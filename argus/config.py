@@ -35,7 +35,7 @@ class ArgusConfig:
     log_level: str = "INFO"
 
     # Database
-    db_url: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/argus"
+    db_url: str = ""
 
     # Broker behavior
     cache_ttl_hours: int = 168
@@ -128,7 +128,7 @@ def load_config() -> ArgusConfig:
     return ArgusConfig(
         env=_env("ARGUS_ENV", "development"),
         log_level=_env("ARGUS_LOG_LEVEL", "INFO"),
-        db_url=_env("ARGUS_DB_URL", "postgresql+psycopg2://postgres:postgres@localhost:5432/argus"),
+        db_url=_env("ARGUS_DB_URL") or _secrets_get("DB_URL") or "postgresql+psycopg2://postgres:postgres@localhost:5432/argus",
         cache_ttl_hours=_env_int("ARGUS_CACHE_TTL_HOURS", 168),
         disable_provider_after_failures=_env_int("ARGUS_DISABLE_PROVIDER_AFTER_FAILURES", 5),
         provider_cooldown_minutes=_env_int("ARGUS_PROVIDER_COOLDOWN_MINUTES", 60),
