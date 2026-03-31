@@ -1,0 +1,10 @@
+# Argus Search Service
+__pycache__/
+*.pyc
+*.pyo
+data/
+.venv/
+*.egg-info/
+dist/
+build/
+.env
