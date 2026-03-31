@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 
 from argus.api.schemas import ProviderTestRequest
 from argus.broker.router import SearchBroker, create_broker
-from argus.models import ProviderName, SearchQuery
+from argus.models import ProviderName, SearchMode, SearchQuery
 
 router = APIRouter()
 

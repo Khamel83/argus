@@ -130,7 +130,7 @@ def health():
     for pname in ProviderName:
         status = broker.get_provider_status(pname)
         effective = status["effective_status"]
-        click.echo(f"  {pname.value:12s} {effective}")
+        click.echo(f"  {pname.value:12s} {effective if isinstance(effective, str) else effective.value}")
     click.echo()
     all_health = broker.health_tracker.get_all_status()
     if all_health:
