@@ -8,3 +8,11 @@ data/
 dist/
 build/
 .env
+
+# ONE_SHOT
+.env
+.env.local
+*.key
+.age/
+!.env.example
+!*.encrypted
