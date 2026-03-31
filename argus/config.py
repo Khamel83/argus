@@ -2,9 +2,11 @@
 Argus configuration — loaded from environment variables.
 
 All settings use ARGUS_ prefix. Missing keys degrade gracefully.
+Falls back to the oneshot secrets vault when env vars are unset.
 """
 
 import os
+import subprocess
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -61,8 +63,26 @@ class ArgusConfig:
     log_provider_payloads: bool = False
 
 
+def _secrets_get(vault_key: str) -> str:
+    """Try to fetch a key from the oneshot secrets vault."""
+    try:
+        result = subprocess.run(
+            ["secrets", "get", vault_key],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return ""
+
+
 def _env(key: str, default: str = "") -> str:
-    return os.environ.get(key, default)
+    val = os.environ.get(key, "")
+    if val:
+        return val
+    # Fallback: try secrets vault with the env key name
+    return _secrets_get(key) or default
 
 
 def _env_bool(key: str, default: bool = False) -> bool:
@@ -97,7 +117,7 @@ def _env_float(key: str, default: float = 0.0) -> float:
 def _provider_config(prefix: str, enabled_default: bool = False, budget_default: float = 0.0, timeout_default: int = 15) -> ProviderConfig:
     return ProviderConfig(
         enabled=_env_bool(f"ARGUS_{prefix}_ENABLED", enabled_default),
-        api_key=_env(f"ARGUS_{prefix}_API_KEY"),
+        api_key=_env(f"ARGUS_{prefix}_API_KEY") or _secrets_get(f"{prefix}_API_KEY"),
         monthly_budget_usd=_env_float(f"ARGUS_{prefix}_MONTHLY_BUDGET_USD", budget_default),
         timeout_seconds=_env_int(f"ARGUS_{prefix}_TIMEOUT_SECONDS", timeout_default),
     )
