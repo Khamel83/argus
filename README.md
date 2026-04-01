@@ -12,11 +12,13 @@ Stop wiring search APIs into every project. Argus is one endpoint that talks to 
 
 You pass Argus a search query. It fans out to multiple providers, collects results, ranks them, deduplicates, and returns a clean list. If a provider is down or over budget, it skips it automatically. Your project never touches a provider API directly.
 
-**Content extraction** — Found a useful link? Pass the URL to Argus and get clean article text back. It tries trafilatura (local, fast) first, then falls back to Jina Reader if needed. No HTML, no navigation, no ads — just the content.
+**Content extraction** — Found a useful link? Pass the URL to Argus and get clean article text back. It tries trafilatura (local, fast) first, then falls back to Jina Reader if needed. No HTML, no navigation, no ads — just the content. Results are cached in memory (168h TTL) so the same URL is never fetched twice.
 
-**Multi-turn sessions** — Pass a `session_id` with your searches and Argus remembers what you've asked before. Follow-up queries like "fastapi" after searching "python web frameworks" get context-enriched automatically.
+**Multi-turn sessions** — Pass a `session_id` with your searches and Argus remembers what you've asked before. Follow-up queries like "fastapi" after searching "python web frameworks" get context-enriched automatically. Sessions persist to SQLite across restarts.
 
-**Token balance tracking** — Track remaining API credits (Jina, etc.) in a local SQLite database. Set balances via CLI, view via API or `argus budgets`.
+**Token balance tracking** — Track remaining API credits (Jina, etc.) in a local SQLite database. Balances auto-decrement as you extract content. Set balances via CLI, view via API or `argus budgets`.
+
+**Domain rate limiting** — Prevents hammering any single domain (default: 10 requests/minute/domain).
 
 ## Quick Start
 
@@ -258,8 +260,11 @@ All config via environment variables. See `.env.example` for the full list.
 | `ARGUS_TAVILY_API_KEY` | — | Tavily API key |
 | `ARGUS_EXA_API_KEY` | — | Exa API key |
 | `ARGUS_CACHE_TTL_HOURS` | 168 | Result cache TTL |
-| `ARGUS_BUDGET_DB_PATH` | `argus_budgets.db` | SQLite path for budget persistence |
+| `ARGUS_BUDGET_DB_PATH` | `argus_budgets.db` | SQLite path for budget/session persistence |
 | `ARGUS_EXTRACTION_TIMEOUT_SECONDS` | 10 | URL fetch timeout for extraction |
+| `ARGUS_EXTRACTION_CACHE_TTL_HOURS` | 168 | Extraction cache TTL (same URL) |
+| `ARGUS_EXTRACTION_DOMAIN_RATE_LIMIT` | 10 | Max extractions per domain per window |
+| `ARGUS_EXTRACTION_DOMAIN_WINDOW_SECONDS` | 60 | Domain rate limit window |
 | `ARGUS_JINA_API_KEY` | — | Jina Reader key (optional — works without, rate-limited) |
 | `ARGUS_RATE_LIMIT` | 60 | Requests per window per client IP |
 | `ARGUS_API_KEY` | — | Bypass rate limiting for internal services |
@@ -270,11 +275,11 @@ Bug reports, feature ideas, and PRs are welcome. See [CONTRIBUTING.md](CONTRIBUT
 
 ## Roadmap
 
-**Now** — Search broker with fallback, health, budgets, content extraction, multi-turn sessions, and token balance tracking. Search → extract → answer, all in one service.
+**Now** — Search broker with fallback, health, budgets, content extraction with caching, domain rate limiting, persistent sessions (SQLite), and auto-decrementing token balance tracking. Search → extract → answer, all in one service.
 
-**Soon** — Content caching (don't re-extract the same URL), domain-level rate limiting, session persistence (SQLite), auto-decrement token balances on extraction use.
+**Soon** — Provider-specific tuning (use Exa for academic, Brave for general), query rewriting to improve recall, embedding-based dedup, browser rendering for JS-heavy pages.
 
-**Later** — Provider-specific tuning (use Exa for academic, Brave for general), query rewriting to improve recall, embedding-based dedup, browser rendering for JS-heavy pages.
+**Later** — Conversational search with automatic query chaining, result summarization, multi-language support.
 
 **Maybe** — Conversational search with automatic query chaining, result summarization, multi-language support.
 

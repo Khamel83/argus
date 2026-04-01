@@ -1,9 +1,12 @@
 """Tests for content extraction."""
 
+import time
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
 from argus.extraction.models import ExtractedContent, ExtractorName
+from argus.extraction.cache import ExtractionCache
+from argus.extraction.rate_limit import DomainRateLimiter
 
 
 class TestExtractionModels:
@@ -32,6 +35,10 @@ class TestExtractionModels:
 
 
 class TestTrafilaturaExtractor:
+    @pytest.fixture(autouse=True)
+    def _skip_without_trafilatura(self):
+        pytest.importorskip("trafilatura")
+
     @pytest.mark.asyncio
     async def test_trafilatura_success(self):
         from argus.extraction.extractor import _extract_trafilatura
@@ -120,7 +127,9 @@ class TestJinaExtractor:
 class TestExtractUrl:
     @pytest.mark.asyncio
     async def test_trafilatura_primary_no_fallback(self):
-        from argus.extraction.extractor import extract_url
+        from argus.extraction.extractor import extract_url, _cache
+
+        _cache.clear()
 
         good_result = ExtractedContent(
             url="https://example.com",
@@ -137,7 +146,10 @@ class TestExtractUrl:
 
     @pytest.mark.asyncio
     async def test_falls_back_to_jina(self):
-        from argus.extraction.extractor import extract_url
+        from argus.extraction.extractor import extract_url, _cache, _domain_limiter
+
+        _cache.clear()
+        _domain_limiter.clear()
 
         bad_result = ExtractedContent(url="https://example.com", error="no content")
         good_result = ExtractedContent(
@@ -155,7 +167,10 @@ class TestExtractUrl:
 
     @pytest.mark.asyncio
     async def test_all_extractors_fail(self):
-        from argus.extraction.extractor import extract_url
+        from argus.extraction.extractor import extract_url, _cache, _domain_limiter
+
+        _cache.clear()
+        _domain_limiter.clear()
 
         bad_result = ExtractedContent(url="https://example.com", error="failed")
 
@@ -163,3 +178,139 @@ class TestExtractUrl:
             with patch("argus.extraction.extractor._extract_jina", new_callable=AsyncMock, return_value=bad_result):
                 result = await extract_url("https://example.com")
                 assert result.error is not None
+
+
+# --- Extraction Cache ---
+
+class TestExtractionCache:
+    def test_put_and_get(self):
+        cache = ExtractionCache(ttl_hours=1)
+        content = ExtractedContent(
+            url="https://example.com",
+            title="Test",
+            text="Content",
+            word_count=1,
+            extractor=ExtractorName.TRAFILATURA,
+        )
+        cache.put("https://example.com", content)
+        result = cache.get("https://example.com")
+        assert result is not None
+        assert result.title == "Test"
+
+    def test_cache_miss(self):
+        cache = ExtractionCache()
+        assert cache.get("https://example.com/nonexistent") is None
+
+    def test_cache_normalizes_url(self):
+        cache = ExtractionCache(ttl_hours=1)
+        content = ExtractedContent(url="https://example.com", text="hi", word_count=1)
+        cache.put("https://example.com/", content)
+        assert cache.get("https://example.com") is not None
+
+    def test_cache_ttl_expires(self):
+        cache = ExtractionCache(ttl_hours=0)  # 0 hours = immediate expiry
+        content = ExtractedContent(url="https://example.com", text="hi", word_count=1)
+        cache.put("https://example.com", content)
+        # TTL is 0 * 3600 = 0 seconds, so even immediate check should miss
+        time.sleep(0.01)
+        assert cache.get("https://example.com") is None
+
+    def test_cache_skips_errors(self):
+        cache = ExtractionCache()
+        content = ExtractedContent(url="https://example.com", error="failed")
+        cache.put("https://example.com", content)
+        assert cache.get("https://example.com") is None
+
+    def test_cache_clear(self):
+        cache = ExtractionCache()
+        content = ExtractedContent(url="https://example.com", text="hi", word_count=1)
+        cache.put("https://example.com", content)
+        assert cache.size() == 1
+        cache.clear()
+        assert cache.size() == 0
+
+    def test_cache_strips_trailing_slash(self):
+        cache = ExtractionCache(ttl_hours=1)
+        content = ExtractedContent(url="https://example.com", text="hi", word_count=1)
+        cache.put("https://example.com/", content)
+        assert cache.get("https://example.com") is not None
+        assert cache.get("https://example.com/") is not None
+
+
+# --- Domain Rate Limiter ---
+
+class TestDomainRateLimiter:
+    def test_allows_within_limit(self):
+        limiter = DomainRateLimiter(max_requests=3, window_seconds=60)
+        for i in range(3):
+            allowed, _ = limiter.is_allowed("https://example.com/page")
+        assert allowed is True
+
+    def test_blocks_over_limit(self):
+        limiter = DomainRateLimiter(max_requests=2, window_seconds=60)
+        limiter.is_allowed("https://example.com/page1")
+        limiter.is_allowed("https://example.com/page2")
+        allowed, retry_after = limiter.is_allowed("https://example.com/page3")
+        assert allowed is False
+        assert retry_after > 0
+
+    def test_separate_domains_independent(self):
+        limiter = DomainRateLimiter(max_requests=1, window_seconds=60)
+        limiter.is_allowed("https://example.com/page1")
+        allowed, _ = limiter.is_allowed("https://other.com/page1")
+        assert allowed is True
+
+    def test_window_expires(self):
+        limiter = DomainRateLimiter(max_requests=1, window_seconds=0)
+        limiter.is_allowed("https://example.com/page1")
+        time.sleep(0.01)
+        allowed, _ = limiter.is_allowed("https://example.com/page2")
+        assert allowed is True
+
+    def test_invalid_url_allowed(self):
+        limiter = DomainRateLimiter(max_requests=1, window_seconds=60)
+        allowed, _ = limiter.is_allowed("not-a-url")
+        assert allowed is True
+
+    def test_clear(self):
+        limiter = DomainRateLimiter(max_requests=1, window_seconds=60)
+        limiter.is_allowed("https://example.com/page1")
+        limiter.clear()
+        allowed, _ = limiter.is_allowed("https://example.com/page2")
+        assert allowed is True
+
+
+# --- Integration: extract_url with cache ---
+
+class TestExtractUrlWithCache:
+    @pytest.mark.asyncio
+    async def test_cached_result_returned(self):
+        from argus.extraction.extractor import extract_url, _cache
+
+        good_result = ExtractedContent(
+            url="https://cached.example.com",
+            title="Cached",
+            text="From cache",
+            word_count=2,
+            extractor=ExtractorName.TRAFILATURA,
+        )
+        _cache.put("https://cached.example.com", good_result)
+
+        # extract_url should return cached result without calling any extractor
+        result = await extract_url("https://cached.example.com")
+        assert result.title == "Cached"
+        _cache.clear()
+
+    @pytest.mark.asyncio
+    async def test_domain_rate_limit_blocks(self):
+        from argus.extraction.extractor import extract_url, _domain_limiter
+
+        # Fill up the rate limit for this domain
+        for _ in range(10):
+            _domain_limiter.is_allowed("https://limited.example.com/page")
+
+        # Next request should be blocked
+        result = await extract_url("https://limited.example.com/other")
+        assert result.error is not None
+        assert "rate limit" in result.error
+        _domain_limiter.clear()

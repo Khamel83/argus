@@ -2,7 +2,7 @@
 
 ## Overview
 
-Search broker with content extraction and multi-turn sessions. Seven provider adapters (SearXNG, Brave, Serper, Tavily, Exa active; SearchAPI, You.com stubs). Automatic fallback, result ranking, health tracking, budget enforcement, token balance tracking. Extract clean text from any URL. Conversational search with session context. Connect via HTTP, CLI, MCP, or Python import.
+Search broker with content extraction and multi-turn sessions. Seven provider adapters (SearXNG, Brave, Serper, Tavily, Exa active; SearchAPI, You.com stubs). Automatic fallback, result ranking, health tracking, budget enforcement, token balance tracking with auto-decrement. Extract clean text from any URL — results cached in memory (168h TTL). Domain rate limiting (10 req/min/domain). Persistent sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
 
 ## Key Commands
 
@@ -78,7 +78,7 @@ Caller (CLI/HTTP/MCP/Python)
 
 ## Content Extraction
 
-Hybrid approach: trafilatura (local, fast, runs in thread pool) tries first, Jina Reader API (external) as fallback. Returns clean text with title, author, date, word count. SSRF protection blocks private IPs.
+Hybrid approach: trafilatura (local, fast, runs in thread pool) tries first, Jina Reader API (external) as fallback. Returns clean text with title, author, date, word count. SSRF protection blocks private IPs. Results cached in memory (168h TTL). Domain rate limiting (10 req/min/domain). Jina token balance auto-decrements on use.
 
 ```bash
 # CLI
@@ -95,7 +95,7 @@ print(result.text)
 
 ## Multi-Turn Sessions
 
-Pass `session_id` to search to enable conversational refinement. The broker remembers prior queries and uses them to context-enrich follow-up searches.
+Pass `session_id` to search to enable conversational refinement. The broker remembers prior queries and uses them to context-enrich follow-up searches. Sessions persist to SQLite (`argus_budgets.db`) across restarts.
 
 ```bash
 # CLI

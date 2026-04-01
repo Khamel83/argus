@@ -1,0 +1,159 @@
+"""
+SQLite-backed session persistence.
+
+Persists sessions and query history so they survive restarts.
+Mirrors BudgetStore pattern from argus/broker/budget_persistence.py.
+"""
+
+import os
+import sqlite3
+import time
+from pathlib import Path
+from typing import Optional
+
+from argus.logging import get_logger
+
+logger = get_logger("sessions.persistence")
+
+DEFAULT_DB_PATH = "argus_budgets.db"  # shares the existing budget DB
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    created_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS session_queries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    query TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'discovery',
+    timestamp REAL NOT NULL,
+    results_count INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_session_queries_sid
+    ON session_queries(session_id);
+
+CREATE TABLE IF NOT EXISTS session_extracted_urls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    query_index INTEGER NOT NULL,
+    url TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_extracted_urls_sid
+    ON session_extracted_urls(session_id);
+"""
+
+
+class SessionPersistence:
+    """SQLite-backed storage for session data."""
+
+    def __init__(self, db_path: Optional[str] = None):
+        self._db_path = db_path or os.environ.get(
+            "ARGUS_BUDGET_DB_PATH", DEFAULT_DB_PATH
+        )
+        self._conn: Optional[sqlite3.Connection] = None
+
+    def _get_conn(self) -> sqlite3.Connection:
+        if self._conn is None:
+            Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(self._db_path)
+            self._conn.execute("PRAGMA foreign_keys = ON")
+            self._conn.executescript(_SCHEMA)
+        return self._conn
+
+    def save_session(self, session_id: str, created_at: float) -> None:
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT OR IGNORE INTO sessions (id, created_at) VALUES (?, ?)",
+            (session_id, created_at),
+        )
+        conn.commit()
+
+    def save_query(
+        self,
+        session_id: str,
+        query: str,
+        mode: str = "discovery",
+        timestamp: float = 0.0,
+        results_count: int = 0,
+    ) -> int:
+        """Save a query record. Returns the row index (query_index)."""
+        conn = self._get_conn()
+        ts = timestamp or time.time()
+        cursor = conn.execute(
+            "INSERT INTO session_queries (session_id, query, mode, timestamp, results_count) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (session_id, query, mode, ts, results_count),
+        )
+        conn.commit()
+        # Return 0-based index for this query in the session
+        row = conn.execute(
+            "SELECT COUNT(*) - 1 FROM session_queries WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        return row[0]
+
+    def save_extracted_url(
+        self, session_id: str, query_index: int, url: str
+    ) -> None:
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT INTO session_extracted_urls (session_id, query_index, url) "
+            "VALUES (?, ?, ?)",
+            (session_id, query_index, url),
+        )
+        conn.commit()
+
+    def load_session(self, session_id: str) -> Optional[dict]:
+        """Load a session with all its queries and extracted URLs."""
+        conn = self._get_conn()
+
+        row = conn.execute(
+            "SELECT id, created_at FROM sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            return None
+
+        queries = []
+        for qr in conn.execute(
+            "SELECT query, mode, timestamp, results_count "
+            "FROM session_queries WHERE session_id = ? ORDER BY id",
+            (session_id,),
+        ).fetchall():
+            q_idx = len(queries)
+            extracted_urls = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT url FROM session_extracted_urls "
+                    "WHERE session_id = ? AND query_index = ?",
+                    (session_id, q_idx),
+                ).fetchall()
+            ]
+            queries.append({
+                "query": qr[0],
+                "mode": qr[1],
+                "timestamp": qr[2],
+                "results_count": qr[3],
+                "extracted_urls": extracted_urls,
+            })
+
+        return {
+            "id": row[0],
+            "created_at": row[1],
+            "queries": queries,
+        }
+
+    def list_sessions(self) -> list[dict]:
+        """List all persisted sessions."""
+        conn = self._get_conn()
+        rows = conn.execute("SELECT id, created_at FROM sessions ORDER BY created_at DESC").fetchall()
+        return [{"id": r[0], "created_at": r[1]} for r in rows]
+
+    def close(self) -> None:
+        if self._conn:
+            self._conn.close()
+            self._conn = None
