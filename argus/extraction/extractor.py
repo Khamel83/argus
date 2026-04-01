@@ -29,11 +29,52 @@ _cache = TTLCache(
     skip_fn=lambda content: bool(content.error),
 )
 
+_cache_ttl = int(os.getenv("ARGUS_EXTRACTION_CACHE_TTL_HOURS", "168")) * 3600
+
 # Shared domain rate limiter — 10 requests per minute per domain
 _domain_limiter = DomainRateLimiter(
     max_requests=int(os.getenv("ARGUS_EXTRACTION_DOMAIN_RATE_LIMIT", "10")),
     window_seconds=int(os.getenv("ARGUS_EXTRACTION_DOMAIN_WINDOW_SECONDS", "60")),
 )
+
+
+def _get_sqlite_cached(url: str) -> ExtractedContent | None:
+    """Check SQLite extraction cache for a URL."""
+    try:
+        from argus.broker.budget_persistence import BudgetStore
+        store = BudgetStore()
+        row = store.get_extraction(extraction_cache_key(url), _cache_ttl)
+        if row is None:
+            return None
+        # Populate in-memory cache on SQLite hit
+        content = ExtractedContent(
+            url=url,
+            title=row["title"],
+            text=row["text"],
+            author=row["author"],
+            date=row["date"],
+            word_count=row["word_count"],
+            extractor=ExtractorName(row["extractor"]) if row["extractor"] else None,
+        )
+        _cache.put(url, value=content)
+        return content
+    except Exception as e:
+        logger.debug("SQLite cache miss (error): %s", e)
+        return None
+
+
+def _save_to_sqlite(url: str, content: ExtractedContent) -> None:
+    """Persist extraction result to SQLite cache."""
+    try:
+        from argus.broker.budget_persistence import BudgetStore
+        store = BudgetStore()
+        store.put_extraction(
+            extraction_cache_key(url),
+            content.title, content.text, content.author, content.date,
+            content.word_count, content.extractor.value if content.extractor else "",
+        )
+    except Exception as e:
+        logger.debug("Failed to persist extraction to SQLite: %s", e)
 
 # Token tracking state
 _jina_call_count = 0
@@ -107,12 +148,18 @@ async def extract_url(url: str) -> ExtractedContent:
     """Extract clean content from a URL.
 
     Tries trafilatura first (local), falls back to Jina Reader (external).
-    Results are cached in memory — same URL within TTL returns cached result.
+    Results are cached in memory and SQLite — same URL within TTL returns cached result.
     """
-    # Check cache
+    # Check in-memory cache first
     cached = _cache.get(url)
     if cached is not None:
-        logger.debug("Extraction cache hit for %s", url[:60])
+        logger.debug("Extraction cache hit (memory) for %s", url[:60])
+        return cached
+
+    # Check SQLite cache
+    cached = _get_sqlite_cached(url)
+    if cached is not None:
+        logger.debug("Extraction cache hit (sqlite) for %s", url[:60])
         return cached
 
     # Check domain rate limit
@@ -128,7 +175,8 @@ async def extract_url(url: str) -> ExtractedContent:
         result = await _extract_trafilatura(url)
         if result.text and not result.error:
             logger.info("Extracted %s via trafilatura (%d words)", url[:60], result.word_count)
-            _cache.put(url, result)
+            _cache.put(url, value=result)
+            _save_to_sqlite(url, result)
             return result
         logger.debug("Trafilatura returned no content for %s: %s", url[:60], result.error)
     except Exception as e:
@@ -139,7 +187,8 @@ async def extract_url(url: str) -> ExtractedContent:
         result = await _extract_jina(url)
         if result.text and not result.error:
             logger.info("Extracted %s via Jina fallback (%d words)", url[:60], result.word_count)
-            _cache.put(url, result)
+            _cache.put(url, value=result)
+            _save_to_sqlite(url, result)
             _track_jina_usage(result.word_count)
             return result
         logger.warning("Jina returned no content for %s: %s", url[:60], result.error)
