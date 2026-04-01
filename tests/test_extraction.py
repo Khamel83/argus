@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
 from argus.extraction.models import ExtractedContent, ExtractorName
-from argus.extraction.cache import ExtractionCache
+from argus.core.cache import TTLCache, extraction_cache_key
 from argus.extraction.rate_limit import DomainRateLimiter
 
 
@@ -127,9 +127,9 @@ class TestJinaExtractor:
 class TestExtractUrl:
     @pytest.mark.asyncio
     async def test_trafilatura_primary_no_fallback(self):
-        from argus.extraction.extractor import extract_url, _cache
+        from argus.extraction.extractor import extract_url, _default_extractor
 
-        _cache.clear()
+        _default_extractor._cache.clear()
 
         good_result = ExtractedContent(
             url="https://example.com",
@@ -139,17 +139,18 @@ class TestExtractUrl:
             extractor=ExtractorName.TRAFILATURA,
         )
 
-        with patch("argus.extraction.extractor._extract_trafilatura", new_callable=AsyncMock, return_value=good_result):
+        with patch("argus.extraction.extractor._extract_trafilatura", new_callable=AsyncMock, return_value=good_result), \
+             patch.object(_default_extractor, "_get_sqlite_cached", return_value=None):
             result = await extract_url("https://example.com")
             assert result.extractor == ExtractorName.TRAFILATURA
             assert "trafilatura" in result.text
 
     @pytest.mark.asyncio
     async def test_falls_back_to_jina(self):
-        from argus.extraction.extractor import extract_url, _cache, _domain_limiter
+        from argus.extraction.extractor import extract_url, _default_extractor
 
-        _cache.clear()
-        _domain_limiter.clear()
+        _default_extractor._cache.clear()
+        _default_extractor._domain_limiter.clear()
 
         bad_result = ExtractedContent(url="https://example.com", error="no content")
         good_result = ExtractedContent(
@@ -160,31 +161,35 @@ class TestExtractUrl:
             extractor=ExtractorName.JINA,
         )
 
-        with patch("argus.extraction.extractor._extract_trafilatura", new_callable=AsyncMock, return_value=bad_result):
-            with patch("argus.extraction.extractor._extract_jina", new_callable=AsyncMock, return_value=good_result):
-                result = await extract_url("https://example.com")
-                assert result.extractor == ExtractorName.JINA
+        with patch("argus.extraction.extractor._extract_trafilatura", new_callable=AsyncMock, return_value=bad_result), \
+             patch("argus.extraction.extractor._extract_jina", new_callable=AsyncMock, return_value=good_result), \
+             patch.object(_default_extractor, "_get_sqlite_cached", return_value=None), \
+             patch.object(_default_extractor, "_save_to_sqlite"):
+            result = await extract_url("https://example.com")
+            assert result.extractor == ExtractorName.JINA
 
     @pytest.mark.asyncio
     async def test_all_extractors_fail(self):
-        from argus.extraction.extractor import extract_url, _cache, _domain_limiter
+        from argus.extraction.extractor import extract_url, _default_extractor
 
-        _cache.clear()
-        _domain_limiter.clear()
+        _default_extractor._cache.clear()
+        _default_extractor._domain_limiter.clear()
 
         bad_result = ExtractedContent(url="https://example.com", error="failed")
 
-        with patch("argus.extraction.extractor._extract_trafilatura", new_callable=AsyncMock, return_value=bad_result):
-            with patch("argus.extraction.extractor._extract_jina", new_callable=AsyncMock, return_value=bad_result):
-                result = await extract_url("https://example.com")
-                assert result.error is not None
+        with patch("argus.extraction.extractor._extract_trafilatura", new_callable=AsyncMock, return_value=bad_result), \
+             patch("argus.extraction.extractor._extract_jina", new_callable=AsyncMock, return_value=bad_result), \
+             patch.object(_default_extractor, "_get_sqlite_cached", return_value=None):
+            result = await extract_url("https://example.com")
+            assert result.error is not None
 
 
 # --- Extraction Cache ---
 
 class TestExtractionCache:
     def test_put_and_get(self):
-        cache = ExtractionCache(ttl_hours=1)
+        cache = TTLCache(ttl_seconds=3600, key_fn=extraction_cache_key,
+                         skip_fn=lambda c: bool(c.error))
         content = ExtractedContent(
             url="https://example.com",
             title="Test",
@@ -192,47 +197,50 @@ class TestExtractionCache:
             word_count=1,
             extractor=ExtractorName.TRAFILATURA,
         )
-        cache.put("https://example.com", content)
+        cache.put("https://example.com", value=content)
         result = cache.get("https://example.com")
         assert result is not None
         assert result.title == "Test"
 
     def test_cache_miss(self):
-        cache = ExtractionCache()
+        cache = TTLCache(ttl_seconds=3600, key_fn=extraction_cache_key)
         assert cache.get("https://example.com/nonexistent") is None
 
     def test_cache_normalizes_url(self):
-        cache = ExtractionCache(ttl_hours=1)
+        cache = TTLCache(ttl_seconds=3600, key_fn=extraction_cache_key,
+                         skip_fn=lambda c: bool(c.error))
         content = ExtractedContent(url="https://example.com", text="hi", word_count=1)
-        cache.put("https://example.com/", content)
+        cache.put("https://example.com/", value=content)
         assert cache.get("https://example.com") is not None
 
     def test_cache_ttl_expires(self):
-        cache = ExtractionCache(ttl_hours=0)  # 0 hours = immediate expiry
+        cache = TTLCache(ttl_seconds=0, key_fn=extraction_cache_key)
         content = ExtractedContent(url="https://example.com", text="hi", word_count=1)
-        cache.put("https://example.com", content)
-        # TTL is 0 * 3600 = 0 seconds, so even immediate check should miss
+        cache.put("https://example.com", value=content)
         time.sleep(0.01)
         assert cache.get("https://example.com") is None
 
     def test_cache_skips_errors(self):
-        cache = ExtractionCache()
+        cache = TTLCache(ttl_seconds=3600, key_fn=extraction_cache_key,
+                         skip_fn=lambda c: bool(c.error))
         content = ExtractedContent(url="https://example.com", error="failed")
-        cache.put("https://example.com", content)
+        cache.put("https://example.com", value=content)
         assert cache.get("https://example.com") is None
 
     def test_cache_clear(self):
-        cache = ExtractionCache()
+        cache = TTLCache(ttl_seconds=3600, key_fn=extraction_cache_key,
+                         skip_fn=lambda c: bool(c.error))
         content = ExtractedContent(url="https://example.com", text="hi", word_count=1)
-        cache.put("https://example.com", content)
+        cache.put("https://example.com", value=content)
         assert cache.size() == 1
         cache.clear()
         assert cache.size() == 0
 
     def test_cache_strips_trailing_slash(self):
-        cache = ExtractionCache(ttl_hours=1)
+        cache = TTLCache(ttl_seconds=3600, key_fn=extraction_cache_key,
+                         skip_fn=lambda c: bool(c.error))
         content = ExtractedContent(url="https://example.com", text="hi", word_count=1)
-        cache.put("https://example.com/", content)
+        cache.put("https://example.com/", value=content)
         assert cache.get("https://example.com") is not None
         assert cache.get("https://example.com/") is not None
 
@@ -285,7 +293,7 @@ class TestDomainRateLimiter:
 class TestExtractUrlWithCache:
     @pytest.mark.asyncio
     async def test_cached_result_returned(self):
-        from argus.extraction.extractor import extract_url, _cache
+        from argus.extraction.extractor import extract_url, _default_extractor
 
         good_result = ExtractedContent(
             url="https://cached.example.com",
@@ -294,23 +302,22 @@ class TestExtractUrlWithCache:
             word_count=2,
             extractor=ExtractorName.TRAFILATURA,
         )
-        _cache.put("https://cached.example.com", good_result)
+        _default_extractor._cache.put("https://cached.example.com", value=good_result)
 
-        # extract_url should return cached result without calling any extractor
-        result = await extract_url("https://cached.example.com")
-        assert result.title == "Cached"
-        _cache.clear()
+        with patch.object(_default_extractor, "_get_sqlite_cached", return_value=None):
+            result = await extract_url("https://cached.example.com")
+            assert result.title == "Cached"
+            _default_extractor._cache.clear()
 
     @pytest.mark.asyncio
     async def test_domain_rate_limit_blocks(self):
-        from argus.extraction.extractor import extract_url, _domain_limiter
+        from argus.extraction.extractor import extract_url, _default_extractor
 
-        # Fill up the rate limit for this domain
         for _ in range(10):
-            _domain_limiter.is_allowed("https://limited.example.com/page")
+            _default_extractor._domain_limiter.is_allowed("https://limited.example.com/page")
 
-        # Next request should be blocked
-        result = await extract_url("https://limited.example.com/other")
-        assert result.error is not None
-        assert "rate limit" in result.error
-        _domain_limiter.clear()
+        with patch.object(_default_extractor, "_get_sqlite_cached", return_value=None):
+            result = await extract_url("https://limited.example.com/other")
+            assert result.error is not None
+            assert "rate limit" in result.error
+            _default_extractor._domain_limiter.clear()

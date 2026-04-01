@@ -26,8 +26,11 @@ async def lifespan(app: FastAPI):
     try:
         broker = app.state.get_broker()
         broker.budget_tracker.close()
-    except Exception:
-        pass
+        if broker._session_store:
+            broker._session_store.close()
+        logger.info("Shutdown complete: connections closed")
+    except Exception as e:
+        logger.warning("Error during shutdown: %s", e)
 
 
 def _build_rate_limiter() -> RateLimiter:
@@ -68,6 +71,7 @@ def create_app(
     )
     app.state.get_broker = _build_broker_provider(broker, broker_factory)
     app.state.rate_limiter = rate_limiter or _build_rate_limiter()
+    app.state.api_key = os.environ.get("ARGUS_API_KEY", "")
 
     app.add_middleware(
         CORSMiddleware,
@@ -75,6 +79,21 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def api_key_auth(request: Request, call_next):
+        api_key = request.app.state.api_key
+        if not api_key:
+            return await call_next(request)
+
+        if request.url.path == "/api/health":
+            return await call_next(request)
+
+        provided = request.headers.get("x-api-key")
+        if provided != api_key:
+            return JSONResponse(status_code=401, content={"error": "Invalid or missing API key"})
+
+        return await call_next(request)
 
     @app.middleware("http")
     async def rate_limit_middleware(request: Request, call_next):

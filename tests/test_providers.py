@@ -231,36 +231,6 @@ class TestExaProvider:
         assert results[0].metadata["id"] == "abc"
 
 
-# --- Stubs ---
-
-class TestStubs:
-    def test_searchapi_not_available(self):
-        from argus.providers.searchapi import SearchApiProvider
-        p = SearchApiProvider(ProviderConfig())
-        assert p.is_available() is False
-
-    def test_you_not_available(self):
-        from argus.providers.you import YouProvider
-        p = YouProvider(ProviderConfig())
-        assert p.is_available() is False
-
-    @pytest.mark.asyncio
-    async def test_searchapi_returns_empty(self):
-        from argus.providers.searchapi import SearchApiProvider
-        p = SearchApiProvider(ProviderConfig())
-        results, trace = await p.search(SearchQuery(query="test"))
-        assert results == []
-        assert trace.status == "skipped"
-
-    @pytest.mark.asyncio
-    async def test_you_returns_empty(self):
-        from argus.providers.you import YouProvider
-        p = YouProvider(ProviderConfig())
-        results, trace = await p.search(SearchQuery(query="test"))
-        assert results == []
-        assert trace.status == "skipped"
-
-
 @pytest.mark.parametrize(
     ("provider_name", "factory"),
     [
@@ -269,8 +239,6 @@ class TestStubs:
         (ProviderName.SERPER, lambda: __import__("argus.providers.serper", fromlist=["SerperProvider"]).SerperProvider(ProviderConfig(enabled=True, api_key="key"))),
         (ProviderName.TAVILY, lambda: __import__("argus.providers.tavily", fromlist=["TavilyProvider"]).TavilyProvider(ProviderConfig(enabled=True, api_key="key"))),
         (ProviderName.EXA, lambda: __import__("argus.providers.exa", fromlist=["ExaProvider"]).ExaProvider(ProviderConfig(enabled=True, api_key="key"))),
-        (ProviderName.SEARCHAPI, lambda: __import__("argus.providers.searchapi", fromlist=["SearchApiProvider"]).SearchApiProvider(ProviderConfig())),
-        (ProviderName.YOU, lambda: __import__("argus.providers.you", fromlist=["YouProvider"]).YouProvider(ProviderConfig())),
     ],
 )
 class TestProviderContracts:

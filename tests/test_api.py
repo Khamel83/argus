@@ -48,7 +48,7 @@ class TestSearchEndpoint:
     @pytest.mark.asyncio
     async def test_search_returns_results(self):
         from argus.api.main import create_app
-        from argus.broker.cache import SearchCache
+        from argus.core.cache import TTLCache, search_cache_key
         from argus.broker.health import HealthTracker
         from argus.broker.budgets import BudgetTracker
         from argus.models import SearchResponse, SearchMode, SearchResult, ProviderTrace
@@ -65,7 +65,7 @@ class TestSearchEndpoint:
             search_run_id="abc123",
         )
         mock_broker.search = AsyncMock(return_value=cached_resp)
-        mock_broker.cache = SearchCache()
+        mock_broker.cache = TTLCache(ttl_seconds=3600, key_fn=search_cache_key)
         mock_broker.health_tracker = HealthTracker()
         mock_broker.budget_tracker = BudgetTracker()
 

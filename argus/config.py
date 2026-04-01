@@ -37,8 +37,6 @@ class ArgusConfig:
     serper: ProviderConfig = field(default_factory=ProviderConfig)
     tavily: ProviderConfig = field(default_factory=ProviderConfig)
     exa: ProviderConfig = field(default_factory=ProviderConfig)
-    searchapi: ProviderConfig = field(default_factory=ProviderConfig)
-    you: ProviderConfig = field(default_factory=ProviderConfig)
     host: str = "127.0.0.1"
     port: int = 8000
     allow_mcp: bool = False
@@ -152,7 +150,7 @@ class EnvironmentConfigLoader:
             log_level=self.get_str("ARGUS_LOG_LEVEL", "INFO"),
             db_url=self.get_str(
                 "ARGUS_DB_URL",
-                "postgresql+psycopg2://postgres:postgres@localhost:5432/argus",
+                "sqlite:///argus.db",
                 secret_keys=("DB_URL",),
             ),
             cache_ttl_hours=self.get_int("ARGUS_CACHE_TTL_HOURS", 168),
@@ -177,8 +175,6 @@ class EnvironmentConfigLoader:
             serper=self.provider_config("SERPER", enabled_default=True),
             tavily=self.provider_config("TAVILY", enabled_default=True, timeout_default=20),
             exa=self.provider_config("EXA", enabled_default=True, timeout_default=20),
-            searchapi=self.provider_config("SEARCHAPI"),
-            you=self.provider_config("YOU"),
             host=self.get_str("ARGUS_HOST", "127.0.0.1"),
             port=self.get_int("ARGUS_PORT", 8000),
             allow_mcp=self.get_bool("ARGUS_ALLOW_MCP"),

@@ -4,13 +4,13 @@ import os
 from typing import Optional
 
 from argus.broker.budgets import BudgetTracker
-from argus.broker.cache import SearchCache
 from argus.broker.execution import ProviderExecutor, ProviderRoutingPolicy
 from argus.broker.health import HealthTracker
 from argus.broker.pipeline import SearchResultPipeline
 from argus.broker.policies import resolve_routing
 from argus.broker.session_flow import SessionSearchService
 from argus.config import get_config
+from argus.core.cache import TTLCache, search_cache_key
 from argus.logging import get_logger
 from argus.models import ProviderName, SearchQuery, SearchResponse
 from argus.persistence.db import SearchPersistenceGateway
@@ -23,7 +23,7 @@ class SearchBroker:
     def __init__(
         self,
         providers: dict[ProviderName, BaseProvider],
-        cache: Optional[SearchCache] = None,
+        cache: Optional[TTLCache] = None,
         health_tracker: Optional[HealthTracker] = None,
         budget_tracker: Optional[BudgetTracker] = None,
         session_store=None,
@@ -32,7 +32,10 @@ class SearchBroker:
         session_service: Optional[SessionSearchService] = None,
     ):
         self._providers = providers
-        self._cache = cache or SearchCache()
+        self._cache = cache or TTLCache(
+            ttl_seconds=168 * 3600,
+            key_fn=search_cache_key,
+        )
         self._health = health_tracker or HealthTracker()
         self._budgets = budget_tracker or BudgetTracker(
             persist_path=os.environ.get("ARGUS_BUDGET_DB_PATH", None)
@@ -56,15 +59,13 @@ class SearchBroker:
             ProviderName.SERPER: self._config.serper.monthly_budget_usd,
             ProviderName.TAVILY: self._config.tavily.monthly_budget_usd,
             ProviderName.EXA: self._config.exa.monthly_budget_usd,
-            ProviderName.SEARCHAPI: self._config.searchapi.monthly_budget_usd,
-            ProviderName.YOU: self._config.you.monthly_budget_usd,
         }
         for pname, budget in budget_map.items():
             if budget > 0:
                 self._budgets.set_budget(pname, budget)
 
     @property
-    def cache(self) -> SearchCache:
+    def cache(self) -> TTLCache:
         return self._cache
 
     @property
@@ -137,11 +138,9 @@ def create_broker() -> SearchBroker:
     """Factory: create a SearchBroker with all configured providers."""
     from argus.providers.brave import BraveProvider
     from argus.providers.exa import ExaProvider
-    from argus.providers.searchapi import SearchApiProvider
     from argus.providers.searxng import SearXNGProvider
     from argus.providers.serper import SerperProvider
     from argus.providers.tavily import TavilyProvider
-    from argus.providers.you import YouProvider
 
     config = get_config()
 
@@ -151,8 +150,6 @@ def create_broker() -> SearchBroker:
         ProviderName.SERPER: SerperProvider(config.serper),
         ProviderName.TAVILY: TavilyProvider(config.tavily),
         ProviderName.EXA: ExaProvider(config.exa),
-        ProviderName.SEARCHAPI: SearchApiProvider(config.searchapi),
-        ProviderName.YOU: YouProvider(config.you),
     }
 
     from argus.sessions import SessionStore

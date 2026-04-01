@@ -2,9 +2,9 @@
 
 import uuid
 
-from argus.broker.cache import SearchCache
 from argus.broker.dedupe import dedupe_results
 from argus.broker.ranking import reciprocal_rank_fusion
+from argus.core.cache import TTLCache, search_cache_key
 from argus.logging import get_logger
 from argus.models import SearchQuery, SearchResponse
 from argus.persistence.db import SearchPersistenceGateway
@@ -16,7 +16,7 @@ class SearchResultPipeline:
     def __init__(
         self,
         *,
-        cache: SearchCache,
+        cache: TTLCache,
         persistence: SearchPersistenceGateway | None = None,
     ):
         self._cache = cache
@@ -43,6 +43,6 @@ class SearchResultPipeline:
             search_run_id=uuid.uuid4().hex[:16],
         )
         if final_results:
-            self._cache.put(query.query, query.mode, response)
+            self._cache.put(query.query, query.mode, value=response)
         self._persistence.record_completed_search(query, response)
         return response

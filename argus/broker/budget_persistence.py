@@ -32,6 +32,17 @@ CREATE TABLE IF NOT EXISTS token_balances (
     balance REAL NOT NULL,
     updated_at REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS extraction_cache (
+    url_hash TEXT PRIMARY KEY,
+    title TEXT DEFAULT '',
+    text TEXT DEFAULT '',
+    author TEXT DEFAULT '',
+    date TEXT,
+    word_count INTEGER DEFAULT 0,
+    extractor TEXT DEFAULT '',
+    cached_at REAL NOT NULL
+);
 """
 
 
@@ -107,3 +118,30 @@ class BudgetStore:
             service: {"balance": balance, "updated_at": updated_at}
             for service, balance, updated_at in rows
         }
+
+    def get_extraction(self, url_hash: str, ttl_seconds: float) -> Optional[dict]:
+        cutoff = time.time() - ttl_seconds
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT title, text, author, date, word_count, extractor, cached_at "
+            "FROM extraction_cache WHERE url_hash = ? AND cached_at >= ?",
+            (url_hash, cutoff),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "title": row[0], "text": row[1], "author": row[2], "date": row[3],
+            "word_count": row[4], "extractor": row[5], "cached_at": row[6],
+        }
+
+    def put_extraction(self, url_hash: str, title: str, text: str,
+                       author: str, date: Optional[str], word_count: int,
+                       extractor: str) -> None:
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT OR REPLACE INTO extraction_cache "
+            "(url_hash, title, text, author, date, word_count, extractor, cached_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (url_hash, title, text, author, date, word_count, extractor, time.time()),
+        )
+        conn.commit()

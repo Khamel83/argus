@@ -8,7 +8,7 @@ from typing import List, Optional, Set
 from pydantic import BaseModel, Field, field_validator
 
 _VALID_MODES: Set[str] = {"recovery", "discovery", "grounding", "research"}
-_VALID_PROVIDERS: Set[str] = {"searxng", "brave", "serper", "tavily", "exa", "searchapi", "you"}
+_VALID_PROVIDERS: Set[str] = {"searxng", "brave", "serper", "tavily", "exa"}
 
 
 class SearchRequest(BaseModel):
