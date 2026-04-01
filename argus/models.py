@@ -24,8 +24,6 @@ class ProviderName(str, Enum):
     SERPER = "serper"
     TAVILY = "tavily"
     EXA = "exa"
-    SEARCHAPI = "searchapi"
-    YOU = "you"
     CACHE = "cache"
 
 

@@ -11,7 +11,6 @@ class TestConfig:
         assert cfg.searxng.enabled is True
         assert cfg.brave.enabled is True  # enabled by default per .env.example
         assert cfg.serper.enabled is True
-        assert cfg.searchapi.enabled is False  # off by default
 
     def test_load_config_from_env(self, monkeypatch):
         monkeypatch.setenv("ARGUS_BRAVE_API_KEY", "test-key")

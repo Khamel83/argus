@@ -59,8 +59,6 @@ class SearchBroker:
             ProviderName.SERPER: self._config.serper.monthly_budget_usd,
             ProviderName.TAVILY: self._config.tavily.monthly_budget_usd,
             ProviderName.EXA: self._config.exa.monthly_budget_usd,
-            ProviderName.SEARCHAPI: self._config.searchapi.monthly_budget_usd,
-            ProviderName.YOU: self._config.you.monthly_budget_usd,
         }
         for pname, budget in budget_map.items():
             if budget > 0:
@@ -140,11 +138,9 @@ def create_broker() -> SearchBroker:
     """Factory: create a SearchBroker with all configured providers."""
     from argus.providers.brave import BraveProvider
     from argus.providers.exa import ExaProvider
-    from argus.providers.searchapi import SearchApiProvider
     from argus.providers.searxng import SearXNGProvider
     from argus.providers.serper import SerperProvider
     from argus.providers.tavily import TavilyProvider
-    from argus.providers.you import YouProvider
 
     config = get_config()
 
@@ -154,8 +150,6 @@ def create_broker() -> SearchBroker:
         ProviderName.SERPER: SerperProvider(config.serper),
         ProviderName.TAVILY: TavilyProvider(config.tavily),
         ProviderName.EXA: ExaProvider(config.exa),
-        ProviderName.SEARCHAPI: SearchApiProvider(config.searchapi),
-        ProviderName.YOU: YouProvider(config.you),
     }
 
     from argus.sessions import SessionStore
