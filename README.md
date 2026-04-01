@@ -9,6 +9,20 @@ One endpoint, five search providers. Argus routes queries across SearXNG, Brave,
 
 Connect via HTTP, CLI, MCP, or Python import.
 
+## Why Argus
+
+Without Argus, every agent that needs web search has to wire up individual provider APIs, handle keys and rate limits for each one, write its own fallback logic, deduplicate results from multiple sources, and build its own content extraction pipeline. Each project reimplements the same glue.
+
+Argus replaces that with one endpoint. You add it to your agent once — the same way you'd add a database client or an LLM API wrapper — and it handles the rest:
+
+- **No provider lock-in** — swap Brave for Serper or add Exa without changing your agent code. Missing keys degrade gracefully; providers are skipped, not errors.
+- **Automatic fallback** — if a provider is down, slow, or over budget, Argus routes to the next best one. Your agent doesn't need retry logic or circuit breakers.
+- **Better results than any single provider** — Reciprocal Rank Fusion merges results from multiple sources. A URL that appears in both Brave and Serper ranks higher than one that only appears in one.
+- **Content extraction built in** — found a useful link? Pass the URL to Argus and get clean article text back. Trafilatura tries first (local, free), Jina Reader falls back if needed. Cached in memory and SQLite so the same URL is never fetched twice.
+- **Multi-turn memory** — Argus remembers prior queries in a session. Follow-up searches like "fastapi" after "python web frameworks" get context-enriched automatically.
+
+Think of it as the LiteLLM of web search — one API, multiple providers, unified interface.
+
 ## What It Does
 
 You pass Argus a search query. It routes to providers in cheap-first order, stops early when the first provider already produced enough useful results, and only falls through when failure, weak output, cooldown, or budget limits justify it. Results are ranked, deduplicated, and returned as one clean list.
