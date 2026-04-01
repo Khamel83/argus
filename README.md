@@ -1,6 +1,8 @@
 # Argus
 
-Argus is a reusable, VPS-hosted search broker. It provides one stable interface over multiple web-search providers, with a free/self-hosted-first policy and explicit health, budget, and fallback behavior.
+Stop wiring five different search APIs into every project. Argus is one endpoint that talks to SearXNG, Brave, Serper, Tavily, and Exa — with automatic fallback, result ranking, health tracking, and budget enforcement built in.
+
+Connect any project via HTTP, CLI, MCP, or Python import. Add a provider key, it works. Remove it, it degrades gracefully.
 
 ## Quick Start
 
@@ -141,132 +143,27 @@ for trace in response.traces:
     print(f"  {trace.provider}: {trace.status} ({trace.results_count} results, {trace.latency_ms}ms)")
 ```
 
-## Goals
+## Why Argus?
 
-- Always-on search service
-- Slow and reliable over fast and flaky
-- Reusable across projects
-- HTTP API first
-- MCP optional, not core
-- Free/self-hosted-first routing
-- Clear provider health and budget tracking
-- One normalized result schema for all callers
+**Without Argus:** Each project wires its own Brave/Serper/Tavily keys, handles rate limits, writes fallback logic, normalizes different response schemas, and tracks which provider is down today.
 
-## Provider Order
+**With Argus:** One HTTP call. Argus picks the best provider, falls back automatically, ranks and deduplicates results, tracks budgets, and tells you exactly what happened via traces. Your project never touches a provider API directly.
 
-Default provider chain:
+- **One interface, five providers** — add/remove keys, your code doesn't change
+- **Automatic fallback** — provider fails? Next one takes over. No code needed.
+- **Budget enforcement** — set monthly limits per provider, Argus stops before you get billed
+- **Health visibility** — always know which providers are up, degraded, or exhausted
+- **Free floor** — SearXNG runs locally for free, always available as fallback
+- **AI-native** — MCP server lets Claude, Cursor, or any agent search the web instantly
 
-- SearXNG
-- Brave
-- Serper
-- Tavily
-- Exa
+## Search Modes
 
-Initial policy:
-
-- `recovery`: cache -> searxng -> brave -> serper -> tavily -> exa
-- `discovery`: cache -> searxng -> brave -> exa -> tavily -> serper
-- `grounding`: cache -> brave -> serper -> searxng
-- `research`: cache -> tavily -> exa -> brave -> serper
-
-These are config-driven.
-
-## Core Features
-
-- Unified search broker
-- Provider adapters (normalize all responses to one schema)
-- Ranking and deduplication (reciprocal rank fusion)
-- Query caching (configurable TTL)
-- Provider health tracking (auto-disable after repeated failures)
-- Provider budget tracking (monthly spend limits)
-- URL recovery mode
-- Discovery mode
-- Grounding mode
-- Research mode
-- HTTP API with OpenAPI docs at `/docs`
-- CLI
-- Optional MCP wrapper
-
-## Primary Endpoints
-
-- `POST /api/search`
-- `POST /api/recover-url`
-- `POST /api/expand`
-- `GET /api/health`
-- `GET /api/budgets`
-- `POST /api/test-provider`
-
-## Architecture
-
-```
-Argus
-├── argus/
-│   ├── providers/     # Provider adapters (SearXNG, Brave, Serper, Tavily, Exa)
-│   ├── broker/        # Routing, ranking, caching, health, budgets
-│   ├── persistence/   # PostgreSQL via SQLAlchemy
-│   ├── api/           # FastAPI HTTP endpoints
-│   ├── cli/           # Click CLI
-│   ├── mcp/           # MCP server (stdio + SSE)
-│   ├── models.py      # Core data models
-│   └── config.py      # Environment-based configuration
-├── tests/
-├── docs/
-└── .env.example
-```
-
-## Design Rules
-
-1. Argus is the system of record for web-search routing logic.
-2. Provider-specific response shapes must never leak outside adapters.
-3. The broker owns routing, retries, fallback, budgets, and degradation.
-4. The API layer must stay thin.
-5. MCP is an optional wrapper around the core service, not the core itself.
-6. Missing keys must degrade gracefully.
-7. Provider exhaustion and repeated failure must be first-class states.
-8. Query/result persistence belongs in Postgres.
-9. SearXNG is the free local floor.
-10. The default output must be normalized and auditable.
-
-## Environment
-
-Argus expects:
-
-* PostgreSQL
-* SearXNG reachable from the host
-* API keys for Brave and Serper
-* Existing Tavily and Exa keys if enabled
-
-See `.env.example` for all configuration variables.
-
-## Downstream Consumers
-
-Argus is designed to be usable by any project:
-
-* local Python code
-* remote HTTP clients
-* CLI workflows
-* AI agents through MCP
-* other internal projects
-
-## Non-goals for v1
-
-* browser UI
-* crawling framework
-* massive distributed search
-* provider-specific custom features exposed directly to clients
-* full auth platform
-* public multi-tenant service
-
-## Success Criteria for v1
-
-* One reliable `POST /api/search`
-* Search works even if one or two providers fail
-* SearXNG works as local fallback floor
-* Provider health is visible
-* Budget exhaustion is visible
-* Results are normalized
-* URL recovery works
-* Integration clients can call one interface instead of many
+| Mode | When to use | Provider chain |
+|------|------------|---------------|
+| `discovery` | Find related pages, canonical sources | searxng → brave → exa → tavily → serper |
+| `recovery` | Dead/moved URL recovery | searxng → brave → serper → tavily → exa |
+| `grounding` | Few live sources for fact-checking | brave → serper → searxng |
+| `research` | Broad exploratory retrieval | tavily → exa → brave → serper |
 
 ## License
 

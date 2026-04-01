@@ -2,7 +2,7 @@
 
 ## Overview
 
-Argus is a search broker. One HTTP endpoint over multiple web-search providers (SearXNG, Brave, Serper, Tavily, Exa). It normalizes results, handles fallbacks, tracks provider health and budgets, and exposes CLI/HTTP/MCP/Python interfaces.
+Search broker. One endpoint, five providers (SearXNG, Brave, Serper, Tavily, Exa). Automatic fallback, result ranking, health tracking, budget enforcement. Connect via HTTP, CLI, MCP, or Python import.
 
 ## Key Commands
 
