@@ -1,26 +1,21 @@
+"""Domain-level rate limiter for content extraction.
+
+Delegates sliding-window counting to core.rate_limit.SlidingWindowLimiter.
+Adds domain extraction from URLs.
 """
-Domain-level rate limiter for content extraction.
 
-Prevents hammering any single domain. Sliding window per extracted domain.
-Mirrors RateLimiter pattern from argus/api/rate_limit.py.
-"""
+from typing import Tuple
 
-import time
-from collections import defaultdict
-from typing import Dict, List
-from urllib.parse import urlparse
-
+from argus.core.rate_limit import SlidingWindowLimiter
 from argus.logging import get_logger
+from urllib.parse import urlparse
 
 logger = get_logger("extraction.rate_limit")
 
 
 class DomainRateLimiter:
     def __init__(self, max_requests: int = 10, window_seconds: int = 60):
-        self._max_requests = max_requests
-        self._window = window_seconds
-        # domain -> [timestamps]
-        self._requests: Dict[str, List[float]] = defaultdict(list)
+        self._limiter = SlidingWindowLimiter(max_requests, window_seconds)
 
     @staticmethod
     def _extract_domain(url: str) -> str:
@@ -29,7 +24,7 @@ class DomainRateLimiter:
         except Exception:
             return ""
 
-    def is_allowed(self, url: str) -> tuple[bool, int]:
+    def is_allowed(self, url: str) -> Tuple[bool, int]:
         """Check if extracting from this URL's domain is allowed.
 
         Returns (allowed, retry_after_seconds).
@@ -38,28 +33,15 @@ class DomainRateLimiter:
         if not domain:
             return True, 0
 
-        now = time.time()
-        cutoff = now - self._window
+        allowed, retry_after = self._limiter.is_allowed(domain)
 
-        # Prune old timestamps
-        window = self._requests[domain]
-        self._requests[domain] = [t for t in window if t > cutoff]
-        window = self._requests[domain]
+        if not allowed:
+            logger.warning("Domain rate limit hit for %s, retry after %ds", domain, retry_after)
+        else:
+            remaining = self._limiter.remaining(domain)
+            logger.debug("Domain %s: %d remaining", domain, remaining)
 
-        if len(window) >= self._max_requests:
-            retry_after = int(window[0] + self._window - now) + 1
-            logger.warning(
-                "Domain rate limit hit for %s: %d/%d in %ds window",
-                domain, len(window), self._max_requests, self._window,
-            )
-            return False, retry_after
-
-        window.append(now)
-        remaining = self._max_requests - len(window)
-        logger.debug(
-            "Domain %s: %d/%d remaining", domain, remaining, self._max_requests
-        )
-        return True, 0
+        return allowed, retry_after
 
     def clear(self) -> None:
-        self._requests.clear()
+        self._limiter.clear()
