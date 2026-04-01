@@ -53,7 +53,7 @@ class SecretsResolver:
 
 
 class SubprocessSecretsResolver(SecretsResolver):
-    """Fetch optional secrets from the external oneshot vault."""
+    """Fetch optional secrets from an external `secrets get` helper."""
 
     def get(self, key: str) -> str:
         try:

@@ -39,8 +39,8 @@ pytest tests/
 Caller (CLI/HTTP/MCP/Python)
   → SearchBroker
     → routing policy (per mode)
-      → providers (parallel, with fallback)
-    → cache → dedupe → RRF ranking → response
+      → provider executor (cheap-first, bounded fallback)
+    → result pipeline (cache → dedupe → RRF ranking → response)
   → SessionStore (optional, per-request)
     → query refinement from prior context
   → Extractor (on demand)

@@ -35,3 +35,7 @@ Thumbs.db
 
 # Budget persistence
 argus_budgets.db
+
+# Local operator/session artifacts
+1shot/
+docs/sessions/
