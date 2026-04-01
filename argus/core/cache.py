@@ -33,10 +33,10 @@ class TTLCache:
             del self._store[key]
         return None
 
-    def put(self, *args, value: V) -> None:
+    def put(self, *key_args, value: V) -> None:
         if self._skip_fn and self._skip_fn(value):
             return
-        key = self._key_fn(*args[:-1])  # all args except the trailing value kwarg are key parts
+        key = self._key_fn(*key_args)
         self._store[key] = (value, time.time())
 
     def clear(self) -> None:

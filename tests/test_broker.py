@@ -193,42 +193,42 @@ class TestUrlNormalization:
 
 class TestCache:
     def test_put_and_get(self):
-        from argus.broker.cache import SearchCache
+        from argus.core.cache import TTLCache, search_cache_key
         from argus.models import SearchResponse
-        cache = SearchCache(ttl_hours=1)
+        cache = TTLCache(ttl_seconds=3600, key_fn=search_cache_key)
         resp = SearchResponse(query="test", mode=SearchMode.DISCOVERY, results=[])
-        cache.put("test", SearchMode.DISCOVERY, resp)
+        cache.put("test", SearchMode.DISCOVERY, value=resp)
         assert cache.get("test", SearchMode.DISCOVERY) is resp
 
     def test_cache_miss(self):
-        from argus.broker.cache import SearchCache
-        cache = SearchCache()
+        from argus.core.cache import TTLCache, search_cache_key
+        cache = TTLCache(ttl_seconds=3600, key_fn=search_cache_key)
         assert cache.get("nonexistent", SearchMode.DISCOVERY) is None
 
     def test_different_modes_separate(self):
-        from argus.broker.cache import SearchCache
+        from argus.core.cache import TTLCache, search_cache_key
         from argus.models import SearchResponse
-        cache = SearchCache()
+        cache = TTLCache(ttl_seconds=3600, key_fn=search_cache_key)
         r1 = SearchResponse(query="test", mode=SearchMode.DISCOVERY, results=[])
         r2 = SearchResponse(query="test", mode=SearchMode.GROUNDING, results=[])
-        cache.put("test", SearchMode.DISCOVERY, r1)
-        cache.put("test", SearchMode.GROUNDING, r2)
+        cache.put("test", SearchMode.DISCOVERY, value=r1)
+        cache.put("test", SearchMode.GROUNDING, value=r2)
         assert cache.get("test", SearchMode.DISCOVERY) is r1
         assert cache.get("test", SearchMode.GROUNDING) is r2
 
     def test_case_insensitive(self):
-        from argus.broker.cache import SearchCache
+        from argus.core.cache import TTLCache, search_cache_key
         from argus.models import SearchResponse
-        cache = SearchCache()
+        cache = TTLCache(ttl_seconds=3600, key_fn=search_cache_key)
         resp = SearchResponse(query="test", mode=SearchMode.DISCOVERY, results=[])
-        cache.put("Test", SearchMode.DISCOVERY, resp)
+        cache.put("Test", SearchMode.DISCOVERY, value=resp)
         assert cache.get("test", SearchMode.DISCOVERY) is resp
 
     def test_clear(self):
-        from argus.broker.cache import SearchCache
+        from argus.core.cache import TTLCache, search_cache_key
         from argus.models import SearchResponse
-        cache = SearchCache()
-        cache.put("test", SearchMode.DISCOVERY, SearchResponse(query="test", mode=SearchMode.DISCOVERY, results=[]))
+        cache = TTLCache(ttl_seconds=3600, key_fn=search_cache_key)
+        cache.put("test", SearchMode.DISCOVERY, value=SearchResponse(query="test", mode=SearchMode.DISCOVERY, results=[]))
         cache.clear()
         assert cache.size() == 0
 
@@ -351,7 +351,7 @@ class TestRouter:
         broker = create_broker()
         assert ProviderName.SEARXNG in broker._providers
         assert ProviderName.BRAVE in broker._providers
-        assert len(broker._providers) == 7  # 5 live + 2 stubs
+        assert len(broker._providers) == 5  # all active providers
 
     @pytest.mark.asyncio
     async def test_search_stops_after_good_enough_primary_provider(self, monkeypatch):
