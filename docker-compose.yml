@@ -5,7 +5,13 @@ services:
       - "8005:8005"
     env_file:
       - .env
+    environment:
+      - ARGUS_DB_URL=sqlite:///data/argus.db
+      - ARGUS_BUDGET_DB_PATH=data/argus_budgets.db
     restart: unless-stopped
     volumes:
-      - ./argus_budgets.db:/app/argus_budgets.db
+      - argus-data:/data
     network_mode: bridge
+
+volumes:
+  argus-data:
