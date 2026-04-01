@@ -150,7 +150,7 @@ class EnvironmentConfigLoader:
             log_level=self.get_str("ARGUS_LOG_LEVEL", "INFO"),
             db_url=self.get_str(
                 "ARGUS_DB_URL",
-                "postgresql+psycopg2://postgres:postgres@localhost:5432/argus",
+                "sqlite:///argus.db",
                 secret_keys=("DB_URL",),
             ),
             cache_ttl_hours=self.get_int("ARGUS_CACHE_TTL_HOURS", 168),

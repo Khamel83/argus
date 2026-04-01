@@ -1,122 +1,163 @@
 """
-Database engine, session, and migration helpers.
+SQLite persistence for search history.
+
+Non-fatal: all operations are wrapped with exception handling so
+persistence failures never break search.
 """
 
 import json
+import sqlite3
 import uuid
-from contextlib import contextmanager
 from datetime import datetime
-from typing import Generator, Optional
-
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session, sessionmaker
+from pathlib import Path
+from typing import Optional
 
 from argus.config import get_config
 from argus.logging import get_logger
-from argus.persistence.models import Base, ProviderUsageRow, SearchEvidenceRow, SearchQueryRow, SearchResultRow, SearchRunRow
-from argus.models import ProviderTrace, SearchQuery, SearchResponse
+from argus.models import SearchQuery, SearchResponse
 
 logger = get_logger("persistence.db")
 
-_engine = None
-_session_factory = None
+_db_path: Optional[str] = None
 
 
-def init_db(db_url: Optional[str] = None):
-    """Initialize the database engine and create tables."""
-    global _engine, _session_factory
-    if db_url is None:
-        db_url = get_config().db_url
+def _get_db_path() -> str:
+    global _db_path
+    if _db_path:
+        return _db_path
 
-    _engine = create_engine(db_url, pool_pre_ping=True)
-    _session_factory = sessionmaker(bind=_engine)
-    Base.metadata.create_all(_engine)
-    logger.info("Database initialized and tables created")
+    config = get_config()
+    db_url = config.db_url
 
+    # Support ARGUS_DB_URL=sqlite:///path/to/file.db
+    if db_url.startswith("sqlite:///"):
+        _db_path = db_url[len("sqlite:///"):]
+    elif db_url.startswith("sqlite:"):
+        _db_path = db_url[len("sqlite:"):]
+    else:
+        # Default location
+        _db_path = "argus.db"
 
-def get_engine():
-    if _engine is None:
-        init_db()
-    return _engine
-
-
-def get_session_factory():
-    if _session_factory is None:
-        init_db()
-    return _session_factory
+    return _db_path
 
 
-@contextmanager
-def get_session() -> Generator[Session, None, None]:
-    """Provide a transactional scope around a series of operations."""
-    factory = get_session_factory()
-    session = factory()
+def _get_connection() -> sqlite3.Connection:
+    path = _get_db_path()
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS search_queries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    query_text TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    max_results INTEGER DEFAULT 10,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS search_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    query_id INTEGER NOT NULL REFERENCES search_queries(id),
+    search_run_id TEXT UNIQUE NOT NULL,
+    status TEXT NOT NULL DEFAULT 'started',
+    total_results INTEGER DEFAULT 0,
+    cached INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    finished_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS search_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES search_runs(id),
+    url TEXT NOT NULL,
+    title TEXT DEFAULT '',
+    snippet TEXT DEFAULT '',
+    domain TEXT DEFAULT '',
+    provider TEXT DEFAULT '',
+    score REAL DEFAULT 0.0,
+    final_rank INTEGER DEFAULT 0,
+    metadata_json TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS provider_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES search_runs(id),
+    provider TEXT NOT NULL,
+    status TEXT NOT NULL,
+    results_count INTEGER DEFAULT 0,
+    latency_ms INTEGER DEFAULT 0,
+    error TEXT,
+    budget_remaining REAL,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+"""
+
+
+def init_db() -> None:
+    conn = _get_connection()
     try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
+        conn.executescript(_SCHEMA)
+        conn.commit()
+        logger.info("SQLite database initialized: %s", _get_db_path())
     finally:
-        session.close()
+        conn.close()
 
 
 def persist_search(query_text: str, mode: str, response: SearchResponse) -> Optional[str]:
-    """Persist a complete search query, run, results, and traces."""
     run_id = response.search_run_id or uuid.uuid4().hex[:16]
 
-    with get_session() as session:
-        # Upsert query
-        q_row = SearchQueryRow(query_text=query_text, mode=mode, max_results=response.total_results)
-        session.add(q_row)
-        session.flush()
+    conn = _get_connection()
+    try:
+        conn.execute("INSERT INTO search_queries (query_text, mode, max_results) VALUES (?, ?, ?)",
+                     (query_text, mode, response.total_results))
+        query_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
-        # Create run
-        run_row = SearchRunRow(
-            query_id=q_row.id,
-            search_run_id=run_id,
-            status="completed",
-            total_results=len(response.results),
-            cached=response.cached,
-            finished_at=datetime.now(tz=None),
+        conn.execute(
+            "INSERT INTO search_runs (query_id, search_run_id, status, total_results, cached, finished_at) "
+            "VALUES (?, ?, 'completed', ?, ?, ?)",
+            (query_id, run_id, len(response.results), int(response.cached),
+             datetime.now(tz=None).isoformat()),
         )
-        session.add(run_row)
-        session.flush()
+        run_db_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
-        # Persist results
         for rank, r in enumerate(response.results):
-            result_row = SearchResultRow(
-                run_id=run_row.id,
-                url=r.url,
-                title=r.title,
-                snippet=r.snippet,
-                domain=r.domain or "",
-                provider=r.provider.value if r.provider else "",
-                score=r.score,
-                final_rank=rank,
-                metadata_json=json.dumps(r.metadata) if r.metadata else None,
+            conn.execute(
+                "INSERT INTO search_results (run_id, url, title, snippet, domain, provider, score, final_rank, metadata_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (run_db_id, r.url, r.title, r.snippet, r.domain or "",
+                 r.provider.value if r.provider else "", r.score, rank,
+                 json.dumps(r.metadata) if r.metadata else None),
             )
-            session.add(result_row)
 
-        # Persist traces
         for trace in response.traces:
-            usage_row = ProviderUsageRow(
-                run_id=run_row.id,
-                provider=trace.provider.value,
-                status=trace.status,
-                results_count=trace.results_count,
-                latency_ms=trace.latency_ms,
-                error=trace.error,
-                budget_remaining=trace.budget_remaining,
+            conn.execute(
+                "INSERT INTO provider_usage (run_id, provider, status, results_count, latency_ms, error, budget_remaining) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (run_db_id, trace.provider.value, trace.status, trace.results_count,
+                 trace.latency_ms, trace.error, trace.budget_remaining),
             )
-            session.add(usage_row)
 
+        conn.commit()
         logger.debug("Persisted search run %s with %d results", run_id, len(response.results))
         return run_id
+    finally:
+        conn.close()
 
 
 class SearchPersistenceGateway:
     """Non-fatal persistence boundary for completed search responses."""
+
+    def __init__(self):
+        try:
+            init_db()
+        except Exception as exc:
+            logger.warning("Failed to initialize search database: %s", exc)
 
     def record_completed_search(self, query: SearchQuery, response: SearchResponse) -> Optional[str]:
         try:
