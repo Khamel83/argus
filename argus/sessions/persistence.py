@@ -147,6 +147,19 @@ class SessionPersistence:
             "queries": queries,
         }
 
+    def session_exists(self, session_id: str) -> bool:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT 1 FROM sessions WHERE id = ? LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        return row is not None
+
+    def list_session_ids(self) -> list[str]:
+        conn = self._get_conn()
+        rows = conn.execute("SELECT id FROM sessions ORDER BY created_at DESC").fetchall()
+        return [row[0] for row in rows]
+
     def list_sessions(self) -> list[dict]:
         """List all persisted sessions."""
         conn = self._get_conn()

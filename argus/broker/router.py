@@ -1,44 +1,22 @@
-"""
-Search broker router.
+"""Search broker router."""
 
-Orchestrates provider calls, caching, health checks, budget enforcement,
-ranking, deduplication, and persistence.
-"""
-
-import asyncio
 import os
-import uuid
-from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 
 from argus.broker.budgets import BudgetTracker
 from argus.broker.cache import SearchCache
-from argus.broker.dedupe import dedupe_results
+from argus.broker.execution import ProviderExecutor, ProviderRoutingPolicy
 from argus.broker.health import HealthTracker
+from argus.broker.pipeline import SearchResultPipeline
 from argus.broker.policies import resolve_routing
-from argus.broker.ranking import reciprocal_rank_fusion
+from argus.broker.session_flow import SessionSearchService
 from argus.config import get_config
 from argus.logging import get_logger
-from argus.models import (
-    ProviderName,
-    ProviderTrace,
-    SearchMode,
-    SearchQuery,
-    SearchResponse,
-    SearchResult,
-)
-from argus.persistence.db import persist_search
+from argus.models import ProviderName, SearchQuery, SearchResponse
+from argus.persistence.db import SearchPersistenceGateway
 from argus.providers.base import BaseProvider
 
 logger = get_logger("broker.router")
-
-# Cost-per-query estimates for budget tracking (USD)
-_COST_ESTIMATES = {
-    ProviderName.BRAVE: 0.003,
-    ProviderName.SERPER: 0.001,
-    ProviderName.TAVILY: 0.001,
-    ProviderName.EXA: 0.001,
-}
 
 
 class SearchBroker:
@@ -49,6 +27,9 @@ class SearchBroker:
         health_tracker: Optional[HealthTracker] = None,
         budget_tracker: Optional[BudgetTracker] = None,
         session_store=None,
+        executor: Optional[ProviderExecutor] = None,
+        result_pipeline: Optional[SearchResultPipeline] = None,
+        session_service: Optional[SessionSearchService] = None,
     ):
         self._providers = providers
         self._cache = cache or SearchCache()
@@ -58,8 +39,18 @@ class SearchBroker:
         )
         self._config = get_config()
         self._session_store = session_store
+        self._executor = executor or ProviderExecutor(
+            providers=self._providers,
+            health_tracker=self._health,
+            budget_tracker=self._budgets,
+            routing_policy=ProviderRoutingPolicy(),
+        )
+        self._pipeline = result_pipeline or SearchResultPipeline(
+            cache=self._cache,
+            persistence=SearchPersistenceGateway(),
+        )
+        self._session_service = session_service or SessionSearchService(session_store=session_store)
 
-        # Initialize budgets from config
         budget_map = {
             ProviderName.BRAVE: self._config.brave.monthly_budget_usd,
             ProviderName.SERPER: self._config.serper.monthly_budget_usd,
@@ -85,122 +76,27 @@ class SearchBroker:
         return self._budgets
 
     async def search(self, query: SearchQuery) -> SearchResponse:
-        run_id = uuid.uuid4().hex[:16]
-
-        # 1. Check cache
-        cached = self._cache.get(query.query, query.mode)
+        cache_run_id = os.urandom(8).hex()
+        cached = self._pipeline.get_cached(query, cache_run_id)
         if cached is not None:
-            cached.search_run_id = run_id
-            cached.cached = True
             logger.debug("Cache hit for query: %s (mode=%s)", query.query, query.mode)
             return cached
 
-        # 2. Resolve routing order
         provider_order = resolve_routing(query.mode, query.providers)
-
-        # 3. Execute providers
-        traces: List[ProviderTrace] = []
-        provider_results: dict[str, List[SearchResult]] = {}
-        live_providers_used = 0
-
-        for pname in provider_order:
-            if pname == ProviderName.CACHE:
-                continue  # already checked above
-
-            provider = self._providers.get(pname)
-            if provider is None:
-                continue
-
-            # Skip unavailable
-            if not provider.is_available():
-                traces.append(ProviderTrace(
-                    provider=pname,
-                    status="skipped",
-                    error="not available",
-                ))
-                continue
-
-            # Skip cooldown
-            health_status = self._health.get_status(pname)
-            if health_status is not None:
-                traces.append(ProviderTrace(
-                    provider=pname,
-                    status="skipped",
-                    error=f"health: {health_status.value}",
-                ))
-                continue
-
-            # Skip budget exhausted
-            if self._budgets.is_budget_exhausted(pname):
-                traces.append(ProviderTrace(
-                    provider=pname,
-                    status="skipped",
-                    error="budget exhausted",
-                    budget_remaining=0.0,
-                ))
-                continue
-
-            # Execute
-            try:
-                results, trace = await provider.search(query)
-                traces.append(trace)
-                live_providers_used += 1
-
-                if trace.status == "success":
-                    self._health.record_success(pname)
-                    cost = _COST_ESTIMATES.get(pname, 0.0)
-                    self._budgets.record_usage(pname, cost)
-                    trace.budget_remaining = self._budgets.get_remaining_budget(pname)
-                    provider_results[pname.value] = results
-
-                elif trace.status == "error":
-                    self._health.record_failure(pname)
-            except Exception as e:
-                logger.warning("Provider %s raised unhandled: %s", pname, e)
-                self._health.record_failure(pname)
-                traces.append(ProviderTrace(
-                    provider=pname,
-                    status="error",
-                    error=str(e),
-                ))
-
-        # 4. Merge and rank
-        merged = reciprocal_rank_fusion(provider_results)
-
-        # 5. Dedupe
-        final_results = dedupe_results(merged)
-
-        # 6. Trim to max_results
-        final_results = final_results[:query.max_results]
-
-        # 7. Build response
-        response = SearchResponse(
-            query=query.query,
-            mode=query.mode,
-            results=final_results,
-            traces=traces,
-            total_results=len(final_results),
-            cached=False,
-            search_run_id=run_id,
+        outcome = await self._executor.execute(query, provider_order)
+        response = self._pipeline.build_response(
+            query,
+            outcome.provider_results,
+            outcome.traces,
         )
-
-        # 8. Cache the response (if we got results)
-        if final_results:
-            self._cache.put(query.query, query.mode, response)
-
-        # 9. Persist
-        try:
-            persist_search(query.query, query.mode.value, response)
-        except Exception as e:
-            logger.warning("Failed to persist search: %s", e)
 
         logger.info(
             "Search complete: query=%r mode=%s providers=%d results=%d run=%s",
             query.query,
             query.mode.value,
-            live_providers_used,
-            len(final_results),
-            run_id,
+            outcome.live_providers_used,
+            len(response.results),
+            response.search_run_id,
         )
 
         return response
@@ -208,47 +104,11 @@ class SearchBroker:
     async def search_with_session(
         self, query: SearchQuery, session_id: Optional[str] = None
     ) -> tuple[SearchResponse, Optional[str]]:
-        """Search with optional session context.
-
-        If session_id is provided, the query is refined using prior session history.
-        Returns (response, session_id). Creates a new session if session_id is None.
-        """
-        from argus.sessions.refinement import refine_query
-
-        # Get or create session
-        session = None
-        effective_session_id = session_id
-
-        if self._session_store is not None:
-            if effective_session_id:
-                session = self._session_store.get_session(effective_session_id)
-            if session is None:
-                session = self._session_store.create_session(effective_session_id)
-                effective_session_id = session.id
-
-        # Refine query using session context
-        refined_text = refine_query(query.query, session)
-        if refined_text != query.query:
-            logger.debug("Query refined: %r -> %r", query.query, refined_text)
-            query = SearchQuery(
-                query=refined_text,
-                mode=query.mode,
-                max_results=query.max_results,
-                providers=query.providers,
-            )
-
-        response = await self.search(query)
-
-        # Record query in session
-        if self._session_store is not None and effective_session_id:
-            self._session_store.add_query(
-                effective_session_id,
-                query=refined_text,
-                mode=query.mode.value,
-                results_count=response.total_results,
-            )
-
-        return response, effective_session_id
+        return await self._session_service.search_with_session(
+            query,
+            self.search,
+            session_id=session_id,
+        )
 
     def get_provider_status(self, provider: ProviderName) -> dict:
         """Get combined status for a provider (config + health + budget)."""

@@ -222,3 +222,20 @@ class TestSessionPersistence:
             assert "s-b" in ids
         finally:
             os.unlink(db_path)
+
+    def test_create_session_uses_exists_check_not_full_scan(self):
+        """Existing sessions should be loaded directly without enumerating all sessions first."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+
+        try:
+            store1 = SessionStore(persist=True, db_path=db_path)
+            store1.create_session(session_id="existing")
+
+            store2 = SessionStore(persist=True, db_path=db_path)
+            store2._db.list_sessions = lambda: (_ for _ in ()).throw(AssertionError("full scan not expected"))
+            loaded = store2.create_session(session_id="existing")
+
+            assert loaded.id == "existing"
+        finally:
+            os.unlink(db_path)

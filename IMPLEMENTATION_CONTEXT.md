@@ -30,10 +30,10 @@ Mixed: API, CLI, MCP server, and Python library
 
 ## Current Status
 - Existing product is functional and already structured into domain modules.
-- `pytest` passed on 2026-03-31: `126 passed in 24.51s`.
-- This run is planning-first. No production code refactor has started yet.
-- Durable planning artifacts are being added at repo root because there is no existing planning folder convention.
-- User decisions on 2026-03-31 clarified product priorities: reliability and cheapness over strict compatibility or architecture purity.
+- The staged refactor is implemented across API composition, broker orchestration, result processing, config loading, session persistence, and provider contract coverage.
+- Full verification currently passes on 2026-03-31: `143 passed in 45.06s`.
+- README now reflects the explicit app factory and cheap-first broker architecture.
+- The repo is ready for final cleanup of planning artifacts.
 
 ## Project Goal
 Produce a staged architectural refactor plan that improves correctness, lifecycle control, maintainability, extension safety, and scale-readiness without breaking Argus's public HTTP, CLI, MCP, or Python interfaces.
@@ -101,6 +101,12 @@ Produce a staged architectural refactor plan that improves correctness, lifecycl
 - Decision to use staged architectural refactor planning instead of rewrite
 - Creation of operator and task-planning docs
 - Conversion of the initial open questions into explicit product decisions
+- `TASK01`: explicit app factory, request-scoped broker dependency seam, and API characterization tests
+- `TASK02`: provider execution split out of `SearchBroker` with explicit cheap-first routing and early-stop traces
+- `TASK03`: result pipeline and persistence gateway extracted from broker orchestration
+- `TASK04`: environment/secrets config loader and lazy session persistence seams implemented
+- `TASK05`: provider contract coverage and broker failure-path tests expanded
+- `TASK06`: docs updated and release-gate verification completed
 
 ## Key Decisions
 - The first execution slice should target app composition because it is the safest high-leverage seam and produces observable API behavior with low product risk.
@@ -111,6 +117,7 @@ Produce a staged architectural refactor plan that improves correctness, lifecycl
 - A formal compatibility matrix is not required before code movement starts; a lightweight compatibility checklist and contract tests are sufficient for this single-user project.
 - Configuration can remain synchronous and process-local; no special multi-worker bootstrap architecture is needed for the current use case.
 - Planning files live at repo root for now because that is the least surprising placement in this repository.
+- Cheap-first execution will be made explicit with deterministic stop rules instead of "query every provider and sort it out later."
 
 ## Implementation Notes
 - `argus/api/routes_search.py` currently uses a module-global broker singleton.
@@ -131,7 +138,7 @@ Produce a staged architectural refactor plan that improves correctness, lifecycl
 - Which public interfaces are acceptable to break first if the simplification materially improves the codebase?
 
 ## Next Recommended Step
-Execute `TASK01.md`: introduce an explicit app factory and dependency seams, then add characterization tests that prove current `/api` behavior is unchanged.
+Delete the temporary planning artifacts, commit the final cleanup, and push the branch.
 
 ## Execution Log
 - 2026-03-31: Reviewed `README.md`, `pyproject.toml`, broker, API, config, session, and test modules.
@@ -139,3 +146,8 @@ Execute `TASK01.md`: introduce an explicit app factory and dependency seams, the
 - 2026-03-31: Decided against rewrite and selected staged architectural refactor planning.
 - 2026-03-31: Added `Full_Operator.md`, `IMPLEMENTATION_CONTEXT.md`, and staged task files at repo root.
 - 2026-03-31: Recorded user decisions: optimize for reliability and cheapness, allow interface changes when justified, keep compatibility checks lightweight, and keep configuration bootstrap simple for single-user usage.
+- 2026-03-31: Implemented `create_app()` with app-state broker injection and verified `pytest tests/test_api.py` (`16 passed`).
+- 2026-03-31: Split broker orchestration into execution, pipeline, and session-flow seams; verified `pytest tests/test_broker.py` (`39 passed`).
+- 2026-03-31: Refactored config loading and session persistence boundaries; verified `pytest tests/test_config.py tests/test_sessions.py` (`37 passed`).
+- 2026-03-31: Added provider contract coverage and reran `pytest tests/test_providers.py tests/test_broker.py` (`65 passed`).
+- 2026-03-31: Ran `pytest` (`143 passed`) and smoke-checked `create_app()`, CLI module import, and MCP module startup path.

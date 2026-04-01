@@ -1,10 +1,11 @@
 """Tests for provider adapters."""
 
+import inspect
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from argus.config import ProviderConfig, SearXNGConfig
-from argus.models import SearchMode, SearchQuery
+from argus.models import ProviderName, ProviderStatus, SearchMode, SearchQuery
 
 
 def _make_mock_response(data):
@@ -258,3 +259,28 @@ class TestStubs:
         results, trace = await p.search(SearchQuery(query="test"))
         assert results == []
         assert trace.status == "skipped"
+
+
+@pytest.mark.parametrize(
+    ("provider_name", "factory"),
+    [
+        (ProviderName.SEARXNG, lambda: __import__("argus.providers.searxng", fromlist=["SearXNGProvider"]).SearXNGProvider(SearXNGConfig())),
+        (ProviderName.BRAVE, lambda: __import__("argus.providers.brave", fromlist=["BraveProvider"]).BraveProvider(ProviderConfig(enabled=True, api_key="key"))),
+        (ProviderName.SERPER, lambda: __import__("argus.providers.serper", fromlist=["SerperProvider"]).SerperProvider(ProviderConfig(enabled=True, api_key="key"))),
+        (ProviderName.TAVILY, lambda: __import__("argus.providers.tavily", fromlist=["TavilyProvider"]).TavilyProvider(ProviderConfig(enabled=True, api_key="key"))),
+        (ProviderName.EXA, lambda: __import__("argus.providers.exa", fromlist=["ExaProvider"]).ExaProvider(ProviderConfig(enabled=True, api_key="key"))),
+        (ProviderName.SEARCHAPI, lambda: __import__("argus.providers.searchapi", fromlist=["SearchApiProvider"]).SearchApiProvider(ProviderConfig())),
+        (ProviderName.YOU, lambda: __import__("argus.providers.you", fromlist=["YouProvider"]).YouProvider(ProviderConfig())),
+    ],
+)
+class TestProviderContracts:
+    def test_implements_base_provider_contract(self, provider_name, factory):
+        from argus.providers.base import BaseProvider
+
+        provider = factory()
+
+        assert isinstance(provider, BaseProvider)
+        assert provider.name == provider_name
+        assert isinstance(provider.status(), ProviderStatus)
+        assert isinstance(provider.is_available(), bool)
+        assert inspect.iscoroutinefunction(provider.search)

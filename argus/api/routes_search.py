@@ -1,11 +1,6 @@
-"""
-Search endpoints.
-"""
+"""Search endpoints."""
 
-import asyncio
-from typing import Optional
-
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Request
 
 from argus.api.schemas import (
     ExpandRequest,
@@ -15,19 +10,14 @@ from argus.api.schemas import (
     SearchResultSchema,
     ProviderTraceSchema,
 )
-from argus.broker.router import SearchBroker, create_broker
+from argus.broker.router import SearchBroker
 from argus.models import SearchMode, SearchQuery
 
 router = APIRouter()
 
-_broker: Optional[SearchBroker] = None
 
-
-def get_broker() -> SearchBroker:
-    global _broker
-    if _broker is None:
-        _broker = create_broker()
-    return _broker
+def get_broker(request: Request) -> SearchBroker:
+    return request.app.state.get_broker()
 
 
 def _to_response(resp) -> SearchResponse:
@@ -63,9 +53,7 @@ def _to_response(resp) -> SearchResponse:
 
 
 @router.post("/search", response_model=SearchResponse)
-async def search(req: SearchRequest):
-    broker = get_broker()
-
+async def search(req: SearchRequest, broker: SearchBroker = Depends(get_broker)):
     query = SearchQuery(
         query=req.query,
         mode=SearchMode(req.mode),
@@ -83,10 +71,7 @@ async def search(req: SearchRequest):
 
 
 @router.post("/recover-url", response_model=SearchResponse)
-async def recover_url(req: RecoverUrlRequest):
-    broker = get_broker()
-
-    # Build recovery query from URL and optional hints
+async def recover_url(req: RecoverUrlRequest, broker: SearchBroker = Depends(get_broker)):
     query_parts = [req.url]
     if req.title:
         query_parts.append(req.title)
@@ -104,9 +89,7 @@ async def recover_url(req: RecoverUrlRequest):
 
 
 @router.post("/expand", response_model=SearchResponse)
-async def expand(req: ExpandRequest):
-    broker = get_broker()
-
+async def expand(req: ExpandRequest, broker: SearchBroker = Depends(get_broker)):
     query_text = req.query
     if req.context:
         query_text = f"{req.query} {req.context}"

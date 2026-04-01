@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from argus.config import get_config
 from argus.logging import get_logger
 from argus.persistence.models import Base, ProviderUsageRow, SearchEvidenceRow, SearchQueryRow, SearchResultRow, SearchRunRow
-from argus.models import ProviderTrace, SearchResponse
+from argus.models import ProviderTrace, SearchQuery, SearchResponse
 
 logger = get_logger("persistence.db")
 
@@ -113,3 +113,14 @@ def persist_search(query_text: str, mode: str, response: SearchResponse) -> Opti
 
         logger.debug("Persisted search run %s with %d results", run_id, len(response.results))
         return run_id
+
+
+class SearchPersistenceGateway:
+    """Non-fatal persistence boundary for completed search responses."""
+
+    def record_completed_search(self, query: SearchQuery, response: SearchResponse) -> Optional[str]:
+        try:
+            return persist_search(query.query, query.mode.value, response)
+        except Exception as exc:
+            logger.warning("Failed to persist search: %s", exc)
+            return None

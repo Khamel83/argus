@@ -1,7 +1,4 @@
-"""Smoke tests for TASK01 — config, models, logging."""
-
-import os
-import pytest
+"""Tests for config, models, and logging."""
 
 
 class TestConfig:
@@ -24,14 +21,40 @@ class TestConfig:
         assert cfg.brave.api_key == "test-key"
         assert cfg.brave.enabled is True
 
+    def test_load_config_uses_secret_fallbacks(self):
+        from argus.config import SecretsResolver, load_config
+
+        class StubSecrets(SecretsResolver):
+            def get(self, key: str) -> str:
+                if key == "ARGUS_BRAVE_API_KEY":
+                    return "secret-key"
+                if key == "DB_URL":
+                    return "sqlite:///secret.db"
+                return ""
+
+        cfg = load_config(environ={}, secrets_resolver=StubSecrets())
+
+        assert cfg.brave.api_key == "secret-key"
+        assert cfg.db_url == "sqlite:///secret.db"
+
     def test_get_config_singleton(self):
-        from argus.config import get_config, _config
-        # Reset to test singleton behavior
-        import argus.config as cfg_mod
-        cfg_mod._config = None
+        from argus.config import get_config, reset_config
+        reset_config()
         c1 = get_config()
         c2 = get_config()
         assert c1 is c2
+
+    def test_force_reload_rebuilds_singleton(self, monkeypatch):
+        from argus.config import get_config, reset_config
+
+        reset_config()
+        monkeypatch.setenv("ARGUS_ENV", "development")
+        c1 = get_config()
+        monkeypatch.setenv("ARGUS_ENV", "production")
+        c2 = get_config(force_reload=True)
+
+        assert c1 is not c2
+        assert c2.env == "production"
 
 
 class TestModels:

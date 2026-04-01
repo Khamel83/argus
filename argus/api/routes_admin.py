@@ -1,31 +1,20 @@
-"""
-Admin endpoints for provider testing.
-"""
+"""Admin endpoints for provider testing."""
 
-from typing import Optional
-
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from argus.api.schemas import ProviderTestRequest
-from argus.broker.router import SearchBroker, create_broker
+from argus.broker.router import SearchBroker
 from argus.models import ProviderName, SearchMode, SearchQuery
 
 router = APIRouter()
 
-_broker: Optional[SearchBroker] = None
 
-
-def get_broker() -> SearchBroker:
-    global _broker
-    if _broker is None:
-        _broker = create_broker()
-    return _broker
+def get_broker(request: Request) -> SearchBroker:
+    return request.app.state.get_broker()
 
 
 @router.post("/test-provider")
-async def test_provider(req: ProviderTestRequest):
-    broker = get_broker()
-
+async def test_provider(req: ProviderTestRequest, broker: SearchBroker = Depends(get_broker)):
     try:
         pname = ProviderName(req.provider)
     except ValueError:

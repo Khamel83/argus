@@ -10,7 +10,7 @@ Stop wiring search APIs into every project. Argus is one endpoint that talks to 
 
 ## What It Does
 
-You pass Argus a search query. It fans out to multiple providers, collects results, ranks them, deduplicates, and returns a clean list. If a provider is down or over budget, it skips it automatically. Your project never touches a provider API directly.
+You pass Argus a search query. It routes to providers in cheap-first order, stops early when the first provider already produced enough useful results, and only falls through when failure, weak output, cooldown, or budget limits justify it. Results are then ranked, deduplicated, and returned as one clean list. Your project never touches a provider API directly.
 
 **Content extraction** — Found a useful link? Pass the URL to Argus and get clean article text back. It tries trafilatura (local, fast) first, then falls back to Jina Reader if needed. No HTML, no navigation, no ads — just the content. Results are cached in memory (168h TTL) so the same URL is never fetched twice.
 
@@ -185,10 +185,12 @@ Available tools: `search_web`, `extract_content`, `recover_url`, `expand_links`,
 ### Python
 
 ```python
+from argus.api.main import create_app
 from argus.broker.router import create_broker
 from argus.models import SearchQuery, SearchMode
 from argus.extraction import extract_url
 
+app = create_app()  # same composition path used by the default ASGI export
 broker = create_broker()
 
 # Search
@@ -226,10 +228,12 @@ resp2, _ = await broker.search_with_session(
 
 ```
 Caller (CLI / HTTP / MCP / Python)
-  → SearchBroker
-    → routing policy (per mode)
-      → providers (parallel, with fallback)
-    → cache → dedupe → RRF ranking → response
+  → FastAPI app factory / CLI / MCP entry points
+    → SearchBroker
+      → routing policy (per mode)
+      → provider executor (cheap-first, bounded fallback)
+      → result pipeline (cache → dedupe → RRF ranking → response)
+      → persistence gateway
   → SessionStore (optional, per-request)
     → query refinement from prior context
   → Extractor (on demand)
@@ -246,6 +250,12 @@ Caller (CLI / HTTP / MCP / Python)
 | `argus/cli/` | Click CLI commands |
 | `argus/mcp/` | MCP server for LLM integration |
 | `argus/persistence/` | PostgreSQL query/result storage |
+
+### Composition Notes
+
+- `argus.api.main:create_app()` is the explicit FastAPI assembly path. The module-level `app` export is still available for `uvicorn argus.api.main:app`.
+- `SearchBroker` is a thin coordinator around provider execution, result processing, session-aware search flow, and non-fatal persistence.
+- Provider routing is sequential and cheap-first by default. Argus skips unavailable, cooled-down, or budget-exhausted providers and records those decisions in traces.
 
 ## Configuration
 

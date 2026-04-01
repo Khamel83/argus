@@ -1,8 +1,49 @@
 """Tests for broker: policies, ranking, dedupe, cache, health, budget, router."""
 
+from dataclasses import dataclass
+
 import pytest
 
-from argus.models import SearchMode, ProviderName, SearchResult
+from argus.models import ProviderName, ProviderStatus, ProviderTrace, SearchMode, SearchQuery, SearchResult
+
+
+@dataclass
+class StubProvider:
+    name: ProviderName
+    results: list[SearchResult] | None = None
+    trace: ProviderTrace | None = None
+    available: bool = True
+    raise_error: Exception | None = None
+
+    def __post_init__(self):
+        if self.results is None:
+            self.results = []
+        if self.trace is None:
+            self.trace = ProviderTrace(
+                provider=self.name,
+                status="success",
+                results_count=len(self.results),
+            )
+        self.calls = 0
+
+    def is_available(self) -> bool:
+        return self.available
+
+    def status(self) -> ProviderStatus:
+        return ProviderStatus.ENABLED if self.available else ProviderStatus.DISABLED_BY_CONFIG
+
+    async def search(self, query: SearchQuery):
+        self.calls += 1
+        if self.raise_error is not None:
+            raise self.raise_error
+        return list(self.results), ProviderTrace(
+            provider=self.trace.provider,
+            status=self.trace.status,
+            results_count=len(self.results),
+            latency_ms=self.trace.latency_ms,
+            error=self.trace.error,
+            budget_remaining=self.trace.budget_remaining,
+        )
 
 
 # --- Policies ---
@@ -311,3 +352,194 @@ class TestRouter:
         assert ProviderName.SEARXNG in broker._providers
         assert ProviderName.BRAVE in broker._providers
         assert len(broker._providers) == 7  # 5 live + 2 stubs
+
+    @pytest.mark.asyncio
+    async def test_search_stops_after_good_enough_primary_provider(self, monkeypatch):
+        from argus.broker.router import SearchBroker
+
+        monkeypatch.setattr(
+            "argus.persistence.db.SearchPersistenceGateway.record_completed_search",
+            lambda self, query, response: None,
+        )
+
+        primary_results = [
+            SearchResult(
+                url=f"https://example.com/{idx}",
+                title=f"Result {idx}",
+                snippet="ok",
+                provider=ProviderName.SEARXNG,
+            )
+            for idx in range(5)
+        ]
+        primary = StubProvider(name=ProviderName.SEARXNG, results=primary_results)
+        backup = StubProvider(
+            name=ProviderName.BRAVE,
+            results=[SearchResult(url="https://backup.com", title="Backup", snippet="backup")],
+        )
+
+        broker = SearchBroker(
+            providers={
+                ProviderName.SEARXNG: primary,
+                ProviderName.BRAVE: backup,
+            },
+        )
+
+        response = await broker.search(
+            SearchQuery(
+                query="cheap first",
+                mode=SearchMode.DISCOVERY,
+                max_results=5,
+                providers=[ProviderName.SEARXNG, ProviderName.BRAVE],
+            )
+        )
+
+        assert primary.calls == 1
+        assert backup.calls == 0
+        assert response.total_results == 5
+        assert response.traces[-1].status == "skipped"
+        assert response.traces[-1].error == "early stop"
+
+    @pytest.mark.asyncio
+    async def test_search_hedges_to_next_provider_when_primary_is_weak(self, monkeypatch):
+        from argus.broker.router import SearchBroker
+
+        monkeypatch.setattr(
+            "argus.persistence.db.SearchPersistenceGateway.record_completed_search",
+            lambda self, query, response: None,
+        )
+
+        primary = StubProvider(
+            name=ProviderName.SEARXNG,
+            results=[SearchResult(url="https://weak.com", title="Weak", snippet="weak")],
+        )
+        backup = StubProvider(
+            name=ProviderName.BRAVE,
+            results=[
+                SearchResult(url="https://backup.com/1", title="Backup 1", snippet="b1"),
+                SearchResult(url="https://backup.com/2", title="Backup 2", snippet="b2"),
+            ],
+        )
+
+        broker = SearchBroker(
+            providers={
+                ProviderName.SEARXNG: primary,
+                ProviderName.BRAVE: backup,
+            },
+        )
+
+        response = await broker.search(
+            SearchQuery(
+                query="needs hedge",
+                mode=SearchMode.DISCOVERY,
+                max_results=5,
+                providers=[ProviderName.SEARXNG, ProviderName.BRAVE],
+            )
+        )
+
+        assert primary.calls == 1
+        assert backup.calls == 1
+        assert response.total_results == 3
+        assert [trace.provider for trace in response.traces[:2]] == [
+            ProviderName.SEARXNG,
+            ProviderName.BRAVE,
+        ]
+
+    @pytest.mark.asyncio
+    async def test_search_skips_budget_exhausted_provider(self, monkeypatch):
+        from argus.broker.budgets import BudgetTracker
+        from argus.broker.router import SearchBroker
+
+        monkeypatch.setattr(
+            "argus.persistence.db.SearchPersistenceGateway.record_completed_search",
+            lambda self, query, response: None,
+        )
+
+        backup = StubProvider(
+            name=ProviderName.SERPER,
+            results=[SearchResult(url="https://fallback.com", title="Fallback", snippet="ok")],
+        )
+
+        exhausted_budget = BudgetTracker()
+        broker = SearchBroker(
+            providers={
+                ProviderName.BRAVE: StubProvider(name=ProviderName.BRAVE, results=[]),
+                ProviderName.SERPER: backup,
+            },
+            budget_tracker=exhausted_budget,
+        )
+        broker.budget_tracker.set_budget(ProviderName.BRAVE, 1.0)
+        broker.budget_tracker.record_usage(ProviderName.BRAVE, 1.0)
+
+        response = await broker.search(
+            SearchQuery(
+                query="budget exhausted",
+                mode=SearchMode.DISCOVERY,
+                providers=[ProviderName.BRAVE, ProviderName.SERPER],
+            )
+        )
+
+        assert response.traces[0].provider == ProviderName.BRAVE
+        assert response.traces[0].error == "budget exhausted"
+        assert backup.calls == 1
+
+    @pytest.mark.asyncio
+    async def test_search_handles_provider_exception_and_continues(self, monkeypatch):
+        from argus.broker.router import SearchBroker
+
+        monkeypatch.setattr(
+            "argus.persistence.db.SearchPersistenceGateway.record_completed_search",
+            lambda self, query, response: None,
+        )
+
+        failing = StubProvider(
+            name=ProviderName.SEARXNG,
+            raise_error=RuntimeError("boom"),
+        )
+        backup = StubProvider(
+            name=ProviderName.BRAVE,
+            results=[SearchResult(url="https://backup.com", title="Backup", snippet="ok")],
+        )
+        broker = SearchBroker(
+            providers={
+                ProviderName.SEARXNG: failing,
+                ProviderName.BRAVE: backup,
+            },
+        )
+
+        response = await broker.search(
+            SearchQuery(
+                query="exception path",
+                mode=SearchMode.DISCOVERY,
+                providers=[ProviderName.SEARXNG, ProviderName.BRAVE],
+            )
+        )
+
+        assert response.traces[0].status == "error"
+        assert "boom" in response.traces[0].error
+        assert backup.calls == 1
+
+    @pytest.mark.asyncio
+    async def test_persistence_failure_is_non_fatal(self, monkeypatch):
+        from argus.broker.router import SearchBroker
+
+        monkeypatch.setattr(
+            "argus.persistence.db.persist_search",
+            lambda query_text, mode, response: (_ for _ in ()).throw(RuntimeError("persist failed")),
+        )
+
+        primary = StubProvider(
+            name=ProviderName.SEARXNG,
+            results=[SearchResult(url="https://example.com", title="Result", snippet="ok")],
+        )
+        broker = SearchBroker(providers={ProviderName.SEARXNG: primary})
+
+        response = await broker.search(
+            SearchQuery(
+                query="persist fail",
+                mode=SearchMode.DISCOVERY,
+                providers=[ProviderName.SEARXNG],
+            )
+        )
+
+        assert response.total_results == 1
+        assert response.results[0].url == "https://example.com"

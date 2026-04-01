@@ -1,30 +1,19 @@
-"""
-Health and budget endpoints.
-"""
+"""Health and budget endpoints."""
 
-from typing import Optional
+from fastapi import APIRouter, Depends, Request, Response
 
-from fastapi import APIRouter, Response
-
-from argus.broker.router import SearchBroker, create_broker
+from argus.broker.router import SearchBroker
 from argus.models import ProviderName
 
 router = APIRouter()
 
-_broker: Optional[SearchBroker] = None
 
-
-def get_broker() -> SearchBroker:
-    global _broker
-    if _broker is None:
-        _broker = create_broker()
-    return _broker
+def get_broker(request: Request) -> SearchBroker:
+    return request.app.state.get_broker()
 
 
 @router.get("/health")
-async def health():
-    broker = get_broker()
-
+async def health(broker: SearchBroker = Depends(get_broker)):
     all_providers = {}
     for pname in ProviderName:
         status = broker.get_provider_status(pname)
@@ -43,9 +32,7 @@ async def health():
 
 
 @router.get("/health/detail")
-async def health_detail():
-    broker = get_broker()
-
+async def health_detail(broker: SearchBroker = Depends(get_broker)):
     providers = {}
     for pname in ProviderName:
         providers[pname.value] = broker.get_provider_status(pname)
@@ -60,9 +47,7 @@ async def health_detail():
 
 
 @router.get("/budgets")
-async def budgets():
-    broker = get_broker()
-
+async def budgets(broker: SearchBroker = Depends(get_broker)):
     budget_info = {}
     for pname in ProviderName:
         budget_info[pname.value] = {
