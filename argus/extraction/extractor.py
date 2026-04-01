@@ -11,7 +11,7 @@ import os
 
 import httpx
 
-from argus.extraction.cache import ExtractionCache
+from argus.core.cache import TTLCache, extraction_cache_key
 from argus.extraction.models import ExtractedContent, ExtractorName
 from argus.extraction.rate_limit import DomainRateLimiter
 from argus.logging import get_logger
@@ -23,8 +23,10 @@ JINA_READER_URL = "https://r.jina.ai/"
 JINA_API_KEY = os.getenv("ARGUS_JINA_API_KEY", "")
 
 # Shared cache instance — lives for the process lifetime
-_cache = ExtractionCache(
-    ttl_hours=int(os.getenv("ARGUS_EXTRACTION_CACHE_TTL_HOURS", "168"))
+_cache = TTLCache(
+    ttl_seconds=int(os.getenv("ARGUS_EXTRACTION_CACHE_TTL_HOURS", "168")) * 3600,
+    key_fn=extraction_cache_key,
+    skip_fn=lambda content: bool(content.error),
 )
 
 # Shared domain rate limiter — 10 requests per minute per domain
@@ -96,7 +98,7 @@ async def _extract_jina(url: str) -> ExtractedContent:
     )
 
 
-def get_extraction_cache() -> ExtractionCache:
+def get_extraction_cache() -> TTLCache:
     """Return the shared extraction cache instance."""
     return _cache
 
