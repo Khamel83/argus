@@ -10,19 +10,12 @@ build/
 # Virtual environments
 .venv/
 venv/
-env/
 
 # Environment
 .env
 .env.bak
 .env.local
 !.env.example
-
-# SOPS/Age
-*.key
-.age/
-.sops.yaml
-!*.encrypted
 
 # Testing
 .pytest_cache/
@@ -39,12 +32,3 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
-
-# 1shot orchestration (not part of Argus package)
-1shot/
-
-# Scripts (local/CI helpers, not core)
-scripts/
-
-# Session docs
-docs/sessions/

@@ -1,126 +1,125 @@
 # Argus
 
-Stop wiring five different search APIs into every project. Argus is one endpoint that talks to SearXNG, Brave, Serper, Tavily, and Exa — with automatic fallback, result ranking, health tracking, and budget enforcement built in.
+Stop wiring search APIs into every project. Argus is one endpoint that talks to SearXNG, Brave, Serper, Tavily, and Exa — with automatic fallback, result ranking, health tracking, and budget enforcement. Connect via HTTP, CLI, MCP, or Python import. Add a provider key, it works. Remove it, it degrades gracefully.
 
-Connect any project via HTTP, CLI, MCP, or Python import. Add a provider key, it works. Remove it, it degrades gracefully.
+## What It Does
+
+You pass Argus a search query. It fans out to multiple providers, collects results, ranks them, deduplicates, and returns a clean list. If a provider is down or over budget, it skips it automatically. Your project never touches a provider API directly.
+
+The output is designed for LLM consumption — enough context (title, snippet, URL, domain, relevance score) for a model to decide "this link is worth reading" without downloading the whole page.
 
 ## Quick Start
 
-**Prerequisites:** Python 3.12+, PostgreSQL. Optionally [SearXNG](https://github.com/searxng/searxng) for free local search.
+### Docker (recommended)
 
 ```bash
-# Install
-git clone https://github.com/khamel83/argus.git && cd argus
-python -m venv .venv && source .venv/bin/activate
-pip install -e .
-
-# Configure
+# 1. Create .env with your provider keys
 cp .env.example .env
-# Edit .env — at minimum set ARGUS_DB_URL and enable providers you have keys for
+# Edit .env — set ARGUS_DB_URL and at least one provider key
 
-# Run
-argus serve
-```
+# 2. Start Argus + Postgres + SearXNG
+docker compose up -d
 
-Verify it's working:
-
-```bash
-# Health check
+# 3. Verify
 curl http://localhost:8000/api/health
 # {"status":"ok"}
 
-# Search
 curl -X POST http://localhost:8000/api/search \
   -H "Content-Type: application/json" \
-  -d '{"query": "python web frameworks 2025", "mode": "discovery", "max_results": 3}'
+  -d '{"query": "fastapi tutorial", "mode": "discovery"}'
 ```
 
-## Integration Examples
+### Local install
+
+```bash
+git clone https://github.com/Khamel83/argus.git && cd argus
+python -m venv .venv && source .venv/bin/activate
+cp .env.example .env
+pip install -e ".[mcp]"
+argus serve
+```
+
+## Provider Setup
+
+All you need is API keys for whichever providers you want. SearXNG is free and runs locally. The rest have generous free tiers.
+
+| Provider | Free tier | Get a key |
+|----------|----------|-----------|
+| [SearXNG](https://github.com/searxng/searxng) | Unlimited (self-hosted) | No key needed — runs in Docker |
+| [Brave Search](https://brave.com/search/api/) | 2,000 queries/month | [dashboard](https://brave.com/search/api/) |
+| [Serper](https://serper.dev) | 2,500 queries/month | [signup](https://serper.dev/signup) |
+| [Tavily](https://tavily.com) | 1,000 queries/month | [signup](https://app.tavily.com/sign-up) |
+| [Exa](https://exa.ai) | 1,000 queries/month | [signup](https://dashboard.exa.ai/signup) |
+
+Set keys in `.env`:
+```
+ARGUS_BRAVE_API_KEY=BSA...
+ARGUS_SERPER_API_KEY=abc...
+ARGUS_TAVILY_API_KEY=tvly-...
+ARGUS_EXA_API_KEY=...
+```
+
+Unset or blank keys are silently skipped. You can run Argus with just SearXNG and no paid keys at all.
+
+### SearXNG Setup
+
+The included `docker-compose.yml` starts SearXNG automatically. If running separately:
+
+```bash
+docker run -d --name searxng -p 8080:8080 searxng/searxng:latest
+curl http://localhost:8080/search?q=test\&format=json
+```
+
+See [docs/providers.md](docs/providers.md) for SearXNG tuning and Docker networking details.
+
+## Integration
 
 ### HTTP API
 
 ```bash
-# Discovery search
+# Search
 curl -X POST http://localhost:8000/api/search \
   -H "Content-Type: application/json" \
-  -d '{"query": "fastapi tutorial", "mode": "discovery", "max_results": 5}'
+  -d '{"query": "python web frameworks", "mode": "discovery", "max_results": 5}'
 
 # Recover a dead URL
 curl -X POST http://localhost:8000/api/recover-url \
   -H "Content-Type: application/json" \
   -d '{"url": "https://example.com/old-page", "title": "Example Article"}'
 
-# Expand with related links
-curl -X POST http://localhost:8000/api/expand \
-  -H "Content-Type: application/json" \
-  -d '{"query": "system design patterns"}'
-
-# Check health and budgets
+# Health & budgets
 curl http://localhost:8000/api/health/detail
 curl http://localhost:8000/api/budgets
 ```
 
-All endpoints return JSON. See `docs/search-operations.md` for full API reference.
+OpenAPI docs available at `http://localhost:8000/docs`.
 
 ### CLI
 
 ```bash
-# Search (discovery mode by default)
 argus search -q "python web framework"
 argus search -q "python web framework" --mode research -n 20
-argus search -q "https://dead.link" --mode recovery
-
-# JSON output
-argus search -q "fastapi" --json
-
-# Admin
+argus recover-url -u "https://dead.link" -t "Page Title"
 argus health
-argus budgets
 argus test-provider -p brave
-argus test-provider -p searxng -q "climate change"
 ```
 
-### MCP (for Claude, Cursor, or any MCP client)
+### MCP
 
-Add to your MCP config:
+Add to your MCP client config:
 
-**Claude Code** (`~/.claude.json`):
 ```json
 {
   "mcpServers": {
     "argus": {
       "command": "argus",
-      "args": ["mcp", "serve"],
-      "transport": "stdio"
-    }
-  }
-}
-```
-
-**Claude Desktop** (`claude_desktop_config.json`):
-```json
-{
-  "mcpServers": {
-    "argus": {
-      "command": "/path/to/.venv/bin/argus",
       "args": ["mcp", "serve"]
     }
   }
 }
 ```
 
-**Remote MCP** (SSE transport):
-```json
-{
-  "mcpServers": {
-    "argus": {
-      "url": "http://localhost:8001/mcp"
-    }
-  }
-}
-```
-
-MCP tools available: `search_web`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`
+Tools: `search_web`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`
 
 ### Python
 
@@ -129,32 +128,12 @@ from argus.broker.router import create_broker
 from argus.models import SearchQuery, SearchMode
 
 broker = create_broker()
-
-# Discovery search
 response = await broker.search(
     SearchQuery(query="python web frameworks", mode=SearchMode.DISCOVERY, max_results=10)
 )
-
-for result in response.results:
-    print(f"{result.title}: {result.url} (score: {result.score:.3f})")
-
-# Check traces (which providers returned what)
-for trace in response.traces:
-    print(f"  {trace.provider}: {trace.status} ({trace.results_count} results, {trace.latency_ms}ms)")
+for r in response.results:
+    print(f"{r.title}: {r.url} (score: {r.score:.3f})")
 ```
-
-## Why Argus?
-
-**Without Argus:** Each project wires its own Brave/Serper/Tavily keys, handles rate limits, writes fallback logic, normalizes different response schemas, and tracks which provider is down today.
-
-**With Argus:** One HTTP call. Argus picks the best provider, falls back automatically, ranks and deduplicates results, tracks budgets, and tells you exactly what happened via traces. Your project never touches a provider API directly.
-
-- **One interface, five providers** — add/remove keys, your code doesn't change
-- **Automatic fallback** — provider fails? Next one takes over. No code needed.
-- **Budget enforcement** — set monthly limits per provider, Argus stops before you get billed
-- **Health visibility** — always know which providers are up, degraded, or exhausted
-- **Free floor** — SearXNG runs locally for free, always available as fallback
-- **AI-native** — MCP server lets Claude, Cursor, or any agent search the web instantly
 
 ## Search Modes
 
@@ -164,6 +143,29 @@ for trace in response.traces:
 | `recovery` | Dead/moved URL recovery | searxng → brave → serper → tavily → exa |
 | `grounding` | Few live sources for fact-checking | brave → serper → searxng |
 | `research` | Broad exploratory retrieval | tavily → exa → brave → serper |
+
+## Configuration
+
+All config via environment variables. See `.env.example` for the full list.
+
+Key variables:
+- `ARGUS_DB_URL` — PostgreSQL connection string (required)
+- `ARGUS_SEARXNG_BASE_URL` — SearXNG endpoint (default: `http://127.0.0.1:8080`)
+- `ARGUS_BRAVE_API_KEY`, `ARGUS_SERPER_API_KEY`, etc. — provider keys
+- `ARGUS_CACHE_TTL_HOURS` — result cache TTL (default: 168)
+- `ARGUS_BRAVE_MONTHLY_BUDGET_USD` — per-provider monthly spend limit
+
+## Roadmap
+
+Theoretical — shaped by what's actually useful, not a fixed plan.
+
+**Now** — Search broker with fallback, health, budgets. Output is ranked URLs with snippets. The caller decides what to fetch next.
+
+**Soon** — Content extraction layer. Given a URL from search results, fetch and extract clean text so the caller gets the content, not just a link. This closes the loop: search → identify useful link → extract → answer.
+
+**Later** — Multi-turn search context. Remember previous queries in a session, refine results based on what was useful. Conversational search that gets better as you narrow down.
+
+**Maybe** — Provider-specific tuning (use Exa for academic, Brave for general), query rewriting to improve recall, result caching across sessions, embedding-based dedup.
 
 ## License
 
