@@ -72,6 +72,12 @@ async def search(req: SearchRequest):
         max_results=req.max_results,
     )
 
+    if req.session_id:
+        resp, session_id = await broker.search_with_session(query, session_id=req.session_id)
+        response = _to_response(resp)
+        response.session_id = session_id
+        return response
+
     resp = await broker.search(query)
     return _to_response(resp)
 

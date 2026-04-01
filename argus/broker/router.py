@@ -48,6 +48,7 @@ class SearchBroker:
         cache: Optional[SearchCache] = None,
         health_tracker: Optional[HealthTracker] = None,
         budget_tracker: Optional[BudgetTracker] = None,
+        session_store=None,
     ):
         self._providers = providers
         self._cache = cache or SearchCache()
@@ -56,6 +57,7 @@ class SearchBroker:
             persist_path=os.environ.get("ARGUS_BUDGET_DB_PATH", None)
         )
         self._config = get_config()
+        self._session_store = session_store
 
         # Initialize budgets from config
         budget_map = {
@@ -203,6 +205,51 @@ class SearchBroker:
 
         return response
 
+    async def search_with_session(
+        self, query: SearchQuery, session_id: Optional[str] = None
+    ) -> tuple[SearchResponse, Optional[str]]:
+        """Search with optional session context.
+
+        If session_id is provided, the query is refined using prior session history.
+        Returns (response, session_id). Creates a new session if session_id is None.
+        """
+        from argus.sessions.refinement import refine_query
+
+        # Get or create session
+        session = None
+        effective_session_id = session_id
+
+        if self._session_store is not None:
+            if effective_session_id:
+                session = self._session_store.get_session(effective_session_id)
+            if session is None:
+                session = self._session_store.create_session(effective_session_id)
+                effective_session_id = session.id
+
+        # Refine query using session context
+        refined_text = refine_query(query.query, session)
+        if refined_text != query.query:
+            logger.debug("Query refined: %r -> %r", query.query, refined_text)
+            query = SearchQuery(
+                query=refined_text,
+                mode=query.mode,
+                max_results=query.max_results,
+                providers=query.providers,
+            )
+
+        response = await self.search(query)
+
+        # Record query in session
+        if self._session_store is not None and effective_session_id:
+            self._session_store.add_query(
+                effective_session_id,
+                query=refined_text,
+                mode=query.mode.value,
+                results_count=response.total_results,
+            )
+
+        return response, effective_session_id
+
     def get_provider_status(self, provider: ProviderName) -> dict:
         """Get combined status for a provider (config + health + budget)."""
         provider_obj = self._providers.get(provider)
@@ -248,4 +295,7 @@ def create_broker() -> SearchBroker:
         ProviderName.YOU: YouProvider(config.you),
     }
 
-    return SearchBroker(providers=providers)
+    from argus.sessions import SessionStore
+
+    session_store = SessionStore()
+    return SearchBroker(providers=providers, session_store=session_store)

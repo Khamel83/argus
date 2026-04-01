@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "argus"
 version = "1.0.0"
-description = "Standalone search broker — routes queries across multiple web-search providers with fallback, RRF ranking, health tracking, and budget enforcement"
+description = "Search broker with content extraction and multi-turn sessions — routes queries across multiple providers with fallback, ranking, health tracking, and budget enforcement"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
-keywords = ["mcp", "mcp-server", "search", "search-api", "search-broker", "ai-agents", "llm-tools", "web-search", "fastapi", "brave-search", "serper", "tavily", "exa", "searxng"]
+keywords = ["mcp", "mcp-server", "search", "search-api", "search-broker", "content-extraction", "ai-agents", "llm-tools", "web-search", "fastapi", "brave-search", "serper", "tavily", "exa", "searxng", "trafilatura", "jina"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -17,6 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Internet :: WWW/HTTP",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
@@ -29,6 +30,7 @@ dependencies = [
     "httpx>=0.27.0",
     "click>=8.1.0",
     "pyyaml>=6.0",
+    "trafilatura>=1.6.0",
 ]
 
 [project.optional-dependencies]

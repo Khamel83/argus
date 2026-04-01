@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from argus.api.rate_limit import RateLimiter
 from argus.api.routes_admin import router as admin_router
+from argus.api.routes_extract import router as extract_router
 from argus.api.routes_health import router as health_router
 from argus.api.routes_search import router as search_router
 from argus.logging import get_logger
@@ -53,6 +54,7 @@ app.add_middleware(
 app.include_router(search_router, prefix="/api")
 app.include_router(health_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
+app.include_router(extract_router, prefix="/api")
 
 
 @app.middleware("http")

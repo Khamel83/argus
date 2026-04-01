@@ -16,6 +16,7 @@ class SearchRequest(BaseModel):
     mode: str = Field("discovery", description="Search mode: recovery, discovery, grounding, research")
     max_results: int = Field(10, ge=1, le=50, description="Maximum results to return")
     providers: Optional[List[str]] = Field(None, description="Override provider routing order")
+    session_id: Optional[str] = Field(None, description="Session ID for multi-turn context")
 
     @field_validator("query")
     @classmethod
@@ -71,6 +72,7 @@ class SearchResponse(BaseModel):
     total_results: int = 0
     cached: bool = False
     search_run_id: Optional[str] = None
+    session_id: Optional[str] = None
 
 
 class RecoverUrlRequest(BaseModel):
@@ -87,6 +89,34 @@ class ExpandRequest(BaseModel):
 class ProviderTestRequest(BaseModel):
     provider: str = Field(..., description="Provider name to test")
     query: str = Field("argus", description="Test query")
+
+
+class ExtractRequest(BaseModel):
+    url: str = Field(..., min_length=1, max_length=2048, description="URL to extract content from")
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("URL must start with http:// or https://")
+        # Block private/internal URLs to prevent SSRF
+        from urllib.parse import urlparse
+        parsed = urlparse(v)
+        hostname = parsed.hostname or ""
+        if hostname in ("localhost", "127.0.0.1", "::1") or hostname.startswith(("10.", "172.16.", "192.168.", "169.254.")):
+            raise ValueError("Private/internal URLs are not allowed")
+        return v
+
+
+class ExtractResponse(BaseModel):
+    url: str
+    title: str = ""
+    text: str = ""
+    author: str = ""
+    date: Optional[str] = None
+    word_count: int = 0
+    extractor: Optional[str] = None
+    error: Optional[str] = None
 
 
 class ErrorResponse(BaseModel):

@@ -46,6 +46,7 @@ async def search_web(
     query: str,
     mode: str = "discovery",
     max_results: int = 10,
+    session_id: str = None,
 ) -> str:
     """Search the web using the Argus broker.
 
@@ -53,9 +54,17 @@ async def search_web(
         query: Search query string
         mode: Search mode (recovery, discovery, grounding, research)
         max_results: Maximum results to return
+        session_id: Optional session ID for multi-turn context
     """
     search_mode = SearchMode(mode)
     q = SearchQuery(query=query, mode=search_mode, max_results=max_results)
+
+    if session_id:
+        resp, sid = await broker.search_with_session(q, session_id=session_id)
+        result = json.loads(_serialize_response(resp))
+        result["session_id"] = sid
+        return json.dumps(result, indent=2)
+
     resp = await broker.search(q)
     return _serialize_response(resp)
 
@@ -176,4 +185,26 @@ async def test_provider_mcp(
             {"url": r.url, "title": r.title, "snippet": r.snippet[:100]}
             for r in results[:3]
         ],
+    }, indent=2)
+
+
+async def extract_content(url: str) -> str:
+    """Extract clean text content from a URL.
+
+    Args:
+        url: URL to extract content from
+    """
+    from argus.extraction import extract_url
+
+    result = await extract_url(url)
+
+    return json.dumps({
+        "url": result.url,
+        "title": result.title,
+        "text": result.text,
+        "author": result.author,
+        "date": result.date,
+        "word_count": result.word_count,
+        "extractor": result.extractor.value if result.extractor else None,
+        "error": result.error,
     }, indent=2)

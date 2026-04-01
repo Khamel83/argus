@@ -36,9 +36,9 @@ async def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int
 
     # Register tools
     @mcp.tool()
-    async def search_web(query: str, mode: str = "discovery", max_results: int = 10) -> str:
+    async def search_web(query: str, mode: str = "discovery", max_results: int = 10, session_id: str = None) -> str:
         """Search the web using the Argus broker."""
-        return await mcp_tools.search_web(broker, query, mode, max_results)
+        return await mcp_tools.search_web(broker, query, mode, max_results, session_id)
 
     @mcp.tool()
     async def recover_url(url: str, title: str = None, domain: str = None) -> str:
@@ -64,6 +64,11 @@ async def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int
     async def test_provider(provider: str, query: str = "argus") -> str:
         """Smoke-test a single provider."""
         return await mcp_tools.test_provider_mcp(broker, provider, query)
+
+    @mcp.tool()
+    async def extract_content(url: str) -> str:
+        """Extract clean text content from a URL."""
+        return await mcp_tools.extract_content(url)
 
     # Register resources
     @mcp.resource("argus://providers/status")

@@ -26,6 +26,12 @@ CREATE TABLE IF NOT EXISTS budget_usage (
 );
 CREATE INDEX IF NOT EXISTS idx_budget_provider_ts
     ON budget_usage(provider, timestamp);
+
+CREATE TABLE IF NOT EXISTS token_balances (
+    service TEXT PRIMARY KEY,
+    balance REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
 """
 
 
@@ -77,3 +83,27 @@ class BudgetStore:
         if self._conn:
             self._conn.close()
             self._conn = None
+
+    def set_token_balance(self, service: str, balance: float) -> None:
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT INTO token_balances (service, balance, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(service) DO UPDATE SET balance = ?, updated_at = ?",
+            (service, balance, time.time(), balance, time.time()),
+        )
+        conn.commit()
+
+    def get_token_balance(self, service: str) -> Optional[float]:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT balance FROM token_balances WHERE service = ?", (service,)
+        ).fetchone()
+        return float(row[0]) if row else None
+
+    def get_all_token_balances(self) -> dict:
+        conn = self._get_conn()
+        rows = conn.execute("SELECT service, balance, updated_at FROM token_balances").fetchall()
+        return {
+            service: {"balance": balance, "updated_at": updated_at}
+            for service, balance, updated_at in rows
+        }

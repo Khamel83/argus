@@ -38,8 +38,9 @@ def cli():
 @click.option("--mode", "-m", default="discovery", type=click.Choice(["recovery", "discovery", "grounding", "research"]))
 @click.option("--max-results", "-n", default=10, help="Max results")
 @click.option("--providers", "-p", multiple=False, help="Override providers (comma-separated)")
+@click.option("--session", "-s", default=None, help="Session ID for multi-turn context")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def search(query, mode, max_results, providers, as_json):
+def search(query, mode, max_results, providers, as_json, session):
     """Execute a search query."""
     from argus.broker.router import create_broker
     from argus.models import SearchMode, SearchQuery
@@ -47,7 +48,12 @@ def search(query, mode, max_results, providers, as_json):
     broker = create_broker()
     q = SearchQuery(query=query, mode=SearchMode(mode), max_results=max_results)
 
-    resp = _run(broker.search(q))
+    if session:
+        resp, sid = _run(broker.search_with_session(q, session_id=session))
+        session_id = sid
+    else:
+        resp = _run(broker.search(q))
+        session_id = None
 
     if as_json:
         data = {
@@ -61,11 +67,15 @@ def search(query, mode, max_results, providers, as_json):
             "cached": resp.cached,
             "run_id": resp.search_run_id,
         }
+        if session_id:
+            data["session_id"] = session_id
         click.echo(json.dumps(data, indent=2))
     else:
         click.echo(f"Query: {resp.query}")
         click.echo(f"Mode: {resp.mode.value} | Results: {resp.total_results} | Cached: {resp.cached}")
         click.echo(f"Run ID: {resp.search_run_id}")
+        if session_id:
+            click.echo(f"Session: {session_id}")
         click.echo()
         for i, r in enumerate(resp.results, 1):
             provider = f" [{r.provider.value}]" if r.provider else ""
@@ -81,6 +91,42 @@ def search(query, mode, max_results, providers, as_json):
                 click.echo(f"  {t.provider.value}: {t.status} ({t.results_count} results, {t.latency_ms}ms)")
                 if t.error:
                     click.echo(f"    Error: {t.error}")
+
+
+@cli.command()
+@click.option("--url", "-u", required=True, help="URL to extract content from")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def extract(url, as_json):
+    """Extract clean text content from a URL."""
+    from argus.extraction import extract_url
+
+    result = _run(extract_url(url))
+
+    if result.error:
+        click.echo(f"Error: {result.error}", err=True)
+        sys.exit(1)
+
+    if as_json:
+        data = {
+            "url": result.url,
+            "title": result.title,
+            "text": result.text,
+            "author": result.author,
+            "date": result.date,
+            "word_count": result.word_count,
+            "extractor": result.extractor.value if result.extractor else None,
+        }
+        click.echo(json.dumps(data, indent=2))
+    else:
+        if result.title:
+            click.echo(f"Title: {result.title}")
+        if result.author:
+            click.echo(f"Author: {result.author}")
+        if result.date:
+            click.echo(f"Date: {result.date}")
+        click.echo(f"Words: {result.word_count} | Extractor: {result.extractor.value if result.extractor else 'unknown'}")
+        click.echo()
+        click.echo(result.text)
 
 
 @cli.command(name="recover-url")
@@ -156,6 +202,33 @@ def budgets():
         budget_str = f"${remaining:.4f}" if remaining is not None else "unlimited"
         status = "EXHAUSTED" if exhausted else "ok"
         click.echo(f"  {pname.value:12s} remaining={budget_str:12s} used=${usage:.4f} calls={count} [{status}]")
+
+    # Token balances
+    store = broker.budget_tracker._store
+    if store:
+        balances = store.get_all_token_balances()
+        if balances:
+            click.echo()
+            click.echo("Token balances:")
+            for service, info in balances.items():
+                click.echo(f"  {service:12s} balance={info['balance']:,.0f} tokens")
+
+
+@cli.command()
+@click.option("--service", "-s", required=True, help="Service name (e.g. jina)")
+@click.option("--balance", "-b", required=True, type=float, help="Current token balance")
+def set_balance(service, balance):
+    """Set a token balance for an extraction service."""
+    from argus.broker.router import create_broker
+
+    broker = create_broker()
+    store = broker.budget_tracker._store
+    if store is None:
+        click.echo("Budget persistence not enabled. Set ARGUS_BUDGET_DB_PATH in .env", err=True)
+        sys.exit(1)
+
+    store.set_token_balance(service, balance)
+    click.echo(f"Set {service} balance to {balance:,.0f} tokens")
 
 
 @cli.command()

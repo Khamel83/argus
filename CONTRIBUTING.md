@@ -28,7 +28,8 @@ Keep PRs focused. One change per PR makes review easier.
 ## Adding a Provider
 
 1. Create `argus/providers/yourprovider.py` implementing `BaseProvider`
-2. Register in `argus/broker/router.py` `create_broker()`
-3. Add config entries in `argus/config.py` and `.env.example`
-4. Add tests in `tests/test_providers.py`
-5. Add to routing policies in `argus/broker/policies.py`
+2. Add `ProviderName` enum entry in `argus/models.py`
+3. Register in `argus/broker/router.py` `create_broker()`
+4. Add config entries in `argus/config.py` and `.env.example`
+5. Add tests in `tests/test_providers.py`
+6. Add to routing policies in `argus/broker/policies.py`

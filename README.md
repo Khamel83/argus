@@ -4,13 +4,19 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![MCP Server](https://img.shields.io/badge/MCP-server-purple)](https://modelcontextprotocol.io/)
 
-Stop wiring search APIs into every project. Argus is one endpoint that talks to SearXNG, Brave, Serper, Tavily, and Exa — with automatic fallback, result ranking, health tracking, and budget enforcement. Connect via HTTP, CLI, MCP, or Python import. Add a provider key, it works. Remove it, it degrades gracefully.
+Stop wiring search APIs into every project. Argus is one endpoint that talks to multiple search providers — with automatic fallback, result ranking, health tracking, and budget enforcement. Connect via HTTP, CLI, MCP, or Python import. Add a provider key, it works. Remove it, it degrades gracefully.
+
+**Search → Extract → Answer.** Argus doesn't just find URLs — it can fetch and extract clean text from any page, and it remembers your prior queries so follow-up searches get smarter.
 
 ## What It Does
 
 You pass Argus a search query. It fans out to multiple providers, collects results, ranks them, deduplicates, and returns a clean list. If a provider is down or over budget, it skips it automatically. Your project never touches a provider API directly.
 
-The output is designed for LLM consumption — enough context (title, snippet, URL, domain, relevance score) for a model to decide "this link is worth reading" without downloading the whole page.
+**Content extraction** — Found a useful link? Pass the URL to Argus and get clean article text back. It tries trafilatura (local, fast) first, then falls back to Jina Reader if needed. No HTML, no navigation, no ads — just the content.
+
+**Multi-turn sessions** — Pass a `session_id` with your searches and Argus remembers what you've asked before. Follow-up queries like "fastapi" after searching "python web frameworks" get context-enriched automatically.
+
+**Token balance tracking** — Track remaining API credits (Jina, etc.) in a local SQLite database. Set balances via CLI, view via API or `argus budgets`.
 
 ## Quick Start
 
@@ -19,7 +25,7 @@ The output is designed for LLM consumption — enough context (title, snippet, U
 ```bash
 # 1. Create .env with your provider keys
 cp .env.example .env
-# Edit .env — set ARGUS_DB_URL and at least one provider key
+# Edit .env — at minimum, set provider API keys
 
 # 2. Start Argus + Postgres + SearXNG
 docker compose up -d
@@ -47,13 +53,15 @@ argus serve
 
 All you need is API keys for whichever providers you want. SearXNG is free and runs locally. The rest have generous free tiers.
 
-| Provider | Free tier | Get a key |
-|----------|----------|-----------|
-| [SearXNG](https://github.com/searxng/searxng) | Unlimited (self-hosted) | No key needed — runs in Docker |
-| [Brave Search](https://brave.com/search/api/) | 2,000 queries/month | [dashboard](https://brave.com/search/api/) |
-| [Serper](https://serper.dev) | 2,500 queries/month | [signup](https://serper.dev/signup) |
-| [Tavily](https://tavily.com) | 1,000 queries/month | [signup](https://app.tavily.com/sign-up) |
-| [Exa](https://exa.ai) | 1,000 queries/month | [signup](https://dashboard.exa.ai/signup) |
+| Provider | Status | Free tier | Get a key |
+|----------|--------|----------|-----------|
+| [SearXNG](https://github.com/searxng/searxng) | Active | Unlimited (self-hosted) | No key needed — runs in Docker |
+| [Brave Search](https://brave.com/search/api/) | Active | 2,000 queries/month | [dashboard](https://brave.com/search/api/) |
+| [Serper](https://serper.dev) | Active | 2,500 queries/month | [signup](https://serper.dev/signup) |
+| [Tavily](https://tavily.com) | Active | 1,000 queries/month | [signup](https://app.tavily.com/sign-up) |
+| [Exa](https://exa.ai) | Active | 1,000 queries/month | [signup](https://dashboard.exa.ai/signup) |
+| SearchAPI | Stub | — | Not yet configured |
+| You.com | Stub | — | Not yet configured |
 
 Set keys in `.env`:
 ```
@@ -80,33 +88,63 @@ See [docs/providers.md](docs/providers.md) for SearXNG tuning and Docker network
 
 ### HTTP API
 
+All endpoints prefixed with `/api`. OpenAPI docs at `http://localhost:8000/docs`.
+
 ```bash
 # Search
 curl -X POST http://localhost:8000/api/search \
   -H "Content-Type: application/json" \
   -d '{"query": "python web frameworks", "mode": "discovery", "max_results": 5}'
 
+# Multi-turn search (session context)
+curl -X POST http://localhost:8000/api/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "python web frameworks", "session_id": "my-session"}'
+
+curl -X POST http://localhost:8000/api/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "fastapi vs django", "session_id": "my-session"}'
+# ↑ second query is context-enriched by the first
+
+# Extract content from a URL
+curl -X POST http://localhost:8000/api/extract \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com/article"}'
+# → {"url": "...", "title": "...", "text": "clean article text...", "word_count": 842, "extractor": "trafilatura"}
+
 # Recover a dead URL
 curl -X POST http://localhost:8000/api/recover-url \
   -H "Content-Type: application/json" \
   -d '{"url": "https://example.com/old-page", "title": "Example Article"}'
 
+# Expand a query with related links
+curl -X POST http://localhost:8000/api/expand \
+  -H "Content-Type: application/json" \
+  -d '{"query": "fastapi", "context": "python web framework"}'
+
 # Health & budgets
 curl http://localhost:8000/api/health/detail
 curl http://localhost:8000/api/budgets
+# → {"budgets": {...}, "token_balances": {"jina": {"balance": 9833638.0, "updated_at": ...}}}
 ```
-
-OpenAPI docs available at `http://localhost:8000/docs`.
 
 ### CLI
 
 ```bash
 argus search -q "python web framework"
 argus search -q "python web framework" --mode research -n 20
-argus recover-url -u "https://dead.link" -t "Page Title"
-argus health
-argus test-provider -p brave
+argus search -q "fastapi" --session my-session        # multi-turn context
+argus extract -u "https://example.com/article"        # extract clean text
+argus recover-url -u "https://dead.link" -t "Title"
+argus health                                          # provider status
+argus budgets                                         # budget status + token balances
+argus set-balance -s jina -b 9833638                  # track token balance
+argus test-provider -p brave                          # smoke-test a provider
+argus serve                                           # start API server
+argus mcp serve                                       # start MCP server
 ```
+
+All commands support `--json` for structured output.
 
 ### MCP
 
@@ -140,20 +178,37 @@ argus test-provider -p brave
 }
 ```
 
-Tools: `search_web`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`
+Available tools: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`
 
 ### Python
 
 ```python
 from argus.broker.router import create_broker
 from argus.models import SearchQuery, SearchMode
+from argus.extraction import extract_url
 
 broker = create_broker()
+
+# Search
 response = await broker.search(
     SearchQuery(query="python web frameworks", mode=SearchMode.DISCOVERY, max_results=10)
 )
 for r in response.results:
     print(f"{r.title}: {r.url} (score: {r.score:.3f})")
+
+# Extract content from a result
+content = await extract_url(response.results[0].url)
+print(content.title)
+print(content.text)
+
+# Multi-turn search with session context
+resp, session_id = await broker.search_with_session(
+    SearchQuery(query="python web frameworks", mode=SearchMode.DISCOVERY)
+)
+resp2, _ = await broker.search_with_session(
+    SearchQuery(query="fastapi vs django"),
+    session_id=session_id,  # refined by prior query
+)
 ```
 
 ## Search Modes
@@ -165,32 +220,63 @@ for r in response.results:
 | `grounding` | Few live sources for fact-checking | brave → serper → searxng |
 | `research` | Broad exploratory retrieval | tavily → exa → brave → serper |
 
+## Architecture
+
+```
+Caller (CLI / HTTP / MCP / Python)
+  → SearchBroker
+    → routing policy (per mode)
+      → providers (parallel, with fallback)
+    → cache → dedupe → RRF ranking → response
+  → SessionStore (optional, per-request)
+    → query refinement from prior context
+  → Extractor (on demand)
+    → trafilatura (primary) → Jina Reader (fallback)
+```
+
+| Module | Responsibility |
+|--------|---------------|
+| `argus/broker/` | Routing, ranking, dedup, caching, health, budgets |
+| `argus/providers/` | Provider adapters (one per search API) |
+| `argus/extraction/` | URL content extraction (trafilatura + Jina) |
+| `argus/sessions/` | Multi-turn session store and query refinement |
+| `argus/api/` | FastAPI HTTP endpoints |
+| `argus/cli/` | Click CLI commands |
+| `argus/mcp/` | MCP server for LLM integration |
+| `argus/persistence/` | PostgreSQL query/result storage |
+
 ## Configuration
 
 All config via environment variables. See `.env.example` for the full list.
 
-Key variables:
-- `ARGUS_DB_URL` — PostgreSQL connection string (required)
-- `ARGUS_SEARXNG_BASE_URL` — SearXNG endpoint (default: `http://127.0.0.1:8080`)
-- `ARGUS_BRAVE_API_KEY`, `ARGUS_SERPER_API_KEY`, etc. — provider keys
-- `ARGUS_CACHE_TTL_HOURS` — result cache TTL (default: 168)
-- `ARGUS_BRAVE_MONTHLY_BUDGET_USD` — per-provider monthly spend limit
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ARGUS_DB_URL` | — | PostgreSQL connection string |
+| `ARGUS_SEARXNG_BASE_URL` | `http://127.0.0.1:8080` | SearXNG endpoint |
+| `ARGUS_BRAVE_API_KEY` | — | Brave Search API key |
+| `ARGUS_SERPER_API_KEY` | — | Serper API key |
+| `ARGUS_TAVILY_API_KEY` | — | Tavily API key |
+| `ARGUS_EXA_API_KEY` | — | Exa API key |
+| `ARGUS_CACHE_TTL_HOURS` | 168 | Result cache TTL |
+| `ARGUS_BUDGET_DB_PATH` | `argus_budgets.db` | SQLite path for budget persistence |
+| `ARGUS_EXTRACTION_TIMEOUT_SECONDS` | 10 | URL fetch timeout for extraction |
+| `ARGUS_JINA_API_KEY` | — | Jina Reader key (optional — works without, rate-limited) |
+| `ARGUS_RATE_LIMIT` | 60 | Requests per window per client IP |
+| `ARGUS_API_KEY` | — | Bypass rate limiting for internal services |
 
 ## Contributing
 
-Bug reports, feature ideas, and PRs are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the quick guide.
+Bug reports, feature ideas, and PRs are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Roadmap
 
-Theoretical — shaped by what's actually useful, not a fixed plan.
+**Now** — Search broker with fallback, health, budgets, content extraction, multi-turn sessions, and token balance tracking. Search → extract → answer, all in one service.
 
-**Now** — Search broker with fallback, health, budgets. Output is ranked URLs with snippets. The caller decides what to fetch next.
+**Soon** — Content caching (don't re-extract the same URL), domain-level rate limiting, session persistence (SQLite), auto-decrement token balances on extraction use.
 
-**Soon** — Content extraction layer. Given a URL from search results, fetch and extract clean text so the caller gets the content, not just a link. This closes the loop: search → identify useful link → extract → answer.
+**Later** — Provider-specific tuning (use Exa for academic, Brave for general), query rewriting to improve recall, embedding-based dedup, browser rendering for JS-heavy pages.
 
-**Later** — Multi-turn search context. Remember previous queries in a session, refine results based on what was useful. Conversational search that gets better as you narrow down.
-
-**Maybe** — Provider-specific tuning (use Exa for academic, Brave for general), query rewriting to improve recall, result caching across sessions, embedding-based dedup.
+**Maybe** — Conversational search with automatic query chaining, result summarization, multi-language support.
 
 ## License
 

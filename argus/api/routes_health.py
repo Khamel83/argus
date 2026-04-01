@@ -72,4 +72,10 @@ async def budgets():
             "exhausted": broker.budget_tracker.is_budget_exhausted(pname),
         }
 
-    return {"budgets": budget_info}
+    # Token balances for extraction services (Jina, etc.)
+    token_balances = {}
+    store = broker.budget_tracker._store
+    if store:
+        token_balances = store.get_all_token_balances()
+
+    return {"budgets": budget_info, "token_balances": token_balances}
