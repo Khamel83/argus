@@ -33,8 +33,10 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Budget persistence
-argus_budgets.db
+# Database files
+*.db
+*.db-wal
+*.db-shm
 
 # Local operator/session artifacts
 1shot/
