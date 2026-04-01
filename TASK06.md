@@ -12,7 +12,7 @@ Release-gate work only has value once the internal movement is complete enough t
 - Define release criteria for shipping the refactor safely.
 
 ## What To Build
-- Compatibility checklist spanning API, CLI, MCP, and Python usage.
+- Lightweight compatibility checklist spanning API, CLI, MCP, and Python usage.
 - Updated architecture notes in repo docs.
 - Release notes or migration notes if any additive changes were introduced.
 - Final verification log in `IMPLEMENTATION_CONTEXT.md`.

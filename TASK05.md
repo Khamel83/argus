@@ -8,13 +8,13 @@ Hardening belongs after boundaries exist. Otherwise the project risks encoding o
 
 ## Scope
 - Formalize provider contract coverage.
-- Decide and implement bounded concurrency or explicitly preserve sequential execution with tests.
+- Harden the chosen cheap-first routing model and only add bounded hedging where it measurably improves reliability.
 - Improve observability and failure characterization around provider routing.
 
 ## What To Build
 - Contract tests for provider adapters against the `BaseProvider` interface.
 - Execution tests around provider timeout, skip, error, and recovery paths.
-- If adopted, bounded concurrency controls with deterministic tests.
+- If adopted after measurement, bounded hedging controls with deterministic tests.
 - Additional logging or trace assertions that make production behavior easier to reason about.
 
 ## Files To Create Or Modify
@@ -28,7 +28,7 @@ Hardening belongs after boundaries exist. Otherwise the project risks encoding o
 - Completion of `TASK04.md`
 
 ## Implementation Notes
-- Concurrency is optional only if sequential execution is explicitly retained as a conscious design decision and tested as such.
+- Cheapness is the default. Any extra provider overlap must pay for itself in measured reliability or latency wins.
 - Avoid changing provider-specific request semantics in this task.
 - Focus on operability, determinism, and contract clarity.
 

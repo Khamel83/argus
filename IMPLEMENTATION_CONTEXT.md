@@ -33,6 +33,7 @@ Mixed: API, CLI, MCP server, and Python library
 - `pytest` passed on 2026-03-31: `126 passed in 24.51s`.
 - This run is planning-first. No production code refactor has started yet.
 - Durable planning artifacts are being added at repo root because there is no existing planning folder convention.
+- User decisions on 2026-03-31 clarified product priorities: reliability and cheapness over strict compatibility or architecture purity.
 
 ## Project Goal
 Produce a staged architectural refactor plan that improves correctness, lifecycle control, maintainability, extension safety, and scale-readiness without breaking Argus's public HTTP, CLI, MCP, or Python interfaces.
@@ -40,7 +41,7 @@ Produce a staged architectural refactor plan that improves correctness, lifecycl
 ## Success Criteria
 - The plan is explicit, sequential, and executable in small slices.
 - Each stage is independently shippable and testable.
-- Public contracts stay stable unless a later stage explicitly versions them.
+- Public contracts change only when the change clearly improves reliability, cheapness, or maintainability.
 - High-risk coupling points are called out before code changes begin.
 - The earliest execution slice produces an observable improvement without destabilizing current behavior.
 
@@ -50,19 +51,21 @@ Produce a staged architectural refactor plan that improves correctness, lifecycl
 - The repo includes automated tests that currently pass.
 - Git is available.
 - The user wants the architectural refactor to exist as a durable plan.
+- The user is comfortable with additive or breaking changes if they are the right design choice.
+- The product priority is reliability and cheapness for a single-user hobby workflow.
+- Expected usage is single operator usage across one or more intermittent Claude sessions, not team-scale multi-tenant deployment.
 - Untracked paths currently present: `1shot/`, `docs/sessions/`, `scripts/`.
 
 ## Assumptions
-- This refactor should preserve all current public interfaces in early phases.
 - No rewrite is desired or justified while the test baseline is green.
 - SQLite-backed session persistence remains supported.
-- Provider routing behavior should remain stable unless explicitly changed in a later task.
 - External services can be mocked or adapter-wrapped when direct access is unavailable.
 - This run's implementation scope is the planning system itself: operator doc, context, and task files.
+- Deployment remains simple and process-local unless a later real need appears.
 
 ## Constraints
 - Avoid destructive repo cleanup or unrelated file churn.
-- Preserve behavior before moving internals.
+- Preserve behavior where it is cheap to do so, but do not protect accidental complexity just for compatibility's sake.
 - Keep the repo legible for future agents and humans.
 - Use the existing code shape as the source of truth for refactor seams.
 - Ask-user-questions tooling is unavailable in this runtime, so assumptions must be written down explicitly.
@@ -73,15 +76,16 @@ Produce a staged architectural refactor plan that improves correctness, lifecycl
 - External search providers: configurable, but not required for planning.
 - Secrets loading: currently mixed into config loading via environment and subprocess fallback.
 - Persistence: available through current session and search persistence modules.
-- Deployment path: local and Docker both appear supported; no deployment change is required for planning.
+- Deployment path: local and Docker both appear supported; no multi-worker bootstrap work is required for this plan.
 
 ## Execution Strategy
 1. Preserve current behavior with characterization coverage around the public surfaces most affected by refactor.
 2. Introduce explicit app composition and dependency seams so lifecycle and overrides are no longer hidden behind module globals.
 3. Decompose `SearchBroker` into smaller units with single-purpose responsibilities.
-4. Isolate result processing, persistence, config, and session infrastructure behind clearer boundaries.
-5. Add operational hardening for concurrency, contracts, and compatibility.
-6. Finish with release-gate verification and migration notes.
+4. Rework provider execution around cheap-first reliability: primary-first execution, explicit stop conditions, and optional bounded hedging only when it measurably improves outcomes.
+5. Isolate result processing, persistence, config, and session infrastructure behind clearer boundaries.
+6. Add operational hardening for contracts and compatibility.
+7. Finish with release-gate verification and migration notes.
 
 ## Task Inventory
 - `TASK01.md`: App composition and characterization baseline
@@ -96,11 +100,16 @@ Produce a staged architectural refactor plan that improves correctness, lifecycl
 - Baseline verification with `pytest`
 - Decision to use staged architectural refactor planning instead of rewrite
 - Creation of operator and task-planning docs
+- Conversion of the initial open questions into explicit product decisions
 
 ## Key Decisions
 - The first execution slice should target app composition because it is the safest high-leverage seam and produces observable API behavior with low product risk.
 - `SearchBroker` is the primary refactor hotspot because it currently owns too many responsibilities.
-- Public behavior remains the compatibility anchor for all planned changes.
+- Reliability and cheapness are the primary design criteria.
+- Backward compatibility is useful but not sacred; breaking or additive changes are acceptable when they clearly improve the design.
+- Provider execution should not be "parallel by default." The target model is cheap-first routing: start with a primary provider, stop early when results are sufficient, and only hedge to a second provider when failure, timeout, or low-confidence output justifies the extra cost.
+- A formal compatibility matrix is not required before code movement starts; a lightweight compatibility checklist and contract tests are sufficient for this single-user project.
+- Configuration can remain synchronous and process-local; no special multi-worker bootstrap architecture is needed for the current use case.
 - Planning files live at repo root for now because that is the least surprising placement in this repository.
 
 ## Implementation Notes
@@ -112,15 +121,14 @@ Produce a staged architectural refactor plan that improves correctness, lifecycl
 
 ## Risks / Blockers
 - No true blockers for planning.
-- Unknown non-functional targets remain: expected QPS, concurrency, latency budgets, and deployment envelope.
+- Exact thresholds for "sufficient results" and hedge triggers still need to be defined during implementation.
 - Hidden external consumers may rely on current module-level construction patterns.
 - Refactor safety depends on expanding contract coverage before moving internals.
 
 ## Open Questions
-- Should the refactor remain strictly no-break, or are additive API changes acceptable if they improve observability?
-- Is sequential provider fallback the intended long-term behavior, or is bounded parallel execution desired?
-- Does the project need a formal compatibility matrix across HTTP, CLI, MCP, and Python usage before code movement starts?
-- Should configuration loading remain synchronous and process-local, or is a clearer settings bootstrap required for multi-worker deployment?
+- What should count as "enough" search results for an early stop: fixed count, score threshold, domain diversity, or per-mode policy?
+- Should a hedge be triggered only on hard failure and timeout, or also on low-result and low-quality outcomes?
+- Which public interfaces are acceptable to break first if the simplification materially improves the codebase?
 
 ## Next Recommended Step
 Execute `TASK01.md`: introduce an explicit app factory and dependency seams, then add characterization tests that prove current `/api` behavior is unchanged.
@@ -130,3 +138,4 @@ Execute `TASK01.md`: introduce an explicit app factory and dependency seams, the
 - 2026-03-31: Ran `pytest`; all 126 tests passed.
 - 2026-03-31: Decided against rewrite and selected staged architectural refactor planning.
 - 2026-03-31: Added `Full_Operator.md`, `IMPLEMENTATION_CONTEXT.md`, and staged task files at repo root.
+- 2026-03-31: Recorded user decisions: optimize for reliability and cheapness, allow interface changes when justified, keep compatibility checks lightweight, and keep configuration bootstrap simple for single-user usage.
