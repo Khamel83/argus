@@ -123,3 +123,8 @@ class SessionStore:
                 if session_id not in self._sessions:
                     self._load_session(session_id)
         return list(self._sessions.values())
+
+    def close(self) -> None:
+        if self._db:
+            self._db.close()
+            self._db = None

@@ -26,8 +26,11 @@ async def lifespan(app: FastAPI):
     try:
         broker = app.state.get_broker()
         broker.budget_tracker.close()
-    except Exception:
-        pass
+        if broker._session_store:
+            broker._session_store.close()
+        logger.info("Shutdown complete: connections closed")
+    except Exception as e:
+        logger.warning("Error during shutdown: %s", e)
 
 
 def _build_rate_limiter() -> RateLimiter:
