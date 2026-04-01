@@ -15,8 +15,8 @@ class TestSchemas:
         assert req.mode == "discovery"
 
     def test_search_request_invalid_mode(self):
-        req = SearchRequest(query="test", mode="invalid")
-        assert req.mode == "invalid"  # pydantic doesn't validate custom here
+        with pytest.raises(Exception):
+            SearchRequest(query="test", mode="invalid")
 
     def test_search_request_min_length(self):
         with pytest.raises(Exception):
@@ -89,7 +89,7 @@ class TestSearchEndpoint:
 
         client = TestClient(app)
         resp = client.post("/api/search", json={"query": "test", "mode": "invalid_mode"})
-        assert resp.status_code == 400
+        assert resp.status_code == 422
 
     @pytest.mark.asyncio
     async def test_recover_url_endpoint(self):

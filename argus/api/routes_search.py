@@ -5,7 +5,7 @@ Search endpoints.
 import asyncio
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from argus.api.schemas import (
     ExpandRequest,
@@ -66,16 +66,9 @@ def _to_response(resp) -> SearchResponse:
 async def search(req: SearchRequest):
     broker = get_broker()
 
-    # Validate mode
-    try:
-        mode = SearchMode(req.mode)
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid mode: {req.mode}. Must be one of: recovery, discovery, grounding, research")
-
-    # Build query
     query = SearchQuery(
         query=req.query,
-        mode=mode,
+        mode=SearchMode(req.mode),
         max_results=req.max_results,
     )
 

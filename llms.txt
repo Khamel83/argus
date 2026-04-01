@@ -1,0 +1,34 @@
+# Argus
+
+> Argus is a standalone search broker that routes queries across multiple web-search providers (SearXNG, Brave, Serper, Tavily, Exa) with automatic fallback, Reciprocal Rank Fusion ranking, health tracking, and budget enforcement. Connect via HTTP API, CLI, MCP server, or Python import.
+
+## Installation
+
+> pip install -e ".[mcp]" to install with MCP support. Configure provider API keys in .env. Run `argus serve` to start the HTTP API on port 8000, or `argus mcp serve` to start the MCP server over stdio.
+
+## MCP Server
+
+> Start with `argus mcp serve`. Tools: search_web, recover_url, expand_links, search_health, search_budgets, test_provider. Add to Claude Code, Cursor, or VS Code by adding the MCP config JSON to your client settings. See README for copy-paste configs.
+
+## HTTP API
+
+> POST /api/search with {"query": "...", "mode": "discovery", "max_results": 10}. OpenAPI docs at /docs. Endpoints: /api/search, /api/recover-url, /api/expand, /api/health, /api/health/detail, /api/budgets, /api/test-provider.
+
+## Search Modes
+
+> discovery: find related pages and canonical sources. recovery: find a moved or dead URL. grounding: few live sources for fact-checking. research: broad exploratory retrieval.
+
+## Python SDK
+
+> from argus.broker.router import create_broker; from argus.models import SearchQuery, SearchMode; broker = create_broker(); response = await broker.search(SearchQuery(query="...", mode=SearchMode.DISCOVERY))
+
+## CLI
+
+> argus search -q "query" --mode discovery; argus recover-url -u "https://dead.link"; argus health; argus budgets; argus test-provider -p brave
+
+## Documentation
+
+> README.md — full documentation with quick start, integration examples, and configuration reference
+> docs/providers.md — provider setup, Docker networking, and configuration
+> CLAUDE.md — developer guide and architecture overview
+> CONTRIBUTING.md — contribution guide and adding providers

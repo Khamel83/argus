@@ -6,6 +6,7 @@ ranking, deduplication, and persistence.
 """
 
 import asyncio
+import os
 import uuid
 from datetime import datetime
 from typing import List, Optional
@@ -51,7 +52,9 @@ class SearchBroker:
         self._providers = providers
         self._cache = cache or SearchCache()
         self._health = health_tracker or HealthTracker()
-        self._budgets = budget_tracker or BudgetTracker()
+        self._budgets = budget_tracker or BudgetTracker(
+            persist_path=os.environ.get("ARGUS_BUDGET_DB_PATH", None)
+        )
         self._config = get_config()
 
         # Initialize budgets from config

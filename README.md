@@ -1,5 +1,9 @@
 # Argus
 
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-brightgreen)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![MCP Server](https://img.shields.io/badge/MCP-server-purple)](https://modelcontextprotocol.io/)
+
 Stop wiring search APIs into every project. Argus is one endpoint that talks to SearXNG, Brave, Serper, Tavily, and Exa — with automatic fallback, result ranking, health tracking, and budget enforcement. Connect via HTTP, CLI, MCP, or Python import. Add a provider key, it works. Remove it, it degrades gracefully.
 
 ## What It Does
@@ -106,7 +110,7 @@ argus test-provider -p brave
 
 ### MCP
 
-Add to your MCP client config:
+**Claude Code** — add to your MCP settings:
 
 ```json
 {
@@ -114,6 +118,23 @@ Add to your MCP client config:
     "argus": {
       "command": "argus",
       "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+**Cursor** — add to `.cursor/mcp.json` in your project root (same JSON).
+
+**VS Code** — add to your settings under `mcp.servers` (same JSON).
+
+**SSE transport** (remote access):
+
+```json
+{
+  "mcpServers": {
+    "argus": {
+      "command": "argus",
+      "args": ["mcp", "serve", "--transport", "sse", "--host", "127.0.0.1", "--port", "8001"]
     }
   }
 }
@@ -154,6 +175,10 @@ Key variables:
 - `ARGUS_BRAVE_API_KEY`, `ARGUS_SERPER_API_KEY`, etc. — provider keys
 - `ARGUS_CACHE_TTL_HOURS` — result cache TTL (default: 168)
 - `ARGUS_BRAVE_MONTHLY_BUDGET_USD` — per-provider monthly spend limit
+
+## Contributing
+
+Bug reports, feature ideas, and PRs are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the quick guide.
 
 ## Roadmap
 
