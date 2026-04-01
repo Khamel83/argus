@@ -1,8 +1,145 @@
 # Argus
 
-Argus is a reusable, VPS-hosted search broker.
+Argus is a reusable, VPS-hosted search broker. It provides one stable interface over multiple web-search providers, with a free/self-hosted-first policy and explicit health, budget, and fallback behavior.
 
-It provides one stable interface over multiple web-search providers, with a free/self-hosted-first policy and explicit health, budget, and fallback behavior.
+## Quick Start
+
+**Prerequisites:** Python 3.12+, PostgreSQL. Optionally [SearXNG](https://github.com/searxng/searxng) for free local search.
+
+```bash
+# Install
+git clone https://github.com/khamel83/argus.git && cd argus
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
+
+# Configure
+cp .env.example .env
+# Edit .env — at minimum set ARGUS_DB_URL and enable providers you have keys for
+
+# Run
+argus serve
+```
+
+Verify it's working:
+
+```bash
+# Health check
+curl http://localhost:8000/api/health
+# {"status":"ok"}
+
+# Search
+curl -X POST http://localhost:8000/api/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "python web frameworks 2025", "mode": "discovery", "max_results": 3}'
+```
+
+## Integration Examples
+
+### HTTP API
+
+```bash
+# Discovery search
+curl -X POST http://localhost:8000/api/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "fastapi tutorial", "mode": "discovery", "max_results": 5}'
+
+# Recover a dead URL
+curl -X POST http://localhost:8000/api/recover-url \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com/old-page", "title": "Example Article"}'
+
+# Expand with related links
+curl -X POST http://localhost:8000/api/expand \
+  -H "Content-Type: application/json" \
+  -d '{"query": "system design patterns"}'
+
+# Check health and budgets
+curl http://localhost:8000/api/health/detail
+curl http://localhost:8000/api/budgets
+```
+
+All endpoints return JSON. See `docs/search-operations.md` for full API reference.
+
+### CLI
+
+```bash
+# Search (discovery mode by default)
+argus search -q "python web framework"
+argus search -q "python web framework" --mode research -n 20
+argus search -q "https://dead.link" --mode recovery
+
+# JSON output
+argus search -q "fastapi" --json
+
+# Admin
+argus health
+argus budgets
+argus test-provider -p brave
+argus test-provider -p searxng -q "climate change"
+```
+
+### MCP (for Claude, Cursor, or any MCP client)
+
+Add to your MCP config:
+
+**Claude Code** (`~/.claude.json`):
+```json
+{
+  "mcpServers": {
+    "argus": {
+      "command": "argus",
+      "args": ["mcp", "serve"],
+      "transport": "stdio"
+    }
+  }
+}
+```
+
+**Claude Desktop** (`claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "argus": {
+      "command": "/path/to/.venv/bin/argus",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+**Remote MCP** (SSE transport):
+```json
+{
+  "mcpServers": {
+    "argus": {
+      "url": "http://localhost:8001/mcp"
+    }
+  }
+}
+```
+
+MCP tools available: `search_web`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`
+
+### Python
+
+```python
+from argus.broker.router import create_broker
+from argus.models import SearchQuery, SearchMode
+
+broker = create_broker()
+
+# Discovery search
+response = await broker.search(
+    SearchQuery(query="python web frameworks", mode=SearchMode.DISCOVERY, max_results=10)
+)
+
+for result in response.results:
+    print(f"{result.title}: {result.url} (score: {result.score:.3f})")
+
+# Check traces (which providers returned what)
+for trace in response.traces:
+    print(f"  {trace.provider}: {trace.status} ({trace.results_count} results, {trace.latency_ms}ms)")
+```
 
 ## Goals
 
@@ -15,7 +152,7 @@ It provides one stable interface over multiple web-search providers, with a free
 - Clear provider health and budget tracking
 - One normalized result schema for all callers
 
-## Provider order
+## Provider Order
 
 Default provider chain:
 
@@ -32,51 +169,52 @@ Initial policy:
 - `grounding`: cache -> brave -> serper -> searxng
 - `research`: cache -> tavily -> exa -> brave -> serper
 
-These must be config-driven.
+These are config-driven.
 
-## Core features
+## Core Features
 
 - Unified search broker
-- Provider adapters
-- Query/result normalization
-- Ranking and dedupe
-- Query caching
-- Provider health tracking
-- Provider budget tracking
+- Provider adapters (normalize all responses to one schema)
+- Ranking and deduplication (reciprocal rank fusion)
+- Query caching (configurable TTL)
+- Provider health tracking (auto-disable after repeated failures)
+- Provider budget tracking (monthly spend limits)
 - URL recovery mode
 - Discovery mode
 - Grounding mode
 - Research mode
-- HTTP API
+- HTTP API with OpenAPI docs at `/docs`
 - CLI
 - Optional MCP wrapper
 
-## Primary endpoints
+## Primary Endpoints
 
-- `POST /search`
-- `POST /recover-url`
-- `POST /expand`
-- `GET /health`
-- `GET /budgets`
-- `POST /test-provider`
+- `POST /api/search`
+- `POST /api/recover-url`
+- `POST /api/expand`
+- `GET /api/health`
+- `GET /api/budgets`
+- `POST /api/test-provider`
 
-## Initial architecture
+## Architecture
 
-```text
+```
 Argus
 ├── argus/
-│   ├── providers/
-│   ├── broker/
-│   ├── persistence/
-│   ├── api/
-│   ├── cli/
-│   └── mcp/
+│   ├── providers/     # Provider adapters (SearXNG, Brave, Serper, Tavily, Exa)
+│   ├── broker/        # Routing, ranking, caching, health, budgets
+│   ├── persistence/   # PostgreSQL via SQLAlchemy
+│   ├── api/           # FastAPI HTTP endpoints
+│   ├── cli/           # Click CLI
+│   ├── mcp/           # MCP server (stdio + SSE)
+│   ├── models.py      # Core data models
+│   └── config.py      # Environment-based configuration
 ├── tests/
 ├── docs/
 └── .env.example
 ```
 
-## Design rules
+## Design Rules
 
 1. Argus is the system of record for web-search routing logic.
 2. Provider-specific response shapes must never leak outside adapters.
@@ -98,26 +236,16 @@ Argus expects:
 * API keys for Brave and Serper
 * Existing Tavily and Exa keys if enabled
 
-## Manual prerequisites
+See `.env.example` for all configuration variables.
 
-Before implementation:
+## Downstream Consumers
 
-1. Deploy SearXNG
-2. Verify `format=json` works
-3. Get Brave API key
-4. Get Serper API key
-5. Put Tavily and Exa keys in `.env`
-6. Confirm PostgreSQL connection details
-7. Decide initial monthly budgets
-
-## Downstream consumers
-
-Argus should be usable by:
+Argus is designed to be usable by any project:
 
 * local Python code
 * remote HTTP clients
 * CLI workflows
-* AI hosts through MCP
+* AI agents through MCP
 * other internal projects
 
 ## Non-goals for v1
@@ -129,9 +257,9 @@ Argus should be usable by:
 * full auth platform
 * public multi-tenant service
 
-## Success criteria for v1
+## Success Criteria for v1
 
-* One reliable `POST /search`
+* One reliable `POST /api/search`
 * Search works even if one or two providers fail
 * SearXNG works as local fallback floor
 * Provider health is visible
@@ -139,3 +267,7 @@ Argus should be usable by:
 * Results are normalized
 * URL recovery works
 * Integration clients can call one interface instead of many
+
+## License
+
+MIT
