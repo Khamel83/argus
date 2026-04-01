@@ -1,18 +1,18 @@
 # Argus
 
-> Argus is a standalone search broker that routes queries across multiple web-search providers (SearXNG, Brave, Serper, Tavily, Exa) with automatic fallback, Reciprocal Rank Fusion ranking, health tracking, and budget enforcement. Connect via HTTP API, CLI, MCP server, or Python import.
+> Multi-provider search broker for AI agents. Routes queries across SearXNG, Brave, Serper, Tavily, and Exa with automatic fallback, RRF ranking, health tracking, and budget enforcement. Extract clean text from any URL. Multi-turn sessions with context-enriched follow-ups. API key auth. SQLite only — zero external database dependencies. Connect via HTTP, CLI, MCP, or Python.
 
 ## Installation
 
-> pip install -e ".[mcp]" to install with MCP support. Configure provider API keys in .env. Run `argus serve` to start the HTTP API on port 8000, or `argus mcp serve` to start the MCP server over stdio.
+> pip install -e ".[mcp]" to install with MCP support. Configure provider API keys in .env (at least one of: Brave, Serper, Tavily, Exa). Run `argus serve` for HTTP API on port 8000, or `argus mcp serve` for MCP server over stdio. Docker: `docker compose up -d`.
 
 ## MCP Server
 
-> Start with `argus mcp serve`. Tools: search_web, recover_url, expand_links, search_health, search_budgets, test_provider. Add to Claude Code, Cursor, or VS Code by adding the MCP config JSON to your client settings. See README for copy-paste configs.
+> Start with `argus mcp serve`. Tools: search_web, extract_content, recover_url, expand_links, search_health, search_budgets, test_provider. Add to Claude Code, Cursor, or VS Code via MCP config JSON. See README for copy-paste configs.
 
 ## HTTP API
 
-> POST /api/search with {"query": "...", "mode": "discovery", "max_results": 10}. OpenAPI docs at /docs. Endpoints: /api/search, /api/recover-url, /api/expand, /api/health, /api/health/detail, /api/budgets, /api/test-provider.
+> POST /api/search with {"query": "...", "mode": "discovery", "max_results": 10}. Set ARGUS_API_KEY to require authentication (health exempt). OpenAPI docs at /docs. Endpoints: /api/search, /api/extract, /api/recover-url, /api/expand, /api/health, /api/budgets.
 
 ## Search Modes
 
@@ -20,15 +20,19 @@
 
 ## Python SDK
 
-> from argus.broker.router import create_broker; from argus.models import SearchQuery, SearchMode; broker = create_broker(); response = await broker.search(SearchQuery(query="...", mode=SearchMode.DISCOVERY))
+> from argus.broker.router import create_broker; from argus.models import SearchQuery, SearchMode; broker = create_broker(); response = await broker.search(SearchQuery(query="...", mode=SearchMode.DISCOVERY)); content = await extract_url(response.results[0].url)
 
 ## CLI
 
-> argus search -q "query" --mode discovery; argus recover-url -u "https://dead.link"; argus health; argus budgets; argus test-provider -p brave
+> argus search -q "query" --mode discovery; argus extract -u "https://example.com/article"; argus health; argus budgets; argus test-provider -p brave
+
+## Architecture
+
+> SQLite for all persistence (search history, budgets, sessions, extraction cache). WAL mode for reliability. Generic TTLCache and SlidingWindowLimiter in argus/core/. No SQLAlchemy, no PostgreSQL.
 
 ## Documentation
 
-> README.md — full documentation with quick start, integration examples, and configuration reference
-> docs/providers.md — provider setup, Docker networking, and configuration
+> README.md — full documentation with quick start, integration examples, configuration
+> docs/providers.md — provider setup, Docker networking, budget configuration
 > CLAUDE.md — developer guide and architecture overview
 > CONTRIBUTING.md — contribution guide and adding providers

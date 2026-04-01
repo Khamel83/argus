@@ -2,7 +2,7 @@
 
 ## Overview
 
-Search broker with content extraction and multi-turn sessions. Seven provider adapters (SearXNG, Brave, Serper, Tavily, Exa active; SearchAPI, You.com stubs). Automatic fallback, result ranking, health tracking, budget enforcement, token balance tracking with auto-decrement. Extract clean text from any URL — results cached in memory (168h TTL). Domain rate limiting (10 req/min/domain). Persistent sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
+Search broker with content extraction and multi-turn sessions. Five provider adapters (SearXNG, Brave, Serper, Tavily, Exa). Automatic fallback, result ranking, health tracking, budget enforcement, token balance tracking with auto-decrement. Extract clean text from any URL — results cached in memory + SQLite (168h TTL). Domain rate limiting (10 req/min/domain). Persistent sessions (SQLite). API key auth. Connect via HTTP, CLI, MCP, or Python import. Zero external database dependencies.
 
 ## Key Commands
 
@@ -53,10 +53,11 @@ Caller (CLI/HTTP/MCP/Python)
 | `argus/providers/` | Provider adapters (one per search API) |
 | `argus/extraction/` | URL content extraction (trafilatura + Jina) |
 | `argus/sessions/` | Multi-turn session store and query refinement |
-| `argus/api/` | FastAPI HTTP endpoints |
+| `argus/api/` | FastAPI HTTP endpoints, auth, rate limiting |
 | `argus/cli/` | Click CLI commands |
 | `argus/mcp/` | MCP server for LLM integration |
-| `argus/persistence/` | PostgreSQL query/result storage |
+| `argus/persistence/` | SQLite search history |
+| `argus/core/` | Generic TTLCache, SlidingWindowLimiter |
 
 ## Interfaces
 
@@ -78,7 +79,7 @@ Caller (CLI/HTTP/MCP/Python)
 
 ## Content Extraction
 
-Hybrid approach: trafilatura (local, fast, runs in thread pool) tries first, Jina Reader API (external) as fallback. Returns clean text with title, author, date, word count. SSRF protection blocks private IPs. Results cached in memory (168h TTL). Domain rate limiting (10 req/min/domain). Jina token balance auto-decrements on use.
+Hybrid approach: trafilatura (local, fast, runs in thread pool) tries first, Jina Reader API (external) as fallback. Returns clean text with title, author, date, word count. SSRF protection blocks private IPs. Results cached in memory + SQLite (168h TTL, survives restarts). Domain rate limiting (10 req/min/domain). Jina token balance auto-decrements on use.
 
 ```bash
 # CLI

@@ -1,6 +1,6 @@
 # Argus
 
-> Argus is a standalone search broker that routes queries across multiple web-search providers (SearXNG, Brave, Serper, Tavily, Exa) with automatic fallback, Reciprocal Rank Fusion ranking, health tracking, and budget enforcement. Connect via HTTP, CLI, MCP, or Python import. Add a provider key, it works. Remove it, it degrades gracefully.
+> Argus is a multi-provider search broker for AI agents. Routes queries across SearXNG, Brave, Serper, Tavily, and Exa with automatic fallback, RRF ranking, health tracking, and budget enforcement. Extract clean text from any URL. Multi-turn sessions with context-enriched follow-ups. API key auth. SQLite only — zero external database dependencies. Connect via HTTP, CLI, MCP, or Python.
 
 ## What It Does
 
@@ -8,11 +8,13 @@
 
 > The output is designed for LLM consumption — enough context (title, snippet, URL, domain, relevance score) for a model to decide "this link is worth reading" without downloading the whole page.
 
+> Content extraction fetches clean article text from any URL (trafilatura primary, Jina fallback), cached in memory and SQLite. Multi-turn sessions remember prior queries for smarter follow-ups.
+
 ## Installation
 
 ### Docker (recommended)
 
-> cp .env.example .env and edit with your provider keys. docker compose up -d starts Argus + Postgres + SearXNG. Verify with curl http://localhost:8000/api/health.
+> cp .env.example .env and edit with your provider keys. docker compose up -d starts Argus. Verify with curl http://localhost:8005/api/health.
 
 ### Local install
 
@@ -36,23 +38,21 @@
 
 ### HTTP API
 
-> POST /api/search with {"query": "...", "mode": "discovery", "max_results": 5}. POST /api/recover-url for dead URL recovery. GET /api/health/detail for provider status. GET /api/budgets for budget tracking. OpenAPI docs at /docs.
+> POST /api/search with {"query": "...", "mode": "discovery", "max_results": 5}. POST /api/extract for content extraction. POST /api/recover-url for dead URL recovery. Set ARGUS_API_KEY to require authentication (health exempt). OpenAPI docs at /docs.
 
 ### CLI
 
-> argus search -q "query" --mode discovery; argus search -q "query" --mode research -n 20; argus recover-url -u "https://dead.link"; argus health; argus budgets; argus test-provider -p brave
+> argus search -q "query" --mode discovery; argus search -q "query" --mode research -n 20; argus extract -u "https://example.com/article"; argus recover-url -u "https://dead.link"; argus health; argus budgets; argus test-provider -p brave
 
 ### MCP
 
-> Start with `argus mcp serve` (stdio) or `argus mcp serve --transport sse --port 8001` (HTTP). Tools: search_web, recover_url, expand_links, search_health, search_budgets, test_provider. Resources: argus://providers/status, argus://providers/budgets, argus://policies/current.
+> Start with `argus mcp serve` (stdio) or `argus mcp serve --transport sse --port 8001` (HTTP). Tools: search_web, extract_content, recover_url, expand_links, search_health, search_budgets, test_provider.
 
 > Claude Code config: {"mcpServers": {"argus": {"command": "argus", "args": ["mcp", "serve"]}}}
-> Cursor config: same JSON in .cursor/mcp.json
-> VS Code config: same JSON in settings.json under mcp.servers
 
 ### Python
 
-> from argus.broker.router import create_broker; from argus.models import SearchQuery, SearchMode; broker = create_broker(); response = await broker.search(SearchQuery(query="...", mode=SearchMode.DISCOVERY, max_results=10)); results = response.results (each has url, title, snippet, domain, provider, score)
+> from argus.broker.router import create_broker; from argus.models import SearchQuery, SearchMode; from argus.extraction import extract_url; broker = create_broker(); response = await broker.search(SearchQuery(query="...", mode=SearchMode.DISCOVERY)); content = await extract_url(response.results[0].url)
 
 ## Search Modes
 
@@ -63,16 +63,16 @@
 
 ## Configuration
 
-> All config via environment variables with ARGUS_ prefix. Key variables: ARGUS_DB_URL (PostgreSQL), ARGUS_SEARXNG_BASE_URL, provider API keys, ARGUS_CACHE_TTL_HOURS (default 168), per-provider monthly budgets (ARGUS_BRAVE_MONTHLY_BUDGET_USD, etc.), ARGUS_RATE_LIMIT (default 60 req/min), ARGUS_BUDGET_DB_PATH (SQLite budget persistence).
+> All config via environment variables with ARGUS_ prefix. Key variables: ARGUS_DB_URL (SQLite), ARGUS_BUDGET_DB_PATH (SQLite for budgets/sessions/extraction cache), ARGUS_API_KEY (auth), provider API keys, ARGUS_CACHE_TTL_HOURS (default 168), ARGUS_RATE_LIMIT (default 60 req/min), ARGUS_JINA_API_KEY (extraction fallback).
 
 ## Architecture
 
-> Caller (CLI/HTTP/MCP/Python) → SearchBroker → routing policy (per mode) → providers (parallel, with fallback) → cache → dedupe → RRF ranking → response. Provider adapters in argus/providers/ hide provider-specific logic. Broker in argus/broker/ owns routing, retries, budgets, degradation. API layer in argus/api/ is thin.
+> Caller (CLI/HTTP/MCP/Python) → SearchBroker → routing policy (per mode) → providers (cheap-first, with fallback) → cache (TTLCache) → dedupe → RRF ranking → response → SQLite persistence (non-fatal). ContentExtractor: trafilatura → Jina, cached in memory + SQLite. Generic TTLCache and SlidingWindowLimiter in argus/core/. No external database dependencies.
 
 ## Documentation
 
-> README.md — full documentation with quick start, integration examples, and configuration reference
-> docs/providers.md — provider setup, Docker networking, and configuration details
+> README.md — full documentation with quick start, integration examples, configuration
+> docs/providers.md — provider setup, Docker networking, budget configuration
 > CONTRIBUTING.md — contribution guide and how to add providers
 > CLAUDE.md — developer guide and architecture overview
-> docs/go-to-market.md — publicization strategy and timeline
+> docs/go-to-market.md — distribution strategy

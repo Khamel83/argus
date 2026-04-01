@@ -59,7 +59,7 @@
 
 ## Competitive Position
 
-Argus is the only search broker that: multi-provider routing + RRF ranking + budget enforcement + health tracking + MCP native. The closest competitor (`multi-search-api`) has no MCP, no HTTP API, no ranking, no budgets. The MCP search category has 903 repos on GitHub but **zero** do all of this.
+Argus is the only search broker with: multi-provider routing + RRF ranking + budget enforcement + health tracking + MCP native + zero external database dependencies. The MCP search category on GitHub has ~500 repos — all single-provider. Nothing else does multi-provider routing as a service.
 
 ## Distribution Channels
 
