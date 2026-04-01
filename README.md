@@ -20,6 +20,7 @@ Argus replaces that with one endpoint. You add it to your agent once — the sam
 - **Better results than any single provider** — Reciprocal Rank Fusion merges results from multiple sources. A URL that appears in both Brave and Serper ranks higher than one that only appears in one.
 - **Content extraction built in** — found a useful link? Pass the URL to Argus and get clean article text back. Trafilatura tries first (local, free), Jina Reader falls back if needed. Cached in memory and SQLite so the same URL is never fetched twice.
 - **Multi-turn memory** — Argus remembers prior queries in a session. Follow-up searches like "fastapi" after "python web frameworks" get context-enriched automatically.
+- **Budget-aware by default** — each provider has a generous free tier (Brave: 2k/mo, Serper: 2.5k/mo, Tavily: 1k/mo, Exa: 1k/mo). Argus tracks usage per provider and automatically rotates away from one when its quota is hit. Combined, that's thousands of free searches per month — enough for most personal and development use.
 
 Think of it as the LiteLLM of web search — one API, multiple providers, unified interface.
 
