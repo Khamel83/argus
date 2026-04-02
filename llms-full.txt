@@ -12,12 +12,6 @@
 
 ## Installation
 
-### Docker (recommended)
-
-> cp .env.example .env and edit with your provider keys. docker compose up -d starts Argus. Verify with curl http://localhost:8005/api/health.
-
-### Local install
-
 > git clone https://github.com/Khamel83/argus.git && cd argus; python -m venv .venv && source .venv/bin/activate; pip install -e ".[mcp]"; argus serve
 
 ## Provider Setup
@@ -63,7 +57,7 @@
 
 ## Configuration
 
-> All config via environment variables with ARGUS_ prefix. Key variables: ARGUS_DB_URL (SQLite), ARGUS_BUDGET_DB_PATH (SQLite for budgets/sessions/extraction cache), ARGUS_API_KEY (auth), provider API keys, ARGUS_CACHE_TTL_HOURS (default 168), ARGUS_RATE_LIMIT (default 60 req/min), ARGUS_JINA_API_KEY (extraction fallback).
+> All config via environment variables with ARGUS_ prefix. Key variables: ARGUS_DB_PATH (SQLite — all tables in one file), ARGUS_API_KEY (auth), provider API keys (ARGUS_BRAVE_API_KEY, etc.), ARGUS_CACHE_TTL_HOURS (default 168), ARGUS_RATE_LIMIT (default 60 req/min), ARGUS_JINA_API_KEY (extraction fallback).
 
 ## Architecture
 
@@ -72,7 +66,6 @@
 ## Documentation
 
 > README.md — full documentation with quick start, integration examples, configuration
-> docs/providers.md — provider setup, Docker networking, budget configuration
+> docs/providers.md — provider setup and budget configuration
+> docs/routing-contract.md — authoritative routing, fallback, and ranking spec
 > CONTRIBUTING.md — contribution guide and how to add providers
-> CLAUDE.md — developer guide and architecture overview
-> docs/go-to-market.md — distribution strategy

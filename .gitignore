@@ -37,6 +37,7 @@ Thumbs.db
 *.db
 *.db-wal
 *.db-shm
+*.bak
 
 # Local operator/session artifacts
 1shot/

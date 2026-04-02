@@ -96,7 +96,7 @@ print(result.text)
 
 ## Multi-Turn Sessions
 
-Pass `session_id` to search to enable conversational refinement. The broker remembers prior queries and uses them to context-enrich follow-up searches. Sessions persist to SQLite (`argus_budgets.db`) across restarts.
+Pass `session_id` to search to enable conversational refinement. The broker remembers prior queries and uses them to context-enrich follow-up searches. Sessions persist to SQLite (`argus.db`) across restarts.
 
 ```bash
 # CLI
@@ -119,4 +119,4 @@ All config via env vars (see `.env.example`). Missing API keys degrade gracefull
 - Extracted content is `ExtractedContent`: url, title, text, author, date, word_count
 - Routes prefixed with `/api`
 - Free/self-hosted-first: SearXNG is always the fallback floor
-- Token balances persist in SQLite (`argus_budgets.db`) alongside budget tracking
+- Token balances persist in SQLite (`argus.db`) alongside budget tracking

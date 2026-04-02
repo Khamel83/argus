@@ -4,7 +4,7 @@
 
 ## Installation
 
-> pip install -e ".[mcp]" to install with MCP support. Configure provider API keys in .env (at least one of: Brave, Serper, Tavily, Exa). Run `argus serve` for HTTP API on port 8000, or `argus mcp serve` for MCP server over stdio. Docker: `docker compose up -d`.
+> pip install -e ".[mcp]" to install with MCP support. Configure provider API keys in .env (at least one of: Brave, Serper, Tavily, Exa). Run `argus serve` for HTTP API on port 8000, or `argus mcp serve` for MCP server over stdio.
 
 ## MCP Server
 
@@ -33,6 +33,6 @@
 ## Documentation
 
 > README.md — full documentation with quick start, integration examples, configuration
-> docs/providers.md — provider setup, Docker networking, budget configuration
-> CLAUDE.md — developer guide and architecture overview
+> docs/providers.md — provider setup and budget configuration
+> docs/routing-contract.md — authoritative routing, fallback, and ranking spec
 > CONTRIBUTING.md — contribution guide and adding providers
