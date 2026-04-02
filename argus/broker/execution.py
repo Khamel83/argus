@@ -1,5 +1,7 @@
 """Provider execution services for the search broker."""
 
+import asyncio
+
 from dataclasses import dataclass
 from typing import Dict, List, Sequence
 
@@ -152,6 +154,22 @@ class ProviderExecutor:
             live_providers_used=live_providers_used,
         )
 
+    def _record_outcome(
+        self,
+        provider_name: ProviderName,
+        trace: ProviderTrace,
+        results: List[SearchResult],
+    ) -> None:
+        """Record health/budget after a successful or errored provider call."""
+        if trace.status == "success":
+            self._health.record_success(provider_name)
+            cost = self._cost_estimates.get(provider_name, 0.0)
+            self._budgets.record_usage(provider_name, cost)
+            trace.budget_remaining = self._budgets.get_remaining_budget(provider_name)
+            trace.results_count = len(results)
+        elif trace.status == "error":
+            self._health.record_failure(provider_name)
+
     async def _execute_provider(
         self,
         query: SearchQuery,
@@ -160,16 +178,16 @@ class ProviderExecutor:
     ) -> tuple[List[SearchResult], ProviderTrace]:
         try:
             results, trace = await provider.search(query)
-            if trace.status == "success":
-                self._health.record_success(provider_name)
-                cost = self._cost_estimates.get(provider_name, 0.0)
-                self._budgets.record_usage(provider_name, cost)
-                trace.budget_remaining = self._budgets.get_remaining_budget(provider_name)
-                trace.results_count = len(results)
-            elif trace.status == "error":
-                self._health.record_failure(provider_name)
+            self._record_outcome(provider_name, trace, results)
             return results, trace
         except Exception as exc:
-            logger.warning("Provider %s raised unhandled: %s", provider_name, exc)
-            self._health.record_failure(provider_name)
-            return [], ProviderTrace(provider=provider_name, status="error", error=str(exc))
+            logger.warning("Provider %s raised unhandled: %s (retrying in 1s)", provider_name, exc)
+            await asyncio.sleep(1)
+            try:
+                results, trace = await provider.search(query)
+                self._record_outcome(provider_name, trace, results)
+                return results, trace
+            except Exception as retry_exc:
+                logger.warning("Provider %s retry also failed: %s", provider_name, retry_exc)
+                self._health.record_failure(provider_name)
+                return [], ProviderTrace(provider=provider_name, status="error", error=str(retry_exc))
