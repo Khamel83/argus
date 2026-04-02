@@ -12,7 +12,7 @@ from argus.broker.session_flow import SessionSearchService
 from argus.config import get_config
 from argus.core.cache import TTLCache, search_cache_key
 from argus.logging import get_logger
-from argus.models import ProviderName, SearchQuery, SearchResponse
+from argus.models import ProviderName, ProviderStatus, SearchQuery, SearchResponse
 from argus.persistence.db import SearchPersistenceGateway
 from argus.providers.base import BaseProvider
 
@@ -113,6 +113,8 @@ class SearchBroker:
 
     def get_provider_status(self, provider: ProviderName) -> dict:
         """Get combined status for a provider (config + health + budget)."""
+        from datetime import timezone
+
         provider_obj = self._providers.get(provider)
         base_status = provider_obj.status() if provider_obj else "unknown"
 
@@ -125,12 +127,44 @@ class SearchBroker:
         if budget_status:
             effective = budget_status.value
 
+        # Derived diagnostic fields
+        missing_key = base_status == ProviderStatus.UNAVAILABLE_MISSING_KEY
+        budget_exhausted = budget_status == ProviderStatus.BUDGET_EXHAUSTED
+
+        health_obj = self._health.get_health(provider)
+        cooldown_until = None
+        if health_obj.is_in_cooldown() and health_obj.disabled_until is not None:
+            from datetime import datetime
+            cooldown_until = datetime.fromtimestamp(
+                health_obj.disabled_until, tz=timezone.utc
+            ).isoformat()
+
+        if effective == ProviderStatus.DISABLED_BY_CONFIG:
+            reason = "disabled in config"
+        elif effective == ProviderStatus.UNAVAILABLE_MISSING_KEY:
+            reason = "missing API key"
+        elif effective == ProviderStatus.BUDGET_EXHAUSTED:
+            reason = "monthly budget exhausted"
+        elif effective == ProviderStatus.TEMPORARILY_DISABLED:
+            reason = (
+                f"{health_obj.consecutive_failures} consecutive failures"
+                + (f" — in cooldown until {cooldown_until}" if cooldown_until else "")
+            )
+        elif effective == ProviderStatus.DEGRADED:
+            reason = f"degraded — {health_obj.consecutive_failures} consecutive failures"
+        else:
+            reason = "healthy"
+
         return {
             "provider": provider.value,
             "config_status": base_status,
-            "health": self._health.get_health(provider).__dict__ if provider in self._health._health else None,
+            "health": health_obj.__dict__ if provider in self._health._health else None,
             "budget_remaining": self._budgets.get_remaining_budget(provider),
             "effective_status": effective,
+            "missing_key": missing_key,
+            "budget_exhausted": budget_exhausted,
+            "cooldown_until": cooldown_until,
+            "reason": reason,
         }
 
 
