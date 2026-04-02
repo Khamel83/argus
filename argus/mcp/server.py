@@ -12,6 +12,8 @@ from argus.logging import get_logger, setup_logging
 from argus.mcp import tools as mcp_tools
 from argus.mcp import resources as mcp_resources
 
+__version__ = __import__("argus").__version__
+
 logger = get_logger("mcp.server")
 
 
@@ -32,7 +34,7 @@ async def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int
     setup_logging("INFO")
     broker = create_broker()
 
-    mcp = FastMCP("argus", version="1.0.0")
+    mcp = FastMCP("argus", version=__version__)
 
     # Register tools
     @mcp.tool()

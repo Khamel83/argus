@@ -17,6 +17,8 @@ from argus.api.routes_search import router as search_router
 from argus.broker.router import SearchBroker, create_broker
 from argus.logging import get_logger
 
+__version__ = __import__("argus").__version__
+
 logger = get_logger("api")
 
 
@@ -66,7 +68,7 @@ def create_app(
     app = FastAPI(
         title="Argus",
         description="Standalone search broker service",
-        version="1.0.0",
+        version=__version__,
         lifespan=lifespan,
     )
     app.state.get_broker = _build_broker_provider(broker, broker_factory)

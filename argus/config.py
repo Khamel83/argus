@@ -40,8 +40,6 @@ class ArgusConfig:
     exa: ProviderConfig = field(default_factory=ProviderConfig)
     host: str = "127.0.0.1"
     port: int = 8000
-    allow_mcp: bool = False
-    allow_web_ui: bool = False
     log_full_results: bool = False
     log_provider_payloads: bool = False
     session_max_turns: int = 20
@@ -80,7 +78,7 @@ class EnvironmentConfigLoader:
         secrets_resolver: SecretsResolver | None = None,
     ):
         self._environ = environ if environ is not None else os.environ
-        self._secrets = secrets_resolver or SubprocessSecretsResolver()
+        self._secrets = secrets_resolver or SecretsResolver()
 
     def get_str(
         self,
@@ -195,8 +193,6 @@ class EnvironmentConfigLoader:
             exa=self.provider_config("EXA", enabled_default=True, timeout_default=20),
             host=self.get_str("ARGUS_HOST", "127.0.0.1"),
             port=self.get_int("ARGUS_PORT", 8000),
-            allow_mcp=self.get_bool("ARGUS_ALLOW_MCP"),
-            allow_web_ui=self.get_bool("ARGUS_ALLOW_WEB_UI"),
             log_full_results=self.get_bool("ARGUS_LOG_FULL_RESULTS"),
             log_provider_payloads=self.get_bool("ARGUS_LOG_PROVIDER_PAYLOADS"),
             session_max_turns=self.get_int("ARGUS_SESSION_MAX_TURNS", 20),
