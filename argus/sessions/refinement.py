@@ -3,6 +3,12 @@ Query refinement using session context.
 
 Builds a context-enriched query from prior session history
 so that follow-up searches are informed by what came before.
+
+NOTE: This is simple string concatenation, not semantic understanding.
+The refinement prepends prior query text to short follow-up queries.
+It does not perform intent parsing, entity resolution, or contextual
+rewriting. For complex conversational shifts, consider an LLM-based
+approach — this module intentionally avoids that dependency.
 """
 
 from typing import List, Optional

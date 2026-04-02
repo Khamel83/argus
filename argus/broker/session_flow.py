@@ -19,6 +19,9 @@ class SessionSearchService:
         session_id: Optional[str] = None,
     ) -> tuple[SearchResponse, Optional[str]]:
         from argus.sessions.refinement import refine_query
+        # NOTE: refine_query uses simple concatenation, not semantic understanding.
+        # It works well for straightforward follow-ups but won't handle
+        # complex context shifts or pronoun resolution.
 
         session = None
         effective_session_id = session_id
