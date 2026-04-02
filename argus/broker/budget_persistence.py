@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS budget_usage (
 CREATE INDEX IF NOT EXISTS idx_budget_provider_ts
     ON budget_usage(provider, timestamp);
 
-CREATE TABLE IF NOT EXISTS token_balances (
+CREATE TABLE IF NOT EXISTS service_credits (
     service TEXT PRIMARY KEY,
     balance REAL NOT NULL,
     updated_at REAL NOT NULL
@@ -83,20 +83,23 @@ def _migrate_legacy_budget_db(conn: sqlite3.Connection, new_db_path: str) -> Non
         escaped = str(old_path).replace("'", "''")
         conn.execute(f"ATTACH DATABASE '{escaped}' AS legacy")
 
-        tables = (
-            "budget_usage",
-            "token_balances",
-            "extraction_cache",
-            "sessions",
-            "session_queries",
-            "session_extracted_urls",
+        # (legacy_table, main_table) — token_balances was renamed to service_credits
+        table_map = (
+            ("budget_usage", "budget_usage"),
+            ("token_balances", "service_credits"),
+            ("extraction_cache", "extraction_cache"),
+            ("sessions", "sessions"),
+            ("session_queries", "session_queries"),
+            ("session_extracted_urls", "session_extracted_urls"),
         )
-        for table in tables:
+        for legacy_name, main_name in table_map:
             try:
-                conn.execute(f"INSERT OR IGNORE INTO main.{table} SELECT * FROM legacy.{table}")
-                logger.debug("Migrated legacy.%s", table)
+                conn.execute(
+                    f"INSERT OR IGNORE INTO main.{main_name} SELECT * FROM legacy.{legacy_name}"
+                )
+                logger.debug("Migrated legacy.%s → main.%s", legacy_name, main_name)
             except sqlite3.OperationalError as exc:
-                logger.debug("Skipping legacy.%s: %s", table, exc)
+                logger.debug("Skipping legacy.%s: %s", legacy_name, exc)
 
         conn.commit()
         conn.execute("DETACH DATABASE legacy")
@@ -134,6 +137,19 @@ class BudgetStore:
             self._conn = sqlite3.connect(path)
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
+            # Rename token_balances → service_credits in existing DBs before running schema
+            tables = {
+                r[0]
+                for r in self._conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "token_balances" in tables and "service_credits" not in tables:
+                self._conn.execute(
+                    "ALTER TABLE token_balances RENAME TO service_credits"
+                )
+                self._conn.commit()
+                logger.info("Renamed token_balances → service_credits")
             self._conn.executescript(_SCHEMA)
             _migrate_legacy_budget_db(self._conn, path)
         return self._conn
@@ -171,25 +187,25 @@ class BudgetStore:
             self._conn.close()
             self._conn = None
 
-    def set_token_balance(self, service: str, balance: float) -> None:
+    def set_service_credit(self, service: str, balance: float) -> None:
         conn = self._get_conn()
         conn.execute(
-            "INSERT INTO token_balances (service, balance, updated_at) VALUES (?, ?, ?) "
+            "INSERT INTO service_credits (service, balance, updated_at) VALUES (?, ?, ?) "
             "ON CONFLICT(service) DO UPDATE SET balance = ?, updated_at = ?",
             (service, balance, time.time(), balance, time.time()),
         )
         conn.commit()
 
-    def get_token_balance(self, service: str) -> Optional[float]:
+    def get_service_credit(self, service: str) -> Optional[float]:
         conn = self._get_conn()
         row = conn.execute(
-            "SELECT balance FROM token_balances WHERE service = ?", (service,)
+            "SELECT balance FROM service_credits WHERE service = ?", (service,)
         ).fetchone()
         return float(row[0]) if row else None
 
-    def get_all_token_balances(self) -> dict:
+    def get_all_service_credits(self) -> dict:
         conn = self._get_conn()
-        rows = conn.execute("SELECT service, balance, updated_at FROM token_balances").fetchall()
+        rows = conn.execute("SELECT service, balance, updated_at FROM service_credits").fetchall()
         return {
             service: {"balance": balance, "updated_at": updated_at}
             for service, balance, updated_at in rows

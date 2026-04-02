@@ -57,10 +57,10 @@ async def budgets(broker: SearchBroker = Depends(get_broker)):
             "exhausted": broker.budget_tracker.is_budget_exhausted(pname),
         }
 
-    # Token balances for extraction services (Jina, etc.)
-    token_balances = {}
+    # Service credits (Jina reader tokens, etc.) — separate from provider budgets
+    service_credits = {}
     store = broker.budget_tracker._store
     if store:
-        token_balances = store.get_all_token_balances()
+        service_credits = store.get_all_service_credits()
 
-    return {"budgets": budget_info, "token_balances": token_balances}
+    return {"provider_budgets": budget_info, "service_credits": service_credits}

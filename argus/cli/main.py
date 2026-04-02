@@ -203,14 +203,14 @@ def budgets():
         status = "EXHAUSTED" if exhausted else "ok"
         click.echo(f"  {pname.value:12s} remaining={budget_str:12s} used=${usage:.4f} calls={count} [{status}]")
 
-    # Token balances
+    # Service credits (e.g. Jina reader tokens)
     store = broker.budget_tracker._store
     if store:
-        balances = store.get_all_token_balances()
-        if balances:
+        credits = store.get_all_service_credits()
+        if credits:
             click.echo()
-            click.echo("Token balances:")
-            for service, info in balances.items():
+            click.echo("Service credits:")
+            for service, info in credits.items():
                 click.echo(f"  {service:12s} balance={info['balance']:,.0f} tokens")
 
 
@@ -224,10 +224,10 @@ def set_balance(service, balance):
     broker = create_broker()
     store = broker.budget_tracker._store
     if store is None:
-        click.echo("Budget persistence not enabled. Set ARGUS_BUDGET_DB_PATH in .env", err=True)
+        click.echo("Budget persistence not enabled. Set ARGUS_DB_PATH in .env", err=True)
         sys.exit(1)
 
-    store.set_token_balance(service, balance)
+    store.set_service_credit(service, balance)
     click.echo(f"Set {service} balance to {balance:,.0f} tokens")
 
 

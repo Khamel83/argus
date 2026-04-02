@@ -88,10 +88,10 @@ class ContentExtractor:
             return
 
         try:
-            current = self._store.get_token_balance("jina")
+            current = self._store.get_service_credit("jina")
             if current is not None:
                 new_balance = current - self._jina_accumulated_tokens
-                self._store.set_token_balance("jina", new_balance)
+                self._store.set_service_credit("jina", new_balance)
                 logger.info(
                     "Jina token balance synced: %,.0f → %,.0f (%d calls, ~%d tokens)",
                     current, new_balance, self._jina_call_count, self._jina_accumulated_tokens,
