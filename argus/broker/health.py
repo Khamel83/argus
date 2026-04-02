@@ -18,6 +18,8 @@ class ProviderHealth:
     last_success: Optional[float] = None  # timestamp
     last_failure: Optional[float] = None  # timestamp
     disabled_until: Optional[float] = None  # cooldown deadline
+    force_disabled: bool = False  # manual operator override
+    force_disabled_reason: str = ""
 
     def record_success(self) -> None:
         self.consecutive_failures = 0
@@ -28,6 +30,8 @@ class ProviderHealth:
         self.last_failure = time.time()
 
     def is_in_cooldown(self) -> bool:
+        if self.force_disabled:
+            return False  # force_disabled has its own status; cooldown is separate
         if self.disabled_until is None:
             return False
         return time.time() < self.disabled_until
@@ -58,11 +62,29 @@ class HealthTracker:
 
     def get_status(self, provider: ProviderName) -> Optional[ProviderStatus]:
         health = self._get(provider)
+        if health.force_disabled:
+            return ProviderStatus.MANUALLY_DISABLED
         if health.is_in_cooldown():
             return ProviderStatus.TEMPORARILY_DISABLED
         if health.consecutive_failures >= self._failure_threshold:
             return ProviderStatus.DEGRADED
         return None
+
+    def force_disable(self, provider: ProviderName, reason: str = "") -> None:
+        health = self._get(provider)
+        health.force_disabled = True
+        health.force_disabled_reason = reason
+
+    def force_enable(self, provider: ProviderName) -> None:
+        health = self._get(provider)
+        health.force_disabled = False
+        health.force_disabled_reason = ""
+
+    def reset_cooldown(self, provider: ProviderName) -> None:
+        """Clear failure count and cooldown window (does not affect force_disabled)."""
+        health = self._get(provider)
+        health.consecutive_failures = 0
+        health.disabled_until = None
 
     def get_health(self, provider: ProviderName) -> ProviderHealth:
         return self._get(provider)
@@ -76,6 +98,8 @@ class HealthTracker:
                 "last_success": health.last_success,
                 "last_failure": health.last_failure,
                 "in_cooldown": health.is_in_cooldown(),
+                "force_disabled": health.force_disabled,
+                "force_disabled_reason": health.force_disabled_reason,
                 "status_override": status.value if status else None,
             }
         return result

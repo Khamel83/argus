@@ -30,6 +30,13 @@ CREATE TABLE IF NOT EXISTS service_credits (
     updated_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS provider_overrides (
+    provider TEXT PRIMARY KEY,
+    disabled INTEGER NOT NULL DEFAULT 0,
+    disabled_at REAL,
+    reason TEXT DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS extraction_cache (
     url_hash TEXT PRIMARY KEY,
     title TEXT DEFAULT '',
@@ -209,6 +216,31 @@ class BudgetStore:
         return {
             service: {"balance": balance, "updated_at": updated_at}
             for service, balance, updated_at in rows
+        }
+
+    def set_provider_override(
+        self, provider: str, disabled: bool, reason: str = ""
+    ) -> None:
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT INTO provider_overrides (provider, disabled, disabled_at, reason) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(provider) DO UPDATE SET disabled = ?, disabled_at = ?, reason = ?",
+            (provider, int(disabled), time.time(), reason,
+             int(disabled), time.time(), reason),
+        )
+        conn.commit()
+
+    def get_provider_overrides(self) -> dict[str, dict]:
+        """Return all manually disabled providers as {provider: {disabled, reason}}."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT provider, disabled, disabled_at, reason FROM provider_overrides "
+            "WHERE disabled = 1"
+        ).fetchall()
+        return {
+            provider: {"disabled": bool(disabled), "disabled_at": disabled_at, "reason": reason}
+            for provider, disabled, disabled_at, reason in rows
         }
 
     def get_extraction(self, url_hash: str, ttl_seconds: float) -> Optional[dict]:

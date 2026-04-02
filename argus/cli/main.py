@@ -281,6 +281,70 @@ def serve(host, port, reload):
 
 
 @cli.group()
+def provider():
+    """Manage provider runtime state."""
+    pass
+
+
+@provider.command(name="disable")
+@click.argument("name")
+@click.option("--reason", "-r", default="", help="Reason for disabling")
+def provider_disable(name, reason):
+    """Manually disable a provider at runtime."""
+    from argus.broker.router import create_broker
+    from argus.models import ProviderName
+
+    broker = create_broker()
+    try:
+        pname = ProviderName(name)
+    except ValueError:
+        click.echo(f"Unknown provider: {name}", err=True)
+        sys.exit(1)
+    broker.health_tracker.force_disable(pname, reason)
+    store = broker.budget_tracker._store
+    if store:
+        store.set_provider_override(pname.value, disabled=True, reason=reason)
+    click.echo(f"Disabled {name}" + (f": {reason}" if reason else ""))
+
+
+@provider.command(name="enable")
+@click.argument("name")
+def provider_enable(name):
+    """Re-enable a manually disabled provider."""
+    from argus.broker.router import create_broker
+    from argus.models import ProviderName
+
+    broker = create_broker()
+    try:
+        pname = ProviderName(name)
+    except ValueError:
+        click.echo(f"Unknown provider: {name}", err=True)
+        sys.exit(1)
+    broker.health_tracker.force_enable(pname)
+    store = broker.budget_tracker._store
+    if store:
+        store.set_provider_override(pname.value, disabled=False)
+    click.echo(f"Enabled {name}")
+
+
+@provider.command(name="reset-health")
+@click.argument("name")
+def provider_reset_health(name):
+    """Clear failure count and cooldown for a provider."""
+    from argus.broker.router import create_broker
+    from argus.models import ProviderName
+
+    broker = create_broker()
+    try:
+        pname = ProviderName(name)
+    except ValueError:
+        click.echo(f"Unknown provider: {name}", err=True)
+        sys.exit(1)
+    broker.health_tracker.reset_cooldown(pname)
+    click.echo(f"Health reset for {name}")
+
+
+@cli.group()
 def session():
     """Manage search sessions."""
     pass

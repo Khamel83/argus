@@ -32,6 +32,7 @@ class ProviderStatus(str, Enum):
     DISABLED_BY_CONFIG = "disabled_by_config"
     UNAVAILABLE_MISSING_KEY = "unavailable_missing_key"
     TEMPORARILY_DISABLED = "temporarily_disabled_after_failures"
+    MANUALLY_DISABLED = "manually_disabled"
     BUDGET_EXHAUSTED = "budget_exhausted"
     DEGRADED = "degraded"
     HEALTHY = "healthy"

@@ -64,6 +64,20 @@ class SearchBroker:
             if budget > 0:
                 self._budgets.set_budget(pname, budget)
 
+        # Restore persisted manual provider overrides
+        if self._budgets._store:
+            try:
+                overrides = self._budgets._store.get_provider_overrides()
+                for provider_str, info in overrides.items():
+                    try:
+                        pname = ProviderName(provider_str)
+                        self._health.force_disable(pname, info.get("reason", ""))
+                        logger.info("Restored manual disable for provider: %s", provider_str)
+                    except ValueError:
+                        pass
+            except Exception as exc:
+                logger.warning("Failed to load provider overrides: %s", exc)
+
     @property
     def cache(self) -> TTLCache:
         return self._cache
@@ -145,6 +159,10 @@ class SearchBroker:
             reason = "missing API key"
         elif effective == ProviderStatus.BUDGET_EXHAUSTED:
             reason = "monthly budget exhausted"
+        elif effective == ProviderStatus.MANUALLY_DISABLED:
+            reason = f"manually disabled" + (
+                f": {health_obj.force_disabled_reason}" if health_obj.force_disabled_reason else ""
+            )
         elif effective == ProviderStatus.TEMPORARILY_DISABLED:
             reason = (
                 f"{health_obj.consecutive_failures} consecutive failures"
