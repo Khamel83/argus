@@ -41,7 +41,14 @@ CREATE TABLE IF NOT EXISTS session_extracted_urls (
 );
 CREATE INDEX IF NOT EXISTS idx_extracted_urls_sid
     ON session_extracted_urls(session_id);
+
+CREATE TABLE IF NOT EXISTS argus_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
+
+_SCHEMA_VERSION = "1"
 
 
 class SessionPersistence:
@@ -65,6 +72,25 @@ class SessionPersistence:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
             self._conn.executescript(_SCHEMA)
+
+            # Check schema version
+            row = self._conn.execute(
+                "SELECT value FROM argus_meta WHERE key = 'schema_version'"
+            ).fetchone()
+            if row is None:
+                self._conn.execute(
+                    "INSERT INTO argus_meta (key, value) VALUES ('schema_version', ?)",
+                    (_SCHEMA_VERSION,),
+                )
+                self._conn.commit()
+                logger.info("Session store initialized (schema v%s)", _SCHEMA_VERSION)
+            elif row[0] != _SCHEMA_VERSION:
+                logger.warning(
+                    "Session store schema version mismatch: DB has v%s, expected v%s. "
+                    "Delete the database file to reset.",
+                    row[0], _SCHEMA_VERSION,
+                )
+
         return self._conn
 
     def save_session(self, session_id: str, created_at: float) -> None:

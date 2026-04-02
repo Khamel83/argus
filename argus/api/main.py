@@ -8,6 +8,7 @@ from typing import Callable, Optional
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError, HTTPException as FastAPIHTTPException
 
 from argus.api.rate_limit import RateLimiter
 from argus.api.routes_admin import router as admin_router
@@ -75,12 +76,46 @@ def create_app(
     app.state.rate_limiter = rate_limiter or _build_rate_limiter()
     app.state.api_key = os.environ.get("ARGUS_API_KEY", "")
 
+    cors_origins = os.environ.get("ARGUS_CORS_ORIGINS", "*")
+    if cors_origins == "*":
+        allow_origins = ["*"]
+    else:
+        allow_origins = [o.strip() for o in cors_origins.split(",") if o.strip()]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=allow_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request: Request, exc: RequestValidationError):
+        errors = exc.errors()
+        # Ensure all error values are JSON-serializable
+        for e in errors:
+            if "ctx" in e and isinstance(e["ctx"], dict):
+                for k, v in e["ctx"].items():
+                    if not isinstance(v, (str, int, float, bool, list, dict, type(None))):
+                        e["ctx"][k] = str(v)
+        return JSONResponse(
+            status_code=422,
+            content={"error": "Validation error", "detail": errors},
+        )
+
+    @app.exception_handler(FastAPIHTTPException)
+    async def http_exception_handler(request: Request, exc: FastAPIHTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": exc.detail, "detail": None},
+        )
+
+    @app.exception_handler(404)
+    async def not_found_handler(request: Request, exc):
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Not found", "detail": None},
+        )
 
     @app.middleware("http")
     async def api_key_auth(request: Request, call_next):
@@ -93,7 +128,7 @@ def create_app(
 
         provided = request.headers.get("x-api-key")
         if provided != api_key:
-            return JSONResponse(status_code=401, content={"error": "Invalid or missing API key"})
+            return JSONResponse(status_code=401, content={"error": "Invalid or missing API key", "detail": "Provide a valid x-api-key header"})
 
         return await call_next(request)
 
@@ -110,7 +145,7 @@ def create_app(
                 status_code=429,
                 content={
                     "error": "Rate limit exceeded",
-                    "retry_after": headers.get("Retry-After"),
+                    "detail": headers.get("Retry-After"),
                 },
                 headers=headers,
             )

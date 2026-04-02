@@ -47,7 +47,14 @@ CREATE TABLE IF NOT EXISTS extraction_cache (
     extractor TEXT DEFAULT '',
     cached_at REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS argus_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
+
+_SCHEMA_VERSION = "1"
 
 
 _SESSION_SCHEMA = """
@@ -158,6 +165,27 @@ class BudgetStore:
                 self._conn.commit()
                 logger.info("Renamed token_balances → service_credits")
             self._conn.executescript(_SCHEMA)
+
+            # Check schema version
+            row = self._conn.execute(
+                "SELECT value FROM argus_meta WHERE key = 'schema_version'"
+            ).fetchone()
+            if row is None:
+                self._conn.execute(
+                    "INSERT INTO argus_meta (key, value) VALUES ('schema_version', ?)",
+                    (_SCHEMA_VERSION,),
+                )
+                self._conn.commit()
+                logger.info("Budget store initialized (schema v%s)", _SCHEMA_VERSION)
+            elif row[0] != _SCHEMA_VERSION:
+                logger.warning(
+                    "Budget store schema version mismatch: DB has v%s, expected v%s. "
+                    "Delete %s to reset.",
+                    row[0], _SCHEMA_VERSION, path,
+                )
+            else:
+                logger.debug("Budget store ready (schema v%s)", _SCHEMA_VERSION)
+
             _migrate_legacy_budget_db(self._conn, path)
         return self._conn
 

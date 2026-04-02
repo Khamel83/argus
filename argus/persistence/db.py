@@ -84,15 +84,39 @@ CREATE TABLE IF NOT EXISTS provider_usage (
     budget_remaining REAL,
     created_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS argus_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
+
+_SCHEMA_VERSION = "1"
 
 
 def init_db() -> None:
     conn = _get_connection()
     try:
         conn.executescript(_SCHEMA)
+
+        # Check schema version
+        row = conn.execute("SELECT value FROM argus_meta WHERE key = 'schema_version'").fetchone()
+        if row is None:
+            conn.execute(
+                "INSERT INTO argus_meta (key, value) VALUES ('schema_version', ?)",
+                (_SCHEMA_VERSION,),
+            )
+            logger.info("SQLite database initialized (schema v%s): %s", _SCHEMA_VERSION, _get_db_path())
+        elif row[0] != _SCHEMA_VERSION:
+            logger.warning(
+                "Schema version mismatch: DB has v%s, expected v%s. "
+                "Delete %s to reset, or check release notes for migration steps.",
+                row[0], _SCHEMA_VERSION, _get_db_path(),
+            )
+        else:
+            logger.info("SQLite database ready (schema v%s): %s", _SCHEMA_VERSION, _get_db_path())
+
         conn.commit()
-        logger.info("SQLite database initialized: %s", _get_db_path())
     finally:
         conn.close()
 

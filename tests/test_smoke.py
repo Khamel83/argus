@@ -55,3 +55,17 @@ class TestSmokeStartup:
             body = resp.json()
             # Jina or trafilatura may succeed with empty content
             assert "url" in body or "detail" in body
+
+    def test_validation_error_has_standard_shape(self, client):
+        resp = client.post("/api/search", json={"query": "test", "mode": "invalid_mode"})
+        assert resp.status_code == 422
+        body = resp.json()
+        assert "error" in body
+        assert "detail" in body
+        assert isinstance(body["detail"], list)
+
+    def test_nonexistent_route_has_standard_shape(self, client):
+        resp = client.get("/api/nonexistent")
+        assert resp.status_code == 404
+        body = resp.json()
+        assert "error" in body

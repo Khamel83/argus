@@ -5,6 +5,7 @@ Exposes Argus search broker tools and resources via MCP protocol.
 """
 
 import asyncio
+import os
 from typing import Any
 
 from argus.broker.router import create_broker
@@ -24,6 +25,10 @@ async def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int
         transport: Transport type ("stdio" or "sse")
         host: Host for SSE transport
         port: Port for SSE transport
+
+    Security: stdio transport is inherently local (caller spawned the process).
+    For SSE transport, set ARGUS_API_KEY to restrict access. Without it, any
+    client that can reach the port can call all tools.
     """
     try:
         from mcp.server.fastmcp import FastMCP
@@ -93,6 +98,14 @@ async def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int
         logger.info("Starting Argus MCP server (stdio)")
         await mcp.run(transport="stdio")
     elif transport == "sse":
+        api_key = os.environ.get("ARGUS_API_KEY", "")
+        if not api_key:
+            logger.warning(
+                "MCP SSE server starting without ARGUS_API_KEY. "
+                "Any client that can reach %s:%d can call all tools. "
+                "Set ARGUS_API_KEY to restrict access.",
+                host, port,
+            )
         logger.info("Starting Argus MCP server (sse) on %s:%d", host, port)
         await mcp.run(transport="sse", host=host, port=port)
     else:
