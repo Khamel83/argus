@@ -146,16 +146,24 @@ class ContentExtractor:
             return ExtractedContent(url=url, error=f"all extractors failed: {e}")
 
 
-# Module-level default instance for backward compatibility
-_default_extractor = ContentExtractor()
+# Lazy extractor: avoids triggering SQLite/BudgetStore on import.
+_default_extractor: ContentExtractor | None = None
+
+
+def get_extractor() -> ContentExtractor:
+    """Get or create the default extractor instance (lazy init)."""
+    global _default_extractor
+    if _default_extractor is None:
+        _default_extractor = ContentExtractor()
+    return _default_extractor
 
 
 def get_extraction_cache() -> TTLCache:
-    return _default_extractor.cache
+    return get_extractor().cache
 
 
 async def extract_url(url: str) -> ExtractedContent:
-    return await _default_extractor.extract(url)
+    return await get_extractor().extract(url)
 
 
 # --- Private extraction functions (stateless) ---
