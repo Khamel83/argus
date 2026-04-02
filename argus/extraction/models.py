@@ -3,7 +3,7 @@ Extraction domain models.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -22,6 +22,6 @@ class ExtractedContent:
     author: str = ""
     date: Optional[str] = None
     word_count: int = 0
-    extracted_at: datetime = field(default_factory=lambda: datetime.now(tz=None))
+    extracted_at: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
     extractor: Optional[ExtractorName] = None
     error: Optional[str] = None

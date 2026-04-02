@@ -8,7 +8,7 @@ persistence failures never break search.
 import json
 import sqlite3
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -110,7 +110,7 @@ def persist_search(query_text: str, mode: str, response: SearchResponse) -> Opti
             "INSERT INTO search_runs (query_id, search_run_id, status, total_results, cached, finished_at) "
             "VALUES (?, ?, 'completed', ?, ?, ?)",
             (query_id, run_id, len(response.results), int(response.cached),
-             datetime.now(tz=None).isoformat()),
+             datetime.now(tz=timezone.utc).isoformat()),
         )
         run_db_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 

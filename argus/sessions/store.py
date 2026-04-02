@@ -2,7 +2,7 @@
 
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 from argus.logging import get_logger
@@ -54,7 +54,7 @@ class SessionStore:
             return None
         session = Session(
             id=data["id"],
-            created_at=datetime.fromtimestamp(data["created_at"]),
+            created_at=datetime.fromtimestamp(data["created_at"], tz=timezone.utc),
         )
         # Lazy TTL expiry: drop expired sessions on read
         if self._is_expired(session):
@@ -66,7 +66,7 @@ class SessionStore:
                 QueryRecord(
                     query=qd["query"],
                     mode=qd["mode"],
-                    timestamp=datetime.fromtimestamp(qd["timestamp"]),
+                    timestamp=datetime.fromtimestamp(qd["timestamp"], tz=timezone.utc),
                     results_count=qd["results_count"],
                     extracted_urls=qd["extracted_urls"],
                 )

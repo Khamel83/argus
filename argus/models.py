@@ -6,7 +6,7 @@ Provider-specific shapes must never leak outside adapters.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional, Dict, Any
 
@@ -86,4 +86,4 @@ class SearchResponse:
     total_results: int = 0
     cached: bool = False
     search_run_id: Optional[str] = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(tz=None))
+    created_at: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
