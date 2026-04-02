@@ -24,6 +24,14 @@ Argus replaces that with one endpoint. You add it to your agent once — the sam
 
 Think of it as the LiteLLM of web search — one API, multiple providers, unified interface.
 
+## What Argus Is (and Isn't)
+
+**Core** — search routing, result normalization, RRF ranking, provider health tracking, budget enforcement, deduplication.
+
+**Attached services** — content extraction (trafilatura + Jina), multi-turn sessions, MCP server interface.
+
+**Not** — a web crawler, a browser automation system, a full document store, a general agent framework, an answer synthesis engine, or a multi-tenant SaaS. If you need those things, Argus integrates with systems that do them.
+
 ## What It Does
 
 You pass Argus a search query. It routes to providers in cheap-first order, stops early when the first provider already produced enough useful results, and only falls through when failure, weak output, cooldown, or budget limits justify it. Results are ranked, deduplicated, and returned as one clean list.
@@ -78,6 +86,8 @@ All you need is API keys for whichever providers you want. SearXNG is free and r
 | [Serper](https://serper.dev) | 2,500 queries/month | [signup](https://serper.dev/signup) |
 | [Tavily](https://tavily.com) | 1,000 queries/month | [signup](https://app.tavily.com/sign-up) |
 | [Exa](https://exa.ai) | 1,000 queries/month | [signup](https://dashboard.exa.ai/signup) |
+
+Free tier limits and verification dates: [docs/providers.md](docs/providers.md).
 
 Set keys in `.env`:
 ```
@@ -140,6 +150,12 @@ argus health
 argus budgets
 argus set-balance -s jina -b 9833638
 argus test-provider -p brave
+# Provider admin
+argus provider disable brave --reason "over budget"
+argus provider enable brave
+argus provider reset-health brave
+# Session management
+argus session delete my-session
 argus serve
 argus mcp serve
 ```
@@ -222,8 +238,7 @@ All config via environment variables. See `.env.example`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ARGUS_DB_URL` | `sqlite:///argus.db` | Search history database |
-| `ARGUS_BUDGET_DB_PATH` | `argus_budgets.db` | Budgets, sessions, extraction cache |
+| `ARGUS_DB_PATH` | `argus.db` | Unified SQLite database (search, budgets, sessions, extraction cache) |
 | `ARGUS_API_KEY` | — | Require API key on all endpoints (health exempt) |
 | `ARGUS_SEARXNG_BASE_URL` | `http://127.0.0.1:8080` | SearXNG endpoint |
 | `ARGUS_BRAVE_API_KEY` | — | Brave Search API key |
@@ -235,6 +250,17 @@ All config via environment variables. See `.env.example`.
 | `ARGUS_EXTRACTION_CACHE_TTL_HOURS` | 168 | Extraction cache TTL |
 | `ARGUS_RATE_LIMIT` | 60 | Requests per window per client IP |
 | `ARGUS_RATE_LIMIT_WINDOW` | 60 | Rate limit window (seconds) |
+
+## Non-Goals
+
+Argus deliberately does not:
+
+- **Crawl or spider** — it queries search APIs, not raw URLs. If you need a crawler, use one and feed the URLs to `argus extract`.
+- **Drive a browser** — no Playwright, Puppeteer, or JS rendering. For JS-heavy pages, Jina Reader handles fallback extraction.
+- **Store documents** — results are ranked and returned. There is no document index or vector store built in.
+- **Synthesize answers** — Argus returns search results and extracted text. Answer generation is left to the LLM calling Argus.
+- **Run multi-tenant** — no user accounts, no per-user quotas, no auth beyond a single `ARGUS_API_KEY`. Designed for private/single-user deployments.
+- **Replace provider SDKs** — the broker is a routing layer, not a complete API wrapper. Provider-specific features (image search, news search, etc.) are out of scope.
 
 ## License
 

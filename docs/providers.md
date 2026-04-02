@@ -1,5 +1,25 @@
 # Provider Setup
 
+## Free Tier Summary
+
+> Last verified: 2026-04-02. Free tier limits change — check each provider's pricing page before relying on them.
+
+| Provider | Free tier | Notes |
+|----------|-----------|-------|
+| SearXNG | Unlimited (self-hosted) | Requires running a local Docker container |
+| Brave Search | 2,000 queries/month | No credit card required |
+| Serper | 2,500 queries/month | No credit card required |
+| Tavily | 1,000 queries/month | No credit card required |
+| Exa | 1,000 queries/month | No credit card required |
+| Jina Reader | ~1M tokens (one-time) | Tokens consumed on extraction fallback |
+
+Combined free-tier capacity: ~7,500 searches/month + unlimited self-hosted SearXNG. Enough for most personal and development use without a credit card.
+
+Argus rotates away from a provider automatically when its monthly budget is hit. All providers are independent — losing one doesn't break search.
+
+---
+
+
 Each provider needs an API key set in `.env`. Unset keys are silently skipped.
 
 ## SearXNG (free, self-hosted)
