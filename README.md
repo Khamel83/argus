@@ -239,6 +239,7 @@ All config via environment variables. See `.env.example`.
 | `ARGUS_EXTRACTION_CACHE_TTL_HOURS` | 168 | Extraction cache TTL |
 | `ARGUS_RATE_LIMIT` | 60 | Requests per window per client IP |
 | `ARGUS_RATE_LIMIT_WINDOW` | 60 | Rate limit window (seconds) |
+| `ARGUS_CORS_ORIGINS` | `*` | Allowed CORS origins (comma-separated, `*` allows all) |
 
 ## Non-Goals
 
