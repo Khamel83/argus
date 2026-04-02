@@ -46,6 +46,8 @@ class ContentExtractor:
         )
         self._jina_call_count = 0
         self._jina_accumulated_tokens = 0
+        from argus.broker.budget_persistence import BudgetStore
+        self._store = BudgetStore()
 
     @property
     def cache(self) -> TTLCache:
@@ -53,9 +55,7 @@ class ContentExtractor:
 
     def _get_sqlite_cached(self, url: str) -> ExtractedContent | None:
         try:
-            from argus.broker.budget_persistence import BudgetStore
-            store = BudgetStore()
-            row = store.get_extraction(extraction_cache_key(url), self._cache_ttl)
+            row = self._store.get_extraction(extraction_cache_key(url), self._cache_ttl)
             if row is None:
                 return None
             content = ExtractedContent(
@@ -72,9 +72,7 @@ class ContentExtractor:
 
     def _save_to_sqlite(self, url: str, content: ExtractedContent) -> None:
         try:
-            from argus.broker.budget_persistence import BudgetStore
-            store = BudgetStore()
-            store.put_extraction(
+            self._store.put_extraction(
                 extraction_cache_key(url), content.title, content.text,
                 content.author, content.date, content.word_count,
                 content.extractor.value if content.extractor else "",
@@ -90,12 +88,10 @@ class ContentExtractor:
             return
 
         try:
-            from argus.broker.budget_persistence import BudgetStore
-            store = BudgetStore()
-            current = store.get_token_balance("jina")
+            current = self._store.get_token_balance("jina")
             if current is not None:
                 new_balance = current - self._jina_accumulated_tokens
-                store.set_token_balance("jina", new_balance)
+                self._store.set_token_balance("jina", new_balance)
                 logger.info(
                     "Jina token balance synced: %,.0f → %,.0f (%d calls, ~%d tokens)",
                     current, new_balance, self._jina_call_count, self._jina_accumulated_tokens,
