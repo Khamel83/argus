@@ -18,6 +18,7 @@ from argus.models import (
     SearchResult,
     SearchQuery,
 )
+from argus.broker.dedupe import extract_domain
 from argus.providers.base import BaseProvider
 
 logger = get_logger("providers.exa")
@@ -95,7 +96,7 @@ class ExaProvider(BaseProvider):
                 url=url,
                 title=item.get("title", ""),
                 snippet=item.get("text", ""),
-                domain=self._extract_domain(url),
+                domain=extract_domain(url),
                 provider=self.name,
                 score=item.get("score", 0.0),
                 raw_rank=i,
@@ -107,10 +108,3 @@ class ExaProvider(BaseProvider):
             ))
         return results
 
-    @staticmethod
-    def _extract_domain(url: str) -> str:
-        try:
-            from urllib.parse import urlparse
-            return urlparse(url).netloc
-        except Exception:
-            return ""
