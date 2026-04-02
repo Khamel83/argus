@@ -251,6 +251,8 @@ Argus deliberately does not:
 - **Synthesize answers** — Argus returns search results and extracted text. Answer generation is left to the LLM calling Argus.
 - **Run multi-tenant** — no user accounts, no per-user quotas, no auth beyond a single `ARGUS_API_KEY`. Designed for private/single-user deployments.
 - **Replace provider SDKs** — the broker is a routing layer, not a complete API wrapper. Provider-specific features (image search, news search, etc.) are out of scope.
+- **Per-request audit logging** — health tracking records provider success/failure, but individual request traces are not persisted. The `ARGUS_LOG_FULL_RESULTS` flag dumps everything at debug level if needed, but there is no structured audit trail. Designed for personal use where debugging is ad-hoc.
+- **Handle high concurrency** — SQLite with WAL mode handles moderate load fine, but there is no connection pooling. Under heavy concurrent access (many simultaneous MCP clients), you may see `database is locked` errors. Designed for single-user or small-team deployments.
 
 ## License
 
