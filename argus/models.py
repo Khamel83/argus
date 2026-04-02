@@ -57,6 +57,11 @@ class SearchResult:
     score: float = 0.0
     raw_rank: int = 0
     metadata: Dict[str, Any] = field(default_factory=dict)
+    # Provenance — set by ranking/dedup pipeline
+    providers_seen: List[str] = field(default_factory=list)
+    rank_fused: bool = False
+    dedupe_key: str = ""
+    matched_in_n_providers: int = 1
 
 
 @dataclass

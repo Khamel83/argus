@@ -56,6 +56,7 @@ def dedupe_results(results: list[SearchResult]) -> list[SearchResult]:
 
     for result in results:
         normalized = normalize_url(result.url)
+        result.dedupe_key = normalized
         if normalized not in seen_urls:
             seen_urls.add(normalized)
             if not result.domain:

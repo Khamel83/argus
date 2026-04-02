@@ -20,6 +20,7 @@ def reciprocal_rank_fusion(
     """
     scores: dict[str, float] = {}  # url -> fused score
     seen: dict[str, SearchResult] = {}  # url -> best result
+    providers_per_url: dict[str, list[str]] = {}  # url -> list of provider names
 
     for provider, results in provider_results.items():
         for rank, result in enumerate(results):
@@ -29,8 +30,10 @@ def reciprocal_rank_fusion(
             if url not in scores:
                 scores[url] = 0.0
                 seen[url] = result
+                providers_per_url[url] = []
 
             scores[url] += rrf_score
+            providers_per_url[url].append(provider)
 
     # Sort by fused score descending
     sorted_urls = sorted(scores.keys(), key=lambda u: scores[u], reverse=True)
@@ -39,6 +42,10 @@ def reciprocal_rank_fusion(
     for url in sorted_urls:
         result = seen[url]
         result.score = scores[url]
+        contributors = providers_per_url[url]
+        result.providers_seen = contributors
+        result.matched_in_n_providers = len(contributors)
+        result.rank_fused = len(contributors) > 1
         merged.append(result)
 
     return merged
