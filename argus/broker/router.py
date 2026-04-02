@@ -38,7 +38,7 @@ class SearchBroker:
         )
         self._health = health_tracker or HealthTracker()
         self._budgets = budget_tracker or BudgetTracker(
-            persist_path=os.environ.get("ARGUS_BUDGET_DB_PATH", None)
+            persist_path=get_config().db_path
         )
         self._config = get_config()
         self._session_store = session_store

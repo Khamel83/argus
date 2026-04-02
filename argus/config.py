@@ -28,6 +28,7 @@ class ArgusConfig:
     env: str = "development"
     log_level: str = "INFO"
     db_url: str = ""
+    db_path: str = "argus.db"
     cache_ttl_hours: int = 168
     disable_provider_after_failures: int = 5
     provider_cooldown_minutes: int = 60
@@ -144,15 +145,29 @@ class EnvironmentConfigLoader:
             ),
         )
 
+    def _resolve_db_path(self) -> str:
+        """Single unified DB path. Prefers ARGUS_DB_PATH; falls back to parsing ARGUS_DB_URL."""
+        explicit = self.get_str("ARGUS_DB_PATH", "")
+        if explicit:
+            return explicit
+        db_url = self.get_str("ARGUS_DB_URL", "")
+        if db_url.startswith("sqlite:///"):
+            return db_url[len("sqlite:///"):]
+        if db_url.startswith("sqlite://"):
+            return db_url[len("sqlite://"):]
+        return "argus.db"
+
     def load(self) -> ArgusConfig:
+        db_path = self._resolve_db_path()
         return ArgusConfig(
             env=self.get_str("ARGUS_ENV", "development"),
             log_level=self.get_str("ARGUS_LOG_LEVEL", "INFO"),
             db_url=self.get_str(
                 "ARGUS_DB_URL",
-                "sqlite:///argus.db",
+                f"sqlite:///{db_path}",
                 secret_keys=("DB_URL",),
             ),
+            db_path=db_path,
             cache_ttl_hours=self.get_int("ARGUS_CACHE_TTL_HOURS", 168),
             disable_provider_after_failures=self.get_int(
                 "ARGUS_DISABLE_PROVIDER_AFTER_FAILURES",

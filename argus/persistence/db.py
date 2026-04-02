@@ -25,19 +25,7 @@ def _get_db_path() -> str:
     global _db_path
     if _db_path:
         return _db_path
-
-    config = get_config()
-    db_url = config.db_url
-
-    # Support ARGUS_DB_URL=sqlite:///path/to/file.db
-    if db_url.startswith("sqlite:///"):
-        _db_path = db_url[len("sqlite:///"):]
-    elif db_url.startswith("sqlite:"):
-        _db_path = db_url[len("sqlite:"):]
-    else:
-        # Default location
-        _db_path = "argus.db"
-
+    _db_path = get_config().db_path
     return _db_path
 
 

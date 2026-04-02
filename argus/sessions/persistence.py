@@ -5,7 +5,6 @@ Persists sessions and query history so they survive restarts.
 Mirrors BudgetStore pattern from argus/broker/budget_persistence.py.
 """
 
-import os
 import sqlite3
 import time
 from pathlib import Path
@@ -14,8 +13,6 @@ from typing import Optional
 from argus.logging import get_logger
 
 logger = get_logger("sessions.persistence")
-
-DEFAULT_DB_PATH = "argus_budgets.db"  # shares the existing budget DB
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -51,16 +48,22 @@ class SessionPersistence:
     """SQLite-backed storage for session data."""
 
     def __init__(self, db_path: Optional[str] = None):
-        self._db_path = db_path or os.environ.get(
-            "ARGUS_BUDGET_DB_PATH", DEFAULT_DB_PATH
-        )
+        self._db_path: Optional[str] = db_path  # None = resolve lazily from config
         self._conn: Optional[sqlite3.Connection] = None
+
+    def _resolved_db_path(self) -> str:
+        if self._db_path is None:
+            from argus.config import get_config
+            self._db_path = get_config().db_path
+        return self._db_path
 
     def _get_conn(self) -> sqlite3.Connection:
         if self._conn is None:
-            Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(self._db_path)
-            self._conn.execute("PRAGMA foreign_keys = ON")
+            path = self._resolved_db_path()
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(path)
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA foreign_keys=ON")
             self._conn.executescript(_SCHEMA)
         return self._conn
 
