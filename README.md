@@ -46,33 +46,22 @@ You pass Argus a search query. It routes to providers in cheap-first order, stop
 
 ## Quick Start
 
-### Docker (recommended)
-
-```bash
-# 1. Create .env with your provider keys
-cp .env.example .env
-# Edit .env — at minimum, set one provider API key
-
-# 2. Start Argus
-docker compose up -d
-
-# 3. Verify
-curl http://localhost:8005/api/health
-# {"status":"ok"}
-
-curl -X POST http://localhost:8005/api/search \
-  -H "Content-Type: application/json" \
-  -d '{"query": "fastapi tutorial", "mode": "discovery"}'
-```
-
-### Local install
-
 ```bash
 git clone https://github.com/Khamel83/argus.git && cd argus
 python -m venv .venv && source .venv/bin/activate
 cp .env.example .env
+# Edit .env — at minimum, set one provider API key
+
 pip install -e ".[mcp]"
 argus serve
+
+# Verify
+curl http://localhost:8000/api/health
+# {"status":"ok"}
+
+curl -X POST http://localhost:8000/api/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "fastapi tutorial", "mode": "discovery"}'
 ```
 
 ## Provider Setup
@@ -81,7 +70,7 @@ All you need is API keys for whichever providers you want. SearXNG is free and r
 
 | Provider | Free tier | Get a key |
 |----------|----------|-----------|
-| [SearXNG](https://github.com/searxng/searxng) | Unlimited (self-hosted) | No key needed — runs in Docker |
+| [SearXNG](https://github.com/searxng/searxng) | Unlimited (self-hosted) | No key needed — runs locally |
 | [Brave Search](https://brave.com/search/api/) | 2,000 queries/month | [dashboard](https://brave.com/search/api/) |
 | [Serper](https://serper.dev) | 2,500 queries/month | [signup](https://serper.dev/signup) |
 | [Tavily](https://tavily.com) | 1,000 queries/month | [signup](https://app.tavily.com/sign-up) |
@@ -99,7 +88,7 @@ ARGUS_EXA_API_KEY=...
 
 Unset or blank keys are silently skipped. You can run Argus with just SearXNG and no paid keys at all.
 
-See [docs/providers.md](docs/providers.md) for SearXNG tuning and Docker networking details.
+See [docs/providers.md](docs/providers.md) for SearXNG tuning details.
 
 ## Integration
 
@@ -109,33 +98,33 @@ All endpoints prefixed with `/api`. OpenAPI docs at `/docs`. Set `ARGUS_API_KEY`
 
 ```bash
 # Search
-curl -X POST http://localhost:8005/api/search \
+curl -X POST http://localhost:8000/api/search \
   -H "Content-Type: application/json" \
   -d '{"query": "python web frameworks", "mode": "discovery", "max_results": 5}'
 
 # Multi-turn search
-curl -X POST http://localhost:8005/api/search \
+curl -X POST http://localhost:8000/api/search \
   -H "Content-Type: application/json" \
   -d '{"query": "python web frameworks", "session_id": "my-session"}'
 
 # Extract content from a URL
-curl -X POST http://localhost:8005/api/extract \
+curl -X POST http://localhost:8000/api/extract \
   -H "Content-Type: application/json" \
   -d '{"url": "https://example.com/article"}'
 
 # Recover a dead URL
-curl -X POST http://localhost:8005/api/recover-url \
+curl -X POST http://localhost:8000/api/recover-url \
   -H "Content-Type: application/json" \
   -d '{"url": "https://example.com/old-page", "title": "Example Article"}'
 
 # Expand a query with related links
-curl -X POST http://localhost:8005/api/expand \
+curl -X POST http://localhost:8000/api/expand \
   -H "Content-Type: application/json" \
   -d '{"query": "fastapi", "context": "python web framework"}'
 
 # Health & budgets
-curl http://localhost:8005/api/health
-curl http://localhost:8005/api/budgets
+curl http://localhost:8000/api/health
+curl http://localhost:8000/api/budgets
 ```
 
 ### CLI

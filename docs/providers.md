@@ -6,7 +6,7 @@
 
 | Provider | Free tier | Notes |
 |----------|-----------|-------|
-| SearXNG | Unlimited (self-hosted) | Requires running a local Docker container |
+| SearXNG | Unlimited (self-hosted) | Runs locally, requires Docker or native install |
 | Brave Search | 2,000 queries/month | No credit card required |
 | Serper | 2,500 queries/month | No credit card required |
 | Tavily | 1,000 queries/month | No credit card required |
@@ -24,7 +24,7 @@ Each provider needs an API key set in `.env`. Unset keys are silently skipped.
 
 ## SearXNG (free, self-hosted)
 
-No API key needed. Runs locally in Docker.
+No API key needed. Runs locally.
 
 ```bash
 docker run -d --name searxng -p 8080:8080 searxng/searxng:latest
@@ -57,16 +57,6 @@ server:
   bind_address: "127.0.0.1"
   limiter: false  # Set to true in production
 ```
-
-### Docker Networking
-
-If SearXNG and Argus are on the same Docker network, use the container hostname:
-
-```
-ARGUS_SEARXNG_BASE_URL=http://searxng:8080
-```
-
-The included `docker-compose.yml` handles this automatically.
 
 ## Brave Search
 
