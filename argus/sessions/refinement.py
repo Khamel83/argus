@@ -15,7 +15,11 @@ logger = get_logger("sessions.refinement")
 MAX_CONTEXT_QUERIES = 3
 
 
-def refine_query(current_query: str, session: Optional[Session]) -> str:
+def refine_query(
+    current_query: str,
+    session: Optional[Session],
+    max_context_chars: int = 2000,
+) -> str:
     """Refine a query using prior session context.
 
     Strategy: extract key terms from recent queries and prepend as context.
@@ -56,6 +60,8 @@ def refine_query(current_query: str, session: Optional[Session]) -> str:
 
     if is_follow_up:
         last_context = context_terms[-1]
+        if len(last_context) > max_context_chars:
+            last_context = last_context[:max_context_chars]
         return f"{last_context} {current_query}"
 
     # For longer queries, check if current query already contains context

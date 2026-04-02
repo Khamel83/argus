@@ -1,5 +1,6 @@
 """Session store with optional SQLite persistence."""
 
+import time
 import uuid
 from datetime import datetime
 from typing import Dict, Optional
@@ -14,10 +15,22 @@ logger = get_logger("sessions")
 class SessionStore:
     """Store for search sessions with optional SQLite persistence."""
 
-    def __init__(self, persist: bool = True, db_path: Optional[str] = None):
+    def __init__(
+        self,
+        persist: bool = True,
+        db_path: Optional[str] = None,
+        max_turns: Optional[int] = None,
+        ttl_hours: Optional[int] = None,
+    ):
         self._sessions: Dict[str, Session] = {}
         self._persist = persist
         self._db: Optional[SessionPersistence] = None
+
+        from argus.config import get_config
+        cfg = get_config()
+        self._max_turns = max_turns if max_turns is not None else cfg.session_max_turns
+        self._ttl_seconds = (ttl_hours if ttl_hours is not None else cfg.session_ttl_hours) * 3600
+
         if persist:
             try:
                 self._db = SessionPersistence(db_path=db_path)
@@ -29,6 +42,10 @@ class SessionStore:
                 )
                 self._persist = False
 
+    def _is_expired(self, session: Session) -> bool:
+        age_seconds = time.time() - session.created_at.timestamp()
+        return age_seconds > self._ttl_seconds
+
     def _load_session(self, session_id: str) -> Optional[Session]:
         if not self._db:
             return None
@@ -39,6 +56,11 @@ class SessionStore:
             id=data["id"],
             created_at=datetime.fromtimestamp(data["created_at"]),
         )
+        # Lazy TTL expiry: drop expired sessions on read
+        if self._is_expired(session):
+            logger.debug("Session %s expired — deleting", session_id)
+            self._db.delete_session(session_id)
+            return None
         for qd in data["queries"]:
             session.queries.append(
                 QueryRecord(
@@ -91,6 +113,10 @@ class SessionStore:
             results_count=results_count,
         )
         session.queries.append(record)
+        # Trim to max_turns, keeping most recent (truncation degrades refinement quality)
+        if len(session.queries) > self._max_turns:
+            session.queries = session.queries[-self._max_turns:]
+            logger.debug("Session %s: trimmed to %d turns", session_id, self._max_turns)
         logger.debug(
             "Session %s: added query #%d: %s",
             session_id,
@@ -123,6 +149,15 @@ class SessionStore:
                 if session_id not in self._sessions:
                     self._load_session(session_id)
         return list(self._sessions.values())
+
+    def delete_session(self, session_id: str) -> bool:
+        """Delete a session from memory and DB. Returns True if it existed."""
+        existed = session_id in self._sessions
+        self._sessions.pop(session_id, None)
+        if self._persist and self._db:
+            existed = self._db.delete_session(session_id) or existed
+        logger.debug("Deleted session %s (existed=%s)", session_id, existed)
+        return existed
 
     def close(self) -> None:
         if self._db:

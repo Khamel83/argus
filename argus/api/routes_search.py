@@ -1,6 +1,6 @@
 """Search endpoints."""
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from argus.api.schemas import (
     ExpandRequest,
@@ -86,6 +86,16 @@ async def recover_url(req: RecoverUrlRequest, broker: SearchBroker = Depends(get
 
     resp = await broker.search(search_query)
     return _to_response(resp)
+
+
+@router.delete("/sessions/{session_id}", status_code=204)
+async def delete_session(session_id: str, broker: SearchBroker = Depends(get_broker)):
+    store = broker._session_store
+    if store is None:
+        raise HTTPException(status_code=404, detail="Sessions not enabled")
+    existed = store.delete_session(session_id)
+    if not existed:
+        raise HTTPException(status_code=404, detail="Session not found")
 
 
 @router.post("/expand", response_model=SearchResponse)

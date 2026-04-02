@@ -44,6 +44,9 @@ class ArgusConfig:
     allow_web_ui: bool = False
     log_full_results: bool = False
     log_provider_payloads: bool = False
+    session_max_turns: int = 20
+    session_ttl_hours: int = 168
+    session_max_context_chars: int = 2000
 
 
 class SecretsResolver:
@@ -196,6 +199,9 @@ class EnvironmentConfigLoader:
             allow_web_ui=self.get_bool("ARGUS_ALLOW_WEB_UI"),
             log_full_results=self.get_bool("ARGUS_LOG_FULL_RESULTS"),
             log_provider_payloads=self.get_bool("ARGUS_LOG_PROVIDER_PAYLOADS"),
+            session_max_turns=self.get_int("ARGUS_SESSION_MAX_TURNS", 20),
+            session_ttl_hours=self.get_int("ARGUS_SESSION_TTL_HOURS", 168),
+            session_max_context_chars=self.get_int("ARGUS_SESSION_MAX_CONTEXT_CHARS", 2000),
         )
 
 

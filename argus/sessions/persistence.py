@@ -169,6 +169,14 @@ class SessionPersistence:
         rows = conn.execute("SELECT id, created_at FROM sessions ORDER BY created_at DESC").fetchall()
         return [{"id": r[0], "created_at": r[1]} for r in rows]
 
+    def delete_session(self, session_id: str) -> bool:
+        """Delete a session and cascade to queries/extracted_urls. Returns True if it existed."""
+        conn = self._get_conn()
+        conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+        conn.commit()
+        # row_count > 0 means the session existed (CASCADE handles child rows)
+        return conn.execute("SELECT changes()").fetchone()[0] > 0
+
     def close(self) -> None:
         if self._conn:
             self._conn.close()

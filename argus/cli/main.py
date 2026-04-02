@@ -281,6 +281,31 @@ def serve(host, port, reload):
 
 
 @cli.group()
+def session():
+    """Manage search sessions."""
+    pass
+
+
+@session.command(name="delete")
+@click.argument("session_id")
+def session_delete(session_id):
+    """Delete a session and its query history."""
+    from argus.broker.router import create_broker
+
+    broker = create_broker()
+    store = broker._session_store
+    if store is None:
+        click.echo("Sessions not enabled", err=True)
+        sys.exit(1)
+    existed = store.delete_session(session_id)
+    if existed:
+        click.echo(f"Deleted session {session_id}")
+    else:
+        click.echo(f"Session not found: {session_id}", err=True)
+        sys.exit(1)
+
+
+@cli.group()
 def mcp():
     """Start the Argus MCP server for LLM integration."""
     pass

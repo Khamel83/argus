@@ -30,7 +30,11 @@ class SessionSearchService:
                 session = self._session_store.create_session(effective_session_id)
                 effective_session_id = session.id
 
-        refined_text = refine_query(query.query, session)
+        from argus.config import get_config
+        refined_text = refine_query(
+            query.query, session,
+            max_context_chars=get_config().session_max_context_chars,
+        )
         effective_query = query
         if refined_text != query.query:
             logger.debug("Query refined: %r -> %r", query.query, refined_text)
