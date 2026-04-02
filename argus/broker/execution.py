@@ -11,7 +11,15 @@ from argus.providers.base import BaseProvider
 
 logger = get_logger("broker.execution")
 
-_COST_ESTIMATES = {
+# Approximate per-call cost in USD (not per-token).
+# Used for budget tracking when providers don't report actual usage.
+# SearXNG is free/self-hosted and not listed here.
+# Check provider docs for current pricing:
+#   Brave: https://api.search.brave.com/app/documentation/web-search/pricing
+#   Serper: https://serper.dev/#pricing
+#   Tavily: https://tavily.com/#pricing
+#   Exa: https://docs.exa.ai/reference/pricing
+DEFAULT_COST_ESTIMATES: dict[ProviderName, float] = {
     ProviderName.BRAVE: 0.003,
     ProviderName.SERPER: 0.001,
     ProviderName.TAVILY: 0.001,
@@ -70,11 +78,13 @@ class ProviderExecutor:
         health_tracker: HealthTracker,
         budget_tracker: BudgetTracker,
         routing_policy: ProviderRoutingPolicy | None = None,
+        cost_estimates: dict[ProviderName, float] | None = None,
     ):
         self._providers = providers
         self._health = health_tracker
         self._budgets = budget_tracker
         self._routing_policy = routing_policy or ProviderRoutingPolicy()
+        self._cost_estimates = cost_estimates or DEFAULT_COST_ESTIMATES
 
     async def execute(
         self,
@@ -152,7 +162,7 @@ class ProviderExecutor:
             results, trace = await provider.search(query)
             if trace.status == "success":
                 self._health.record_success(provider_name)
-                cost = _COST_ESTIMATES.get(provider_name, 0.0)
+                cost = self._cost_estimates.get(provider_name, 0.0)
                 self._budgets.record_usage(provider_name, cost)
                 trace.budget_remaining = self._budgets.get_remaining_budget(provider_name)
                 trace.results_count = len(results)
