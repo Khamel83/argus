@@ -66,6 +66,10 @@
 ## Documentation
 
 > README.md — full documentation with quick start, integration examples, configuration
+> CHANGELOG.md — version history
 > docs/providers.md — provider setup and budget configuration
 > docs/routing-contract.md — authoritative routing, fallback, and ranking spec
+> docs/search-modes.md — when to use each search mode, with examples and cost guidance
+> docs/mcp-tools.md — MCP tool and resource reference with parameters, return types, and examples
+> docs/troubleshooting.md — common issues and fixes
 > CONTRIBUTING.md — contribution guide and how to add providers

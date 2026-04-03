@@ -64,6 +64,14 @@ curl -X POST http://localhost:8000/api/search \
   -d '{"query": "fastapi tutorial", "mode": "discovery"}'
 ```
 
+## Next Steps
+
+- **Add more providers** for better results and fallback coverage — [provider setup guide](docs/providers.md)
+- **Choose the right search mode** for your use case — [search modes explained](docs/search-modes.md)
+- **Connect to your agent via MCP** — [MCP tool reference](docs/mcp-tools.md)
+- **Check provider health and budgets**: `argus health` / `argus budgets`
+- **Something not working?** — [troubleshooting guide](docs/troubleshooting.md)
+
 ## Provider Setup
 
 All you need is API keys for whichever providers you want. SearXNG is free and runs locally.
@@ -193,6 +201,8 @@ print(content.text)
 | `recovery` | Dead/moved URL recovery | searxng → brave → serper → tavily → exa |
 | `grounding` | Fact-checking with few sources | brave → serper → searxng |
 | `research` | Broad exploratory retrieval | tavily → exa → brave → serper |
+
+See [docs/search-modes.md](docs/search-modes.md) for detailed guidance on choosing a mode.
 
 ## Architecture
 
