@@ -129,6 +129,42 @@ def extract(url, as_json):
         click.echo(result.text)
 
 
+@cli.command()
+@click.argument("url")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def fetch(url, as_json):
+    """Extract clean text from a URL (positional shorthand for extract)."""
+    from argus.extraction import extract_url
+
+    result = _run(extract_url(url))
+
+    if result.error:
+        click.echo(f"Error: {result.error}", err=True)
+        sys.exit(1)
+
+    if as_json:
+        data = {
+            "url": result.url,
+            "title": result.title,
+            "text": result.text,
+            "author": result.author,
+            "date": result.date,
+            "word_count": result.word_count,
+            "extractor": result.extractor.value if result.extractor else None,
+        }
+        click.echo(json.dumps(data, indent=2))
+    else:
+        if result.title:
+            click.echo(f"Title: {result.title}")
+        if result.author:
+            click.echo(f"Author: {result.author}")
+        if result.date:
+            click.echo(f"Date: {result.date}")
+        click.echo(f"Words: {result.word_count} | Extractor: {result.extractor.value if result.extractor else 'unknown'}")
+        click.echo()
+        click.echo(result.text)
+
+
 @cli.command(name="recover-url")
 @click.option("--url", "-u", required=True, help="URL to recover")
 @click.option("--title", "-t", help="Optional title hint")

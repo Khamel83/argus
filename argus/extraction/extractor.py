@@ -118,7 +118,16 @@ class ContentExtractor:
         if not allowed:
             return ExtractedContent(url=url, error=f"domain rate limit exceeded, retry after {retry_after}s")
 
-        # For paywall domains with cookies, try authenticated extraction first
+        # For paywall domains with cookies, try authenticated extraction first.
+        # Auto-detect domain from URL if not explicitly provided.
+        if not domain:
+            from argus.extraction.cookies import needs_auth
+            from urllib.parse import urlparse
+            if needs_auth(url):
+                hostname = urlparse(url).hostname or ""
+                parts = hostname.split(".")
+                domain = ".".join(parts[-2:]) if len(parts) >= 2 else hostname
+
         if domain:
             try:
                 from argus.extraction.auth_extractor import extract_authenticated

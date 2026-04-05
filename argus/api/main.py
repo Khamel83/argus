@@ -26,7 +26,10 @@ logger = get_logger("api")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
+    from argus.extraction.health_poller import start_poller, stop_poller
+    start_poller()
     yield
+    stop_poller()
     try:
         broker = app.state.get_broker()
         broker.budget_tracker.close()
