@@ -4,13 +4,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
 
 WORKDIR /app
 COPY pyproject.toml .
-RUN pip install --no-cache-dir --prefix=/install .
+COPY argus/ argus/
+RUN pip install --no-cache-dir .
 
 FROM python:3.12-slim
 
 WORKDIR /app
-COPY --from=builder /install /usr/local
-COPY argus/ argus/
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin/argus /usr/local/bin/argus
 
 RUN mkdir -p /data
 
