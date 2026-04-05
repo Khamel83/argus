@@ -2,7 +2,7 @@
 
 ## Overview
 
-Search broker with content extraction and multi-turn sessions. Five provider adapters (SearXNG, Brave, Serper, Tavily, Exa). Automatic fallback, result ranking, health tracking, budget enforcement, token balance tracking with auto-decrement. Extract clean text from any URL — results cached in memory + SQLite (168h TTL). Domain rate limiting (10 req/min/domain). Persistent sessions (SQLite). API key auth. Connect via HTTP, CLI, MCP, or Python import. Zero external database dependencies.
+Search broker with content extraction and multi-turn sessions. Five provider adapters (SearXNG, Brave, Serper, Tavily, Exa). Automatic fallback, result ranking, health tracking, budget enforcement, token balance tracking with auto-decrement. Extract clean text from any URL — authenticated extraction for paywall domains (Playwright via remote service), trafilatura for general pages, Jina Reader as fallback. Results cached in memory + SQLite (168h TTL). Domain rate limiting (10 req/min/domain). Persistent sessions (SQLite). API key auth. Connect via HTTP, CLI, MCP, or Python import. Zero external database dependencies.
 
 ## Key Commands
 
@@ -44,6 +44,7 @@ Caller (CLI/HTTP/MCP/Python)
   → SessionStore (optional, per-request)
     → query refinement from prior context
   → Extractor (on demand)
+    → auth extraction (paywall domains, remote Playwright service)
     → trafilatura (primary) → Jina Reader (fallback)
 ```
 
@@ -51,7 +52,7 @@ Caller (CLI/HTTP/MCP/Python)
 |--------|---------------|
 | `argus/broker/` | Routing, ranking, dedup, caching, health, budgets |
 | `argus/providers/` | Provider adapters (one per search API) |
-| `argus/extraction/` | URL content extraction (trafilatura + Jina) |
+| `argus/extraction/` | URL content extraction (auth extraction, trafilatura, Jina) |
 | `argus/sessions/` | Multi-turn session store and query refinement |
 | `argus/api/` | FastAPI HTTP endpoints, auth, rate limiting |
 | `argus/cli/` | Click CLI commands |
@@ -79,7 +80,7 @@ Caller (CLI/HTTP/MCP/Python)
 
 ## Content Extraction
 
-Hybrid approach: trafilatura (local, fast, runs in thread pool) tries first, Jina Reader API (external) as fallback. Returns clean text with title, author, date, word count. SSRF protection blocks private IPs. Results cached in memory + SQLite (168h TTL, survives restarts). Domain rate limiting (10 req/min/domain). Jina token balance auto-decrements on use.
+Three-tier extraction: authenticated extraction (Playwright via remote Mac Mini service) tries first for paywall domains with cookies, trafilatura (local, fast, runs in thread pool) tries next, Jina Reader API (external) falls back last. Returns clean text with title, author, date, word count. SSRF protection blocks private IPs. Results cached in memory + SQLite (168h TTL, survives restarts). Domain rate limiting (10 req/min/domain). Jina token balance auto-decrements on use.
 
 ```bash
 # CLI

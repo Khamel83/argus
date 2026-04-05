@@ -67,13 +67,15 @@ Search the web using the Argus broker. Routes across providers with automatic fa
 
 ### extract_content
 
-Extract clean text from a URL. Uses trafilatura (local) first, Jina Reader as fallback. Results are cached.
+Extract clean text from a URL. For paywall domains with configured cookies, authenticated extraction runs first (Playwright via remote service). Falls back to trafilatura (local), then Jina Reader. Results are cached.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `url` | string | *required* | URL to extract content from |
 
-**Returns:** JSON with `url`, `title`, `text`, `author`, `date`, `word_count`, `extractor` (`"trafilatura"` or `"jina"`), `error`.
+The domain is auto-detected from the URL. Auth extraction triggers automatically for known paywall domains when a remote extraction service is configured.
+
+**Returns:** JSON with `url`, `title`, `text`, `author`, `date`, `word_count`, `extractor` (`"auth_playwright"`, `"trafilatura"`, or `"jina"`), `error`.
 
 **Example:**
 ```json

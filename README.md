@@ -18,7 +18,7 @@ Argus replaces that with one endpoint. You add it to your agent once — the sam
 - **No provider lock-in** — swap Brave for Serper or add Exa without changing your agent code. Missing keys degrade gracefully; providers are skipped, not errors.
 - **Automatic fallback** — if a provider is down, slow, or over budget, Argus routes to the next best one. Your agent doesn't need retry logic or circuit breakers.
 - **Better results than any single provider** — Reciprocal Rank Fusion merges results from multiple sources. A URL that appears in both Brave and Serper ranks higher than one that only appears in one.
-- **Content extraction built in** — found a useful link? Pass the URL to Argus and get clean article text back. Trafilatura tries first (local, free), Jina Reader falls back if needed. Cached in memory and SQLite so the same URL is never fetched twice.
+- **Content extraction built in** — found a useful link? Pass the URL to Argus and get clean article text back. Paywall domains get authenticated extraction first (Playwright via remote service), then trafilatura (local, free), then Jina Reader fallback. Cached in memory and SQLite so the same URL is never fetched twice.
 - **Multi-turn memory** — Argus remembers prior queries in a session. Follow-up searches like "fastapi" after "python web frameworks" get context-enriched automatically.
 - **Budget-aware by default** — each provider has a generous free tier (Brave: 2k/mo, Serper: 2.5k/mo, Tavily: 1k/mo, Exa: 1k/mo). Argus tracks usage per provider and automatically rotates away from one when its quota is hit. Combined, that's thousands of free searches per month — enough for most personal and development use.
 
@@ -28,15 +28,15 @@ Think of it as the LiteLLM of web search — one API, multiple providers, unifie
 
 **Core** — search routing, result normalization, RRF ranking, provider health tracking, budget enforcement, deduplication.
 
-**Attached services** — content extraction (trafilatura + Jina), multi-turn sessions, MCP server interface.
+**Attached services** — content extraction (auth extraction + trafilatura + Jina), multi-turn sessions, MCP server interface.
 
-**Not** — a web crawler, a browser automation system, a full document store, a general agent framework, an answer synthesis engine, or a multi-tenant SaaS. If you need those things, Argus integrates with systems that do them.
+**Not** — a web crawler, a full document store, a general agent framework, an answer synthesis engine, or a multi-tenant SaaS. If you need those things, Argus integrates with systems that do them.
 
 ## What It Does
 
 You pass Argus a search query. It routes to providers in cheap-first order, stops early when the first provider already produced enough useful results, and only falls through when failure, weak output, cooldown, or budget limits justify it. Results are ranked, deduplicated, and returned as one clean list.
 
-**Content extraction** — Pass a URL and get clean article text back. Trafilatura (local, fast) tries first, Jina Reader falls back if needed. Results cached in memory and SQLite (168h TTL) — survives restarts.
+**Content extraction** — Pass a URL and get clean article text back. For paywall domains, authenticated extraction runs first (Playwright on a remote service via Tailscale). Trafilatura (local, fast) tries next, Jina Reader falls back if needed. Results cached in memory and SQLite (168h TTL) — survives restarts.
 
 **Multi-turn sessions** — Pass a `session_id` and Argus remembers what you've asked before. Follow-up queries get context-enriched automatically. Sessions persist to SQLite across restarts.
 
@@ -215,6 +215,7 @@ Caller (CLI / HTTP / MCP / Python)
     → persistence gateway (SQLite, non-fatal)
   → SessionStore (optional, per-request)
   → ContentExtractor (on demand)
+    → auth extraction (paywall domains, remote Playwright service)
     → trafilatura (primary) → Jina Reader (fallback)
     → cache: memory → SQLite
 ```
@@ -224,7 +225,7 @@ Caller (CLI / HTTP / MCP / Python)
 | `argus/core/` | Generic TTLCache, SlidingWindowLimiter |
 | `argus/broker/` | Routing, ranking, dedup, health, budgets |
 | `argus/providers/` | Provider adapters (SearXNG, Brave, Serper, Tavily, Exa) |
-| `argus/extraction/` | URL content extraction (trafilatura + Jina) |
+| `argus/extraction/` | URL content extraction (auth extraction, trafilatura, Jina) |
 | `argus/sessions/` | Multi-turn session store |
 | `argus/api/` | FastAPI HTTP endpoints + auth + rate limiting |
 | `argus/cli/` | Click CLI commands |
@@ -246,6 +247,9 @@ All config via environment variables. See `.env.example`.
 | `ARGUS_EXA_API_KEY` | — | Exa API key |
 | `ARGUS_CACHE_TTL_HOURS` | 168 | Result cache TTL |
 | `ARGUS_JINA_API_KEY` | — | Jina Reader key (optional) |
+| `ARGUS_REMOTE_EXTRACT_URL` | — | Remote auth extraction service URL (enables Playwright-based extraction for paywall domains) |
+| `ARGUS_REMOTE_EXTRACT_KEY` | — | API key for the remote extraction service |
+| `ARGUS_REMOTE_EXTRACT_TIMEOUT` | `35` | Timeout (seconds) for remote extraction requests |
 | `ARGUS_EXTRACTION_CACHE_TTL_HOURS` | 168 | Extraction cache TTL |
 | `ARGUS_RATE_LIMIT` | 60 | Requests per window per client IP |
 | `ARGUS_RATE_LIMIT_WINDOW` | 60 | Rate limit window (seconds) |
@@ -256,7 +260,7 @@ All config via environment variables. See `.env.example`.
 Argus deliberately does not:
 
 - **Crawl or spider** — it queries search APIs, not raw URLs. If you need a crawler, use one and feed the URLs to `argus extract`.
-- **Drive a browser** — no Playwright, Puppeteer, or JS rendering. For JS-heavy pages, Jina Reader handles fallback extraction.
+- **Drive a browser locally** — Playwright runs on a separate machine (Mac Mini) accessed via Tailscale, not embedded in the Argus process. If you need local browser automation, that's outside scope.
 - **Store documents** — results are ranked and returned. There is no document index or vector store built in.
 - **Synthesize answers** — Argus returns search results and extracted text. Answer generation is left to the LLM calling Argus.
 - **Run multi-tenant** — no user accounts, no per-user quotas, no auth beyond a single `ARGUS_API_KEY`. Designed for private/single-user deployments.
