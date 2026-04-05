@@ -12,7 +12,7 @@ Stop wiring search APIs into every project. Argus is one endpoint that talks to 
 
 You pass Argus a search query. It routes to providers in cheap-first order, stops early when the first provider already produced enough useful results, and only falls through when failure, weak output, cooldown, or budget limits justify it. Results are then ranked, deduplicated, and returned as one clean list. Your project never touches a provider API directly.
 
-**Content extraction** — Found a useful link? Pass the URL to Argus and get clean article text back. It tries trafilatura (local, fast) first, then falls back to Jina Reader if needed. No HTML, no navigation, no ads — just the content. Results are cached in memory (168h TTL) so the same URL is never fetched twice.
+**Content extraction** — Found a useful link? Pass the URL to Argus and get clean article text back. It runs a 6-step fallback chain with quality gates between every step: trafilatura → Playwright → Jina Reader → Wayback Machine → archive.is. Each result is checked for paywall stubs, soft 404s, and minimum quality before moving on. SSRF protection blocks private IPs. Results are cached in memory (168h TTL). Authenticated extraction via cookies is supported for paywall domains (NYT, Bloomberg, etc.).
 
 **Multi-turn sessions** — Pass a `session_id` with your searches and Argus remembers what you've asked before. Follow-up queries like "fastapi" after searching "python web frameworks" get context-enriched automatically. Sessions persist to SQLite across restarts.
 
@@ -112,7 +112,7 @@ curl -X POST http://localhost:8000/api/search \
 curl -X POST http://localhost:8000/api/extract \
   -H "Content-Type: application/json" \
   -d '{"url": "https://example.com/article"}'
-# → {"url": "...", "title": "...", "text": "clean article text...", "word_count": 842, "extractor": "trafilatura"}
+# → {"url": "...", "title": "...", "text": "clean article text...", "word_count": 842, "extractor": "trafilatura", "quality_passed": true}
 
 # Recover a dead URL
 curl -X POST http://localhost:8000/api/recover-url \
@@ -137,6 +137,9 @@ argus search -q "python web framework"
 argus search -q "python web framework" --mode research -n 20
 argus search -q "fastapi" --session my-session        # multi-turn context
 argus extract -u "https://example.com/article"        # extract clean text
+argus extract -u "https://example.com/article" -d nytimes.com  # authenticated extraction
+argus cookies import                                   # import browser cookies
+argus cookies health                                   # check cookie freshness
 argus recover-url -u "https://dead.link" -t "Title"
 argus health                                          # provider status
 argus budgets                                         # budget status + token balances
@@ -237,14 +240,17 @@ Caller (CLI / HTTP / MCP / Python)
   → SessionStore (optional, per-request)
     → query refinement from prior context
   → Extractor (on demand)
-    → trafilatura (primary) → Jina Reader (fallback)
+    → SSRF check → cache → rate limit → auth (cookies) → quality gate →
+      trafilatura → quality gate → Playwright → quality gate →
+      Jina Reader → quality gate → Wayback Machine → quality gate →
+      archive.is → quality gate → return best
 ```
 
 | Module | Responsibility |
 |--------|---------------|
 | `argus/broker/` | Routing, ranking, dedup, caching, health, budgets |
 | `argus/providers/` | Provider adapters (one per search API) |
-| `argus/extraction/` | URL content extraction (trafilatura + Jina) |
+| `argus/extraction/` | URL content extraction (6-step fallback chain with quality gates, auth, SSRF) |
 | `argus/sessions/` | Multi-turn session store and query refinement |
 | `argus/api/` | FastAPI HTTP endpoints |
 | `argus/cli/` | Click CLI commands |
@@ -276,6 +282,8 @@ All config via environment variables. See `.env.example` for the full list.
 | `ARGUS_EXTRACTION_DOMAIN_RATE_LIMIT` | 10 | Max extractions per domain per window |
 | `ARGUS_EXTRACTION_DOMAIN_WINDOW_SECONDS` | 60 | Domain rate limit window |
 | `ARGUS_JINA_API_KEY` | — | Jina Reader key (optional — works without, rate-limited) |
+| `ARGUS_REMOTE_EXTRACT_URL` | — | Auth extraction service URL (Mac Mini Playwright + cookies) |
+| `ARGUS_REMOTE_EXTRACT_KEY` | — | Auth extraction service API key |
 | `ARGUS_RATE_LIMIT` | 60 | Requests per window per client IP |
 | `ARGUS_API_KEY` | — | Bypass rate limiting for internal services |
 
@@ -285,13 +293,11 @@ Bug reports, feature ideas, and PRs are welcome. See [CONTRIBUTING.md](CONTRIBUT
 
 ## Roadmap
 
-**Now** — Search broker with fallback, health, budgets, content extraction with caching, domain rate limiting, persistent sessions (SQLite), and auto-decrementing token balance tracking. Search → extract → answer, all in one service.
+**Now** — Search broker with fallback, health, budgets, content extraction with 6-step fallback chain (trafilatura → Playwright → Jina → Wayback → archive.is), quality gates, SSRF protection, authenticated extraction via cookies, domain rate limiting, persistent sessions (SQLite), and auto-decrementing token balance tracking. Search → extract → answer, all in one service.
 
-**Soon** — Provider-specific tuning (use Exa for academic, Brave for general), query rewriting to improve recall, embedding-based dedup, browser rendering for JS-heavy pages.
+**Soon** — Provider-specific tuning (use Exa for academic, Brave for general), query rewriting to improve recall, embedding-based dedup, SQLite extraction cache persistence.
 
 **Later** — Conversational search with automatic query chaining, result summarization, multi-language support.
-
-**Maybe** — Conversational search with automatic query chaining, result summarization, multi-language support.
 
 ## License
 
