@@ -1,0 +1,50 @@
+# VCS
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment (injected at runtime, not baked in)
+.env
+.env.bak
+.env.local
+
+# Testing
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Docs
+docs/
+*.md
+!README.md
+LICENSE
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime artifacts
+argus_budgets.db/
+1shot/
+docker-compose.yml
+Dockerfile

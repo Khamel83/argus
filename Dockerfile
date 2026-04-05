@@ -1,12 +1,29 @@
-FROM python:3.12-slim AS base
+FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
-# Install dependencies
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir . && pip install --no-cache-dir 'mcp>=1.0.0'
+# Install build deps (needed for psycopg2-binary, lxml, etc.)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libxml2-dev libxslt1-dev && \
+    rm -rf /var/lib/apt/lists/*
 
-# Copy application
+COPY pyproject.toml ./
+RUN pip install --no-cache-dir --prefix=/install ".[mcp]"
+
+# --- Final image ---
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Runtime deps for lxml
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libxml2 libxslt1.1 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy installed packages from builder
+COPY --from=builder /install /usr/local
+
+# Copy application code
 COPY argus/ ./argus/
 
 # Create non-root user
