@@ -105,11 +105,14 @@ def can_authenticate(domain: str) -> bool:
     if not remote_mode and get_cookie_path(domain) is None:
         return False
 
-    health = _load_health()
-    status = health.get(domain, {}).get("status", "healthy")
-    if status == "stale":
-        logger.info("Cookies for %s are stale, skipping auth", domain)
-        return False
+    # In remote mode, cookie freshness is managed by the remote service.
+    # Local stale status (from prior local-Playwright attempts) is irrelevant.
+    if not remote_mode:
+        health = _load_health()
+        status = health.get(domain, {}).get("status", "healthy")
+        if status == "stale":
+            logger.info("Cookies for %s are stale, skipping auth", domain)
+            return False
 
     # Rate limit check
     now = time.monotonic()
@@ -136,8 +139,10 @@ def record_auth_request(domain: str, success: bool, status_code: int = 0) -> Non
     entry["last_used"] = datetime.now(timezone.utc).isoformat()
     entry["last_status_code"] = status_code
 
-    # Only mark stale on auth failures (401/403), not on short content with 200
-    if status_code in (401, 403):
+    # Only mark stale on auth failures (401/403) in local mode.
+    # In remote mode, 403 often means bot detection, not bad cookies.
+    remote_mode = bool(os.getenv("ARGUS_REMOTE_EXTRACT_URL", ""))
+    if not remote_mode and status_code in (401, 403):
         entry["status"] = "stale"
         logger.warning(
             "Cookies for %s marked as stale (status=%d)",
