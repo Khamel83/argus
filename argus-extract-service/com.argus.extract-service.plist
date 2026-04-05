@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.argus.extract-service</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/macmini/argus-extract-service/.venv/bin/uvicorn</string>
+        <string>main:app</string>
+        <string>--host</string>
+        <string>0.0.0.0</string>
+        <string>--port</string>
+        <string>8910</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/macmini/argus-extract-service</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/macmini/argus-extract-service/.venv/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>ARGUS_EXTRACT_SERVICE_KEY</key>
+        <string>571647eb25034d7e6ec49e04defe3638df21ac0a8a5bcd37bb8ed1ec9397d0a3</string>
+        <key>ARGUS_COOKIE_DIR</key>
+        <string>/Users/macmini/.config/argus/cookies</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/macmini/Library/Logs/argus-extract-service.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/macmini/Library/Logs/argus-extract-service.err.log</string>
+</dict>
+</plist>

@@ -95,8 +95,14 @@ def needs_auth(url: str) -> bool:
 
 
 def can_authenticate(domain: str) -> bool:
-    """Check if we have cookies and aren't rate-limited for this domain."""
-    if get_cookie_path(domain) is None:
+    """Check if we can authenticate for this domain.
+
+    In remote mode (ARGUS_REMOTE_EXTRACT_URL set), cookies live on the remote
+    service so we skip the local file check. Rate limiting and stale status
+    are still enforced locally.
+    """
+    remote_mode = bool(os.getenv("ARGUS_REMOTE_EXTRACT_URL", ""))
+    if not remote_mode and get_cookie_path(domain) is None:
         return False
 
     health = _load_health()
