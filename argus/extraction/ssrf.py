@@ -1,7 +1,6 @@
 """
 SSRF Protection - Block requests to internal/private networks.
 
-Ported from Atlas modules/ingest/robust_fetcher.py.
 Called before any extraction attempt to prevent Server-Side Request Forgery.
 """
 

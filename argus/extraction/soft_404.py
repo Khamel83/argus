@@ -1,7 +1,6 @@
 """
 Soft 404 Detection - Detect pages that return 200 but are actually error pages.
 
-Ported from Atlas modules/ingest/robust_fetcher.py.
 Integrated into the quality gate — soft-404 content is rejected.
 """
 

@@ -1,7 +1,6 @@
 """
 Quality Gate - Content quality checkpoint between extraction steps.
 
-Ported from Atlas modules/quality/quality_gate.py.
 Runs AFTER an extractor succeeds but BEFORE returning the result.
 If content fails, the extraction chain tries the next extractor.
 
