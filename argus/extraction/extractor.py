@@ -100,7 +100,7 @@ class ContentExtractor:
         except Exception as e:
             logger.warning("Failed to sync Jina token balance: %s", e)
 
-    async def extract(self, url: str) -> ExtractedContent:
+    async def extract(self, url: str, domain: str | None = None) -> ExtractedContent:
         # In-memory cache
         cached = self._cache.get(url)
         if cached is not None:
@@ -117,6 +117,19 @@ class ContentExtractor:
         allowed, retry_after = self._domain_limiter.is_allowed(url)
         if not allowed:
             return ExtractedContent(url=url, error=f"domain rate limit exceeded, retry after {retry_after}s")
+
+        # For paywall domains with cookies, try authenticated extraction first
+        if domain:
+            try:
+                from argus.extraction.auth_extractor import extract_authenticated
+
+                auth_result = await extract_authenticated(url, domain)
+                if auth_result and auth_result.text and not auth_result.error:
+                    self._cache.put(url, value=auth_result)
+                    self._save_to_sqlite(url, auth_result)
+                    return auth_result
+            except Exception as e:
+                logger.debug("Auth extraction not available: %s", e)
 
         # Try trafilatura
         try:
@@ -162,8 +175,8 @@ def get_extraction_cache() -> TTLCache:
     return get_extractor().cache
 
 
-async def extract_url(url: str) -> ExtractedContent:
-    return await get_extractor().extract(url)
+async def extract_url(url: str, domain: str | None = None) -> ExtractedContent:
+    return await get_extractor().extract(url, domain=domain)
 
 
 # --- Private extraction functions (stateless) ---

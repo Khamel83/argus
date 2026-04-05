@@ -11,6 +11,7 @@ from typing import Optional
 class ExtractorName(str, Enum):
     TRAFILATURA = "trafilatura"
     JINA = "jina"
+    AUTH_PLAYWRIGHT = "auth_playwright"
 
 
 @dataclass

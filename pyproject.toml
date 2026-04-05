@@ -40,6 +40,9 @@ dev = [
 mcp = [
     "mcp>=1.0.0",
 ]
+auth = [
+    "playwright>=1.40.0",
+]
 
 [project.scripts]
 argus = "argus.cli.main:cli"

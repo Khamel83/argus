@@ -31,6 +31,12 @@ async def lifespan(app: FastAPI):
         broker.budget_tracker.close()
         if broker._session_store:
             broker._session_store.close()
+        # Close Playwright browser if auth extraction was used
+        try:
+            from argus.extraction.auth_extractor import shutdown_browser
+            await shutdown_browser()
+        except ImportError:
+            pass
         logger.info("Shutdown complete: connections closed")
     except Exception as e:
         logger.warning("Error during shutdown: %s", e)

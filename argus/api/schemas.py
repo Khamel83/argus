@@ -93,6 +93,7 @@ class ProviderTestRequest(BaseModel):
 
 class ExtractRequest(BaseModel):
     url: str = Field(..., min_length=1, max_length=2048, description="URL to extract content from")
+    domain: Optional[str] = Field(None, description="Domain hint for authenticated extraction (e.g. nytimes.com)")
 
     @field_validator("url")
     @classmethod
