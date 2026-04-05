@@ -7,6 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![MCP Server](https://img.shields.io/badge/MCP-server-purple)](https://modelcontextprotocol.io/)
 [![Zero external DB deps](https://img.shields.io/badge/DB-SQLite%20only-blue)](https://www.sqlite.org/)
+[![argus MCP server](https://glama.ai/mcp/servers/Khamel83/argus/badges/card.svg)](https://glama.ai/mcp/servers/Khamel83/argus)
 
 One endpoint, five search providers. Argus routes queries across SearXNG, Brave, Serper, Tavily, and Exa with automatic fallback, RRF result ranking, health tracking, and budget enforcement. Extract clean text from any URL. Remember prior queries for smarter follow-ups. Zero external database dependencies — SQLite only.
 
