@@ -46,12 +46,12 @@ class TestTrafilaturaExtractor:
         with patch("trafilatura.fetch_url") as mock_fetch, \
              patch("trafilatura.bare_extraction") as mock_extract:
             mock_fetch.return_value = "<html><body><article><h1>Title</h1><p>Content here.</p></article></body></html>"
-            mock_extract.return_value = {
+            mock_extract.return_value = type('Doc', (), {
                 "text": "Content here.",
                 "title": "Title",
                 "author": "Author",
                 "date": "2024-01-01",
-            }
+            })()
 
             result = await _extract_trafilatura("https://example.com")
             assert result.text == "Content here."

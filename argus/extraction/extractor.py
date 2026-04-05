@@ -188,13 +188,17 @@ async def _extract_trafilatura(url: str) -> ExtractedContent:
     if not downloaded:
         return ExtractedContent(url=url, error="trafilatura: failed to fetch URL")
     extracted = await loop.run_in_executor(None, trafilatura.bare_extraction, downloaded)
-    if not extracted or not extracted.get("text"):
+    text = getattr(extracted, "text", None) if extracted else None
+    if not text:
         return ExtractedContent(url=url, error="trafilatura: no content extracted")
-    text = extracted["text"]
     return ExtractedContent(
-        url=url, title=extracted.get("title", ""), text=text,
-        author=extracted.get("author", ""), date=extracted.get("date"),
-        word_count=len(text.split()), extractor=ExtractorName.TRAFILATURA,
+        url=url,
+        title=getattr(extracted, "title", "") or "",
+        text=text,
+        author=getattr(extracted, "author", "") or "",
+        date=getattr(extracted, "date", None),
+        word_count=len(text.split()),
+        extractor=ExtractorName.TRAFILATURA,
     )
 
 

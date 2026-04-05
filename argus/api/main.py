@@ -16,7 +16,7 @@ from argus.api.routes_extract import router as extract_router
 from argus.api.routes_health import router as health_router
 from argus.api.routes_search import router as search_router
 from argus.broker.router import SearchBroker, create_broker
-from argus.logging import get_logger
+from argus.logging import get_logger, setup_logging
 
 __version__ = __import__("argus").__version__
 
@@ -25,6 +25,7 @@ logger = get_logger("api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    setup_logging()
     yield
     try:
         broker = app.state.get_broker()
