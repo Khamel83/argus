@@ -118,6 +118,9 @@ class ExtractResponse(BaseModel):
     word_count: int = 0
     extractor: Optional[str] = None
     error: Optional[str] = None
+    quality_passed: Optional[bool] = None
+    quality_reason: Optional[str] = None
+    extractors_tried: Optional[list[str]] = None
 
 
 class ErrorResponse(BaseModel):

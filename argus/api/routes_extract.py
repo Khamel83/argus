@@ -23,6 +23,9 @@ async def extract(req: ExtractRequest):
         word_count=result.word_count,
         extractor=result.extractor.value if result.extractor else None,
         error=result.error,
+        quality_passed=getattr(result, "quality_passed", None),
+        quality_reason=getattr(result, "quality_reason", None),
+        extractors_tried=getattr(result, "extractors_tried", None),
     )
 
 
