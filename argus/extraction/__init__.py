@@ -1,8 +1,8 @@
 """
 Argus content extraction layer.
 
-Given a URL from search results, fetch and extract clean text.
-Closes the loop: search → identify useful link → extract → answer.
+Integrated fallback chain with quality gates:
+  trafilatura → playwright → jina → wayback → archive.is
 
 Usage:
     from argus.extraction import extract_url
@@ -12,5 +12,12 @@ Usage:
 
 from argus.extraction.extractor import extract_url
 from argus.extraction.models import ExtractedContent, ExtractorName
+from argus.extraction.quality_gate import QualityGate, GateResult
 
-__all__ = ["extract_url", "ExtractedContent", "ExtractorName"]
+__all__ = [
+    "extract_url",
+    "ExtractedContent",
+    "ExtractorName",
+    "QualityGate",
+    "GateResult",
+]

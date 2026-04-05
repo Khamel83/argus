@@ -31,6 +31,7 @@ dependencies = [
     "click>=8.1.0",
     "pyyaml>=6.0",
     "trafilatura>=1.6.0",
+    "playwright>=1.40.0",
 ]
 
 [project.optional-dependencies]

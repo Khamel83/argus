@@ -66,9 +66,14 @@ async def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int
         return await mcp_tools.test_provider_mcp(broker, provider, query)
 
     @mcp.tool()
-    async def extract_content(url: str) -> str:
-        """Extract clean text content from a URL."""
-        return await mcp_tools.extract_content(url)
+    async def extract_content(url: str, domain: str = None) -> str:
+        """Extract clean text content from a URL. Pass domain for authenticated extraction on paywall sites."""
+        return await mcp_tools.extract_content(url, domain=domain)
+
+    @mcp.tool()
+    def cookie_health() -> str:
+        """Get health status of all configured cookie domains."""
+        return mcp_tools.cookie_health()
 
     # Register resources
     @mcp.resource("argus://providers/status")

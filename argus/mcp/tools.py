@@ -77,11 +77,14 @@ async def recover_url(
 ) -> str:
     """Recover a dead, moved, or unavailable URL.
 
+    Tries search-based recovery first, then archive.ph as fallback.
+
     Args:
         url: The URL to recover
         title: Optional title hint
         domain: Optional domain hint
     """
+    # First try search-based recovery
     query_parts = [url]
     if title:
         query_parts.append(title)
@@ -90,7 +93,66 @@ async def recover_url(
 
     q = SearchQuery(query=" ".join(query_parts), mode=SearchMode.RECOVERY, max_results=10)
     resp = await broker.search(q)
+
+    # If search found results, return those
+    if resp.results:
+        return _serialize_response(resp)
+
+    # Fallback: try archive.ph
+    try:
+        archive_result = await _try_archive_ph(url)
+        if archive_result:
+            result = json.loads(_serialize_response(resp))
+            result["results"].append(archive_result)
+            result["total_results"] = len(result["results"])
+            result["archive_ph_used"] = True
+            return json.dumps(result, indent=2)
+    except Exception as e:
+        json_resp = json.loads(_serialize_response(resp))
+        json_resp["archive_ph_error"] = str(e)
+        return json.dumps(json_resp, indent=2)
+
     return _serialize_response(resp)
+
+
+async def _try_archive_ph(url: str) -> Optional[dict]:
+    """Try to fetch content from archive.ph."""
+    import httpx
+
+    from urllib.parse import quote_plus
+
+    archive_url = f"https://archive.ph/newest/{quote_plus(url)}"
+
+    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        resp = await client.get(archive_url, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+        })
+
+        if resp.status_code != 200:
+            return None
+
+        html = resp.text
+
+        # Check if archive.ph actually has this page
+        if "does not have an archive" in html or "was not archived" in html:
+            return None
+
+        # Extract text from archived page
+        import trafilatura
+        loop = __import__("asyncio").get_event_loop()
+        extracted = await loop.run_in_executor(None, trafilatura.bare_extraction, html)
+
+        if extracted and extracted.get("text") and len(extracted["text"]) > 200:
+            return {
+                "url": str(resp.url),
+                "title": extracted.get("title", ""),
+                "snippet": extracted["text"][:200],
+                "domain": "archive.ph",
+                "provider": "archive_ph",
+                "score": 0.8,
+            }
+
+    return None
 
 
 async def expand_links(
@@ -188,15 +250,16 @@ async def test_provider_mcp(
     }, indent=2)
 
 
-async def extract_content(url: str) -> str:
+async def extract_content(url: str, domain: str = None) -> str:
     """Extract clean text content from a URL.
 
     Args:
         url: URL to extract content from
+        domain: Optional domain hint for authenticated extraction (e.g. nytimes.com)
     """
     from argus.extraction import extract_url
 
-    result = await extract_url(url)
+    result = await extract_url(url, domain=domain)
 
     return json.dumps({
         "url": result.url,
@@ -207,4 +270,21 @@ async def extract_content(url: str) -> str:
         "word_count": result.word_count,
         "extractor": result.extractor.value if result.extractor else None,
         "error": result.error,
+    }, indent=2)
+
+
+def cookie_health() -> str:
+    """Get health status of all configured cookie domains.
+
+    Returns per-domain status, request counts, staleness warnings,
+    and whether cookies need refreshing.
+    """
+    from argus.extraction.cookies import get_health_summary
+
+    summary = get_health_summary()
+    return json.dumps({
+        "domains": summary,
+        "total_domains": len(summary),
+        "stale": [d for d, s in summary.items() if s["status"] == "stale"],
+        "refresh_needed": [d for d, s in summary.items() if s.get("stale_warning")],
     }, indent=2)

@@ -124,9 +124,46 @@ class TestJinaExtractor:
             assert result.error is not None
 
 
+def _good_text(n: int = 150) -> str:
+    """Generate text that passes the quality gate (n words)."""
+    return " ".join(["word"] * n)
+
+
+# Failing result used to simulate extractor failures in chain tests
+_BAD_RESULT = ExtractedContent(url="https://example.com", error="failed")
+
+# Module paths for all chain extractors (order matters)
+_CHAIN_EXTRACTORS = [
+    ("auth", "argus.extraction.auth_extractor", "extract_authenticated"),
+    ("trafilatura", "argus.extraction.extractor", "_extract_trafilatura"),
+    ("playwright", "argus.extraction.playwright_extractor", "extract_playwright"),
+    ("jina", "argus.extraction.extractor", "_extract_jina"),
+    ("wayback", "argus.extraction.wayback_extractor", "extract_wayback"),
+    ("archive_is", "argus.extraction.archive_extractor", "extract_archive_is"),
+]
+
+
+@pytest.fixture
+def mock_chain():
+    """Fixture that patches all chain extractors. Use parametrize or override."""
+    patches = []
+    mocks = {}
+
+    for name, module_path, func_name in _CHAIN_EXTRACTORS:
+        p = patch(f"{module_path}.{func_name}", new_callable=AsyncMock, return_value=_BAD_RESULT)
+        m = p.start()
+        patches.append(p)
+        mocks[name] = m
+
+    yield mocks
+
+    for p in patches:
+        p.stop()
+
+
 class TestExtractUrl:
     @pytest.mark.asyncio
-    async def test_trafilatura_primary_no_fallback(self):
+    async def test_trafilatura_primary_no_fallback(self, mock_chain):
         from argus.extraction.extractor import extract_url, _cache
 
         _cache.clear()
@@ -134,50 +171,90 @@ class TestExtractUrl:
         good_result = ExtractedContent(
             url="https://example.com",
             title="Title",
-            text="Good content from trafilatura",
-            word_count=5,
+            text=_good_text(150),
+            word_count=150,
             extractor=ExtractorName.TRAFILATURA,
         )
+        mock_chain["trafilatura"].return_value = good_result
 
-        with patch("argus.extraction.extractor._extract_trafilatura", new_callable=AsyncMock, return_value=good_result):
-            result = await extract_url("https://example.com")
-            assert result.extractor == ExtractorName.TRAFILATURA
-            assert "trafilatura" in result.text
+        result = await extract_url("https://example.com")
+        assert result.extractor == ExtractorName.TRAFILATURA
+        assert result.quality_passed is True
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_jina(self):
+    async def test_falls_back_to_jina(self, mock_chain):
         from argus.extraction.extractor import extract_url, _cache, _domain_limiter
 
         _cache.clear()
         _domain_limiter.clear()
 
-        bad_result = ExtractedContent(url="https://example.com", error="no content")
         good_result = ExtractedContent(
             url="https://example.com",
             title="Title",
-            text="Good content from Jina",
-            word_count=5,
+            text=_good_text(150),
+            word_count=150,
             extractor=ExtractorName.JINA,
         )
+        mock_chain["jina"].return_value = good_result
 
-        with patch("argus.extraction.extractor._extract_trafilatura", new_callable=AsyncMock, return_value=bad_result):
-            with patch("argus.extraction.extractor._extract_jina", new_callable=AsyncMock, return_value=good_result):
-                result = await extract_url("https://example.com")
-                assert result.extractor == ExtractorName.JINA
+        result = await extract_url("https://example.com")
+        assert result.extractor == ExtractorName.JINA
 
     @pytest.mark.asyncio
-    async def test_all_extractors_fail(self):
+    async def test_all_extractors_fail(self, mock_chain):
         from argus.extraction.extractor import extract_url, _cache, _domain_limiter
 
         _cache.clear()
         _domain_limiter.clear()
 
-        bad_result = ExtractedContent(url="https://example.com", error="failed")
+        result = await extract_url("https://example.com")
+        assert result.error is not None
 
-        with patch("argus.extraction.extractor._extract_trafilatura", new_callable=AsyncMock, return_value=bad_result):
-            with patch("argus.extraction.extractor._extract_jina", new_callable=AsyncMock, return_value=bad_result):
-                result = await extract_url("https://example.com")
-                assert result.error is not None
+    @pytest.mark.asyncio
+    async def test_ssrf_blocks_private_ip(self):
+        from argus.extraction.extractor import extract_url
+
+        result = await extract_url("http://192.168.1.1/admin")
+        assert result.error is not None
+        assert "ssrf_blocked" in result.error
+
+    @pytest.mark.asyncio
+    async def test_quality_gate_rejects_short_content(self, mock_chain):
+        from argus.extraction.extractor import extract_url, _cache, _domain_limiter
+
+        _cache.clear()
+        _domain_limiter.clear()
+
+        short_result = ExtractedContent(
+            url="https://example.com",
+            title="Title",
+            text=_good_text(50),
+            word_count=50,
+            extractor=ExtractorName.TRAFILATURA,
+        )
+        good_result = ExtractedContent(
+            url="https://example.com",
+            title="Title",
+            text=_good_text(200),
+            word_count=200,
+            extractor=ExtractorName.JINA,
+        )
+        mock_chain["trafilatura"].return_value = short_result
+        mock_chain["jina"].return_value = good_result
+
+        result = await extract_url("https://example.com")
+        assert result.extractor == ExtractorName.JINA
+        assert result.quality_passed is True
+
+    @pytest.mark.asyncio
+    async def test_extractors_tried_tracked(self, mock_chain):
+        from argus.extraction.extractor import extract_url, _cache, _domain_limiter
+
+        _cache.clear()
+        _domain_limiter.clear()
+
+        result = await extract_url("https://example.com")
+        assert "trafilatura" in result.extractors_tried
 
 
 # --- Extraction Cache ---
