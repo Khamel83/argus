@@ -18,7 +18,7 @@ __version__ = __import__("argus").__version__
 logger = get_logger("mcp.server")
 
 
-async def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 8001):
+def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 8001):
     """Start the Argus MCP server.
 
     Args:
@@ -96,7 +96,7 @@ async def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int
     # Start server
     if transport == "stdio":
         logger.info("Starting Argus MCP server (stdio)")
-        await mcp.run(transport="stdio")
+        mcp.run(transport="stdio")
     elif transport == "sse":
         api_key = os.environ.get("ARGUS_API_KEY", "")
         if not api_key:
@@ -107,6 +107,6 @@ async def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int
                 host, port,
             )
         logger.info("Starting Argus MCP server (sse) on %s:%d", host, port)
-        await mcp.run(transport="sse", host=host, port=port)
+        mcp.run(transport="sse", host=host, port=port)
     else:
         logger.error("Unknown transport: %s", transport)

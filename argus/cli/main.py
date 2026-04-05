@@ -417,6 +417,5 @@ def mcp():
 @click.option("--port", "-p", default=8001, help="Port for SSE transport")
 def mcp_serve(transport, host, port):
     """Start MCP server. Use stdio for Claude/Cursor, sse for remote access."""
-    import asyncio
     from argus.mcp.server import serve_mcp
-    asyncio.run(serve_mcp(transport=transport, host=host, port=port))
+    serve_mcp(transport=transport, host=host, port=port)
