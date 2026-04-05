@@ -192,11 +192,18 @@ LOGIN_FLOWS = {
         "success_check": "myaccount.nytimes.com",
     },
     "wsj.com": {
+        # WSJ uses Dow Jones SSO (Auth0 at sso.accounts.dowjones.com).
+        # Navigate to the login page which redirects to the SSO form.
         "login_url": "https://accounts.wsj.com/login",
         "steps": [
-            {"selector": 'input[name="username"], input[type="email"], #username', "value": "{email}"},
-            {"selector": 'input[name="password"], input[type="password"], #password', "value": "{password}"},
-            {"click": 'button[type="submit"], #submit-button'},
+            # Auth0 universal login uses id="username" even for email fields
+            {"wait_selector": 'input[id="username"], input[name="email"], input[type="email"]', "timeout_ms": 12000},
+            {"selector": 'input[id="username"], input[name="email"], input[type="email"]', "value": "{email}"},
+            {"click": 'button[type="submit"], button[name="action"], button[value="default"]'},
+            {"wait_ms": 3000},
+            {"wait_selector": 'input[id="password"], input[name="password"], input[type="password"]', "timeout_ms": 10000},
+            {"selector": 'input[id="password"], input[name="password"], input[type="password"]', "value": "{password}"},
+            {"click": 'button[type="submit"], button[name="action"], button[value="default"]'},
         ],
         "success_check": "wsj.com",
     },
@@ -227,6 +234,18 @@ LOGIN_FLOWS = {
             {"click": 'button[type="submit"]'},
         ],
         "success_check": "chicagotribune.com",
+    },
+    "bloomberg.com": {
+        "login_url": "https://www.bloomberg.com/account/signin",
+        "steps": [
+            {"wait_selector": 'input[name="email"], input[type="email"]', "timeout_ms": 8000},
+            {"selector": 'input[name="email"], input[type="email"]', "value": "{email}"},
+            {"click": 'button[type="submit"], button[data-testid="submit"]'},
+            {"wait_ms": 2000},
+            {"selector": 'input[name="password"], input[type="password"]', "value": "{password}"},
+            {"click": 'button[type="submit"], button[data-testid="submit"]'},
+        ],
+        "success_check": "bloomberg.com",
     },
 }
 
@@ -311,16 +330,16 @@ async def _run_login_flow(domain: str, creds: dict) -> dict:
             ]
 
             success_check = flow.get("success_check", "")
-            if len(domain_cookies) >= 3 and success_check in current_url:
+            cookie_count = len(domain_cookies)
+            url_ok = success_check in current_url
+            if cookie_count >= 3 and url_ok:
                 _save_cookies(domain, domain_cookies)
-                logger.info("Login flow for %s: success, %d cookies saved", domain, len(domain_cookies))
-                return {"success": True, "cookie_count": len(domain_cookies)}
+                return {"success": True, "cookie_count": cookie_count}
             else:
-                logger.info(
-                    "Login flow for %s: may have failed — url=%s cookies=%d",
-                    domain, current_url, len(domain_cookies),
-                )
-                return {"success": False, "message": "login may have failed — check credentials or CAPTCHA"}
+                return {
+                    "success": False,
+                    "message": "login may have failed — check credentials or CAPTCHA",
+                }
         finally:
             await page.close()
     finally:

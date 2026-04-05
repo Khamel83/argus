@@ -19,8 +19,10 @@ logger = get_logger("extraction.health_poller")
 
 POLL_INTERVAL = int(os.getenv("ARGUS_AUTH_POLL_INTERVAL", "1800"))
 
-# Domains that require manual cookie refresh — skip auto-login
-MANUAL_ONLY_DOMAINS = {"bloomberg.com"}
+# Domains that require manual cookie refresh — skip auto-login.
+# chicagotribune.com: Google OAuth flow, can't automate simple form-fill.
+# wsj.com: DataDome CAPTCHA fires before login form even appears in headless Chrome.
+MANUAL_ONLY_DOMAINS = {"chicagotribune.com", "wsj.com"}
 
 
 async def refresh_domain(domain: str, remote_url: str, remote_key: str) -> dict:
