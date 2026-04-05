@@ -142,6 +142,21 @@ PyPI: https://pypi.org/project/argus-search/
 
 ---
 
+## Status (2026-04-05)
+
+| Task | Platform | Status | Link |
+|------|----------|--------|------|
+| 1 | modelcontextprotocol/servers | PR open, review pending | [#3833](https://github.com/modelcontextprotocol/servers/pull/3833) |
+| 2 | wong2/awesome-mcp-servers | Submitted (website form) | mcpservers.org |
+| 2b | punkpeye/awesome-mcp-servers | PR open | [#4036](https://github.com/punkpeye/awesome-mcp-servers/pull/4036) |
+| 3 | vinta/awesome-python | PR open, review pending | [#3026](https://github.com/vinta/awesome-python/pull/3026) |
+| 4 | mjhea0/awesome-fastapi | PR open | [#274](https://github.com/mjhea0/awesome-fastapi/pull/274) |
+| 5 | Smithery | Skipped — needs live HTTPS endpoint | N/A |
+| 6 | PulseMCP | Auto-ingests from official registry | Pulses when #3833 merges |
+| 7 | mcp.so | Live | [mcp.so/server/argus-search](https://mcp.so/server/argus-search/Khamel83) |
+
+---
+
 ## Order of operations
 
 Do them in this order for maximum impact:
