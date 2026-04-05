@@ -214,11 +214,18 @@ async def extract_authenticated(url: str, domain: str) -> Optional[ExtractedCont
 
 
 def _extract_from_html(html: str) -> str:
-    """Extract clean text from rendered HTML using trafilatura."""
-    import trafilatura
+    """Extract clean text from rendered HTML using readability-lxml.
 
-    result = trafilatura.bare_extraction(html)
-    if result is None:
-        return ""
-    text = getattr(result, "text", None) or result.get("text") if hasattr(result, "get") else None
-    return text or ""
+    JS-rendered pages often have content in shadow DOM or React components
+    that trafilatura can't parse. readability-lxml handles these well.
+    """
+    from readability import Document
+
+    doc = Document(html)
+    summary = doc.summary()
+    if summary:
+        # Strip any remaining HTML tags
+        import re
+        text = re.sub(r"<[^>]+>", "", summary)
+        return text.strip()
+    return ""

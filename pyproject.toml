@@ -42,6 +42,7 @@ mcp = [
 ]
 auth = [
     "playwright>=1.40.0",
+    "readability-lxml>=0.8.0",
 ]
 
 [project.scripts]
