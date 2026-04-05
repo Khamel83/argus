@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "argus"
+name = "argus-search"
 version = "1.0.0"
 description = "Search broker with content extraction and multi-turn sessions — routes queries across multiple providers with fallback, ranking, health tracking, and budget enforcement"
 readme = "README.md"
@@ -11,7 +11,7 @@ license = {text = "MIT"}
 requires-python = ">=3.11"
 keywords = ["mcp", "mcp-server", "search", "search-api", "search-broker", "content-extraction", "ai-agents", "llm-tools", "web-search", "fastapi", "brave-search", "serper", "tavily", "exa", "searxng", "trafilatura", "jina"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
@@ -20,6 +20,9 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Internet :: WWW/HTTP",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Environment :: Console",
+    "Typing :: Typed",
 ]
 dependencies = [
     "fastapi>=0.115.0",
@@ -53,6 +56,7 @@ Issues = "https://github.com/Khamel83/argus/issues"
 
 [tool.setuptools.packages.find]
 include = ["argus*"]
+exclude = ["argus-extract-service*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -1,0 +1,20 @@
+[Unit]
+Description=Argus Search Broker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/github/argus
+EnvironmentFile=/home/ubuntu/github/argus/.env
+ExecStart=/home/ubuntu/github/argus/.venv/bin/argus serve --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=argus
+
+[Install]
+WantedBy=multi-user.target

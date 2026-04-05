@@ -9,6 +9,8 @@ Search broker with content extraction and multi-turn sessions. Five provider ada
 ```bash
 # Setup
 cp .env.example .env          # configure providers and DB
+pip install 'argus-search[mcp]'  # install from PyPI
+# Or from source:
 pip install -e ".[mcp]"       # install with MCP support
 
 # Run

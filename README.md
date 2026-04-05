@@ -1,5 +1,8 @@
 # Argus
 
+[![PyPI version](https://img.shields.io/pypi/v/argus-search)](https://pypi.org/project/argus-search/)
+[![PyPI downloads](https://img.shields.io/pypi/dm/argus-search)](https://pypi.org/project/argus-search/)
+[![CI](https://img.shields.io/github/actions/workflow/status/Khamel83/argus/ci.yml?branch=main)](https://github.com/Khamel83/argus/actions)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-brightgreen)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![MCP Server](https://img.shields.io/badge/MCP-server-purple)](https://modelcontextprotocol.io/)
@@ -47,12 +50,16 @@ You pass Argus a search query. It routes to providers in cheap-first order, stop
 ## Quick Start
 
 ```bash
+# Install from PyPI
+pip install 'argus-search[mcp]'
+
+# Or from source
 git clone https://github.com/Khamel83/argus.git && cd argus
 python -m venv .venv && source .venv/bin/activate
 cp .env.example .env
 # Edit .env — at minimum, set one provider API key
-
 pip install -e ".[mcp]"
+
 argus serve
 
 # Verify

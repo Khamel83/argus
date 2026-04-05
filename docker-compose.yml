@@ -1,0 +1,19 @@
+services:
+  argus:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - argus-data:/data
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  argus-data:
