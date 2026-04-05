@@ -95,12 +95,13 @@ def search(query, mode, max_results, providers, as_json, session):
 
 @cli.command()
 @click.option("--url", "-u", required=True, help="URL to extract content from")
+@click.option("--domain", "-d", help="Domain hint for authenticated extraction (e.g. nytimes.com)")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def extract(url, as_json):
+def extract(url, as_json, domain):
     """Extract clean text content from a URL."""
     from argus.extraction import extract_url
 
-    result = _run(extract_url(url))
+    result = _run(extract_url(url, domain=domain))
 
     if result.error:
         click.echo(f"Error: {result.error}", err=True)
@@ -294,3 +295,150 @@ def mcp_serve(transport, host, port):
     """Start MCP server. Use stdio for Claude/Cursor, sse for remote access."""
     from argus.mcp.server import serve_mcp
     serve_mcp(transport=transport, host=host, port=port)
+
+
+@cli.group()
+def cookies():
+    """Manage browser cookies for authenticated extraction."""
+    pass
+
+
+@cookies.command(name="import")
+@click.option("--domain", "-d", default=None, help="Domain (e.g. nytimes.com). Inferred from cookies if omitted.")
+@click.option("--file", "-f", "filepath", default=None, type=click.Path(exists=True), help="EditThisCookie JSON file. If omitted, imports all from inbox.")
+def cookies_import(domain, filepath):
+    """Import cookies from EditThisCookie JSON exports.
+
+    Drop JSON files in ~/.config/argus/cookies/inbox/ then run:
+        argus cookies import
+
+    Or import a specific file:
+        argus cookies import -f ~/Downloads/nyt_cookies.json
+
+    Domain is auto-detected from cookie data. Override with -d if needed.
+    """
+    from pathlib import Path
+    from argus.extraction.cookies import COOKIE_DIR, load_editthiscookie_json, _load_health, _save_health
+
+    cookie_dir = COOKIE_DIR
+    inbox_dir = cookie_dir / "inbox"
+    cookie_dir.mkdir(parents=True, exist_ok=True)
+    inbox_dir.mkdir(parents=True, exist_ok=True)
+
+    # Collect files to process
+    if filepath:
+        files = [Path(filepath)]
+    elif inbox_dir.exists():
+        files = sorted(inbox_dir.glob("*.json"))
+        if not files:
+            click.echo(f"No cookie files found in {inbox_dir}")
+            click.echo(f"\nDrop EditThisCookie JSON exports there, then re-run this command.")
+            return
+    else:
+        click.echo(f"No inbox directory at {inbox_dir}")
+        click.echo(f"Drop cookie JSON files in: {inbox_dir}")
+        return
+
+    from datetime import datetime, timezone
+    imported = 0
+
+    for f in files:
+        # Load raw to infer domain
+        try:
+            raw = json.loads(f.read_text())
+        except Exception as e:
+            click.echo(f"  SKIP {f.name}: invalid JSON ({e})")
+            continue
+
+        # Get cookies list (handle both array and wrapped object)
+        if isinstance(raw, dict):
+            cookie_list = raw.get("cookies", [raw])
+        else:
+            cookie_list = raw
+
+        # Infer domain from cookie data
+        inferred = domain
+        if not inferred:
+            domains_seen = set()
+            for c in cookie_list:
+                d = c.get("domain", "")
+                # Strip leading dots, skip empty
+                d = d.lstrip(".")
+                if d and not d.startswith(" "):
+                    # Get base domain (last 2 parts)
+                    parts = d.split(".")
+                    if len(parts) >= 2:
+                        base = ".".join(parts[-2:])
+                        if base not in ("co", "com", "org", "net", "io"):
+                            domains_seen.add(base)
+                    else:
+                        domains_seen.add(d)
+
+            if not domains_seen:
+                click.echo(f"  SKIP {f.name}: no domain found in cookies")
+                continue
+
+            # Pick the most common base domain
+            from collections import Counter
+            inferred = Counter(domains_seen).most_common(1)[0][0]
+
+        dest = cookie_dir / f"{inferred}.json"
+
+        # Validate by doing a test load
+        loaded = load_editthiscookie_json(f)
+        if not loaded:
+            click.echo(f"  SKIP {f.name}: no valid cookies")
+            continue
+
+        # Copy to destination
+        import shutil
+        shutil.copy2(f, dest)
+
+        # Record health
+        health = _load_health()
+        health[inferred] = {
+            "status": "healthy",
+            "request_count": 0,
+            "last_used": None,
+            "cookies_loaded_at": datetime.now(timezone.utc).isoformat(),
+        }
+        _save_health(health)
+
+        # Remove from inbox if it was there
+        if f.parent == inbox_dir:
+            f.unlink()
+
+        click.echo(f"  OK {inferred}: {len(loaded)} cookies from {f.name}")
+        imported += 1
+
+    click.echo(f"\nImported {imported} cookie file(s)")
+    click.echo(f"Cookie dir: {cookie_dir}")
+    click.echo(f"Run 'argus cookies health' to check status anytime.")
+
+
+@cookies.command(name="health")
+def cookies_health():
+    """Show health status of all cookie domains."""
+    from argus.extraction.cookies import get_health_summary, COOKIE_DIR, get_cookie_path
+
+    summary = get_health_summary()
+
+    if not summary:
+        click.echo("No cookies configured.")
+        click.echo(f"\nCookie directory: {COOKIE_DIR}")
+        click.echo("Import cookies with: argus cookies import -d nytimes.com -f cookies.json")
+        return
+
+    click.echo("Cookie health:\n")
+    for domain, info in summary.items():
+        status_emoji = "OK" if info["status"] == "healthy" else "STALE"
+        age = f"{info['days_since_used']}d ago" if info['days_since_used'] is not None else "never"
+        warning = " [REFRESH NEEDED]" if info.get("stale_warning") else ""
+        click.echo(f"  {domain:30s} [{status_emoji:5s}]  used: {age},  requests: {info['request_count']}{warning}")
+
+    # Show what cookies are available on disk
+    click.echo(f"\nCookie directory: {COOKIE_DIR}")
+    if COOKIE_DIR.exists():
+        files = sorted(f.stem for f in COOKIE_DIR.glob("*.json") if f.stem != "health")
+        if files:
+            click.echo(f"On disk: {', '.join(files)}")
