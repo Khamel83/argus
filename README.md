@@ -44,12 +44,18 @@ curl -X POST http://localhost:8000/api/search \
 ### Local install
 
 ```bash
+# From PyPI (recommended)
+pip install "argus-search[mcp]"
+
+# Or from source
 git clone https://github.com/Khamel83/argus.git && cd argus
 python -m venv .venv && source .venv/bin/activate
 cp .env.example .env
 pip install -e ".[mcp]"
 argus serve
 ```
+
+> **Note:** The PyPI package is `argus-search` (the name `argus` is taken by an unrelated project). The CLI command is still `argus`.
 
 ## Provider Setup
 
@@ -153,7 +159,7 @@ All commands support `--json` for structured output.
 
 ### MCP
 
-**Claude Code** — add to your MCP settings:
+**Claude Code** — add to `~/.claude/.mcp.json` (global, all projects) or project `.mcp.json`:
 
 ```json
 {
@@ -302,3 +308,17 @@ Bug reports, feature ideas, and PRs are welcome. See [CONTRIBUTING.md](CONTRIBUT
 ## License
 
 MIT
+
+## Publishing
+
+The PyPI package is **`argus-search`** (the name `argus` is taken by an unrelated project). The CLI command remains `argus`.
+
+### Release checklist
+
+1. Bump `version` in `pyproject.toml`
+2. Commit and push to `main`
+3. Build: `python3 -m build`
+4. Publish: `PYPI_API_TOKEN=$(secrets get PYPI_API_TOKEN) python3 -m twine upload dist/*`
+5. Create GitHub release: `gh release create v<version> --title "v<version>"`
+
+> The PyPI token is scoped to `argus-search` only and stored in the encrypted vault (`secrets get PYPI_API_TOKEN`). The `pypi-publish.yml` workflow uses OIDC trusted publishing but needs reconfiguration on PyPI — manual upload via `twine` is the current path.

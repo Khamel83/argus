@@ -8,8 +8,9 @@ Search broker with content extraction and multi-turn sessions. Seven provider ad
 
 ```bash
 # Setup
-cp .env.example .env          # configure providers and DB
-pip install -e ".[mcp]"       # install with MCP support
+cp .env.example .env                    # configure providers and DB
+pip install "argus-search[mcp]"         # install from PyPI (with MCP support)
+# or from source: pip install -e ".[mcp]"
 
 # Run
 argus serve                   # HTTP API on :8000
