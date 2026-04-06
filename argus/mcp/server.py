@@ -4,7 +4,6 @@ MCP server for Argus.
 Exposes Argus search broker tools and resources via MCP protocol.
 """
 
-import asyncio
 from typing import Any
 
 from argus.broker.router import create_broker
@@ -15,7 +14,7 @@ from argus.mcp import resources as mcp_resources
 logger = get_logger("mcp.server")
 
 
-async def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 8001):
+def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 8001):
     """Start the Argus MCP server.
 
     Args:
@@ -32,7 +31,7 @@ async def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int
     setup_logging("INFO")
     broker = create_broker()
 
-    mcp = FastMCP("argus", version="1.0.0")
+    mcp = FastMCP("argus", host=host, port=port)
 
     # Register tools
     @mcp.tool()
@@ -94,9 +93,9 @@ async def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int
     # Start server
     if transport == "stdio":
         logger.info("Starting Argus MCP server (stdio)")
-        await mcp.run(transport="stdio")
+        mcp.run(transport="stdio")
     elif transport == "sse":
         logger.info("Starting Argus MCP server (sse) on %s:%d", host, port)
-        await mcp.run(transport="sse", host=host, port=port)
+        mcp.run(transport="sse")
     else:
         logger.error("Unknown transport: %s", transport)
