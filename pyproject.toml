@@ -3,8 +3,8 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "argus"
-version = "1.2.0"
+name = "argus-search"
+version = "1.2.1"
 description = "Search broker with content extraction and multi-turn sessions — routes queries across multiple providers with fallback, ranking, health tracking, and budget enforcement"
 readme = "README.md"
 license = {text = "MIT"}
