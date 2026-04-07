@@ -283,7 +283,7 @@ def serve(host, port, reload):
 
 @cli.group()
 def mcp():
-    """Start the Argus MCP server for LLM integration."""
+    """Configure and run the Argus MCP server."""
     pass
 
 
@@ -295,6 +295,49 @@ def mcp_serve(transport, host, port):
     """Start MCP server. Use stdio for Claude/Cursor, sse for remote access."""
     from argus.mcp.server import serve_mcp
     serve_mcp(transport=transport, host=host, port=port)
+
+
+@mcp.command(name="init")
+@click.option("--global", "global_", is_flag=True, help="Add to ~/.claude.json (all projects)")
+def mcp_init(global_):
+    """Add Argus MCP server config to this project or globally."""
+    import json
+    import sys
+    from pathlib import Path
+
+    argus_bin = str(Path(sys.argv[0]).resolve())
+    entry = {
+        "command": argus_bin,
+        "args": ["mcp", "serve"],
+        "description": "Argus search broker — search_web, extract_content, recover_url, expand_links, health, budgets",
+    }
+
+    if global_:
+        config_path = Path.home() / ".claude.json"
+        scope = "global (~/.claude.json)"
+    else:
+        config_path = Path(".mcp.json")
+        scope = "project (.mcp.json)"
+
+    config_path.touch(mode=0o644, exist_ok=True)
+    try:
+        data = json.loads(config_path.read_text()) if config_path.stat().st_size else {}
+    except json.JSONDecodeError:
+        click.echo(f"Warning: {config_path} had invalid JSON, starting fresh.", err=True)
+        data = {}
+
+    servers = data.setdefault("mcpServers", {})
+
+    if "argus" in servers:
+        servers["argus"] = entry
+        action = "Updated"
+    else:
+        servers["argus"] = entry
+        action = "Added"
+
+    config_path.write_text(json.dumps(data, indent=2) + "\n")
+    click.echo(f"{action} argus MCP to {scope}")
+    click.echo("Restart Claude Code in this project to connect.")
 
 
 @cli.group()
