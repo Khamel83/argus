@@ -242,14 +242,16 @@ print(content.text)
 
 ## Search Modes
 
-| Mode | When to use | Provider order (within tiers) |
-|------|------------|-------------------------------|
-| `discovery` | Find related pages, canonical sources | Brave → Exa → Tavily → Linkup → Serper → Parallel → You |
-| `recovery` | Dead/moved URL recovery | Brave → Serper → Tavily → Exa → Linkup → Parallel → You |
-| `grounding` | Few live sources for fact-checking | Brave → Serper → SearXNG → Linkup → Parallel → You |
-| `research` | Broad exploratory retrieval | Tavily → Exa → Brave → SearXNG → Linkup → Serper → Parallel → You |
+Each mode defines which providers are best suited for that query type. Routing sorts by credit tier first, then preserves mode-specific ordering within each tier. Budget-exhausted providers are skipped.
 
-SearXNG (Tier 0) always leads regardless of mode. Within each tier, mode-specific ordering is preserved.
+| Mode | When to use | Actual runtime order |
+|------|------------|---------------------|
+| `discovery` | Related pages, canonical sources | SearXNG → Brave → Exa → Tavily → Linkup → Serper → Parallel → You |
+| `recovery` | Dead/moved URL recovery | SearXNG → Brave → Tavily → Exa → Linkup → Serper → Parallel → You |
+| `grounding` | Few live sources for fact-checking | SearXNG → Brave → Linkup → Serper → Parallel → You |
+| `research` | Broad exploratory retrieval | SearXNG → Tavily → Exa → Brave → Linkup → Serper → Parallel → You |
+
+SearXNG (free, unlimited) always leads. The within-tier ordering reflects which provider is strongest for each query type — Brave for general web, Tavily/Exa for structured deep retrieval, Serper for Google-quality results.
 
 ## Architecture
 

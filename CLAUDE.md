@@ -82,14 +82,16 @@ Routing sorts by tier first (free → monthly → one-time), then preserves mode
 
 ## Search Modes
 
-| Mode | Use case | Tier-1 order | Tier-3 order |
-|------|----------|--------------|-------------|
-| `discovery` | Related pages, canonical sources | Brave → Exa → Tavily → Linkup | Serper → Parallel → You |
-| `recovery` | Dead/moved URL | Brave → Serper → Tavily → Exa → Linkup | Parallel → You |
-| `grounding` | Few sources for fact-checking | Brave → Serper | Linkup → Parallel → You |
-| `research` | Broad exploratory | Tavily → Exa → Brave → Linkup | Serper → Parallel → You |
+Each mode defines which providers are best suited for that query type. Routing sorts by credit tier first, then preserves mode-specific ordering within each tier. Budget-exhausted providers are skipped.
 
-SearXNG (Tier 0) always leads regardless of mode.
+| Mode | Use case | Actual runtime order |
+|------|----------|---------------------|
+| `discovery` | Related pages, canonical sources | SearXNG → Brave → Exa → Tavily → Linkup → Serper → Parallel → You |
+| `recovery` | Dead/moved URL | SearXNG → Brave → Tavily → Exa → Linkup → Serper → Parallel → You |
+| `grounding` | Few sources for fact-checking | SearXNG → Brave → Linkup → Serper → Parallel → You |
+| `research` | Broad exploratory | SearXNG → Tavily → Exa → Brave → Linkup → Serper → Parallel → You |
+
+SearXNG (free, unlimited) always leads. Within-tier ordering reflects provider strengths per query type.
 
 ## Content Extraction
 
