@@ -58,6 +58,8 @@ class SearchBroker:
             ProviderName.EXA: self._config.exa.monthly_budget_usd,
             ProviderName.SEARCHAPI: self._config.searchapi.monthly_budget_usd,
             ProviderName.YOU: self._config.you.monthly_budget_usd,
+            ProviderName.PARALLEL: self._config.parallel.monthly_budget_usd,
+            ProviderName.LINKUP: self._config.linkup.monthly_budget_usd,
         }
         for pname, budget in budget_map.items():
             if budget > 0:
@@ -137,6 +139,8 @@ def create_broker() -> SearchBroker:
     """Factory: create a SearchBroker with all configured providers."""
     from argus.providers.brave import BraveProvider
     from argus.providers.exa import ExaProvider
+    from argus.providers.linkup import LinkupProvider
+    from argus.providers.parallel import ParallelProvider
     from argus.providers.searchapi import SearchApiProvider
     from argus.providers.searxng import SearXNGProvider
     from argus.providers.serper import SerperProvider
@@ -153,6 +157,8 @@ def create_broker() -> SearchBroker:
         ProviderName.EXA: ExaProvider(config.exa),
         ProviderName.SEARCHAPI: SearchApiProvider(config.searchapi),
         ProviderName.YOU: YouProvider(config.you),
+        ProviderName.PARALLEL: ParallelProvider(config.parallel),
+        ProviderName.LINKUP: LinkupProvider(config.linkup),
     }
 
     from argus.sessions import SessionStore

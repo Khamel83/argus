@@ -2,7 +2,7 @@
 
 ## Overview
 
-Search broker with content extraction and multi-turn sessions. Seven provider adapters (SearXNG, Brave, Serper, Tavily, Exa active; SearchAPI, You.com stubs). Automatic fallback, result ranking, health tracking, budget enforcement, token balance tracking with auto-decrement. Extract clean text from any URL — results cached in memory (168h TTL). Domain rate limiting (10 req/min/domain). Persistent sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
+Search broker with content extraction and multi-turn sessions. Nine provider adapters (SearXNG, Brave, Serper, Tavily, Exa, Linkup, Parallel AI, You.com active; SearchAPI stub). Tier-based credit-aware routing: free providers first, then monthly recurring, then one-time credits. Automatic fallback, result ranking, health tracking, budget enforcement. 8-step content extraction fallback chain with quality gates. Extract clean text from any URL. Domain rate limiting (10 req/min/domain). Persistent sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
 
 ## Key Commands
 
@@ -10,6 +10,7 @@ Search broker with content extraction and multi-turn sessions. Seven provider ad
 # Setup
 cp .env.example .env                    # configure providers and DB
 pip install "argus-search[mcp]"         # install from PyPI (with MCP support)
+pip install "argus-search[mcp,crawl4ai]" # with Crawl4AI extractor
 # or from source: pip install -e ".[mcp]"
 
 # Run
@@ -39,25 +40,36 @@ pytest tests/
 ```
 Caller (CLI/HTTP/MCP/Python)
   → SearchBroker
-    → routing policy (per mode)
-      → provider executor (cheap-first, bounded fallback)
+    → routing policy (tier-sorted, mode-specific within tiers)
+      → provider executor (budget check → health check → search → early stop)
     → result pipeline (cache → dedupe → RRF ranking → response)
   → SessionStore (optional, per-request)
     → query refinement from prior context
   → Extractor (on demand)
-    → trafilatura (primary) → Jina Reader (fallback)
+    → trafilatura → crawl4ai → playwright → jina →
+      you_contents → wayback → archive.is
 ```
 
 | Module | Responsibility |
 |--------|---------------|
-| `argus/broker/` | Routing, ranking, dedup, caching, health, budgets |
-| `argus/providers/` | Provider adapters (one per search API) |
-| `argus/extraction/` | URL content extraction (trafilatura + Jina) |
+| `argus/broker/` | Tier-based routing, ranking, dedup, caching, health, budgets |
+| `argus/providers/` | 9 provider adapters (one per search API) |
+| `argus/extraction/` | 8-step URL extraction fallback chain with quality gates |
 | `argus/sessions/` | Multi-turn session store and query refinement |
 | `argus/api/` | FastAPI HTTP endpoints |
 | `argus/cli/` | Click CLI commands |
 | `argus/mcp/` | MCP server for LLM integration |
 | `argus/persistence/` | PostgreSQL query/result storage |
+
+## Provider Tiers
+
+| Tier | Providers | Credits |
+|------|-----------|---------|
+| 0 (free) | SearXNG | Unlimited, self-hosted |
+| 1 (monthly) | Brave, Tavily, Exa, Linkup | Recurring monthly |
+| 3 (one-time) | Serper, Parallel, You.com, SearchAPI | Don't come back |
+
+Routing sorts by tier first (free → monthly → one-time), then preserves mode-specific ordering within each tier. Budget enforcement skips exhausted providers automatically.
 
 ## Interfaces
 
@@ -70,47 +82,34 @@ Caller (CLI/HTTP/MCP/Python)
 
 ## Search Modes
 
-| Mode | Use case | Chain |
-|------|----------|-------|
-| `discovery` | Related pages, canonical sources | searxng → brave → exa → tavily → serper |
-| `recovery` | Dead/moved URL | searxng → brave → serper → tavily → exa |
-| `grounding` | Few sources for fact-checking | brave → serper → searxng |
-| `research` | Broad exploratory | tavily → exa → brave → serper |
+| Mode | Use case | Tier-1 order | Tier-3 order |
+|------|----------|--------------|-------------|
+| `discovery` | Related pages, canonical sources | Brave → Exa → Tavily → Linkup | Serper → Parallel → You |
+| `recovery` | Dead/moved URL | Brave → Serper → Tavily → Exa → Linkup | Parallel → You |
+| `grounding` | Few sources for fact-checking | Brave → Serper | Linkup → Parallel → You |
+| `research` | Broad exploratory | Tavily → Exa → Brave → Linkup | Serper → Parallel → You |
+
+SearXNG (Tier 0) always leads regardless of mode.
 
 ## Content Extraction
 
-Hybrid approach: trafilatura (local, fast, runs in thread pool) tries first, Jina Reader API (external) as fallback. Returns clean text with title, author, date, word count. SSRF protection blocks private IPs. Results cached in memory (168h TTL). Domain rate limiting (10 req/min/domain). Jina token balance auto-decrements on use.
+8-step fallback chain with quality gates between every step:
 
-```bash
-# CLI
-argus extract -u "https://example.com/article"
-
-# HTTP
-curl -X POST http://localhost:8000/api/extract -H "Content-Type: application/json" -d '{"url": "https://example.com/article"}'
-
-# Python
-from argus.extraction import extract_url
-result = await extract_url("https://example.com/article")
-print(result.text)
 ```
+trafilatura (local, fast) → Crawl4AI (local, JS rendering) →
+Playwright (local, headless browser) → Jina Reader (external API) →
+You.com Contents ($1/1k pages) → Wayback Machine → archive.is
+```
+
+SSRF protection blocks private IPs. Results cached in memory (168h TTL). Domain rate limiting (10 req/min/domain). Authenticated extraction via cookies for paywall domains (NYT, Bloomberg, etc.).
 
 ## Multi-Turn Sessions
 
-Pass `session_id` to search to enable conversational refinement. The broker remembers prior queries and uses them to context-enrich follow-up searches. Sessions persist to SQLite (`argus_budgets.db`) across restarts.
-
-```bash
-# CLI
-argus search -q "python web frameworks" --session mysession
-argus search -q "fastapi" --session mysession  # refined by prior context
-
-# HTTP
-curl -X POST http://localhost:8000/api/search -H "Content-Type: application/json" \
-  -d '{"query": "fastapi", "session_id": "mysession"}'
-```
+Pass `session_id` to search to enable conversational refinement. The broker remembers prior queries and uses them to context-enrich follow-up searches. Sessions persist to SQLite across restarts.
 
 ## Configuration
 
-All config via env vars (see `.env.example`). Missing API keys degrade gracefully — providers are skipped, not errors.
+All config via env vars (see `.env.example`). Missing API keys degrade gracefully — providers are skipped, not errors. Budget values are query counts (not USD): 0 = unlimited, set to enforce credit tracking.
 
 ## Conventions
 
@@ -119,4 +118,5 @@ All config via env vars (see `.env.example`). Missing API keys degrade gracefull
 - Extracted content is `ExtractedContent`: url, title, text, author, date, word_count
 - Routes prefixed with `/api`
 - Free/self-hosted-first: SearXNG is always the fallback floor
-- Token balances persist in SQLite (`argus_budgets.db`) alongside budget tracking
+- Token balances persist in SQLite alongside budget tracking
+- Budget env var is named `MONTHLY_BUDGET_USD` but values are query counts (legacy naming)

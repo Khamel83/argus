@@ -1,8 +1,8 @@
 """
-You.com search provider.
+Parallel Web Systems search provider.
 
-API: https://api.you.com/search
-Independent index with vertical search (News, Healthcare, Legal).
+API: https://api.parallel.ai/v1beta/search
+Proprietary index with token-dense excerpts.
 """
 
 import time
@@ -21,18 +21,18 @@ from argus.models import (
 )
 from argus.providers.base import BaseProvider
 
-logger = get_logger("providers.you")
+logger = get_logger("providers.parallel")
 
-YOU_API_BASE = "https://api.you.com/v1/search"
+PARALLEL_API_BASE = "https://api.parallel.ai/v1beta/search"
 
 
-class YouProvider(BaseProvider):
+class ParallelProvider(BaseProvider):
     def __init__(self, config: ProviderConfig):
         self._config = config
 
     @property
     def name(self) -> ProviderName:
-        return ProviderName.YOU
+        return ProviderName.PARALLEL
 
     def is_available(self) -> bool:
         return self._config.enabled and bool(self._config.api_key)
@@ -47,30 +47,25 @@ class YouProvider(BaseProvider):
     async def search(self, query: SearchQuery) -> Tuple[List[SearchResult], ProviderTrace]:
         start = time.monotonic()
 
-        if not self.is_available():
-            return [], ProviderTrace(
-                provider=self.name,
-                status="skipped",
-                error="You.com provider not configured",
-            )
-
         headers = {
-            "X-API-Key": self._config.api_key,
+            "Content-Type": "application/json",
+            "x-api-key": self._config.api_key,
+            "parallel-beta": "search-extract-2025-10-10",
         }
-        params = {
-            "query": query.query,
-            "count": query.max_results,
-            "safesearch": "off",
+        body = {
+            "objective": query.query,
+            "search_queries": [query.query],
+            "max_results": query.max_results,
         }
 
         try:
             async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as client:
-                resp = await client.get(YOU_API_BASE, params=params, headers=headers)
+                resp = await client.post(PARALLEL_API_BASE, json=body, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
 
-            web_results = data.get("results", {}).get("web", [])
-            results = self._normalize(web_results)
+            raw_results = data.get("results", [])
+            results = self._normalize(raw_results)
             latency_ms = int((time.monotonic() - start) * 1000)
 
             trace = ProviderTrace(
@@ -83,7 +78,7 @@ class YouProvider(BaseProvider):
 
         except Exception as e:
             latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("You.com search failed: %s", e)
+            logger.warning("Parallel search failed: %s", e)
             trace = ProviderTrace(
                 provider=self.name,
                 status="error",
@@ -98,13 +93,10 @@ class YouProvider(BaseProvider):
             url = item.get("url") or ""
             if not url:
                 continue
-            # You.com returns snippets as a list; join the first one
-            snippets = item.get("snippets", [])
-            snippet = snippets[0] if snippets else item.get("description", "")
             results.append(SearchResult(
                 url=url,
                 title=item.get("title", ""),
-                snippet=snippet,
+                snippet=item.get("excerpt", "") or item.get("snippet", ""),
                 domain=self._extract_domain(url),
                 provider=self.name,
                 score=0.0,

@@ -3,8 +3,9 @@ Content extraction: integrated fallback chain with quality gates.
 
 Chain order:
   SSRF check → cache → rate limit → auth → quality gate →
-  trafilatura → quality gate → playwright → quality gate →
-  jina → quality gate → wayback → quality gate →
+  trafilatura → quality gate → crawl4ai → quality gate →
+  playwright → quality gate → jina → quality gate →
+  you_contents → quality gate → wayback → quality gate →
   archive.is → quality gate → return best result
 
 Results are cached in memory to avoid re-extracting the same URL.
@@ -132,8 +133,8 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
 
     Chain:
       SSRF → cache → rate limit → auth → QG → trafilatura → QG →
-      playwright → QG → jina → QG → wayback → QG → archive.is → QG
-      → return best result (even if all quality gates failed)
+      crawl4ai → QG → playwright → QG → jina → QG → wayback → QG →
+      archive.is → QG → return best result (even if all quality gates failed)
 
     Results are cached in memory — same URL within TTL returns cached result.
     """
@@ -204,7 +205,27 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
     except Exception as e:
         logger.warning("Trafilatura failed for %s: %s", url[:60], e)
 
-    # Step 3: Playwright (local headless browser)
+    # Step 3: Crawl4AI (self-hosted, JS rendering)
+    if os.getenv("ARGUS_CRAWL4AI_ENABLED", "").lower() in ("1", "true"):
+        try:
+            from argus.extraction.crawl4ai_extractor import extract_crawl4ai
+
+            result = await extract_crawl4ai(url)
+            track_attempt("crawl4ai", result)
+            if result.text and not result.error:
+                passed, reason = _run_quality_gate(result.text, url, "crawl4ai")
+                result.quality_passed = passed
+                result.quality_reason = reason if not passed else None
+                result.extractors_tried = list(extractors_tried)
+                if passed:
+                    logger.info("Extracted %s via crawl4ai (%d words)", url[:60], result.word_count)
+                    _cache.put(url, result)
+                    return result
+                logger.debug("Crawl4AI content failed quality gate: %s", reason)
+        except Exception as e:
+            logger.warning("Crawl4AI failed for %s: %s", url[:60], e)
+
+    # Step 4: Playwright (local headless browser)
     try:
         from argus.extraction.playwright_extractor import extract_playwright
 
@@ -241,7 +262,27 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
     except Exception as e:
         logger.warning("Jina failed for %s: %s", url[:60], e)
 
-    # Step 5: Wayback Machine
+    # Step 5: You.com Contents API ($1/1k pages, cheaper than Jina)
+    if os.getenv("ARGUS_YOU_CONTENTS_ENABLED", "").lower() in ("1", "true"):
+        try:
+            from argus.extraction.you_extractor import extract_you_contents
+
+            result = await extract_you_contents(url)
+            track_attempt("you_contents", result)
+            if result.text and not result.error:
+                passed, reason = _run_quality_gate(result.text, url, "you_contents")
+                result.quality_passed = passed
+                result.quality_reason = reason if not passed else None
+                result.extractors_tried = list(extractors_tried)
+                if passed:
+                    logger.info("Extracted %s via You.com Contents (%d words)", url[:60], result.word_count)
+                    _cache.put(url, result)
+                    return result
+                logger.debug("You.com Contents failed quality gate: %s", reason)
+        except Exception as e:
+            logger.warning("You.com Contents failed for %s: %s", url[:60], e)
+
+    # Step 6: Wayback Machine
     try:
         from argus.extraction.wayback_extractor import extract_wayback
 

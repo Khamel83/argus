@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "argus-search"
-version = "1.2.1"
-description = "Search broker with content extraction and multi-turn sessions — routes queries across multiple providers with fallback, ranking, health tracking, and budget enforcement"
+version = "1.3.0"
+description = "Search broker with content extraction and multi-turn sessions — routes queries across 9 providers with tier-based credit-aware routing, fallback, ranking, health tracking, and budget enforcement"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
-keywords = ["mcp", "mcp-server", "search", "search-api", "search-broker", "content-extraction", "ai-agents", "llm-tools", "web-search", "fastapi", "brave-search", "serper", "tavily", "exa", "searxng", "trafilatura", "jina"]
+keywords = ["mcp", "mcp-server", "search", "search-api", "search-broker", "content-extraction", "ai-agents", "llm-tools", "web-search", "fastapi", "brave-search", "serper", "tavily", "exa", "searxng", "trafilatura", "jina", "you-com", "linkup", "parallel-ai", "crawl4ai"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -42,6 +42,9 @@ dev = [
 ]
 mcp = [
     "mcp>=1.0.0",
+]
+crawl4ai = [
+    "crawl4ai>=0.4",
 ]
 
 [project.scripts]

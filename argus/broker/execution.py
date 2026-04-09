@@ -12,10 +12,13 @@ from argus.providers.base import BaseProvider
 logger = get_logger("broker.execution")
 
 _COST_ESTIMATES = {
-    ProviderName.BRAVE: 0.003,
-    ProviderName.SERPER: 0.001,
-    ProviderName.TAVILY: 0.001,
-    ProviderName.EXA: 0.001,
+    ProviderName.BRAVE: 1.0,
+    ProviderName.SERPER: 1.0,
+    ProviderName.TAVILY: 1.0,
+    ProviderName.EXA: 1.0,
+    ProviderName.PARALLEL: 1.0,
+    ProviderName.LINKUP: 1.0,
+    ProviderName.YOU: 1.0,
 }
 
 _EARLY_STOP_THRESHOLDS = {

@@ -74,11 +74,42 @@ class TestPolicies:
         assert ProviderName.TAVILY in order
         assert ProviderName.EXA in order
 
-    def test_override_providers(self):
+    def test_tier_sorting_free_first(self):
+        """Tier 0 (SearXNG) should always come before tier 1+ providers."""
+        from argus.broker.policies import get_provider_order
+        for mode in SearchMode:
+            order = get_provider_order(mode)
+            # CACHE is index 0, SearXNG (tier 0) should be index 1
+            assert order[1] == ProviderName.SEARXNG, f"{mode}: expected SearXNG at position 1, got {order[1]}"
+
+    def test_tier_sorting_monthly_before_onetime(self):
+        """Tier 1 (monthly) should always come before tier 3 (one-time)."""
+        from argus.broker.policies import get_provider_order
+        for mode in SearchMode:
+            order = get_provider_order(mode)
+            searxng_idx = order.index(ProviderName.SEARXNG)
+            # Find first tier-1 and first tier-3 provider
+            from argus.broker.budgets import PROVIDER_TIERS
+            first_monthly = None
+            first_onetime = None
+            for p in order[searxng_idx + 1:]:
+                tier = PROVIDER_TIERS.get(p, 99)
+                if tier == 1 and first_monthly is None:
+                    first_monthly = p
+                if tier == 3 and first_onetime is None:
+                    first_onetime = p
+            if first_monthly and first_onetime:
+                assert order.index(first_monthly) < order.index(first_onetime), (
+                    f"{mode}: monthly {first_monthly} should come before one-time {first_onetime}"
+                )
+
+    def test_override_providers_sorted_by_tier(self):
+        """Override provider lists should also be tier-sorted."""
         from argus.broker.policies import resolve_routing
-        override = [ProviderName.BRAVE, ProviderName.SERPER]
+        # Serper (tier 3) before Brave (tier 1) in override -> should reorder
+        override = [ProviderName.SERPER, ProviderName.BRAVE]
         result = resolve_routing(SearchMode.DISCOVERY, override)
-        assert result == override
+        assert result == [ProviderName.BRAVE, ProviderName.SERPER]
 
     def test_no_override_uses_policy(self):
         from argus.broker.policies import resolve_routing
@@ -351,7 +382,7 @@ class TestRouter:
         broker = create_broker()
         assert ProviderName.SEARXNG in broker._providers
         assert ProviderName.BRAVE in broker._providers
-        assert len(broker._providers) == 7  # 5 live + 2 stubs
+        assert len(broker._providers) == 9  # 5 live + 2 stubs + parallel + linkup
 
     @pytest.mark.asyncio
     async def test_search_stops_after_good_enough_primary_provider(self, monkeypatch):

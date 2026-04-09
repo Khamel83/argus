@@ -16,6 +16,8 @@ class ExtractorName(str, Enum):
     WAYBACK = "wayback"
     ARCHIVE_IS = "archive_is"
     AUTH = "auth"
+    CRAWL4AI = "crawl4ai"
+    YOU_CONTENTS = "you_contents"
 
 
 @dataclass

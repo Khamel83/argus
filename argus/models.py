@@ -26,6 +26,8 @@ class ProviderName(str, Enum):
     EXA = "exa"
     SEARCHAPI = "searchapi"
     YOU = "you"
+    PARALLEL = "parallel"
+    LINKUP = "linkup"
     CACHE = "cache"
 
 

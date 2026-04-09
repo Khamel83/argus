@@ -1,8 +1,8 @@
 """
-You.com search provider.
+Linkup search provider.
 
-API: https://api.you.com/search
-Independent index with vertical search (News, Healthcare, Legal).
+API: https://api.linkup.so/search
+AI-native search with high factual accuracy.
 """
 
 import time
@@ -21,18 +21,18 @@ from argus.models import (
 )
 from argus.providers.base import BaseProvider
 
-logger = get_logger("providers.you")
+logger = get_logger("providers.linkup")
 
-YOU_API_BASE = "https://api.you.com/v1/search"
+LINKUP_API_BASE = "https://api.linkup.so/v1/search"
 
 
-class YouProvider(BaseProvider):
+class LinkupProvider(BaseProvider):
     def __init__(self, config: ProviderConfig):
         self._config = config
 
     @property
     def name(self) -> ProviderName:
-        return ProviderName.YOU
+        return ProviderName.LINKUP
 
     def is_available(self) -> bool:
         return self._config.enabled and bool(self._config.api_key)
@@ -47,30 +47,24 @@ class YouProvider(BaseProvider):
     async def search(self, query: SearchQuery) -> Tuple[List[SearchResult], ProviderTrace]:
         start = time.monotonic()
 
-        if not self.is_available():
-            return [], ProviderTrace(
-                provider=self.name,
-                status="skipped",
-                error="You.com provider not configured",
-            )
-
         headers = {
-            "X-API-Key": self._config.api_key,
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self._config.api_key}",
         }
-        params = {
-            "query": query.query,
-            "count": query.max_results,
-            "safesearch": "off",
+        body = {
+            "q": query.query,
+            "depth": "standard",
+            "outputType": "searchResults",
         }
 
         try:
             async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as client:
-                resp = await client.get(YOU_API_BASE, params=params, headers=headers)
+                resp = await client.post(LINKUP_API_BASE, json=body, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
 
-            web_results = data.get("results", {}).get("web", [])
-            results = self._normalize(web_results)
+            raw_results = data.get("results", [])
+            results = self._normalize(raw_results)
             latency_ms = int((time.monotonic() - start) * 1000)
 
             trace = ProviderTrace(
@@ -83,7 +77,7 @@ class YouProvider(BaseProvider):
 
         except Exception as e:
             latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("You.com search failed: %s", e)
+            logger.warning("Linkup search failed: %s", e)
             trace = ProviderTrace(
                 provider=self.name,
                 status="error",
@@ -98,13 +92,10 @@ class YouProvider(BaseProvider):
             url = item.get("url") or ""
             if not url:
                 continue
-            # You.com returns snippets as a list; join the first one
-            snippets = item.get("snippets", [])
-            snippet = snippets[0] if snippets else item.get("description", "")
             results.append(SearchResult(
                 url=url,
-                title=item.get("title", ""),
-                snippet=snippet,
+                title=item.get("name", ""),
+                snippet=item.get("content", "") or item.get("snippet", ""),
                 domain=self._extract_domain(url),
                 provider=self.name,
                 score=0.0,

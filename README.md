@@ -2,23 +2,24 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-brightgreen)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/argus-search)](https://pypi.org/project/argus-search/)
 [![MCP Server](https://img.shields.io/badge/MCP-server-purple)](https://modelcontextprotocol.io/)
 
-Stop wiring search APIs into every project. Argus is one endpoint that talks to multiple search providers — with automatic fallback, result ranking, health tracking, and budget enforcement. Connect via HTTP, CLI, MCP, or Python import. Add a provider key, it works. Remove it, it degrades gracefully.
+Stop wiring search APIs into every project. Argus is one endpoint that talks to 9 search providers — with tier-based credit-aware routing, automatic fallback, result ranking, health tracking, and budget enforcement. Connect via HTTP, CLI, MCP, or Python import. Add a provider key, it works. Remove it, it degrades gracefully.
 
-**Search → Extract → Answer.** Argus doesn't just find URLs — it can fetch and extract clean text from any page, and it remembers your prior queries so follow-up searches get smarter.
+**Search → Extract → Answer.** Argus doesn't just find URLs — it can fetch and extract clean text from any page using an 8-step fallback chain, and it remembers your prior queries so follow-up searches get smarter.
 
 ## What It Does
 
-You pass Argus a search query. It routes to providers in cheap-first order, stops early when the first provider already produced enough useful results, and only falls through when failure, weak output, cooldown, or budget limits justify it. Results are then ranked, deduplicated, and returned as one clean list. Your project never touches a provider API directly.
+You pass Argus a search query. It routes to providers in tier order — free/unlimited first (SearXNG), then monthly recurring credits (Brave, Tavily, Linkup, Exa), then one-time credits (Serper, Parallel, You.com) — stopping early when enough useful results are found. Budget-exhausted providers are skipped automatically. Results are ranked, deduplicated, and returned as one clean list.
 
-**Content extraction** — Found a useful link? Pass the URL to Argus and get clean article text back. It runs a 6-step fallback chain with quality gates between every step: trafilatura → Playwright → Jina Reader → Wayback Machine → archive.is. Each result is checked for paywall stubs, soft 404s, and minimum quality before moving on. SSRF protection blocks private IPs. Results are cached in memory (168h TTL). Authenticated extraction via cookies is supported for paywall domains (NYT, Bloomberg, etc.).
+**Tier-based credit routing** — Providers are sorted by credit type: Tier 0 (free, unlimited) → Tier 1 (monthly recurring) → Tier 3 (one-time credits). Query-type routing is preserved within each tier — e.g., in research mode, Tavily and Exa still go before Brave within the monthly tier. Budget enforcement tracks query counts per provider on a 30-day rolling window. When credits run out, the provider is skipped until they refresh.
 
-**Multi-turn sessions** — Pass a `session_id` with your searches and Argus remembers what you've asked before. Follow-up queries like "fastapi" after searching "python web frameworks" get context-enriched automatically. Sessions persist to SQLite across restarts.
+**Content extraction** — 8-step fallback chain with quality gates: trafilatura → Crawl4AI → Playwright → Jina Reader → You.com Contents → Wayback Machine → archive.is. Each result is checked for paywall stubs, soft 404s, and minimum quality before moving on. SSRF protection blocks private IPs. Results are cached in memory (168h TTL). Authenticated extraction via cookies is supported for paywall domains.
 
-**Token balance tracking** — Track remaining API credits (Jina, etc.) in a local SQLite database. Balances auto-decrement as you extract content. Set balances via CLI, view via API or `argus budgets`.
+**Multi-turn sessions** — Pass a `session_id` with your searches and Argus remembers what you've asked before. Follow-up queries get context-enriched automatically. Sessions persist to SQLite across restarts.
 
-**Domain rate limiting** — Prevents hammering any single domain (default: 10 requests/minute/domain).
+**Token balance tracking** — Track remaining API credits in a local SQLite database. Balances auto-decrement as you extract content. Set balances via CLI, view via API or `argus budgets`.
 
 ## Quick Start
 
@@ -34,7 +35,6 @@ docker compose up -d
 
 # 3. Verify
 curl http://localhost:8000/api/health
-# {"status":"ok"}
 
 curl -X POST http://localhost:8000/api/search \
   -H "Content-Type: application/json" \
@@ -44,8 +44,11 @@ curl -X POST http://localhost:8000/api/search \
 ### Local install
 
 ```bash
-# From PyPI (recommended)
+# From PyPI
 pip install "argus-search[mcp]"
+
+# With Crawl4AI (self-hosted JS rendering extractor)
+pip install "argus-search[mcp,crawl4ai]"
 
 # Or from source
 git clone https://github.com/Khamel83/argus.git && cd argus
@@ -55,21 +58,37 @@ pip install -e ".[mcp]"
 argus serve
 ```
 
-> **Note:** The PyPI package is `argus-search` (the name `argus` is taken by an unrelated project). The CLI command is still `argus`.
+> **Note:** The PyPI package is `argus-search` (the name `argus` is taken). The CLI command is still `argus`.
 
-## Provider Setup
+## Providers
 
-All you need is API keys for whichever providers you want. SearXNG is free and runs locally. The rest have generous free tiers.
+9 providers across 3 credit tiers. SearXNG is free and unlimited — everything else has generous free tiers.
 
-| Provider | Status | Free tier | Get a key |
-|----------|--------|----------|-----------|
-| [SearXNG](https://github.com/searxng/searxng) | Active | Unlimited (self-hosted) | No key needed — runs in Docker |
-| [Brave Search](https://brave.com/search/api/) | Active | 2,000 queries/month | [dashboard](https://brave.com/search/api/) |
-| [Serper](https://serper.dev) | Active | 2,500 queries/month | [signup](https://serper.dev/signup) |
-| [Tavily](https://tavily.com) | Active | 1,000 queries/month | [signup](https://app.tavily.com/sign-up) |
-| [Exa](https://exa.ai) | Active | 1,000 queries/month | [signup](https://dashboard.exa.ai/signup) |
-| SearchAPI | Stub | — | Not yet configured |
-| You.com | Stub | — | Not yet configured |
+### Search Providers
+
+| Provider | Tier | Free tier | API |
+|----------|------|----------|-----|
+| [SearXNG](https://github.com/searxng/searxng) | 0 (free) | Unlimited (self-hosted) | No key needed |
+| [Brave Search](https://brave.com/search/api/) | 1 (monthly) | 2,000 queries/month | [dashboard](https://brave.com/search/api/) |
+| [Tavily](https://tavily.com) | 1 (monthly) | 1,000 queries/month | [signup](https://app.tavily.com/sign-up) |
+| [Exa](https://exa.ai) | 1 (monthly) | 1,000 queries/month | [signup](https://dashboard.exa.ai/signup) |
+| [Linkup](https://linkup.so) | 1 (monthly) | 1,000 standard queries/month | [signup](https://linkup.so) |
+| [Serper](https://serper.dev) | 3 (one-time) | 2,500 credits (signup) | [signup](https://serper.dev/signup) |
+| [Parallel AI](https://parallel.ai) | 3 (one-time) | 16,000 credits (signup) | [signup](https://parallel.ai) |
+| [You.com](https://you.com) | 3 (one-time) | $100 credit on signup | [platform](https://you.com/platform) |
+| SearchAPI | 3 (one-time) | Placeholder | Not yet configured |
+
+### Content Extractors
+
+| Extractor | Type | Cost | Notes |
+|-----------|------|------|-------|
+| trafilatura | Local | Free | Primary, fast, no API |
+| Crawl4AI | Local | Free | JS rendering, needs `crawl4ai` package |
+| Playwright | Local | Free | Headless browser fallback |
+| Jina Reader | API | Token-based | External fallback |
+| You.com Contents | API | $1/1k pages | Uses You.com search key |
+| Wayback Machine | External | Free | Dead page recovery |
+| archive.is | External | Free | Dead page recovery |
 
 Set keys in `.env`:
 ```
@@ -77,6 +96,9 @@ ARGUS_BRAVE_API_KEY=BSA...
 ARGUS_SERPER_API_KEY=abc...
 ARGUS_TAVILY_API_KEY=tvly-...
 ARGUS_EXA_API_KEY=...
+ARGUS_LINKUP_API_KEY=...
+ARGUS_PARALLEL_API_KEY=...
+ARGUS_YOU_API_KEY=...
 ```
 
 Unset or blank keys are silently skipped. You can run Argus with just SearXNG and no paid keys at all.
@@ -90,7 +112,23 @@ docker run -d --name searxng -p 8080:8080 searxng/searxng:latest
 curl http://localhost:8080/search?q=test\&format=json
 ```
 
-See [docs/providers.md](docs/providers.md) for SearXNG tuning and Docker networking details.
+## How Routing Works
+
+Providers are selected by two factors: **credit tier** (primary) and **query type** (secondary).
+
+```
+┌──────────────────────────────────────────────┐
+│  Tier 0: FREE (SearXNG)                      │  ← always first
+├──────────────────────────────────────────────┤
+│  Tier 1: MONTHLY RECURRING                   │
+│    Brave · Tavily · Exa · Linkup             │  ← mode-specific order within tier
+├──────────────────────────────────────────────┤
+│  Tier 3: ONE-TIME CREDITS                    │
+│    Serper · Parallel · You.com · SearchAPI   │  ← last resort, budget-enforced
+└──────────────────────────────────────────────┘
+```
+
+When a provider's monthly budget is exhausted, it's skipped until the 30-day rolling window resets. Budgets are query-count based, set per provider in `.env`.
 
 ## Integration
 
@@ -109,16 +147,10 @@ curl -X POST http://localhost:8000/api/search \
   -H "Content-Type: application/json" \
   -d '{"query": "python web frameworks", "session_id": "my-session"}'
 
-curl -X POST http://localhost:8000/api/search \
-  -H "Content-Type: application/json" \
-  -d '{"query": "fastapi vs django", "session_id": "my-session"}'
-# ↑ second query is context-enriched by the first
-
 # Extract content from a URL
 curl -X POST http://localhost:8000/api/extract \
   -H "Content-Type: application/json" \
   -d '{"url": "https://example.com/article"}'
-# → {"url": "...", "title": "...", "text": "clean article text...", "word_count": 842, "extractor": "trafilatura", "quality_passed": true}
 
 # Recover a dead URL
 curl -X POST http://localhost:8000/api/recover-url \
@@ -133,7 +165,6 @@ curl -X POST http://localhost:8000/api/expand \
 # Health & budgets
 curl http://localhost:8000/api/health/detail
 curl http://localhost:8000/api/budgets
-# → {"budgets": {...}, "token_balances": {"jina": {"balance": 9833638.0, "updated_at": ...}}}
 ```
 
 ### CLI
@@ -159,7 +190,7 @@ All commands support `--json` for structured output.
 
 ### MCP
 
-**Claude Code** — add to `~/.claude/.mcp.json` (global, all projects) or project `.mcp.json`:
+Add to your MCP client config:
 
 ```json
 {
@@ -172,11 +203,7 @@ All commands support `--json` for structured output.
 }
 ```
 
-**Cursor** — add to `.cursor/mcp.json` in your project root (same JSON).
-
-**VS Code** — add to your settings under `mcp.servers` (same JSON).
-
-**SSE transport** (remote access):
+Works with **Claude Code**, **Cursor**, **VS Code**, and any MCP-compatible client. For remote access via SSE:
 
 ```json
 {
@@ -189,17 +216,15 @@ All commands support `--json` for structured output.
 }
 ```
 
-Available tools: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`
+Available tools: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `cookie_health`
 
 ### Python
 
 ```python
-from argus.api.main import create_app
 from argus.broker.router import create_broker
 from argus.models import SearchQuery, SearchMode
 from argus.extraction import extract_url
 
-app = create_app()  # same composition path used by the default ASGI export
 broker = create_broker()
 
 # Search
@@ -213,61 +238,46 @@ for r in response.results:
 content = await extract_url(response.results[0].url)
 print(content.title)
 print(content.text)
-
-# Multi-turn search with session context
-resp, session_id = await broker.search_with_session(
-    SearchQuery(query="python web frameworks", mode=SearchMode.DISCOVERY)
-)
-resp2, _ = await broker.search_with_session(
-    SearchQuery(query="fastapi vs django"),
-    session_id=session_id,  # refined by prior query
-)
 ```
 
 ## Search Modes
 
-| Mode | When to use | Provider chain |
-|------|------------|---------------|
-| `discovery` | Find related pages, canonical sources | searxng → brave → exa → tavily → serper |
-| `recovery` | Dead/moved URL recovery | searxng → brave → serper → tavily → exa |
-| `grounding` | Few live sources for fact-checking | brave → serper → searxng |
-| `research` | Broad exploratory retrieval | tavily → exa → brave → serper |
+| Mode | When to use | Provider order (within tiers) |
+|------|------------|-------------------------------|
+| `discovery` | Find related pages, canonical sources | Brave → Exa → Tavily → Linkup → Serper → Parallel → You |
+| `recovery` | Dead/moved URL recovery | Brave → Serper → Tavily → Exa → Linkup → Parallel → You |
+| `grounding` | Few live sources for fact-checking | Brave → Serper → SearXNG → Linkup → Parallel → You |
+| `research` | Broad exploratory retrieval | Tavily → Exa → Brave → SearXNG → Linkup → Serper → Parallel → You |
+
+SearXNG (Tier 0) always leads regardless of mode. Within each tier, mode-specific ordering is preserved.
 
 ## Architecture
 
 ```
 Caller (CLI / HTTP / MCP / Python)
-  → FastAPI app factory / CLI / MCP entry points
-    → SearchBroker
-      → routing policy (per mode)
-      → provider executor (cheap-first, bounded fallback)
-      → result pipeline (cache → dedupe → RRF ranking → response)
-      → persistence gateway
+  → SearchBroker
+    → routing policy (tier-sorted, mode-specific within tiers)
+      → provider executor (budget check → health check → search → early stop)
+    → result pipeline (cache → dedupe → RRF ranking → response)
   → SessionStore (optional, per-request)
     → query refinement from prior context
   → Extractor (on demand)
-    → SSRF check → cache → rate limit → auth (cookies) → quality gate →
-      trafilatura → quality gate → Playwright → quality gate →
-      Jina Reader → quality gate → Wayback Machine → quality gate →
-      archive.is → quality gate → return best
+    → SSRF → cache → rate limit → auth → QG →
+      trafilatura → QG → crawl4ai → QG → playwright → QG →
+      jina → QG → you_contents → QG → wayback → QG →
+      archive.is → QG → return best
 ```
 
 | Module | Responsibility |
 |--------|---------------|
-| `argus/broker/` | Routing, ranking, dedup, caching, health, budgets |
-| `argus/providers/` | Provider adapters (one per search API) |
-| `argus/extraction/` | URL content extraction (6-step fallback chain with quality gates, auth, SSRF) |
+| `argus/broker/` | Tier-based routing, ranking, dedup, caching, health, budgets |
+| `argus/providers/` | 9 provider adapters (one per search API) |
+| `argus/extraction/` | 8-step URL extraction fallback chain with quality gates |
 | `argus/sessions/` | Multi-turn session store and query refinement |
 | `argus/api/` | FastAPI HTTP endpoints |
 | `argus/cli/` | Click CLI commands |
 | `argus/mcp/` | MCP server for LLM integration |
 | `argus/persistence/` | PostgreSQL query/result storage |
-
-### Composition Notes
-
-- `argus.api.main:create_app()` is the explicit FastAPI assembly path. The module-level `app` export is still available for `uvicorn argus.api.main:app`.
-- `SearchBroker` is a thin coordinator around provider execution, result processing, session-aware search flow, and non-fatal persistence.
-- Provider routing is sequential and cheap-first by default. Argus skips unavailable, cooled-down, or budget-exhausted providers and records those decisions in traces.
 
 ## Configuration
 
@@ -281,29 +291,17 @@ All config via environment variables. See `.env.example` for the full list.
 | `ARGUS_SERPER_API_KEY` | — | Serper API key |
 | `ARGUS_TAVILY_API_KEY` | — | Tavily API key |
 | `ARGUS_EXA_API_KEY` | — | Exa API key |
+| `ARGUS_LINKUP_API_KEY` | — | Linkup API key |
+| `ARGUS_PARALLEL_API_KEY` | — | Parallel AI API key |
+| `ARGUS_YOU_API_KEY` | — | You.com API key |
+| `ARGUS_*_MONTHLY_BUDGET_USD` | 0 (unlimited) | Query-count budget per provider |
+| `ARGUS_CRAWL4AI_ENABLED` | false | Enable Crawl4AI extraction step |
+| `ARGUS_YOU_CONTENTS_ENABLED` | false | Enable You.com Contents API extraction |
 | `ARGUS_CACHE_TTL_HOURS` | 168 | Result cache TTL |
-| `ARGUS_BUDGET_DB_PATH` | `argus_budgets.db` | SQLite path for budget/session persistence |
+| `ARGUS_JINA_API_KEY` | — | Jina Reader key (optional) |
 | `ARGUS_EXTRACTION_TIMEOUT_SECONDS` | 10 | URL fetch timeout for extraction |
-| `ARGUS_EXTRACTION_CACHE_TTL_HOURS` | 168 | Extraction cache TTL (same URL) |
-| `ARGUS_EXTRACTION_DOMAIN_RATE_LIMIT` | 10 | Max extractions per domain per window |
-| `ARGUS_EXTRACTION_DOMAIN_WINDOW_SECONDS` | 60 | Domain rate limit window |
-| `ARGUS_JINA_API_KEY` | — | Jina Reader key (optional — works without, rate-limited) |
-| `ARGUS_REMOTE_EXTRACT_URL` | — | Auth extraction service URL (Mac Mini Playwright + cookies) |
-| `ARGUS_REMOTE_EXTRACT_KEY` | — | Auth extraction service API key |
+| `ARGUS_EXTRACTION_CACHE_TTL_HOURS` | 168 | Extraction cache TTL |
 | `ARGUS_RATE_LIMIT` | 60 | Requests per window per client IP |
-| `ARGUS_API_KEY` | — | Bypass rate limiting for internal services |
-
-## Contributing
-
-Bug reports, feature ideas, and PRs are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Roadmap
-
-**Now** — Search broker with fallback, health, budgets, content extraction with 6-step fallback chain (trafilatura → Playwright → Jina → Wayback → archive.is), quality gates, SSRF protection, authenticated extraction via cookies, domain rate limiting, persistent sessions (SQLite), and auto-decrementing token balance tracking. Search → extract → answer, all in one service.
-
-**Soon** — Provider-specific tuning (use Exa for academic, Brave for general), query rewriting to improve recall, embedding-based dedup, SQLite extraction cache persistence.
-
-**Later** — Conversational search with automatic query chaining, result summarization, multi-language support.
 
 ## License
 
@@ -311,7 +309,7 @@ MIT
 
 ## Publishing
 
-The PyPI package is **`argus-search`** (the name `argus` is taken by an unrelated project). The CLI command remains `argus`.
+The PyPI package is **`argus-search`** (the name `argus` is taken).
 
 ### Release checklist
 
@@ -320,5 +318,3 @@ The PyPI package is **`argus-search`** (the name `argus` is taken by an unrelate
 3. Build: `python3 -m build`
 4. Publish: `PYPI_API_TOKEN=$(secrets get PYPI_API_TOKEN) python3 -m twine upload dist/*`
 5. Create GitHub release: `gh release create v<version> --title "v<version>"`
-
-> The PyPI token is scoped to `argus-search` only and stored in the encrypted vault (`secrets get PYPI_API_TOKEN`). The `pypi-publish.yml` workflow uses OIDC trusted publishing but needs reconfiguration on PyPI — manual upload via `twine` is the current path.
