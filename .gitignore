@@ -35,6 +35,16 @@ Thumbs.db
 
 # Budget persistence
 argus_budgets.db
+argus.db
+argus.db-shm
+argus.db-wal
+
+# AI tooling (local config, not project code)
+.claude/
+.janitor/
+.mcp.json
+.opencode/
+CLAUDE.local.md
 
 # Local operator/session artifacts
 1shot/
