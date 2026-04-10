@@ -86,3 +86,4 @@ class SearchResponse:
     cached: bool = False
     search_run_id: Optional[str] = None
     created_at: datetime = field(default_factory=lambda: datetime.now(tz=None))
+    budget_warnings: List[str] = field(default_factory=list)

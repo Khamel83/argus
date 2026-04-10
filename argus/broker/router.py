@@ -5,7 +5,7 @@ from typing import Optional
 
 from argus.broker.budgets import BudgetTracker
 from argus.broker.cache import SearchCache
-from argus.broker.execution import ProviderExecutor, ProviderRoutingPolicy
+from argus.broker.execution import ProviderExecutor
 from argus.broker.health import HealthTracker
 from argus.broker.pipeline import SearchResultPipeline
 from argus.broker.policies import resolve_routing
@@ -43,7 +43,6 @@ class SearchBroker:
             providers=self._providers,
             health_tracker=self._health,
             budget_tracker=self._budgets,
-            routing_policy=ProviderRoutingPolicy(),
         )
         self._pipeline = result_pipeline or SearchResultPipeline(
             cache=self._cache,
@@ -90,6 +89,7 @@ class SearchBroker:
             query,
             outcome.provider_results,
             outcome.traces,
+            budget_warnings=outcome.budget_pace_warnings,
         )
 
         logger.info(
@@ -100,6 +100,10 @@ class SearchBroker:
             len(response.results),
             response.search_run_id,
         )
+
+        if outcome.budget_pace_warnings:
+            for w in outcome.budget_pace_warnings:
+                logger.warning("Budget pace: %s", w)
 
         return response
 

@@ -369,6 +369,37 @@ class TestBudgets:
         b.record_usage(ProviderName.BRAVE, 1.0)
         assert b.check_status(ProviderName.BRAVE) == ProviderStatus.BUDGET_EXHAUSTED
 
+    def test_daily_pace_calculation(self):
+        from argus.broker.budgets import BudgetTracker
+        from argus.models import ProviderName
+        b = BudgetTracker()
+        b.set_budget(ProviderName.BRAVE, 3000.0)
+        b.record_usage(ProviderName.BRAVE)
+        # 3000 budget, 1 used → remaining 2999, pace = 2999/30 ≈ 100/day
+        assert b.daily_pace(ProviderName.BRAVE) > 99
+        assert b.daily_pace(ProviderName.BRAVE) < 101
+        assert not b.is_over_pace(ProviderName.BRAVE)
+
+    def test_over_pace_detection(self):
+        from argus.broker.budgets import BudgetTracker
+        from argus.models import ProviderName
+        b = BudgetTracker()
+        b.set_budget(ProviderName.BRAVE, 30.0)
+        # Use all 30 today → remaining 0, pace = 0/day → over pace
+        for _ in range(30):
+            b.record_usage(ProviderName.BRAVE)
+        assert b.is_over_pace(ProviderName.BRAVE)
+        assert b.used_today(ProviderName.BRAVE) == 30
+
+    def test_unlimited_provider_never_over_pace(self):
+        from argus.broker.budgets import BudgetTracker
+        from argus.models import ProviderName
+        b = BudgetTracker()
+        # No budget set → unlimited
+        assert b.daily_pace(ProviderName.BRAVE) == float("inf")
+        assert not b.is_over_pace(ProviderName.BRAVE)
+        assert b.used_today(ProviderName.BRAVE) == 0
+
 
 # --- Router ---
 
@@ -385,7 +416,8 @@ class TestRouter:
         assert len(broker._providers) == 10  # 5 live + 2 stubs + parallel + linkup + duckduckgo
 
     @pytest.mark.asyncio
-    async def test_search_stops_after_good_enough_primary_provider(self, monkeypatch):
+    async def test_free_providers_always_queried(self, monkeypatch):
+        """Tier 0 (SearXNG, DuckDuckGo) are always queried regardless of results."""
         from argus.broker.router import SearchBroker
 
         monkeypatch.setattr(
@@ -393,45 +425,43 @@ class TestRouter:
             lambda self, query, response: None,
         )
 
-        primary_results = [
-            SearchResult(
-                url=f"https://example.com/{idx}",
-                title=f"Result {idx}",
-                snippet="ok",
-                provider=ProviderName.SEARXNG,
-            )
-            for idx in range(5)
-        ]
-        primary = StubProvider(name=ProviderName.SEARXNG, results=primary_results)
-        backup = StubProvider(
+        searxng = StubProvider(
+            name=ProviderName.SEARXNG,
+            results=[SearchResult(url="https://example.com/1", title="Result 1", snippet="ok", provider=ProviderName.SEARXNG)],
+        )
+        ddg = StubProvider(
+            name=ProviderName.DUCKDUCKGO,
+            results=[SearchResult(url="https://example.com/2", title="Result 2", snippet="ok", provider=ProviderName.DUCKDUCKGO)],
+        )
+        paid = StubProvider(
             name=ProviderName.BRAVE,
-            results=[SearchResult(url="https://backup.com", title="Backup", snippet="backup")],
+            results=[SearchResult(url="https://backup.com", title="Backup", snippet="backup", provider=ProviderName.BRAVE)],
         )
 
         broker = SearchBroker(
-            providers={
-                ProviderName.SEARXNG: primary,
-                ProviderName.BRAVE: backup,
-            },
+            providers={ProviderName.SEARXNG: searxng, ProviderName.DUCKDUCKGO: ddg, ProviderName.BRAVE: paid},
         )
 
         response = await broker.search(
             SearchQuery(
-                query="cheap first",
+                query="always use free",
                 mode=SearchMode.DISCOVERY,
                 max_results=5,
-                providers=[ProviderName.SEARXNG, ProviderName.BRAVE],
+                providers=[ProviderName.SEARXNG, ProviderName.DUCKDUCKGO, ProviderName.BRAVE],
             )
         )
 
-        assert primary.calls == 1
-        assert backup.calls == 0
-        assert response.total_results == 5
-        assert response.traces[-1].status == "skipped"
-        assert response.traces[-1].error == "early stop"
+        assert searxng.calls == 1
+        assert ddg.calls == 1
+        # Brave has no budget set, so it's unlimited — should also be queried
+        assert paid.calls == 1
+        assert response.total_results == 3
 
     @pytest.mark.asyncio
-    async def test_search_hedges_to_next_provider_when_primary_is_weak(self, monkeypatch):
+    async def test_paid_provider_skipped_when_over_pace(self, monkeypatch):
+        """Paid providers are skipped when today's usage exceeds daily pace."""
+        import time
+        from argus.broker.budgets import BudgetTracker
         from argus.broker.router import SearchBroker
 
         monkeypatch.setattr(
@@ -439,41 +469,122 @@ class TestRouter:
             lambda self, query, response: None,
         )
 
-        primary = StubProvider(
+        free = StubProvider(
             name=ProviderName.SEARXNG,
-            results=[SearchResult(url="https://weak.com", title="Weak", snippet="weak")],
+            results=[SearchResult(url="https://example.com", title="Free", snippet="ok", provider=ProviderName.SEARXNG)],
         )
-        backup = StubProvider(
+        paid = StubProvider(
             name=ProviderName.BRAVE,
-            results=[
-                SearchResult(url="https://backup.com/1", title="Backup 1", snippet="b1"),
-                SearchResult(url="https://backup.com/2", title="Backup 2", snippet="b2"),
-            ],
+            results=[SearchResult(url="https://backup.com", title="Paid", snippet="ok", provider=ProviderName.BRAVE)],
         )
 
+        budget = BudgetTracker()
         broker = SearchBroker(
-            providers={
-                ProviderName.SEARXNG: primary,
-                ProviderName.BRAVE: backup,
-            },
+            providers={ProviderName.SEARXNG: free, ProviderName.BRAVE: paid},
+            budget_tracker=budget,
         )
+        # Budget of 300, but burn 200 today → pace is 100/30≈3.3/day → way over
+        budget.set_budget(ProviderName.BRAVE, 300.0)
+        for _ in range(200):
+            budget.record_usage(ProviderName.BRAVE)
 
         response = await broker.search(
             SearchQuery(
-                query="needs hedge",
+                query="over pace",
                 mode=SearchMode.DISCOVERY,
-                max_results=5,
                 providers=[ProviderName.SEARXNG, ProviderName.BRAVE],
             )
         )
 
-        assert primary.calls == 1
-        assert backup.calls == 1
-        assert response.total_results == 3
-        assert [trace.provider for trace in response.traces[:2]] == [
-            ProviderName.SEARXNG,
-            ProviderName.BRAVE,
-        ]
+        assert free.calls == 1
+        assert paid.calls == 0
+        assert response.total_results == 1
+        assert "over pace" in response.traces[-1].error
+        assert response.budget_warnings
+
+    @pytest.mark.asyncio
+    async def test_paid_provider_used_when_under_pace(self, monkeypatch):
+        """Paid providers are queried when budget pace is healthy."""
+        from argus.broker.budgets import BudgetTracker
+        from argus.broker.router import SearchBroker
+
+        monkeypatch.setattr(
+            "argus.persistence.db.SearchPersistenceGateway.record_completed_search",
+            lambda self, query, response: None,
+        )
+
+        free = StubProvider(
+            name=ProviderName.SEARXNG,
+            results=[SearchResult(url="https://example.com", title="Free", snippet="ok", provider=ProviderName.SEARXNG)],
+        )
+        paid = StubProvider(
+            name=ProviderName.BRAVE,
+            results=[SearchResult(url="https://backup.com", title="Paid", snippet="ok", provider=ProviderName.BRAVE)],
+        )
+
+        budget = BudgetTracker()
+        broker = SearchBroker(
+            providers={ProviderName.SEARXNG: free, ProviderName.BRAVE: paid},
+            budget_tracker=budget,
+        )
+        # Set budget AFTER broker construction (constructor reads from config)
+        budget.set_budget(ProviderName.BRAVE, 3000.0)
+        for _ in range(10):
+            budget.record_usage(ProviderName.BRAVE)
+
+        response = await broker.search(
+            SearchQuery(
+                query="under pace",
+                mode=SearchMode.DISCOVERY,
+                providers=[ProviderName.SEARXNG, ProviderName.BRAVE],
+            )
+        )
+
+        assert free.calls == 1
+        assert paid.calls == 1
+        assert response.total_results == 2
+
+    @pytest.mark.asyncio
+    async def test_one_time_credits_conserved_when_over_pace(self, monkeypatch):
+        """Tier 3 (one-time) providers are more aggressively conserved."""
+        from argus.broker.budgets import BudgetTracker
+        from argus.broker.router import SearchBroker
+
+        monkeypatch.setattr(
+            "argus.persistence.db.SearchPersistenceGateway.record_completed_search",
+            lambda self, query, response: None,
+        )
+
+        free = StubProvider(
+            name=ProviderName.SEARXNG,
+            results=[SearchResult(url="https://example.com", title="Free", snippet="ok", provider=ProviderName.SEARXNG)],
+        )
+        onetime = StubProvider(
+            name=ProviderName.SERPER,
+            results=[SearchResult(url="https://one.com", title="One", snippet="ok", provider=ProviderName.SERPER)],
+        )
+
+        budget = BudgetTracker()
+        broker = SearchBroker(
+            providers={ProviderName.SEARXNG: free, ProviderName.SERPER: onetime},
+            budget_tracker=budget,
+        )
+        # Set budget AFTER broker construction (constructor reads from config)
+        budget.set_budget(ProviderName.SERPER, 100.0)
+        for _ in range(10):
+            budget.record_usage(ProviderName.SERPER)
+
+        response = await broker.search(
+            SearchQuery(
+                query="conserve one-time",
+                mode=SearchMode.DISCOVERY,
+                providers=[ProviderName.SEARXNG, ProviderName.SERPER],
+            )
+        )
+
+        assert free.calls == 1
+        assert onetime.calls == 0
+        assert "one-time credits conserved" in response.traces[-1].error
 
     @pytest.mark.asyncio
     async def test_search_skips_budget_exhausted_provider(self, monkeypatch):

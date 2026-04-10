@@ -99,6 +99,30 @@ class BudgetTracker:
             return False
         return remaining <= 0
 
+    def used_today(self, provider: ProviderName) -> int:
+        """Return number of queries used in the last 24 hours."""
+        cutoff = time.time() - (24 * 3600)
+        return len([1 for t, _ in self._usage[provider] if t >= cutoff])
+
+    def daily_pace(self, provider: ProviderName) -> float:
+        """Return the number of credits per day the remaining budget allows.
+
+        If budget is unlimited (0 or not set), returns infinity.
+        Otherwise: remaining_budget / 30 (spread evenly across the month).
+        """
+        remaining = self.get_remaining_budget(provider)
+        if remaining is None:
+            return float("inf")
+        return remaining / 30.0
+
+    def is_over_pace(self, provider: ProviderName) -> bool:
+        """True if today's usage exceeds the daily pace allowance.
+
+        This means we're burning credits faster than we can afford
+        over the rest of the 30-day window.
+        """
+        return self.used_today(provider) >= self.daily_pace(provider)
+
     def get_usage_count(self, provider: ProviderName) -> int:
         """Return number of queries used this month for a provider."""
         cutoff = time.time() - (30 * 24 * 3600)

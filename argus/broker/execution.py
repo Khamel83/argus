@@ -1,9 +1,9 @@
 """Provider execution services for the search broker."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Sequence
 
-from argus.broker.budgets import BudgetTracker
+from argus.broker.budgets import BudgetTracker, PROVIDER_TIERS
 from argus.broker.health import HealthTracker
 from argus.logging import get_logger
 from argus.models import ProviderName, ProviderTrace, SearchMode, SearchQuery, SearchResult
@@ -21,12 +21,8 @@ _COST_ESTIMATES = {
     ProviderName.YOU: 1.0,
 }
 
-_EARLY_STOP_THRESHOLDS = {
-    SearchMode.RECOVERY: 3,
-    SearchMode.DISCOVERY: 5,
-    SearchMode.GROUNDING: 3,
-    SearchMode.RESEARCH: 8,
-}
+# Tier 0 providers are always queried — free and unlimited.
+_TIER_0_PROVIDERS = {p for p, t in PROVIDER_TIERS.items() if t == 0}
 
 
 @dataclass
@@ -34,36 +30,7 @@ class ProviderExecutionOutcome:
     traces: List[ProviderTrace]
     provider_results: Dict[str, List[SearchResult]]
     live_providers_used: int
-
-
-class ProviderRoutingPolicy:
-    """Cheap-first routing policy with explicit early-stop and hedge triggers."""
-
-    def should_stop(
-        self,
-        *,
-        query: SearchQuery,
-        results_count: int,
-        trace: ProviderTrace,
-        remaining_providers: Sequence[ProviderName],
-    ) -> bool:
-        if not remaining_providers:
-            return True
-        if trace.status != "success":
-            return False
-        if results_count <= 0:
-            return False
-        threshold = min(
-            query.max_results,
-            _EARLY_STOP_THRESHOLDS.get(query.mode, query.max_results),
-        )
-        return results_count >= max(1, threshold)
-
-    def skipped_after_stop(self, providers: Sequence[ProviderName]) -> List[ProviderTrace]:
-        return [
-            ProviderTrace(provider=provider, status="skipped", error="early stop")
-            for provider in providers
-        ]
+    budget_pace_warnings: List[str] = field(default_factory=list)
 
 
 class ProviderExecutor:
@@ -72,12 +39,29 @@ class ProviderExecutor:
         providers: dict[ProviderName, BaseProvider],
         health_tracker: HealthTracker,
         budget_tracker: BudgetTracker,
-        routing_policy: ProviderRoutingPolicy | None = None,
+        routing_policy=None,  # kept for backward compat, not used
     ):
         self._providers = providers
         self._health = health_tracker
         self._budgets = budget_tracker
-        self._routing_policy = routing_policy or ProviderRoutingPolicy()
+
+    def _should_query_paid(self, provider: ProviderName, tier: int) -> tuple[bool, str]:
+        """Decide whether to query a paid provider based on budget pace.
+
+        Returns (should_query, reason).
+        """
+        if self._budgets.is_budget_exhausted(provider):
+            return False, "budget exhausted"
+
+        if not self._budgets.is_over_pace(provider):
+            return True, "under pace"
+
+        # Over pace — only query if we haven't gotten many results yet
+        # and we really need more. Tier 3 is even more conservative.
+        if tier >= 3:
+            return False, "over pace, one-time credits conserved"
+
+        return False, "over pace, conserving monthly credits"
 
     async def execute(
         self,
@@ -87,8 +71,11 @@ class ProviderExecutor:
         traces: List[ProviderTrace] = []
         provider_results: Dict[str, List[SearchResult]] = {}
         live_providers_used = 0
+        pace_warnings: List[str] = []
 
-        ordered = [provider for provider in provider_order if provider != ProviderName.CACHE]
+        ordered = [p for p in provider_order if p != ProviderName.CACHE]
+        total_results_so_far = 0
+
         for index, pname in enumerate(ordered):
             provider = self._providers.get(pname)
             if provider is None:
@@ -114,35 +101,44 @@ class ProviderExecutor:
                 )
                 continue
 
-            if self._budgets.is_budget_exhausted(pname):
-                traces.append(
-                    ProviderTrace(
-                        provider=pname,
-                        status="skipped",
-                        error="budget exhausted",
-                        budget_remaining=0.0,
+            tier = self._budgets.get_provider_tier(pname)
+
+            # Tier 0: always query (free, unlimited)
+            # Tier 1/3: check budget pace before spending credits
+            if tier > 0:
+                should_query, reason = self._should_query_paid(pname, tier)
+                if not should_query:
+                    remaining = self._budgets.get_remaining_budget(pname) or 0
+                    used_today = self._budgets.used_today(pname)
+                    pace = self._budgets.daily_pace(pname)
+                    warning = (
+                        f"{pname.value}: {reason} "
+                        f"(used {used_today:.0f} today, pace {pace:.0f}/day, "
+                        f"{remaining:.0f} remaining)"
                     )
-                )
-                continue
+                    pace_warnings.append(warning)
+                    traces.append(
+                        ProviderTrace(
+                            provider=pname,
+                            status="skipped",
+                            error=reason,
+                            budget_remaining=remaining,
+                        )
+                    )
+                    continue
 
             results, trace = await self._execute_provider(query, provider, pname)
             traces.append(trace)
             if trace.status == "success":
                 live_providers_used += 1
                 provider_results[pname.value] = results
-                if self._routing_policy.should_stop(
-                    query=query,
-                    results_count=trace.results_count,
-                    trace=trace,
-                    remaining_providers=ordered[index + 1 :],
-                ):
-                    traces.extend(self._routing_policy.skipped_after_stop(ordered[index + 1 :]))
-                    break
+                total_results_so_far += len(results)
 
         return ProviderExecutionOutcome(
             traces=traces,
             provider_results=provider_results,
             live_providers_used=live_providers_used,
+            budget_pace_warnings=pace_warnings,
         )
 
     async def _execute_provider(
