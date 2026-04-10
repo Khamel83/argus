@@ -2,7 +2,23 @@
 
 ## Overview
 
-Search broker that puts free search APIs in one place with intelligent credit-aware routing. 10 provider adapters: SearXNG and DuckDuckGo (free, unlimited, no API keys), Brave, Tavily, Exa, Linkup (monthly free tiers: 5,000 queries/month combined), Serper, Parallel AI, You.com (one-time signup credits: ~18,500 combined), SearchAPI (stub). Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. 8-step content extraction fallback chain. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
+Search broker that puts free search APIs in one place with intelligent credit-aware routing. 10 provider adapters: SearXNG and DuckDuckGo (free, unlimited, no API keys), Brave, Tavily, Exa, Linkup (monthly free tiers: 5,000 queries/month combined), Serper, Parallel AI, You.com (one-time signup credits: ~6,500 + $20 combined), SearchAPI (stub). Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. 8-step content extraction fallback chain. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
+
+## Two Deployment Tiers
+
+### Tier 1: No server (API keys only)
+- `pip install argus-search` — works immediately with DuckDuckGo
+- Add API keys for 5,000+ more free monthly queries
+- Extraction via external APIs only (Jina, You.com Contents, Wayback)
+- Runs on any machine with Python 3.11+
+- No Docker, no database server, no API keys required to start
+
+### Tier 2: Full install (Docker + self-hosted)
+- Add SearXNG for second unlimited search engine (1 vCPU, 512MB RAM)
+- Add Crawl4AI for local JS rendering extraction (4GB RAM minimum)
+- `docker compose up -d` for one-command setup
+- Full 8-step extraction chain including local extractors
+- Minimum hardware: 4GB RAM (without Crawl4AI: 1GB RAM)
 
 ## Key Commands
 
@@ -70,7 +86,7 @@ Caller (CLI/HTTP/MCP/Python)
 |------|-----------|---------|
 | 0 (free) | SearXNG, DuckDuckGo | Unlimited, no API keys |
 | 1 (monthly) | Brave (2k/mo), Tavily (1k/mo), Exa (1k/mo), Linkup (1k/mo) | Recurring monthly |
-| 3 (one-time) | Serper (2.5k), Parallel (16k), You.com ($100), SearchAPI | Don't come back |
+| 3 (one-time) | Serper (2.5k), Parallel (4k), You.com ($20), SearchAPI | Don't come back |
 
 Routing sorts by tier first (free → monthly → one-time), then preserves mode-specific ordering within each tier. Budget enforcement skips exhausted providers automatically.
 
@@ -106,7 +122,7 @@ Playwright (local, headless browser) → Jina Reader (external API) →
 You.com Contents ($1/1k pages) → Wayback Machine → archive.is
 ```
 
-SSRF protection blocks private IPs. Results cached in memory (168h TTL). Domain rate limiting (10 req/min/domain). Authenticated extraction via cookies for paywall domains (NYT, Bloomberg, etc.).
+First 3 extractors need local hosting. Last 4 are external APIs that work anywhere. SSRF protection blocks private IPs. Results cached in memory (168h TTL). Domain rate limiting (10 req/min/domain). Authenticated extraction via cookies for paywall domains (NYT, Bloomberg, etc.).
 
 ## Multi-Turn Sessions
 
