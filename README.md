@@ -6,7 +6,7 @@
 [![CI](https://github.com/Khamel83/argus/actions/workflows/ci.yml/badge.svg)](https://github.com/Khamel83/argus/actions/workflows/ci.yml)
 [![MCP Server](https://img.shields.io/badge/MCP-server-purple)](https://modelcontextprotocol.io/)
 
-Search companies give you free web searches — 5,000+ per month across 10 providers, plus two unlimited with no API key at all. Argus puts them all in one place and routes every query to the right one at the right time.
+Search companies give you free web searches — thousands per month, across 10 providers, and two of them are unlimited with no API key at all. Argus puts them all in one place and automatically picks the right one for each query so you don't waste credits.
 
 ## Two Ways to Use Argus
 
@@ -62,13 +62,11 @@ You don't need one search API. You need all of them — and you need them free.
 
 ## What It Does
 
-You pass Argus a search query. It routes to providers in tier order — free/unlimited first (SearXNG, DuckDuckGo), then monthly recurring credits (Brave, Tavily, Linkup, Exa), then one-time credits (Serper, Parallel, You.com) — stopping early when enough useful results are found. Budget-exhausted providers are skipped automatically. Results are ranked, deduplicated, and returned as one clean list.
+You ask Argus a question. It checks the free providers first — if DuckDuckGo or SearXNG returns enough good results, it stops there. No credits touched. If you need more, it moves on to the monthly-credit providers (Brave, Tavily, Exa, Linkup), and only reaches for the one-time signup credits as a last resort. When a provider runs out of budget, Argus skips it and tries the next one. You get back one ranked, deduplicated list of results — no idea which provider(s) actually answered, unless you look at the traces.
 
-**Tier-based credit routing** — Providers are sorted by credit type: Tier 0 (free, unlimited) → Tier 1 (monthly recurring) → Tier 3 (one-time credits). Query-type routing is preserved within each tier. Budget enforcement tracks query counts per provider on a 30-day rolling window.
+**Content extraction** — Found a result but need the full text? Argus tries up to eight different ways to get it: first the fast local methods (trafilatura, Crawl4AI, Playwright), then external APIs if those fail (Jina, You.com, Wayback Machine, archive.is). It checks each attempt for garbage output — paywall stubs, blank pages, error messages — and moves on if the quality isn't good enough.
 
-**Content extraction** — 8-step fallback chain: trafilatura → Crawl4AI → Playwright → Jina Reader → You.com Contents → Wayback Machine → archive.is. Each step is checked for paywall stubs, soft 404s, and minimum quality before falling back. SSRF protection blocks private IPs. Results cached in memory (168h TTL).
-
-**Multi-turn sessions** — Pass a `session_id` with your searches and Argus remembers prior queries. Follow-up searches get context-enriched automatically. Sessions persist to SQLite.
+**Multi-turn sessions** — Searching for something and want to refine? Pass a `session_id` and Argus remembers what you asked before. Your follow-up searches get context from prior queries automatically. Sessions persist to SQLite so they survive restarts.
 
 ## Content Extractors
 
@@ -86,7 +84,7 @@ The first three require a local machine. The last four are external APIs that wo
 
 ## How Routing Works
 
-Two factors determine which provider handles each query: **credit tier** (primary) and **query type** (secondary).
+Argus picks which provider to ask based on two things: how much the provider costs (tier) and how well it handles that type of query (mode).
 
 ```
 ┌──────────────────────────────────────────────────────┐
@@ -100,11 +98,11 @@ Two factors determine which provider handles each query: **credit tier** (primar
 └──────────────────────────────────────────────────────┘
 ```
 
-Free providers always go first. If a free provider returns enough results, the query stops there — no credits used. When free providers don't have enough, monthly-credit providers kick in. One-time credits are held in reserve. When any provider's budget is exhausted, it's skipped until the 30-day window resets.
+The idea is simple: burn through the free stuff first. If that's not enough, dip into the monthly credits. Save the one-time signup credits for when you really need them. When a provider runs out, it gets skipped — and it comes back automatically when its budget resets.
 
 ### Search Modes
 
-Each mode picks the best providers for that query type. Tier sorting always applies first.
+Not all search providers are equally good at everything. Discovery mode favors Exa and Brave for finding related pages. Research mode leads with Tavily for broad retrieval. Recovery mode prioritizes Brave and Tavily for finding moved content. Tier sorting always applies first — within each tier, the mode picks who goes first.
 
 | Mode | When to use | Runtime order |
 |------|------------|---------------|
@@ -113,7 +111,7 @@ Each mode picks the best providers for that query type. Tier sorting always appl
 | `grounding` | Few live sources for fact-checking | SearXNG → DuckDuckGo → Brave → Linkup → Serper → Parallel → You |
 | `research` | Broad exploratory retrieval | SearXNG → DuckDuckGo → Tavily → Exa → Brave → Linkup → Serper → Parallel → You |
 
-Free providers always lead. Within-tier ordering reflects which provider is strongest for each query type.
+Free providers (SearXNG, DuckDuckGo) always lead. Within each tier, the order reflects which provider handles that query type best.
 
 ## Integration
 
@@ -266,15 +264,3 @@ All config via environment variables. See `.env.example` for the full list. Miss
 ## License
 
 MIT
-
-## Publishing
-
-The PyPI package is **`argus-search`** (the name `argus` is taken).
-
-### Release checklist
-
-1. Bump `version` in `pyproject.toml`
-2. Commit and push to `main`
-3. Build: `python3 -m build`
-4. Publish: `PYPI_API_TOKEN=$(secrets get PYPI_API_TOKEN) python3 -m twine upload dist/*`
-5. Create GitHub release: `gh release create v<version> --title "v<version>"`
