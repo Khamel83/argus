@@ -55,7 +55,6 @@ MODE_PROVIDER_PREFERENCES: dict[SearchMode, list[ProviderName]] = {
         ProviderName.TAVILY,
         ProviderName.EXA,
         ProviderName.BRAVE,
-        ProviderName.SEARXNG,
         ProviderName.LINKUP,
         ProviderName.SERPER,
         ProviderName.PARALLEL,

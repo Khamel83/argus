@@ -2,7 +2,7 @@
 
 ## Overview
 
-Search broker with content extraction and multi-turn sessions. Nine provider adapters (SearXNG, Brave, Serper, Tavily, Exa, Linkup, Parallel AI, You.com active; SearchAPI stub). Tier-based credit-aware routing: free providers first, then monthly recurring, then one-time credits. Automatic fallback, result ranking, health tracking, budget enforcement. 8-step content extraction fallback chain with quality gates. Extract clean text from any URL. Domain rate limiting (10 req/min/domain). Persistent sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
+Search broker that puts free search APIs in one place with intelligent credit-aware routing. 10 provider adapters: SearXNG and DuckDuckGo (free, unlimited, no API keys), Brave, Tavily, Exa, Linkup (monthly free tiers), Serper, Parallel AI, You.com (one-time credits), SearchAPI (stub). ~8,000+ free monthly queries available. Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. 8-step content extraction fallback chain. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
 
 ## Key Commands
 
@@ -12,6 +12,9 @@ cp .env.example .env                    # configure providers and DB
 pip install "argus-search[mcp]"         # install from PyPI (with MCP support)
 pip install "argus-search[mcp,crawl4ai]" # with Crawl4AI extractor
 # or from source: pip install -e ".[mcp]"
+
+# Zero-config search (no API keys needed)
+argus search -q "python web frameworks"  # uses DuckDuckGo automatically
 
 # Run
 argus serve                   # HTTP API on :8000
@@ -53,7 +56,7 @@ Caller (CLI/HTTP/MCP/Python)
 | Module | Responsibility |
 |--------|---------------|
 | `argus/broker/` | Tier-based routing, ranking, dedup, caching, health, budgets |
-| `argus/providers/` | 9 provider adapters (one per search API) |
+| `argus/providers/` | 10 provider adapters (one per search API) |
 | `argus/extraction/` | 8-step URL extraction fallback chain with quality gates |
 | `argus/sessions/` | Multi-turn session store and query refinement |
 | `argus/api/` | FastAPI HTTP endpoints |
@@ -65,9 +68,9 @@ Caller (CLI/HTTP/MCP/Python)
 
 | Tier | Providers | Credits |
 |------|-----------|---------|
-| 0 (free) | SearXNG | Unlimited, self-hosted |
-| 1 (monthly) | Brave, Tavily, Exa, Linkup | Recurring monthly |
-| 3 (one-time) | Serper, Parallel, You.com, SearchAPI | Don't come back |
+| 0 (free) | SearXNG, DuckDuckGo | Unlimited, no API keys |
+| 1 (monthly) | Brave (2k/mo), Tavily (1k/mo), Exa (1k/mo), Linkup (1k/mo) | Recurring monthly |
+| 3 (one-time) | Serper (2.5k), Parallel (16k), You.com ($100), SearchAPI | Don't come back |
 
 Routing sorts by tier first (free → monthly → one-time), then preserves mode-specific ordering within each tier. Budget enforcement skips exhausted providers automatically.
 
@@ -86,12 +89,12 @@ Each mode defines which providers are best suited for that query type. Routing s
 
 | Mode | Use case | Actual runtime order |
 |------|----------|---------------------|
-| `discovery` | Related pages, canonical sources | SearXNG → Brave → Exa → Tavily → Linkup → Serper → Parallel → You |
-| `recovery` | Dead/moved URL | SearXNG → Brave → Tavily → Exa → Linkup → Serper → Parallel → You |
-| `grounding` | Few sources for fact-checking | SearXNG → Brave → Linkup → Serper → Parallel → You |
-| `research` | Broad exploratory | SearXNG → Tavily → Exa → Brave → Linkup → Serper → Parallel → You |
+| `discovery` | Related pages, canonical sources | SearXNG → DuckDuckGo → Brave → Exa → Tavily → Linkup → Serper → Parallel → You |
+| `recovery` | Dead/moved URL | SearXNG → DuckDuckGo → Brave → Tavily → Exa → Linkup → Serper → Parallel → You |
+| `grounding` | Few sources for fact-checking | SearXNG → DuckDuckGo → Brave → Linkup → Serper → Parallel → You |
+| `research` | Broad exploratory | SearXNG → DuckDuckGo → Tavily → Exa → Brave → Linkup → Serper → Parallel → You |
 
-SearXNG (free, unlimited) always leads. Within-tier ordering reflects provider strengths per query type.
+Free providers (SearXNG, DuckDuckGo) always lead. Within-tier ordering reflects provider strengths per query type.
 
 ## Content Extraction
 
@@ -119,6 +122,6 @@ All config via env vars (see `.env.example`). Missing API keys degrade gracefull
 - All search results are `SearchResult`: url, title, snippet, domain, provider, score
 - Extracted content is `ExtractedContent`: url, title, text, author, date, word_count
 - Routes prefixed with `/api`
-- Free/self-hosted-first: SearXNG is always the fallback floor
+- Free/self-hosted-first: SearXNG and DuckDuckGo are the fallback floor
 - Token balances persist in SQLite alongside budget tracking
 - Budget env var is named `MONTHLY_BUDGET_USD` but values are query counts (legacy naming)
