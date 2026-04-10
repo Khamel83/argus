@@ -2,7 +2,7 @@
 
 ## Overview
 
-Search broker that puts free search APIs in one place with intelligent credit-aware routing. 10 provider adapters: SearXNG and DuckDuckGo (free, unlimited, no API keys), Brave, Tavily, Exa, Linkup (monthly free tiers), Serper, Parallel AI, You.com (one-time credits), SearchAPI (stub). ~8,000+ free monthly queries available. Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. 8-step content extraction fallback chain. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
+Search broker that puts free search APIs in one place with intelligent credit-aware routing. 10 provider adapters: SearXNG and DuckDuckGo (free, unlimited, no API keys), Brave, Tavily, Exa, Linkup (monthly free tiers: 5,000 queries/month combined), Serper, Parallel AI, You.com (one-time signup credits: ~18,500 combined), SearchAPI (stub). Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. 8-step content extraction fallback chain. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
 
 ## Key Commands
 

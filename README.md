@@ -5,9 +5,9 @@
 [![PyPI](https://img.shields.io/pypi/v/argus-search)](https://pypi.org/project/argus-search/)
 [![MCP Server](https://img.shields.io/badge/MCP-server-purple)](https://modelcontextprotocol.io/)
 
-Search companies give you free web searches — thousands per month across 10 providers. Argus puts them all in one place and routes every query to the right one at the right time.
+Search companies give you free web searches — 5,000+ per month across 10 providers, plus two unlimited with no API key at all. Argus puts them all in one place and routes every query to the right one at the right time.
 
-Zero-config free search with SearXNG and DuckDuckGo (no API keys, unlimited). Add API keys for Brave, Tavily, Exa, Linkup, and others to get thousands more free monthly credits. Argus tracks budgets, skips exhausted providers, and falls back automatically. You can do a thousand searches a day and only burn API credits when the free options don't cover it.
+Zero-config free search with SearXNG and DuckDuckGo (no API keys, unlimited). Add API keys for Brave, Tavily, Exa, Linkup, and others to unlock thousands more free monthly credits. Argus tracks budgets, skips exhausted providers, and falls back automatically. You can do a hundred searches a day and only use API credits when the free options don't cover it.
 
 **Search → Extract → Answer.** Find URLs, then extract clean text from any page using an 8-step fallback chain. Multi-turn sessions remember prior queries so follow-up searches get smarter. Connect via HTTP, CLI, MCP, or Python import.
 
@@ -15,19 +15,19 @@ Zero-config free search with SearXNG and DuckDuckGo (no API keys, unlimited). Ad
 
 You don't need one search API. You need all of them — and you need them free.
 
-| What you get | Monthly free capacity |
-|---|---|
-| SearXNG (self-hosted) | Unlimited |
-| DuckDuckGo (scraped) | Unlimited |
-| Brave Search | 2,000 queries |
-| Tavily | 1,000 queries |
-| Exa | 1,000 queries |
-| Linkup | 1,000 queries |
-| Serper | 2,500 one-time credits |
-| Parallel AI | 16,000 one-time credits |
-| You.com | $100 credit (~500/mo paced) |
+| Provider | Credit type | Free capacity |
+|----------|------------|---------------|
+| SearXNG | Free (self-hosted) | Unlimited, no API key |
+| DuckDuckGo | Free (scraped) | Unlimited, no API key |
+| Brave Search | Monthly recurring | 2,000 queries/month |
+| Tavily | Monthly recurring | 1,000 queries/month |
+| Exa | Monthly recurring | 1,000 queries/month |
+| Linkup | Monthly recurring | 1,000 queries/month |
+| Serper | One-time signup | 2,500 credits |
+| Parallel AI | One-time signup | 16,000 credits |
+| You.com | One-time signup | $100 credit |
 
-**That's 8,000+ free monthly queries before you touch a single paid credit** — and two providers with no limit at all. Argus routes to free providers first, then monthly recurring credits, then one-time credits. Budget-exhausted providers are skipped until they reset. When credits refresh, they come back online automatically.
+**5,000 free queries per month** from the four recurring providers, plus two unlimited providers with no API key at all. On top of that, three providers give you ~18,500 one-time credits just for signing up. Argus routes to free providers first, monthly recurring next, one-time credits last. Budget-exhausted providers are skipped until they reset. When credits refresh, they come back online automatically.
 
 ## What It Does
 
