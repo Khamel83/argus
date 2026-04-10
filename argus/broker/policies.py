@@ -20,6 +20,7 @@ from argus.models import ProviderName, SearchMode
 MODE_PROVIDER_PREFERENCES: dict[SearchMode, list[ProviderName]] = {
     SearchMode.RECOVERY: [
         ProviderName.SEARXNG,
+        ProviderName.DUCKDUCKGO,
         ProviderName.BRAVE,
         ProviderName.SERPER,
         ProviderName.TAVILY,
@@ -30,6 +31,7 @@ MODE_PROVIDER_PREFERENCES: dict[SearchMode, list[ProviderName]] = {
     ],
     SearchMode.DISCOVERY: [
         ProviderName.SEARXNG,
+        ProviderName.DUCKDUCKGO,
         ProviderName.BRAVE,
         ProviderName.EXA,
         ProviderName.TAVILY,
@@ -39,14 +41,17 @@ MODE_PROVIDER_PREFERENCES: dict[SearchMode, list[ProviderName]] = {
         ProviderName.YOU,
     ],
     SearchMode.GROUNDING: [
+        ProviderName.SEARXNG,
+        ProviderName.DUCKDUCKGO,
         ProviderName.BRAVE,
         ProviderName.SERPER,
-        ProviderName.SEARXNG,
         ProviderName.LINKUP,
         ProviderName.PARALLEL,
         ProviderName.YOU,
     ],
     SearchMode.RESEARCH: [
+        ProviderName.SEARXNG,
+        ProviderName.DUCKDUCKGO,
         ProviderName.TAVILY,
         ProviderName.EXA,
         ProviderName.BRAVE,

@@ -138,6 +138,7 @@ class SearchBroker:
 def create_broker() -> SearchBroker:
     """Factory: create a SearchBroker with all configured providers."""
     from argus.providers.brave import BraveProvider
+    from argus.providers.duckduckgo import DuckDuckGoProvider
     from argus.providers.exa import ExaProvider
     from argus.providers.linkup import LinkupProvider
     from argus.providers.parallel import ParallelProvider
@@ -151,6 +152,7 @@ def create_broker() -> SearchBroker:
 
     providers: dict[ProviderName, BaseProvider] = {
         ProviderName.SEARXNG: SearXNGProvider(config.searxng),
+        ProviderName.DUCKDUCKGO: DuckDuckGoProvider(),
         ProviderName.BRAVE: BraveProvider(config.brave),
         ProviderName.SERPER: SerperProvider(config.serper),
         ProviderName.TAVILY: TavilyProvider(config.tavily),

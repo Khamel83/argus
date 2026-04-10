@@ -23,8 +23,9 @@ logger = get_logger("broker.budgets")
 # Tier 2: Monthly or semi-monthly credits
 # Tier 3: One-time signup credits (don't come back)
 PROVIDER_TIERS: dict[ProviderName, int] = {
-    ProviderName.SEARXNG: 0,  # free, unlimited
-    ProviderName.BRAVE: 1,     # monthly recurring
+    ProviderName.SEARXNG: 0,     # free, unlimited (self-hosted)
+    ProviderName.DUCKDUCKGO: 0, # free, unlimited (scrapes DDG)
+    ProviderName.BRAVE: 1,        # monthly recurring
     ProviderName.TAVILY: 1,    # monthly recurring
     ProviderName.LINKUP: 1,    # monthly recurring
     ProviderName.EXA: 1,       # monthly (likely)

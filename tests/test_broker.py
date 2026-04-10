@@ -382,7 +382,7 @@ class TestRouter:
         broker = create_broker()
         assert ProviderName.SEARXNG in broker._providers
         assert ProviderName.BRAVE in broker._providers
-        assert len(broker._providers) == 9  # 5 live + 2 stubs + parallel + linkup
+        assert len(broker._providers) == 10  # 5 live + 2 stubs + parallel + linkup + duckduckgo
 
     @pytest.mark.asyncio
     async def test_search_stops_after_good_enough_primary_provider(self, monkeypatch):

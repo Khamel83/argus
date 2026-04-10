@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "argus-search"
-version = "1.3.0"
+version = "1.3.1"
 description = "Search broker with content extraction and multi-turn sessions — routes queries across 9 providers with tier-based credit-aware routing, fallback, ranking, health tracking, and budget enforcement"
 readme = "README.md"
 license = {text = "MIT"}
@@ -31,6 +31,7 @@ dependencies = [
     "click>=8.1.0",
     "pyyaml>=6.0",
     "trafilatura>=1.6.0",
+    "ddgs>=9.0",
     "playwright>=1.40.0",
 ]
 

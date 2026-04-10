@@ -20,6 +20,7 @@ class SearchMode(str, Enum):
 
 class ProviderName(str, Enum):
     SEARXNG = "searxng"
+    DUCKDUCKGO = "duckduckgo"
     BRAVE = "brave"
     SERPER = "serper"
     TAVILY = "tavily"
