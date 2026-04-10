@@ -6,7 +6,7 @@
 [![CI](https://github.com/Khamel83/argus/actions/workflows/ci.yml/badge.svg)](https://github.com/Khamel83/argus/actions/workflows/ci.yml)
 [![MCP Server](https://img.shields.io/badge/MCP-server-purple)](https://modelcontextprotocol.io/)
 
-Search companies give you free web searches — thousands per month, across 10 providers, and two of them are unlimited with no API key at all. Argus puts them all in one place and automatically picks the right one for each query so you don't waste credits.
+Search companies give you free web searches — thousands per month across every major provider, and two of them are unlimited with no API key at all. Argus puts them all in one place and automatically picks the right one for each query so you don't waste credits.
 
 ## Two Ways to Use Argus
 
@@ -33,7 +33,7 @@ docker compose up -d    # SearXNG + Argus
 
 | What you have | What you get | How |
 |--------------|-------------|-----|
-| **Raspberry Pi 3** (1GB, probably running Pi-hole) | SearXNG + search via 10 providers | Pi-hole uses ~100MB, SearXNG needs ~512MB ([confirmed by maintainers](https://github.com/searxng/searxng/discussions/3884)). They fit together. |
+| **Raspberry Pi 3** (1GB, probably running Pi-hole) | SearXNG + search via all providers | Pi-hole uses ~100MB, SearXNG needs ~512MB ([confirmed by maintainers](https://github.com/searxng/searxng/discussions/3884)). They fit together. |
 | **Raspberry Pi 4** (4GB) | Everything — SearXNG, all providers, Crawl4AI | Same as above plus local JS-rendering extraction. Crawl4AI basic mode runs on Pi 4 ([per their docs](https://pypi.org/project/Crawl4AI/)). |
 | **Mac Mini M1+** (8GB+) | Everything, plus headroom | Full stack with room for other services. Runs alongside whatever else is on there. |
 | **Any old laptop** (4GB+) | Everything | Same as Pi 4. Docker + Python = full Argus. |
@@ -234,7 +234,7 @@ Caller (CLI / HTTP / MCP / Python)
 | Module | Responsibility |
 |--------|---------------|
 | `argus/broker/` | Tier-based routing, ranking, dedup, caching, health, budgets |
-| `argus/providers/` | 10 provider adapters (one per search API) |
+| `argus/providers/` | Provider adapters (one per search API) |
 | `argus/extraction/` | 8-step URL extraction fallback chain with quality gates |
 | `argus/sessions/` | Multi-turn session store and query refinement |
 | `argus/api/` | FastAPI HTTP endpoints |

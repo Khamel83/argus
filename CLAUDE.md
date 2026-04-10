@@ -2,7 +2,7 @@
 
 ## Overview
 
-Search broker that puts free search APIs in one place with intelligent credit-aware routing. 10 provider adapters: SearXNG and DuckDuckGo (free, unlimited, no API keys), Brave, Tavily, Exa, Linkup (monthly free tiers: 5,000 queries/month combined), Serper, Parallel AI, You.com (one-time signup credits: ~6,500 + $20 combined), SearchAPI (stub). Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. 8-step content extraction fallback chain. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
+Search broker that puts every free search API in one place with intelligent credit-aware routing. Provider adapters: SearXNG and DuckDuckGo (free, unlimited, no API keys), Brave, Tavily, Exa, Linkup (monthly free tiers), Serper, Parallel AI, You.com, SearchAPI. Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. 8-step content extraction fallback chain. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
 
 ## Two Deployment Tiers
 
@@ -73,7 +73,7 @@ Caller (CLI/HTTP/MCP/Python)
 | Module | Responsibility |
 |--------|---------------|
 | `argus/broker/` | Tier-based routing, ranking, dedup, caching, health, budgets |
-| `argus/providers/` | 10 provider adapters (one per search API) |
+| `argus/providers/` | Provider adapters (one per search API) |
 | `argus/extraction/` | 8-step URL extraction fallback chain with quality gates |
 | `argus/sessions/` | Multi-turn session store and query refinement |
 | `argus/api/` | FastAPI HTTP endpoints |

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "argus-search"
 version = "1.3.1"
-description = "Search broker with content extraction and multi-turn sessions — routes queries across 10 providers with tier-based credit-aware routing, fallback, ranking, health tracking, and budget enforcement"
+description = "One endpoint, every free search API. Search broker for AI agents with automatic fallback, RRF ranking, and budget enforcement. The LiteLLM of web search."
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
