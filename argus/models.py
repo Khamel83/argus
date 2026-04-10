@@ -73,6 +73,7 @@ class ProviderTrace:
     latency_ms: int = 0
     error: Optional[str] = None
     budget_remaining: Optional[float] = None
+    credit_info: Optional[dict] = None  # raw credit/rate-limit data from provider
 
 
 @dataclass

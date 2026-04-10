@@ -215,6 +215,47 @@ def budgets():
                 click.echo(f"  {service:12s} balance={info['balance']:,.0f} tokens")
 
 
+@cli.command("check-balances")
+def check_balances():
+    """Probe all providers for live credit/balance info and cache results."""
+    from argus.broker.router import create_broker
+    from argus.broker.balance_check import check_all_balances, persist_balances
+    from argus.models import ProviderName
+
+    broker = create_broker()
+
+    # Collect API keys from provider configs
+    api_keys = {}
+    for pname, provider in broker._providers.items():
+        cfg = provider._config if hasattr(provider, "_config") else None
+        if cfg and getattr(cfg, "api_key", None):
+            api_keys[pname] = cfg.api_key
+
+    if not api_keys:
+        click.echo("No API keys configured. Nothing to check.")
+        return
+
+    click.echo(f"Checking balances for {len(api_keys)} providers...")
+    balances = asyncio.get_event_loop().run_until_complete(check_all_balances(api_keys))
+
+    store = broker.budget_tracker._store
+    persist_balances(balances, store)
+
+    click.echo()
+    for b in balances:
+        if b.error:
+            click.echo(f"  {b.provider.value:12s} ERROR: {b.error}")
+        elif b.remaining is not None:
+            limit_str = f"/{b.limit:.0f}" if b.limit else ""
+            click.echo(f"  {b.provider.value:12s} {b.remaining:.0f} {b.unit} remaining {limit_str} (via {b.source})")
+        else:
+            click.echo(f"  {b.provider.value:12s} no credit data available")
+
+    if store:
+        click.echo(f"\nCached to {broker.budget_tracker._store._db_path}")
+    click.echo("\nRun 'argus budgets' to see combined status.")
+
+
 @cli.command()
 @click.option("--service", "-s", required=True, help="Service name (e.g. jina)")
 @click.option("--balance", "-b", required=True, type=float, help="Current token balance")

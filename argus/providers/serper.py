@@ -65,11 +65,21 @@ class SerperProvider(BaseProvider):
             results = self._normalize(organic)
             latency_ms = int((time.monotonic() - start) * 1000)
 
+            credit_info = {}
+            if "credits" in data:
+                credit_info["credits"] = data["credits"]
+            if "credit_limit" in data:
+                credit_info["credit_limit"] = data["credit_limit"]
+            for hdr in ("X-Credits-Remaining", "X-RateLimit-Remaining"):
+                if hdr in resp.headers:
+                    credit_info[hdr] = resp.headers[hdr]
+
             trace = ProviderTrace(
                 provider=self.name,
                 status="success",
                 results_count=len(results),
                 latency_ms=latency_ms,
+                credit_info=credit_info or None,
             )
             return results, trace
 

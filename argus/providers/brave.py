@@ -63,11 +63,17 @@ class BraveProvider(BaseProvider):
             results = self._normalize(web_results)
             latency_ms = int((time.monotonic() - start) * 1000)
 
+            credit_info = {}
+            for hdr in ("X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Used"):
+                if hdr in resp.headers:
+                    credit_info[hdr] = resp.headers[hdr]
+
             trace = ProviderTrace(
                 provider=self.name,
                 status="success",
                 results_count=len(results),
                 latency_ms=latency_ms,
+                credit_info=credit_info or None,
             )
             return results, trace
 
