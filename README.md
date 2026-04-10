@@ -16,37 +16,30 @@ pip install argus-search
 argus search -q "python web frameworks"
 ```
 
-That's it. DuckDuckGo handles the search. No accounts, no keys, no containers. You get unlimited free search immediately. Add API keys whenever you want to unlock more providers — or don't, and DuckDuckGo handles everything.
+That's it. DuckDuckGo handles the search — no accounts, no keys, no containers. You get unlimited free search from your laptop right now. Add API keys whenever you want more providers, or don't.
 
-**What you get with zero setup:**
-- Unlimited search via DuckDuckGo (no API key)
-- Content extraction via external APIs (Jina, You.com Contents, Wayback Machine)
-- Multi-turn sessions (SQLite, local file)
-- CLI, MCP server, HTTP API, Python import
+**Works on any machine with Python 3.11+:** your laptop, a Mac Mini, a Raspberry Pi, a cloud VM. Nothing to host.
 
-**Add API keys to unlock:**
-- 5,000 more free queries/month (Brave, Tavily, Exa, Linkup)
-- ~6,500 one-time signup credits (Serper, Parallel, You.com)
-- Full 8-step extraction chain (trafilatura, Crawl4AI, Playwright)
+### 2. Full install on hardware you already have
 
-### 2. Full install (Docker, self-hosted)
-
-Add SearXNG and you get a second unlimited free search engine with better structured results than DuckDuckGo. Add Crawl4AI and Playwright for local JS-rendering extraction that doesn't depend on any external API.
+Got a Raspberry Pi running Pi-hole? A Mac Mini on your desk? An old laptop? That's enough to run the full stack — SearXNG (your own private search engine) plus local JS-rendering content extraction that doesn't depend on anyone's API.
 
 ```bash
 docker compose up -d    # SearXNG + Argus
 ```
 
-**Hardware requirements:**
+**What runs where:**
 
-| Component | Minimum | Recommended |
-|-----------|---------|-------------|
-| SearXNG | 1 vCPU, 512MB RAM ([confirmed by maintainers](https://github.com/searxng/searxng/discussions/3884)) | 1 vCPU, 1GB RAM |
-| Argus (search only) | Any machine with Python 3.11+ | — |
-| Argus + Crawl4AI | 4GB RAM ([per Crawl4AI docs](https://pypi.org/project/Crawl4AI/)) | 8GB RAM |
-| Full stack (SearXNG + Argus + extraction) | 4GB RAM | 8GB RAM, any modern CPU |
+| What you have | What you get | How |
+|--------------|-------------|-----|
+| **Raspberry Pi 3** (1GB, probably running Pi-hole) | SearXNG + search via 10 providers | Pi-hole uses ~100MB, SearXNG needs ~512MB ([confirmed by maintainers](https://github.com/searxng/searxng/discussions/3884)). They fit together. |
+| **Raspberry Pi 4** (4GB) | Everything — SearXNG, all providers, Crawl4AI | Same as above plus local JS-rendering extraction. Crawl4AI basic mode runs on Pi 4 ([per their docs](https://pypi.org/project/Crawl4AI/)). |
+| **Mac Mini M1+** (8GB+) | Everything, plus headroom | Full stack with room for other services. Runs alongside whatever else is on there. |
+| **Any old laptop** (4GB+) | Everything | Same as Pi 4. Docker + Python = full Argus. |
+| **Free cloud VM** (1GB, e.g. OCI/AWS free tier) | SearXNG + search providers | Enough for search. Skip Crawl4AI — external APIs (Jina, You.com, Wayback) handle extraction. |
+| **No machine at all** | DuckDuckGo + API providers | `pip install argus-search` on your laptop. No server needed. |
 
-Runs on a Raspberry Pi 4 (basic mode), an old laptop, a free cloud VM, or a Mac Mini. SearXNG is extremely lightweight — confirmed running on 512MB VMs with zero issues. Crawl4AI is the heaviest component at 4GB minimum (it runs Chromium under the hood). If you don't need JS-rendered extraction, skip it and save the RAM.
+SearXNG is the most useful thing you're not running. It takes 512MB of RAM and gives you a private Google-style search engine that nobody can rate-limit, block, or charge for. It's the cheapest infrastructure upgrade you can make — it runs alongside Pi-hole on hardware millions of people already own.
 
 ## Why Argus
 

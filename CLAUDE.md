@@ -10,15 +10,16 @@ Search broker that puts free search APIs in one place with intelligent credit-aw
 - `pip install argus-search` — works immediately with DuckDuckGo
 - Add API keys for 5,000+ more free monthly queries
 - Extraction via external APIs only (Jina, You.com Contents, Wayback)
-- Runs on any machine with Python 3.11+
+- Runs on any machine with Python 3.11+ (laptop, Mac Mini, Pi, cloud VM)
 - No Docker, no database server, no API keys required to start
 
-### Tier 2: Full install (Docker + self-hosted)
-- Add SearXNG for second unlimited search engine (1 vCPU, 512MB RAM)
-- Add Crawl4AI for local JS rendering extraction (4GB RAM minimum)
+### Tier 2: Full install on hardware you already have
+- Raspberry Pi 3 (1GB): SearXNG + all search providers. Fits alongside Pi-hole (SearXNG ~512MB, Pi-hole ~100MB).
+- Raspberry Pi 4 (4GB): Everything — SearXNG, all providers, Crawl4AI local JS extraction.
+- Mac Mini M1+ (8GB): Full stack with headroom for other services.
+- Any old laptop (4GB+): Full stack via Docker.
+- Free cloud VM (1GB): SearXNG + search. No Crawl4AI (use external APIs for extraction).
 - `docker compose up -d` for one-command setup
-- Full 8-step extraction chain including local extractors
-- Minimum hardware: 4GB RAM (without Crawl4AI: 1GB RAM)
 
 ## Key Commands
 
