@@ -29,6 +29,7 @@ class ProviderName(str, Enum):
     YOU = "you"
     PARALLEL = "parallel"
     LINKUP = "linkup"
+    VALYU = "valyu"
     CACHE = "cache"
 
 

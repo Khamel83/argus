@@ -250,6 +250,29 @@ async def test_provider_mcp(
     }, indent=2)
 
 
+async def valyu_answer(query: str, fast_mode: bool = False) -> str:
+    """Get an AI-synthesized answer grounded in real-time search results.
+
+    Args:
+        query: Question or research query to answer
+        fast_mode: Use faster mode with lower latency
+    """
+    from argus.providers.valyu_answer import valyu_answer as _answer
+
+    result = await _answer(query, fast_mode=fast_mode)
+
+    return json.dumps({
+        "answer": result.answer,
+        "sources": [
+            {"title": s.get("title", ""), "url": s.get("url", "")}
+            for s in result.sources[:10]
+        ],
+        "cost_usd": result.cost_usd,
+        "tx_id": result.tx_id,
+        "error": result.error,
+    }, indent=2)
+
+
 async def extract_content(url: str, domain: str = None) -> str:
     """Extract clean text content from a URL.
 

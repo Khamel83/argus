@@ -41,6 +41,7 @@ class ArgusConfig:
     you: ProviderConfig = field(default_factory=ProviderConfig)
     parallel: ProviderConfig = field(default_factory=ProviderConfig)
     linkup: ProviderConfig = field(default_factory=ProviderConfig)
+    valyu: ProviderConfig = field(default_factory=ProviderConfig)
     host: str = "127.0.0.1"
     port: int = 8000
     allow_mcp: bool = False
@@ -183,6 +184,7 @@ class EnvironmentConfigLoader:
             you=self.provider_config("YOU", enabled_default=True),
             parallel=self.provider_config("PARALLEL"),
             linkup=self.provider_config("LINKUP"),
+            valyu=self.provider_config("VALYU"),
             host=self.get_str("ARGUS_HOST", "127.0.0.1"),
             port=self.get_int("ARGUS_PORT", 8000),
             allow_mcp=self.get_bool("ARGUS_ALLOW_MCP"),

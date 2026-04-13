@@ -8,7 +8,7 @@ preserving mode-specific ordering within each tier.
 Tier 0: Free/unlimited (SearXNG) — always first
 Tier 1: Monthly recurring credits (Brave, Tavily, Linkup, Exa)
 Tier 2: Semi-monthly credits
-Tier 3: One-time credits (Serper, Parallel, You.com, SearchAPI) — always last
+Tier 3: One-time credits (Serper, Parallel, You.com, SearchAPI, Valyu) — always last
 """
 
 from argus.broker.budgets import PROVIDER_TIERS
@@ -28,6 +28,7 @@ MODE_PROVIDER_PREFERENCES: dict[SearchMode, list[ProviderName]] = {
         ProviderName.LINKUP,
         ProviderName.PARALLEL,
         ProviderName.YOU,
+        ProviderName.VALYU,
     ],
     SearchMode.DISCOVERY: [
         ProviderName.SEARXNG,
@@ -39,6 +40,7 @@ MODE_PROVIDER_PREFERENCES: dict[SearchMode, list[ProviderName]] = {
         ProviderName.SERPER,
         ProviderName.PARALLEL,
         ProviderName.YOU,
+        ProviderName.VALYU,
     ],
     SearchMode.GROUNDING: [
         ProviderName.SEARXNG,
@@ -48,6 +50,7 @@ MODE_PROVIDER_PREFERENCES: dict[SearchMode, list[ProviderName]] = {
         ProviderName.LINKUP,
         ProviderName.PARALLEL,
         ProviderName.YOU,
+        ProviderName.VALYU,
     ],
     SearchMode.RESEARCH: [
         ProviderName.SEARXNG,
@@ -59,6 +62,7 @@ MODE_PROVIDER_PREFERENCES: dict[SearchMode, list[ProviderName]] = {
         ProviderName.SERPER,
         ProviderName.PARALLEL,
         ProviderName.YOU,
+        ProviderName.VALYU,
     ],
 }
 

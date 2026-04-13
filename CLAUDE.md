@@ -67,14 +67,14 @@ Caller (CLI/HTTP/MCP/Python)
     → query refinement from prior context
   → Extractor (on demand)
     → trafilatura → crawl4ai → playwright → jina →
-      you_contents → wayback → archive.is
+      valyu_contents → firecrawl → you_contents → wayback → archive.is
 ```
 
 | Module | Responsibility |
 |--------|---------------|
 | `argus/broker/` | Tier-based routing, ranking, dedup, caching, health, budgets |
 | `argus/providers/` | Provider adapters (one per search API) |
-| `argus/extraction/` | 8-step URL extraction fallback chain with quality gates |
+| `argus/extraction/` | 9-step URL extraction fallback chain with quality gates |
 | `argus/sessions/` | Multi-turn session store and query refinement |
 | `argus/api/` | FastAPI HTTP endpoints |
 | `argus/cli/` | Click CLI commands |
@@ -87,7 +87,7 @@ Caller (CLI/HTTP/MCP/Python)
 |------|-----------|---------|
 | 0 (free) | SearXNG, DuckDuckGo | Unlimited, no API keys |
 | 1 (monthly) | Brave (2k/mo), Tavily (1k/mo), Exa (1k/mo), Linkup (1k/mo) | Recurring monthly |
-| 3 (one-time) | Serper (2.5k), Parallel (4k), You.com ($20), SearchAPI | Don't come back |
+| 3 (one-time) | Serper (2.5k), Parallel (4k), You.com ($20), SearchAPI, Valyu ($10) | Don't come back |
 
 Routing sorts by tier first (free → monthly → one-time), then preserves mode-specific ordering within each tier. Budget enforcement skips exhausted providers automatically.
 
@@ -97,8 +97,8 @@ Routing sorts by tier first (free → monthly → one-time), then preserves mode
 |-----------|-----------|
 | HTTP API | `POST /api/search`, `POST /api/extract`, `POST /api/recover-url`, `POST /api/expand` — OpenAPI at `/docs` |
 | CLI | `argus search`, `argus extract`, `argus recover-url`, `argus health`, `argus budgets`, `argus set-balance` |
-| MCP | `argus mcp serve` — tools: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider` |
-| Python | `from argus.broker.router import create_broker`, `from argus.extraction import extract_url` |
+| MCP | `argus mcp serve` — tools: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `valyu_answer` |
+| Python | `from argus.broker.router import create_broker`, `from argus.extraction import extract_url`, `from argus.providers.valyu_answer import valyu_answer` |
 
 ## Search Modes
 
@@ -106,24 +106,25 @@ Each mode defines which providers are best suited for that query type. Routing s
 
 | Mode | Use case | Actual runtime order |
 |------|----------|---------------------|
-| `discovery` | Related pages, canonical sources | SearXNG → DuckDuckGo → Brave → Exa → Tavily → Linkup → Serper → Parallel → You |
-| `recovery` | Dead/moved URL | SearXNG → DuckDuckGo → Brave → Tavily → Exa → Linkup → Serper → Parallel → You |
-| `grounding` | Few sources for fact-checking | SearXNG → DuckDuckGo → Brave → Linkup → Serper → Parallel → You |
-| `research` | Broad exploratory | SearXNG → DuckDuckGo → Tavily → Exa → Brave → Linkup → Serper → Parallel → You |
+| `discovery` | Related pages, canonical sources | SearXNG → DuckDuckGo → Brave → Exa → Tavily → Linkup → Serper → Parallel → You → Valyu |
+| `recovery` | Dead/moved URL | SearXNG → DuckDuckGo → Brave → Tavily → Exa → Linkup → Serper → Parallel → You → Valyu |
+| `grounding` | Few sources for fact-checking | SearXNG → DuckDuckGo → Brave → Linkup → Serper → Parallel → You → Valyu |
+| `research` | Broad exploratory | SearXNG → DuckDuckGo → Tavily → Exa → Brave → Linkup → Serper → Parallel → You → Valyu |
 
 Free providers (SearXNG, DuckDuckGo) always lead. Within-tier ordering reflects provider strengths per query type.
 
 ## Content Extraction
 
-8-step fallback chain with quality gates between every step:
+9-step fallback chain with quality gates between every step:
 
 ```
 trafilatura (local, fast) → Crawl4AI (local, JS rendering) →
 Playwright (local, headless browser) → Jina Reader (external API) →
+Valyu Contents ($0.001/URL) → Firecrawl (1 credit/page) →
 You.com Contents ($1/1k pages) → Wayback Machine → archive.is
 ```
 
-First 3 extractors need local hosting. Last 4 are external APIs that work anywhere. SSRF protection blocks private IPs. Results cached in memory (168h TTL). Domain rate limiting (10 req/min/domain). Authenticated extraction via cookies for paywall domains (NYT, Bloomberg, etc.).
+First 3 extractors need local hosting. Last 6 are external APIs that work anywhere. SSRF protection blocks private IPs. Results cached in memory (168h TTL). Domain rate limiting (10 req/min/domain). Authenticated extraction via cookies for paywall domains (NYT, Bloomberg, etc.).
 
 ## Multi-Turn Sessions
 

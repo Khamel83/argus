@@ -5,6 +5,7 @@ Chain order:
   SSRF check → cache → rate limit → auth → quality gate →
   trafilatura → quality gate → crawl4ai → quality gate →
   playwright → quality gate → jina → quality gate →
+  valyu_contents → quality gate → firecrawl → quality gate →
   you_contents → quality gate → wayback → quality gate →
   archive.is → quality gate → return best result
 
@@ -133,8 +134,9 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
 
     Chain:
       SSRF → cache → rate limit → auth → QG → trafilatura → QG →
-      crawl4ai → QG → playwright → QG → jina → QG → wayback → QG →
-      archive.is → QG → return best result (even if all quality gates failed)
+      crawl4ai → QG → playwright → QG → jina → QG →
+      valyu_contents → QG → firecrawl → QG → you_contents → QG →
+      wayback → QG → archive.is → QG → return best result (even if all quality gates failed)
 
     Results are cached in memory — same URL within TTL returns cached result.
     """
@@ -244,7 +246,7 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
     except Exception as e:
         logger.warning("Playwright failed for %s: %s", url[:60], e)
 
-    # Step 4: Jina Reader (external API)
+    # Step 4: Jina Reader (external API, free tier rate-limited)
     try:
         result = await _extract_jina(url)
         track_attempt("jina", result)
@@ -262,7 +264,45 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
     except Exception as e:
         logger.warning("Jina failed for %s: %s", url[:60], e)
 
-    # Step 5: You.com Contents API ($1/1k pages, cheaper than Jina)
+    # Step 5: Valyu Contents API ($0.001/URL, cheapest external option)
+    try:
+        from argus.extraction.valyu_extractor import extract_valyu_contents
+
+        result = await extract_valyu_contents(url)
+        track_attempt("valyu_contents", result)
+        if result.text and not result.error:
+            passed, reason = _run_quality_gate(result.text, url, "valyu_contents")
+            result.quality_passed = passed
+            result.quality_reason = reason if not passed else None
+            result.extractors_tried = list(extractors_tried)
+            if passed:
+                logger.info("Extracted %s via Valyu Contents (%d words)", url[:60], result.word_count)
+                _cache.put(url, result)
+                return result
+            logger.debug("Valyu Contents failed quality gate: %s", reason)
+    except Exception as e:
+        logger.warning("Valyu Contents failed for %s: %s", url[:60], e)
+
+    # Step 6: Firecrawl (external API, 1 credit/page, best Markdown quality)
+    try:
+        from argus.extraction.firecrawl_extractor import extract_firecrawl
+
+        result = await extract_firecrawl(url)
+        track_attempt("firecrawl", result)
+        if result.text and not result.error:
+            passed, reason = _run_quality_gate(result.text, url, "firecrawl")
+            result.quality_passed = passed
+            result.quality_reason = reason if not passed else None
+            result.extractors_tried = list(extractors_tried)
+            if passed:
+                logger.info("Extracted %s via Firecrawl (%d words)", url[:60], result.word_count)
+                _cache.put(url, result)
+                return result
+            logger.debug("Firecrawl content failed quality gate: %s", reason)
+    except Exception as e:
+        logger.warning("Firecrawl failed for %s: %s", url[:60], e)
+
+    # Step 7: You.com Contents API ($1/1k pages, cheaper than Jina)
     if os.getenv("ARGUS_YOU_CONTENTS_ENABLED", "").lower() in ("1", "true"):
         try:
             from argus.extraction.you_extractor import extract_you_contents
@@ -282,7 +322,7 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
         except Exception as e:
             logger.warning("You.com Contents failed for %s: %s", url[:60], e)
 
-    # Step 6: Wayback Machine
+    # Step 8: Wayback Machine
     try:
         from argus.extraction.wayback_extractor import extract_wayback
 
@@ -301,7 +341,7 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
     except Exception as e:
         logger.warning("Wayback failed for %s: %s", url[:60], e)
 
-    # Step 6: Archive.is
+    # Step 9: Archive.is
     try:
         from argus.extraction.archive_extractor import extract_archive_is
 

@@ -57,8 +57,9 @@ You don't need one search API. You need all of them — and you need them free.
 | Serper | One-time signup | 2,500 credits | [signup](https://serper.dev/signup) |
 | Parallel AI | One-time signup | 4,000 credits | [signup](https://parallel.ai) |
 | You.com | One-time signup | $20 credit | [platform](https://you.com/platform) |
+| Valyu | One-time signup | $10 credit | [platform](https://platform.valyu.ai) |
 
-**5,000 free queries per month** from the four recurring providers. Two providers need no API key at all (unlimited). Three more give you ~6,500 one-time credits for signing up. Argus routes to free providers first, monthly recurring next, one-time credits last. Budget-exhausted providers are skipped until they reset. When credits refresh, they come back online automatically.
+**5,000 free queries per month** from the four recurring providers. Two providers need no API key at all (unlimited). Four more give you one-time credits for signing up. Argus routes to free providers first, monthly recurring next, one-time credits last. Budget-exhausted providers are skipped until they reset. When credits refresh, they come back online automatically.
 
 ## What It Does
 
@@ -192,7 +193,7 @@ Works with **Claude Code**, **Cursor**, **VS Code**, and any MCP-compatible clie
 }
 ```
 
-Available tools: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `cookie_health`
+Available tools: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `cookie_health`, `valyu_answer`
 
 ### Python
 
@@ -235,7 +236,7 @@ Caller (CLI / HTTP / MCP / Python)
 |--------|---------------|
 | `argus/broker/` | Tier-based routing, ranking, dedup, caching, health, budgets |
 | `argus/providers/` | Provider adapters (one per search API) |
-| `argus/extraction/` | 8-step URL extraction fallback chain with quality gates |
+| `argus/extraction/` | 9-step URL extraction fallback chain with quality gates |
 | `argus/sessions/` | Multi-turn session store and query refinement |
 | `argus/api/` | FastAPI HTTP endpoints |
 | `argus/cli/` | Click CLI commands |

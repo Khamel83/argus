@@ -33,6 +33,7 @@ PROVIDER_TIERS: dict[ProviderName, int] = {
     ProviderName.PARALLEL: 3,  # one-time credits
     ProviderName.YOU: 3,       # one-time credits
     ProviderName.SEARCHAPI: 3,  # one-time/placeholder
+    ProviderName.VALYU: 3,       # one-time credits ($10)
 }
 
 

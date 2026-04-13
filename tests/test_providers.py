@@ -244,6 +244,11 @@ class TestStubs:
         p = YouProvider(ProviderConfig())
         assert p.is_available() is False
 
+    def test_valyu_not_available(self):
+        from argus.providers.valyu import ValyuProvider
+        p = ValyuProvider(ProviderConfig())
+        assert p.is_available() is False
+
     @pytest.mark.asyncio
     async def test_searchapi_returns_empty(self):
         from argus.providers.searchapi import SearchApiProvider
@@ -260,6 +265,124 @@ class TestStubs:
         assert results == []
         assert trace.status == "skipped"
 
+    @pytest.mark.asyncio
+    async def test_valyu_returns_empty_when_disabled(self):
+        from argus.providers.valyu import ValyuProvider
+        p = ValyuProvider(ProviderConfig())
+        results, trace = await p.search(SearchQuery(query="test"))
+        assert results == []
+        assert trace.status == "skipped"
+
+
+# --- Valyu ---
+
+class TestValyuProvider:
+    def test_is_available_with_key(self):
+        from argus.providers.valyu import ValyuProvider
+        p = ValyuProvider(ProviderConfig(enabled=True, api_key="val_test_key"))
+        assert p.is_available() is True
+
+    def test_not_available_without_key(self):
+        from argus.providers.valyu import ValyuProvider
+        p = ValyuProvider(ProviderConfig(enabled=True, api_key=""))
+        assert p.is_available() is False
+
+    def test_status_missing_key(self):
+        from argus.providers.valyu import ValyuProvider
+        p = ValyuProvider(ProviderConfig(enabled=True, api_key=""))
+        assert p.status() == ProviderStatus.UNAVAILABLE_MISSING_KEY
+
+    def test_status_disabled(self):
+        from argus.providers.valyu import ValyuProvider
+        p = ValyuProvider(ProviderConfig(enabled=False))
+        assert p.status() == ProviderStatus.DISABLED_BY_CONFIG
+
+    @pytest.mark.asyncio
+    async def test_search_normalizes_results(self):
+        from argus.providers.valyu import ValyuProvider
+        p = ValyuProvider(ProviderConfig(enabled=True, api_key="val_test_key"))
+
+        mock_response = {
+            "success": True,
+            "tx_id": "tx_test123",
+            "query": "test query",
+            "results": [
+                {
+                    "id": "https://example.com",
+                    "title": "Example",
+                    "url": "https://example.com",
+                    "content": "A test page with content",
+                    "description": "A page",
+                    "source": "web",
+                    "price": 0.0015,
+                    "length": 5000,
+                    "relevance_score": 0.95,
+                    "data_type": "unstructured",
+                    "source_type": "website",
+                },
+                {"id": "", "title": "Empty URL", "url": "", "content": "skip me"},
+            ],
+            "results_by_source": {"web": 1},
+            "total_deduction_dollars": 0.0015,
+            "total_characters": 5000,
+        }
+
+        with patch("argus.providers.valyu.httpx.AsyncClient") as mock_client_cls:
+            mock_client_cls.return_value.post = AsyncMock(return_value=_make_mock_response(mock_response))
+            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client_cls.return_value)
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            query = SearchQuery(query="test query")
+            results, trace = await p.search(query)
+
+        assert len(results) == 1
+        assert results[0].url == "https://example.com"
+        assert results[0].title == "Example"
+        assert results[0].snippet == "A page"
+        assert results[0].provider.value == "valyu"
+        assert results[0].score == 0.95
+        assert trace.status == "success"
+        assert trace.results_count == 1
+        assert trace.credit_info["cost_usd"] == 0.0015
+
+    @pytest.mark.asyncio
+    async def test_search_handles_api_error(self):
+        from argus.providers.valyu import ValyuProvider
+        p = ValyuProvider(ProviderConfig(enabled=True, api_key="val_test_key"))
+
+        mock_response = {
+            "success": False,
+            "error": "Insufficient credits",
+        }
+
+        with patch("argus.providers.valyu.httpx.AsyncClient") as mock_client_cls:
+            mock_client_cls.return_value.post = AsyncMock(return_value=_make_mock_response(mock_response))
+            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client_cls.return_value)
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            query = SearchQuery(query="test")
+            results, trace = await p.search(query)
+
+        assert results == []
+        assert trace.status == "error"
+        assert "Insufficient credits" in trace.error
+
+    @pytest.mark.asyncio
+    async def test_search_handles_connection_error(self):
+        from argus.providers.valyu import ValyuProvider
+        p = ValyuProvider(ProviderConfig(enabled=True, api_key="val_test_key"))
+
+        with patch("argus.providers.valyu.httpx.AsyncClient") as mock_client_cls:
+            mock_client_cls.return_value.post = AsyncMock(side_effect=Exception("connection refused"))
+            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client_cls.return_value)
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            query = SearchQuery(query="test")
+            results, trace = await p.search(query)
+
+        assert results == []
+        assert trace.status == "error"
+
 
 @pytest.mark.parametrize(
     ("provider_name", "factory"),
@@ -271,6 +394,7 @@ class TestStubs:
         (ProviderName.EXA, lambda: __import__("argus.providers.exa", fromlist=["ExaProvider"]).ExaProvider(ProviderConfig(enabled=True, api_key="key"))),
         (ProviderName.SEARCHAPI, lambda: __import__("argus.providers.searchapi", fromlist=["SearchApiProvider"]).SearchApiProvider(ProviderConfig())),
         (ProviderName.YOU, lambda: __import__("argus.providers.you", fromlist=["YouProvider"]).YouProvider(ProviderConfig())),
+        (ProviderName.VALYU, lambda: __import__("argus.providers.valyu", fromlist=["ValyuProvider"]).ValyuProvider(ProviderConfig())),
     ],
 )
 class TestProviderContracts:

@@ -18,6 +18,8 @@ class ExtractorName(str, Enum):
     AUTH = "auth"
     CRAWL4AI = "crawl4ai"
     YOU_CONTENTS = "you_contents"
+    VALYU_CONTENTS = "valyu_contents"
+    FIRECRAWL = "firecrawl"
 
 
 @dataclass

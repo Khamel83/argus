@@ -70,6 +70,11 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
         return await mcp_tools.extract_content(url, domain=domain)
 
     @mcp.tool()
+    async def valyu_answer(query: str, fast_mode: bool = False) -> str:
+        """Get an AI-synthesized answer with citations. Uses Valyu Answer API ($0.10+/request)."""
+        return await mcp_tools.valyu_answer(query, fast_mode=fast_mode)
+
+    @mcp.tool()
     def cookie_health() -> str:
         """Get health status of all configured cookie domains."""
         return mcp_tools.cookie_health()
