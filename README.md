@@ -6,11 +6,23 @@
 [![CI](https://github.com/Khamel83/argus/actions/workflows/ci.yml/badge.svg)](https://github.com/Khamel83/argus/actions/workflows/ci.yml)
 [![MCP Server](https://img.shields.io/badge/MCP-server-purple)](https://modelcontextprotocol.io/)
 
-Search companies give you free web searches — thousands per month across every major provider, and two of them are unlimited with no API key at all. Argus puts them all in one place and automatically picks the right one for each query so you don't waste credits.
+Multi-provider web search broker for AI agents. Routes across SearXNG, DuckDuckGo, Brave, Serper, Tavily, Exa, and more — using RRF fusion, content extraction, and budget-aware routing so you don't waste your free search credits.
 
-## Two Ways to Use Argus
+**Features at a glance:**
 
-### 1. No server, no Docker, no API keys
+- **Multi-provider search** — 11 providers, one API, free-first tier routing
+- **5,000+ free queries/month** — automatic budget tracking, exhausted providers skipped
+- **Content extraction** — 9-step fallback chain with quality gates (local + external)
+- **Multi-turn sessions** — pass `session_id` for conversational search refinement
+- **4 search modes** — discovery, research, recovery, grounding
+- **Dead URL recovery** — first-class `/recover-url` endpoint with archive fallbacks
+- **4 integration paths** — HTTP API, CLI, MCP server, Python SDK
+
+_Built for AI agent builders, RAG infra, and ops teams who don't want to hand-wire search APIs._
+
+## Quickstart
+
+### Mode 1: Local CLI (zero config)
 
 ```bash
 pip install argus-search && argus search -q "python web frameworks"
@@ -18,7 +30,11 @@ pip install argus-search && argus search -q "python web frameworks"
 
 That's it. DuckDuckGo handles the search — no accounts, no keys, no containers. You get unlimited free search from your laptop right now. Add API keys whenever you want more providers, or don't.
 
-**Works on any machine with Python 3.11+:** your laptop, a Mac Mini, a Raspberry Pi, a cloud VM. Nothing to host.
+```bash
+argus extract -u "https://example.com/article"       # extract clean text from any URL
+```
+
+Works on any machine with Python 3.11+ — laptop, Mac Mini, Raspberry Pi, cloud VM. Nothing to host.
 
 **For MCP (Claude Code, Cursor, VS Code):**
 
@@ -34,30 +50,24 @@ Then add to your MCP config:
 
 One command to install, one JSON block to connect. No server to run, no keys to configure.
 
-### 2. Full install on hardware you already have
+### Mode 2: Full Stack Server
 
-Got a Raspberry Pi running Pi-hole? A Mac Mini on your desk? An old laptop? That's enough to run the full stack — SearXNG (your own private search engine) plus local JS-rendering content extraction that doesn't depend on anyone's API.
+Got a Raspberry Pi running Pi-hole? A Mac Mini on your desk? An old laptop? That's enough to run the full stack — SearXNG (your own private search engine) plus local JS-rendering content extraction.
 
 ```bash
 docker compose up -d    # SearXNG + Argus
 ```
 
-**What runs where:**
+| What you have | What you get |
+|--------------|-------------|
+| **Any machine with Python 3.11+** | DuckDuckGo + API providers (no server) |
+| **Raspberry Pi 4 / old laptop** (4GB+) | Everything — SearXNG, all providers, Crawl4AI |
+| **Mac Mini M1+** (8GB+) | Full stack with headroom |
+| **Free cloud VM** (1GB) | SearXNG + search providers (skip Crawl4AI) |
 
-| What you have | What you get | How |
-|--------------|-------------|-----|
-| **Raspberry Pi 3** (1GB, probably running Pi-hole) | SearXNG + search via all providers | Pi-hole uses ~100MB, SearXNG needs ~512MB ([confirmed by maintainers](https://github.com/searxng/searxng/discussions/3884)). They fit together. |
-| **Raspberry Pi 4** (4GB) | Everything — SearXNG, all providers, Crawl4AI | Same as above plus local JS-rendering extraction. Crawl4AI basic mode runs on Pi 4 ([per their docs](https://pypi.org/project/Crawl4AI/)). |
-| **Mac Mini M1+** (8GB+) | Everything, plus headroom | Full stack with room for other services. Runs alongside whatever else is on there. |
-| **Any old laptop** (4GB+) | Everything | Same as Pi 4. Docker + Python = full Argus. |
-| **Free cloud VM** (1GB, e.g. OCI/AWS free tier) | SearXNG + search providers | Enough for search. Skip Crawl4AI — external APIs (Jina, You.com, Wayback) handle extraction. |
-| **No machine at all** | DuckDuckGo + API providers | `pip install argus-search` on your laptop. No server needed. |
+SearXNG takes 512MB of RAM and gives you a private Google-style search engine that nobody can rate-limit, block, or charge for. It runs alongside Pi-hole on hardware millions of people already own.
 
-SearXNG is the most useful thing you're not running. It takes 512MB of RAM and gives you a private Google-style search engine that nobody can rate-limit, block, or charge for. It's the cheapest infrastructure upgrade you can make — it runs alongside Pi-hole on hardware millions of people already own.
-
-## Why Argus
-
-You don't need one search API. You need all of them — and you need them free.
+## Providers
 
 | Provider | Credit type | Free capacity | Setup |
 |----------|------------|---------------|-------|
@@ -73,66 +83,9 @@ You don't need one search API. You need all of them — and you need them free.
 | You.com | One-time signup | $20 credit | [platform](https://you.com/platform) |
 | Valyu | One-time signup | $10 credit | [platform](https://platform.valyu.ai) |
 
-**5,000 free queries per month** from the four recurring providers. Three providers need no API key at all (unlimited). Four more give you one-time credits for signing up. Argus routes to free providers first, monthly recurring next, one-time credits last. Budget-exhausted providers are skipped until they reset. When credits refresh, they come back online automatically.
+**5,000 free queries/month** from the four recurring providers. Three providers need no API key at all. Routing priority: **Tier 0** (free: SearXNG, DuckDuckGo, GitHub) → **Tier 1** (monthly: Brave, Tavily, Exa, Linkup) → **Tier 2** (one-time: Serper, Parallel, You.com, Valyu, SearchAPI). Budget-exhausted providers are skipped automatically.
 
-## What It Does
-
-You ask Argus a question. It checks the free providers first — if DuckDuckGo or SearXNG returns enough good results, it stops there. No credits touched. If you need more, it moves on to the monthly-credit providers (Brave, Tavily, Exa, Linkup), and only reaches for the one-time signup credits as a last resort. When a provider runs out of budget, Argus skips it and tries the next one. You get back one ranked, deduplicated list of results — no idea which provider(s) actually answered, unless you look at the traces.
-
-**Content extraction** — Found a result but need the full text? Argus tries up to nine different ways to get it: first the fast local methods (trafilatura, Crawl4AI, Playwright), then external APIs if those fail (Jina, Valyu Contents, Firecrawl, You.com, Wayback Machine, archive.is). It checks each attempt for garbage output — paywall stubs, blank pages, error messages — and moves on if the quality isn't good enough.
-
-**Multi-turn sessions** — Searching for something and want to refine? Pass a `session_id` and Argus remembers what you asked before. Your follow-up searches get context from prior queries automatically. Sessions persist to SQLite so they survive restarts.
-
-## Content Extractors
-
-| Extractor | Needs hosting? | Cost | Notes |
-|-----------|---------------|------|-------|
-| trafilatura | No (pure Python) | Free | Primary, fast |
-| Crawl4AI | Yes (4GB RAM min) | Free | JS rendering, optional dep |
-| Playwright | Yes (512MB per instance) | Free | Headless browser fallback |
-| Jina Reader | No (external API) | Token-based | Works without any server |
-| Valyu Contents | No (external API) | $0.001/URL | Cheapest external option |
-| Firecrawl | No (external API) | 1 credit/page | Best Markdown quality |
-| You.com Contents | No (external API) | $1/1k pages | Works without any server |
-| Wayback Machine | No (external) | Free | Dead page recovery |
-| archive.is | No (external) | Free | Dead page recovery |
-
-The first three require a local machine. The last six are external APIs that work in any deployment — including serverless.
-
-## How Routing Works
-
-Argus picks which provider to ask based on two things: how much the provider costs (tier) and how well it handles that type of query (mode).
-
-```
-┌──────────────────────────────────────────────────────┐
-│  Tier 0: FREE (SearXNG, DuckDuckGo, GitHub)         │  ← always first, unlimited
-├──────────────────────────────────────────────────────┤
-│  Tier 1: MONTHLY RECURRING                           │
-│    Brave · Tavily · Exa · Linkup                     │  ← 5,000 free queries/mo
-├──────────────────────────────────────────────────────┤
-│  Tier 3: ONE-TIME CREDITS                            │
-│    Serper · Parallel · You.com · Valyu · SearchAPI   │  ← budget-enforced, last resort
-└──────────────────────────────────────────────────────┘
-```
-
-The idea is simple: burn through the free stuff first. If that's not enough, dip into the monthly credits. Save the one-time signup credits for when you really need them. When a provider runs out, it gets skipped — and it comes back automatically when its budget resets.
-
-### Search Modes
-
-Not all search providers are equally good at everything. Discovery mode favors Exa and Brave for finding related pages. Research mode leads with Tavily for broad retrieval. Recovery mode prioritizes Brave and Tavily for finding moved content. Tier sorting always applies first — within each tier, the mode picks who goes first.
-
-| Mode | When to use | Runtime order |
-|------|------------|---------------|
-| `discovery` | Related pages, canonical sources | SearXNG → DuckDuckGo → GitHub → Brave → Exa → Tavily → Linkup → Serper → Parallel → You → Valyu |
-| `recovery` | Dead/moved URL recovery | SearXNG → DuckDuckGo → Brave → Tavily → Exa → Linkup → Serper → Parallel → You → Valyu |
-| `grounding` | Few live sources for fact-checking | SearXNG → DuckDuckGo → Brave → Linkup → Serper → Parallel → You → Valyu |
-| `research` | Broad exploratory retrieval | SearXNG → DuckDuckGo → GitHub → Tavily → Exa → Brave → Linkup → Serper → Parallel → You → Valyu |
-
-Free providers (SearXNG, DuckDuckGo) always lead. Within each tier, the order reflects which provider handles that query type best.
-
-## Integration
-
-### HTTP API
+## HTTP API
 
 All endpoints prefixed with `/api`. OpenAPI docs at `http://localhost:8000/docs`.
 
@@ -142,17 +95,17 @@ curl -X POST http://localhost:8000/api/search \
   -H "Content-Type: application/json" \
   -d '{"query": "python web frameworks", "mode": "discovery", "max_results": 5}'
 
-# Multi-turn search
+# Multi-turn search (conversational refinement)
 curl -X POST http://localhost:8000/api/search \
   -H "Content-Type: application/json" \
   -d '{"query": "what about async?", "session_id": "my-session"}'
 
-# Extract content
+# Extract content from a working URL
 curl -X POST http://localhost:8000/api/extract \
   -H "Content-Type: application/json" \
   -d '{"url": "https://example.com/article"}'
 
-# Recover a dead URL
+# Recover a dead or moved URL
 curl -X POST http://localhost:8000/api/recover-url \
   -H "Content-Type: application/json" \
   -d '{"url": "https://example.com/old-page", "title": "Example Article"}'
@@ -161,6 +114,52 @@ curl -X POST http://localhost:8000/api/recover-url \
 curl http://localhost:8000/api/health/detail
 curl http://localhost:8000/api/budgets
 ```
+
+#### Search modes
+
+| Mode | Use for | Example |
+|------|---------|---------|
+| `discovery` | Related pages, canonical sources | "Find the official docs for X" |
+| `research` | Broad exploratory retrieval | "Latest approaches to Y?" |
+| `recovery` | Finding moved/dead content | "This URL is 404" |
+| `grounding` | Fact-checking with live sources | "Verify this claim about Z" |
+
+Tier-based routing always applies first. Within each tier, the mode selects provider order.
+
+#### Response format
+
+```json
+{
+  "query": "python web frameworks",
+  "mode": "discovery",
+  "results": [
+    {"url": "https://fastapi.tiangolo.com", "title": "FastAPI", "snippet": "Modern Python web framework", "score": 0.942}
+  ],
+  "total_results": 1,
+  "cached": false,
+  "traces": [
+    {"provider": "duckduckgo", "status": "success", "results_count": 5, "latency_ms": 312}
+  ]
+}
+```
+
+Each result includes `url`, `title`, `snippet`, `domain`, `provider`, and `score`. The `traces` array shows which providers were called and their outcomes.
+
+#### Budgets
+
+```json
+{
+  "budgets": {
+    "brave": {"remaining": 1847, "monthly_usage": 153, "usage_count": 153, "exhausted": false},
+    "duckduckgo": {"remaining": 0, "monthly_usage": 0, "usage_count": 42, "exhausted": false}
+  },
+  "token_balances": {"jina": 9833638}
+}
+```
+
+Each provider tracks usage per calendar month. When a provider hits its budget, Argus skips it and moves to the next tier. Free providers (SearXNG, DuckDuckGo, GitHub) have no limit. Set `ARGUS_*_MONTHLY_BUDGET_USD` to enforce custom limits per provider.
+
+## Integration
 
 ### CLI
 
@@ -180,6 +179,13 @@ argus mcp serve                                      # start MCP server
 ```
 
 All commands support `--json` for structured output.
+
+<details>
+<summary>How sessions work</summary>
+
+Pass `session_id` to any search call. Argus stores each query and extracted URL in a SQLite-backed session. Reusing the same `session_id` gives the broker context from prior queries — follow-up searches are automatically refined using earlier conversation context. Sessions persist across restarts. Omit `session_id` for stateless, one-shot searches.
+
+</details>
 
 ### MCP
 
@@ -231,21 +237,18 @@ print(content.title)
 print(content.text)
 ```
 
+## Content Extraction
+
+Argus tries up to nine methods to extract content from any URL: first local (trafilatura, Crawl4AI, Playwright), then external APIs (Jina, Valyu Contents, Firecrawl, You.com, Wayback, archive.is). Each attempt is quality-checked for garbage output. See [docs/providers.md](docs/providers.md) for the full extractor comparison.
+
+**Extract** gets the full text of a working URL. **Recover-URL** finds alternatives when a URL is dead, paywalled, or radically changed by querying archival sources (Wayback, archive.is) and running a question-guided extraction loop.
+
 ## Architecture
 
 ```
-Caller (CLI / HTTP / MCP / Python)
-  → SearchBroker
-    → routing policy (tier-sorted, mode-specific within tiers)
-      → provider executor (budget check → health check → search → early stop)
-    → result pipeline (cache → dedupe → RRF ranking → response)
-  → SessionStore (optional, per-request)
-    → query refinement from prior context
-  → Extractor (on demand)
-    → SSRF → cache → rate limit → auth → QG →
-      trafilatura → QG → crawl4ai → QG → playwright → QG →
-      jina → QG → you_contents → QG → wayback → QG →
-      archive.is → QG → return best
+Caller (CLI/HTTP/MCP/Python) → SearchBroker → tier-sorted providers → RRF ranking → response
+                                     ↕ SessionStore (optional)
+                            Extractor (on demand) → 9-step fallback chain with quality gates
 ```
 
 | Module | Responsibility |
@@ -258,6 +261,8 @@ Caller (CLI / HTTP / MCP / Python)
 | `argus/cli/` | Click CLI commands |
 | `argus/mcp/` | MCP server for LLM integration |
 | `argus/persistence/` | PostgreSQL query/result storage |
+
+Add new providers or extractors with a single adapter file. See [CONTRIBUTING.md](CONTRIBUTING.md) for the interface.
 
 ## Configuration
 
@@ -280,6 +285,17 @@ All config via environment variables. See `.env.example` for the full list. Miss
 | `ARGUS_CRAWL4AI_ENABLED` | false | Enable Crawl4AI extraction step |
 | `ARGUS_YOU_CONTENTS_ENABLED` | false | Enable You.com Contents API extraction |
 | `ARGUS_CACHE_TTL_HOURS` | 168 | Result cache TTL |
+
+## FAQ
+
+**How is this different from calling Tavily/Serper directly?**
+Argus calls them for you — plus 9 other providers. You get one ranked, deduplicated result set instead of managing multiple API keys and stitching results together. Free providers are tried first, so you only burn credits when needed.
+
+**Can I run only one provider?**
+Yes. Set only the API key for the provider you want. All others are silently skipped. For zero-config, just install and go — DuckDuckGo handles everything with no keys.
+
+**Do I need Docker?**
+No. `pip install argus-search` works immediately on any machine with Python 3.11+. Docker is only needed for SearXNG (self-hosted search) or Crawl4AI (local JS rendering).
 
 ## License
 
