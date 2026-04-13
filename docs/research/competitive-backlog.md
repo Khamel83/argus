@@ -8,6 +8,7 @@ Items from `docs/research/mcp-search-competitors/research.md` "Where Competitors
 - [x] **AI-powered answers** — Valyu Answer MCP tool added (`valyu_answer`). Returns synthesized answers with citations via SSE. Replaces the Perplexity Sonar gap.
 - [x] **More extraction providers** — Valyu Contents ($0.001/URL) and Firecrawl (1 credit/page) added to 9-step extraction chain.
 - [x] **More search providers** — Valyu Search added as tier 3 provider across all modes.
+- [x] **GitHub integration** — GitHub provider added (tier 0, free, 30 req/min with token). Searches repositories. In discovery and research modes.
 
 ## Open (from competitive research)
 

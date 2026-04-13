@@ -152,6 +152,7 @@ def create_broker() -> SearchBroker:
     from argus.providers.serper import SerperProvider
     from argus.providers.tavily import TavilyProvider
     from argus.providers.valyu import ValyuProvider
+    from argus.providers.github import GitHubProvider
     from argus.providers.you import YouProvider
 
     config = get_config()
@@ -168,6 +169,7 @@ def create_broker() -> SearchBroker:
         ProviderName.PARALLEL: ParallelProvider(config.parallel),
         ProviderName.LINKUP: LinkupProvider(config.linkup),
         ProviderName.VALYU: ValyuProvider(config.valyu),
+        ProviderName.GITHUB: GitHubProvider(config.github),
     }
 
     from argus.sessions import SessionStore

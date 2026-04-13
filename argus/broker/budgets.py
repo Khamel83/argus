@@ -25,6 +25,7 @@ logger = get_logger("broker.budgets")
 PROVIDER_TIERS: dict[ProviderName, int] = {
     ProviderName.SEARXNG: 0,     # free, unlimited (self-hosted)
     ProviderName.DUCKDUCKGO: 0, # free, unlimited (scrapes DDG)
+    ProviderName.GITHUB: 0,    # free, unlimited (rate-limited but no cost)
     ProviderName.BRAVE: 1,        # monthly recurring
     ProviderName.TAVILY: 1,    # monthly recurring
     ProviderName.LINKUP: 1,    # monthly recurring

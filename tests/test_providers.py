@@ -1,6 +1,7 @@
 """Tests for provider adapters."""
 
 import inspect
+import httpx
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -384,6 +385,84 @@ class TestValyuProvider:
         assert trace.status == "error"
 
 
+# --- GitHub ---
+
+class TestGitHubProvider:
+    def test_is_available_when_enabled(self):
+        from argus.providers.github import GitHubProvider
+        p = GitHubProvider(ProviderConfig(enabled=True))
+        assert p.is_available() is True
+
+    def test_not_available_when_disabled(self):
+        from argus.providers.github import GitHubProvider
+        p = GitHubProvider(ProviderConfig(enabled=False))
+        assert p.is_available() is False
+
+    def test_status_disabled(self):
+        from argus.providers.github import GitHubProvider
+        p = GitHubProvider(ProviderConfig(enabled=False))
+        assert p.status() == ProviderStatus.DISABLED_BY_CONFIG
+
+    @pytest.mark.asyncio
+    async def test_search_normalizes_results(self):
+        from argus.providers.github import GitHubProvider
+        p = GitHubProvider(ProviderConfig(enabled=True))
+
+        mock_response = {
+            "total_count": 1,
+            "items": [
+                {
+                    "full_name": "Khamel83/argus",
+                    "html_url": "https://github.com/Khamel83/argus",
+                    "description": "Search broker for AI agents",
+                    "stargazers_count": 42,
+                    "language": "Python",
+                    "forks_count": 5,
+                    "topics": ["search", "mcp"],
+                    "updated_at": "2026-04-13T00:00:00Z",
+                },
+            ],
+        }
+
+        with patch("argus.providers.github.httpx.AsyncClient") as mock_client_cls:
+            mock_client_cls.return_value.get = AsyncMock(return_value=_make_mock_response(mock_response))
+            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client_cls.return_value)
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            query = SearchQuery(query="argus search broker")
+            results, trace = await p.search(query)
+
+        assert len(results) == 1
+        assert results[0].url == "https://github.com/Khamel83/argus"
+        assert results[0].title == "Khamel83/argus"
+        assert results[0].snippet == "Search broker for AI agents"
+        assert results[0].domain == "github.com"
+        assert results[0].metadata["stars"] == 42
+        assert trace.status == "success"
+
+    @pytest.mark.asyncio
+    async def test_search_handles_rate_limit(self):
+        from argus.providers.github import GitHubProvider
+        p = GitHubProvider(ProviderConfig(enabled=True))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 403
+        mock_resp.json.return_value = {"message": "API rate limit exceeded"}
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError("rate limit", request=MagicMock(), response=mock_resp)
+
+        with patch("argus.providers.github.httpx.AsyncClient") as mock_client_cls:
+            mock_client_cls.return_value.get = AsyncMock(return_value=mock_resp)
+            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client_cls.return_value)
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            query = SearchQuery(query="test")
+            results, trace = await p.search(query)
+
+        assert results == []
+        assert trace.status == "error"
+        assert "rate limited" in trace.error
+
+
 @pytest.mark.parametrize(
     ("provider_name", "factory"),
     [
@@ -395,6 +474,7 @@ class TestValyuProvider:
         (ProviderName.SEARCHAPI, lambda: __import__("argus.providers.searchapi", fromlist=["SearchApiProvider"]).SearchApiProvider(ProviderConfig())),
         (ProviderName.YOU, lambda: __import__("argus.providers.you", fromlist=["YouProvider"]).YouProvider(ProviderConfig())),
         (ProviderName.VALYU, lambda: __import__("argus.providers.valyu", fromlist=["ValyuProvider"]).ValyuProvider(ProviderConfig())),
+        (ProviderName.GITHUB, lambda: __import__("argus.providers.github", fromlist=["GitHubProvider"]).GitHubProvider(ProviderConfig(enabled=True))),
     ],
 )
 class TestProviderContracts:

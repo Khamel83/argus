@@ -413,7 +413,7 @@ class TestRouter:
         broker = create_broker()
         assert ProviderName.SEARXNG in broker._providers
         assert ProviderName.BRAVE in broker._providers
-        assert len(broker._providers) == 11  # 5 live + 2 stubs + parallel + linkup + duckduckgo + valyu
+        assert len(broker._providers) == 12  # 5 live + 2 stubs + parallel + linkup + duckduckgo + valyu + github
 
     @pytest.mark.asyncio
     async def test_free_providers_always_queried(self, monkeypatch):

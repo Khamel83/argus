@@ -30,6 +30,7 @@ class ProviderName(str, Enum):
     PARALLEL = "parallel"
     LINKUP = "linkup"
     VALYU = "valyu"
+    GITHUB = "github"
     CACHE = "cache"
 
 

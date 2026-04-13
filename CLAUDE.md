@@ -85,7 +85,7 @@ Caller (CLI/HTTP/MCP/Python)
 
 | Tier | Providers | Credits |
 |------|-----------|---------|
-| 0 (free) | SearXNG, DuckDuckGo | Unlimited, no API keys |
+| 0 (free) | SearXNG, DuckDuckGo, GitHub | Unlimited, no API keys (GitHub rate-limited) |
 | 1 (monthly) | Brave (2k/mo), Tavily (1k/mo), Exa (1k/mo), Linkup (1k/mo) | Recurring monthly |
 | 3 (one-time) | Serper (2.5k), Parallel (4k), You.com ($20), SearchAPI, Valyu ($10) | Don't come back |
 
@@ -106,10 +106,10 @@ Each mode defines which providers are best suited for that query type. Routing s
 
 | Mode | Use case | Actual runtime order |
 |------|----------|---------------------|
-| `discovery` | Related pages, canonical sources | SearXNG → DuckDuckGo → Brave → Exa → Tavily → Linkup → Serper → Parallel → You → Valyu |
+| `discovery` | Related pages, canonical sources | SearXNG → DuckDuckGo → Brave → Exa → Tavily → Linkup → Serper → Parallel → You → Valyu → GitHub |
 | `recovery` | Dead/moved URL | SearXNG → DuckDuckGo → Brave → Tavily → Exa → Linkup → Serper → Parallel → You → Valyu |
 | `grounding` | Few sources for fact-checking | SearXNG → DuckDuckGo → Brave → Linkup → Serper → Parallel → You → Valyu |
-| `research` | Broad exploratory | SearXNG → DuckDuckGo → Tavily → Exa → Brave → Linkup → Serper → Parallel → You → Valyu |
+| `research` | Broad exploratory | SearXNG → DuckDuckGo → Tavily → Exa → Brave → Linkup → Serper → Parallel → You → Valyu → GitHub |
 
 Free providers (SearXNG, DuckDuckGo) always lead. Within-tier ordering reflects provider strengths per query type.
 

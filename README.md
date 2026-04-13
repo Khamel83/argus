@@ -50,6 +50,7 @@ You don't need one search API. You need all of them — and you need them free.
 |----------|------------|---------------|-------|
 | DuckDuckGo | Free (scraped) | Unlimited | None |
 | SearXNG | Free (self-hosted) | Unlimited | Docker |
+| GitHub | Free (API) | Unlimited | None (token for higher rate limit) |
 | Brave Search | Monthly recurring | 2,000 queries/month | [dashboard](https://brave.com/search/api/) |
 | Tavily | Monthly recurring | 1,000 queries/month | [signup](https://app.tavily.com/sign-up) |
 | Exa | Monthly recurring | 1,000 queries/month | [signup](https://dashboard.exa.ai/signup) |
@@ -59,7 +60,7 @@ You don't need one search API. You need all of them — and you need them free.
 | You.com | One-time signup | $20 credit | [platform](https://you.com/platform) |
 | Valyu | One-time signup | $10 credit | [platform](https://platform.valyu.ai) |
 
-**5,000 free queries per month** from the four recurring providers. Two providers need no API key at all (unlimited). Four more give you one-time credits for signing up. Argus routes to free providers first, monthly recurring next, one-time credits last. Budget-exhausted providers are skipped until they reset. When credits refresh, they come back online automatically.
+**5,000 free queries per month** from the four recurring providers. Three providers need no API key at all (unlimited). Four more give you one-time credits for signing up. Argus routes to free providers first, monthly recurring next, one-time credits last. Budget-exhausted providers are skipped until they reset. When credits refresh, they come back online automatically.
 
 ## What It Does
 
