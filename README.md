@@ -13,13 +13,26 @@ Search companies give you free web searches — thousands per month across every
 ### 1. No server, no Docker, no API keys
 
 ```bash
-pip install argus-search
-argus search -q "python web frameworks"
+pip install argus-search && argus search -q "python web frameworks"
 ```
 
 That's it. DuckDuckGo handles the search — no accounts, no keys, no containers. You get unlimited free search from your laptop right now. Add API keys whenever you want more providers, or don't.
 
 **Works on any machine with Python 3.11+:** your laptop, a Mac Mini, a Raspberry Pi, a cloud VM. Nothing to host.
+
+**For MCP (Claude Code, Cursor, VS Code):**
+
+```bash
+pipx install argus-search[mcp] && argus mcp serve
+```
+
+Then add to your MCP config:
+
+```json
+{"mcpServers": {"argus": {"command": "argus", "args": ["mcp", "serve"]}}}
+```
+
+One command to install, one JSON block to connect. No server to run, no keys to configure.
 
 ### 2. Full install on hardware you already have
 
@@ -66,7 +79,7 @@ You don't need one search API. You need all of them — and you need them free.
 
 You ask Argus a question. It checks the free providers first — if DuckDuckGo or SearXNG returns enough good results, it stops there. No credits touched. If you need more, it moves on to the monthly-credit providers (Brave, Tavily, Exa, Linkup), and only reaches for the one-time signup credits as a last resort. When a provider runs out of budget, Argus skips it and tries the next one. You get back one ranked, deduplicated list of results — no idea which provider(s) actually answered, unless you look at the traces.
 
-**Content extraction** — Found a result but need the full text? Argus tries up to eight different ways to get it: first the fast local methods (trafilatura, Crawl4AI, Playwright), then external APIs if those fail (Jina, You.com, Wayback Machine, archive.is). It checks each attempt for garbage output — paywall stubs, blank pages, error messages — and moves on if the quality isn't good enough.
+**Content extraction** — Found a result but need the full text? Argus tries up to nine different ways to get it: first the fast local methods (trafilatura, Crawl4AI, Playwright), then external APIs if those fail (Jina, Valyu Contents, Firecrawl, You.com, Wayback Machine, archive.is). It checks each attempt for garbage output — paywall stubs, blank pages, error messages — and moves on if the quality isn't good enough.
 
 **Multi-turn sessions** — Searching for something and want to refine? Pass a `session_id` and Argus remembers what you asked before. Your follow-up searches get context from prior queries automatically. Sessions persist to SQLite so they survive restarts.
 
@@ -78,11 +91,13 @@ You ask Argus a question. It checks the free providers first — if DuckDuckGo o
 | Crawl4AI | Yes (4GB RAM min) | Free | JS rendering, optional dep |
 | Playwright | Yes (512MB per instance) | Free | Headless browser fallback |
 | Jina Reader | No (external API) | Token-based | Works without any server |
+| Valyu Contents | No (external API) | $0.001/URL | Cheapest external option |
+| Firecrawl | No (external API) | 1 credit/page | Best Markdown quality |
 | You.com Contents | No (external API) | $1/1k pages | Works without any server |
 | Wayback Machine | No (external) | Free | Dead page recovery |
 | archive.is | No (external) | Free | Dead page recovery |
 
-The first three require a local machine. The last four are external APIs that work in any deployment — including serverless.
+The first three require a local machine. The last six are external APIs that work in any deployment — including serverless.
 
 ## How Routing Works
 
@@ -90,13 +105,13 @@ Argus picks which provider to ask based on two things: how much the provider cos
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│  Tier 0: FREE (SearXNG, DuckDuckGo)                  │  ← always first, unlimited
+│  Tier 0: FREE (SearXNG, DuckDuckGo, GitHub)         │  ← always first, unlimited
 ├──────────────────────────────────────────────────────┤
 │  Tier 1: MONTHLY RECURRING                           │
 │    Brave · Tavily · Exa · Linkup                     │  ← 5,000 free queries/mo
 ├──────────────────────────────────────────────────────┤
 │  Tier 3: ONE-TIME CREDITS                            │
-│    Serper · Parallel · You.com · SearchAPI           │  ← budget-enforced, last resort
+│    Serper · Parallel · You.com · Valyu · SearchAPI   │  ← budget-enforced, last resort
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -108,10 +123,10 @@ Not all search providers are equally good at everything. Discovery mode favors E
 
 | Mode | When to use | Runtime order |
 |------|------------|---------------|
-| `discovery` | Related pages, canonical sources | SearXNG → DuckDuckGo → Brave → Exa → Tavily → Linkup → Serper → Parallel → You |
-| `recovery` | Dead/moved URL recovery | SearXNG → DuckDuckGo → Brave → Tavily → Exa → Linkup → Serper → Parallel → You |
-| `grounding` | Few live sources for fact-checking | SearXNG → DuckDuckGo → Brave → Linkup → Serper → Parallel → You |
-| `research` | Broad exploratory retrieval | SearXNG → DuckDuckGo → Tavily → Exa → Brave → Linkup → Serper → Parallel → You |
+| `discovery` | Related pages, canonical sources | SearXNG → DuckDuckGo → GitHub → Brave → Exa → Tavily → Linkup → Serper → Parallel → You → Valyu |
+| `recovery` | Dead/moved URL recovery | SearXNG → DuckDuckGo → Brave → Tavily → Exa → Linkup → Serper → Parallel → You → Valyu |
+| `grounding` | Few live sources for fact-checking | SearXNG → DuckDuckGo → Brave → Linkup → Serper → Parallel → You → Valyu |
+| `research` | Broad exploratory retrieval | SearXNG → DuckDuckGo → GitHub → Tavily → Exa → Brave → Linkup → Serper → Parallel → You → Valyu |
 
 Free providers (SearXNG, DuckDuckGo) always lead. Within each tier, the order reflects which provider handles that query type best.
 
@@ -258,6 +273,9 @@ All config via environment variables. See `.env.example` for the full list. Miss
 | `ARGUS_LINKUP_API_KEY` | — | Linkup API key |
 | `ARGUS_PARALLEL_API_KEY` | — | Parallel AI API key |
 | `ARGUS_YOU_API_KEY` | — | You.com API key |
+| `ARGUS_VALYU_API_KEY` | — | Valyu API key (search, contents, answer) |
+| `ARGUS_FIRECRAWL_API_KEY` | — | Firecrawl API key (content extraction) |
+| `ARGUS_GITHUB_API_KEY` | — | GitHub token (higher rate limit) |
 | `ARGUS_*_MONTHLY_BUDGET_USD` | 0 (unlimited) | Query-count budget per provider |
 | `ARGUS_CRAWL4AI_ENABLED` | false | Enable Crawl4AI extraction step |
 | `ARGUS_YOU_CONTENTS_ENABLED` | false | Enable You.com Contents API extraction |

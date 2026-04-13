@@ -2,14 +2,14 @@
 
 ## Overview
 
-Search broker that puts every free search API in one place with intelligent credit-aware routing. Provider adapters: SearXNG and DuckDuckGo (free, unlimited, no API keys), Brave, Tavily, Exa, Linkup (monthly free tiers), Serper, Parallel AI, You.com, SearchAPI. Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. 8-step content extraction fallback chain. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
+Search broker that puts every free search API in one place with intelligent credit-aware routing. Provider adapters: SearXNG and DuckDuckGo (free, unlimited, no API keys), GitHub (free, code search), Brave, Tavily, Exa, Linkup (monthly free tiers), Serper, Parallel AI, You.com, Valyu, SearchAPI. Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. 9-step content extraction fallback chain. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
 
 ## Two Deployment Tiers
 
 ### Tier 1: No server (API keys only)
 - `pip install argus-search` — works immediately with DuckDuckGo
 - Add API keys for 5,000+ more free monthly queries
-- Extraction via external APIs only (Jina, You.com Contents, Wayback)
+- Extraction via external APIs only (Jina, Valyu Contents, Firecrawl, You.com Contents, Wayback)
 - Runs on any machine with Python 3.11+ (laptop, Mac Mini, Pi, cloud VM)
 - No Docker, no database server, no API keys required to start
 
@@ -106,10 +106,10 @@ Each mode defines which providers are best suited for that query type. Routing s
 
 | Mode | Use case | Actual runtime order |
 |------|----------|---------------------|
-| `discovery` | Related pages, canonical sources | SearXNG → DuckDuckGo → Brave → Exa → Tavily → Linkup → Serper → Parallel → You → Valyu → GitHub |
+| `discovery` | Related pages, canonical sources | SearXNG → DuckDuckGo → GitHub → Brave → Exa → Tavily → Linkup → Serper → Parallel → You → Valyu |
 | `recovery` | Dead/moved URL | SearXNG → DuckDuckGo → Brave → Tavily → Exa → Linkup → Serper → Parallel → You → Valyu |
 | `grounding` | Few sources for fact-checking | SearXNG → DuckDuckGo → Brave → Linkup → Serper → Parallel → You → Valyu |
-| `research` | Broad exploratory | SearXNG → DuckDuckGo → Tavily → Exa → Brave → Linkup → Serper → Parallel → You → Valyu → GitHub |
+| `research` | Broad exploratory | SearXNG → DuckDuckGo → GitHub → Tavily → Exa → Brave → Linkup → Serper → Parallel → You → Valyu |
 
 Free providers (SearXNG, DuckDuckGo) always lead. Within-tier ordering reflects provider strengths per query type.
 

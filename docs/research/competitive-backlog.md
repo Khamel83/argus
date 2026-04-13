@@ -9,16 +9,20 @@ Items from `docs/research/mcp-search-competitors/research.md` "Where Competitors
 - [x] **More extraction providers** — Valyu Contents ($0.001/URL) and Firecrawl (1 credit/page) added to 9-step extraction chain.
 - [x] **More search providers** — Valyu Search added as tier 3 provider across all modes.
 - [x] **GitHub integration** — GitHub provider added (tier 0, free, 30 req/min with token). Searches repositories. In discovery and research modes.
+- [x] **Ease of setup** — README zero-config section strengthened. One-liner install + search. pipx instructions added. MCP setup section clarified.
 
 ## Open (from competitive research)
 
 ### High Impact
-- [ ] **GitHub integration** — mcp-omnisearch has GitHub search. Argus does not. Add GitHub code/repo search as a provider.
-- [ ] **MCP Marketplace presence** — Tavily is on Databricks MCP Marketplace. Argus is on PyPI but not in MCP marketplaces. Submit to `mcp.so` and `registry.modelcontextprotocol.io`.
-- [ ] **Ease of setup** — `npx one-search-mcp` is simpler. Consider a `pipx install argus-search && argus mcp serve` one-liner in README.
+- [ ] **MCP Marketplace presence** — Three registries, all need browser action or public deployment:
+  - **Smithery** (smithery.ai/new): Needs public HTTPS URL serving MCP (Streamable HTTP). Argus supports SSE transport — would need deployment to a public host first (Vercel, Railway, etc.). Smithery auto-scans the URL for tools/metadata.
+  - **mcp.so** (mcp.so/submit): Web form — needs Name + URL. Browser submission. No GitHub issue path found.
+  - **mcpservers.org** (mcpservers.org/submit): Web form — free listing or $39 premium for priority review. This is the awesome-mcp-servers repo (no PRs accepted).
+  - **Official MCP Registry** (registry.modelcontextprotocol.io): TypeScript SDK only — no Python support yet.
+  - **Blocker**: All three need either (a) Argus deployed to a public HTTPS URL, or (b) manual browser submission. Neither is a code change.
 
 ### Medium Impact
-- [ ] **Local search without backend** — DuckDuckGo works with zero infra, but research notes "Argus needs SearXNG for free search" is a perception issue. Ensure README leads with DuckDuckGo zero-config.
+- [ ] **Local search without backend** — DuckDuckGo works with zero infra, but research notes "Argus needs SearXNG for free search" is a perception issue. README now leads with zero-config. Consider adding a "Quick Start" badge or section at the very top.
 - [ ] **Documentation polish** — Competitors have professional docs, SDKs, enterprise support. Argus has project docs. Consider readthedocs or similar.
 
 ### Low Priority / Future
