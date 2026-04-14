@@ -18,6 +18,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install build tools
+        run: pip install build twine
+
       - name: Build
         run: python -m build
 
@@ -25,7 +28,7 @@ jobs:
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: python -m twine upload dist/*
+        run: twine upload dist/*
 
   mcp-registry:
     needs: pypi
@@ -43,20 +46,3 @@ jobs:
 
       - name: Publish to MCP Registry
         run: mcp-publisher publish
-
-  cleanup:
-    if: always()
-    needs: [pypi, mcp-registry]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 0
-      - name: Tag release commit
-        run: |
-          git fetch origin main --depth=50
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ github.event.release.tag_name }}" -m "${{ github.event.release.tag_name }}" 2>/dev/null || true
-          git push origin "${{ github.event.release.tag_name }}" 2>/dev/null || true
