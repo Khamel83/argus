@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] - 2026-04-14
+
+### Added
+- MCP Registry publishing — live at [modelcontextprotocol.io](https://registry.modelcontextprotocol.io/servers/io.github.Khamel83/argus) as `io.github.Khamel83/argus`
+- `server.json` for MCP Registry metadata and verification
+- GitHub Actions publish workflow (PyPI + MCP Registry on release)
+- `mcp-name` verification tag in README for PyPI-based ownership
+
+### Changed
+- MCP badge links to registry listing
+- README MCP quickstart includes registry-based install option
+- CLAUDE.md documents version sync convention and MCP Registry interface
+
+## [1.3.2] - 2026-04-13
+
+### Added
+- GitHub search provider (free, tier 0) — 10 req/min unauthenticated, 30/min with token
+- Valyu provider — search, contents extraction, and AI-synthesized answers with citations
+- Firecrawl extractor — content extraction (1 credit/page)
+- Pace-aware routing — always queries free providers, paces paid ones based on remaining budget
+- Proactive balance checking — header parsing + Tavily usage API for live balance tracking
+
+### Changed
+- Documentation quality pass — features, JSON examples, modes, FAQ
+- README and CLAUDE.md updated for new providers and ease-of-setup positioning
+
 ## [1.3.1] - 2026-04-09
 
 ### Added

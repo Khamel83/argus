@@ -3,12 +3,14 @@
 <!-- mcp-name: io.github.Khamel83/argus -->
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-brightgreen)](https://www.python.org/downloads/)
+[![PyPI Version](https://img.shields.io/pypi/v/argus-search)](https://pypi.org/project/argus-search/)
+[![PyPI Downloads](https://img.shields.io/pepy/dt/argus-search)](https://pepy.tech/projects/argus-search)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![PyPI](https://img.shields.io/pypi/v/argus-search)](https://pypi.org/project/argus-search/)
 [![CI](https://github.com/Khamel83/argus/actions/workflows/ci.yml/badge.svg)](https://github.com/Khamel83/argus/actions/workflows/ci.yml)
-[![MCP Server](https://img.shields.io/badge/MCP-Registry-blue)](https://registry.modelcontextprotocol.io/servers/io.github.Khamel83/argus)
+[![MCP Registry](https://img.shields.io/badge/MCP-Registry-blue)](https://registry.modelcontextprotocol.io/servers/io.github.Khamel83/argus)
+[![Docker](https://img.shields.io/badge/ghcr.io-khamel83%2Fargus-blue)](https://github.com/Khamel83/argus/pkgs/container/argus)
 
-Multi-provider web search broker for AI agents. Routes across SearXNG, DuckDuckGo, Brave, Serper, Tavily, Exa, and more — using RRF fusion, content extraction, and budget-aware routing so you don't waste your free search credits.
+Multi-provider web search broker for AI agents. Routes across SearXNG, DuckDuckGo, GitHub, Brave, Tavily, Exa, and more — using RRF fusion, content extraction, and budget-aware routing so you don't waste your free search credits.
 
 **Features at a glance:**
 
@@ -21,6 +23,20 @@ Multi-provider web search broker for AI agents. Routes across SearXNG, DuckDuckG
 - **4 integration paths** — HTTP API, CLI, MCP server, Python SDK
 
 _Built for AI agent builders, RAG infra, and ops teams who don't want to hand-wire search APIs._
+
+## Contents
+
+- [Quickstart](#quickstart)
+- [Providers](#providers)
+- [HTTP API](#http-api)
+- [Integration](#integration)
+  - [CLI](#cli)
+  - [MCP](#mcp)
+  - [Python](#python)
+- [Content Extraction](#content-extraction)
+- [Architecture](#architecture)
+- [Configuration](#configuration)
+- [FAQ](#faq)
 
 ## Quickstart
 
@@ -315,4 +331,4 @@ No. `pip install argus-search` works immediately on any machine with Python 3.11
 
 ## License
 
-MIT
+MIT — see [CHANGELOG.md](CHANGELOG.md) for release history.
