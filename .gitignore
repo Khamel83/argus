@@ -49,3 +49,4 @@ CLAUDE.local.md
 # Local operator/session artifacts
 1shot/
 docs/sessions/
+.mcpregistry_*
