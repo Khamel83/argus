@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/argus-search)](https://pypi.org/project/argus-search/)
 [![CI](https://github.com/Khamel83/argus/actions/workflows/ci.yml/badge.svg)](https://github.com/Khamel83/argus/actions/workflows/ci.yml)
-[![MCP Server](https://img.shields.io/badge/MCP-server-purple)](https://modelcontextprotocol.io/)
+[![MCP Server](https://img.shields.io/badge/MCP-Registry-blue)](https://registry.modelcontextprotocol.io/servers/io.github.Khamel83/argus)
 
 Multi-provider web search broker for AI agents. Routes across SearXNG, DuckDuckGo, Brave, Serper, Tavily, Exa, and more — using RRF fusion, content extraction, and budget-aware routing so you don't waste your free search credits.
 
@@ -48,6 +48,20 @@ Then add to your MCP config:
 
 ```json
 {"mcpServers": {"argus": {"command": "argus", "args": ["mcp", "serve"]}}}
+```
+
+Or install from the [MCP Registry](https://registry.modelcontextprotocol.io/servers/io.github.Khamel83/argus):
+
+```json
+{
+  "mcpServers": {
+    "argus": {
+      "registryType": "pypi",
+      "identifier": "argus-search",
+      "runtimeHint": "uvx"
+    }
+  }
+}
 ```
 
 One command to install, one JSON block to connect. No server to run, no keys to configure.

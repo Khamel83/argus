@@ -98,6 +98,7 @@ Routing sorts by tier first (free → monthly → one-time), then preserves mode
 | HTTP API | `POST /api/search`, `POST /api/extract`, `POST /api/recover-url`, `POST /api/expand` — OpenAPI at `/docs` |
 | CLI | `argus search`, `argus extract`, `argus recover-url`, `argus health`, `argus budgets`, `argus set-balance` |
 | MCP | `argus mcp serve` — tools: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `valyu_answer` |
+| MCP Registry | [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/servers/io.github.Khamel83/argus) — `io.github.Khamel83/argus` |
 | Python | `from argus.broker.router import create_broker`, `from argus.extraction import extract_url`, `from argus.providers.valyu_answer import valyu_answer` |
 
 ## Search Modes
@@ -143,3 +144,5 @@ All config via env vars (see `.env.example`). Missing API keys degrade gracefull
 - Free/self-hosted-first: SearXNG and DuckDuckGo are the fallback floor
 - Token balances persist in SQLite alongside budget tracking
 - Budget env var is named `MONTHLY_BUDGET_USD` but values are query counts (legacy naming)
+- Version bumps must update `pyproject.toml` AND `server.json` (top-level + packages[0])
+- `README.md` must retain `<!-- mcp-name: io.github.Khamel83/argus -->` (PyPI verification for MCP Registry)

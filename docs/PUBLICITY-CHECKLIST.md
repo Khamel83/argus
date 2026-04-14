@@ -142,10 +142,11 @@ PyPI: https://pypi.org/project/argus-search/
 
 ---
 
-## Status (2026-04-05)
+## Status (2026-04-14)
 
 | Task | Platform | Status | Link |
 |------|----------|--------|------|
+| 0 | MCP Registry (official) | **Live** — `io.github.Khamel83/argus` | [registry](https://registry.modelcontextprotocol.io/servers/io.github.Khamel83/argus) |
 | 1 | modelcontextprotocol/servers | PR open, review pending | [#3833](https://github.com/modelcontextprotocol/servers/pull/3833) |
 | 2 | wong2/awesome-mcp-servers | Submitted (website form) | mcpservers.org |
 | 2b | punkpeye/awesome-mcp-servers | PR open | [#4036](https://github.com/punkpeye/awesome-mcp-servers/pull/4036) |
