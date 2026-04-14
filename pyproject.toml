@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "argus-search"
-version = "1.3.2"
+version = "1.3.3"
 description = "One endpoint, every free search API. Search broker for AI agents with automatic fallback, RRF ranking, and budget enforcement. The LiteLLM of web search."
 readme = "README.md"
 license = {text = "MIT"}

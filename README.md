@@ -1,5 +1,7 @@
 # Argus
 
+<!-- mcp-name: io.github.Khamel83/argus -->
+
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-brightgreen)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/argus-search)](https://pypi.org/project/argus-search/)
