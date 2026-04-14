@@ -27,3 +27,35 @@ jobs:
 
       - name: Run tests
         run: python -m pytest tests/ -v --tb=short
+
+  freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check llms.txt freshness
+        run: |
+          README_TS=$(git log -1 --format=%ct -- README.md)
+          LLMS_TS=$(git log -1 --format=%ct -- llms.txt)
+          LLMSFULL_TS=$(git log -1 --format=%ct -- llms-full.txt)
+
+          if [ "$LLMS_TS" -lt "$README_TS" ] || [ "$LLMSFULL_TS" -lt "$README_TS" ]; then
+            echo "::warning::llms.txt or llms-full.txt is older than README.md — update them before release"
+          fi
+
+      - name: Check version sync
+        run: |
+          PYPI_VER=$(python3 -c "import tomllib; d=tomllib.load(open('pyproject.toml','rb')); print(d['project']['version'])")
+          # Extract version from server.json (top-level)
+          SJSON_VER=$(python3 -c "import json; d=json.load(open('server.json')); print(d['version'])")
+          SJSON_PKG_VER=$(python3 -c "import json; d=json.load(open('server.json')); print(d['packages'][0]['version'])")
+
+          if [ "$PYPI_VER" != "$SJSON_VER" ]; then
+            echo "::error::pyproject.toml ($PYPI_VER) and server.json top-level ($SJSON_VER) version mismatch"
+            exit 1
+          fi
+          if [ "$PYPI_VER" != "$SJSON_PKG_VER" ]; then
+            echo "::error::pyproject.toml ($PYPI_VER) and server.json packages[0] ($SJSON_PKG_VER) version mismatch"
+            exit 1
+          fi
+          echo "Versions in sync: $PYPI_VER"

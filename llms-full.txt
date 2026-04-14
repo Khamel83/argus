@@ -1,78 +1,90 @@
 # Argus
 
-> Argus is a standalone search broker that routes queries across multiple web-search providers (SearXNG, Brave, Serper, Tavily, Exa) with automatic fallback, Reciprocal Rank Fusion ranking, health tracking, and budget enforcement. Connect via HTTP, CLI, MCP, or Python import. Add a provider key, it works. Remove it, it degrades gracefully.
+> Argus is a multi-provider web search broker for AI agents. It routes queries across 11 providers with tier-based credit routing, Reciprocal Rank Fusion ranking, content extraction, and budget enforcement. Works immediately with DuckDuckGo — no API keys needed. Add API keys for 5,000+ free monthly queries. Connect via HTTP, CLI, MCP server, or Python import.
 
 ## What It Does
 
-> You pass Argus a search query. It fans out to multiple providers, collects results, ranks them via Reciprocal Rank Fusion (RRF with k=60), deduplicates by URL, and returns a clean list. If a provider is down or over budget, it skips it automatically. Your project never touches a provider API directly.
-
-> The output is designed for LLM consumption — enough context (title, snippet, URL, domain, relevance score) for a model to decide "this link is worth reading" without downloading the whole page.
+> You pass Argus a search query. It fans out to multiple providers (prioritizing free ones), collects results, ranks them via Reciprocal Rank Fusion (k=60), deduplicates by URL, and returns a clean list. If a provider is down or over budget, it skips it automatically. Your code never touches a provider API directly.
+> Output is designed for LLM consumption — title, snippet, URL, domain, provider, and relevance score for each result.
 
 ## Installation
 
-### Docker (recommended)
+> pip install argus-search works immediately with DuckDuckGo on any machine with Python 3.11+
+> pip install "argus-search[mcp]" adds MCP server support
+> pip install "argus-search[mcp,crawl4ai]" adds local JS rendering (needs playwright + crawl4ai)
+> Docker: docker compose up -d for SearXNG + Argus
 
-> cp .env.example .env and edit with your provider keys. docker compose up -d starts Argus + Postgres + SearXNG. Verify with curl http://localhost:8000/api/health.
+## Providers
 
-### Local install
+> Tier 0 (free, unlimited): SearXNG (self-hosted), DuckDuckGo (no key), GitHub (free, rate-limited)
+> Tier 1 (monthly recurring): Brave (2k/mo), Tavily (1k/mo), Exa (1k/mo), Linkup (1k/mo)
+> Tier 3 (one-time credits): Serper (2.5k), Parallel AI (4k), You.com ($20), Valyu ($10)
+> Routing: always queries free providers first, then monthly, then one-time. Exhausted providers skipped.
 
-> git clone https://github.com/Khamel83/argus.git && cd argus; python -m venv .venv && source .venv/bin/activate; pip install -e ".[mcp]"; argus serve
+## Content Extraction
 
-## Provider Setup
+> 9-step fallback chain with quality gates: trafilatura → Crawl4AI → Playwright → Jina Reader → Valyu Contents → Firecrawl → You.com Contents → Wayback Machine → archive.is
+> First 3 are local (need hosting). Last 6 are external APIs (work anywhere).
+> extract_content for working URLs. recover_url for dead/moved URLs (queries archives and runs extraction loop).
+> SSRF protection blocks private IPs. Domain rate limiting at 10 req/min/domain. Cookie auth for paywalls.
 
-> All you need is API keys for whichever providers you want. SearXNG is free and runs locally. The rest have generous free tiers.
+## Multi-Turn Sessions
 
-> | Provider | Free tier | Get a key |
-> |----------|----------|-----------|
-> | SearXNG | Unlimited (self-hosted) | No key needed |
-> | Brave Search | 2,000 queries/month | https://brave.com/search/api/ |
-> | Serper | 2,500 queries/month | https://serper.dev |
-> | Tavily | 1,000 queries/month | https://tavily.com |
-> | Exa | 1,000 queries/month | https://exa.ai |
-
-> Set keys in .env: ARGUS_BRAVE_API_KEY=, ARGUS_SERPER_API_KEY=, ARGUS_TAVILY_API_KEY=, ARGUS_EXA_API_KEY=. Unset or blank keys are silently skipped.
+> Pass session_id to any search call. Broker stores queries and extracted URLs in SQLite. Follow-up searches are context-enriched from prior conversation. Persists across restarts.
 
 ## Integration
 
 ### HTTP API
 
-> POST /api/search with {"query": "...", "mode": "discovery", "max_results": 5}. POST /api/recover-url for dead URL recovery. GET /api/health/detail for provider status. GET /api/budgets for budget tracking. OpenAPI docs at /docs.
+> argus serve on port 8000. POST /api/search {"query": "...", "mode": "discovery", "max_results": 10, "session_id": "..."}
+> POST /api/extract {"url": "..."}. POST /api/recover-url {"url": "...", "title": "..."}
+> GET /api/health/detail, GET /api/budgets. OpenAPI at /docs.
 
 ### CLI
 
-> argus search -q "query" --mode discovery; argus search -q "query" --mode research -n 20; argus recover-url -u "https://dead.link"; argus health; argus budgets; argus test-provider -p brave
+> argus search -q "query" --mode discovery --session my-session --json
+> argus extract -u "https://example.com" -d nytimes.com
+> argus recover-url -u "https://dead.link" -t "Title"
+> argus health, argus budgets, argus set-balance -s jina -b 9833638, argus test-provider -p brave
 
 ### MCP
 
-> Start with `argus mcp serve` (stdio) or `argus mcp serve --transport sse --port 8001` (HTTP). Tools: search_web, recover_url, expand_links, search_health, search_budgets, test_provider. Resources: argus://providers/status, argus://providers/budgets, argus://policies/current.
-
-> Claude Code config: {"mcpServers": {"argus": {"command": "argus", "args": ["mcp", "serve"]}}}
-> Cursor config: same JSON in .cursor/mcp.json
-> VS Code config: same JSON in settings.json under mcp.servers
+> argus mcp serve (stdio) or argus mcp serve --transport sse --port 8001
+> Tools: search_web, extract_content, recover_url, expand_links, search_health, search_budgets, test_provider, valyu_answer, cookie_health
+> Resources: argus://providers/status, argus://providers/budgets, argus://policies/current
+> Config: {"mcpServers": {"argus": {"command": "argus", "args": ["mcp", "serve"]}}}
+> MCP Registry: io.github.Khamel83/argus
 
 ### Python
 
-> from argus.broker.router import create_broker; from argus.models import SearchQuery, SearchMode; broker = create_broker(); response = await broker.search(SearchQuery(query="...", mode=SearchMode.DISCOVERY, max_results=10)); results = response.results (each has url, title, snippet, domain, provider, score)
+> from argus.broker.router import create_broker; from argus.models import SearchQuery, SearchMode
+> from argus.extraction import extract_url
+> broker = create_broker()
+> response = await broker.search(SearchQuery(query="...", mode=SearchMode.DISCOVERY, max_results=10))
+> for r in response.results: print(f"{r.title}: {r.url} (score: {r.score:.3f})")
+> content = await extract_url("https://example.com")
 
 ## Search Modes
 
-> discovery: Find related pages and canonical sources. Chain: searxng → brave → exa → tavily → serper.
-> recovery: Find a moved or dead URL. Chain: searxng → brave → serper → tavily → exa.
-> grounding: Few live sources for fact-checking. Chain: brave → serper → searxng.
-> research: Broad exploratory retrieval. Chain: tavily → exa → brave → serper.
+> discovery: related pages and canonical sources. Free providers always lead.
+> recovery: find moved or dead URLs via archive sources.
+> grounding: few live sources for fact-checking.
+> research: broad exploratory retrieval.
 
 ## Configuration
 
-> All config via environment variables with ARGUS_ prefix. Key variables: ARGUS_DB_URL (PostgreSQL), ARGUS_SEARXNG_BASE_URL, provider API keys, ARGUS_CACHE_TTL_HOURS (default 168), per-provider monthly budgets (ARGUS_BRAVE_MONTHLY_BUDGET_USD, etc.), ARGUS_RATE_LIMIT (default 60 req/min), ARGUS_BUDGET_DB_PATH (SQLite budget persistence).
+> All config via ARGUS_ prefix env vars. Key variables: ARGUS_SEARXNG_BASE_URL, provider API keys (ARGUS_BRAVE_API_KEY etc.), ARGUS_CACHE_TTL_HOURS (168), per-provider budgets (ARGUS_BRAVE_MONTHLY_BUDGET_USD etc.), ARGUS_CRAWL4AI_ENABLED, ARGUS_EXTRACTION_TIMEOUT_SECONDS.
+> See .env.example for full list. Missing keys degrade gracefully — providers are skipped, not errors.
 
 ## Architecture
 
-> Caller (CLI/HTTP/MCP/Python) → SearchBroker → routing policy (per mode) → providers (parallel, with fallback) → cache → dedupe → RRF ranking → response. Provider adapters in argus/providers/ hide provider-specific logic. Broker in argus/broker/ owns routing, retries, budgets, degradation. API layer in argus/api/ is thin.
+> Caller (CLI/HTTP/MCP/Python) → SearchBroker → routing policy (tier-sorted, mode-specific) → provider executor (budget check → health check → search → early stop) → cache → dedupe → RRF ranking → response
+> Provider adapters in argus/providers/. Broker in argus/broker/. Extractor in argus/extraction/. API in argus/api/. CLI in argus/cli/. MCP in argus/mcp/. Sessions in argus/sessions/.
 
 ## Documentation
 
-> README.md — full documentation with quick start, integration examples, and configuration reference
-> docs/providers.md — provider setup, Docker networking, and configuration details
-> CONTRIBUTING.md — contribution guide and how to add providers
+> README.md — product page with quickstart, providers, integration, configuration
+> docs/providers.md — provider setup and configuration details
+> CONTRIBUTING.md — contribution guide and adding providers
 > CLAUDE.md — developer guide and architecture overview
-> docs/go-to-market.md — publicization strategy and timeline
+> CHANGELOG.md — release history

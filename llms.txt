@@ -1,34 +1,64 @@
 # Argus
 
-> Argus is a standalone search broker that routes queries across multiple web-search providers (SearXNG, Brave, Serper, Tavily, Exa) with automatic fallback, Reciprocal Rank Fusion ranking, health tracking, and budget enforcement. Connect via HTTP API, CLI, MCP server, or Python import.
+> Multi-provider web search broker for AI agents. Routes across 11 providers (SearXNG, DuckDuckGo, GitHub, Brave, Serper, Tavily, Exa, Linkup, Parallel AI, You.com, Valyu) with tier-based routing, RRF ranking, content extraction, and budget enforcement. Works immediately with DuckDuckGo (no API keys). 5,000+ free monthly queries with API keys.
 
 ## Installation
 
-> pip install -e ".[mcp]" to install with MCP support. Configure provider API keys in .env. Run `argus serve` to start the HTTP API on port 8000, or `argus mcp serve` to start the MCP server over stdio.
+> pip install argus-search && argus search -q "query"
+> pip install "argus-search[mcp]" for MCP server support
+> pip install "argus-search[mcp,crawl4ai]" for local JS rendering extraction
+> Zero config — DuckDuckGo handles search with no keys, no containers, no accounts
 
 ## MCP Server
 
-> Start with `argus mcp serve`. Tools: search_web, recover_url, expand_links, search_health, search_budgets, test_provider. Add to Claude Code, Cursor, or VS Code by adding the MCP config JSON to your client settings. See README for copy-paste configs.
+> argus mcp serve (stdio) or argus mcp serve --transport sse --port 8001 (HTTP)
+> Tools: search_web, extract_content, recover_url, expand_links, search_health, search_budgets, test_provider, valyu_answer, cookie_health
+> Resources: argus://providers/status, argus://providers/budgets, argus://policies/current
+> Claude Code config: {"mcpServers": {"argus": {"command": "argus", "args": ["mcp", "serve"]}}}
+> Also on MCP Registry: io.github.Khamel83/argus
 
 ## HTTP API
 
-> POST /api/search with {"query": "...", "mode": "discovery", "max_results": 10}. OpenAPI docs at /docs. Endpoints: /api/search, /api/recover-url, /api/expand, /api/health, /api/health/detail, /api/budgets, /api/test-provider.
-
-## Search Modes
-
-> discovery: find related pages and canonical sources. recovery: find a moved or dead URL. grounding: few live sources for fact-checking. research: broad exploratory retrieval.
-
-## Python SDK
-
-> from argus.broker.router import create_broker; from argus.models import SearchQuery, SearchMode; broker = create_broker(); response = await broker.search(SearchQuery(query="...", mode=SearchMode.DISCOVERY))
+> argus serve starts on port 8000. OpenAPI docs at /docs.
+> POST /api/search {"query": "...", "mode": "discovery", "max_results": 10}
+> POST /api/extract {"url": "..."}
+> POST /api/recover-url {"url": "...", "title": "..."}
+> POST /api/expand {"query": "..."}
+> GET /api/health/detail, GET /api/budgets
 
 ## CLI
 
-> argus search -q "query" --mode discovery; argus recover-url -u "https://dead.link"; argus health; argus budgets; argus test-provider -p brave
+> argus search -q "query" --mode discovery --session my-session
+> argus extract -u "https://example.com" -d nytimes.com
+> argus recover-url -u "https://dead.link" -t "Page Title"
+> argus health, argus budgets, argus test-provider -p brave
+> argus set-balance -s jina -b 9833638
+
+## Search Modes
+
+> discovery: related pages, canonical sources. Recovery: find moved/dead URLs. Grounding: few sources for fact-checking. Research: broad exploratory retrieval.
+> Routing: Tier 0 (free: SearXNG, DuckDuckGo, GitHub) → Tier 1 (monthly: Brave 2k, Tavily 1k, Exa 1k, Linkup 1k) → Tier 3 (one-time: Serper 2.5k, Parallel 4k, You.com $20, Valyu $10)
+> Budget-exhausted providers are skipped automatically
+
+## Content Extraction
+
+> 9-step fallback chain: trafilatura → Crawl4AI → Playwright → Jina → Valyu Contents → Firecrawl → You.com Contents → Wayback → archive.is
+> Quality gates between every step. SSRF protection. Domain rate limiting (10 req/min). Cookie auth for paywalls.
+
+## Multi-Turn Sessions
+
+> Pass session_id to search for conversational refinement. Prior queries enrich follow-up searches. SQLite-backed, persists across restarts.
+
+## Python SDK
+
+> from argus.broker.router import create_broker; from argus.models import SearchQuery, SearchMode
+> broker = create_broker()
+> response = await broker.search(SearchQuery(query="...", mode=SearchMode.DISCOVERY, max_results=10))
+> content = await extract_url("https://example.com")
 
 ## Documentation
 
-> README.md — full documentation with quick start, integration examples, and configuration reference
-> docs/providers.md — provider setup, Docker networking, and configuration
-> CLAUDE.md — developer guide and architecture overview
+> README.md — full docs with quickstart, providers, integration, configuration
+> docs/providers.md — provider setup and configuration
 > CONTRIBUTING.md — contribution guide and adding providers
+> CLAUDE.md — developer guide and architecture overview
