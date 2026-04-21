@@ -7,6 +7,7 @@ Uses the standard library sqlite3 module -- no new dependencies.
 
 import os
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -42,14 +43,14 @@ class BudgetStore:
         self._db_path = db_path or os.environ.get(
             "ARGUS_BUDGET_DB_PATH", DEFAULT_DB_PATH
         )
-        self._conn: Optional[sqlite3.Connection] = None
+        self._local = threading.local()
 
     def _get_conn(self) -> sqlite3.Connection:
-        if self._conn is None:
+        if not hasattr(self._local, "conn"):
             Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(self._db_path)
-            self._conn.executescript(_SCHEMA)
-        return self._conn
+            self._local.conn = sqlite3.connect(self._db_path)
+            self._local.conn.executescript(_SCHEMA)
+        return self._local.conn
 
     def record_usage(self, provider: str, cost_usd: float = 0.0) -> None:
         conn = self._get_conn()
@@ -80,9 +81,9 @@ class BudgetStore:
         return row[0]
 
     def close(self) -> None:
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        if hasattr(self._local, "conn"):
+            self._local.conn.close()
+            del self._local.conn
 
     def set_token_balance(self, service: str, balance: float) -> None:
         conn = self._get_conn()
