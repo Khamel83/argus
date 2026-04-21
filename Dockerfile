@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./
+COPY argus/ ./argus/
 RUN pip install --no-cache-dir --prefix=/install ".[mcp]"
 
 # --- Final image ---
