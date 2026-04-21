@@ -1,24 +1,13 @@
-## Description
+## Summary
+Brief description of what this PR does and why.
 
-<!-- What does this PR do? -->
-
-## Type of Change
-
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Breaking change
-- [ ] Documentation
+## Changes
+-
 
 ## Testing
-
-<!-- How did you verify this works? -->
-
-```bash
-pytest tests/
-```
+- [ ] Tests pass: `pytest`
+- [ ] Tested manually with:
 
 ## Checklist
-
-- [ ] Tests pass (`pytest tests/`)
-- [ ] CHANGELOG.md updated (for user-facing changes)
-- [ ] No secrets or credentials committed
+- [ ] Code follows existing patterns
+- [ ] New features have tests

@@ -234,18 +234,29 @@ Add to your MCP client config:
 }
 ```
 
-Works with **Claude Code**, **Cursor**, **VS Code**, and any MCP-compatible client. For remote access via SSE:
+Works with **Claude Code**, **Cursor**, **VS Code**, and any MCP-compatible client.
 
+**Option B — Self-hosted server (homelab / always-on machine)**
+
+Run Argus once on a server, connect every client to it over the network. No local install needed on client machines.
+
+On the server (`docker compose up -d` starts both):
+```bash
+argus mcp serve --transport sse --host 0.0.0.0 --port 8001
+```
+
+On each client machine, add to `~/.claude/claude_desktop_config.json` (or equivalent):
 ```json
 {
   "mcpServers": {
     "argus": {
-      "command": "argus",
-      "args": ["mcp", "serve", "--transport", "sse", "--host", "127.0.0.1", "--port", "8001"]
+      "url": "http://<your-server>:8271/sse"
     }
   }
 }
 ```
+
+With [Tailscale](https://tailscale.com), `<your-server>` is your machine's Tailscale hostname (e.g. `homelab-ts`). One server, every machine on your network gets search.
 
 Available tools: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `cookie_health`, `valyu_answer`
 
