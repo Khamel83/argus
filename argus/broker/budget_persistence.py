@@ -80,6 +80,33 @@ class BudgetStore:
         ).fetchone()
         return row[0]
 
+    def get_lifetime_usage(self, provider: str) -> float:
+        """Return total usage for a provider across all time (no time cutoff)."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT COALESCE(SUM(cost_usd), 0) FROM budget_usage "
+            "WHERE provider = ?",
+            (provider,),
+        ).fetchone()
+        return float(row[0])
+
+    def get_lifetime_usage_count(self, provider: str) -> int:
+        """Return total query count for a provider across all time."""
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT COUNT(*) FROM budget_usage WHERE provider = ?", (provider,)
+        ).fetchone()
+        return row[0]
+
+    def delete_provider_usage(self, provider: str) -> int:
+        """Delete all usage records for a provider. Returns rows deleted."""
+        conn = self._get_conn()
+        cursor = conn.execute(
+            "DELETE FROM budget_usage WHERE provider = ?", (provider,)
+        )
+        conn.commit()
+        return cursor.rowcount
+
     def close(self) -> None:
         if hasattr(self._local, "conn"):
             self._local.conn.close()

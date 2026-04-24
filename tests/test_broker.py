@@ -385,11 +385,44 @@ class TestBudgets:
         from argus.models import ProviderName
         b = BudgetTracker()
         b.set_budget(ProviderName.BRAVE, 30.0)
-        # Use all 30 today → remaining 0, pace = 0/day → over pace
+        # Use all 30 today → remaining 0 → over pace
         for _ in range(30):
             b.record_usage(ProviderName.BRAVE)
         assert b.is_over_pace(ProviderName.BRAVE)
-        assert b.used_today(ProviderName.BRAVE) == 30
+
+    def test_heavy_day_after_empty_days_is_not_over_pace(self):
+        """A single heavy day after empty days should NOT trigger over-pace."""
+        from argus.broker.budgets import BudgetTracker
+        import time
+        from argus.models import ProviderName
+
+        b = BudgetTracker()
+        b.set_budget(ProviderName.BRAVE, 3000.0)
+        now = time.time()
+        # Use 200 queries today — that's a heavy day
+        for i in range(200):
+            b._usage[ProviderName.BRAVE].append((now, 1.0))
+        # Remaining: 2800, 7-day rate: 200/7 = 28.6/day
+        # Days until exhausted: 2800/28.6 = 97 days → NOT over pace
+        assert not b.is_over_pace(ProviderName.BRAVE)
+
+    def test_sustained_heavy_usage_is_over_pace(self):
+        """Sustained heavy usage for a week SHOULD trigger over-pace."""
+        from argus.broker.budgets import BudgetTracker
+        import time
+        from argus.models import ProviderName
+
+        b = BudgetTracker()
+        b.set_budget(ProviderName.BRAVE, 300.0)
+        now = time.time()
+        # Use 100/day for 7 days = 700 total, but budget is only 300
+        for day in range(7):
+            ts = now - (6 - day) * 24 * 3600
+            for _ in range(100):
+                b._usage[ProviderName.BRAVE].append((ts, 1.0))
+        # Remaining: 0 (700 > 300) → over pace
+        assert b.is_budget_exhausted(ProviderName.BRAVE)
+        assert b.is_over_pace(ProviderName.BRAVE)
 
     def test_unlimited_provider_never_over_pace(self):
         from argus.broker.budgets import BudgetTracker
@@ -399,6 +432,82 @@ class TestBudgets:
         assert b.daily_pace(ProviderName.BRAVE) == float("inf")
         assert not b.is_over_pace(ProviderName.BRAVE)
         assert b.used_today(ProviderName.BRAVE) == 0
+
+    def test_tier3_lifetime_tracking(self):
+        """Tier-3 (one-time) credits should track usage forever, not reset after 30 days."""
+        from argus.broker.budgets import BudgetTracker
+        import time
+
+        b = BudgetTracker()
+        b.set_budget(ProviderName.SERPER, 8.0)
+        # Record 5 usages now
+        for _ in range(5):
+            b.record_usage(ProviderName.SERPER)
+        # Simulate 3 usages 31 days ago
+        old_ts = time.time() - (31 * 24 * 3600)
+        b._usage[ProviderName.SERPER] = [
+            (old_ts, 1.0), (old_ts + 1, 1.0), (old_ts + 2, 1.0),
+            (time.time(), 1.0), (time.time() + 1, 1.0),
+            (time.time() + 2, 1.0), (time.time() + 3, 1.0),
+            (time.time() + 4, 1.0),
+        ]
+        # Should show 8 total (3 old + 5 recent) — old entries NOT aged out
+        assert b.get_monthly_usage(ProviderName.SERPER) == 8.0
+        assert b.is_budget_exhausted(ProviderName.SERPER) is True
+
+    def test_tier1_rolling_window_unaffected(self):
+        """Tier-1 (monthly) credits should still use 30-day rolling window."""
+        from argus.broker.budgets import BudgetTracker
+        import time
+
+        b = BudgetTracker()
+        b.set_budget(ProviderName.BRAVE, 10.0)
+        # Record 5 usages 31 days ago
+        old_ts = time.time() - (31 * 24 * 3600)
+        for _ in range(5):
+            b._usage[ProviderName.BRAVE].append((old_ts, 1.0))
+        # Old entries should age out — 0 usage
+        assert b.get_monthly_usage(ProviderName.BRAVE) == 0.0
+        assert b.is_budget_exhausted(ProviderName.BRAVE) is False
+
+    def test_tier3_daily_pace_is_inf(self):
+        """Tier-3 providers should have infinite daily pace — never over pace."""
+        from argus.broker.budgets import BudgetTracker
+
+        b = BudgetTracker()
+        b.set_budget(ProviderName.SERPER, 100.0)
+        assert b.daily_pace(ProviderName.SERPER) == float("inf")
+        assert b.is_over_pace(ProviderName.SERPER) is False
+        # Even with heavy usage today, still not "over pace"
+        for _ in range(50):
+            b.record_usage(ProviderName.SERPER)
+        assert b.is_over_pace(ProviderName.SERPER) is False
+
+    def test_tier3_exhaustion_is_sole_gate(self):
+        """Tier-3 providers only skipped when truly exhausted."""
+        from argus.broker.budgets import BudgetTracker
+
+        b = BudgetTracker()
+        b.set_budget(ProviderName.SERPER, 5.0)
+        for _ in range(4):
+            b.record_usage(ProviderName.SERPER)
+        assert b.is_budget_exhausted(ProviderName.SERPER) is False
+        b.record_usage(ProviderName.SERPER)
+        assert b.is_budget_exhausted(ProviderName.SERPER) is True
+
+    def test_tier3_reset_clears_lifetime(self):
+        """Manual reset should clear all lifetime usage for tier-3."""
+        from argus.broker.budgets import BudgetTracker
+
+        b = BudgetTracker()
+        b.set_budget(ProviderName.SERPER, 10.0)
+        for _ in range(10):
+            b.record_usage(ProviderName.SERPER)
+        assert b.is_budget_exhausted(ProviderName.SERPER) is True
+        cleared = b.reset_lifetime_usage(ProviderName.SERPER)
+        assert cleared == 10
+        assert b.is_budget_exhausted(ProviderName.SERPER) is False
+        assert b.get_monthly_usage(ProviderName.SERPER) == 0.0
 
 
 # --- Router ---
@@ -545,8 +654,8 @@ class TestRouter:
         assert response.total_results == 2
 
     @pytest.mark.asyncio
-    async def test_one_time_credits_conserved_when_over_pace(self, monkeypatch):
-        """Tier 3 (one-time) providers are more aggressively conserved."""
+    async def test_one_time_credits_used_when_available(self, monkeypatch):
+        """Tier 3 (one-time) providers are queried when budget remains — no pacing."""
         from argus.broker.budgets import BudgetTracker
         from argus.broker.router import SearchBroker
 
@@ -576,15 +685,15 @@ class TestRouter:
 
         response = await broker.search(
             SearchQuery(
-                query="conserve one-time",
+                query="use one-time credits",
                 mode=SearchMode.DISCOVERY,
                 providers=[ProviderName.SEARXNG, ProviderName.SERPER],
             )
         )
 
+        # Tier 3 providers should NOT be paced — only exhausted
         assert free.calls == 1
-        assert onetime.calls == 0
-        assert "one-time credits conserved" in response.traces[-1].error
+        assert onetime.calls == 1
 
     @pytest.mark.asyncio
     async def test_search_skips_budget_exhausted_provider(self, monkeypatch):

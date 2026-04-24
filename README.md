@@ -122,7 +122,7 @@ SearXNG takes 512MB of RAM and gives you a private Google-style search engine th
 
 ² WolframAlpha returns **computed answers** (math, unit conversions, factual lookups), not web search results. It only activates in `grounding` and `research` modes. Queries it can't compute (general web searches) return empty — no error, no health penalty.
 
-**7,000+ free queries/month** from recurring free-tier providers alone (WolframAlpha 2k + Brave 2k + Tavily 1k + Exa 1k + Linkup 1k). DuckDuckGo, Yahoo, SearXNG, and GitHub have no monthly cap. Routing priority: **Tier 0** (free: SearXNG, DuckDuckGo, Yahoo, GitHub, WolframAlpha) → **Tier 1** (monthly: Brave, Tavily, Exa, Linkup) → **Tier 2** (one-time: Serper, Parallel, You.com, Valyu, SearchAPI). Budget-exhausted providers are skipped automatically.
+**7,000+ free queries/month** from recurring free-tier providers alone (WolframAlpha 2k + Brave 2k + Tavily 1k + Exa 1k + Linkup 1k). DuckDuckGo, Yahoo, SearXNG, and GitHub have no monthly cap. Routing priority: **Tier 0** (free: SearXNG, DuckDuckGo, Yahoo, GitHub, WolframAlpha) → **Tier 1** (monthly recurring: Brave, Tavily, Exa, Linkup) → **Tier 3** (one-time: Serper, Parallel, You.com, Valyu, SearchAPI). Budget-exhausted providers are skipped automatically.
 
 ## HTTP API
 
@@ -196,7 +196,7 @@ Each result includes `url`, `title`, `snippet`, `domain`, `provider`, and `score
 }
 ```
 
-Each provider tracks usage per calendar month. When a provider hits its budget, Argus skips it and moves to the next tier. Free providers (SearXNG, DuckDuckGo, GitHub) have no limit. Set `ARGUS_*_MONTHLY_BUDGET_USD` to enforce custom limits per provider.
+Each provider tracks usage. Tier 1 (monthly) uses a 30-day rolling window; tier 3 (one-time) uses a lifetime counter that never resets. When a provider hits its budget, Argus skips it and moves to the next. Free providers (SearXNG, DuckDuckGo, GitHub) have no limit. Set `ARGUS_*_MONTHLY_BUDGET_USD` to enforce custom limits per provider.
 
 ## Integration
 
@@ -313,6 +313,31 @@ Caller (CLI/HTTP/MCP/Python) → SearchBroker → tier-sorted providers → RRF 
 | `argus/persistence/` | PostgreSQL query/result storage |
 
 Add new providers or extractors with a single adapter file. See [CONTRIBUTING.md](CONTRIBUTING.md) for the interface.
+
+### How a Query Works
+
+```
+query arrives → cache? → build provider queue → execute sequentially → RRF fuse → dedup → respond
+```
+
+1. **Cache check.** `SearchCache` hashes `normalized_query:mode` (SHA256). Hit returns immediately with a TTL of 168 hours (7 days).
+
+2. **Provider queue.** `resolve_routing()` takes the mode-specific preference list and stable-sorts by tier: tier 0 (free) first, tier 1 (monthly) next, tier 3 (one-time) last. Example for discovery mode:
+   ```
+   searxng → duckduckgo → yahoo → github → brave → exa → tavily → linkup → serper → parallel → you → valyu
+   ```
+
+3. **Sequential execution with gates.** Each provider is checked in order. Four gates must pass before an API call:
+   - **Config** — is the provider enabled and configured (API key present)?
+   - **Health** — has it failed 5+ consecutive times (triggers 60-minute cooldown)?
+   - **Budget** — for tier 1+: is the budget exhausted? For tier 1 (monthly), pacing checks if the 7-day usage rate would drain the remaining budget in under a week — empty days bank headroom. For tier 3 (one-time), a lifetime counter gates access — exhaustion is the sole check.
+   - **Execute** — the actual HTTP call. Successes reset failure counters; failures increment them.
+
+4. **RRF fusion.** Results from all queried providers are merged using Reciprocal Rank Fusion (`k=60`). Each result's score is the sum of `1/(k + rank)` across every provider that returned it. Results appearing in multiple providers rank higher.
+
+5. **Dedup and truncate.** URLs are normalized (stripped `www.`, tracking params like `utm_*`, trailing slashes) and deduplicated. The merged list is truncated to `max_results` (default 10).
+
+6. **Cache and persist.** The final response is written to the in-memory cache and persisted to PostgreSQL. Provider traces (which were called, which were skipped and why) are included in the response for observability.
 
 ## Configuration
 

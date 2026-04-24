@@ -19,6 +19,8 @@ _COST_ESTIMATES = {
     ProviderName.PARALLEL: 1.0,
     ProviderName.LINKUP: 1.0,
     ProviderName.YOU: 1.0,
+    ProviderName.VALYU: 1.0,
+    ProviderName.SEARCHAPI: 1.0,
 }
 
 # Tier 0 providers are always queried — free and unlimited.
@@ -49,17 +51,14 @@ class ProviderExecutor:
         """Decide whether to query a paid provider based on budget pace.
 
         Returns (should_query, reason).
+        Tier 3 (one-time) providers are never "over pace" — exhaustion is the sole gate.
+        Tier 1 (monthly) providers are paced to spread credits across 30 days.
         """
         if self._budgets.is_budget_exhausted(provider):
             return False, "budget exhausted"
 
         if not self._budgets.is_over_pace(provider):
             return True, "under pace"
-
-        # Over pace — only query if we haven't gotten many results yet
-        # and we really need more. Tier 3 is even more conservative.
-        if tier >= 3:
-            return False, "over pace, one-time credits conserved"
 
         return False, "over pace, conserving monthly credits"
 
