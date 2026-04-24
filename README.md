@@ -10,14 +10,13 @@
 [![MCP Registry](https://img.shields.io/badge/MCP-Registry-blue)](https://registry.modelcontextprotocol.io/servers/io.github.Khamel83/argus)
 [![Docker](https://img.shields.io/badge/ghcr.io-khamel83%2Fargus-blue)](https://github.com/Khamel83/argus/pkgs/container/argus)
 
-Search infrastructure for AI agents. Zero-config start, 14 providers, computed answers via WolframAlpha, and a 9-step content extraction chain — so your agent gets actual text, not just URLs.
+Multi-provider web search broker for AI agents. 14 providers, budget-aware routing, content extraction — one API so your agent doesn't need to stitch search results together.
 
 **Features at a glance:**
 
 - **14 providers, one API** — free-first tier routing, budget-exhausted providers skipped automatically
 - **Zero-key start** — `pip install argus-search` gives you DuckDuckGo + Yahoo immediately, no accounts needed
 - **SearXNG self-host = 70+ engines** — Google, Bing, Yahoo, Startpage, Ecosia, Qwant and more via one Docker container
-- **WolframAlpha integration** — computed answers for math, unit conversions, and factual queries (2,000 free calls/month)
 - **9-step content extraction** — returns full page text with quality gates, not just links
 - **Multi-turn sessions** — pass `session_id` for conversational context across searches
 - **4 search modes** — discovery, research, recovery, grounding
@@ -338,13 +337,13 @@ All config via environment variables. See `.env.example` for the full list. Miss
 ## FAQ
 
 **How is this different from calling Tavily/Serper directly?**
-Argus calls them for you — plus 9 other providers. You get one ranked, deduplicated result set instead of managing multiple API keys and stitching results together. Free providers are tried first, so you only burn credits when needed.
+Argus calls them for you — plus 13 other providers. You get one ranked, deduplicated result set instead of managing multiple API keys and stitching results together. Free providers are tried first, so you only burn credits when needed.
 
 **Can I run only one provider?**
-Yes. Set only the API key for the provider you want. All others are silently skipped. For zero-config, just install and go — DuckDuckGo handles everything with no keys.
+Yes. Set only the API key for the provider you want. All others are silently skipped. For zero-config, just install and go — DuckDuckGo + Yahoo handle search with no keys.
 
 **Do I need Docker?**
-No. `pip install argus-search` works immediately on any machine with Python 3.11+. Docker is only needed for SearXNG (self-hosted search) or Crawl4AI (local JS rendering).
+No. `pip install argus-search` works immediately on any machine with Python 3.11+. Docker is only needed for SearXNG (self-hosted search, aggregates 70+ engines) or Crawl4AI (local JS rendering).
 
 ## License
 
