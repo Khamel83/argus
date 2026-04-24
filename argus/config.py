@@ -43,6 +43,7 @@ class ArgusConfig:
     linkup: ProviderConfig = field(default_factory=ProviderConfig)
     valyu: ProviderConfig = field(default_factory=ProviderConfig)
     github: ProviderConfig = field(default_factory=ProviderConfig)
+    wolfram: ProviderConfig = field(default_factory=ProviderConfig)
     host: str = "127.0.0.1"
     port: int = 8000
     allow_mcp: bool = False
@@ -187,6 +188,17 @@ class EnvironmentConfigLoader:
             linkup=self.provider_config("LINKUP"),
             valyu=self.provider_config("VALYU"),
             github=self.provider_config("GITHUB"),
+            wolfram=ProviderConfig(
+                enabled=self.get_bool("ARGUS_WOLFRAM_ENABLED", True),
+                api_key=self.get_str(
+                    "ARGUS_WOLFRAM_API_KEY",
+                    secret_keys=("WOLFRAM_APP_ID", "WOLFRAM_API_KEY"),
+                ),
+                monthly_budget_usd=self.get_float(
+                    "ARGUS_WOLFRAM_MONTHLY_BUDGET_USD", 2000.0
+                ),
+                timeout_seconds=self.get_int("ARGUS_WOLFRAM_TIMEOUT_SECONDS", 15),
+            ),
             host=self.get_str("ARGUS_HOST", "127.0.0.1"),
             port=self.get_int("ARGUS_PORT", 8000),
             allow_mcp=self.get_bool("ARGUS_ALLOW_MCP"),

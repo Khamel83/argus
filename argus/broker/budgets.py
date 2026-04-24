@@ -23,17 +23,19 @@ logger = get_logger("broker.budgets")
 # Tier 2: Monthly or semi-monthly credits
 # Tier 3: One-time signup credits (don't come back)
 PROVIDER_TIERS: dict[ProviderName, int] = {
-    ProviderName.SEARXNG: 0,     # free, unlimited (self-hosted)
-    ProviderName.DUCKDUCKGO: 0, # free, unlimited (scrapes DDG)
-    ProviderName.GITHUB: 0,    # free, unlimited (rate-limited but no cost)
-    ProviderName.BRAVE: 1,        # monthly recurring
-    ProviderName.TAVILY: 1,    # monthly recurring
-    ProviderName.LINKUP: 1,    # monthly recurring
-    ProviderName.EXA: 1,       # monthly (likely)
-    ProviderName.SERPER: 3,    # one-time credits
-    ProviderName.PARALLEL: 3,  # one-time credits
-    ProviderName.YOU: 3,       # one-time credits
-    ProviderName.SEARCHAPI: 3,  # one-time/placeholder
+    ProviderName.SEARXNG: 0,     # free, unlimited (self-hosted, 70+ engines)
+    ProviderName.DUCKDUCKGO: 0,  # free, unlimited (scrapes DDG)
+    ProviderName.YAHOO: 0,       # free, unlimited (scraped, fragile)
+    ProviderName.GITHUB: 0,      # free, unlimited (rate-limited but no cost)
+    ProviderName.WOLFRAM: 0,     # free, 2k/month (API key required)
+    ProviderName.BRAVE: 1,       # monthly recurring
+    ProviderName.TAVILY: 1,      # monthly recurring
+    ProviderName.LINKUP: 1,      # monthly recurring
+    ProviderName.EXA: 1,         # monthly recurring
+    ProviderName.SERPER: 3,      # one-time credits
+    ProviderName.PARALLEL: 3,    # one-time credits
+    ProviderName.YOU: 3,         # one-time credits
+    ProviderName.SEARCHAPI: 3,   # one-time/placeholder
     ProviderName.VALYU: 3,       # one-time credits ($10)
 }
 

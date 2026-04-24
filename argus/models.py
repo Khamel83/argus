@@ -21,6 +21,7 @@ class SearchMode(str, Enum):
 class ProviderName(str, Enum):
     SEARXNG = "searxng"
     DUCKDUCKGO = "duckduckgo"
+    YAHOO = "yahoo"
     BRAVE = "brave"
     SERPER = "serper"
     TAVILY = "tavily"
@@ -31,6 +32,7 @@ class ProviderName(str, Enum):
     LINKUP = "linkup"
     VALYU = "valyu"
     GITHUB = "github"
+    WOLFRAM = "wolfram"
     CACHE = "cache"
 
 

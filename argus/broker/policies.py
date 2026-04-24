@@ -21,6 +21,7 @@ MODE_PROVIDER_PREFERENCES: dict[SearchMode, list[ProviderName]] = {
     SearchMode.RECOVERY: [
         ProviderName.SEARXNG,
         ProviderName.DUCKDUCKGO,
+        ProviderName.YAHOO,
         ProviderName.BRAVE,
         ProviderName.SERPER,
         ProviderName.TAVILY,
@@ -33,6 +34,7 @@ MODE_PROVIDER_PREFERENCES: dict[SearchMode, list[ProviderName]] = {
     SearchMode.DISCOVERY: [
         ProviderName.SEARXNG,
         ProviderName.DUCKDUCKGO,
+        ProviderName.YAHOO,
         ProviderName.BRAVE,
         ProviderName.EXA,
         ProviderName.TAVILY,
@@ -46,6 +48,8 @@ MODE_PROVIDER_PREFERENCES: dict[SearchMode, list[ProviderName]] = {
     SearchMode.GROUNDING: [
         ProviderName.SEARXNG,
         ProviderName.DUCKDUCKGO,
+        ProviderName.YAHOO,
+        ProviderName.WOLFRAM,   # computed answers for facts/calculations
         ProviderName.BRAVE,
         ProviderName.SERPER,
         ProviderName.LINKUP,
@@ -56,6 +60,8 @@ MODE_PROVIDER_PREFERENCES: dict[SearchMode, list[ProviderName]] = {
     SearchMode.RESEARCH: [
         ProviderName.SEARXNG,
         ProviderName.DUCKDUCKGO,
+        ProviderName.YAHOO,
+        ProviderName.WOLFRAM,   # factual grounding alongside web sources
         ProviderName.TAVILY,
         ProviderName.EXA,
         ProviderName.BRAVE,

@@ -10,19 +10,21 @@
 [![MCP Registry](https://img.shields.io/badge/MCP-Registry-blue)](https://registry.modelcontextprotocol.io/servers/io.github.Khamel83/argus)
 [![Docker](https://img.shields.io/badge/ghcr.io-khamel83%2Fargus-blue)](https://github.com/Khamel83/argus/pkgs/container/argus)
 
-Multi-provider web search broker for AI agents. Routes across SearXNG, DuckDuckGo, GitHub, Brave, Tavily, Exa, and more — using RRF fusion, content extraction, and budget-aware routing so you don't waste your free search credits.
+Search infrastructure for AI agents. Zero-config start, 14 providers, computed answers via WolframAlpha, and a 9-step content extraction chain — so your agent gets actual text, not just URLs.
 
 **Features at a glance:**
 
-- **Multi-provider search** — 11 providers, one API, free-first tier routing
-- **5,000+ free queries/month** — automatic budget tracking, exhausted providers skipped
-- **Content extraction** — 9-step fallback chain with quality gates (local + external)
-- **Multi-turn sessions** — pass `session_id` for conversational search refinement
+- **14 providers, one API** — free-first tier routing, budget-exhausted providers skipped automatically
+- **Zero-key start** — `pip install argus-search` gives you DuckDuckGo + Yahoo immediately, no accounts needed
+- **SearXNG self-host = 70+ engines** — Google, Bing, Yahoo, Startpage, Ecosia, Qwant and more via one Docker container
+- **WolframAlpha integration** — computed answers for math, unit conversions, and factual queries (2,000 free calls/month)
+- **9-step content extraction** — returns full page text with quality gates, not just links
+- **Multi-turn sessions** — pass `session_id` for conversational context across searches
 - **4 search modes** — discovery, research, recovery, grounding
-- **Dead URL recovery** — first-class `/recover-url` endpoint with archive fallbacks
+- **Dead URL recovery** — `/recover-url` with Wayback Machine and archive fallbacks
 - **4 integration paths** — HTTP API, CLI, MCP server, Python SDK
 
-_Built for AI agent builders, RAG infra, and ops teams who don't want to hand-wire search APIs._
+_Built for AI agent builders, RAG pipelines, and ops teams who need reliable search without stitching APIs together._
 
 ## Contents
 
@@ -104,8 +106,10 @@ SearXNG takes 512MB of RAM and gives you a private Google-style search engine th
 | Provider | Credit type | Free capacity | Setup |
 |----------|------------|---------------|-------|
 | DuckDuckGo | Free (scraped) | Unlimited | None |
-| SearXNG | Free (self-hosted) | Unlimited | Docker |
+| Yahoo | Free (scraped) | Unlimited | None — fragile, auto-skipped if broken |
+| SearXNG | Free (self-hosted) | Unlimited — 70+ engines¹ | Docker |
 | GitHub | Free (API) | Unlimited | None (token for higher rate limit) |
+| WolframAlpha | Free (API key) | 2,000 queries/month | [free key](https://developer.wolframalpha.com/) |
 | Brave Search | Monthly recurring | 2,000 queries/month | [dashboard](https://brave.com/search/api/) |
 | Tavily | Monthly recurring | 1,000 queries/month | [signup](https://app.tavily.com/sign-up) |
 | Exa | Monthly recurring | 1,000 queries/month | [signup](https://dashboard.exa.ai/signup) |
@@ -115,7 +119,9 @@ SearXNG takes 512MB of RAM and gives you a private Google-style search engine th
 | You.com | One-time signup | $20 credit | [platform](https://you.com/platform) |
 | Valyu | One-time signup | $10 credit | [platform](https://platform.valyu.ai) |
 
-**5,000 free queries/month** from the four recurring providers. Three providers need no API key at all. Routing priority: **Tier 0** (free: SearXNG, DuckDuckGo, GitHub) → **Tier 1** (monthly: Brave, Tavily, Exa, Linkup) → **Tier 2** (one-time: Serper, Parallel, You.com, Valyu, SearchAPI). Budget-exhausted providers are skipped automatically.
+¹ SearXNG aggregates Google, Bing, Yahoo, Startpage, Ecosia, Qwant, Wikipedia, and 60+ more — all behind a single self-hosted endpoint. Run `docker compose up -d` on any machine with 512MB of free RAM.
+
+**7,000+ free queries/month** from recurring free-tier providers alone (WolframAlpha 2k + Brave 2k + Tavily 1k + Exa 1k + Linkup 1k). DuckDuckGo, Yahoo, SearXNG, and GitHub have no monthly cap. Routing priority: **Tier 0** (free: SearXNG, DuckDuckGo, Yahoo, GitHub, WolframAlpha) → **Tier 1** (monthly: Brave, Tavily, Exa, Linkup) → **Tier 2** (one-time: Serper, Parallel, You.com, Valyu, SearchAPI). Budget-exhausted providers are skipped automatically.
 
 ## HTTP API
 

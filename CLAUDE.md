@@ -2,13 +2,14 @@
 
 ## Overview
 
-Search broker that puts every free search API in one place with intelligent credit-aware routing. Provider adapters: SearXNG and DuckDuckGo (free, unlimited, no API keys), GitHub (free, code search), Brave, Tavily, Exa, Linkup (monthly free tiers), Serper, Parallel AI, You.com, Valyu, SearchAPI. Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. 9-step content extraction fallback chain. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
+Search infrastructure for AI agents: 14 providers, intelligent credit-aware routing, WolframAlpha computed answers, and a 9-step content extraction chain. Provider adapters: SearXNG (self-hosted, aggregates 70+ engines), DuckDuckGo, Yahoo (scraped), GitHub, WolframAlpha (free API, computed answers), Brave, Tavily, Exa, Linkup (monthly free tiers), Serper, Parallel AI, You.com, Valyu, SearchAPI. Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
 
 ## Two Deployment Tiers
 
 ### Tier 1: No server (API keys only)
-- `pip install argus-search` — works immediately with DuckDuckGo
-- Add API keys for 5,000+ more free monthly queries
+- `pip install argus-search` — works immediately with DuckDuckGo + Yahoo
+- Add WOLFRAM_APP_ID for computed answers (math, facts, conversions — 2,000 free/month)
+- Add API keys for 7,000+ more free monthly queries
 - Extraction via external APIs only (Jina, Valyu Contents, Firecrawl, You.com Contents, Wayback)
 - Runs on any machine with Python 3.11+ (laptop, Mac Mini, Pi, cloud VM)
 - No Docker, no database server, no API keys required to start
@@ -85,11 +86,15 @@ Caller (CLI/HTTP/MCP/Python)
 
 | Tier | Providers | Credits |
 |------|-----------|---------|
-| 0 (free) | SearXNG, DuckDuckGo, GitHub | Unlimited, no API keys (GitHub rate-limited) |
+| 0 (free) | SearXNG (70+ engines via self-host), DuckDuckGo, Yahoo (scraped), GitHub, WolframAlpha (2k/mo, API key) | Unlimited or free recurring |
 | 1 (monthly) | Brave (2k/mo), Tavily (1k/mo), Exa (1k/mo), Linkup (1k/mo) | Recurring monthly |
 | 3 (one-time) | Serper (2.5k), Parallel (4k), You.com ($20), SearchAPI, Valyu ($10) | Don't come back |
 
 Routing sorts by tier first (free → monthly → one-time), then preserves mode-specific ordering within each tier. Budget enforcement skips exhausted providers automatically.
+
+WolframAlpha is unique: it returns computed answers (math, conversions, facts), not a list of URLs. It appears in grounding and research modes. WOLFRAM_APP_ID is in the secrets vault.
+
+Yahoo is a Tier 0 scraped provider. It will be auto-disabled by the health tracker if Yahoo HTML changes. No API key needed.
 
 ## Interfaces
 
@@ -107,10 +112,10 @@ Each mode defines which providers are best suited for that query type. Routing s
 
 | Mode | Use case | Actual runtime order |
 |------|----------|---------------------|
-| `discovery` | Related pages, canonical sources | SearXNG → DuckDuckGo → GitHub → Brave → Exa → Tavily → Linkup → Serper → Parallel → You → Valyu |
-| `recovery` | Dead/moved URL | SearXNG → DuckDuckGo → Brave → Tavily → Exa → Linkup → Serper → Parallel → You → Valyu |
-| `grounding` | Few sources for fact-checking | SearXNG → DuckDuckGo → Brave → Linkup → Serper → Parallel → You → Valyu |
-| `research` | Broad exploratory | SearXNG → DuckDuckGo → GitHub → Tavily → Exa → Brave → Linkup → Serper → Parallel → You → Valyu |
+| `discovery` | Related pages, canonical sources | SearXNG → DuckDuckGo → Yahoo → GitHub → Brave → Exa → Tavily → Linkup → Serper → Parallel → You → Valyu |
+| `recovery` | Dead/moved URL | SearXNG → DuckDuckGo → Yahoo → Brave → Tavily → Exa → Linkup → Serper → Parallel → You → Valyu |
+| `grounding` | Fact-checking + computed answers | SearXNG → DuckDuckGo → Yahoo → **Wolfram** → Brave → Linkup → Serper → Parallel → You → Valyu |
+| `research` | Broad exploratory | SearXNG → DuckDuckGo → Yahoo → **Wolfram** → GitHub → Tavily → Exa → Brave → Linkup → Serper → Parallel → You → Valyu |
 
 Free providers (SearXNG, DuckDuckGo) always lead. Within-tier ordering reflects provider strengths per query type.
 

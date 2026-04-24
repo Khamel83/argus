@@ -60,6 +60,7 @@ class SearchBroker:
             ProviderName.PARALLEL: self._config.parallel.monthly_budget_usd,
             ProviderName.LINKUP: self._config.linkup.monthly_budget_usd,
             ProviderName.VALYU: self._config.valyu.monthly_budget_usd,
+            ProviderName.WOLFRAM: self._config.wolfram.monthly_budget_usd,
         }
         for pname, budget in budget_map.items():
             if budget > 0:
@@ -154,12 +155,15 @@ def create_broker() -> SearchBroker:
     from argus.providers.valyu import ValyuProvider
     from argus.providers.github import GitHubProvider
     from argus.providers.you import YouProvider
+    from argus.providers.wolfram import WolframProvider
+    from argus.providers.yahoo import YahooProvider
 
     config = get_config()
 
     providers: dict[ProviderName, BaseProvider] = {
         ProviderName.SEARXNG: SearXNGProvider(config.searxng),
         ProviderName.DUCKDUCKGO: DuckDuckGoProvider(),
+        ProviderName.YAHOO: YahooProvider(),
         ProviderName.BRAVE: BraveProvider(config.brave),
         ProviderName.SERPER: SerperProvider(config.serper),
         ProviderName.TAVILY: TavilyProvider(config.tavily),
@@ -170,6 +174,7 @@ def create_broker() -> SearchBroker:
         ProviderName.LINKUP: LinkupProvider(config.linkup),
         ProviderName.VALYU: ValyuProvider(config.valyu),
         ProviderName.GITHUB: GitHubProvider(config.github),
+        ProviderName.WOLFRAM: WolframProvider(config.wolfram),
     }
 
     from argus.sessions import SessionStore
