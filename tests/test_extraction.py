@@ -135,6 +135,7 @@ _BAD_RESULT = ExtractedContent(url="https://example.com", error="failed")
 # Module paths for all chain extractors (order matters)
 _CHAIN_EXTRACTORS = [
     ("auth", "argus.extraction.auth_extractor", "extract_authenticated"),
+    ("residential", "argus.extraction.residential_extractor", "extract_residential"),
     ("trafilatura", "argus.extraction.extractor", "_extract_trafilatura"),
     ("playwright", "argus.extraction.playwright_extractor", "extract_playwright"),
     ("jina", "argus.extraction.extractor", "_extract_jina"),

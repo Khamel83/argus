@@ -4,12 +4,20 @@ Content extraction: integrated fallback chain with quality gates.
 Chain order:
   SSRF check → cache → rate limit → auth → quality gate →
   trafilatura → quality gate → crawl4ai → quality gate →
-  playwright → quality gate → jina → quality gate →
-  valyu_contents → quality gate → firecrawl → quality gate →
-  you_contents → quality gate → wayback → quality gate →
-  archive.is → quality gate → return best result
+  obscura (CLI) → quality gate → playwright (CDP or Chrome) → quality gate →
+  residential (Tailscale) → quality gate →
+  jina → quality gate → valyu_contents → quality gate →
+  firecrawl → quality gate → you_contents → quality gate →
+  wayback → quality gate → archive.is → quality gate → return best result
 
 Results are cached in memory to avoid re-extracting the same URL.
+
+Obscura (https://github.com/h4ckf0r0day/obscura): optional Rust headless browser.
+  - CLI step: requires `obscura` binary on PATH
+  - CDP step: requires ARGUS_OBSCURA_CDP_URL=ws://127.0.0.1:9222 (obscura serve --stealth)
+    When set, Playwright connects to Obscura instead of launching Chrome, gaining
+    stealth mode (navigator.webdriver=undefined, fingerprint randomization) and
+    30MB vs 200MB memory footprint.
 """
 
 import asyncio
@@ -134,8 +142,8 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
 
     Chain:
       SSRF → cache → rate limit → auth → QG → trafilatura → QG →
-      crawl4ai → QG → playwright → QG → jina → QG →
-      valyu_contents → QG → firecrawl → QG → you_contents → QG →
+      crawl4ai → QG → obscura → QG → playwright → QG → residential → QG →
+      jina → QG → valyu_contents → QG → firecrawl → QG → you_contents → QG →
       wayback → QG → archive.is → QG → return best result (even if all quality gates failed)
 
     Results are cached in memory — same URL within TTL returns cached result.
@@ -227,7 +235,26 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
         except Exception as e:
             logger.warning("Crawl4AI failed for %s: %s", url[:60], e)
 
-    # Step 4: Playwright (local headless browser)
+    # Step 4: Obscura CLI (local headless browser, stealth mode — requires obscura binary on PATH)
+    try:
+        from argus.extraction.obscura_extractor import extract_obscura
+
+        result = await extract_obscura(url)
+        track_attempt("obscura", result)
+        if result.text and not result.error:
+            passed, reason = _run_quality_gate(result.text, url, "obscura")
+            result.quality_passed = passed
+            result.quality_reason = reason if not passed else None
+            result.extractors_tried = list(extractors_tried)
+            if passed:
+                logger.info("Extracted %s via obscura (%d words)", url[:60], result.word_count)
+                _cache.put(url, result)
+                return result
+            logger.debug("Obscura content failed quality gate: %s", reason)
+    except Exception as e:
+        logger.warning("Obscura failed for %s: %s", url[:60], e)
+
+    # Step 5: Playwright (local headless browser — uses Obscura CDP if ARGUS_OBSCURA_CDP_URL is set)
     try:
         from argus.extraction.playwright_extractor import extract_playwright
 
@@ -246,7 +273,27 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
     except Exception as e:
         logger.warning("Playwright failed for %s: %s", url[:60], e)
 
-    # Step 4: Jina Reader (external API, free tier rate-limited)
+    # Step 6: Residential extraction (remote service over Tailscale, residential IP)
+    try:
+        from argus.extraction.residential_extractor import extract_residential, _is_configured
+
+        if _is_configured():
+            result = await extract_residential(url, domain=domain or "")
+            track_attempt("residential", result)
+            if result.text and not result.error:
+                passed, reason = _run_quality_gate(result.text, url, "residential")
+                result.quality_passed = passed
+                result.quality_reason = reason if not passed else None
+                result.extractors_tried = list(extractors_tried)
+                if passed:
+                    logger.info("Extracted %s via residential (%d words)", url[:60], result.word_count)
+                    _cache.put(url, result)
+                    return result
+                logger.debug("Residential content failed quality gate: %s", reason)
+    except Exception as e:
+        logger.warning("Residential extraction failed for %s: %s", url[:60], e)
+
+    # Step 7: Jina Reader (external API, free tier rate-limited)
     try:
         result = await _extract_jina(url)
         track_attempt("jina", result)
@@ -264,7 +311,7 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
     except Exception as e:
         logger.warning("Jina failed for %s: %s", url[:60], e)
 
-    # Step 5: Valyu Contents API ($0.001/URL, cheapest external option)
+    # Step 8: Valyu Contents API ($0.001/URL, cheapest external option)
     try:
         from argus.extraction.valyu_extractor import extract_valyu_contents
 
@@ -283,7 +330,7 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
     except Exception as e:
         logger.warning("Valyu Contents failed for %s: %s", url[:60], e)
 
-    # Step 6: Firecrawl (external API, 1 credit/page, best Markdown quality)
+    # Step 9: Firecrawl (external API, 1 credit/page, best Markdown quality)
     try:
         from argus.extraction.firecrawl_extractor import extract_firecrawl
 
@@ -302,7 +349,7 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
     except Exception as e:
         logger.warning("Firecrawl failed for %s: %s", url[:60], e)
 
-    # Step 7: You.com Contents API ($1/1k pages, cheaper than Jina)
+    # Step 10: You.com Contents API ($1/1k pages, cheaper than Jina)
     if os.getenv("ARGUS_YOU_CONTENTS_ENABLED", "").lower() in ("1", "true"):
         try:
             from argus.extraction.you_extractor import extract_you_contents
@@ -322,7 +369,7 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
         except Exception as e:
             logger.warning("You.com Contents failed for %s: %s", url[:60], e)
 
-    # Step 8: Wayback Machine
+    # Step 11: Wayback Machine
     try:
         from argus.extraction.wayback_extractor import extract_wayback
 
@@ -341,7 +388,7 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
     except Exception as e:
         logger.warning("Wayback failed for %s: %s", url[:60], e)
 
-    # Step 9: Archive.is
+    # Step 12: Archive.is
     try:
         from argus.extraction.archive_extractor import extract_archive_is
 

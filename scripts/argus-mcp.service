@@ -1,0 +1,17 @@
+[Unit]
+Description=Argus MCP Server (streamable-http)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/github/argus
+ExecStart=/bin/bash /home/ubuntu/github/argus/scripts/start-mcp.sh
+Restart=always
+RestartSec=5
+SyslogIdentifier=argus-mcp
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

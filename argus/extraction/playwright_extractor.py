@@ -2,11 +2,20 @@
 Local Playwright Extraction - Headless browser for JS-rendered content.
 
 Uses async Playwright with a reusable browser instance (singleton).
+
+If ARGUS_OBSCURA_CDP_URL is set (e.g. ws://127.0.0.1:9222), Playwright connects
+to an Obscura CDP server instead of launching headless Chrome. Obscura provides
+built-in stealth (navigator.webdriver=undefined, fingerprint randomization) and
+uses 30MB vs 200MB memory. Falls back to launching Chrome if connection fails.
+
+When connected via Obscura CDP, extraction uses LP.getMarkdown for cleaner output.
+
 Gracefully degrades if playwright is not installed.
 """
 
 import asyncio
 import logging
+import os
 from typing import Optional
 
 from argus.extraction.models import ExtractedContent, ExtractorName
@@ -14,13 +23,15 @@ from argus.logging import get_logger
 
 logger = get_logger("extraction.playwright")
 
+OBSCURA_CDP_URL = os.getenv("ARGUS_OBSCURA_CDP_URL", "")
+
 _browser = None
 _playwright_instance = None
+_using_obscura_cdp = False
 _PLAYWRIGHT_AVAILABLE = None
 
 
 def _check_playwright():
-    """Check if playwright is available (cached check)."""
     global _PLAYWRIGHT_AVAILABLE
     if _PLAYWRIGHT_AVAILABLE is None:
         try:
@@ -33,8 +44,12 @@ def _check_playwright():
 
 
 async def _get_browser():
-    """Get or create a shared browser instance."""
-    global _browser, _playwright_instance
+    """Get or create a shared browser instance.
+
+    Tries Obscura CDP first (if ARGUS_OBSCURA_CDP_URL is set), then falls
+    back to launching headless Chrome.
+    """
+    global _browser, _playwright_instance, _using_obscura_cdp
 
     if _browser and _browser.is_connected():
         return _browser
@@ -45,6 +60,20 @@ async def _get_browser():
     try:
         from playwright.async_api import async_playwright
         _playwright_instance = await async_playwright().start()
+
+        if OBSCURA_CDP_URL:
+            try:
+                _browser = await _playwright_instance.chromium.connect_over_cdp(OBSCURA_CDP_URL)
+                _using_obscura_cdp = True
+                logger.info("Connected to Obscura CDP at %s", OBSCURA_CDP_URL)
+                return _browser
+            except Exception as e:
+                logger.warning(
+                    "Obscura CDP connection failed (%s), falling back to Chrome: %s",
+                    OBSCURA_CDP_URL, e,
+                )
+                _using_obscura_cdp = False
+
         _browser = await _playwright_instance.chromium.launch(
             headless=True,
             args=['--no-sandbox', '--disable-setuid-sandbox'],
@@ -56,46 +85,45 @@ async def _get_browser():
 
 
 async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedContent:
-    """Extract content using headless Chromium.
-
-    Args:
-        url: URL to extract
-        timeout_ms: Page load timeout in milliseconds
-
-    Returns:
-        ExtractedContent with text from rendered page
-    """
+    """Extract content using headless browser (Obscura CDP or Chrome)."""
     browser = await _get_browser()
     if not browser:
         return ExtractedContent(url=url, error="playwright: not available")
 
     page = None
     try:
-        page = await browser.new_page()
+        context = await browser.new_context()
+        page = await context.new_page()
         await page.goto(url, wait_until='domcontentloaded', timeout=timeout_ms)
-
-        # Wait for content to settle
         await asyncio.sleep(1)
 
-        # Try to get meaningful text
-        text = await page.evaluate("""() => {
-            // Remove script/style/nav/footer elements
-            const els = document.querySelectorAll('script, style, nav, footer, header, aside, iframe, noscript');
-            els.forEach(el => el.remove());
-
-            // Get main content area if it exists
-            const main = document.querySelector('main, article, [role="main"], .post-content, .article-body, .entry-content');
-            const source = main || document.body;
-
-            return source.innerText || source.textContent || '';
-        }""")
-
         title = await page.title()
+        text = ""
+
+        # Obscura CDP: use LP.getMarkdown for cleaner DOM-to-Markdown conversion
+        if _using_obscura_cdp:
+            try:
+                cdp = await context.new_cdp_session(page)
+                result = await cdp.send("LP.getMarkdown")
+                text = result.get("markdown", "").strip()
+                await cdp.detach()
+            except Exception as e:
+                logger.debug("LP.getMarkdown failed, falling back to innerText: %s", e)
+
+        # Standard path (Chrome, or Obscura CDP fallback)
+        if not text or len(text.split()) < 50:
+            text = await page.evaluate("""() => {
+                const els = document.querySelectorAll('script, style, nav, footer, header, aside, iframe, noscript');
+                els.forEach(el => el.remove());
+                const main = document.querySelector('main, article, [role="main"], .post-content, .article-body, .entry-content');
+                const source = main || document.body;
+                return source.innerText || source.textContent || '';
+            }""")
+            text = text.strip() if text else ""
 
         if not text or len(text.strip()) < 100:
             return ExtractedContent(url=url, error="playwright: too little content after render")
 
-        text = text.strip()
         return ExtractedContent(
             url=url,
             title=title or "",
@@ -112,6 +140,10 @@ async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedCon
                 await page.close()
             except Exception:
                 pass
+        try:
+            await context.close()
+        except Exception:
+            pass
 
 
 async def extract_playwright(url: str) -> ExtractedContent:
@@ -120,14 +152,19 @@ async def extract_playwright(url: str) -> ExtractedContent:
 
 
 async def close_browser():
-    """Close the shared browser instance (call on shutdown)."""
-    global _browser, _playwright_instance
+    """Close the shared browser instance (call on shutdown).
+
+    When using Obscura CDP, this disconnects from the Obscura server
+    without stopping it — Obscura keeps running for future connections.
+    """
+    global _browser, _playwright_instance, _using_obscura_cdp
     if _browser:
         try:
             await _browser.close()
         except Exception:
             pass
         _browser = None
+        _using_obscura_cdp = False
     if _playwright_instance:
         try:
             await _playwright_instance.stop()

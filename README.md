@@ -17,7 +17,7 @@ Multi-provider web search broker for AI agents. 14 providers, budget-aware routi
 - **14 providers, one API** — free-first tier routing, budget-exhausted providers skipped automatically
 - **Zero-key start** — `pip install argus-search` gives you DuckDuckGo + Yahoo immediately, no accounts needed
 - **SearXNG self-host = 70+ engines** — Google, Bing, Yahoo, Startpage, Ecosia, Qwant and more via one Docker container
-- **9-step content extraction** — returns full page text with quality gates, not just links
+- **10-step content extraction** — returns full page text with quality gates, not just links
 - **Multi-turn sessions** — pass `session_id` for conversational context across searches
 - **4 search modes** — discovery, research, recovery, grounding
 - **Dead URL recovery** — `/recover-url` with Wayback Machine and archive fallbacks
@@ -94,7 +94,7 @@ docker compose up -d    # SearXNG + Argus
 | What you have | What you get |
 |--------------|-------------|
 | **Any machine with Python 3.11+** | DuckDuckGo + API providers (no server) |
-| **Raspberry Pi 4 / old laptop** (4GB+) | Everything — SearXNG, all providers, Crawl4AI |
+| **Raspberry Pi 4 / old laptop** (4GB+) | Everything — SearXNG, all providers, Crawl4AI, Obscura |
 | **Mac Mini M1+** (8GB+) | Full stack with headroom |
 | **Free cloud VM** (1GB) | SearXNG + search providers (skip Crawl4AI) |
 
@@ -228,7 +228,9 @@ Pass `session_id` to any search call. Argus stores each query and extracted URL 
 
 ### MCP
 
-Add to your MCP client config:
+**Option A — Local (stdio)**
+
+Install and run on the same machine as your MCP client:
 
 ```json
 {
@@ -241,29 +243,29 @@ Add to your MCP client config:
 }
 ```
 
-Works with **Claude Code**, **Cursor**, **VS Code**, and any MCP-compatible client.
+Use the full path if `argus` isn't on PATH: `"/home/you/.local/bin/argus"`.
 
-**Option B — Self-hosted server (homelab / always-on machine)**
+Works with **Claude Code**, **Cursor**, and any stdio-based MCP client.
 
-Run Argus once on a server, connect every client to it over the network. No local install needed on client machines.
+**Option B — Self-hosted server (remote clients over Tailscale)**
 
-On the server (`docker compose up -d` starts both):
+Run Argus on one machine, connect every client over the network. No local install on clients.
+
+On the server:
 ```bash
-argus mcp serve --transport sse --host 0.0.0.0 --port 8001
+argus mcp serve --transport streamable-http --host 0.0.0.0 --port 8001
 ```
 
-On each client machine, add to `~/.claude/claude_desktop_config.json` (or equivalent):
-```json
-{
-  "mcpServers": {
-    "argus": {
-      "url": "http://<your-server>:8271/sse"
-    }
-  }
-}
-```
+On each client:
 
-With [Tailscale](https://tailscale.com), `<your-server>` is your machine's Tailscale hostname (e.g. `homelab-ts`). One server, every machine on your network gets search.
+| Client | Config |
+|--------|--------|
+| **Claude Code** | `{"mcpServers":{"argus":{"type":"sse","url":"http://<server>:8001/mcp"}}}` |
+| **Antigravity** | `{"mcpServers":{"argus":{"serverUrl":"http://<server>:8001/mcp"}}}` |
+
+With [Tailscale](https://tailscale.com), `<server>` is your machine's Tailscale IP (e.g. `100.126.13.70`). One server, every machine on your mesh gets search.
+
+**Transports**: `stdio` (default, for local), `sse` (legacy remote), `streamable-http` (modern remote — required for Antigravity).
 
 Available tools: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `cookie_health`, `valyu_answer`
 
@@ -289,7 +291,18 @@ print(content.text)
 
 ## Content Extraction
 
-Argus tries up to nine methods to extract content from any URL: first local (trafilatura, Crawl4AI, Playwright), then external APIs (Jina, Valyu Contents, Firecrawl, You.com, Wayback, archive.is). Each attempt is quality-checked for garbage output. See [docs/providers.md](docs/providers.md) for the full extractor comparison.
+Argus tries up to ten methods to extract content from any URL: first local (trafilatura, Crawl4AI, Obscura, Playwright), then external APIs (Jina, Valyu Contents, Firecrawl, You.com, Wayback, archive.is). Each attempt is quality-checked for garbage output. See [docs/providers.md](docs/providers.md) for the full extractor comparison.
+
+**Obscura** (optional) is a lightweight Rust headless browser (~70MB binary, 30MB RAM) with built-in stealth mode — it sets `navigator.webdriver=undefined`, randomizes canvas/GPU/audio fingerprints per session, and blocks 3,520 tracker domains. This directly addresses bot detection on JS-heavy and anti-scraping sites that block standard Playwright/Chrome. No API key, no rate limit — fully local.
+
+Two ways to use it:
+
+| Mode | Setup | What you get |
+|------|-------|-------------|
+| **CLI extraction step** | Install binary on `$PATH` | Argus auto-detects it; stealth browser as fallback step before Playwright |
+| **CDP backend for Playwright** | Run `obscura serve --stealth --port 9222`, set `ARGUS_OBSCURA_CDP_URL=ws://127.0.0.1:9222` | Playwright uses Obscura as its browser engine — stealth + 30MB vs 200MB + DOM-to-Markdown output |
+
+Install the binary: [github.com/h4ckf0r0day/obscura/releases](https://github.com/h4ckf0r0day/obscura/releases)
 
 **Extract** gets the full text of a working URL. **Recover-URL** finds alternatives when a URL is dead, paywalled, or radically changed by querying archival sources (Wayback, archive.is) and running a question-guided extraction loop.
 
@@ -298,14 +311,14 @@ Argus tries up to nine methods to extract content from any URL: first local (tra
 ```
 Caller (CLI/HTTP/MCP/Python) → SearchBroker → tier-sorted providers → RRF ranking → response
                                      ↕ SessionStore (optional)
-                            Extractor (on demand) → 9-step fallback chain with quality gates
+                            Extractor (on demand) → 10-step fallback chain with quality gates
 ```
 
 | Module | Responsibility |
 |--------|---------------|
 | `argus/broker/` | Tier-based routing, ranking, dedup, caching, health, budgets |
 | `argus/providers/` | Provider adapters (one per search API) |
-| `argus/extraction/` | 9-step URL extraction fallback chain with quality gates |
+| `argus/extraction/` | 10-step URL extraction fallback chain with quality gates |
 | `argus/sessions/` | Multi-turn session store and query refinement |
 | `argus/api/` | FastAPI HTTP endpoints |
 | `argus/cli/` | Click CLI commands |
@@ -359,6 +372,8 @@ All config via environment variables. See `.env.example` for the full list. Miss
 | `ARGUS_*_MONTHLY_BUDGET_USD` | 0 (unlimited) | Query-count budget per provider |
 | `ARGUS_CRAWL4AI_ENABLED` | false | Enable Crawl4AI extraction step |
 | `ARGUS_YOU_CONTENTS_ENABLED` | false | Enable You.com Contents API extraction |
+| `ARGUS_OBSCURA_CDP_URL` | — | Obscura CDP endpoint (e.g. `ws://127.0.0.1:9222`) — makes Playwright use Obscura as its browser engine |
+| `ARGUS_OBSCURA_TIMEOUT_SECONDS` | 20 | Timeout for Obscura CLI subprocess calls |
 | `ARGUS_CACHE_TTL_HOURS` | 168 | Result cache TTL |
 
 ## FAQ

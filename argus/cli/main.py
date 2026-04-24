@@ -329,11 +329,11 @@ def mcp():
 
 
 @mcp.command(name="serve")
-@click.option("--transport", "-t", default="stdio", type=click.Choice(["stdio", "sse"]))
-@click.option("--host", "-h", default="0.0.0.0", help="Host for SSE transport")
-@click.option("--port", "-p", default=8001, help="Port for SSE transport")
+@click.option("--transport", "-t", default="stdio", type=click.Choice(["stdio", "sse", "streamable-http"]))
+@click.option("--host", "-h", default="0.0.0.0", help="Host for SSE/streamable-http transport")
+@click.option("--port", "-p", default=8001, help="Port for SSE/streamable-http transport")
 def mcp_serve(transport, host, port):
-    """Start MCP server. Use stdio for Claude/Cursor, sse for remote access."""
+    """Start MCP server. Use stdio for Claude/Cursor, sse or streamable-http for remote access."""
     from argus.mcp.server import serve_mcp
     serve_mcp(transport=transport, host=host, port=port)
 

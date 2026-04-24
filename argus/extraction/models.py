@@ -10,8 +10,10 @@ from typing import Optional
 
 class ExtractorName(str, Enum):
     """Which extractor produced the result."""
+    RESIDENTIAL = "residential"
     TRAFILATURA = "trafilatura"
     JINA = "jina"
+    OBSCURA = "obscura"
     PLAYWRIGHT = "playwright"
     WAYBACK = "wayback"
     ARCHIVE_IS = "archive_is"

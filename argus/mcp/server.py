@@ -102,5 +102,8 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
     elif transport == "sse":
         logger.info("Starting Argus MCP server (sse) on %s:%d", host, port)
         mcp.run(transport="sse")
+    elif transport == "streamable-http":
+        logger.info("Starting Argus MCP server (streamable-http) on %s:%d", host, port)
+        mcp.run(transport="streamable-http")
     else:
         logger.error("Unknown transport: %s", transport)

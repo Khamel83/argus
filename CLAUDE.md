@@ -2,7 +2,7 @@
 
 ## Overview
 
-Search infrastructure for AI agents: 14 providers, intelligent credit-aware routing, WolframAlpha computed answers, and a 9-step content extraction chain. Provider adapters: SearXNG (self-hosted, aggregates 70+ engines), DuckDuckGo, Yahoo (scraped), GitHub, WolframAlpha (free API, computed answers), Brave, Tavily, Exa, Linkup (monthly free tiers), Serper, Parallel AI, You.com, Valyu, SearchAPI. Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
+Search infrastructure for AI agents: 14 providers, intelligent credit-aware routing, WolframAlpha computed answers, and a 10-step content extraction chain. Provider adapters: SearXNG (self-hosted, aggregates 70+ engines), DuckDuckGo, Yahoo (scraped), GitHub, WolframAlpha (free API, computed answers), Brave, Tavily, Exa, Linkup (monthly free tiers), Serper, Parallel AI, You.com, Valyu, SearchAPI. Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
 
 ## Two Deployment Tiers
 
@@ -16,7 +16,7 @@ Search infrastructure for AI agents: 14 providers, intelligent credit-aware rout
 
 ### Tier 2: Full install on hardware you already have
 - Raspberry Pi 3 (1GB): SearXNG + all search providers. Fits alongside Pi-hole (SearXNG ~512MB, Pi-hole ~100MB).
-- Raspberry Pi 4 (4GB): Everything — SearXNG, all providers, Crawl4AI local JS extraction.
+- Raspberry Pi 4 (4GB): Everything — SearXNG, all providers, Crawl4AI local JS extraction, Obscura stealth browser.
 - Mac Mini M1+ (8GB): Full stack with headroom for other services.
 - Any old laptop (4GB+): Full stack via Docker.
 - Free cloud VM (1GB): SearXNG + search. No Crawl4AI (use external APIs for extraction).
@@ -37,7 +37,8 @@ argus search -q "python web frameworks"  # uses DuckDuckGo automatically
 # Run
 argus serve                   # HTTP API on :8000
 argus mcp serve               # MCP server (stdio)
-argus mcp serve --transport sse --port 8001
+argus mcp serve --transport sse --port 8001         # SSE (legacy remote)
+argus mcp serve --transport streamable-http --port 8001  # Antigravity, modern remote
 
 # Search
 argus search -q "query" --mode discovery
@@ -75,7 +76,7 @@ Caller (CLI/HTTP/MCP/Python)
 |--------|---------------|
 | `argus/broker/` | Tier-based routing, ranking, dedup, caching, health, budgets |
 | `argus/providers/` | Provider adapters (one per search API) |
-| `argus/extraction/` | 9-step URL extraction fallback chain with quality gates |
+| `argus/extraction/` | 10-step URL extraction fallback chain with quality gates |
 | `argus/sessions/` | Multi-turn session store and query refinement |
 | `argus/api/` | FastAPI HTTP endpoints |
 | `argus/cli/` | Click CLI commands |
@@ -102,7 +103,7 @@ Yahoo is a Tier 0 scraped provider. It will be auto-disabled by the health track
 |-----------|-----------|
 | HTTP API | `POST /api/search`, `POST /api/extract`, `POST /api/recover-url`, `POST /api/expand` — OpenAPI at `/docs` |
 | CLI | `argus search`, `argus extract`, `argus recover-url`, `argus health`, `argus budgets`, `argus set-balance` |
-| MCP | `argus mcp serve` — tools: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `valyu_answer` |
+| MCP | `argus mcp serve` — tools: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `valyu_answer`. Transports: stdio (default), `--transport sse` (legacy remote), `--transport streamable-http` (Antigravity, modern clients) |
 | MCP Registry | [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/servers/io.github.Khamel83/argus) — `io.github.Khamel83/argus` |
 | Python | `from argus.broker.router import create_broker`, `from argus.extraction import extract_url`, `from argus.providers.valyu_answer import valyu_answer` |
 
@@ -121,16 +122,19 @@ Free providers (SearXNG, DuckDuckGo) always lead. Within-tier ordering reflects 
 
 ## Content Extraction
 
-9-step fallback chain with quality gates between every step:
+10-step fallback chain with quality gates between every step:
 
 ```
 trafilatura (local, fast) → Crawl4AI (local, JS rendering) →
-Playwright (local, headless browser) → Jina Reader (external API) →
+Obscura (local, stealth headless browser — optional binary) →
+Playwright (local, headless Chrome or Obscura CDP) → Jina Reader (external API) →
 Valyu Contents ($0.001/URL) → Firecrawl (1 credit/page) →
 You.com Contents ($1/1k pages) → Wayback Machine → archive.is
 ```
 
-First 3 extractors need local hosting. Last 6 are external APIs that work anywhere. SSRF protection blocks private IPs. Results cached in memory (168h TTL). Domain rate limiting (10 req/min/domain). Authenticated extraction via cookies for paywall domains (NYT, Bloomberg, etc.).
+First 4 extractors need local install. Last 6 are external APIs that work anywhere. SSRF protection blocks private IPs. Results cached in memory (168h TTL). Domain rate limiting (10 req/min/domain). Authenticated extraction via cookies for paywall domains (NYT, Bloomberg, etc.).
+
+Obscura (https://github.com/h4ckf0r0day/obscura): optional Rust headless browser binary (~70MB, 30MB RAM). No API key, no rate limit. Two modes: (1) CLI step — install binary on PATH, Argus auto-detects via `shutil.which`. (2) CDP backend — run `obscura serve --stealth --port 9222`, set `ARGUS_OBSCURA_CDP_URL=ws://127.0.0.1:9222` to make Playwright connect to it instead of launching Chrome. CDP mode enables stealth (navigator.webdriver=undefined, fingerprint randomization) and LP.getMarkdown for DOM-to-Markdown output.
 
 ## Multi-Turn Sessions
 

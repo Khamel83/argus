@@ -6,6 +6,7 @@ to render the full page behind authentication, then extracts text via trafilatur
 """
 
 import asyncio
+import os
 from typing import Optional
 
 from argus.extraction.cookies import (
@@ -27,25 +28,39 @@ _browser = None
 _contexts: dict[str, object] = {}  # domain → browser context
 
 
-class ExtractorName(str):
-    """Extend with auth extractor."""
-    AUTH = "auth_playwright"
-
-
-AUTH_EXTRACTOR = ExtractorName("auth_playwright")
+OBScura_CDP_URL = os.getenv("ARGUS_OBSCURA_CDP_URL", "")
 
 
 async def _get_browser():
-    """Get or create a shared Playwright browser instance."""
+    """Get or create a shared Playwright browser instance.
+
+    Tries Obscura CDP first (if ARGUS_OBSCURA_CDP_URL is set), then falls
+    back to launching headless Chrome.
+    """
     global _browser
-    if _browser is None:
+    if _browser is not None:
         try:
-            from playwright.async_api import async_playwright
-            pw = await async_playwright().start()
-            _browser = await pw.chromium.launch(headless=True)
-        except Exception as e:
-            logger.error("Failed to launch Playwright: %s", e)
-            return None, None
+            if hasattr(_browser, 'is_connected') and _browser.is_connected():
+                return _browser
+        except Exception:
+            _browser = None
+
+    try:
+        from playwright.async_api import async_playwright
+        pw = await async_playwright().start()
+
+        if OBScura_CDP_URL:
+            try:
+                _browser = await pw.chromium.connect_over_cdp(OBScura_CDP_URL)
+                logger.info("Auth extractor connected to Obscura CDP")
+                return _browser
+            except Exception as e:
+                logger.warning("Obscura CDP unavailable, falling back to Chrome: %s", e)
+
+        _browser = await pw.chromium.launch(headless=True)
+    except Exception as e:
+        logger.error("Failed to launch Playwright: %s", e)
+        return None
     return _browser
 
 
@@ -140,7 +155,7 @@ async def extract_authenticated(url: str, domain: str) -> Optional[ExtractedCont
                 title=title,
                 text=extracted,
                 word_count=word_count,
-                extractor=AUTH_EXTRACTOR,
+                extractor=ExtractorName.AUTH,
             )
 
         finally:
