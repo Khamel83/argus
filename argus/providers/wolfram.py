@@ -61,10 +61,19 @@ class WolframProvider(BaseProvider):
         try:
             async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as client:
                 resp = await client.get(WOLFRAM_LLM_API, params=params)
-                resp.raise_for_status()
-                text = resp.text.strip()
 
             latency_ms = int((time.monotonic() - start) * 1000)
+
+            # 501 = Wolfram can't compute this query. Not a provider failure.
+            if resp.status_code == 501:
+                return [], ProviderTrace(
+                    provider=self.name,
+                    status="empty",
+                    latency_ms=latency_ms,
+                )
+
+            resp.raise_for_status()
+            text = resp.text.strip()
 
             if not text:
                 return [], ProviderTrace(

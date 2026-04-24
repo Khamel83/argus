@@ -182,12 +182,12 @@ class EnvironmentConfigLoader:
             serper=self.provider_config("SERPER", enabled_default=True),
             tavily=self.provider_config("TAVILY", enabled_default=True, timeout_default=20),
             exa=self.provider_config("EXA", enabled_default=True, timeout_default=20),
-            searchapi=self.provider_config("SEARCHAPI"),
+            searchapi=self.provider_config("SEARCHAPI", enabled_default=True),
             you=self.provider_config("YOU", enabled_default=True),
-            parallel=self.provider_config("PARALLEL"),
-            linkup=self.provider_config("LINKUP"),
-            valyu=self.provider_config("VALYU"),
-            github=self.provider_config("GITHUB"),
+            parallel=self.provider_config("PARALLEL", enabled_default=True),
+            linkup=self.provider_config("LINKUP", enabled_default=True),
+            valyu=self.provider_config("VALYU", enabled_default=True),
+            github=self.provider_config("GITHUB", enabled_default=True),
             wolfram=ProviderConfig(
                 enabled=self.get_bool("ARGUS_WOLFRAM_ENABLED", True),
                 api_key=self.get_str(

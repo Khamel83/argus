@@ -120,6 +120,8 @@ SearXNG takes 512MB of RAM and gives you a private Google-style search engine th
 
 ¹ SearXNG aggregates Google, Bing, Yahoo, Startpage, Ecosia, Qwant, Wikipedia, and 60+ more — all behind a single self-hosted endpoint. Run `docker compose up -d` on any machine with 512MB of free RAM.
 
+² WolframAlpha returns **computed answers** (math, unit conversions, factual lookups), not web search results. It only activates in `grounding` and `research` modes. Queries it can't compute (general web searches) return empty — no error, no health penalty.
+
 **7,000+ free queries/month** from recurring free-tier providers alone (WolframAlpha 2k + Brave 2k + Tavily 1k + Exa 1k + Linkup 1k). DuckDuckGo, Yahoo, SearXNG, and GitHub have no monthly cap. Routing priority: **Tier 0** (free: SearXNG, DuckDuckGo, Yahoo, GitHub, WolframAlpha) → **Tier 1** (monthly: Brave, Tavily, Exa, Linkup) → **Tier 2** (one-time: Serper, Parallel, You.com, Valyu, SearchAPI). Budget-exhausted providers are skipped automatically.
 
 ## HTTP API

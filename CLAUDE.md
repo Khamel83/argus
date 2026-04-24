@@ -92,7 +92,7 @@ Caller (CLI/HTTP/MCP/Python)
 
 Routing sorts by tier first (free → monthly → one-time), then preserves mode-specific ordering within each tier. Budget enforcement skips exhausted providers automatically.
 
-WolframAlpha is unique: it returns computed answers (math, conversions, facts), not a list of URLs. It appears in grounding and research modes. WOLFRAM_APP_ID is in the secrets vault.
+WolframAlpha is unique: it returns computed answers (math, conversions, facts), not a list of URLs. It only activates in grounding and research modes. Queries it can't compute return empty — no error, no health penalty. WOLFRAM_APP_ID is in the secrets vault.
 
 Yahoo is a Tier 0 scraped provider. It will be auto-disabled by the health tracker if Yahoo HTML changes. No API key needed.
 
