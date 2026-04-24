@@ -1,6 +1,6 @@
 # Argus
 
-> Argus is a multi-provider web search broker for AI agents. It routes queries across 11 providers with tier-based credit routing, Reciprocal Rank Fusion ranking, content extraction, and budget enforcement. Works immediately with DuckDuckGo — no API keys needed. Add API keys for 5,000+ free monthly queries. Connect via HTTP, CLI, MCP server, or Python import.
+> Argus is search infrastructure for AI agents. 14 providers with tier-based credit routing, Reciprocal Rank Fusion ranking, WolframAlpha computed answers, 9-step content extraction, and budget enforcement. Works immediately with DuckDuckGo + Yahoo — no API keys needed. Add API keys for 7,000+ free monthly queries. Connect via HTTP, CLI, MCP server, or Python import.
 
 ## What It Does
 
@@ -9,16 +9,18 @@
 
 ## Installation
 
-> pip install argus-search works immediately with DuckDuckGo on any machine with Python 3.11+
+> pip install argus-search works immediately with DuckDuckGo + Yahoo on any machine with Python 3.11+
 > pip install "argus-search[mcp]" adds MCP server support
 > pip install "argus-search[mcp,crawl4ai]" adds local JS rendering (needs playwright + crawl4ai)
 > Docker: docker compose up -d for SearXNG + Argus
 
 ## Providers
 
-> Tier 0 (free, unlimited): SearXNG (self-hosted), DuckDuckGo (no key), GitHub (free, rate-limited)
+> Tier 0 (free): SearXNG (self-hosted, aggregates 70+ engines), DuckDuckGo (no key), Yahoo (scraped, no key), GitHub (free, rate-limited), WolframAlpha (2k/mo computed answers, free API key)
 > Tier 1 (monthly recurring): Brave (2k/mo), Tavily (1k/mo), Exa (1k/mo), Linkup (1k/mo)
-> Tier 3 (one-time credits): Serper (2.5k), Parallel AI (4k), You.com ($20), Valyu ($10)
+> Tier 3 (one-time credits): Serper (2.5k), Parallel AI (4k), You.com ($20), Valyu ($10), SearchAPI
+> WolframAlpha returns computed answers (math, conversions, facts) not URL lists. Best in grounding+research modes.
+> Yahoo is fragile (scraped HTML) — auto-disabled by health tracker if structure changes. No API key needed.
 > Routing: always queries free providers first, then monthly, then one-time. Exhausted providers skipped.
 
 ## Content Extraction
@@ -68,8 +70,8 @@
 
 > discovery: related pages and canonical sources. Free providers always lead.
 > recovery: find moved or dead URLs via archive sources.
-> grounding: few live sources for fact-checking.
-> research: broad exploratory retrieval.
+> grounding: fact-checking with live sources + WolframAlpha computed answers.
+> research: broad exploratory retrieval with WolframAlpha for factual grounding.
 
 ## Configuration
 

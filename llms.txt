@@ -1,13 +1,14 @@
 # Argus
 
-> Multi-provider web search broker for AI agents. Routes across 11 providers (SearXNG, DuckDuckGo, GitHub, Brave, Serper, Tavily, Exa, Linkup, Parallel AI, You.com, Valyu) with tier-based routing, RRF ranking, content extraction, and budget enforcement. Works immediately with DuckDuckGo (no API keys). 5,000+ free monthly queries with API keys.
+> Search infrastructure for AI agents. 14 providers (SearXNG 70+ engines, DuckDuckGo, Yahoo, GitHub, WolframAlpha computed answers, Brave, Tavily, Exa, Linkup, Serper, Parallel AI, You.com, Valyu, SearchAPI) with tier-based routing, RRF ranking, 9-step content extraction, and budget enforcement. Works immediately with DuckDuckGo + Yahoo (no API keys). 7,000+ free monthly queries with API keys.
 
 ## Installation
 
 > pip install argus-search && argus search -q "query"
 > pip install "argus-search[mcp]" for MCP server support
 > pip install "argus-search[mcp,crawl4ai]" for local JS rendering extraction
-> Zero config — DuckDuckGo handles search with no keys, no containers, no accounts
+> Zero config — DuckDuckGo + Yahoo handle search with no keys, no containers, no accounts
+> Add ARGUS_WOLFRAM_API_KEY (free at developer.wolframalpha.com) for computed math/fact answers
 
 ## MCP Server
 
@@ -36,8 +37,8 @@
 
 ## Search Modes
 
-> discovery: related pages, canonical sources. Recovery: find moved/dead URLs. Grounding: few sources for fact-checking. Research: broad exploratory retrieval.
-> Routing: Tier 0 (free: SearXNG, DuckDuckGo, GitHub) → Tier 1 (monthly: Brave 2k, Tavily 1k, Exa 1k, Linkup 1k) → Tier 3 (one-time: Serper 2.5k, Parallel 4k, You.com $20, Valyu $10)
+> discovery: related pages, canonical sources. Recovery: find moved/dead URLs. Grounding: facts + WolframAlpha computed answers. Research: broad exploratory retrieval with WolframAlpha.
+> Routing: Tier 0 (free: SearXNG 70+ engines, DuckDuckGo, Yahoo, GitHub, WolframAlpha 2k/mo) → Tier 1 (monthly: Brave 2k, Tavily 1k, Exa 1k, Linkup 1k) → Tier 3 (one-time: Serper 2.5k, Parallel 4k, You.com $20, Valyu $10)
 > Budget-exhausted providers are skipped automatically
 
 ## Content Extraction
