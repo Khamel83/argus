@@ -60,7 +60,7 @@ async def assess_content(req: AssessContentRequest):
     )
 
 
-@router.get("/cookies/health")
+@router.get("/admin/cookies/health")
 async def cookie_health():
     """Get health status of all configured cookie domains."""
     from argus.extraction.cookies import get_health_summary

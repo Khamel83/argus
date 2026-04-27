@@ -9,6 +9,14 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from argus.auth import (
+    AuthConfig,
+    extract_api_token,
+    is_admin_path,
+    is_caller_path,
+    is_local_client,
+    is_public_path,
+)
 from argus.api.rate_limit import RateLimiter
 from argus.api.routes_admin import router as admin_router
 from argus.api.routes_extract import router as extract_router
@@ -31,10 +39,11 @@ async def lifespan(app: FastAPI):
 
 
 def _build_rate_limiter() -> RateLimiter:
+    auth = AuthConfig.from_env()
     return RateLimiter(
         max_requests=int(os.environ.get("ARGUS_RATE_LIMIT", "60")),
         window_seconds=int(os.environ.get("ARGUS_RATE_LIMIT_WINDOW", "60")),
-        api_key=os.environ.get("ARGUS_API_KEY", ""),
+        exempt_tokens=[auth.caller_api_key, auth.admin_api_key],
     )
 
 
@@ -60,6 +69,7 @@ def create_app(
     broker_factory: Optional[Callable[[], SearchBroker]] = None,
     rate_limiter: Optional[RateLimiter] = None,
 ) -> FastAPI:
+    auth_config = AuthConfig.from_env()
     app = FastAPI(
         title="Argus",
         description="Standalone search broker service",
@@ -68,20 +78,74 @@ def create_app(
     )
     app.state.get_broker = _build_broker_provider(broker, broker_factory)
     app.state.rate_limiter = rate_limiter or _build_rate_limiter()
+    app.state.auth_config = auth_config
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    if auth_config.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(auth_config.cors_origins),
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Admin-API-Key", "X-Request-Id"],
+        )
+
+    @app.middleware("http")
+    async def add_request_id(request: Request, call_next):
+        request_id = request.headers.get("x-request-id", uuid.uuid4().hex[:16])
+        request.state.request_id = request_id
+        response = await call_next(request)
+        response.headers["x-request-id"] = request_id
+        return response
+
+    @app.middleware("http")
+    async def auth_middleware(request: Request, call_next):
+        path = request.url.path
+        client_ip = request.client.host if request.client else None
+        is_local = is_local_client(client_ip)
+        token = extract_api_token(
+            request.headers,
+            "x-api-key",
+            "x-admin-api-key",
+        )
+        auth = request.app.state.auth_config
+
+        if is_public_path(path):
+            return await call_next(request)
+
+        if is_admin_path(path):
+            if not auth.has_admin_key():
+                return JSONResponse(
+                    status_code=503,
+                    content={"error": "Admin API key is not configured"},
+                )
+            if not auth.matches_admin_token(token):
+                return JSONResponse(
+                    status_code=401,
+                    content={"error": "Admin authentication required"},
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            return await call_next(request)
+
+        if is_caller_path(path) and not is_local:
+            if not auth.has_caller_key():
+                return JSONResponse(
+                    status_code=503,
+                    content={"error": "API key is not configured for remote access"},
+                )
+            if not auth.matches_caller_token(token):
+                return JSONResponse(
+                    status_code=401,
+                    content={"error": "Authentication required"},
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+        return await call_next(request)
 
     @app.middleware("http")
     async def rate_limit_middleware(request: Request, call_next):
         client_ip = request.client.host if request.client else "unknown"
-        api_key_header = request.headers.get("x-api-key")
+        token = extract_api_token(request.headers, "x-api-key", "x-admin-api-key")
         allowed, headers = request.app.state.rate_limiter.is_allowed(
-            client_ip, request.url.path, api_key_header
+            client_ip, request.url.path, token
         )
 
         if not allowed:
@@ -97,14 +161,6 @@ def create_app(
         response = await call_next(request)
         for k, v in headers.items():
             response.headers[k] = v
-        return response
-
-    @app.middleware("http")
-    async def add_request_id(request: Request, call_next):
-        request_id = request.headers.get("x-request-id", uuid.uuid4().hex[:16])
-        request.state.request_id = request_id
-        response = await call_next(request)
-        response.headers["x-request-id"] = request_id
         return response
 
     app.include_router(search_router, prefix="/api")

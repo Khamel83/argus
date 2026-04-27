@@ -31,7 +31,7 @@ async def health(broker: SearchBroker = Depends(get_broker)):
     )
 
 
-@router.get("/health/detail")
+@router.get("/admin/health/detail")
 async def health_detail(broker: SearchBroker = Depends(get_broker)):
     providers = {}
     for pname in ProviderName:
@@ -46,7 +46,7 @@ async def health_detail(broker: SearchBroker = Depends(get_broker)):
     }
 
 
-@router.get("/budgets")
+@router.get("/admin/budgets")
 async def budgets(broker: SearchBroker = Depends(get_broker)):
     budget_info = {}
     for pname in ProviderName:

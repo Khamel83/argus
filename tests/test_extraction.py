@@ -126,7 +126,9 @@ class TestJinaExtractor:
 
 def _good_text(n: int = 150) -> str:
     """Generate text that passes the quality gate (n words)."""
-    return " ".join(["word"] * n)
+    if n <= 1:
+        return "word."
+    return " ".join(["word"] * (n - 1) + ["done."])
 
 
 # Failing result used to simulate extractor failures in chain tests

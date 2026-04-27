@@ -309,7 +309,7 @@ def test_provider(provider, query):
 
 
 @cli.command()
-@click.option("--host", "-h", default="0.0.0.0", help="Bind host")
+@click.option("--host", "-h", default="127.0.0.1", help="Bind host")
 @click.option("--port", "-p", default=8000, help="Bind port")
 @click.option("--reload", is_flag=True, help="Auto-reload on code changes")
 def serve(host, port, reload):
@@ -330,7 +330,7 @@ def mcp():
 
 @mcp.command(name="serve")
 @click.option("--transport", "-t", default="stdio", type=click.Choice(["stdio", "sse", "streamable-http"]))
-@click.option("--host", "-h", default="0.0.0.0", help="Host for SSE/streamable-http transport")
+@click.option("--host", "-h", default="127.0.0.1", help="Host for SSE/streamable-http transport")
 @click.option("--port", "-p", default=8001, help="Port for SSE/streamable-http transport")
 def mcp_serve(transport, host, port):
     """Start MCP server. Use stdio for Claude/Cursor, sse or streamable-http for remote access."""

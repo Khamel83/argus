@@ -167,6 +167,20 @@ class TestHealthEndpoint:
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
 
+    @pytest.mark.asyncio
+    async def test_health_detail_moved_under_admin_prefix(self):
+        from argus.api.main import create_app
+        from fastapi.testclient import TestClient
+
+        mock_broker = MagicMock()
+        mock_broker.get_provider_status = MagicMock(return_value={"effective_status": "enabled"})
+        mock_broker.health_tracker.get_all_status = MagicMock(return_value={})
+
+        client = TestClient(create_app(broker=mock_broker))
+
+        resp = client.get("/api/health/detail")
+        assert resp.status_code == 404
+
 
 class TestRequestCorrelation:
     @pytest.mark.asyncio
@@ -218,7 +232,7 @@ class TestRateLimitComposition:
             )
         )
 
-        limiter = RateLimiter(max_requests=1, window_seconds=60, exempt_paths=[], api_key="")
+        limiter = RateLimiter(max_requests=1, window_seconds=60, exempt_paths=[], exempt_tokens=[])
         client = TestClient(create_app(broker=mock_broker, rate_limiter=limiter))
 
         first = client.post("/api/search", json={"query": "test", "mode": "discovery"})
@@ -228,3 +242,102 @@ class TestRateLimitComposition:
         assert "X-RateLimit-Limit" in first.headers
         assert second.status_code == 429
         assert second.json()["error"] == "Rate limit exceeded"
+
+
+class TestAuthEnforcement:
+    def _build_broker(self):
+        from argus.broker.budgets import BudgetTracker
+        from argus.broker.health import HealthTracker
+        from argus.models import SearchMode, SearchResponse
+
+        mock_broker = MagicMock()
+        mock_broker.search = AsyncMock(
+            return_value=SearchResponse(
+                query="test",
+                mode=SearchMode.DISCOVERY,
+                results=[],
+                total_results=0,
+                cached=False,
+                search_run_id="auth-1",
+            )
+        )
+        mock_broker.get_provider_status = MagicMock(return_value={"effective_status": "enabled"})
+        mock_broker.health_tracker = HealthTracker()
+        mock_broker.budget_tracker = BudgetTracker()
+        return mock_broker
+
+    def test_remote_search_requires_api_key(self, monkeypatch):
+        from fastapi.testclient import TestClient
+
+        from argus.api.main import create_app
+
+        monkeypatch.setenv("ARGUS_API_KEY", "caller-secret")
+        client = TestClient(create_app(broker=self._build_broker()), client=("203.0.113.10", 50000))
+
+        resp = client.post("/api/search", json={"query": "test", "mode": "discovery"})
+        assert resp.status_code == 401
+        assert resp.json()["error"] == "Authentication required"
+
+    def test_remote_search_accepts_bearer_or_x_api_key(self, monkeypatch):
+        from fastapi.testclient import TestClient
+
+        from argus.api.main import create_app
+
+        monkeypatch.setenv("ARGUS_API_KEY", "caller-secret")
+        client = TestClient(create_app(broker=self._build_broker()), client=("203.0.113.10", 50000))
+
+        bearer = client.post(
+            "/api/search",
+            json={"query": "test", "mode": "discovery"},
+            headers={"Authorization": "Bearer caller-secret"},
+        )
+        x_api_key = client.post(
+            "/api/search",
+            json={"query": "test", "mode": "discovery"},
+            headers={"X-API-Key": "caller-secret"},
+        )
+
+        assert bearer.status_code == 200
+        assert x_api_key.status_code == 200
+
+    def test_remote_search_fails_when_api_key_not_configured(self, monkeypatch):
+        from fastapi.testclient import TestClient
+
+        from argus.api.main import create_app
+
+        monkeypatch.delenv("ARGUS_API_KEY", raising=False)
+        monkeypatch.delenv("ARGUS_ADMIN_API_KEY", raising=False)
+        client = TestClient(create_app(broker=self._build_broker()), client=("203.0.113.10", 50000))
+
+        resp = client.post("/api/search", json={"query": "test", "mode": "discovery"})
+        assert resp.status_code == 503
+        assert resp.json()["error"] == "API key is not configured for remote access"
+
+    def test_admin_route_requires_admin_key_even_for_local_client(self, monkeypatch):
+        from fastapi.testclient import TestClient
+
+        from argus.api.main import create_app
+
+        monkeypatch.setenv("ARGUS_API_KEY", "caller-secret")
+        monkeypatch.setenv("ARGUS_ADMIN_API_KEY", "admin-secret")
+        client = TestClient(create_app(broker=self._build_broker()))
+
+        resp = client.get("/api/admin/health/detail")
+        assert resp.status_code == 401
+        assert resp.json()["error"] == "Admin authentication required"
+
+    def test_admin_route_accepts_admin_token(self, monkeypatch):
+        from fastapi.testclient import TestClient
+
+        from argus.api.main import create_app
+
+        monkeypatch.setenv("ARGUS_API_KEY", "caller-secret")
+        monkeypatch.setenv("ARGUS_ADMIN_API_KEY", "admin-secret")
+        client = TestClient(create_app(broker=self._build_broker()))
+
+        resp = client.get(
+            "/api/admin/health/detail",
+            headers={"X-Admin-API-Key": "admin-secret"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"

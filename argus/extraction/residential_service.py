@@ -8,7 +8,7 @@ as a systemd service — set and forget.
 Usage:
     python -m argus.extraction.residential_service
     # or
-    ARGUS_BIND=0.0.0.0 ARGUS_PORT=8123 python -m argus.extraction.residential_service
+    ARGUS_BIND=100.113.216.27 ARGUS_PORT=8123 python -m argus.extraction.residential_service
 
 Endpoints:
     POST /extract  {"url": "https://..."}  → ExtractedContent JSON
@@ -23,7 +23,7 @@ import shutil
 import socket
 import time
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 app = FastAPI(title="Argus Residential Extractor", version="1.0.0")
@@ -38,13 +38,43 @@ _USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 ]
 
-BIND = os.getenv("ARGUS_BIND", "0.0.0.0")
+BIND = os.getenv("ARGUS_BIND", "127.0.0.1")
 PORT = int(os.getenv("ARGUS_PORT", "8123"))
 TIMEOUT = int(os.getenv("ARGUS_RESIDENTIAL_TIMEOUT_SECONDS", "25"))
 CRAWL4AI_ENABLED = os.getenv("ARGUS_CRAWL4AI_ENABLED", "").lower() in ("1", "true")
 
 _start_time = time.time()
 _request_count = 0
+
+
+def _shared_secret() -> str:
+    return os.getenv("ARGUS_RESIDENTIAL_SHARED_SECRET", "").strip()
+
+
+def _allowed_cidrs() -> list[str]:
+    raw = os.getenv(
+        "ARGUS_RESIDENTIAL_ALLOWED_CIDRS",
+        "127.0.0.1/32,::1/128,100.64.0.0/10,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
+    )
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _client_allowed(client_host: str | None) -> bool:
+    if not client_host or client_host in {"localhost", "testclient"}:
+        return True
+
+    try:
+        client_ip = ipaddress.ip_address(client_host)
+    except ValueError:
+        return False
+
+    for cidr in _allowed_cidrs():
+        try:
+            if client_ip in ipaddress.ip_network(cidr, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 class ExtractRequest(BaseModel):
@@ -78,8 +108,20 @@ async def health():
 
 
 @app.post("/extract")
-async def extract(req: ExtractRequest):
+async def extract(req: ExtractRequest, request: Request):
     global _request_count
+    secret = _shared_secret()
+    if not secret:
+        raise HTTPException(status_code=503, detail="residential shared secret not configured")
+
+    client_host = request.client.host if request.client else None
+    if not _client_allowed(client_host):
+        raise HTTPException(status_code=403, detail="caller not allowed")
+
+    auth_header = request.headers.get("authorization", "")
+    if auth_header != f"Bearer {secret}":
+        raise HTTPException(status_code=401, detail="authentication required")
+
     _request_count += 1
     url = req.url
 

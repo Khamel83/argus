@@ -3,7 +3,7 @@ services:
     build: .
     image: argus:latest
     ports:
-      - "${ARGUS_PORT:-8000}:8000"
+      - "${ARGUS_BIND_HOST:-127.0.0.1}:${ARGUS_PORT:-8000}:8000"
     env_file:
       - .env
     environment:

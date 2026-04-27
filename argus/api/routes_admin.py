@@ -1,4 +1,4 @@
-"""Admin endpoints for provider testing."""
+"""Admin endpoints for privileged operations."""
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -6,7 +6,7 @@ from argus.api.schemas import ProviderTestRequest
 from argus.broker.router import SearchBroker
 from argus.models import ProviderName, SearchMode, SearchQuery
 
-router = APIRouter()
+router = APIRouter(prefix="/admin")
 
 
 def get_broker(request: Request) -> SearchBroker:

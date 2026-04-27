@@ -1,28 +1,31 @@
 # Contributing to Argus
 
-Thanks for taking a look. Here's how to get started.
+Argus development is standardized on Python 3.12. The published package still supports Python 3.11+, but local repo work, CI parity, and release verification should use the commands below.
 
 ## Quick Setup
 
 ```bash
 git clone https://github.com/Khamel83/argus.git && cd argus
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev,mcp]"
+uv sync --python 3.12 --extra dev --extra mcp
 cp .env.example .env  # configure at least one provider key
-pytest
+uv run pytest tests/ -v --tb=short
 ```
 
 ## Development
 
-- `pytest tests/` to run the test suite
+- Bootstrap or refresh the dev environment: `uv sync --python 3.12 --extra dev --extra mcp`
+- Run the canonical verification command: `uv run pytest tests/ -v --tb=short`
+- Run a targeted test file: `uv run pytest tests/test_api.py -v --tb=short`
 - All config via env vars — see `.env.example` for what's available
 - Provider adapters live in `argus/providers/` and implement `BaseProvider`
+
+If you do not already have `uv`, install it from <https://docs.astral.sh/uv/> and re-run the commands above. The repo also includes `.python-version` so `uv`, `pyenv`, and similar tools converge on Python 3.12 by default.
 
 ## Pull Requests
 
 1. Fork the repo
 2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Make your changes, make sure tests pass: `pytest`
+3. Make your changes, make sure tests pass: `uv run pytest tests/ -v --tb=short`
 4. Push and open a PR
 
 One change per PR makes review easier. If it's two logically separate things, it's probably two PRs.

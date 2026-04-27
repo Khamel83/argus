@@ -2,7 +2,7 @@
 
 <!-- mcp-name: io.github.Khamel83/argus -->
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-brightgreen)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B%20%7C%20dev-3.12-brightgreen)](https://www.python.org/downloads/)
 [![PyPI Version](https://img.shields.io/pypi/v/argus-search)](https://pypi.org/project/argus-search/)
 [![PyPI Downloads](https://img.shields.io/pepy/dt/argus-search)](https://pepy.tech/projects/argus-search)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -28,6 +28,7 @@ _Built for AI agent builders, RAG pipelines, and ops teams who need reliable sea
 ## Contents
 
 - [Quickstart](#quickstart)
+- [Development](#development)
 - [Providers](#providers)
 - [HTTP API](#http-api)
 - [Integration](#integration)
@@ -100,6 +101,17 @@ docker compose up -d    # SearXNG + Argus
 
 SearXNG takes 512MB of RAM and gives you a private Google-style search engine that nobody can rate-limit, block, or charge for. It runs alongside Pi-hole on hardware millions of people already own.
 
+## Development
+
+Repo development is pinned to Python 3.12. The package runtime floor remains Python 3.11, but contributors should use the `uv` workflow below so local verification matches CI and avoids accidentally using an older system interpreter.
+
+```bash
+uv sync --python 3.12 --extra dev --extra mcp
+uv run pytest tests/ -v --tb=short
+```
+
+The repo includes `.python-version` with `3.12` so `uv`, `pyenv`, and similar tools pick the right interpreter by default. More contributor guidance lives in [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Providers
 
 | Provider | Credit type | Free capacity | Setup |
@@ -128,6 +140,8 @@ SearXNG takes 512MB of RAM and gives you a private Google-style search engine th
 
 All endpoints prefixed with `/api`. OpenAPI docs at `http://localhost:8000/docs`.
 
+Local loopback calls can use the API without auth. Remote HTTP callers must send `ARGUS_API_KEY` as either `Authorization: Bearer ...` or `X-API-Key: ...`. Privileged routes under `/api/admin/*` require `ARGUS_ADMIN_API_KEY` (or fall back to `ARGUS_API_KEY` if no separate admin key is configured).
+
 ```bash
 # Search
 curl -X POST http://localhost:8000/api/search \
@@ -149,9 +163,14 @@ curl -X POST http://localhost:8000/api/recover-url \
   -H "Content-Type: application/json" \
   -d '{"url": "https://example.com/old-page", "title": "Example Article"}'
 
-# Health & budgets
-curl http://localhost:8000/api/health/detail
-curl http://localhost:8000/api/budgets
+# Public health
+curl http://localhost:8000/api/health
+
+# Admin health & budgets
+curl -H "Authorization: Bearer $ARGUS_ADMIN_API_KEY" \
+  http://localhost:8000/api/admin/health/detail
+curl -H "Authorization: Bearer $ARGUS_ADMIN_API_KEY" \
+  http://localhost:8000/api/admin/budgets
 ```
 
 #### Search modes
@@ -253,21 +272,24 @@ Run Argus on one machine, connect every client over the network. No local instal
 
 On the server:
 ```bash
-argus mcp serve --transport streamable-http --host 0.0.0.0 --port 8001
+export ARGUS_API_KEY=replace-with-a-long-random-secret
+argus mcp serve --transport streamable-http --host 100.126.13.70 --port 8001
 ```
 
 On each client:
 
 | Client | Config |
 |--------|--------|
-| **Claude Code** | `{"mcpServers":{"argus":{"type":"sse","url":"http://<server>:8001/mcp"}}}` |
-| **Antigravity** | `{"mcpServers":{"argus":{"serverUrl":"http://<server>:8001/mcp"}}}` |
+| **Claude Code** | `{"mcpServers":{"argus":{"type":"sse","url":"http://<server>:8001/mcp","headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` |
+| **Antigravity** | `{"mcpServers":{"argus":{"serverUrl":"http://<server>:8001/mcp","headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` |
 
 With [Tailscale](https://tailscale.com), `<server>` is your machine's Tailscale IP (e.g. `100.126.13.70`). One server, every machine on your mesh gets search.
 
-**Transports**: `stdio` (default, for local), `sse` (legacy remote), `streamable-http` (modern remote — required for Antigravity).
+**Transports**: `stdio` (default, for local), `sse` (legacy remote), `streamable-http` (modern remote — required for Antigravity). Remote HTTP transports require `ARGUS_API_KEY`.
 
-Available tools: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `cookie_health`, `valyu_answer`
+Available tools:
+- Local `stdio`: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `cookie_health`, `valyu_answer`
+- Remote HTTP MCP: `search_web`, `extract_content`, `recover_url`, `expand_links`, `valyu_answer`
 
 ### Python
 
@@ -388,6 +410,12 @@ Yes. Set only the API key for the provider you want. All others are silently ski
 
 **Do I need Docker?**
 No. `pip install argus-search` works immediately on any machine with Python 3.11+. Docker is only needed for SearXNG (self-hosted search, aggregates 70+ engines) or Crawl4AI (local JS rendering).
+
+**Which Python version should contributors use?**
+Use Python 3.12 for repo development and verification: `uv sync --python 3.12 --extra dev --extra mcp` then `uv run pytest tests/ -v --tb=short`. The published package still supports Python 3.11+.
+
+**What is the safest way to deploy Argus on a network?**
+Use Tailscale or another private network, bind explicitly to the trusted interface, set `ARGUS_API_KEY`, and reserve `/api/admin/*` for `ARGUS_ADMIN_API_KEY`. Treat direct internet exposure as an advanced mode behind a reverse proxy.
 
 ## License
 

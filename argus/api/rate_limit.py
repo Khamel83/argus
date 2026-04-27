@@ -1,9 +1,4 @@
-"""
-Simple in-process rate limiter.
-
-Sliding window: tracks request timestamps per client+endpoint.
-Returns 429 when the limit is exceeded within the window.
-"""
+"""Simple in-process rate limiter."""
 
 import time
 from collections import defaultdict
@@ -20,12 +15,12 @@ class RateLimiter:
         max_requests: int = 60,
         window_seconds: int = 60,
         exempt_paths: Optional[List[str]] = None,
-        api_key: Optional[str] = None,
+        exempt_tokens: Optional[List[str]] = None,
     ):
         self._max_requests = max_requests
         self._window = window_seconds
         self._exempt_paths = set(exempt_paths or ["/api/health"])
-        self._api_key = api_key
+        self._exempt_tokens = {token for token in (exempt_tokens or []) if token}
         # client_ip -> path -> [timestamps]
         self._requests: Dict[str, Dict[str, List[float]]] = defaultdict(
             lambda: defaultdict(list)
@@ -35,8 +30,7 @@ class RateLimiter:
         self, client_ip: str, path: str, api_key_header: Optional[str] = None
     ) -> Tuple[bool, dict]:
         """Check if the request is allowed. Returns (allowed, headers)."""
-        # API key bypass
-        if self._api_key and api_key_header == self._api_key:
+        if api_key_header and api_key_header in self._exempt_tokens:
             return True, {}
 
         # Exempt paths

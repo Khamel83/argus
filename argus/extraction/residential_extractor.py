@@ -29,6 +29,10 @@ RESIDENTIAL_TIMEOUT = int(os.getenv("ARGUS_RESIDENTIAL_EXTRACTOR_TIMEOUT_SECONDS
 CIRCUIT_BREAKER_COOLDOWN = 60.0
 
 
+def _shared_secret() -> str:
+    return os.getenv("ARGUS_RESIDENTIAL_SHARED_SECRET", "").strip()
+
+
 class _EndpointHealth:
     """Per-endpoint circuit breaker with TTL recovery."""
 
@@ -76,6 +80,7 @@ def _load_cookies_for_domain(domain: str) -> Optional[list[dict]]:
 async def _try_endpoint(url: str, endpoint: str, cookies: Optional[list[dict]], domain: Optional[str]) -> Optional[ExtractedContent]:
     """Try a single endpoint. Returns ExtractedContent on success, None on failure."""
     body: dict = {"url": url}
+    secret = _shared_secret()
     if cookies:
         body["cookies"] = cookies
     if domain:
@@ -86,7 +91,10 @@ async def _try_endpoint(url: str, endpoint: str, cookies: Optional[list[dict]], 
             resp = await client.post(
                 f"{endpoint}/extract",
                 json=body,
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {secret}",
+                },
             )
 
         if resp.status_code == 200:
@@ -124,6 +132,8 @@ async def extract_residential(url: str, domain: str = "") -> ExtractedContent:
     """Extract content via remote residential service with failover."""
     if not _is_configured():
         return ExtractedContent(url=url, error="residential: not configured")
+    if not _shared_secret():
+        return ExtractedContent(url=url, error="residential: shared secret not configured")
 
     cookies = _load_cookies_for_domain(domain) if domain else None
 
