@@ -101,7 +101,7 @@ Yahoo is a Tier 0 scraped provider. It will be auto-disabled by the health track
 
 | Interface | How to use |
 |-----------|-----------|
-| HTTP API | `POST /api/search`, `POST /api/extract`, `POST /api/recover-url`, `POST /api/expand` — OpenAPI at `/docs` |
+| HTTP API | `POST /api/search`, `POST /api/extract`, `POST /api/assess-content`, `POST /api/recover-url`, `POST /api/expand` — OpenAPI at `/docs` |
 | CLI | `argus search`, `argus extract`, `argus recover-url`, `argus health`, `argus budgets`, `argus set-balance` |
 | MCP | `argus mcp serve` — tools: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `valyu_answer`. Transports: stdio (default), `--transport sse` (legacy remote), `--transport streamable-http` (Antigravity, modern clients) |
 | MCP Registry | [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/servers/io.github.Khamel83/argus) — `io.github.Khamel83/argus` |
@@ -122,7 +122,7 @@ Free providers (SearXNG, DuckDuckGo) always lead. Within-tier ordering reflects 
 
 ## Content Extraction
 
-10-step fallback chain with quality gates between every step:
+10-step fallback chain with quality gates and completeness assessment between every step:
 
 ```
 trafilatura (local, fast) → Crawl4AI (local, JS rendering) →
@@ -133,6 +133,8 @@ You.com Contents ($1/1k pages) → Wayback Machine → archive.is
 ```
 
 First 4 extractors need local install. Last 6 are external APIs that work anywhere. SSRF protection blocks private IPs. Results cached in memory (168h TTL). Domain rate limiting (10 req/min/domain). Authenticated extraction via cookies for paywall domains (NYT, Bloomberg, etc.).
+
+**Completeness assessment** (`argus/extraction/completeness.py`): runs after every quality gate pass. Detects feed-level truncation (not just paywalls) via five signals: `trailing_ellipsis`, `feed_marker` ("Read more", WordPress RSS footers), `mid_sentence_end`, `abrupt_final_para`, `word_cap` (common RSS limits). Confidence ≥ 0.85 = continue chain; returned in API response as `is_complete`, `completeness_confidence`, `truncation_type`, `completeness_signals`, `recommended_action`. Use `POST /api/assess-content` to assess text you already have without triggering extraction.
 
 Obscura (https://github.com/h4ckf0r0day/obscura): optional Rust headless browser binary (~70MB, 30MB RAM). No API key, no rate limit. Two modes: (1) CLI step — install binary on PATH, Argus auto-detects via `shutil.which`. (2) CDP backend — run `obscura serve --stealth --port 9222`, set `ARGUS_OBSCURA_CDP_URL=ws://127.0.0.1:9222` to make Playwright connect to it instead of launching Chrome. CDP mode enables stealth (navigator.webdriver=undefined, fingerprint randomization) and LP.getMarkdown for DOM-to-Markdown output.
 

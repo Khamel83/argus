@@ -293,6 +293,8 @@ print(content.text)
 
 Argus tries up to ten methods to extract content from any URL: first local (trafilatura, Crawl4AI, Obscura, Playwright), then external APIs (Jina, Valyu Contents, Firecrawl, You.com, Wayback, archive.is). Each attempt is quality-checked for garbage output. See [docs/providers.md](docs/providers.md) for the full extractor comparison.
 
+**Completeness assessment** runs automatically after every successful extraction. Argus scores five signals — trailing ellipsis, feed truncation markers ("Read more", WordPress RSS footers), mid-sentence endings, abrupt final paragraphs, and suspicious round word counts — and returns `is_complete`, `completeness_confidence`, and `truncation_type` alongside the text. When confidence is ≥ 85%, Argus continues trying the next extractor rather than returning a partial result; this means a trafilatura fetch that ends with "..." will automatically fall through to Playwright, Jina, Wayback, etc. Callers that already have text (e.g. RSS feed items) can use `POST /api/assess-content` to check completeness without triggering extraction.
+
 **Obscura** (optional) is a lightweight Rust headless browser (~70MB binary, 30MB RAM) with built-in stealth mode — it sets `navigator.webdriver=undefined`, randomizes canvas/GPU/audio fingerprints per session, and blocks 3,520 tracker domains. This directly addresses bot detection on JS-heavy and anti-scraping sites that block standard Playwright/Chrome. No API key, no rate limit — fully local.
 
 Two ways to use it:
@@ -304,7 +306,7 @@ Two ways to use it:
 
 Install the binary: [github.com/h4ckf0r0day/obscura/releases](https://github.com/h4ckf0r0day/obscura/releases)
 
-**Extract** gets the full text of a working URL. **Recover-URL** finds alternatives when a URL is dead, paywalled, or radically changed by querying archival sources (Wayback, archive.is) and running a question-guided extraction loop.
+**Extract** gets the full text of a working URL and tells you whether that text is complete. **Recover-URL** finds alternatives when a URL is dead, paywalled, or radically changed.
 
 ## Architecture
 

@@ -5,7 +5,10 @@ Extraction domain models.
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from argus.extraction.completeness import CompletenessResult
 
 
 class ExtractorName(str, Enum):
@@ -39,3 +42,4 @@ class ExtractedContent:
     quality_passed: bool = True
     quality_reason: Optional[str] = None
     extractors_tried: list = field(default_factory=list)
+    completeness_result: Optional["CompletenessResult"] = None

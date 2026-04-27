@@ -121,6 +121,26 @@ class ExtractResponse(BaseModel):
     quality_passed: Optional[bool] = None
     quality_reason: Optional[str] = None
     extractors_tried: Optional[list[str]] = None
+    # Completeness assessment — present when extraction succeeded
+    is_complete: Optional[bool] = None
+    completeness_confidence: Optional[float] = None
+    truncation_type: Optional[str] = None
+    completeness_signals: Optional[list[str]] = None
+    recommended_action: Optional[str] = None
+
+
+class AssessContentRequest(BaseModel):
+    text: str
+    url: str = ""
+
+
+class AssessContentResponse(BaseModel):
+    is_complete: bool
+    confidence: float
+    truncation_type: str
+    signals: list[str]
+    word_count: int
+    recommended_action: str
 
 
 class ErrorResponse(BaseModel):

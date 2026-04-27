@@ -26,6 +26,7 @@ import os
 import httpx
 
 from argus.extraction.cache import ExtractionCache
+from argus.extraction.completeness import assess_completeness
 from argus.extraction.models import ExtractedContent, ExtractorName
 from argus.extraction.quality_gate import QualityGate, GateResult
 from argus.extraction.soft_404 import is_soft_404
@@ -62,16 +63,34 @@ _TOKENS_PER_WORD = 1.3
 
 def _run_quality_gate(content: str, url: str, extractor_name: str) -> tuple[bool, str]:
     """Run quality gate + soft 404 check. Returns (passed, reason)."""
-    # Soft 404 check first
     if is_soft_404(content):
         return False, "soft_404"
-
-    # Quality gate
     evaluation = _quality_gate.evaluate(content, url, extractor=extractor_name)
     if not evaluation.passed:
         return False, evaluation.reason
-
     return True, ""
+
+
+# Threshold for treating truncated-but-quality-passed content as "keep trying".
+# Only applies to free extractors (steps 1–6). Paid APIs are not retried for
+# completeness alone — we accept what we have and flag it for the caller.
+_COMPLETENESS_RETRY_CONFIDENCE = 0.85
+_COMPLETENESS_RETRY_MAX_STEPS = 6  # auth(1) traf(2) crawl4ai(3) obscura(4) playwright(5) residential(6)
+
+
+def _should_continue_for_completeness(result: ExtractedContent, step: int) -> bool:
+    """Return True if we should skip returning this result and try the next extractor.
+
+    Conditions: quality passed, but completeness assessment says it's clearly
+    truncated (confidence >= threshold), AND we're still in the free-extractor
+    window (step <= _COMPLETENESS_RETRY_MAX_STEPS).
+    """
+    if step > _COMPLETENESS_RETRY_MAX_STEPS:
+        return False
+    cr = result.completeness_result
+    if cr is None:
+        return False
+    return (not cr.is_complete) and cr.confidence >= _COMPLETENESS_RETRY_CONFIDENCE
 
 
 async def _extract_trafilatura(url: str) -> ExtractedContent:
@@ -191,9 +210,13 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
                 result.quality_reason = reason if not passed else None
                 result.extractors_tried = list(extractors_tried)
                 if passed:
-                    logger.info("Extracted %s via auth (%d words)", url[:60], result.word_count)
-                    _cache.put(url, result)
-                    return result
+                    result.completeness_result = assess_completeness(result.text, url)
+                    if not _should_continue_for_completeness(result, step=1):
+                        logger.info("Extracted %s via auth (%d words)", url[:60], result.word_count)
+                        _cache.put(url, result)
+                        return result
+                    logger.debug("Auth passed quality but appears truncated (%s) — continuing chain",
+                                 result.completeness_result.truncation_type)
                 track_attempt("auth", result)
         except Exception as e:
             logger.debug("Auth extraction not available: %s", e)
@@ -208,10 +231,15 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
             result.quality_reason = reason if not passed else None
             result.extractors_tried = list(extractors_tried)
             if passed:
-                logger.info("Extracted %s via trafilatura (%d words)", url[:60], result.word_count)
-                _cache.put(url, result)
-                return result
-            logger.debug("Trafilatura content failed quality gate: %s", reason)
+                result.completeness_result = assess_completeness(result.text, url)
+                if not _should_continue_for_completeness(result, step=2):
+                    logger.info("Extracted %s via trafilatura (%d words)", url[:60], result.word_count)
+                    _cache.put(url, result)
+                    return result
+                logger.debug("Trafilatura passed quality but appears truncated (%s) — continuing chain",
+                             result.completeness_result.truncation_type)
+            else:
+                logger.debug("Trafilatura content failed quality gate: %s", reason)
     except Exception as e:
         logger.warning("Trafilatura failed for %s: %s", url[:60], e)
 
@@ -228,10 +256,15 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
                 result.quality_reason = reason if not passed else None
                 result.extractors_tried = list(extractors_tried)
                 if passed:
-                    logger.info("Extracted %s via crawl4ai (%d words)", url[:60], result.word_count)
-                    _cache.put(url, result)
-                    return result
-                logger.debug("Crawl4AI content failed quality gate: %s", reason)
+                    result.completeness_result = assess_completeness(result.text, url)
+                    if not _should_continue_for_completeness(result, step=3):
+                        logger.info("Extracted %s via crawl4ai (%d words)", url[:60], result.word_count)
+                        _cache.put(url, result)
+                        return result
+                    logger.debug("Crawl4AI passed quality but appears truncated (%s) — continuing chain",
+                                 result.completeness_result.truncation_type)
+                else:
+                    logger.debug("Crawl4AI content failed quality gate: %s", reason)
         except Exception as e:
             logger.warning("Crawl4AI failed for %s: %s", url[:60], e)
 
@@ -247,10 +280,15 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
             result.quality_reason = reason if not passed else None
             result.extractors_tried = list(extractors_tried)
             if passed:
-                logger.info("Extracted %s via obscura (%d words)", url[:60], result.word_count)
-                _cache.put(url, result)
-                return result
-            logger.debug("Obscura content failed quality gate: %s", reason)
+                result.completeness_result = assess_completeness(result.text, url)
+                if not _should_continue_for_completeness(result, step=4):
+                    logger.info("Extracted %s via obscura (%d words)", url[:60], result.word_count)
+                    _cache.put(url, result)
+                    return result
+                logger.debug("Obscura passed quality but appears truncated (%s) — continuing chain",
+                             result.completeness_result.truncation_type)
+            else:
+                logger.debug("Obscura content failed quality gate: %s", reason)
     except Exception as e:
         logger.warning("Obscura failed for %s: %s", url[:60], e)
 
@@ -266,10 +304,15 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
             result.quality_reason = reason if not passed else None
             result.extractors_tried = list(extractors_tried)
             if passed:
-                logger.info("Extracted %s via playwright (%d words)", url[:60], result.word_count)
-                _cache.put(url, result)
-                return result
-            logger.debug("Playwright content failed quality gate: %s", reason)
+                result.completeness_result = assess_completeness(result.text, url)
+                if not _should_continue_for_completeness(result, step=5):
+                    logger.info("Extracted %s via playwright (%d words)", url[:60], result.word_count)
+                    _cache.put(url, result)
+                    return result
+                logger.debug("Playwright passed quality but appears truncated (%s) — continuing chain",
+                             result.completeness_result.truncation_type)
+            else:
+                logger.debug("Playwright content failed quality gate: %s", reason)
     except Exception as e:
         logger.warning("Playwright failed for %s: %s", url[:60], e)
 
@@ -286,10 +329,15 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
                 result.quality_reason = reason if not passed else None
                 result.extractors_tried = list(extractors_tried)
                 if passed:
-                    logger.info("Extracted %s via residential (%d words)", url[:60], result.word_count)
-                    _cache.put(url, result)
-                    return result
-                logger.debug("Residential content failed quality gate: %s", reason)
+                    result.completeness_result = assess_completeness(result.text, url)
+                    if not _should_continue_for_completeness(result, step=6):
+                        logger.info("Extracted %s via residential (%d words)", url[:60], result.word_count)
+                        _cache.put(url, result)
+                        return result
+                    logger.debug("Residential passed quality but appears truncated (%s) — continuing chain",
+                                 result.completeness_result.truncation_type)
+                else:
+                    logger.debug("Residential content failed quality gate: %s", reason)
     except Exception as e:
         logger.warning("Residential extraction failed for %s: %s", url[:60], e)
 
@@ -303,6 +351,7 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
             result.quality_reason = reason if not passed else None
             result.extractors_tried = list(extractors_tried)
             if passed:
+                result.completeness_result = assess_completeness(result.text, url)
                 logger.info("Extracted %s via Jina (%d words)", url[:60], result.word_count)
                 _cache.put(url, result)
                 _track_jina_usage(result.word_count)
@@ -323,6 +372,7 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
             result.quality_reason = reason if not passed else None
             result.extractors_tried = list(extractors_tried)
             if passed:
+                result.completeness_result = assess_completeness(result.text, url)
                 logger.info("Extracted %s via Valyu Contents (%d words)", url[:60], result.word_count)
                 _cache.put(url, result)
                 return result
@@ -342,6 +392,7 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
             result.quality_reason = reason if not passed else None
             result.extractors_tried = list(extractors_tried)
             if passed:
+                result.completeness_result = assess_completeness(result.text, url)
                 logger.info("Extracted %s via Firecrawl (%d words)", url[:60], result.word_count)
                 _cache.put(url, result)
                 return result
@@ -362,6 +413,7 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
                 result.quality_reason = reason if not passed else None
                 result.extractors_tried = list(extractors_tried)
                 if passed:
+                    result.completeness_result = assess_completeness(result.text, url)
                     logger.info("Extracted %s via You.com Contents (%d words)", url[:60], result.word_count)
                     _cache.put(url, result)
                     return result
@@ -381,6 +433,7 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
             result.quality_reason = reason if not passed else None
             result.extractors_tried = list(extractors_tried)
             if passed:
+                result.completeness_result = assess_completeness(result.text, url)
                 logger.info("Extracted %s via wayback (%d words)", url[:60], result.word_count)
                 _cache.put(url, result)
                 return result
@@ -400,6 +453,7 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
             result.quality_reason = reason if not passed else None
             result.extractors_tried = list(extractors_tried)
             if passed:
+                result.completeness_result = assess_completeness(result.text, url)
                 logger.info("Extracted %s via archive.is (%d words)", url[:60], result.word_count)
                 _cache.put(url, result)
                 return result
@@ -412,6 +466,8 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
         best_result.quality_passed = False
         best_result.quality_reason = "all_extractors_quality_failed"
         best_result.extractors_tried = extractors_tried
+        if best_result.text and best_result.completeness_result is None:
+            best_result.completeness_result = assess_completeness(best_result.text, url)
         _cache.put(url, best_result)
         logger.warning(
             "All quality gates failed for %s, returning best (%d words via %s)",
