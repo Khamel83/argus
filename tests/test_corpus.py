@@ -1,5 +1,6 @@
 """Tests for Argus corpus path resolution and legacy import."""
 
+import os
 from pathlib import Path
 
 
@@ -26,4 +27,18 @@ class TestCorpusPaths:
         result = mirror_legacy_docs_cache(legacy, get_corpus_paths())
         assert result["docs_cache_files"] >= 1
         assert result["research_files"] >= 1
+        assert Path(result["manifest_path"]).exists()
+
+    def test_mirror_legacy_docs_cache_skips_broken_symlinks(self, monkeypatch, tmp_path):
+        legacy = tmp_path / "docs-cache"
+        (legacy / "docs" / "cache" / "demo").mkdir(parents=True)
+        (legacy / "docs" / "external").mkdir(parents=True)
+        (legacy / "docs" / "cache" / "demo" / "README.md").write_text("# Demo\n", encoding="utf-8")
+        os.symlink(legacy / "missing-target", legacy / "docs" / "external" / "broken-link")
+
+        monkeypatch.setenv("ARGUS_DATA_ROOT", str(tmp_path / "argus-data"))
+        from argus.corpus import get_corpus_paths, mirror_legacy_docs_cache
+
+        result = mirror_legacy_docs_cache(legacy, get_corpus_paths())
+        assert result["docs_cache_files"] >= 1
         assert Path(result["manifest_path"]).exists()

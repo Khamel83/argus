@@ -119,6 +119,8 @@ def _copy_tree(source: Path, destination: Path) -> int:
 
     copied = 0
     for path in source.rglob("*"):
+        if path.is_symlink() and not path.exists():
+            continue
         relative = path.relative_to(source)
         target = destination / relative
         if path.is_dir():
