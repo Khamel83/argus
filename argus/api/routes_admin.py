@@ -2,15 +2,20 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from argus.api.schemas import ProviderTestRequest
+from argus.api.schemas import PathsResponse, ProviderTestRequest
 from argus.broker.router import SearchBroker
 from argus.models import ProviderName, SearchMode, SearchQuery
+from argus.workflows import WorkflowService
 
 router = APIRouter(prefix="/admin")
 
 
 def get_broker(request: Request) -> SearchBroker:
     return request.app.state.get_broker()
+
+
+def get_workflows(request: Request) -> WorkflowService:
+    return request.app.state.get_workflows()
 
 
 @router.post("/test-provider")
@@ -42,3 +47,8 @@ async def test_provider(req: ProviderTestRequest, broker: SearchBroker = Depends
             for r in results[:3]
         ],
     }
+
+
+@router.get("/paths", response_model=PathsResponse)
+async def corpus_paths(workflows: WorkflowService = Depends(get_workflows)):
+    return PathsResponse(**workflows.get_paths())

@@ -10,7 +10,7 @@
 [![MCP Registry](https://img.shields.io/badge/MCP-Registry-blue)](https://registry.modelcontextprotocol.io/servers/io.github.Khamel83/argus)
 [![Docker](https://img.shields.io/badge/ghcr.io-khamel83%2Fargus-blue)](https://github.com/Khamel83/argus/pkgs/container/argus)
 
-Multi-provider web search broker for AI agents. 14 providers, budget-aware routing, content extraction — one API so your agent doesn't need to stitch search results together.
+Retrieval platform for AI agents. Argus routes search across 14 providers, recovers dead URLs, captures important site content, builds local docs-plus-research packs, and persists everything with traceable local artifacts.
 
 **Features at a glance:**
 
@@ -18,17 +18,23 @@ Multi-provider web search broker for AI agents. 14 providers, budget-aware routi
 - **Zero-key start** — `pip install argus-search` gives you DuckDuckGo + Yahoo immediately, no accounts needed
 - **SearXNG self-host = 70+ engines** — Google, Bing, Yahoo, Startpage, Ecosia, Qwant and more via one Docker container
 - **10-step content extraction** — returns full page text with quality gates, not just links
+- **Opinionated retrieval workflows** — recover dead articles, capture important pages from a site, and build local docs-plus-research packs
+- **Argus-owned corpus storage** — runtime data goes to a writable user data directory, not your repo checkout
 - **Multi-turn sessions** — pass `session_id` for conversational context across searches
 - **4 search modes** — discovery, research, recovery, grounding
 - **Dead URL recovery** — `/recover-url` with Wayback Machine and archive fallbacks
 - **4 integration paths** — HTTP API, CLI, MCP server, Python SDK
 
-_Built for AI agent builders, RAG pipelines, and ops teams who need reliable search without stitching APIs together._
+_Built for AI agent builders, RAG pipelines, and ops teams who need reliable search, capture, and local evidence without stitching APIs together._
+
+> Status: beta. The retrieval workflows and corpus model are production-oriented, but still maturing.
 
 ## Contents
 
 - [Quickstart](#quickstart)
 - [Development](#development)
+- [Where Argus Writes Data](#where-argus-writes-data)
+- [Opinionated Workflows](#opinionated-workflows)
 - [Providers](#providers)
 - [HTTP API](#http-api)
 - [Integration](#integration)
@@ -38,6 +44,7 @@ _Built for AI agent builders, RAG pipelines, and ops teams who need reliable sea
 - [Content Extraction](#content-extraction)
 - [Architecture](#architecture)
 - [Configuration](#configuration)
+- [When Not To Use Argus](#when-not-to-use-argus)
 - [FAQ](#faq)
 
 ## Quickstart
@@ -52,6 +59,9 @@ That's it. DuckDuckGo handles the search — no accounts, no keys, no containers
 
 ```bash
 argus extract -u "https://example.com/article"       # extract clean text from any URL
+argus recover-article -u "https://example.com/dead-post"
+argus capture-site -u "https://docs.example.com"
+argus build-research-pack -t "example sdk" --official-url "https://docs.example.com"
 ```
 
 Works on any machine with Python 3.11+ — laptop, Mac Mini, Raspberry Pi, cloud VM. Nothing to host.
@@ -100,6 +110,61 @@ docker compose up -d    # SearXNG + Argus
 | **Free cloud VM** (1GB) | SearXNG + search providers (skip Crawl4AI) |
 
 SearXNG takes 512MB of RAM and gives you a private Google-style search engine that nobody can rate-limit, block, or charge for. It runs alongside Pi-hole on hardware millions of people already own.
+
+## Where Argus Writes Data
+
+Argus code and Argus runtime data are different things.
+
+- **Code** lives wherever you install or clone Argus.
+- **Runtime corpus data** lives in a writable user data directory resolved by `platformdirs`, or in `ARGUS_DATA_ROOT` if you override it.
+
+Inspect the exact paths on your machine:
+
+```bash
+argus paths
+```
+
+By default Argus writes:
+
+- official docs cache under the resolved `docs/cache/`
+- research packs under `docs/research/`
+- workflow run state under `workflows/runs/`
+- versioned workflow snapshots under `snapshots/`
+
+This means Argus does **not** require a sibling `../docs-cache` checkout. If you have an older `docs-cache` tree, import it once with:
+
+```bash
+argus corpus import-docs-cache -s /path/to/docs-cache
+```
+
+## Opinionated Workflows
+
+These workflows build local artifacts, not just transient JSON responses.
+
+### Recover A Dead Article
+
+```bash
+argus recover-article -u "https://example.com/old-post" -t "Example Post"
+```
+
+Argus searches for recovery candidates, extracts the best result, saves the recovered sources locally, and writes a citation-backed report plus manifest.
+
+### Capture The Important Parts Of A Site
+
+```bash
+argus capture-site -u "https://docs.example.com"
+```
+
+Argus stays on-domain, uses sitemap-assisted discovery plus heuristic link scoring, saves the important pages it finds, and writes a detailed summary with references.
+
+### Build A Docs + Research Pack
+
+```bash
+argus build-research-pack -t "example sdk"
+argus build-research-pack -t "example sdk" --official-url "https://docs.example.com"
+```
+
+Argus captures official docs into its local docs cache, adds non-official supporting sources from search, and writes a combined research pack with traceable artifacts.
 
 ## Development
 
@@ -393,12 +458,24 @@ All config via environment variables. See `.env.example` for the full list. Miss
 | `ARGUS_VALYU_API_KEY` | — | Valyu API key (search, contents, answer) |
 | `ARGUS_FIRECRAWL_API_KEY` | — | Firecrawl API key (content extraction) |
 | `ARGUS_GITHUB_API_KEY` | — | GitHub token (higher rate limit) |
+| `ARGUS_DATA_ROOT` | platformdirs user data dir | Override the Argus runtime corpus root |
 | `ARGUS_*_MONTHLY_BUDGET_USD` | 0 (unlimited) | Query-count budget per provider |
 | `ARGUS_CRAWL4AI_ENABLED` | false | Enable Crawl4AI extraction step |
 | `ARGUS_YOU_CONTENTS_ENABLED` | false | Enable You.com Contents API extraction |
 | `ARGUS_OBSCURA_CDP_URL` | — | Obscura CDP endpoint (e.g. `ws://127.0.0.1:9222`) — makes Playwright use Obscura as its browser engine |
 | `ARGUS_OBSCURA_TIMEOUT_SECONDS` | 20 | Timeout for Obscura CLI subprocess calls |
 | `ARGUS_CACHE_TTL_HOURS` | 168 | Result cache TTL |
+
+## When Not To Use Argus
+
+Argus is best when you need search, capture, provenance, and local artifacts together.
+
+Avoid it when:
+
+- you only need one search API and do not need fallback or budget controls
+- you only need a one-off page scrape with no persistent corpus or report output
+- you need an end-user search UI rather than backend retrieval infrastructure
+- you need fully deterministic summarization with no heuristic or LLM-assisted steps
 
 ## FAQ
 

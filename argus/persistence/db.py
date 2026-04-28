@@ -13,7 +13,20 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from argus.config import get_config
 from argus.logging import get_logger
-from argus.persistence.models import Base, ProviderUsageRow, SearchEvidenceRow, SearchQueryRow, SearchResultRow, SearchRunRow
+from argus.persistence.models import (
+    Base,
+    CorpusDocumentRow,
+    CorpusSnapshotRow,
+    CrawlRunRow,
+    ProviderUsageRow,
+    SearchEvidenceRow,
+    SearchQueryRow,
+    SearchResultRow,
+    SearchRunRow,
+    WorkflowArtifactRow,
+    WorkflowCitationRow,
+    WorkflowRunRow,
+)
 from argus.models import ProviderTrace, SearchQuery, SearchResponse
 
 logger = get_logger("persistence.db")
@@ -124,3 +137,108 @@ class SearchPersistenceGateway:
         except Exception as exc:
             logger.warning("Failed to persist search: %s", exc)
             return None
+
+
+class WorkflowPersistenceGateway:
+    """Best-effort persistence for workflow run metadata."""
+
+    def record_run_state(self, payload: dict) -> Optional[str]:
+        try:
+            with get_session() as session:
+                run_id = payload["run_id"]
+                session.query(WorkflowRunRow).filter_by(workflow_run_id=run_id).delete()
+                session.query(CorpusSnapshotRow).filter_by(workflow_run_id=run_id).delete()
+                session.query(CrawlRunRow).filter_by(workflow_run_id=run_id).delete()
+                session.query(CorpusDocumentRow).filter_by(workflow_run_id=run_id).delete()
+                session.query(WorkflowArtifactRow).filter_by(workflow_run_id=run_id).delete()
+                session.query(WorkflowCitationRow).filter_by(workflow_run_id=run_id).delete()
+
+                session.add(
+                    WorkflowRunRow(
+                        workflow_run_id=run_id,
+                        workflow_kind=payload["kind"],
+                        target=payload["target"],
+                        status=payload["status"],
+                        snapshot_dir=payload.get("snapshot_dir", ""),
+                        report_path=payload.get("report_path"),
+                        manifest_path=payload.get("manifest_path"),
+                        error=payload.get("error"),
+                        metadata_json=json.dumps(payload.get("metadata", {})),
+                        created_at=_parse_dt(payload.get("created_at")),
+                        started_at=_parse_dt(payload.get("started_at")),
+                        finished_at=_parse_dt(payload.get("finished_at")),
+                    )
+                )
+                session.add(
+                    CorpusSnapshotRow(
+                        workflow_run_id=run_id,
+                        snapshot_dir=payload.get("snapshot_dir", ""),
+                        is_current=payload["status"] == "completed",
+                        metadata_json=json.dumps(payload.get("metadata", {})),
+                    )
+                )
+
+                documents = payload.get("documents", [])
+                session.add(
+                    CrawlRunRow(
+                        workflow_run_id=run_id,
+                        root_url=payload["target"],
+                        candidate_count=payload.get("metadata", {}).get("candidate_urls", len(documents)),
+                        captured_count=len(documents),
+                        metadata_json=json.dumps(payload.get("metadata", {})),
+                    )
+                )
+
+                for document in documents:
+                    session.add(
+                        CorpusDocumentRow(
+                            workflow_run_id=run_id,
+                            citation_id=document["id"],
+                            source_type=document.get("source_type", "web"),
+                            role=document.get("role", "source"),
+                            title=document.get("title", ""),
+                            url=document["url"],
+                            domain=document.get("domain", ""),
+                            artifact_path=document["artifact_path"],
+                            extractor=document.get("extractor"),
+                            word_count=document.get("word_count", 0),
+                            metadata_json=json.dumps(document.get("metadata", {})),
+                        )
+                    )
+
+                for artifact in payload.get("artifacts", []):
+                    session.add(
+                        WorkflowArtifactRow(
+                            workflow_run_id=run_id,
+                            artifact_kind=artifact["kind"],
+                            path=artifact["path"],
+                            description=artifact.get("description", ""),
+                        )
+                    )
+
+                for citation in payload.get("citations", []):
+                    session.add(
+                        WorkflowCitationRow(
+                            workflow_run_id=run_id,
+                            citation_id=citation["id"],
+                            title=citation.get("title", ""),
+                            url=citation.get("url", ""),
+                            artifact_path=citation["artifact_path"],
+                            note=citation.get("note", ""),
+                        )
+                    )
+                return run_id
+        except Exception as exc:
+            logger.warning("Failed to persist workflow state: %s", exc)
+            return None
+
+
+def _parse_dt(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return None

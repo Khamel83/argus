@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "argus-search"
 version = "1.4.0"
-description = "One endpoint, every free search API. Search broker for AI agents with automatic fallback, RRF ranking, and budget enforcement. The LiteLLM of web search."
+description = "Retrieval platform for AI agents with multi-provider search, capture workflows, local corpus storage, and budget-aware routing."
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
@@ -29,6 +29,7 @@ dependencies = [
     "psycopg2-binary>=2.9.0",
     "httpx>=0.27.0",
     "click>=8.1.0",
+    "platformdirs>=4.3.0",
     "pyyaml>=6.0",
     "trafilatura>=1.6.0",
     "ddgs>=9.0",

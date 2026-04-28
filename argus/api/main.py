@@ -22,8 +22,10 @@ from argus.api.routes_admin import router as admin_router
 from argus.api.routes_extract import router as extract_router
 from argus.api.routes_health import router as health_router
 from argus.api.routes_search import router as search_router
+from argus.api.routes_workflows import router as workflows_router
 from argus.broker.router import SearchBroker, create_broker
 from argus.logging import get_logger
+from argus.workflows import WorkflowService
 
 logger = get_logger("api")
 
@@ -63,6 +65,20 @@ def _build_broker_provider(
     return get_broker
 
 
+def _build_workflow_provider(
+    broker_provider: Callable[[], SearchBroker],
+) -> Callable[[], WorkflowService]:
+    current: WorkflowService | None = None
+
+    def get_workflows() -> WorkflowService:
+        nonlocal current
+        if current is None:
+            current = WorkflowService(broker_provider())
+        return current
+
+    return get_workflows
+
+
 def create_app(
     *,
     broker: Optional[SearchBroker] = None,
@@ -72,11 +88,12 @@ def create_app(
     auth_config = AuthConfig.from_env()
     app = FastAPI(
         title="Argus",
-        description="Standalone search broker service",
+        description="Retrieval platform for AI agents",
         version="1.0.0",
         lifespan=lifespan,
     )
     app.state.get_broker = _build_broker_provider(broker, broker_factory)
+    app.state.get_workflows = _build_workflow_provider(app.state.get_broker)
     app.state.rate_limiter = rate_limiter or _build_rate_limiter()
     app.state.auth_config = auth_config
 
@@ -167,6 +184,7 @@ def create_app(
     app.include_router(health_router, prefix="/api")
     app.include_router(admin_router, prefix="/api")
     app.include_router(extract_router, prefix="/api")
+    app.include_router(workflows_router, prefix="/api")
     return app
 
 

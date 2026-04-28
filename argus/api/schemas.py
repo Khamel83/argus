@@ -3,12 +3,14 @@ Pydantic request/response schemas for the HTTP API.
 """
 
 import re
-from typing import List, Optional, Set
+from typing import Any, List, Optional, Set
 
 from pydantic import BaseModel, Field, field_validator
 
+from argus.models import ProviderName
+
 _VALID_MODES: Set[str] = {"recovery", "discovery", "grounding", "research"}
-_VALID_PROVIDERS: Set[str] = {"searxng", "brave", "serper", "tavily", "exa", "searchapi", "you"}
+_VALID_PROVIDERS: Set[str] = {provider.value for provider in ProviderName if provider != ProviderName.CACHE}
 
 
 class SearchRequest(BaseModel):
@@ -67,8 +69,8 @@ class ProviderTraceSchema(BaseModel):
 class SearchResponse(BaseModel):
     query: str
     mode: str
-    results: List[SearchResultSchema] = []
-    traces: List[ProviderTraceSchema] = []
+    results: List[SearchResultSchema] = Field(default_factory=list)
+    traces: List[ProviderTraceSchema] = Field(default_factory=list)
     total_results: int = 0
     cached: bool = False
     search_run_id: Optional[str] = None
@@ -146,3 +148,87 @@ class AssessContentResponse(BaseModel):
 class ErrorResponse(BaseModel):
     error: str
     details: Optional[dict] = None
+
+
+class PathsResponse(BaseModel):
+    data_root: str
+    docs_root: str
+    docs_cache_dir: str
+    docs_cache_index: str
+    research_dir: str
+    workflow_runs_dir: str
+    snapshots_dir: str
+    imports_dir: str
+    env_override: Optional[str] = None
+    uses_platformdirs: bool = False
+
+
+class WorkflowArtifactSchema(BaseModel):
+    kind: str
+    path: str
+    description: str = ""
+
+
+class CitationSchema(BaseModel):
+    id: str
+    title: str
+    url: str
+    artifact_path: str
+    note: str = ""
+
+
+class SummarySectionSchema(BaseModel):
+    heading: str
+    body: str
+    citation_ids: List[str] = Field(default_factory=list)
+
+
+class StoredDocumentSchema(BaseModel):
+    id: str
+    url: str
+    title: str
+    artifact_path: str
+    word_count: int = 0
+    domain: str = ""
+    role: str = "source"
+    source_type: str = "web"
+    extractor: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowRunResponse(BaseModel):
+    run_id: str
+    kind: str
+    status: str
+    target: str
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    status_url: Optional[str] = None
+    snapshot_dir: str = ""
+    report_path: Optional[str] = None
+    manifest_path: Optional[str] = None
+    artifacts: List[WorkflowArtifactSchema] = Field(default_factory=list)
+    documents: List[StoredDocumentSchema] = Field(default_factory=list)
+    citations: List[CitationSchema] = Field(default_factory=list)
+    summary_sections: List[SummarySectionSchema] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    error: Optional[str] = None
+
+
+class RecoverArticleWorkflowRequest(BaseModel):
+    url: str = Field(..., min_length=1, max_length=2048)
+    title: Optional[str] = None
+    domain: Optional[str] = None
+
+
+class CaptureSiteWorkflowRequest(BaseModel):
+    url: str = Field(..., min_length=1, max_length=2048)
+    soft_page_limit: int = Field(75, ge=1, le=500)
+    hard_page_limit: int = Field(200, ge=1, le=500)
+
+
+class BuildResearchPackWorkflowRequest(BaseModel):
+    topic: str = Field(..., min_length=1, max_length=500)
+    official_url: Optional[str] = None
+    max_research_pages: int = Field(40, ge=1, le=100)

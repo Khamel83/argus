@@ -101,6 +101,40 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
         """Get an AI-synthesized answer with citations. Uses Valyu Answer API ($0.10+/request)."""
         return await mcp_tools.valyu_answer(query, fast_mode=fast_mode)
 
+    @mcp.tool()
+    def argus_paths() -> str:
+        """Show the resolved Argus runtime storage paths."""
+        return mcp_tools.argus_paths()
+
+    @mcp.tool()
+    async def recover_dead_article(url: str, title: str = None, domain: str = None) -> str:
+        """Recover a dead article into a local report with citations."""
+        return await mcp_tools.recover_dead_article(broker, url, title, domain)
+
+    @mcp.tool()
+    async def capture_site(url: str, soft_page_limit: int = 75, hard_page_limit: int = 200) -> str:
+        """Capture the important parts of a site and summarize them."""
+        return await mcp_tools.capture_site(
+            broker,
+            url,
+            soft_page_limit=soft_page_limit,
+            hard_page_limit=hard_page_limit,
+        )
+
+    @mcp.tool()
+    async def build_research_pack(
+        topic: str,
+        official_url: str = None,
+        max_research_pages: int = 40,
+    ) -> str:
+        """Build a local pack with official docs plus external research."""
+        return await mcp_tools.build_research_pack(
+            broker,
+            topic,
+            official_url=official_url,
+            max_research_pages=max_research_pages,
+        )
+
     if expose_admin_tools:
         @mcp.tool()
         def search_health() -> str:
@@ -137,6 +171,11 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
         def routing_policies() -> str:
             """Current routing policies for each search mode."""
             return mcp_resources.routing_policies_resource(broker)
+
+        @mcp.resource("argus://corpus/paths")
+        def corpus_paths() -> str:
+            """Resolved Argus runtime storage paths."""
+            return mcp_resources.corpus_paths_resource()
 
     # Start server
     if transport == "stdio":

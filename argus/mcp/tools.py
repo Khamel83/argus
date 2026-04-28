@@ -6,7 +6,9 @@ import json
 from typing import Optional
 
 from argus.broker.router import SearchBroker
+from argus.corpus import describe_corpus_paths
 from argus.models import SearchMode, SearchQuery
+from argus.workflows import WorkflowService
 
 
 def _serialize_response(resp) -> str:
@@ -273,6 +275,11 @@ async def valyu_answer(query: str, fast_mode: bool = False) -> str:
     }, indent=2)
 
 
+def argus_paths() -> str:
+    """Show the resolved Argus runtime storage layout."""
+    return json.dumps(describe_corpus_paths(), indent=2)
+
+
 async def extract_content(url: str, domain: str = None) -> str:
     """Extract clean text content from a URL.
 
@@ -294,6 +301,68 @@ async def extract_content(url: str, domain: str = None) -> str:
         "extractor": result.extractor.value if result.extractor else None,
         "error": result.error,
     }, indent=2)
+
+
+def _serialize_workflow(result) -> str:
+    return json.dumps(
+        {
+            "run_id": result.run_id,
+            "kind": result.kind.value,
+            "status": result.status.value,
+            "target": result.target,
+            "snapshot_dir": result.snapshot_dir,
+            "report_path": result.report_path,
+            "manifest_path": result.manifest_path,
+            "artifacts": [artifact.__dict__ for artifact in result.artifacts],
+            "documents": [document.__dict__ for document in result.documents],
+            "citations": [citation.__dict__ for citation in result.citations],
+            "summary_sections": [section.__dict__ for section in result.summary_sections],
+            "metadata": result.metadata,
+            "error": result.error,
+        },
+        indent=2,
+    )
+
+
+async def recover_dead_article(
+    broker: SearchBroker,
+    url: str,
+    title: Optional[str] = None,
+    domain: Optional[str] = None,
+) -> str:
+    """Recover a dead article into a local citation-backed report."""
+    result = await WorkflowService(broker).recover_article(url=url, title=title, domain=domain)
+    return _serialize_workflow(result)
+
+
+async def capture_site(
+    broker: SearchBroker,
+    url: str,
+    soft_page_limit: int = 75,
+    hard_page_limit: int = 200,
+) -> str:
+    """Capture the important pages from a site and summarize them."""
+    result = await WorkflowService(broker).capture_site(
+        url=url,
+        soft_page_limit=soft_page_limit,
+        hard_page_limit=hard_page_limit,
+    )
+    return _serialize_workflow(result)
+
+
+async def build_research_pack(
+    broker: SearchBroker,
+    topic: str,
+    official_url: Optional[str] = None,
+    max_research_pages: int = 40,
+) -> str:
+    """Build a combined official-docs and external-research pack."""
+    result = await WorkflowService(broker).build_research_pack(
+        topic=topic,
+        official_url=official_url,
+        max_research_pages=max_research_pages,
+    )
+    return _serialize_workflow(result)
 
 
 def cookie_health() -> str:

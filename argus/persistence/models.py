@@ -1,7 +1,10 @@
 """
 SQLAlchemy ORM models for Argus persistence.
 
-Tables: search_queries, search_runs, search_results, provider_usage, search_evidence.
+Tables:
+- search_queries, search_runs, search_results, provider_usage, search_evidence
+- corpus_sources, corpus_documents, corpus_snapshots, crawl_runs
+- workflow_runs, workflow_artifacts, workflow_citations
 """
 
 from datetime import datetime
@@ -96,4 +99,100 @@ class SearchEvidenceRow(Base):
     title: Mapped[str] = mapped_column(Text, default="")
     snippet: Mapped[str] = mapped_column(Text, default="")
     evidence_type: Mapped[str] = mapped_column(String(50), default="search")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class CorpusSourceRow(Base):
+    __tablename__ = "corpus_sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(50), nullable=False, default="web")
+    title: Mapped[str] = mapped_column(Text, default="")
+    url: Mapped[str] = mapped_column(Text, default="")
+    domain: Mapped[str] = mapped_column(String(255), default="")
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class CorpusSnapshotRow(Base):
+    __tablename__ = "corpus_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workflow_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    snapshot_dir: Mapped[str] = mapped_column(Text, nullable=False)
+    is_current: Mapped[bool] = mapped_column(Boolean, default=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class WorkflowRunRow(Base):
+    __tablename__ = "workflow_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workflow_run_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    workflow_kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    target: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
+    snapshot_dir: Mapped[str] = mapped_column(Text, default="")
+    report_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    manifest_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class CrawlRunRow(Base):
+    __tablename__ = "crawl_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workflow_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    root_url: Mapped[str] = mapped_column(Text, nullable=False)
+    candidate_count: Mapped[int] = mapped_column(Integer, default=0)
+    captured_count: Mapped[int] = mapped_column(Integer, default=0)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class CorpusDocumentRow(Base):
+    __tablename__ = "corpus_documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workflow_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    citation_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(64), default="web")
+    role: Mapped[str] = mapped_column(String(64), default="source")
+    title: Mapped[str] = mapped_column(Text, default="")
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    domain: Mapped[str] = mapped_column(String(255), default="")
+    artifact_path: Mapped[str] = mapped_column(Text, nullable=False)
+    extractor: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    word_count: Mapped[int] = mapped_column(Integer, default=0)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class WorkflowArtifactRow(Base):
+    __tablename__ = "workflow_artifacts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workflow_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    artifact_kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    path: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class WorkflowCitationRow(Base):
+    __tablename__ = "workflow_citations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workflow_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    citation_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    title: Mapped[str] = mapped_column(Text, default="")
+    url: Mapped[str] = mapped_column(Text, default="")
+    artifact_path: Mapped[str] = mapped_column(Text, nullable=False)
+    note: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

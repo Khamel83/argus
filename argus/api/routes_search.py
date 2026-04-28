@@ -11,7 +11,7 @@ from argus.api.schemas import (
     ProviderTraceSchema,
 )
 from argus.broker.router import SearchBroker
-from argus.models import SearchMode, SearchQuery
+from argus.models import ProviderName, SearchMode, SearchQuery
 
 router = APIRouter()
 
@@ -58,6 +58,7 @@ async def search(req: SearchRequest, broker: SearchBroker = Depends(get_broker))
         query=req.query,
         mode=SearchMode(req.mode),
         max_results=req.max_results,
+        providers=[ProviderName(provider) for provider in req.providers] if req.providers else None,
     )
 
     if req.session_id:

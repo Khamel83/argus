@@ -1,8 +1,8 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Khamel83/argus",
-  "title": "Argus Search",
-  "description": "Search infrastructure for AI agents: 14 providers, WolframAlpha computed answers, 9-step content extraction, and budget-aware routing.",
+  "title": "Argus Retrieval",
+  "description": "Retrieval platform for AI agents: multi-provider search, dead-article recovery, site capture, local docs-plus-research packs, and budget-aware routing.",
   "repository": {
     "url": "https://github.com/Khamel83/argus",
     "source": "github"
@@ -58,6 +58,12 @@
         {
           "name": "ARGUS_SEARXNG_BASE_URL",
           "description": "SearXNG instance URL (self-hosted, aggregates 70+ engines)",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "ARGUS_DATA_ROOT",
+          "description": "Optional override for the writable Argus runtime corpus root",
           "isRequired": false,
           "isSecret": false
         }

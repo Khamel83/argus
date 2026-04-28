@@ -341,3 +341,94 @@ class TestAuthEnforcement:
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
+
+
+class TestWorkflowEndpoints:
+    def _workflow_run(self):
+        from argus.workflows.models import WorkflowKind, WorkflowResult, WorkflowStatus
+
+        return WorkflowResult(
+            run_id="wf-1",
+            kind=WorkflowKind.RECOVER_ARTICLE,
+            status=WorkflowStatus.RUNNING,
+            target="https://dead.example.com/post",
+            status_url="/api/workflows/wf-1",
+            snapshot_dir="/tmp/argus/snapshots/recover-article/dead-example-com/wf-1",
+        )
+
+    def test_admin_paths_endpoint(self, monkeypatch):
+        from fastapi.testclient import TestClient
+
+        from argus.api.main import create_app
+
+        mock_broker = MagicMock()
+        mock_broker.get_provider_status = MagicMock(return_value={"effective_status": "enabled"})
+        mock_broker.health_tracker.get_all_status = MagicMock(return_value={})
+        mock_broker.budget_tracker = MagicMock()
+
+        mock_workflows = MagicMock()
+        mock_workflows.get_paths.return_value = {
+            "data_root": "/tmp/argus",
+            "docs_root": "/tmp/argus/docs",
+            "docs_cache_dir": "/tmp/argus/docs/cache",
+            "docs_cache_index": "/tmp/argus/docs/cache/.index.md",
+            "research_dir": "/tmp/argus/docs/research",
+            "workflow_runs_dir": "/tmp/argus/workflows/runs",
+            "snapshots_dir": "/tmp/argus/snapshots",
+            "imports_dir": "/tmp/argus/imports",
+            "env_override": None,
+            "uses_platformdirs": False,
+        }
+
+        monkeypatch.setenv("ARGUS_ADMIN_API_KEY", "admin-secret")
+        app = create_app(broker=mock_broker)
+        app.state.get_workflows = lambda: mock_workflows
+        client = TestClient(app)
+
+        resp = client.get("/api/admin/paths", headers={"X-Admin-API-Key": "admin-secret"})
+        assert resp.status_code == 200
+        assert resp.json()["data_root"] == "/tmp/argus"
+
+    def test_recover_article_endpoint_starts_run(self):
+        from fastapi.testclient import TestClient
+
+        from argus.api.main import create_app
+
+        mock_broker = MagicMock()
+        mock_broker.get_provider_status = MagicMock(return_value={"effective_status": "enabled"})
+        mock_broker.health_tracker.get_all_status = MagicMock(return_value={})
+        mock_broker.budget_tracker = MagicMock()
+
+        mock_workflows = MagicMock()
+        mock_workflows.start_recover_article = AsyncMock(return_value=self._workflow_run())
+        mock_workflows.get_run = MagicMock(return_value=self._workflow_run())
+
+        app = create_app(broker=mock_broker)
+        app.state.get_workflows = lambda: mock_workflows
+        client = TestClient(app)
+
+        resp = client.post("/api/workflows/recover-article", json={"url": "https://dead.example.com/post"})
+        assert resp.status_code == 200
+        assert resp.json()["run_id"] == "wf-1"
+        assert resp.json()["status"] == "running"
+
+    def test_workflow_status_endpoint(self):
+        from fastapi.testclient import TestClient
+
+        from argus.api.main import create_app
+
+        mock_broker = MagicMock()
+        mock_broker.get_provider_status = MagicMock(return_value={"effective_status": "enabled"})
+        mock_broker.health_tracker.get_all_status = MagicMock(return_value={})
+        mock_broker.budget_tracker = MagicMock()
+
+        mock_workflows = MagicMock()
+        mock_workflows.get_run = MagicMock(return_value=self._workflow_run())
+
+        app = create_app(broker=mock_broker)
+        app.state.get_workflows = lambda: mock_workflows
+        client = TestClient(app)
+
+        resp = client.get("/api/workflows/wf-1")
+        assert resp.status_code == 200
+        assert resp.json()["status_url"] == "/api/workflows/wf-1"

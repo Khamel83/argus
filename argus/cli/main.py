@@ -26,11 +26,79 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+def _emit_json(payload):
+    click.echo(json.dumps(payload, indent=2))
+
+
+def _workflow_to_dict(result):
+    return {
+        "run_id": result.run_id,
+        "kind": result.kind.value,
+        "status": result.status.value,
+        "target": result.target,
+        "created_at": result.created_at.isoformat() if result.created_at else None,
+        "started_at": result.started_at.isoformat() if result.started_at else None,
+        "finished_at": result.finished_at.isoformat() if result.finished_at else None,
+        "status_url": result.status_url,
+        "snapshot_dir": result.snapshot_dir,
+        "report_path": result.report_path,
+        "manifest_path": result.manifest_path,
+        "artifacts": [artifact.__dict__ for artifact in result.artifacts],
+        "documents": [document.__dict__ for document in result.documents],
+        "citations": [citation.__dict__ for citation in result.citations],
+        "summary_sections": [section.__dict__ for section in result.summary_sections],
+        "metadata": result.metadata,
+        "error": result.error,
+    }
+
+
+def _print_workflow_result(result, as_json: bool):
+    if as_json:
+        _emit_json(_workflow_to_dict(result))
+        return
+
+    click.echo(f"Run: {result.run_id}")
+    click.echo(f"Workflow: {result.kind.value}")
+    click.echo(f"Status: {result.status.value}")
+    click.echo(f"Target: {result.target}")
+    click.echo(f"Snapshot: {result.snapshot_dir}")
+    if result.report_path:
+        click.echo(f"Report: {result.report_path}")
+    if result.manifest_path:
+        click.echo(f"Manifest: {result.manifest_path}")
+    if result.error:
+        click.echo(f"Error: {result.error}")
+    if result.summary_sections:
+        click.echo()
+        for section in result.summary_sections:
+            click.echo(section.heading)
+            click.echo(section.body)
+            if section.citation_ids:
+                click.echo(f"Citations: {', '.join(section.citation_ids)}")
+            click.echo()
+
+
 @click.group()
 @click.version_option(package_name="argus")
 def cli():
     """Argus — standalone search broker."""
     pass
+
+
+@cli.command()
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def paths(as_json):
+    """Show the resolved Argus runtime storage paths."""
+    from argus.corpus import describe_corpus_paths
+
+    payload = describe_corpus_paths()
+    if as_json:
+        _emit_json(payload)
+        return
+
+    click.echo("Argus data paths:")
+    for key, value in payload.items():
+        click.echo(f"  {key}: {value}")
 
 
 @cli.command()
@@ -43,10 +111,11 @@ def cli():
 def search(query, mode, max_results, providers, as_json, session):
     """Execute a search query."""
     from argus.broker.router import create_broker
-    from argus.models import SearchMode, SearchQuery
+    from argus.models import ProviderName, SearchMode, SearchQuery
 
     broker = create_broker()
-    q = SearchQuery(query=query, mode=SearchMode(mode), max_results=max_results)
+    override = [ProviderName(item.strip()) for item in providers.split(",")] if providers else None
+    q = SearchQuery(query=query, mode=SearchMode(mode), max_results=max_results, providers=override)
 
     if session:
         resp, sid = _run(broker.search_with_session(q, session_id=session))
@@ -130,6 +199,21 @@ def extract(url, as_json, domain):
         click.echo(result.text)
 
 
+@cli.command(name="recover-article")
+@click.option("--url", "-u", required=True, help="Dead or moved article URL")
+@click.option("--title", "-t", default=None, help="Optional title hint")
+@click.option("--domain", "-d", default=None, help="Optional domain hint")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def recover_article(url, title, domain, as_json):
+    """Recover a dead article into a citation-backed local report."""
+    from argus.broker.router import create_broker
+    from argus.workflows import WorkflowService
+
+    service = WorkflowService(create_broker())
+    result = _run(service.recover_article(url=url, title=title, domain=domain))
+    _print_workflow_result(result, as_json)
+
+
 @cli.command(name="recover-url")
 @click.option("--url", "-u", required=True, help="URL to recover")
 @click.option("--title", "-t", help="Optional title hint")
@@ -165,6 +249,48 @@ def recover_url(url, title, domain, as_json):
         for i, r in enumerate(resp.results, 1):
             click.echo(f"  {i}. {r.title}")
             click.echo(f"     {r.url}")
+
+
+@cli.command(name="capture-site")
+@click.option("--url", "-u", required=True, help="Site root or docs root URL")
+@click.option("--soft-page-limit", default=75, type=int, help="Preferred page budget")
+@click.option("--hard-page-limit", default=200, type=int, help="Maximum page budget")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def capture_site(url, soft_page_limit, hard_page_limit, as_json):
+    """Capture the important parts of a site and summarize them with references."""
+    from argus.broker.router import create_broker
+    from argus.workflows import WorkflowService
+
+    service = WorkflowService(create_broker())
+    result = _run(
+        service.capture_site(
+            url=url,
+            soft_page_limit=soft_page_limit,
+            hard_page_limit=hard_page_limit,
+        )
+    )
+    _print_workflow_result(result, as_json)
+
+
+@cli.command(name="build-research-pack")
+@click.option("--topic", "-t", required=True, help="Topic or product to research")
+@click.option("--official-url", default=None, help="Optional official docs URL")
+@click.option("--max-research-pages", default=40, type=int, help="Max non-official research pages")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def build_research_pack(topic, official_url, max_research_pages, as_json):
+    """Build a local pack with official docs plus external research."""
+    from argus.broker.router import create_broker
+    from argus.workflows import WorkflowService
+
+    service = WorkflowService(create_broker())
+    result = _run(
+        service.build_research_pack(
+            topic=topic,
+            official_url=official_url,
+            max_research_pages=max_research_pages,
+        )
+    )
+    _print_workflow_result(result, as_json)
 
 
 @cli.command()
@@ -279,7 +405,7 @@ def set_balance(service, balance):
 def test_provider(provider, query):
     """Smoke-test a single provider."""
     from argus.broker.router import create_broker
-    from argus.models import ProviderName, SearchQuery
+    from argus.models import ProviderName, SearchMode, SearchQuery
 
     broker = create_broker()
 
@@ -350,7 +476,7 @@ def mcp_init(global_):
     entry = {
         "command": argus_bin,
         "args": ["mcp", "serve"],
-        "description": "Argus search broker — search_web, extract_content, recover_url, expand_links, health, budgets",
+        "description": "Argus retrieval platform — search, extract, recover articles, capture sites, and build research packs",
     }
 
     if global_:
@@ -379,6 +505,30 @@ def mcp_init(global_):
     config_path.write_text(json.dumps(data, indent=2) + "\n")
     click.echo(f"{action} argus MCP to {scope}")
     click.echo("Restart Claude Code in this project to connect.")
+
+
+@cli.group()
+def corpus():
+    """Manage Argus corpus storage and legacy imports."""
+    pass
+
+
+@corpus.command(name="import-docs-cache")
+@click.option("--source", "-s", required=True, type=click.Path(exists=True), help="Path to legacy docs-cache root")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def import_docs_cache(source, as_json):
+    """Import a legacy docs-cache tree into Argus-owned storage."""
+    from argus.broker.router import create_broker
+    from argus.workflows import WorkflowService
+
+    service = WorkflowService(create_broker())
+    payload = service.import_legacy_docs_cache(source)
+    if as_json:
+        _emit_json(payload)
+        return
+    click.echo("Imported legacy docs-cache:")
+    for key, value in payload.items():
+        click.echo(f"  {key}: {value}")
 
 
 @cli.group()

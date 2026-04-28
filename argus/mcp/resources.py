@@ -6,6 +6,7 @@ import json
 from typing import Optional
 
 from argus.broker.router import SearchBroker
+from argus.corpus import describe_corpus_paths
 
 
 def provider_status_resource(broker: SearchBroker) -> str:
@@ -52,3 +53,11 @@ def routing_policies_resource(broker: SearchBroker) -> str:
         policies[mode.value] = [p.value for p in providers]
 
     return json.dumps(policies, indent=2)
+
+
+def corpus_paths_resource() -> str:
+    """Resource: argus://corpus/paths
+
+    Resolved Argus runtime storage paths.
+    """
+    return json.dumps(describe_corpus_paths(), indent=2)
