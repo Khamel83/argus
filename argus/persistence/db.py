@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Generator, Optional
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from argus.config import get_config
@@ -19,7 +19,6 @@ from argus.persistence.models import (
     CorpusSnapshotRow,
     CrawlRunRow,
     ProviderUsageRow,
-    SearchEvidenceRow,
     SearchQueryRow,
     SearchResultRow,
     SearchRunRow,
@@ -27,7 +26,7 @@ from argus.persistence.models import (
     WorkflowCitationRow,
     WorkflowRunRow,
 )
-from argus.models import ProviderTrace, SearchQuery, SearchResponse
+from argus.models import SearchQuery, SearchResponse
 
 logger = get_logger("persistence.db")
 

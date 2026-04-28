@@ -6,7 +6,6 @@ Self-hosted metasearch — the free local provider floor.
 
 import time
 from typing import List, Tuple
-from urllib.parse import urlencode
 
 import httpx
 

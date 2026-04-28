@@ -14,11 +14,11 @@ Gracefully degrades if playwright is not installed.
 """
 
 import asyncio
-import logging
+import importlib.util
 import os
-from typing import Optional
 
 from argus.extraction.models import ExtractedContent, ExtractorName
+from argus.extraction.ssrf import is_safe_url
 from argus.logging import get_logger
 
 logger = get_logger("extraction.playwright")
@@ -34,11 +34,8 @@ _PLAYWRIGHT_AVAILABLE = None
 def _check_playwright():
     global _PLAYWRIGHT_AVAILABLE
     if _PLAYWRIGHT_AVAILABLE is None:
-        try:
-            import playwright.async_api  # noqa: F401
-            _PLAYWRIGHT_AVAILABLE = True
-        except ImportError:
-            _PLAYWRIGHT_AVAILABLE = False
+        _PLAYWRIGHT_AVAILABLE = importlib.util.find_spec("playwright.async_api") is not None
+        if not _PLAYWRIGHT_AVAILABLE:
             logger.debug("playwright not installed — headless browser extraction disabled")
     return _PLAYWRIGHT_AVAILABLE
 
@@ -95,6 +92,11 @@ async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedCon
         context = await browser.new_context()
         page = await context.new_page()
         await page.goto(url, wait_until='domcontentloaded', timeout=timeout_ms)
+        final_url = page.url
+        if final_url and final_url != url:
+            safe, reason = is_safe_url(final_url)
+            if not safe:
+                return ExtractedContent(url=url, error=f"playwright: unsafe redirect blocked: {reason}")
         await asyncio.sleep(1)
 
         title = await page.title()
@@ -125,7 +127,7 @@ async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedCon
             return ExtractedContent(url=url, error="playwright: too little content after render")
 
         return ExtractedContent(
-            url=url,
+            url=final_url or url,
             title=title or "",
             text=text,
             word_count=len(text.split()),
@@ -138,12 +140,12 @@ async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedCon
         if page:
             try:
                 await page.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Failed to close Playwright page for %s: %s", url[:60], exc)
         try:
             await context.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to close Playwright context for %s: %s", url[:60], exc)
 
 
 async def extract_playwright(url: str) -> ExtractedContent:
@@ -161,13 +163,13 @@ async def close_browser():
     if _browser:
         try:
             await _browser.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to close Playwright browser: %s", exc)
         _browser = None
         _using_obscura_cdp = False
     if _playwright_instance:
         try:
             await _playwright_instance.stop()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to stop Playwright runtime: %s", exc)
         _playwright_instance = None

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from argus.api.schemas import SearchRequest, SearchResponse, RecoverUrlRequest, ExpandRequest, ProviderTestRequest
+from argus.api.schemas import SearchRequest, RecoverUrlRequest, ExpandRequest, ProviderTestRequest
 
 
 # --- Schemas ---
@@ -51,7 +51,7 @@ class TestSearchEndpoint:
         from argus.broker.cache import SearchCache
         from argus.broker.health import HealthTracker
         from argus.broker.budgets import BudgetTracker
-        from argus.models import SearchResponse, SearchMode, SearchResult, ProviderTrace
+        from argus.models import SearchResponse, SearchMode, SearchResult
 
         # Create a mock broker with a cache hit
         mock_broker = MagicMock()

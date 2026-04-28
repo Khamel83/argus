@@ -36,8 +36,8 @@ async def lifespan(app: FastAPI):
     try:
         broker = app.state.get_broker()
         broker.budget_tracker.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to close broker budget tracker: %s", exc)
 
 
 def _build_rate_limiter() -> RateLimiter:

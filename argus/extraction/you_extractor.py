@@ -7,7 +7,6 @@ Gated by ARGUS_YOU_CONTENTS_ENABLED env var.
 """
 
 import os
-from typing import Optional
 
 import httpx
 

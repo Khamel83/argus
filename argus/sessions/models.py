@@ -4,7 +4,7 @@ Session domain models.
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional
+from typing import List
 
 
 @dataclass

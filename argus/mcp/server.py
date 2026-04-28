@@ -73,7 +73,7 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
 
     mcp = FastMCP("argus", **mcp_kwargs)
 
-    expose_admin_tools = transport == "stdio"
+    expose_admin_tools = transport == "stdio" or use_remote_auth
 
     # Register tools
     @mcp.tool()

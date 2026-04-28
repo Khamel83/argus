@@ -341,6 +341,14 @@ export ARGUS_API_KEY=replace-with-a-long-random-secret
 argus mcp serve --transport streamable-http --host 100.126.13.70 --port 8001
 ```
 
+To keep the HTTP API and remote MCP service running after reboot on a systemd host:
+```bash
+scripts/install-systemd.sh
+systemctl status argus argus-mcp --no-pager
+```
+
+The installer copies `argus.service` and `scripts/argus-mcp.service`, enables both services, and starts them immediately. The start scripts load `.env` first, then optional local secrets vaults if the `secrets` CLI is installed.
+
 On each client:
 
 | Client | Config |
@@ -354,7 +362,7 @@ With [Tailscale](https://tailscale.com), `<server>` is your machine's Tailscale 
 
 Available tools:
 - Local `stdio`: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `cookie_health`, `valyu_answer`
-- Remote HTTP MCP: `search_web`, `extract_content`, `recover_url`, `expand_links`, `valyu_answer`
+- Remote HTTP MCP: `search_web`, `extract_content`, `recover_url`, `expand_links`, `valyu_answer`; authenticated remote servers also expose `search_health`, `search_budgets`, `test_provider`, and `cookie_health`
 
 ### Python
 

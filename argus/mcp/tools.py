@@ -232,6 +232,14 @@ async def test_provider_mcp(
     if prov is None:
         return json.dumps({"error": f"Provider not registered: {provider}"})
 
+    if not prov.is_available():
+        return json.dumps({
+            "provider": provider,
+            "available": False,
+            "status": prov.status().value,
+            "skipped": "provider is not available",
+        }, indent=2)
+
     q = SearchQuery(query=query, mode=SearchMode.DISCOVERY, max_results=3)
     results, trace = await prov.search(q)
 

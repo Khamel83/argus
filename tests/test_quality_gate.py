@@ -1,7 +1,5 @@
 """Tests for quality gate, soft 404, and SSRF protection."""
 
-import pytest
-
 from argus.extraction.quality_gate import QualityGate, GateResult
 from argus.extraction.soft_404 import is_soft_404, soft_404_check
 from argus.extraction.ssrf import is_safe_url

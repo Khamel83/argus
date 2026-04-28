@@ -6,7 +6,7 @@ import json
 import os
 import re
 import shutil
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 

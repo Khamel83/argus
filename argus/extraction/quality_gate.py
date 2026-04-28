@@ -13,7 +13,7 @@ Philosophy:
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, List, Set
+from typing import List
 from urllib.parse import urlparse
 
 from argus.logging import get_logger

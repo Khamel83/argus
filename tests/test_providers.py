@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from argus.config import ProviderConfig, SearXNGConfig
-from argus.models import ProviderName, ProviderStatus, SearchMode, SearchQuery
+from argus.models import ProviderName, ProviderStatus, SearchQuery
 
 
 def _make_mock_response(data):
@@ -232,14 +232,52 @@ class TestExaProvider:
         assert results[0].metadata["id"] == "abc"
 
 
-# --- Stubs ---
+# --- SearchAPI ---
 
-class TestStubs:
-    def test_searchapi_not_available(self):
+class TestSearchApiProvider:
+    def test_searchapi_available_with_key(self):
         from argus.providers.searchapi import SearchApiProvider
-        p = SearchApiProvider(ProviderConfig())
-        assert p.is_available() is False
+        p = SearchApiProvider(ProviderConfig(enabled=True, api_key="key"))
+        assert p.is_available() is True
 
+    def test_searchapi_missing_key_status(self):
+        from argus.providers.searchapi import SearchApiProvider
+        p = SearchApiProvider(ProviderConfig(enabled=True, api_key=""))
+        assert p.status() == ProviderStatus.UNAVAILABLE_MISSING_KEY
+
+    @pytest.mark.asyncio
+    async def test_searchapi_normalizes_organic_results(self):
+        from argus.providers.searchapi import SearchApiProvider
+        p = SearchApiProvider(ProviderConfig(enabled=True, api_key="key"))
+
+        mock_response = {
+            "organic_results": [
+                {
+                    "link": "https://example.com",
+                    "title": "Example",
+                    "snippet": "Example result",
+                    "position": 1,
+                },
+            ],
+            "search_metadata": {"status": "Success"},
+        }
+
+        with patch("argus.providers.searchapi.httpx.AsyncClient") as mock_client_cls:
+            mock_client_cls.return_value.get = AsyncMock(return_value=_make_mock_response(mock_response))
+            mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client_cls.return_value)
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            results, trace = await p.search(SearchQuery(query="example"))
+
+        assert len(results) == 1
+        assert results[0].url == "https://example.com"
+        assert results[0].provider == ProviderName.SEARCHAPI
+        assert trace.status == "success"
+
+
+# --- Optional providers ---
+
+class TestOptionalProviders:
     def test_you_not_available(self):
         from argus.providers.you import YouProvider
         p = YouProvider(ProviderConfig())
@@ -249,14 +287,6 @@ class TestStubs:
         from argus.providers.valyu import ValyuProvider
         p = ValyuProvider(ProviderConfig())
         assert p.is_available() is False
-
-    @pytest.mark.asyncio
-    async def test_searchapi_returns_empty(self):
-        from argus.providers.searchapi import SearchApiProvider
-        p = SearchApiProvider(ProviderConfig())
-        results, trace = await p.search(SearchQuery(query="test"))
-        assert results == []
-        assert trace.status == "skipped"
 
     @pytest.mark.asyncio
     async def test_you_returns_empty(self):

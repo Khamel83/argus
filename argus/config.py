@@ -43,6 +43,7 @@ class ArgusConfig:
     linkup: ProviderConfig = field(default_factory=ProviderConfig)
     valyu: ProviderConfig = field(default_factory=ProviderConfig)
     github: ProviderConfig = field(default_factory=ProviderConfig)
+    yahoo: ProviderConfig = field(default_factory=ProviderConfig)
     wolfram: ProviderConfig = field(default_factory=ProviderConfig)
     host: str = "127.0.0.1"
     port: int = 8000
@@ -188,6 +189,10 @@ class EnvironmentConfigLoader:
             linkup=self.provider_config("LINKUP", enabled_default=True, budget_default=1000.0),
             valyu=self.provider_config("VALYU", enabled_default=True, budget_default=10000.0),
             github=self.provider_config("GITHUB", enabled_default=True),
+            yahoo=ProviderConfig(
+                enabled=self.get_bool("ARGUS_YAHOO_ENABLED", True),
+                timeout_seconds=self.get_int("ARGUS_YAHOO_TIMEOUT_SECONDS", 15),
+            ),
             wolfram=ProviderConfig(
                 enabled=self.get_bool("ARGUS_WOLFRAM_ENABLED", True),
                 api_key=self.get_str(

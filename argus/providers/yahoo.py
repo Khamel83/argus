@@ -11,10 +11,11 @@ lxml is available as a transitive dependency via trafilatura.
 import re
 import time
 from typing import List, Tuple
-from urllib.parse import quote_plus, unquote, urlparse
+from urllib.parse import unquote, urlparse
 
 import httpx
 
+from argus.config import ProviderConfig
 from argus.logging import get_logger
 from argus.models import (
     ProviderName,
@@ -58,14 +59,19 @@ def _unwrap_yahoo_url(href: str) -> str:
 class YahooProvider(BaseProvider):
     """Scrapes Yahoo Search. No API key required."""
 
+    def __init__(self, config: ProviderConfig | None = None):
+        self._config = config or ProviderConfig(enabled=True, timeout_seconds=15)
+
     @property
     def name(self) -> ProviderName:
         return ProviderName.YAHOO
 
     def is_available(self) -> bool:
-        return True
+        return self._config.enabled
 
     def status(self) -> ProviderStatus:
+        if not self._config.enabled:
+            return ProviderStatus.DISABLED_BY_CONFIG
         return ProviderStatus.ENABLED
 
     async def search(self, query: SearchQuery) -> Tuple[List[SearchResult], ProviderTrace]:
@@ -74,7 +80,7 @@ class YahooProvider(BaseProvider):
         try:
             params = {"p": query.query, "n": min(query.max_results, 10), "ei": "UTF-8"}
             async with httpx.AsyncClient(
-                timeout=15,
+                timeout=self._config.timeout_seconds,
                 headers=_HEADERS,
                 follow_redirects=True,
             ) as client:

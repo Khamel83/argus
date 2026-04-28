@@ -5,8 +5,8 @@ Each search mode defines a preferred provider priority list.
 Providers are then sorted by tier (credit-aware) as the primary key,
 preserving mode-specific ordering within each tier.
 
-Tier 0: Free/unlimited (SearXNG, DuckDuckGo, GitHub) — always first
-Tier 2: Semi-monthly credits
+Tier 0: Free/unlimited or free recurring (SearXNG, DuckDuckGo, Yahoo, GitHub, Wolfram) — always first
+Tier 1: Monthly recurring credits (Brave, Tavily, Exa, Linkup)
 Tier 3: One-time credits (Serper, Parallel, You.com, SearchAPI, Valyu) — always last
 Note: GitHub is free (tier 0) but only useful for code/repo queries, not general web search.
 """
@@ -29,6 +29,7 @@ MODE_PROVIDER_PREFERENCES: dict[SearchMode, list[ProviderName]] = {
         ProviderName.LINKUP,
         ProviderName.PARALLEL,
         ProviderName.YOU,
+        ProviderName.SEARCHAPI,
         ProviderName.VALYU,
     ],
     SearchMode.DISCOVERY: [
@@ -42,6 +43,7 @@ MODE_PROVIDER_PREFERENCES: dict[SearchMode, list[ProviderName]] = {
         ProviderName.SERPER,
         ProviderName.PARALLEL,
         ProviderName.YOU,
+        ProviderName.SEARCHAPI,
         ProviderName.VALYU,
         ProviderName.GITHUB,
     ],
@@ -55,6 +57,7 @@ MODE_PROVIDER_PREFERENCES: dict[SearchMode, list[ProviderName]] = {
         ProviderName.LINKUP,
         ProviderName.PARALLEL,
         ProviderName.YOU,
+        ProviderName.SEARCHAPI,
         ProviderName.VALYU,
     ],
     SearchMode.RESEARCH: [
@@ -69,6 +72,7 @@ MODE_PROVIDER_PREFERENCES: dict[SearchMode, list[ProviderName]] = {
         ProviderName.SERPER,
         ProviderName.PARALLEL,
         ProviderName.YOU,
+        ProviderName.SEARCHAPI,
         ProviderName.VALYU,
         ProviderName.GITHUB,
     ],

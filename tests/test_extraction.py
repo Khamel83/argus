@@ -43,9 +43,18 @@ class TestTrafilaturaExtractor:
     async def test_trafilatura_success(self):
         from argus.extraction.extractor import _extract_trafilatura
 
-        with patch("trafilatura.fetch_url") as mock_fetch, \
+        mock_response = MagicMock()
+        mock_response.text = "<html><body><article><h1>Title</h1><p>Content here.</p></article></body></html>"
+        mock_response.url = "https://example.com"
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("argus.extraction.extractor.httpx.AsyncClient") as mock_client_cls, \
              patch("trafilatura.bare_extraction") as mock_extract:
-            mock_fetch.return_value = "<html><body><article><h1>Title</h1><p>Content here.</p></article></body></html>"
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
             mock_extract.return_value = {
                 "text": "Content here.",
                 "title": "Title",
@@ -63,8 +72,17 @@ class TestTrafilaturaExtractor:
     async def test_trafilatura_fetch_fails(self):
         from argus.extraction.extractor import _extract_trafilatura
 
-        with patch("trafilatura.fetch_url") as mock_fetch:
-            mock_fetch.return_value = None
+        mock_response = MagicMock()
+        mock_response.text = ""
+        mock_response.url = "https://example.com"
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("argus.extraction.extractor.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
 
             result = await _extract_trafilatura("https://example.com")
             assert result.error is not None
@@ -74,9 +92,18 @@ class TestTrafilaturaExtractor:
     async def test_trafilatura_no_content(self):
         from argus.extraction.extractor import _extract_trafilatura
 
-        with patch("trafilatura.fetch_url") as mock_fetch, \
+        mock_response = MagicMock()
+        mock_response.text = "<html><body></body></html>"
+        mock_response.url = "https://example.com"
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("argus.extraction.extractor.httpx.AsyncClient") as mock_client_cls, \
              patch("trafilatura.bare_extraction") as mock_extract:
-            mock_fetch.return_value = "<html><body></body></html>"
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
             mock_extract.return_value = None
 
             result = await _extract_trafilatura("https://example.com")
@@ -137,10 +164,15 @@ _BAD_RESULT = ExtractedContent(url="https://example.com", error="failed")
 # Module paths for all chain extractors (order matters)
 _CHAIN_EXTRACTORS = [
     ("auth", "argus.extraction.auth_extractor", "extract_authenticated"),
-    ("residential", "argus.extraction.residential_extractor", "extract_residential"),
     ("trafilatura", "argus.extraction.extractor", "_extract_trafilatura"),
+    ("crawl4ai", "argus.extraction.crawl4ai_extractor", "extract_crawl4ai"),
+    ("obscura", "argus.extraction.obscura_extractor", "extract_obscura"),
     ("playwright", "argus.extraction.playwright_extractor", "extract_playwright"),
+    ("residential", "argus.extraction.residential_extractor", "extract_residential"),
     ("jina", "argus.extraction.extractor", "_extract_jina"),
+    ("valyu_contents", "argus.extraction.valyu_extractor", "extract_valyu_contents"),
+    ("firecrawl", "argus.extraction.firecrawl_extractor", "extract_firecrawl"),
+    ("you_contents", "argus.extraction.you_extractor", "extract_you_contents"),
     ("wayback", "argus.extraction.wayback_extractor", "extract_wayback"),
     ("archive_is", "argus.extraction.archive_extractor", "extract_archive_is"),
 ]
@@ -258,6 +290,33 @@ class TestExtractUrl:
 
         result = await extract_url("https://example.com")
         assert "trafilatura" in result.extractors_tried
+
+    @pytest.mark.asyncio
+    async def test_enabled_extraction_chain_order(self, mock_chain, monkeypatch):
+        from argus.extraction.extractor import extract_url, _cache, _domain_limiter
+
+        monkeypatch.setenv("ARGUS_CRAWL4AI_ENABLED", "true")
+        monkeypatch.setenv("ARGUS_YOU_CONTENTS_ENABLED", "true")
+        monkeypatch.setattr("argus.extraction.residential_extractor._is_configured", lambda: True)
+        _cache.clear()
+        _domain_limiter.clear()
+
+        result = await extract_url("https://example.com", domain="nytimes.com")
+
+        assert result.extractors_tried == [
+            "auth",
+            "trafilatura",
+            "crawl4ai",
+            "obscura",
+            "playwright",
+            "residential",
+            "jina",
+            "valyu_contents",
+            "firecrawl",
+            "you_contents",
+            "wayback",
+            "archive_is",
+        ]
 
 
 # --- Extraction Cache ---

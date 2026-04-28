@@ -3,7 +3,6 @@ MCP resource definitions for Argus.
 """
 
 import json
-from typing import Optional
 
 from argus.broker.router import SearchBroker
 from argus.corpus import describe_corpus_paths

@@ -28,7 +28,7 @@ import httpx
 from argus.extraction.cache import ExtractionCache
 from argus.extraction.completeness import assess_completeness
 from argus.extraction.models import ExtractedContent, ExtractorName
-from argus.extraction.quality_gate import QualityGate, GateResult
+from argus.extraction.quality_gate import QualityGate
 from argus.extraction.soft_404 import is_soft_404
 from argus.extraction.rate_limit import DomainRateLimiter
 from argus.extraction.ssrf import is_safe_url
@@ -72,10 +72,10 @@ def _run_quality_gate(content: str, url: str, extractor_name: str) -> tuple[bool
 
 
 # Threshold for treating truncated-but-quality-passed content as "keep trying".
-# Only applies to free extractors (steps 1–6). Paid APIs are not retried for
-# completeness alone — we accept what we have and flag it for the caller.
+# Applies consistently across the chain. A quality-passed but clearly truncated
+# result should not terminate fallback while there are later extractors left.
 _COMPLETENESS_RETRY_CONFIDENCE = 0.85
-_COMPLETENESS_RETRY_MAX_STEPS = 6  # auth(1) traf(2) crawl4ai(3) obscura(4) playwright(5) residential(6)
+_COMPLETENESS_RETRY_MAX_STEPS = 11
 
 
 def _should_continue_for_completeness(result: ExtractedContent, step: int) -> bool:
@@ -93,13 +93,29 @@ def _should_continue_for_completeness(result: ExtractedContent, step: int) -> bo
     return (not cr.is_complete) and cr.confidence >= _COMPLETENESS_RETRY_CONFIDENCE
 
 
+def _safe_final_url(original_url: str, final_url: str) -> tuple[bool, str]:
+    """Validate a post-redirect URL before using fetched content."""
+    if not final_url or final_url == original_url:
+        return True, ""
+    return is_safe_url(final_url)
+
+
 async def _extract_trafilatura(url: str) -> ExtractedContent:
     """Extract content using trafilatura (local, no API call)."""
     import trafilatura
 
     loop = asyncio.get_event_loop()
 
-    downloaded = await loop.run_in_executor(None, trafilatura.fetch_url, url)
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, follow_redirects=True) as client:
+        resp = await client.get(url, headers={"User-Agent": "Argus/1.0"})
+        resp.raise_for_status()
+        final_url = str(resp.url)
+
+    safe, reason = _safe_final_url(url, final_url)
+    if not safe:
+        return ExtractedContent(url=url, error=f"ssrf_blocked_redirect: {reason}")
+
+    downloaded = resp.text
     if not downloaded:
         return ExtractedContent(url=url, error="trafilatura: failed to fetch URL")
 
@@ -109,7 +125,7 @@ async def _extract_trafilatura(url: str) -> ExtractedContent:
 
     text = extracted["text"]
     return ExtractedContent(
-        url=url,
+        url=final_url,
         title=extracted.get("title", ""),
         text=text,
         author=extracted.get("author", ""),
@@ -353,9 +369,12 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
             if passed:
                 result.completeness_result = assess_completeness(result.text, url)
                 logger.info("Extracted %s via Jina (%d words)", url[:60], result.word_count)
-                _cache.put(url, result)
                 _track_jina_usage(result.word_count)
-                return result
+                if not _should_continue_for_completeness(result, step=7):
+                    _cache.put(url, result)
+                    return result
+                logger.debug("Jina passed quality but appears truncated (%s) — continuing chain",
+                             result.completeness_result.truncation_type)
             logger.debug("Jina content failed quality gate: %s", reason)
     except Exception as e:
         logger.warning("Jina failed for %s: %s", url[:60], e)
@@ -373,9 +392,12 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
             result.extractors_tried = list(extractors_tried)
             if passed:
                 result.completeness_result = assess_completeness(result.text, url)
-                logger.info("Extracted %s via Valyu Contents (%d words)", url[:60], result.word_count)
-                _cache.put(url, result)
-                return result
+                if not _should_continue_for_completeness(result, step=8):
+                    logger.info("Extracted %s via Valyu Contents (%d words)", url[:60], result.word_count)
+                    _cache.put(url, result)
+                    return result
+                logger.debug("Valyu Contents passed quality but appears truncated (%s) — continuing chain",
+                             result.completeness_result.truncation_type)
             logger.debug("Valyu Contents failed quality gate: %s", reason)
     except Exception as e:
         logger.warning("Valyu Contents failed for %s: %s", url[:60], e)
@@ -393,9 +415,12 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
             result.extractors_tried = list(extractors_tried)
             if passed:
                 result.completeness_result = assess_completeness(result.text, url)
-                logger.info("Extracted %s via Firecrawl (%d words)", url[:60], result.word_count)
-                _cache.put(url, result)
-                return result
+                if not _should_continue_for_completeness(result, step=9):
+                    logger.info("Extracted %s via Firecrawl (%d words)", url[:60], result.word_count)
+                    _cache.put(url, result)
+                    return result
+                logger.debug("Firecrawl passed quality but appears truncated (%s) — continuing chain",
+                             result.completeness_result.truncation_type)
             logger.debug("Firecrawl content failed quality gate: %s", reason)
     except Exception as e:
         logger.warning("Firecrawl failed for %s: %s", url[:60], e)
@@ -414,9 +439,12 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
                 result.extractors_tried = list(extractors_tried)
                 if passed:
                     result.completeness_result = assess_completeness(result.text, url)
-                    logger.info("Extracted %s via You.com Contents (%d words)", url[:60], result.word_count)
-                    _cache.put(url, result)
-                    return result
+                    if not _should_continue_for_completeness(result, step=10):
+                        logger.info("Extracted %s via You.com Contents (%d words)", url[:60], result.word_count)
+                        _cache.put(url, result)
+                        return result
+                    logger.debug("You.com Contents passed quality but appears truncated (%s) — continuing chain",
+                                 result.completeness_result.truncation_type)
                 logger.debug("You.com Contents failed quality gate: %s", reason)
         except Exception as e:
             logger.warning("You.com Contents failed for %s: %s", url[:60], e)
@@ -434,9 +462,12 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
             result.extractors_tried = list(extractors_tried)
             if passed:
                 result.completeness_result = assess_completeness(result.text, url)
-                logger.info("Extracted %s via wayback (%d words)", url[:60], result.word_count)
-                _cache.put(url, result)
-                return result
+                if not _should_continue_for_completeness(result, step=11):
+                    logger.info("Extracted %s via wayback (%d words)", url[:60], result.word_count)
+                    _cache.put(url, result)
+                    return result
+                logger.debug("Wayback passed quality but appears truncated (%s) — continuing chain",
+                             result.completeness_result.truncation_type)
             logger.debug("Wayback content failed quality gate: %s", reason)
     except Exception as e:
         logger.warning("Wayback failed for %s: %s", url[:60], e)

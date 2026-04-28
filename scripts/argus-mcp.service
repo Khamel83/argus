@@ -1,6 +1,7 @@
 [Unit]
 Description=Argus MCP Server (streamable-http)
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
@@ -9,6 +10,7 @@ WorkingDirectory=/home/ubuntu/github/argus
 ExecStart=/bin/bash /home/ubuntu/github/argus/scripts/start-mcp.sh
 Restart=always
 RestartSec=5
+Environment=PYTHONUNBUFFERED=1
 SyslogIdentifier=argus-mcp
 StandardOutput=journal
 StandardError=journal

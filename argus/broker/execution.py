@@ -6,7 +6,7 @@ from typing import Dict, List, Sequence
 from argus.broker.budgets import BudgetTracker, PROVIDER_TIERS
 from argus.broker.health import HealthTracker
 from argus.logging import get_logger
-from argus.models import ProviderName, ProviderTrace, SearchMode, SearchQuery, SearchResult
+from argus.models import ProviderName, ProviderTrace, SearchQuery, SearchResult
 from argus.providers.base import BaseProvider
 
 logger = get_logger("broker.execution")

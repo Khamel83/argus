@@ -5,7 +5,6 @@ Queries provider APIs for remaining credits and persists the results
 to the budget store. Designed to run once per day.
 """
 
-import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -42,8 +41,6 @@ async def check_tavily(api_key: str) -> ProviderBalance:
             data = resp.json()
 
         key_info = data.get("key", {})
-        account_info = data.get("account", {})
-
         usage = key_info.get("usage", 0)
         limit = key_info.get("limit", 0)
         remaining = max(0, limit - usage)

@@ -64,5 +64,4 @@ async def assess_content(req: AssessContentRequest):
 async def cookie_health():
     """Get health status of all configured cookie domains."""
     from argus.extraction.cookies import get_health_summary
-    import json
     return get_health_summary()

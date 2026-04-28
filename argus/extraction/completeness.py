@@ -20,7 +20,7 @@ Confidence thresholds:
 
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 
 # Patterns checked against the tail of the article (last 600 chars + first 100)
 _FEED_MARKER_PATTERNS = [

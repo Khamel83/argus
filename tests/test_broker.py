@@ -116,6 +116,20 @@ class TestPolicies:
         result = resolve_routing(SearchMode.DISCOVERY, None)
         assert ProviderName.CACHE in result
 
+    def test_registered_providers_are_routed_or_non_routed(self):
+        """Every documented provider should be registered and routed unless explicitly special."""
+        from argus.broker.policies import get_provider_order
+        from argus.broker.router import create_broker
+
+        broker = create_broker()
+        routed = set()
+        for mode in SearchMode:
+            routed.update(get_provider_order(mode))
+
+        non_routed = {ProviderName.CACHE}
+        missing = set(broker._providers) - routed - non_routed
+        assert missing == set()
+
 
 # --- Ranking ---
 
@@ -294,8 +308,8 @@ class TestHealth:
         assert h.get_status(ProviderName.BRAVE) == ProviderStatus.TEMPORARILY_DISABLED
 
     def test_degraded_when_cooldown_expires(self):
-        from argus.broker.health import HealthTracker, ProviderHealth
-        from argus.models import ProviderName, ProviderStatus
+        from argus.broker.health import HealthTracker
+        from argus.models import ProviderName
         h = HealthTracker(failure_threshold=2, cooldown_minutes=60)
         h.record_failure(ProviderName.BRAVE)
         h.record_failure(ProviderName.BRAVE)
@@ -307,7 +321,7 @@ class TestHealth:
 
     def test_cooldown_applied_after_threshold(self):
         from argus.broker.health import HealthTracker
-        from argus.models import ProviderName, ProviderStatus
+        from argus.models import ProviderName
         h = HealthTracker(failure_threshold=2, cooldown_minutes=60)
         h.record_failure(ProviderName.BRAVE)
         h.record_failure(ProviderName.BRAVE)
@@ -569,7 +583,6 @@ class TestRouter:
     @pytest.mark.asyncio
     async def test_paid_provider_skipped_when_over_pace(self, monkeypatch):
         """Paid providers are skipped when today's usage exceeds daily pace."""
-        import time
         from argus.broker.budgets import BudgetTracker
         from argus.broker.router import SearchBroker
 
@@ -694,6 +707,7 @@ class TestRouter:
         # Tier 3 providers should NOT be paced — only exhausted
         assert free.calls == 1
         assert onetime.calls == 1
+        assert response.total_results == 2
 
     @pytest.mark.asyncio
     async def test_search_skips_budget_exhausted_provider(self, monkeypatch):

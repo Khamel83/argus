@@ -17,6 +17,7 @@ from argus.extraction.cookies import (
     record_auth_request,
 )
 from argus.extraction.models import ExtractedContent, ExtractorName
+from argus.extraction.ssrf import is_safe_url
 from argus.logging import get_logger
 
 logger = get_logger("extraction.auth")
@@ -117,6 +118,13 @@ async def extract_authenticated(url: str, domain: str) -> Optional[ExtractedCont
                 timeout=AUTH_TIMEOUT_MS,
             )
             status_code = response.status if response else 0
+            final_url = page.url
+            if final_url and final_url != url:
+                safe, reason = is_safe_url(final_url)
+                if not safe:
+                    logger.warning("Auth extraction blocked unsafe redirect for %s: %s", url[:60], reason)
+                    record_auth_request(domain, success=False, status_code=status_code)
+                    return None
 
             if status_code in (401, 403):
                 logger.warning("Auth failed for %s (HTTP %d)", url[:60], status_code)
@@ -151,7 +159,7 @@ async def extract_authenticated(url: str, domain: str) -> Optional[ExtractedCont
             record_auth_request(domain, success=True, status_code=status_code)
 
             return ExtractedContent(
-                url=url,
+                url=final_url or url,
                 title=title,
                 text=extracted,
                 word_count=word_count,

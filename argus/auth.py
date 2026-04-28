@@ -5,7 +5,6 @@ from __future__ import annotations
 import ipaddress
 import os
 from dataclasses import dataclass
-from typing import Iterable
 
 
 def is_local_client(client_host: str | None) -> bool:

@@ -6,7 +6,7 @@ Provider-specific response shapes must never leak outside adapters.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List
 from argus.models import ProviderName, ProviderStatus, ProviderTrace, SearchResult, SearchQuery
 
 

@@ -28,8 +28,13 @@ def refine_query(current_query: str, session: Optional[Session]) -> str:
     if session is None or not session.queries:
         return current_query
 
-    # Only use prior queries, not the current one
-    prior = session.queries[:-1]
+    # Broker refinement runs before the current query is appended, so the
+    # session normally contains only prior queries. Direct callers may pass a
+    # session that already includes the current query as the last item; avoid
+    # using that duplicate as context.
+    prior = session.queries
+    if prior and prior[-1].query == current_query:
+        prior = prior[:-1]
     if not prior:
         return current_query
 

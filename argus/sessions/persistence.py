@@ -84,7 +84,7 @@ class SessionPersistence:
         """Save a query record. Returns the row index (query_index)."""
         conn = self._get_conn()
         ts = timestamp or time.time()
-        cursor = conn.execute(
+        conn.execute(
             "INSERT INTO session_queries (session_id, query, mode, timestamp, results_count) "
             "VALUES (?, ?, ?, ?, ?)",
             (session_id, query, mode, ts, results_count),

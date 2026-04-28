@@ -5,7 +5,7 @@ Tracks last success/failure, consecutive failures, cooldown windows.
 """
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from argus.models import ProviderName, ProviderStatus

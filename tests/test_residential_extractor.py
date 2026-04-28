@@ -4,7 +4,7 @@ import time
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
-from argus.extraction.models import ExtractedContent, ExtractorName
+from argus.extraction.models import ExtractorName
 
 
 def _mock_http_client(response_or_side_effect):

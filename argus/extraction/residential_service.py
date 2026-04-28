@@ -8,7 +8,7 @@ as a systemd service — set and forget.
 Usage:
     python -m argus.extraction.residential_service
     # or
-    ARGUS_BIND=100.113.216.27 ARGUS_PORT=8123 python -m argus.extraction.residential_service
+    ARGUS_BIND_HOST=100.113.216.27 ARGUS_PORT=8123 python -m argus.extraction.residential_service
 
 Endpoints:
     POST /extract  {"url": "https://..."}  → ExtractedContent JSON
@@ -16,6 +16,7 @@ Endpoints:
 """
 
 import asyncio
+import importlib.util
 import ipaddress
 import os
 import random
@@ -38,7 +39,7 @@ _USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 ]
 
-BIND = os.getenv("ARGUS_BIND", "127.0.0.1")
+BIND = os.getenv("ARGUS_BIND_HOST", os.getenv("ARGUS_BIND", "127.0.0.1"))
 PORT = int(os.getenv("ARGUS_PORT", "8123"))
 TIMEOUT = int(os.getenv("ARGUS_RESIDENTIAL_TIMEOUT_SECONDS", "25"))
 CRAWL4AI_ENABLED = os.getenv("ARGUS_CRAWL4AI_ENABLED", "").lower() in ("1", "true")
@@ -131,8 +132,6 @@ async def extract(req: ExtractRequest, request: Request):
         raise HTTPException(status_code=400, detail=f"SSRF blocked: {reason}")
 
     cookies = req.cookies
-    domain = req.domain
-
     # Try trafilatura first (fast, local HTTP)
     result = await _extract_trafilatura(url, cookies)
     if result.get("text") and len(result["text"].split()) >= 50:
@@ -165,11 +164,7 @@ async def extract(req: ExtractRequest, request: Request):
 
 
 def _check_playwright() -> bool:
-    try:
-        import playwright.async_api  # noqa: F401
-        return True
-    except ImportError:
-        return False
+    return importlib.util.find_spec("playwright.async_api") is not None
 
 
 def _is_safe_url(url: str) -> tuple[bool, str]:

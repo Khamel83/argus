@@ -8,6 +8,7 @@ Uses the `ddgs` package: https://pypi.org/project/ddgs/
 """
 
 import time
+import importlib.util
 from typing import List, Tuple
 
 from argus.logging import get_logger
@@ -28,11 +29,7 @@ class DuckDuckGoProvider(BaseProvider):
         self._available = self._check_available()
 
     def _check_available(self) -> bool:
-        try:
-            from ddgs import DDGS  # noqa: F401
-            return True
-        except ImportError:
-            return False
+        return importlib.util.find_spec("ddgs") is not None
 
     @property
     def name(self) -> ProviderName:

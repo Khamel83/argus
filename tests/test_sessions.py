@@ -4,6 +4,7 @@ import os
 import tempfile
 import pytest
 
+from argus.models import SearchMode, SearchQuery, SearchResponse
 from argus.sessions.models import Session, QueryRecord
 from argus.sessions.store import SessionStore
 from argus.sessions.refinement import refine_query
@@ -142,6 +143,28 @@ class TestRefinement:
         assert "python async" in result
         assert result.endswith("await")
 
+    @pytest.mark.asyncio
+    async def test_session_search_refines_second_follow_up(self):
+        from argus.broker.session_flow import SessionSearchService
+
+        store = SessionStore(persist=False)
+        service = SessionSearchService(session_store=store)
+        seen_queries = []
+
+        async def search_fn(query):
+            seen_queries.append(query.query)
+            return SearchResponse(query=query.query, mode=query.mode, results=[])
+
+        first = SearchQuery(query="python web frameworks", mode=SearchMode.DISCOVERY)
+        second = SearchQuery(query="fastapi", mode=SearchMode.DISCOVERY)
+
+        _, sid = await service.search_with_session(first, search_fn, session_id="flow")
+        _, sid2 = await service.search_with_session(second, search_fn, session_id=sid)
+
+        assert sid2 == "flow"
+        assert seen_queries[0] == "python web frameworks"
+        assert seen_queries[1] == "python web frameworks fastapi"
+
 
 # --- Session Persistence ---
 
@@ -154,7 +177,7 @@ class TestSessionPersistence:
         try:
             # Create and populate session
             store1 = SessionStore(persist=True, db_path=db_path)
-            session = store1.create_session(session_id="persist-test")
+            store1.create_session(session_id="persist-test")
             store1.add_query("persist-test", query="python frameworks", mode="discovery", results_count=5)
             store1.add_extracted_url("persist-test", query_index=0, url="https://example.com")
 

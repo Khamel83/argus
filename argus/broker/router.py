@@ -163,7 +163,7 @@ def create_broker() -> SearchBroker:
     providers: dict[ProviderName, BaseProvider] = {
         ProviderName.SEARXNG: SearXNGProvider(config.searxng),
         ProviderName.DUCKDUCKGO: DuckDuckGoProvider(),
-        ProviderName.YAHOO: YahooProvider(),
+        ProviderName.YAHOO: YahooProvider(config.yahoo),
         ProviderName.BRAVE: BraveProvider(config.brave),
         ProviderName.SERPER: SerperProvider(config.serper),
         ProviderName.TAVILY: TavilyProvider(config.tavily),

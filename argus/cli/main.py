@@ -326,9 +326,13 @@ def budgets():
         count = broker.budget_tracker.get_usage_count(pname)
         exhausted = broker.budget_tracker.is_budget_exhausted(pname)
 
-        budget_str = f"${remaining:.4f}" if remaining is not None else "unlimited"
+        budget_str = f"{remaining:.0f} queries" if remaining is not None else "unlimited"
+        usage_str = f"{usage:.0f} queries"
         status = "EXHAUSTED" if exhausted else "ok"
-        click.echo(f"  {pname.value:12s} remaining={budget_str:12s} used=${usage:.4f} calls={count} [{status}]")
+        click.echo(
+            f"  {pname.value:12s} remaining={budget_str:14s} "
+            f"used={usage_str:12s} calls={count} [{status}]"
+        )
 
     # Token balances
     store = broker.budget_tracker._store
@@ -346,7 +350,6 @@ def check_balances():
     """Probe all providers for live credit/balance info and cache results."""
     from argus.broker.router import create_broker
     from argus.broker.balance_check import check_all_balances, persist_balances
-    from argus.models import ProviderName
 
     broker = create_broker()
 
@@ -423,6 +426,9 @@ def test_provider(provider, query):
     click.echo(f"Testing {pname.value}...")
     click.echo(f"  Available: {prov.is_available()}")
     click.echo(f"  Status: {prov.status().value}")
+    if not prov.is_available():
+        click.echo("  Skipped: provider is not available")
+        return
 
     q = SearchQuery(query=query, mode=SearchMode.DISCOVERY, max_results=3)
     results, trace = _run(prov.search(q))
@@ -566,7 +572,7 @@ def cookies_import(domain, filepath):
         files = sorted(inbox_dir.glob("*.json"))
         if not files:
             click.echo(f"No cookie files found in {inbox_dir}")
-            click.echo(f"\nDrop EditThisCookie JSON exports there, then re-run this command.")
+            click.echo("\nDrop EditThisCookie JSON exports there, then re-run this command.")
             return
     else:
         click.echo(f"No inbox directory at {inbox_dir}")
@@ -647,13 +653,13 @@ def cookies_import(domain, filepath):
 
     click.echo(f"\nImported {imported} cookie file(s)")
     click.echo(f"Cookie dir: {cookie_dir}")
-    click.echo(f"Run 'argus cookies health' to check status anytime.")
+    click.echo("Run 'argus cookies health' to check status anytime.")
 
 
 @cookies.command(name="health")
 def cookies_health():
     """Show health status of all cookie domains."""
-    from argus.extraction.cookies import get_health_summary, COOKIE_DIR, get_cookie_path
+    from argus.extraction.cookies import get_health_summary, COOKIE_DIR
 
     summary = get_health_summary()
 
