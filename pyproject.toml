@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "argus-search"
-version = "1.4.0"
-description = "Retrieval platform for AI agents with multi-provider search, capture workflows, local corpus storage, and budget-aware routing."
+version = "1.5.0"
+description = "Retrieval platform for AI agents — 14 search providers, 12-step content extraction, dead URL recovery, site capture, and local corpus storage. One API."
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"

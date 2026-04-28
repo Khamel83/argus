@@ -2,18 +2,18 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Khamel83/argus",
   "title": "Argus Retrieval",
-  "description": "Retrieval platform for AI agents: multi-provider search, dead-article recovery, site capture, local docs-plus-research packs, and budget-aware routing.",
+  "description": "Retrieval platform for AI agents — 14 search providers, 12-step content extraction, dead URL recovery, site capture, and local corpus storage. One API.",
   "repository": {
     "url": "https://github.com/Khamel83/argus",
     "source": "github"
   },
-  "version": "1.4.0",
+  "version": "1.5.0",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "argus-search",
-      "version": "1.4.0",
+      "version": "1.5.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

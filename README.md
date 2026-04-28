@@ -2,7 +2,7 @@
 
 <!-- mcp-name: io.github.Khamel83/argus -->
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B%20%7C%20dev-3.12-brightgreen)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue)](https://www.python.org/downloads/)
 [![PyPI Version](https://img.shields.io/pypi/v/argus-search)](https://pypi.org/project/argus-search/)
 [![PyPI Downloads](https://img.shields.io/pepy/dt/argus-search)](https://pepy.tech/projects/argus-search)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -17,7 +17,7 @@ Retrieval platform for AI agents. Argus routes search across 14 providers, recov
 - **14 providers, one API** — free-first tier routing, budget-exhausted providers skipped automatically
 - **Zero-key start** — `pip install argus-search` gives you DuckDuckGo + Yahoo immediately, no accounts needed
 - **SearXNG self-host = 70+ engines** — Google, Bing, Yahoo, Startpage, Ecosia, Qwant and more via one Docker container
-- **10-step content extraction** — returns full page text with quality gates, not just links
+- **12-step content extraction** — returns full page text with quality gates, not just links
 - **Opinionated retrieval workflows** — recover dead articles, capture important pages from a site, and build local docs-plus-research packs
 - **Argus-owned corpus storage** — runtime data goes to a writable user data directory, not your repo checkout
 - **Multi-turn sessions** — pass `session_id` for conversational context across searches
@@ -378,7 +378,7 @@ print(content.text)
 
 ## Content Extraction
 
-Argus tries up to ten methods to extract content from any URL: first local (trafilatura, Crawl4AI, Obscura, Playwright), then external APIs (Jina, Valyu Contents, Firecrawl, You.com, Wayback, archive.is). Each attempt is quality-checked for garbage output. See [docs/providers.md](docs/providers.md) for the full extractor comparison.
+Argus tries up to twelve methods to extract content from any URL: auth extraction for paywalls, then local extractors (trafilatura, Crawl4AI, Obscura, Playwright, residential IP), then external APIs (Jina, Valyu Contents, Firecrawl, You.com, Wayback, archive.is). Each attempt is quality-checked for completeness and garbage output. See [docs/providers.md](docs/providers.md) for the full extractor comparison.
 
 **Completeness assessment** runs automatically after every successful extraction. Argus scores five signals — trailing ellipsis, feed truncation markers ("Read more", WordPress RSS footers), mid-sentence endings, abrupt final paragraphs, and suspicious round word counts — and returns `is_complete`, `completeness_confidence`, and `truncation_type` alongside the text. When confidence is ≥ 85%, Argus continues trying the next extractor rather than returning a partial result; this means a trafilatura fetch that ends with "..." will automatically fall through to Playwright, Jina, Wayback, etc. Callers that already have text (e.g. RSS feed items) can use `POST /api/assess-content` to check completeness without triggering extraction.
 
@@ -400,14 +400,14 @@ Install the binary: [github.com/h4ckf0r0day/obscura/releases](https://github.com
 ```
 Caller (CLI/HTTP/MCP/Python) → SearchBroker → tier-sorted providers → RRF ranking → response
                                      ↕ SessionStore (optional)
-                            Extractor (on demand) → 10-step fallback chain with quality gates
+                            Extractor (on demand) → 12-step fallback chain with quality gates
 ```
 
 | Module | Responsibility |
 |--------|---------------|
 | `argus/broker/` | Tier-based routing, ranking, dedup, caching, health, budgets |
 | `argus/providers/` | Provider adapters (one per search API) |
-| `argus/extraction/` | 10-step URL extraction fallback chain with quality gates |
+| `argus/extraction/` | 12-step URL extraction fallback chain with quality gates |
 | `argus/sessions/` | Multi-turn session store and query refinement |
 | `argus/api/` | FastAPI HTTP endpoints |
 | `argus/cli/` | Click CLI commands |

@@ -19,4 +19,4 @@ _load_vault argus_auth
 
 export ARGUS_SEARXNG_BASE_URL="http://127.0.0.1:8080"
 
-exec argus serve --host 127.0.0.1 --port 8005
+exec argus serve --host 0.0.0.0 --port 8005

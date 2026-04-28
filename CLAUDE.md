@@ -2,7 +2,7 @@
 
 ## Overview
 
-Search infrastructure for AI agents: 14 providers, intelligent credit-aware routing, WolframAlpha computed answers, and a 10-step content extraction chain. Provider adapters: SearXNG (self-hosted, aggregates 70+ engines), DuckDuckGo, Yahoo (scraped), GitHub, WolframAlpha (free API, computed answers), Brave, Tavily, Exa, Linkup (monthly free tiers), Serper, Parallel AI, You.com, Valyu, SearchAPI. Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
+Search infrastructure for AI agents: 14 providers, intelligent credit-aware routing, WolframAlpha computed answers, and a 12-step content extraction chain. Provider adapters: SearXNG (self-hosted, aggregates 70+ engines), DuckDuckGo, Yahoo (scraped), GitHub, WolframAlpha (free API, computed answers), Brave, Tavily, Exa, Linkup (monthly free tiers), Serper, Parallel AI, You.com, Valyu, SearchAPI. Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
 
 ## Two Deployment Tiers
 
@@ -76,7 +76,7 @@ Caller (CLI/HTTP/MCP/Python)
 |--------|---------------|
 | `argus/broker/` | Tier-based routing, ranking, dedup, caching, health, budgets |
 | `argus/providers/` | Provider adapters (one per search API) |
-| `argus/extraction/` | 10-step URL extraction fallback chain with quality gates |
+| `argus/extraction/` | 12-step URL extraction fallback chain with quality gates |
 | `argus/sessions/` | Multi-turn session store and query refinement |
 | `argus/api/` | FastAPI HTTP endpoints |
 | `argus/cli/` | Click CLI commands |
@@ -122,7 +122,7 @@ Free providers (SearXNG, DuckDuckGo) always lead. Within-tier ordering reflects 
 
 ## Content Extraction
 
-10-step fallback chain with quality gates and completeness assessment between every step:
+12-step fallback chain with quality gates and completeness assessment between every step:
 
 ```
 trafilatura (local, fast) → Crawl4AI (local, JS rendering) →

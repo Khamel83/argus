@@ -5,13 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.5.0] - 2026-04-28
 
 ### Added
 - **Content completeness assessment** (`argus/extraction/completeness.py`) — detects feed-level truncation (not just paywalls) via five signals: trailing ellipsis, feed truncation markers ("Read more", WordPress RSS footers, etc.), mid-sentence endings, abrupt final paragraphs, and suspicious round word counts. Returns `is_complete`, `completeness_confidence` (0–1), `truncation_type`, `completeness_signals`, and `recommended_action` on every extraction result.
 - **`POST /api/assess-content`** — lightweight endpoint that assesses completeness of text you already have, no fetching. Accepts `{text, url}`, returns the full completeness breakdown. Ideal for callers scanning stored content (RSS feeds, archives).
 - **Completeness-aware extractor chain** — free extractors (steps 1–6: auth, trafilatura, crawl4ai, obscura, playwright, residential) now continue to the next extractor when content passes the quality gate but completeness confidence is ≥ 0.85. This means a trafilatura result that ends with "..." or a "Read more" marker automatically falls through to Playwright, residential, etc. Paid/external extractors (steps 7–12) assess but do not continue the chain for completeness alone.
-- `completeness_result` field on `ExtractedContent` model; completeness fields exposed in `ExtractResponse` API schema.
+- **Retrieval workflows** — `recover-article`, `capture-site`, `build-research-pack` CLI commands with local artifact persistence.
+- **Corpus storage** — runtime data in writable user data directory via `platformdirs` (or `ARGUS_DATA_ROOT`).
+- Auth extraction step for paywall domains (NYT, Bloomberg, etc.) via cookie-based authentication.
+- Residential IP extraction step (remote service over Tailscale).
+- Obscura stealth browser integration (CLI step + CDP backend for Playwright).
+- `cookie_health` MCP tool for monitoring authenticated domain status.
+- Streamable HTTP MCP transport for Antigravity clients.
+- `AGENTS.md` for AI contributor onboarding.
+- Systemd service file for Argus HTTP API.
+
+### Changed
+- Extraction chain expanded from 10 to 12 steps (added auth + residential).
+- HTTP server binds to 0.0.0.0 for Tailscale network access.
+- Tier-aware budget tracking with 7-day pacing.
+- Python badge URL fixed (cleaner shields.io format).
+- PyPI and MCP Registry descriptions updated.
+- Documentation accuracy pass — extraction step counts verified.
+- All providers enabled by default.
+- WolframAlpha 501 handling — queries that can't compute return empty without health penalty.
 
 ## [1.3.3] - 2026-04-14
 
