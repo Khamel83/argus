@@ -5,7 +5,7 @@ Brief description of what this PR does and why.
 -
 
 ## Testing
-- [ ] Tests pass: `uv run pytest tests/ -v --tb=short`
+- [ ] Tests pass: `pytest`
 - [ ] Tested manually with:
 
 ## Checklist

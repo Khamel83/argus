@@ -1,0 +1,159 @@
+# Project Instructions
+
+## Overview
+
+Search infrastructure for AI agents: 14 providers, intelligent credit-aware routing, WolframAlpha computed answers, and a 10-step content extraction chain. Provider adapters: SearXNG (self-hosted, aggregates 70+ engines), DuckDuckGo, Yahoo (scraped), GitHub, WolframAlpha (free API, computed answers), Brave, Tavily, Exa, Linkup (monthly free tiers), Serper, Parallel AI, You.com, Valyu, SearchAPI. Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
+
+## Two Deployment Tiers
+
+### Tier 1: No server (API keys only)
+- `pip install argus-search` — works immediately with DuckDuckGo + Yahoo
+- Add WOLFRAM_APP_ID for computed answers (math, facts, conversions — 2,000 free/month)
+- Add API keys for 7,000+ more free monthly queries
+- Extraction via external APIs only (Jina, Valyu Contents, Firecrawl, You.com Contents, Wayback)
+- Runs on any machine with Python 3.11+ (laptop, Mac Mini, Pi, cloud VM)
+- No Docker, no database server, no API keys required to start
+
+### Tier 2: Full install on hardware you already have
+- Raspberry Pi 3 (1GB): SearXNG + all search providers. Fits alongside Pi-hole (SearXNG ~512MB, Pi-hole ~100MB).
+- Raspberry Pi 4 (4GB): Everything — SearXNG, all providers, Crawl4AI local JS extraction, Obscura stealth browser.
+- Mac Mini M1+ (8GB): Full stack with headroom for other services.
+- Any old laptop (4GB+): Full stack via Docker.
+- Free cloud VM (1GB): SearXNG + search. No Crawl4AI (use external APIs for extraction).
+- `docker compose up -d` for one-command setup
+
+## Key Commands
+
+```bash
+# Setup
+cp .env.example .env                    # configure providers and DB
+pip install "argus-search[mcp]"         # install from PyPI (with MCP support)
+pip install "argus-search[mcp,crawl4ai]" # with Crawl4AI extractor
+# or from source: pip install -e ".[mcp]"
+
+# Zero-config search (no API keys needed)
+argus search -q "python web frameworks"  # uses DuckDuckGo automatically
+
+# Run
+argus serve                   # HTTP API on :8000
+argus mcp serve               # MCP server (stdio)
+argus mcp serve --transport sse --port 8001         # SSE (legacy remote)
+argus mcp serve --transport streamable-http --port 8001  # Antigravity, modern remote
+
+# Search
+argus search -q "query" --mode discovery
+argus search -q "follow up" --session abc123   # multi-turn context
+
+# Content Extraction
+argus extract -u "https://example.com/article"
+
+# Admin
+argus health                  # provider status
+argus budgets                 # budget status + token balances
+argus set-balance -s jina -b 9833638   # set token balance for a service
+argus test-provider -p brave
+
+# Test
+pytest tests/
+```
+
+## Architecture
+
+```
+Caller (CLI/HTTP/MCP/Python)
+  → SearchBroker
+    → routing policy (tier-sorted, mode-specific within tiers)
+      → provider executor (budget check → health check → search → early stop)
+    → result pipeline (cache → dedupe → RRF ranking → response)
+  → SessionStore (optional, per-request)
+    → query refinement from prior context
+  → Extractor (on demand)
+    → trafilatura → crawl4ai → playwright → jina →
+      valyu_contents → firecrawl → you_contents → wayback → archive.is
+```
+
+| Module | Responsibility |
+|--------|---------------|
+| `argus/broker/` | Tier-based routing, ranking, dedup, caching, health, budgets |
+| `argus/providers/` | Provider adapters (one per search API) |
+| `argus/extraction/` | 10-step URL extraction fallback chain with quality gates |
+| `argus/sessions/` | Multi-turn session store and query refinement |
+| `argus/api/` | FastAPI HTTP endpoints |
+| `argus/cli/` | Click CLI commands |
+| `argus/mcp/` | MCP server for LLM integration |
+| `argus/persistence/` | PostgreSQL query/result storage |
+
+## Provider Tiers
+
+| Tier | Providers | Credits |
+|------|-----------|---------|
+| 0 (free) | SearXNG (70+ engines via self-host), DuckDuckGo, Yahoo (scraped), GitHub, WolframAlpha (2k/mo, API key) | Unlimited or free recurring |
+| 1 (monthly) | Brave (2k/mo), Tavily (1k/mo), Exa (1k/mo), Linkup (1k/mo) | Recurring monthly |
+| 3 (one-time) | Serper (2.5k), Parallel (4k), You.com ($20), SearchAPI, Valyu ($10) | Don't come back |
+
+Routing sorts by tier first (free → monthly → one-time), then preserves mode-specific ordering within each tier. Budget enforcement skips exhausted providers automatically.
+
+WolframAlpha is unique: it returns computed answers (math, conversions, facts), not a list of URLs. It only activates in grounding and research modes. Queries it can't compute return empty — no error, no health penalty. WOLFRAM_APP_ID is in the secrets vault.
+
+Yahoo is a Tier 0 scraped provider. It will be auto-disabled by the health tracker if Yahoo HTML changes. No API key needed.
+
+## Interfaces
+
+| Interface | How to use |
+|-----------|-----------|
+| HTTP API | `POST /api/search`, `POST /api/extract`, `POST /api/assess-content`, `POST /api/recover-url`, `POST /api/expand` — OpenAPI at `/docs` |
+| CLI | `argus search`, `argus extract`, `argus recover-url`, `argus health`, `argus budgets`, `argus set-balance` |
+| MCP | `argus mcp serve` — tools: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `valyu_answer`. Transports: stdio (default), `--transport sse` (legacy remote), `--transport streamable-http` (Antigravity, modern clients) |
+| MCP Registry | [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/servers/io.github.Khamel83/argus) — `io.github.Khamel83/argus` |
+| Python | `from argus.broker.router import create_broker`, `from argus.extraction import extract_url`, `from argus.providers.valyu_answer import valyu_answer` |
+
+## Search Modes
+
+Each mode defines which providers are best suited for that query type. Routing sorts by credit tier first, then preserves mode-specific ordering within each tier. Budget-exhausted providers are skipped.
+
+| Mode | Use case | Actual runtime order |
+|------|----------|---------------------|
+| `discovery` | Related pages, canonical sources | SearXNG → DuckDuckGo → Yahoo → GitHub → Brave → Exa → Tavily → Linkup → Serper → Parallel → You → Valyu |
+| `recovery` | Dead/moved URL | SearXNG → DuckDuckGo → Yahoo → Brave → Tavily → Exa → Linkup → Serper → Parallel → You → Valyu |
+| `grounding` | Fact-checking + computed answers | SearXNG → DuckDuckGo → Yahoo → **Wolfram** → Brave → Linkup → Serper → Parallel → You → Valyu |
+| `research` | Broad exploratory | SearXNG → DuckDuckGo → Yahoo → **Wolfram** → GitHub → Tavily → Exa → Brave → Linkup → Serper → Parallel → You → Valyu |
+
+Free providers (SearXNG, DuckDuckGo) always lead. Within-tier ordering reflects provider strengths per query type.
+
+## Content Extraction
+
+10-step fallback chain with quality gates and completeness assessment between every step:
+
+```
+trafilatura (local, fast) → Crawl4AI (local, JS rendering) →
+Obscura (local, stealth headless browser — optional binary) →
+Playwright (local, headless Chrome or Obscura CDP) → Jina Reader (external API) →
+Valyu Contents ($0.001/URL) → Firecrawl (1 credit/page) →
+You.com Contents ($1/1k pages) → Wayback Machine → archive.is
+```
+
+First 4 extractors need local install. Last 6 are external APIs that work anywhere. SSRF protection blocks private IPs. Results cached in memory (168h TTL). Domain rate limiting (10 req/min/domain). Authenticated extraction via cookies for paywall domains (NYT, Bloomberg, etc.).
+
+**Completeness assessment** (`argus/extraction/completeness.py`): runs after every quality gate pass. Detects feed-level truncation (not just paywalls) via five signals: `trailing_ellipsis`, `feed_marker` ("Read more", WordPress RSS footers), `mid_sentence_end`, `abrupt_final_para`, `word_cap` (common RSS limits). Confidence ≥ 0.85 = continue chain; returned in API response as `is_complete`, `completeness_confidence`, `truncation_type`, `completeness_signals`, `recommended_action`. Use `POST /api/assess-content` to assess text you already have without triggering extraction.
+
+Obscura (https://github.com/h4ckf0r0day/obscura): optional Rust headless browser binary (~70MB, 30MB RAM). No API key, no rate limit. Two modes: (1) CLI step — install binary on PATH, Argus auto-detects via `shutil.which`. (2) CDP backend — run `obscura serve --stealth --port 9222`, set `ARGUS_OBSCURA_CDP_URL=ws://127.0.0.1:9222` to make Playwright connect to it instead of launching Chrome. CDP mode enables stealth (navigator.webdriver=undefined, fingerprint randomization) and LP.getMarkdown for DOM-to-Markdown output.
+
+## Multi-Turn Sessions
+
+Pass `session_id` to search to enable conversational refinement. The broker remembers prior queries and uses them to context-enrich follow-up searches. Sessions persist to SQLite across restarts.
+
+## Configuration
+
+All config via env vars (see `.env.example`). Missing API keys degrade gracefully — providers are skipped, not errors. Budget values are query counts (not USD): 0 = unlimited, set to enforce credit tracking.
+
+## Conventions
+
+- Provider adapters must never leak provider-specific shapes outside `argus/providers/`
+- All search results are `SearchResult`: url, title, snippet, domain, provider, score
+- Extracted content is `ExtractedContent`: url, title, text, author, date, word_count
+- Routes prefixed with `/api`
+- Free/self-hosted-first: SearXNG and DuckDuckGo are the fallback floor
+- Token balances persist in SQLite alongside budget tracking
+- Budget env var is named `MONTHLY_BUDGET_USD` but values are query counts (legacy naming)
+- Version bumps must update `pyproject.toml` AND `server.json` (top-level + packages[0])
+- `README.md` must retain `<!-- mcp-name: io.github.Khamel83/argus -->` (PyPI verification for MCP Registry)
