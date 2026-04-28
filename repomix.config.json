@@ -1,0 +1,30 @@
+{
+  "$schema": "https://repomix.com/schemas/latest/schema.json",
+  "output": {
+    "filePath": "docs/LLM-OVERVIEW.md",
+    "style": "markdown",
+    "compress": true,
+    "removeComments": true,
+    "removeEmptyLines": true,
+    "topFilesLength": 20,
+    "fileSummary": true,
+    "directoryStructure": true,
+    "files": true,
+    "parsableStyle": true
+  },
+  "include": ["argus/**/*"],
+  "ignore": {
+    "useGitignore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      "*.pyc",
+      "__pycache__/",
+      "*.egg-info/",
+      ".venv/",
+      "tests/"
+    ]
+  },
+  "security": {
+    "enableSecurityCheck": false
+  }
+}

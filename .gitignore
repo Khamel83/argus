@@ -49,4 +49,5 @@ CLAUDE.local.md
 # Local operator/session artifacts
 1shot/
 docs/sessions/
+docs/LLM-OVERVIEW.md
 .mcpregistry_*

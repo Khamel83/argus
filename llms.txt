@@ -1,6 +1,6 @@
 # Argus
 
-> Search infrastructure for AI agents. 14 providers (SearXNG 70+ engines, DuckDuckGo, Yahoo, GitHub, WolframAlpha computed answers, Brave, Tavily, Exa, Linkup, Serper, Parallel AI, You.com, Valyu, SearchAPI) with tier-based routing, RRF ranking, 9-step content extraction, and budget enforcement. Works immediately with DuckDuckGo + Yahoo (no API keys). 7,000+ free monthly queries with API keys.
+> Search infrastructure for AI agents. 14 providers (SearXNG 70+ engines, DuckDuckGo, Yahoo, GitHub, WolframAlpha computed answers, Brave, Tavily, Exa, Linkup, Serper, Parallel AI, You.com, Valyu, SearchAPI) with tier-based routing, RRF ranking, 12-step content extraction with completeness assessment, retrieval workflows, and budget enforcement. Works immediately with DuckDuckGo + Yahoo (no API keys). 7,000+ free monthly queries with API keys.
 
 ## Installation
 
@@ -12,7 +12,7 @@
 
 ## MCP Server
 
-> argus mcp serve (stdio) or argus mcp serve --transport sse --port 8001 (HTTP)
+> argus mcp serve (stdio) or argus mcp serve --transport streamable-http --port 8001 (Antigravity-compatible)
 > Tools: search_web, extract_content, recover_url, expand_links, search_health, search_budgets, test_provider, valyu_answer, cookie_health
 > Resources: argus://providers/status, argus://providers/budgets, argus://policies/current
 > Claude Code config: {"mcpServers": {"argus": {"command": "argus", "args": ["mcp", "serve"]}}}
@@ -23,6 +23,7 @@
 > argus serve starts on port 8000. OpenAPI docs at /docs.
 > POST /api/search {"query": "...", "mode": "discovery", "max_results": 10}
 > POST /api/extract {"url": "..."}
+> POST /api/assess-content {"text": "...", "url": "..."}
 > POST /api/recover-url {"url": "...", "title": "..."}
 > POST /api/expand {"query": "..."}
 > GET /api/health/detail, GET /api/budgets
@@ -34,6 +35,7 @@
 > argus recover-url -u "https://dead.link" -t "Page Title"
 > argus health, argus budgets, argus test-provider -p brave
 > argus set-balance -s jina -b 9833638
+> argus workflows recover-article / capture-site / build-research-pack
 
 ## Search Modes
 
@@ -43,7 +45,8 @@
 
 ## Content Extraction
 
-> 9-step fallback chain: trafilatura → Crawl4AI → Playwright → Jina → Valyu Contents → Firecrawl → You.com Contents → Wayback → archive.is
+> 12-step fallback chain: auth → trafilatura → Crawl4AI → Obscura → Playwright → residential → Jina → Valyu Contents → Firecrawl → You.com Contents → Wayback → archive.is
+> Completeness assessment after every step: detects feed truncation, trailing ellipsis, abrupt endings
 > Quality gates between every step. SSRF protection. Domain rate limiting (10 req/min). Cookie auth for paywalls.
 
 ## Multi-Turn Sessions
@@ -60,6 +63,6 @@
 ## Documentation
 
 > README.md — full docs with quickstart, providers, integration, configuration
-> docs/providers.md — provider setup and configuration
 > CONTRIBUTING.md — contribution guide and adding providers
 > CLAUDE.md — developer guide and architecture overview
+> AGENTS.md — AI contributor onboarding

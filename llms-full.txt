@@ -1,6 +1,6 @@
 # Argus
 
-> Argus is search infrastructure for AI agents. 14 providers with tier-based credit routing, Reciprocal Rank Fusion ranking, WolframAlpha computed answers, 9-step content extraction, and budget enforcement. Works immediately with DuckDuckGo + Yahoo — no API keys needed. Add API keys for 7,000+ free monthly queries. Connect via HTTP, CLI, MCP server, or Python import.
+> Argus is search infrastructure for AI agents. 14 providers with tier-based credit routing, Reciprocal Rank Fusion ranking, WolframAlpha computed answers, 12-step content extraction with completeness assessment, retrieval workflows, corpus storage, and budget enforcement. Works immediately with DuckDuckGo + Yahoo — no API keys needed. Add API keys for 7,000+ free monthly queries. Connect via HTTP, CLI, MCP server, or Python import.
 
 ## What It Does
 
@@ -25,10 +25,19 @@
 
 ## Content Extraction
 
-> 9-step fallback chain with quality gates: trafilatura → Crawl4AI → Playwright → Jina Reader → Valyu Contents → Firecrawl → You.com Contents → Wayback Machine → archive.is
-> First 3 are local (need hosting). Last 6 are external APIs (work anywhere).
-> extract_content for working URLs. recover_url for dead/moved URLs (queries archives and runs extraction loop).
+> 12-step fallback chain with quality gates and completeness assessment:
+> auth (cookie-based paywall bypass) → trafilatura (local, fast) → Crawl4AI (local JS rendering) → Obscura (stealth headless browser) → Playwright (local headless Chrome) → residential (remote IP) → Jina Reader (external API) → Valyu Contents ($0.001/URL) → Firecrawl (1 credit/page) → You.com Contents ($1/1k pages) → Wayback Machine → archive.is
+> Completeness assessment runs after every step: detects feed truncation (trailing ellipsis, "Read more" markers, mid-sentence endings, abrupt paragraphs, word caps). Confidence >= 0.85 triggers chain continuation for free extractors.
+> First 6 steps need local install. Last 6 are external APIs (work anywhere).
+> POST /api/assess-content to check completeness of text you already have without fetching.
 > SSRF protection blocks private IPs. Domain rate limiting at 10 req/min/domain. Cookie auth for paywalls.
+
+## Retrieval Workflows
+
+> argus workflows recover-article — find and extract a lost/dead article
+> argus workflows capture-site — snapshot a site into local corpus
+> argus workflows build-research-pack — multi-query research with local artifact persistence
+> Corpus storage via platformdirs (or ARGUS_DATA_ROOT override).
 
 ## Multi-Turn Sessions
 
@@ -40,6 +49,7 @@
 
 > argus serve on port 8000. POST /api/search {"query": "...", "mode": "discovery", "max_results": 10, "session_id": "..."}
 > POST /api/extract {"url": "..."}. POST /api/recover-url {"url": "...", "title": "..."}
+> POST /api/assess-content {"text": "...", "url": "..."}. POST /api/expand {"query": "..."}
 > GET /api/health/detail, GET /api/budgets. OpenAPI at /docs.
 
 ### CLI
@@ -48,10 +58,11 @@
 > argus extract -u "https://example.com" -d nytimes.com
 > argus recover-url -u "https://dead.link" -t "Title"
 > argus health, argus budgets, argus set-balance -s jina -b 9833638, argus test-provider -p brave
+> argus workflows recover-article / capture-site / build-research-pack
 
 ### MCP
 
-> argus mcp serve (stdio) or argus mcp serve --transport sse --port 8001
+> argus mcp serve (stdio) or argus mcp serve --transport streamable-http --port 8001 (Antigravity-compatible)
 > Tools: search_web, extract_content, recover_url, expand_links, search_health, search_budgets, test_provider, valyu_answer, cookie_health
 > Resources: argus://providers/status, argus://providers/budgets, argus://policies/current
 > Config: {"mcpServers": {"argus": {"command": "argus", "args": ["mcp", "serve"]}}}
@@ -81,12 +92,12 @@
 ## Architecture
 
 > Caller (CLI/HTTP/MCP/Python) → SearchBroker → routing policy (tier-sorted, mode-specific) → provider executor (budget check → health check → search → early stop) → cache → dedupe → RRF ranking → response
-> Provider adapters in argus/providers/. Broker in argus/broker/. Extractor in argus/extraction/. API in argus/api/. CLI in argus/cli/. MCP in argus/mcp/. Sessions in argus/sessions/.
+> Provider adapters in argus/providers/. Broker in argus/broker/. Extractor in argus/extraction/. API in argus/api/. CLI in argus/cli/. MCP in argus/mcp/. Sessions in argus/sessions/. Workflows in argus/workflows/. Corpus in argus/corpus/.
 
 ## Documentation
 
 > README.md — product page with quickstart, providers, integration, configuration
-> docs/providers.md — provider setup and configuration details
 > CONTRIBUTING.md — contribution guide and adding providers
 > CLAUDE.md — developer guide and architecture overview
+> AGENTS.md — AI contributor onboarding
 > CHANGELOG.md — release history
