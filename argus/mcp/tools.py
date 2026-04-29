@@ -3,12 +3,22 @@ MCP tool definitions for Argus.
 """
 
 import json
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from argus.broker.router import SearchBroker
 from argus.corpus import describe_corpus_paths
 from argus.models import SearchMode, SearchQuery
 from argus.workflows import WorkflowService
+
+_STATUS_DISPLAY = {
+    "enabled": "OK",
+    "disabled_by_config": "DISABLED (config)",
+    "unavailable_missing_key": "MISSING KEY",
+    "temporarily_disabled_after_failures": "COOLDOWN",
+    "budget_exhausted": "BUDGET EXHAUSTED",
+    "degraded": "DEGRADED",
+    "healthy": "HEALTHY",
+}
 
 
 def _serialize_response(resp) -> str:
@@ -40,6 +50,7 @@ def _serialize_response(resp) -> str:
         "cached": resp.cached,
         "traces": traces,
         "run_id": resp.search_run_id,
+        "budget_warnings": resp.budget_warnings,
     }, indent=2)
 
 
@@ -183,7 +194,12 @@ def search_health(broker: SearchBroker) -> str:
 
     providers = {}
     for pname in ProviderName:
-        providers[pname.value] = broker.get_provider_status(pname)
+        status = broker.get_provider_status(pname)
+        raw = status["effective_status"]
+        status["display_status"] = _STATUS_DISPLAY.get(
+            raw if isinstance(raw, str) else raw.value, str(raw)
+        )
+        providers[pname.value] = status
 
     return json.dumps({
         "providers": providers,
@@ -332,14 +348,28 @@ def _serialize_workflow(result) -> str:
     )
 
 
+def _make_progress_callback(ctx: Any) -> Callable[[int, int, str], None] | None:
+    if ctx is None:
+        return None
+    def cb(current: int, total: int, message: str) -> None:
+        try:
+            ctx.report_progress(current, total, message)
+        except Exception:
+            pass
+    return cb
+
+
 async def recover_dead_article(
     broker: SearchBroker,
     url: str,
     title: Optional[str] = None,
     domain: Optional[str] = None,
+    ctx: Any = None,
 ) -> str:
     """Recover a dead article into a local citation-backed report."""
-    result = await WorkflowService(broker).recover_article(url=url, title=title, domain=domain)
+    result = await WorkflowService(broker, progress_callback=_make_progress_callback(ctx)).recover_article(
+        url=url, title=title, domain=domain,
+    )
     return _serialize_workflow(result)
 
 
@@ -348,9 +378,10 @@ async def capture_site(
     url: str,
     soft_page_limit: int = 75,
     hard_page_limit: int = 200,
+    ctx: Any = None,
 ) -> str:
     """Capture the important pages from a site and summarize them."""
-    result = await WorkflowService(broker).capture_site(
+    result = await WorkflowService(broker, progress_callback=_make_progress_callback(ctx)).capture_site(
         url=url,
         soft_page_limit=soft_page_limit,
         hard_page_limit=hard_page_limit,
@@ -363,9 +394,10 @@ async def build_research_pack(
     topic: str,
     official_url: Optional[str] = None,
     max_research_pages: int = 40,
+    ctx: Any = None,
 ) -> str:
     """Build a combined official-docs and external-research pack."""
-    result = await WorkflowService(broker).build_research_pack(
+    result = await WorkflowService(broker, progress_callback=_make_progress_callback(ctx)).build_research_pack(
         topic=topic,
         official_url=official_url,
         max_research_pages=max_research_pages,

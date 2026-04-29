@@ -8,7 +8,7 @@ class TestConfig:
         assert cfg.env == "development"
         assert cfg.log_level == "INFO"
         assert cfg.cache_ttl_hours == 168
-        assert cfg.searxng.enabled is True
+        assert cfg.searxng.enabled is False  # off by default; requires Docker
         assert cfg.brave.enabled is True  # enabled by default per .env.example
         assert cfg.serper.enabled is True
         assert cfg.searchapi.enabled is True  # all providers on by default; skips if no key

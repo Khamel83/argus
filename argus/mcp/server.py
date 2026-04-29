@@ -107,19 +107,22 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
         """Show the resolved Argus runtime storage paths."""
         return mcp_tools.argus_paths()
 
-    @mcp.tool()
-    async def recover_dead_article(url: str, title: str = None, domain: str = None) -> str:
-        """Recover a dead article into a local report with citations."""
-        return await mcp_tools.recover_dead_article(broker, url, title, domain)
+    from mcp.server.fastmcp import Context as McpContext
 
     @mcp.tool()
-    async def capture_site(url: str, soft_page_limit: int = 75, hard_page_limit: int = 200) -> str:
+    async def recover_dead_article(url: str, title: str = None, domain: str = None, ctx: McpContext = None) -> str:
+        """Recover a dead article into a local report with citations."""
+        return await mcp_tools.recover_dead_article(broker, url, title, domain, ctx=ctx)
+
+    @mcp.tool()
+    async def capture_site(url: str, soft_page_limit: int = 75, hard_page_limit: int = 200, ctx: McpContext = None) -> str:
         """Capture the important parts of a site and summarize them."""
         return await mcp_tools.capture_site(
             broker,
             url,
             soft_page_limit=soft_page_limit,
             hard_page_limit=hard_page_limit,
+            ctx=ctx,
         )
 
     @mcp.tool()
@@ -127,6 +130,7 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
         topic: str,
         official_url: str = None,
         max_research_pages: int = 40,
+        ctx: McpContext = None,
     ) -> str:
         """Build a local pack with official docs plus external research."""
         return await mcp_tools.build_research_pack(
@@ -134,6 +138,7 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
             topic,
             official_url=official_url,
             max_research_pages=max_research_pages,
+            ctx=ctx,
         )
 
     if expose_admin_tools:

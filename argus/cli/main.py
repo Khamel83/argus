@@ -12,6 +12,16 @@ from argus.logging import get_logger
 
 logger = get_logger("cli")
 
+_STATUS_DISPLAY = {
+    "enabled": "OK",
+    "disabled_by_config": "DISABLED (config)",
+    "unavailable_missing_key": "MISSING KEY",
+    "temporarily_disabled_after_failures": "COOLDOWN",
+    "budget_exhausted": "BUDGET EXHAUSTED",
+    "degraded": "DEGRADED",
+    "healthy": "HEALTHY",
+}
+
 
 def _run(coro):
     """Run an async coroutine from sync context."""
@@ -103,13 +113,21 @@ def paths(as_json):
 
 @cli.command()
 @click.option("--query", "-q", required=True, help="Search query")
-@click.option("--mode", "-m", default="discovery", type=click.Choice(["recovery", "discovery", "grounding", "research"]))
+@click.option("--mode", "-m", default="discovery", type=click.Choice(["recovery", "discovery", "grounding", "research"]),
+              help="recovery (find dead URLs), discovery (general search), grounding (fact-checking), research (deep multi-provider)")
 @click.option("--max-results", "-n", default=10, help="Max results")
 @click.option("--providers", "-p", multiple=False, help="Override providers (comma-separated)")
 @click.option("--session", "-s", default=None, help="Session ID for multi-turn context")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def search(query, mode, max_results, providers, as_json, session):
-    """Execute a search query."""
+    """Execute a search query.
+
+    Modes:
+      recovery    Find a moved or dead URL by title/domain hints
+      discovery   General web search across all available providers
+      grounding   Fact-checking and finding authoritative sources
+      research    Deep multi-provider search for research tasks
+    """
     from argus.broker.router import create_broker
     from argus.models import ProviderName, SearchMode, SearchQuery
 
@@ -160,6 +178,11 @@ def search(query, mode, max_results, providers, as_json, session):
                 click.echo(f"  {t.provider.value}: {t.status} ({t.results_count} results, {t.latency_ms}ms)")
                 if t.error:
                     click.echo(f"    Error: {t.error}")
+
+        if resp.budget_warnings:
+            click.echo("Budget warnings:")
+            for w in resp.budget_warnings:
+                click.echo(f"  {w}")
 
 
 @cli.command()
@@ -303,7 +326,8 @@ def health():
     for pname in ProviderName:
         status = broker.get_provider_status(pname)
         effective = status["effective_status"]
-        click.echo(f"  {pname.value:12s} {effective if isinstance(effective, str) else effective.value}")
+        raw = effective if isinstance(effective, str) else effective.value
+        click.echo(f"  {pname.value:12s} {_STATUS_DISPLAY.get(raw, raw)}")
     click.echo()
     all_health = broker.health_tracker.get_all_status()
     if all_health:
@@ -425,7 +449,7 @@ def test_provider(provider, query):
 
     click.echo(f"Testing {pname.value}...")
     click.echo(f"  Available: {prov.is_available()}")
-    click.echo(f"  Status: {prov.status().value}")
+    click.echo(f"  Status: {_STATUS_DISPLAY.get(prov.status().value, prov.status().value)}")
     if not prov.is_available():
         click.echo("  Skipped: provider is not available")
         return
@@ -441,6 +465,94 @@ def test_provider(provider, query):
 
 
 @cli.command()
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def doctor(as_json):
+    """Diagnose your Argus setup: config, providers, connectivity, and MCP readiness."""
+    from argus.broker.router import create_broker
+    from argus.models import ProviderName
+
+    broker = create_broker()
+    checks = []
+
+    # 1. Config loads
+    try:
+        from argus.config import get_config
+        cfg = get_config()
+        checks.append(("Config", True, f"env={cfg.env}, log={cfg.log_level}"))
+    except Exception as e:
+        checks.append(("Config", False, str(e)))
+
+    # 2. Provider audit
+    ready = 0
+    needs_key = 0
+    for pname in ProviderName:
+        status = broker.get_provider_status(pname)
+        raw = status["effective_status"]
+        display = _STATUS_DISPLAY.get(raw if isinstance(raw, str) else raw.value, str(raw))
+        if display == "OK" or display == "HEALTHY":
+            ready += 1
+        elif display == "MISSING KEY":
+            needs_key += 1
+    checks.append(("Providers", ready > 0, f"{ready} ready, {needs_key} need API keys"))
+
+    # 3. SearXNG connectivity (HEAD request)
+    try:
+        import urllib.request
+        import urllib.error
+        cfg = get_config()
+        if cfg.searxng.enabled:
+            req = urllib.request.Request(cfg.searxng.base_url, method="HEAD")
+            urllib.request.urlopen(req, timeout=5)
+            checks.append(("SearXNG", True, f"reachable at {cfg.searxng.base_url}"))
+        else:
+            checks.append(("SearXNG", None, "disabled (enable in .env if you have Docker)"))
+    except Exception:
+        checks.append(("SearXNG", False, "not reachable — check Docker container"))
+
+    # 4. DuckDuckGo probe
+    try:
+        from argus.providers.duckduckgo import DuckDuckGoProvider
+        ddg = DuckDuckGoProvider()
+        checks.append(("DuckDuckGo", ddg.is_available(), "available" if ddg.is_available() else "not available"))
+    except Exception as e:
+        checks.append(("DuckDuckGo", False, str(e)))
+
+    # 5. MCP package
+    try:
+        import mcp.server.fastmcp  # noqa: F401
+        checks.append(("MCP package", True, "installed"))
+    except ImportError:
+        checks.append(("MCP package", False, "pip install 'argus-search[mcp]'"))
+
+    if as_json:
+        _emit_json({
+            "checks": [{"name": n, "ok": ok, "detail": d} for n, ok, d in checks],
+            "providers_ready": ready,
+            "providers_need_keys": needs_key,
+        })
+        return
+
+    # Human output
+    all_pass = True
+    for name, ok, detail in checks:
+        if ok is None:
+            icon = "-"
+            status = "SKIP"
+        elif ok:
+            icon = "+"
+            status = "OK"
+        else:
+            icon = "!"
+            status = "FAIL"
+            all_pass = False
+        click.echo(f"  [{icon}] {name:15s} {status:5s} {detail}")
+    click.echo()
+    if all_pass:
+        click.echo("Setup looks good. Run 'argus health' for detailed provider status.")
+    else:
+        click.echo("Some checks failed. See above for details.")
+        if needs_key:
+            click.echo(f"  {needs_key} providers need API keys — add them to .env or secrets vault.")
 @click.option("--host", "-h", default="127.0.0.1", help="Bind host")
 @click.option("--port", "-p", default=8000, help="Bind port")
 @click.option("--reload", is_flag=True, help="Auto-reload on code changes")
@@ -507,6 +619,10 @@ def mcp_init(global_):
     servers = data.setdefault("mcpServers", {})
 
     if "argus" in servers:
+        if servers["argus"] != entry:
+            if not click.confirm(f"argus MCP config already exists in {scope}. Overwrite?", default=False):
+                click.echo("Aborted.")
+                return
         servers["argus"] = entry
         action = "Updated"
     else:
@@ -516,6 +632,61 @@ def mcp_init(global_):
     config_path.write_text(json.dumps(data, indent=2) + "\n")
     click.echo(f"{action} argus MCP to {scope}")
     click.echo("Restart Claude Code in this project to connect.")
+
+
+@mcp.command(name="check")
+def mcp_check():
+    """Validate MCP server setup: package, transport, and authentication."""
+    import sys
+    from pathlib import Path
+
+    checks = []
+
+    # 1. MCP package
+    try:
+        import mcp.server.fastmcp  # noqa: F401
+        checks.append(("MCP package", True, "installed"))
+    except ImportError:
+        checks.append(("MCP package", False, "pip install 'argus-search[mcp]'"))
+
+    # 2. FastMCP Context (for progress notifications)
+    try:
+        from mcp.server.fastmcp import Context  # noqa: F401
+        checks.append(("Progress notifications", True, "Context available"))
+    except Exception:
+        checks.append(("Progress notifications", False, "MCP version may not support Context"))
+
+    # 3. Config file exists
+    config_paths = [Path(".mcp.json"), Path.home() / ".claude.json"]
+    config_found = [p for p in config_paths if p.exists()]
+    has_argus = False
+    for p in config_found:
+        try:
+            data = json.loads(p.read_text())
+            if "mcpServers" in data and "argus" in data["mcpServers"]:
+                has_argus = True
+                break
+        except Exception:
+            pass
+    checks.append(("MCP config file", has_argus, f"found in {p}" if has_argus else "run 'argus mcp init'"))
+
+    # 4. API key for remote access
+    from argus.auth import AuthConfig
+    auth = AuthConfig.from_env()
+    checks.append(("ARGUS_API_KEY (remote)", auth.has_caller_key(), "set" if auth.has_caller_key() else "needed for SSE/streamable-http transport"))
+
+    # Report
+    all_ok = True
+    for name, ok, detail in checks:
+        status = "OK" if ok else "MISSING"
+        if not ok:
+            all_ok = False
+        click.echo(f"  {name:30s} {status:8s} {detail}")
+    click.echo()
+    if all_ok:
+        click.echo("MCP setup is ready.")
+    else:
+        click.echo("Fix the issues above, then restart Claude Code.")
 
 
 @cli.group()

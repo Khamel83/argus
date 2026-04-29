@@ -12,7 +12,7 @@ _log = logging.getLogger("argus.config")
 
 @dataclass(frozen=True)
 class SearXNGConfig:
-    enabled: bool = True
+    enabled: bool = False
     base_url: str = "http://127.0.0.1:8080"
     timeout_seconds: int = 12
 
@@ -207,7 +207,7 @@ class EnvironmentConfigLoader:
             ),
             default_max_results=self.get_int("ARGUS_DEFAULT_MAX_RESULTS", 10),
             searxng=SearXNGConfig(
-                enabled=self.get_bool("ARGUS_SEARXNG_ENABLED", True),
+                enabled=self.get_bool("ARGUS_SEARXNG_ENABLED", False),
                 base_url=self.get_str(
                     "ARGUS_SEARXNG_BASE_URL",
                     "http://127.0.0.1:8080",

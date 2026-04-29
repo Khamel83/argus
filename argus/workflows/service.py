@@ -7,6 +7,7 @@ import json
 import shutil
 import uuid
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from dataclasses import asdict
 from datetime import datetime
 from html.parser import HTMLParser
@@ -130,11 +131,25 @@ def _lead_text(text: str, limit: int = 280) -> str:
 class WorkflowService:
     """Async workflow executor with in-memory run tracking."""
 
-    def __init__(self, broker: SearchBroker, *, corpus_paths: CorpusPaths | None = None):
+    def __init__(
+        self,
+        broker: SearchBroker,
+        *,
+        corpus_paths: CorpusPaths | None = None,
+        progress_callback: Callable[[int, int, str], None] | None = None,
+    ):
         self._broker = broker
         self._paths = corpus_paths or get_corpus_paths()
         self._runs: dict[str, WorkflowResult] = {}
         self._persistence = WorkflowPersistenceGateway()
+        self._progress = progress_callback
+
+    def _report(self, current: int, total: int, message: str) -> None:
+        if self._progress:
+            try:
+                self._progress(current, total, message)
+            except Exception:
+                pass
 
     def get_paths(self) -> dict[str, Any]:
         return describe_corpus_paths()
@@ -258,6 +273,7 @@ class WorkflowService:
         return run
 
     async def _recover_article_impl(self, run: WorkflowResult, *, url: str, title: str | None, domain: str | None):
+        self._report(0, 3, "Searching for recovery candidates...")
         query_parts = [url]
         if title:
             query_parts.append(title)
@@ -285,6 +301,7 @@ class WorkflowService:
             role="recovered_source",
             source_type="recovery_candidate",
         )
+        self._report(1, 3, f"Extracted {len(documents)} candidate pages")
         if not documents:
             raise ValueError("Recovery candidates were found but none could be extracted")
 
@@ -335,7 +352,9 @@ class WorkflowService:
         soft_page_limit: int,
         hard_page_limit: int,
     ):
+        self._report(0, 4, "Discovering site URLs...")
         candidates = await self._discover_site_urls(url, soft_page_limit=soft_page_limit, hard_page_limit=hard_page_limit)
+        self._report(1, 4, f"Discovered {len(candidates)} URLs, extracting content...")
         documents, citations = await self._capture_explicit_urls(
             run,
             candidates,
@@ -345,6 +364,7 @@ class WorkflowService:
             soft_page_limit=soft_page_limit,
             hard_page_limit=hard_page_limit,
         )
+        self._report(2, 4, f"Extracted {len(documents)} pages, generating summary...")
         if not documents:
             raise ValueError("Site capture did not yield any extractable pages")
 
@@ -382,10 +402,12 @@ class WorkflowService:
         official_url: str | None,
         max_research_pages: int,
     ):
+        self._report(0, 4, "Discovering official documentation URL...")
         official = official_url or await self._discover_official_docs_url(topic)
         if not official:
             raise ValueError("Could not determine an official documentation URL")
 
+        self._report(1, 4, f"Capturing official docs from {official}...")
         official_docs, official_citations = await self._capture_site_documents(
             official,
             run=run,
@@ -395,6 +417,7 @@ class WorkflowService:
             soft_page_limit=50,
             hard_page_limit=120,
         )
+        self._report(2, 4, f"Captured {len(official_docs)} official docs, searching for external research...")
         research_urls = await self._discover_research_urls(topic, official_url=official, limit=max_research_pages)
         research_docs, research_citations = await self._capture_explicit_urls(
             run,
@@ -406,6 +429,7 @@ class WorkflowService:
             soft_page_limit=max_research_pages,
             hard_page_limit=max_research_pages,
         )
+        self._report(3, 4, f"Captured {len(research_docs)} external pages, generating summary...")
         documents = official_docs + research_docs
         citations = official_citations + research_citations
         if not documents:
@@ -519,9 +543,11 @@ class WorkflowService:
         output_dir = Path(run.snapshot_dir) / section
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        for candidate_url in urls:
+        for i, candidate_url in enumerate(urls):
             if hard_page_limit is not None and len(documents) >= hard_page_limit:
                 break
+            if i > 0 and i % 5 == 0:
+                self._report(i, len(urls), f"Extracting page {i}/{len(urls)}: {candidate_url[:60]}")
             result = await extract_url(candidate_url)
             if result.error or not result.text:
                 continue
