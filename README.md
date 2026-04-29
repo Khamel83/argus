@@ -341,7 +341,7 @@ Run Argus on one machine, connect every client over the network. No local instal
 On the server:
 ```bash
 export ARGUS_API_KEY=replace-with-a-long-random-secret
-argus mcp serve --transport streamable-http --host 100.126.13.70 --port 8001
+argus mcp serve --transport streamable-http --host YOUR_TAILSCALE_IP --port 8001
 ```
 
 To keep the HTTP API and remote MCP service running after reboot on a systemd host:
@@ -359,7 +359,7 @@ On each client:
 | **Claude Code** | `{"mcpServers":{"argus":{"type":"sse","url":"http://<server>:8001/mcp","headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` |
 | **Antigravity** | `{"mcpServers":{"argus":{"serverUrl":"http://<server>:8001/mcp","headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` |
 
-With [Tailscale](https://tailscale.com), `<server>` is your machine's Tailscale IP (e.g. `100.126.13.70`). One server, every machine on your mesh gets search.
+With [Tailscale](https://tailscale.com), `<server>` is your machine's Tailscale IP (e.g. `100.x.x.x`). One server, every machine on your mesh gets search.
 
 **Transports**: `stdio` (default, for local), `sse` (legacy remote), `streamable-http` (modern remote — required for Antigravity). Remote HTTP transports require `ARGUS_API_KEY`.
 
