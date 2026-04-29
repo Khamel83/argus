@@ -12,11 +12,11 @@
 > pip install argus-search works immediately with DuckDuckGo + Yahoo on any machine with Python 3.11+
 > pip install "argus-search[mcp]" adds MCP server support
 > pip install "argus-search[mcp,crawl4ai]" adds local JS rendering (needs playwright + crawl4ai)
-> Docker: docker compose up -d for SearXNG + Argus
+> Docker: docker compose up -d for SearXNG + Argus (SearXNG disabled by default — enable in .env when you have a container running)
 
 ## Providers
 
-> Tier 0 (free): SearXNG (self-hosted, aggregates 70+ engines), DuckDuckGo (no key), Yahoo (scraped, no key), GitHub (free, rate-limited), WolframAlpha (2k/mo computed answers, free API key)
+> Tier 0 (free): SearXNG (self-hosted, disabled by default — enable in .env when Docker container is running), DuckDuckGo (no key), Yahoo (scraped, no key), GitHub (free, rate-limited), WolframAlpha (2k/mo computed answers, free API key)
 > Tier 1 (monthly recurring): Brave (2k/mo), Tavily (1k/mo), Exa (1k/mo), Linkup (1k/mo)
 > Tier 3 (one-time credits): Serper (2.5k), Parallel AI (4k), You.com ($20), Valyu ($10), SearchAPI
 > WolframAlpha returns computed answers (math, conversions, facts) not URL lists. Best in grounding+research modes.
@@ -38,6 +38,7 @@
 > argus workflows capture-site — snapshot a site into local corpus
 > argus workflows build-research-pack — multi-query research with local artifact persistence
 > Corpus storage via platformdirs (or ARGUS_DATA_ROOT override).
+> MCP progress notifications: capture_site, build_research_pack, and recover_dead_article report progress back to Claude/Codex sessions via ctx.report_progress().
 
 ## Multi-Turn Sessions
 
@@ -57,14 +58,15 @@
 > argus search -q "query" --mode discovery --session my-session --json
 > argus extract -u "https://example.com" -d nytimes.com
 > argus recover-url -u "https://dead.link" -t "Title"
-> argus health, argus budgets, argus set-balance -s jina -b 9833638, argus test-provider -p brave
+> argus health, argus budgets, argus doctor, argus set-balance -s jina -b 9833638, argus test-provider -p brave
+> argus mcp init, argus mcp check, argus mcp serve
 > argus workflows recover-article / capture-site / build-research-pack
 
 ### MCP
 
 > argus mcp serve (stdio) or argus mcp serve --transport streamable-http --port 8001 (Antigravity-compatible)
 > Tools: search_web, extract_content, recover_url, expand_links, search_health, search_budgets, test_provider, valyu_answer, cookie_health
-> Resources: argus://providers/status, argus://providers/budgets, argus://policies/current
+> Resources: argus://providers/status, argus://providers/budgets, argus://policies/current, argus://corpus/paths
 > Config: {"mcpServers": {"argus": {"command": "argus", "args": ["mcp", "serve"]}}}
 > MCP Registry: io.github.Khamel83/argus
 
@@ -86,7 +88,7 @@
 
 ## Configuration
 
-> All config via ARGUS_ prefix env vars. Key variables: ARGUS_SEARXNG_BASE_URL, provider API keys (ARGUS_BRAVE_API_KEY etc.), ARGUS_CACHE_TTL_HOURS (168), per-provider budgets (ARGUS_BRAVE_MONTHLY_BUDGET_USD etc.), ARGUS_CRAWL4AI_ENABLED, ARGUS_EXTRACTION_TIMEOUT_SECONDS.
+> All config via ARGUS_ prefix env vars. Key variables: ARGUS_SEARXNG_BASE_URL (also ARGUS_SEARXNG_ENABLED=true to enable), provider API keys (ARGUS_BRAVE_API_KEY etc.), ARGUS_CACHE_TTL_HOURS (168), per-provider budgets (ARGUS_BRAVE_MONTHLY_BUDGET_USD etc.), ARGUS_CRAWL4AI_ENABLED, ARGUS_EXTRACTION_TIMEOUT_SECONDS.
 > See .env.example for full list. Missing keys degrade gracefully — providers are skipped, not errors.
 
 ## Architecture

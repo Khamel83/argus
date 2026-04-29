@@ -2,7 +2,7 @@
 
 ## Overview
 
-Search infrastructure for AI agents: 14 providers, intelligent credit-aware routing, WolframAlpha computed answers, and a 12-step content extraction chain. Provider adapters: SearXNG (self-hosted, aggregates 70+ engines), DuckDuckGo, Yahoo (scraped), GitHub, WolframAlpha (free API, computed answers), Brave, Tavily, Exa, Linkup (monthly free tiers), Serper, Parallel AI, You.com, Valyu, SearchAPI. Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
+Search infrastructure for AI agents: 14 providers, intelligent credit-aware routing, WolframAlpha computed answers, and a 12-step content extraction chain. Provider adapters: SearXNG (self-hosted, aggregates 70+ engines, disabled by default), DuckDuckGo, Yahoo (scraped), GitHub, WolframAlpha (free API, computed answers), Brave, Tavily, Exa, Linkup (monthly free tiers), Serper, Parallel AI, You.com, Valyu, SearchAPI. Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
 
 ## Two Deployment Tiers
 
@@ -47,11 +47,16 @@ argus search -q "follow up" --session abc123   # multi-turn context
 # Content Extraction
 argus extract -u "https://example.com/article"
 
-# Admin
+# Diagnostics
+argus doctor                  # full setup check (config, providers, connectivity, MCP)
 argus health                  # provider status
 argus budgets                 # budget status + token balances
-argus set-balance -s jina -b 9833638   # set token balance for a service
+argus mcp check               # validate MCP server setup
 argus test-provider -p brave
+argus set-balance -s jina -b 9833638   # set token balance for a service
+
+# MCP setup
+argus mcp init                 # add MCP config to this project (warns before overwrite)
 
 # Test
 pytest tests/
@@ -87,7 +92,7 @@ Caller (CLI/HTTP/MCP/Python)
 
 | Tier | Providers | Credits |
 |------|-----------|---------|
-| 0 (free) | SearXNG (70+ engines via self-host), DuckDuckGo, Yahoo (scraped), GitHub, WolframAlpha (2k/mo, API key) | Unlimited or free recurring |
+| 0 (free) | SearXNG (70+ engines, disabled by default — enable if you have Docker), DuckDuckGo, Yahoo (scraped), GitHub, WolframAlpha (2k/mo, API key) | Unlimited or free recurring |
 | 1 (monthly) | Brave (2k/mo), Tavily (1k/mo), Exa (1k/mo), Linkup (1k/mo) | Recurring monthly |
 | 3 (one-time) | Serper (2.5k), Parallel (4k), You.com ($20), SearchAPI, Valyu ($10) | Don't come back |
 
@@ -97,13 +102,16 @@ WolframAlpha is unique: it returns computed answers (math, conversions, facts), 
 
 Yahoo is a Tier 0 scraped provider. It will be auto-disabled by the health tracker if Yahoo HTML changes. No API key needed.
 
+SearXNG is a Tier 0 self-hosted provider but **disabled by default** — it requires Docker. Set `ARGUS_SEARXNG_ENABLED=true` when you have a SearXNG container running. DuckDuckGo and Yahoo provide free search without any setup.
+
 ## Interfaces
 
 | Interface | How to use |
 |-----------|-----------|
 | HTTP API | `POST /api/search`, `POST /api/extract`, `POST /api/assess-content`, `POST /api/recover-url`, `POST /api/expand` — OpenAPI at `/docs` |
-| CLI | `argus search`, `argus extract`, `argus recover-url`, `argus health`, `argus budgets`, `argus set-balance` |
-| MCP | `argus mcp serve` — tools: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `valyu_answer`. Transports: stdio (default), `--transport sse` (legacy remote), `--transport streamable-http` (Antigravity, modern clients) |
+| CLI | `argus search`, `argus extract`, `argus recover-url`, `argus doctor`, `argus health`, `argus budgets`, `argus set-balance` |
+| MCP | `argus mcp serve` — tools: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `valyu_answer`. Transports: stdio (default), `--transport sse` (legacy remote), `--transport streamable-http` (Antigravity, modern clients). Progress notifications on long-running workflows. |
+| MCP setup | `argus mcp init` — writes config. `argus mcp check` — validates setup. |
 | MCP Registry | [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/servers/io.github.Khamel83/argus) — `io.github.Khamel83/argus` |
 | Python | `from argus.broker.router import create_broker`, `from argus.extraction import extract_url`, `from argus.providers.valyu_answer import valyu_answer` |
 
@@ -118,7 +126,7 @@ Each mode defines which providers are best suited for that query type. Routing s
 | `grounding` | Fact-checking + computed answers | SearXNG → DuckDuckGo → Yahoo → **Wolfram** → Brave → Linkup → Serper → Parallel → You → Valyu |
 | `research` | Broad exploratory | SearXNG → DuckDuckGo → Yahoo → **Wolfram** → GitHub → Tavily → Exa → Brave → Linkup → Serper → Parallel → You → Valyu |
 
-Free providers (SearXNG, DuckDuckGo) always lead. Within-tier ordering reflects provider strengths per query type.
+Free providers (SearXNG, DuckDuckGo) always lead. SearXNG is skipped when disabled. Within-tier ordering reflects provider strengths per query type.
 
 ## Content Extraction
 
@@ -144,7 +152,7 @@ Pass `session_id` to search to enable conversational refinement. The broker reme
 
 ## Configuration
 
-All config via env vars (see `.env.example`). Missing API keys degrade gracefully — providers are skipped, not errors. Budget values are query counts (not USD): 0 = unlimited, set to enforce credit tracking.
+All config via env vars (see `.env.example`). Missing API keys degrade gracefully — providers are skipped, not errors. Budget values are query counts (not USD): 0 = unlimited, set to enforce credit tracking. Secrets can be resolved from an optional `secrets` CLI vault — batch-loaded at startup for fast init.
 
 ## Conventions
 
@@ -152,7 +160,7 @@ All config via env vars (see `.env.example`). Missing API keys degrade gracefull
 - All search results are `SearchResult`: url, title, snippet, domain, provider, score
 - Extracted content is `ExtractedContent`: url, title, text, author, date, word_count
 - Routes prefixed with `/api`
-- Free/self-hosted-first: SearXNG and DuckDuckGo are the fallback floor
+- Free/self-hosted-first: DuckDuckGo and Yahoo are the fallback floor; SearXNG requires Docker
 - Token balances persist in SQLite alongside budget tracking
 - Budget env var is named `MONTHLY_BUDGET_USD` but values are query counts (legacy naming)
 - Version bumps must update `pyproject.toml` AND `server.json` (top-level + packages[0])

@@ -9,12 +9,13 @@
 > pip install "argus-search[mcp,crawl4ai]" for local JS rendering extraction
 > Zero config — DuckDuckGo + Yahoo handle search with no keys, no containers, no accounts
 > Add ARGUS_WOLFRAM_API_KEY (free at developer.wolframalpha.com) for computed math/fact answers
+> Docker: docker compose up -d for SearXNG + Argus (SearXNG disabled by default — enable in .env when you have a container running)
 
 ## MCP Server
 
 > argus mcp serve (stdio) or argus mcp serve --transport streamable-http --port 8001 (Antigravity-compatible)
 > Tools: search_web, extract_content, recover_url, expand_links, search_health, search_budgets, test_provider, valyu_answer, cookie_health
-> Resources: argus://providers/status, argus://providers/budgets, argus://policies/current
+> Resources: argus://providers/status, argus://providers/budgets, argus://policies/current, argus://corpus/paths
 > Claude Code config: {"mcpServers": {"argus": {"command": "argus", "args": ["mcp", "serve"]}}}
 > Also on MCP Registry: io.github.Khamel83/argus
 
@@ -33,14 +34,15 @@
 > argus search -q "query" --mode discovery --session my-session
 > argus extract -u "https://example.com" -d nytimes.com
 > argus recover-url -u "https://dead.link" -t "Page Title"
-> argus health, argus budgets, argus test-provider -p brave
+> argus health, argus budgets, argus doctor, argus test-provider -p brave
 > argus set-balance -s jina -b 9833638
+> argus mcp init, argus mcp check, argus mcp serve
 > argus workflows recover-article / capture-site / build-research-pack
 
 ## Search Modes
 
 > discovery: related pages, canonical sources. Recovery: find moved/dead URLs. Grounding: facts + WolframAlpha computed answers. Research: broad exploratory retrieval with WolframAlpha.
-> Routing: Tier 0 (free: SearXNG 70+ engines, DuckDuckGo, Yahoo, GitHub, WolframAlpha 2k/mo) → Tier 1 (monthly: Brave 2k, Tavily 1k, Exa 1k, Linkup 1k) → Tier 3 (one-time: Serper 2.5k, Parallel 4k, You.com $20, Valyu $10)
+> Routing: Tier 0 (free: SearXNG 70+ engines — disabled by default, DuckDuckGo, Yahoo, GitHub, WolframAlpha 2k/mo) → Tier 1 (monthly: Brave 2k, Tavily 1k, Exa 1k, Linkup 1k) → Tier 3 (one-time: Serper 2.5k, Parallel 4k, You.com $20, Valyu $10)
 > Budget-exhausted providers are skipped automatically
 
 ## Content Extraction

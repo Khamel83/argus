@@ -96,10 +96,10 @@ One command to install, one JSON block to connect. No server to run, no keys to 
 
 ### Mode 2: Full Stack Server
 
-Got a Raspberry Pi running Pi-hole? A Mac Mini on your desk? An old laptop? That's enough to run the full stack — SearXNG (your own private search engine) plus local JS-rendering content extraction.
+Got a Raspberry Pi running Pi-hole? A Mac Mini on your desk? An old laptop? That's enough to run the full stack — SearXNG (your own private search engine, disabled by default) plus local JS-rendering content extraction.
 
 ```bash
-docker compose up -d    # SearXNG + Argus
+ARGUS_SEARXNG_ENABLED=true docker compose up -d    # SearXNG + Argus
 ```
 
 | What you have | What you get |
@@ -109,7 +109,7 @@ docker compose up -d    # SearXNG + Argus
 | **Mac Mini M1+** (8GB+) | Full stack with headroom |
 | **Free cloud VM** (1GB) | SearXNG + search providers (skip Crawl4AI) |
 
-SearXNG takes 512MB of RAM and gives you a private Google-style search engine that nobody can rate-limit, block, or charge for. It runs alongside Pi-hole on hardware millions of people already own.
+SearXNG takes 512MB of RAM and gives you a private Google-style search engine (disabled by default — set `ARGUS_SEARXNG_ENABLED=true`) that nobody can rate-limit, block, or charge for. It runs alongside Pi-hole on hardware millions of people already own.
 
 ## Where Argus Writes Data
 
@@ -183,7 +183,7 @@ The repo includes `.python-version` with `3.12` so `uv`, `pyenv`, and similar to
 |----------|------------|---------------|-------|
 | DuckDuckGo | Free (scraped) | Unlimited | None |
 | Yahoo | Free (scraped) | Unlimited | None — fragile, auto-skipped if broken |
-| SearXNG | Free (self-hosted) | Unlimited — 70+ engines¹ | Docker |
+| SearXNG | Free (self-hosted, off by default) | Unlimited — 70+ engines¹ | Docker |
 | GitHub | Free (API) | Unlimited | None (token for higher rate limit) |
 | WolframAlpha | Free (API key) | 2,000 queries/month | [free key](https://developer.wolframalpha.com/) |
 | Brave Search | Monthly recurring | 2,000 queries/month | [dashboard](https://brave.com/search/api/) |
@@ -199,7 +199,7 @@ The repo includes `.python-version` with `3.12` so `uv`, `pyenv`, and similar to
 
 ² WolframAlpha returns **computed answers** (math, unit conversions, factual lookups), not web search results. It only activates in `grounding` and `research` modes. Queries it can't compute (general web searches) return empty — no error, no health penalty.
 
-**7,000+ free queries/month** from recurring free-tier providers alone (WolframAlpha 2k + Brave 2k + Tavily 1k + Exa 1k + Linkup 1k). DuckDuckGo, Yahoo, SearXNG, and GitHub have no monthly cap. Routing priority: **Tier 0** (free: SearXNG, DuckDuckGo, Yahoo, GitHub, WolframAlpha) → **Tier 1** (monthly recurring: Brave, Tavily, Exa, Linkup) → **Tier 3** (one-time: Serper, Parallel, You.com, Valyu, SearchAPI). Budget-exhausted providers are skipped automatically.
+**7,000+ free queries/month** from recurring free-tier providers alone (WolframAlpha 2k + Brave 2k + Tavily 1k + Exa 1k + Linkup 1k). DuckDuckGo, Yahoo, and GitHub have no monthly cap. SearXNG is disabled by default (enable in `.env`). Routing priority: **Tier 0** (free: SearXNG*, DuckDuckGo, Yahoo, GitHub, WolframAlpha) → **Tier 1** (monthly recurring: Brave, Tavily, Exa, Linkup) → **Tier 3** (one-time: Serper, Parallel, You.com, Valyu, SearchAPI). Budget-exhausted providers are skipped automatically.
 
 ## HTTP API
 
@@ -280,7 +280,7 @@ Each result includes `url`, `title`, `snippet`, `domain`, `provider`, and `score
 }
 ```
 
-Each provider tracks usage. Tier 1 (monthly) uses a 30-day rolling window; tier 3 (one-time) uses a lifetime counter that never resets. When a provider hits its budget, Argus skips it and moves to the next. Free providers (SearXNG, DuckDuckGo, GitHub) have no limit. Set `ARGUS_*_MONTHLY_BUDGET_USD` to enforce custom limits per provider.
+Each provider tracks usage. Tier 1 (monthly) uses a 30-day rolling window; tier 3 (one-time) uses a lifetime counter that never resets. When a provider hits its budget, Argus skips it and moves to the next. Free providers (DuckDuckGo, GitHub) have no limit. SearXNG is free but disabled by default. Set `ARGUS_*_MONTHLY_BUDGET_USD` to enforce custom limits per provider.
 
 ## Integration
 
@@ -293,12 +293,15 @@ argus search -q "fastapi" --session my-session       # multi-turn context
 argus extract -u "https://example.com/article"       # extract clean text
 argus extract -u "https://example.com/article" -d nytimes.com  # auth extraction
 argus recover-url -u "https://dead.link" -t "Title"
+argus doctor                                         # full setup diagnostics
 argus health                                         # provider status
 argus budgets                                        # budget + token balances
+argus mcp check                                      # validate MCP setup
 argus set-balance -s jina -b 9833638                 # track token balance
 argus test-provider -p brave                         # smoke-test a provider
 argus serve                                          # start API server
 argus mcp serve                                      # start MCP server
+argus mcp init                                       # add MCP config to project
 ```
 
 All commands support `--json` for structured output.
@@ -455,6 +458,7 @@ All config via environment variables. See `.env.example` for the full list. Miss
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `ARGUS_SEARXNG_ENABLED` | `false` | Set `true` when you have a SearXNG Docker container |
 | `ARGUS_SEARXNG_BASE_URL` | `http://127.0.0.1:8080` | SearXNG endpoint |
 | `ARGUS_BRAVE_API_KEY` | — | Brave Search API key |
 | `ARGUS_SERPER_API_KEY` | — | Serper API key |
@@ -494,7 +498,7 @@ Argus calls them for you — plus 13 other providers. You get one ranked, dedupl
 Yes. Set only the API key for the provider you want. All others are silently skipped. For zero-config, just install and go — DuckDuckGo + Yahoo handle search with no keys.
 
 **Do I need Docker?**
-No. `pip install argus-search` works immediately on any machine with Python 3.11+. Docker is only needed for SearXNG (self-hosted search, aggregates 70+ engines) or Crawl4AI (local JS rendering).
+No. `pip install argus-search` works immediately on any machine with Python 3.11+. Docker is only needed for SearXNG (set `ARGUS_SEARXNG_ENABLED=true` in `.env`) or Crawl4AI (local JS rendering).
 
 **Which Python version should contributors use?**
 Use Python 3.12 for repo development and verification: `uv sync --python 3.12 --extra dev --extra mcp` then `uv run pytest tests/ -v --tb=short`. The published package still supports Python 3.11+.
