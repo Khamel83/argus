@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python badge URL fixed (cleaner shields.io format).
 - PyPI and MCP Registry descriptions updated.
 - Documentation accuracy pass — extraction step counts verified.
+- **Secrets resolver** now batch-loads all vault files in a single pass instead of spawning a subprocess per key. MCP server startup ~19x faster (15s → 0.8s). Gracefully handles machines without the `secrets` CLI.
 - All providers enabled by default.
 - WolframAlpha 501 handling — queries that can't compute return empty without health penalty.
 

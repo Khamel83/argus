@@ -57,8 +57,9 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
     use_remote_auth = remote_mcp_requires_auth(transport, host)
 
     if use_remote_auth and not auth_config.has_caller_key():
-        raise ValueError(
-            "Remote MCP access requires ARGUS_API_KEY to be configured."
+        raise SystemExit(
+            "Remote MCP requires ARGUS_API_KEY. Set it in .env or:\n"
+            "  export ARGUS_API_KEY=your-key"
         )
 
     mcp_kwargs: dict[str, Any] = {"host": host, "port": port}

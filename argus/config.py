@@ -1,10 +1,13 @@
 """Argus configuration."""
 
+import logging
 import os
 import re
 import subprocess
 from dataclasses import dataclass, field
 from typing import Mapping, Optional
+
+_log = logging.getLogger("argus.config")
 
 
 @dataclass(frozen=True)
@@ -90,13 +93,18 @@ class SubprocessSecretsResolver(SecretsResolver):
                     timeout=10,
                 )
             except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired, OSError):
+                _log.debug("secrets CLI not found — using environment variables only")
                 return
             except Exception:
                 continue
             if result.returncode == 0:
-                for key, value in self._ENV_LINE_RE.findall(result.stdout):
+                keys = self._ENV_LINE_RE.findall(result.stdout)
+                for key, value in keys:
                     if key not in self._cache:
                         self._cache[key] = value
+                if keys:
+                    _log.debug("loaded %d keys from vault: %s", len(keys), name)
+        _log.debug("secrets cache: %d keys total", len(self._cache))
 
     def get(self, key: str) -> str:
         self._load_batch()

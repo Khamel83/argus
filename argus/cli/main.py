@@ -466,7 +466,12 @@ def mcp():
 @click.option("--port", "-p", default=8001, help="Port for SSE/streamable-http transport")
 def mcp_serve(transport, host, port):
     """Start MCP server. Use stdio for Claude/Cursor, sse or streamable-http for remote access."""
-    from argus.mcp.server import serve_mcp
+    try:
+        from argus.mcp.server import serve_mcp
+    except ImportError:
+        raise SystemExit(
+            "MCP extras not installed. Run: pip install 'argus-search[mcp]'"
+        )
     serve_mcp(transport=transport, host=host, port=port)
 
 
