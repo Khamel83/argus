@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-04-29
+
+### Changed
+- Secrets resolver now batch-loads all vault files in a single pass instead of spawning a subprocess per key. MCP server startup ~19x faster (15s → 0.8s). Gracefully handles machines without the `secrets` CLI.
+- **SearXNG disabled by default** — no confusing Docker errors on first run. Enable in `.env` when you have a container running.
+- **Human-readable provider status** — `argus health` and `argus test-provider` show "MISSING KEY", "COOLDOWN", etc. instead of raw enum values.
+- **Search mode descriptions** in `--help` and `argus mcp init` warns before overwriting existing config.
+- **Budget warnings** displayed after CLI search and included in MCP `search_web` JSON response.
+- **`argus doctor`** — new diagnostic command: config check, provider audit, SearXNG/DuckDuckGo connectivity, MCP package check.
+- **`argus mcp check`** — validates MCP setup: package, Context support, config file, API key.
+- **MCP progress notifications** — `capture_site`, `build_research_pack`, and `recover_dead_article` report progress back to Claude/Codex sessions via `ctx.report_progress()`.
+- All providers enabled by default.
+- WolframAlpha 501 handling — queries that can't compute return empty without health penalty.
+
 ## [1.5.0] - 2026-04-28
 
 ### Added
@@ -28,16 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python badge URL fixed (cleaner shields.io format).
 - PyPI and MCP Registry descriptions updated.
 - Documentation accuracy pass — extraction step counts verified.
-- **Secrets resolver** now batch-loads all vault files in a single pass instead of spawning a subprocess per key. MCP server startup ~19x faster (15s → 0.8s). Gracefully handles machines without the `secrets` CLI.
-- **SearXNG disabled by default** — no confusing Docker errors on first run. Enable in `.env` when you have a container running.
-- **Human-readable provider status** — `argus health` and `argus test-provider` show "MISSING KEY", "COOLDOWN", etc. instead of raw enum values.
-- **Search mode descriptions** in `--help` and `argus mcp init` warns before overwriting existing config.
-- **Budget warnings** displayed after CLI search and included in MCP `search_web` JSON response.
-- **`argus doctor`** — new diagnostic command: config check, provider audit, SearXNG/DuckDuckGo connectivity, MCP package check.
-- **`argus mcp check`** — validates MCP setup: package, Context support, config file, API key.
-- **MCP progress notifications** — `capture_site`, `build_research_pack`, and `recover_dead_article` report progress back to Claude/Codex sessions via `ctx.report_progress()`.
-- All providers enabled by default.
-- WolframAlpha 501 handling — queries that can't compute return empty without health penalty.
 
 ## [1.3.3] - 2026-04-14
 
