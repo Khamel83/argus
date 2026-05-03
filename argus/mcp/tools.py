@@ -35,8 +35,10 @@ def _serialize_response(resp) -> str:
     for i, r in enumerate(resp.results, 1):
         title = r.title or "(no title)"
         snippet = r.snippet or ""
+        egress = r.metadata.get("egress", "unknown")
         lines.append(f"{i}. **{title}**")
         lines.append(f"   URL: {r.url}")
+        lines.append(f"   Egress: {egress}")
         if snippet:
             lines.append(f"   {snippet}")
         lines.append("")
@@ -317,6 +319,10 @@ async def extract_content(url: str, domain: str = None) -> str:
         meta_parts.append(f"Words: {result.word_count}")
     if result.extractor:
         meta_parts.append(f"Extractor: {result.extractor.value}")
+    if result.egress:
+        meta_parts.append(f"Egress: {result.egress}")
+    if result.machine:
+        meta_parts.append(f"Machine: {result.machine}")
 
     lines = [
         f"# {result.title or result.url}",
