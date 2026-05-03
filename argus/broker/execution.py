@@ -154,6 +154,16 @@ class ProviderExecutor:
                 self._budgets.record_usage(provider_name, cost)
                 trace.budget_remaining = self._budgets.get_remaining_budget(provider_name)
                 trace.results_count = len(results)
+
+                # Inject provenance metadata if not already set by the provider
+                from argus.config import get_config
+                cfg = get_config()
+                for r in results:
+                    if "egress" not in r.metadata:
+                        r.metadata["egress"] = cfg.node.egress_type
+                    if "machine" not in r.metadata and cfg.node.machine_name:
+                        r.metadata["machine"] = cfg.node.machine_name
+
             elif trace.status == "error":
                 self._health.record_failure(provider_name)
             return results, trace

@@ -221,12 +221,16 @@ class EnvironmentConfigLoader:
         )
         res_allowed_cidrs = [item.strip() for item in res_allowed_cidrs_raw.split(",") if item.strip()]
 
+        from argus.corpus.paths import resolve_data_root
+        data_root = resolve_data_root()
+        default_db = f"sqlite:///{data_root}/argus.db"
+
         return ArgusConfig(
             env=self.get_str("ARGUS_ENV", "development"),
             log_level=self.get_str("ARGUS_LOG_LEVEL", "INFO"),
             db_url=self.get_str(
                 "ARGUS_DB_URL",
-                "postgresql+psycopg2://postgres:postgres@localhost:5432/argus",
+                default_db,
                 secret_keys=("DB_URL",),
             ),
             cache_ttl_hours=self.get_int("ARGUS_CACHE_TTL_HOURS", 168),
