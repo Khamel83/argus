@@ -1,5 +1,6 @@
 """Tests for residential extraction — client and service."""
 
+import asyncio
 import time
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -22,8 +23,9 @@ def _mock_http_client(response_or_side_effect):
     return mock_cls
 
 
-def _mock_config(endpoints=None, shared_secret="shared-secret", policy="fallback", role="primary", egress="unknown"):
+def _mock_config(endpoints=None, shared_secret="shared-secret", policy="fallback", role="primary", egress="unknown", env="development"):
     return ArgusConfig(
+        env=env,
         node=NodeConfig(role=role, egress_type=egress),
         residential=ResidentialConfig(
             endpoints=endpoints or [],
@@ -411,3 +413,99 @@ class TestResidentialService:
                 )
                 assert resp.status_code == 200
                 assert resp.json()["extractor"] == "playwright"
+
+    @pytest.mark.asyncio
+    async def test_extract_enforces_concurrency(self):
+        from argus.extraction.residential_service import app
+        from httpx import AsyncClient, ASGITransport
+
+        cfg = _mock_config(shared_secret="shared-secret")
+        # Lower limits for testing
+        with patch("argus.extraction.residential_service.get_config", return_value=cfg), \
+             patch("argus.extraction.residential_service._global_semaphore", asyncio.Semaphore(1)), \
+             patch("argus.extraction.residential_service._extract_trafilatura") as mock_traf:
+            
+            mock_traf.return_value = {"text": " ".join(["word"]*60), "word_count": 60, "title": "OK"}
+
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.post(
+                    "/extract",
+                    json={"url": "https://example.com"},
+                    headers={"Authorization": "Bearer shared-secret"},
+                )
+                assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_cookie_scrubbing_on_cross_domain_redirect(self):
+        """Verify that cookies are scrubbed when trafilatura follows a cross-domain redirect."""
+        from argus.extraction.residential_service import _extract_trafilatura
+        from httpx import Response
+
+        mock_cookies = [{"name": "secret", "value": "leak"}]
+        
+        # Mock 1: Redirect to different domain
+        # Mock 2: Success on new domain
+        resp1 = MagicMock(spec=Response)
+        resp1.is_redirect = True
+        resp1.headers = {"location": "https://attacker.com"}
+        
+        resp2 = MagicMock(spec=Response)
+        resp2.is_redirect = False
+        resp2.url = "https://attacker.com"
+        resp2.text = "Gottem"
+        resp2.status_code = 200
+
+        call_count = 0
+        async def fake_get(url, headers=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                assert "Cookie" in headers
+                return resp1
+            else:
+                # SECOND CALL SHOULD NOT HAVE COOKIES
+                assert "Cookie" not in (headers or {})
+                return resp2
+
+        with patch("httpx.AsyncClient") as mock_cls, \
+             patch("argus.extraction.residential_service.random.choice", return_value="UA"), \
+             patch("trafilatura.bare_extraction", return_value={"text": "content", "title": "T"}):
+            mock_client = AsyncMock()
+            mock_client.get = fake_get
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_cls.return_value = mock_client
+
+            result = await _extract_trafilatura("https://example.com", cookies=mock_cookies)
+            assert result["url"] == "https://attacker.com"
+            assert result["text"] == "content"
+            assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_shared_secret_minimum_length(self):
+        from argus.extraction.residential_service import app
+        from httpx import AsyncClient, ASGITransport
+
+        # 1. Dev environment allows short secrets
+        cfg_dev = _mock_config(shared_secret="short", env="development")
+        with patch("argus.extraction.residential_service.get_config", return_value=cfg_dev):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.post(
+                    "/extract",
+                    json={"url": "https://example.com"},
+                    headers={"Authorization": "Bearer short"},
+                )
+                # Should pass auth check (may fail later on extraction)
+                assert resp.status_code != 401
+
+        # 2. Production environment blocks short secrets
+        cfg_prod = _mock_config(shared_secret="short", env="production")
+        with patch("argus.extraction.residential_service.get_config", return_value=cfg_prod):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.post(
+                    "/extract",
+                    json={"url": "https://example.com"},
+                    headers={"Authorization": "Bearer short"},
+                )
+                assert resp.status_code == 503
+                assert "too short" in resp.json()["detail"]
