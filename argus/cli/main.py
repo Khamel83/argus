@@ -670,7 +670,56 @@ def mcp_init(global_, client, remote_url, api_key):
             click.echo(f"  gemini mcp add argus {argus_bin} mcp serve")
 
     if client in ("all", "codex"):
-        click.echo("\nCodex — no MCP support yet; use the Argus HTTP API directly.")
+        import shutil
+        import subprocess
+
+        toml_path = Path.home() / ".codex" / "config.toml"
+        if not toml_path.parent.exists():
+            click.echo("\nCodex — ~/.codex/ not found; is Codex installed?")
+        else:
+            # Read current TOML (line-based — avoid pulling in tomllib/tomli as a dep)
+            toml_text = toml_path.read_text() if toml_path.exists() else ""
+
+            if remote_url:
+                codex_url = remote_url.rstrip("/") + "/mcp"
+                new_section = (
+                    f"\n[mcp_servers.argus]\n"
+                    f'url = "{codex_url}"\n'
+                    f'bearer_token_env_var = "ARGUS_API_KEY"\n'
+                )
+            else:
+                new_section = (
+                    f"\n[mcp_servers.argus]\n"
+                    f'command = "{argus_bin}"\n'
+                    f'args = ["mcp", "serve"]\n'
+                )
+
+            if "[mcp_servers.argus]" in toml_text:
+                # Remove old section (everything from [mcp_servers.argus] to next [section])
+                import re
+                toml_text = re.sub(
+                    r"\n\[mcp_servers\.argus\][^\[]*",
+                    new_section,
+                    toml_text,
+                )
+            else:
+                toml_text = toml_text.rstrip("\n") + new_section
+
+            toml_path.write_text(toml_text)
+            click.echo(f"\nCodex — updated ~/.codex/config.toml with argus MCP ({remote_url or 'local stdio'})")
+
+            # Ensure ARGUS_API_KEY is exported in shell profile (Codex reads it as env var)
+            if api_key and remote_url:
+                zshrc = Path.home() / ".zshrc"
+                bashrc = Path.home() / ".bashrc"
+                rc_path = zshrc if zshrc.exists() else bashrc
+                rc_text = rc_path.read_text() if rc_path.exists() else ""
+                if "ARGUS_API_KEY" not in rc_text:
+                    with rc_path.open("a") as f:
+                        f.write(f"\n# Argus MCP bearer token\nexport ARGUS_API_KEY={api_key}\n")
+                    click.echo(f"  Added ARGUS_API_KEY to {rc_path.name} (run: source ~/{rc_path.name})")
+                else:
+                    click.echo(f"  ARGUS_API_KEY already in {rc_path.name}")
 
     if client == "all":
         click.echo("\nRestart your AI client to connect.")
