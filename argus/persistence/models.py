@@ -67,6 +67,8 @@ class SearchResultRow(Base):
     provider: Mapped[str] = mapped_column(String(50), default="")
     score: Mapped[float] = mapped_column(Float, default=0.0)
     final_rank: Mapped[int] = mapped_column(Integer, default=0)
+    egress: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    machine: Mapped[str | None] = mapped_column(String(100), nullable=True)
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -170,6 +172,8 @@ class CorpusDocumentRow(Base):
     artifact_path: Mapped[str] = mapped_column(Text, nullable=False)
     extractor: Mapped[str | None] = mapped_column(String(64), nullable=True)
     word_count: Mapped[int] = mapped_column(Integer, default=0)
+    egress: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    machine: Mapped[str | None] = mapped_column(String(100), nullable=True)
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -196,3 +200,18 @@ class WorkflowCitationRow(Base):
     artifact_path: Mapped[str] = mapped_column(Text, nullable=False)
     note: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class DomainPolicyRow(Base):
+    __tablename__ = "domain_policies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    domain: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    prefer_residential_search: Mapped[bool] = mapped_column(Boolean, default=False)
+    prefer_residential_extraction: Mapped[bool] = mapped_column(Boolean, default=False)
+    datacenter_failure_count: Mapped[int] = mapped_column(Integer, default=0)
+    residential_success_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_datacenter_failure: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_residential_success: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())

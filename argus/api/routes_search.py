@@ -32,6 +32,8 @@ def _to_response(resp) -> SearchResponse:
                 domain=r.domain,
                 provider=r.provider.value if r.provider else None,
                 score=r.score,
+                egress=r.metadata.get("egress") if r.metadata else None,
+                machine=r.metadata.get("machine") if r.metadata else None,
             )
             for r in resp.results
         ],

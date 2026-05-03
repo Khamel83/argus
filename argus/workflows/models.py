@@ -55,6 +55,8 @@ class StoredDocument:
     role: str = "source"
     source_type: str = "web"
     extractor: str | None = None
+    egress: str | None = None
+    machine: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

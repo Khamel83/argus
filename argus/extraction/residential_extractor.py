@@ -14,23 +14,14 @@ from typing import Optional
 
 import httpx
 
+from argus.config import get_config
 from argus.extraction.cookies import load_editthiscookie_json, get_cookie_path
 from argus.extraction.models import ExtractedContent, ExtractorName
 from argus.logging import get_logger
 
 logger = get_logger("extraction.residential")
 
-import os
-
-_endpoints = os.getenv("ARGUS_RESIDENTIAL_ENDPOINTS", "")
-_legacy_url = os.getenv("ARGUS_RESIDENTIAL_EXTRACTOR_URL", "")
-RESIDENTIAL_ENDPOINTS = [u.strip() for u in _endpoints.split(",") if u.strip()] if _endpoints else ([_legacy_url] if _legacy_url else [])
-RESIDENTIAL_TIMEOUT = int(os.getenv("ARGUS_RESIDENTIAL_EXTRACTOR_TIMEOUT_SECONDS", "30"))
 CIRCUIT_BREAKER_COOLDOWN = 60.0
-
-
-def _shared_secret() -> str:
-    return os.getenv("ARGUS_RESIDENTIAL_SHARED_SECRET", "").strip()
 
 
 class _EndpointHealth:
@@ -59,7 +50,8 @@ _endpoint_health = _EndpointHealth()
 
 
 def _is_configured() -> bool:
-    return bool(RESIDENTIAL_ENDPOINTS)
+    config = get_config()
+    return bool(config.residential.endpoints)
 
 
 def _load_cookies_for_domain(domain: str) -> Optional[list[dict]]:
@@ -79,15 +71,16 @@ def _load_cookies_for_domain(domain: str) -> Optional[list[dict]]:
 
 async def _try_endpoint(url: str, endpoint: str, cookies: Optional[list[dict]], domain: Optional[str]) -> Optional[ExtractedContent]:
     """Try a single endpoint. Returns ExtractedContent on success, None on failure."""
+    config = get_config()
     body: dict = {"url": url}
-    secret = _shared_secret()
+    secret = config.residential.shared_secret
     if cookies:
         body["cookies"] = cookies
     if domain:
         body["domain"] = domain
 
     try:
-        async with httpx.AsyncClient(timeout=RESIDENTIAL_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=config.residential.timeout_seconds) as client:
             resp = await client.post(
                 f"{endpoint}/extract",
                 json=body,
@@ -130,15 +123,16 @@ async def _try_endpoint(url: str, endpoint: str, cookies: Optional[list[dict]], 
 
 async def extract_residential(url: str, domain: str = "") -> ExtractedContent:
     """Extract content via remote residential service with failover."""
+    config = get_config()
     if not _is_configured():
         return ExtractedContent(url=url, error="residential: not configured")
-    if not _shared_secret():
+    if not config.residential.shared_secret:
         return ExtractedContent(url=url, error="residential: shared secret not configured")
 
     cookies = _load_cookies_for_domain(domain) if domain else None
 
     last_error = "residential: all endpoints unavailable"
-    for endpoint in RESIDENTIAL_ENDPOINTS:
+    for endpoint in config.residential.endpoints:
         if not _endpoint_health.is_healthy(endpoint):
             logger.debug("Skipping unhealthy endpoint %s", endpoint)
             continue

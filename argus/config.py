@@ -14,6 +14,7 @@ _log = logging.getLogger("argus.config")
 class SearXNGConfig:
     enabled: bool = False
     base_url: str = "http://127.0.0.1:8080"
+    residential_base_url: str = ""
     timeout_seconds: int = 12
 
 
@@ -23,6 +24,26 @@ class ProviderConfig:
     api_key: str = ""
     monthly_budget_usd: float = 0.0
     timeout_seconds: int = 15
+
+
+@dataclass(frozen=True)
+class NodeConfig:
+    role: str = "primary"  # primary|worker|caller|dev
+    egress_type: str = "unknown"  # residential|datacenter|unknown
+    machine_name: str = ""
+    trusted_tailnet: bool = False
+
+
+@dataclass(frozen=True)
+class ResidentialConfig:
+    endpoints: list[str] = field(default_factory=list)
+    shared_secret: str = ""
+    timeout_seconds: int = 30
+    allowed_cidrs: list[str] = field(default_factory=lambda: [
+        "127.0.0.1/32", "::1/128", "100.64.0.0/10", "10.0.0.0/8",
+        "172.16.0.0/12", "192.168.0.0/16"
+    ])
+    policy: str = "fallback"  # off|fallback|prefer_on_datacenter|prefer_for_domains|always
 
 
 @dataclass(frozen=True)
@@ -49,6 +70,8 @@ class ArgusConfig:
     github: ProviderConfig = field(default_factory=ProviderConfig)
     yahoo: ProviderConfig = field(default_factory=ProviderConfig)
     wolfram: ProviderConfig = field(default_factory=ProviderConfig)
+    node: NodeConfig = field(default_factory=NodeConfig)
+    residential: ResidentialConfig = field(default_factory=ResidentialConfig)
     host: str = "127.0.0.1"
     port: int = 8000
     allow_mcp: bool = False
@@ -188,6 +211,16 @@ class EnvironmentConfigLoader:
         )
 
     def load(self) -> ArgusConfig:
+        res_endpoints_raw = self.get_str("ARGUS_RESIDENTIAL_ENDPOINTS")
+        legacy_res_url = self.get_str("ARGUS_RESIDENTIAL_EXTRACTOR_URL")
+        res_endpoints = [u.strip() for u in res_endpoints_raw.split(",") if u.strip()] if res_endpoints_raw else ([legacy_res_url] if legacy_res_url else [])
+
+        res_allowed_cidrs_raw = self.get_str(
+            "ARGUS_RESIDENTIAL_ALLOWED_CIDRS",
+            "127.0.0.1/32,::1/128,100.64.0.0/10,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
+        )
+        res_allowed_cidrs = [item.strip() for item in res_allowed_cidrs_raw.split(",") if item.strip()]
+
         return ArgusConfig(
             env=self.get_str("ARGUS_ENV", "development"),
             log_level=self.get_str("ARGUS_LOG_LEVEL", "INFO"),
@@ -212,6 +245,7 @@ class EnvironmentConfigLoader:
                     "ARGUS_SEARXNG_BASE_URL",
                     "http://127.0.0.1:8080",
                 ),
+                residential_base_url=self.get_str("ARGUS_SEARXNG_RESIDENTIAL_BASE_URL"),
                 timeout_seconds=self.get_int("ARGUS_SEARXNG_TIMEOUT_SECONDS", 12),
             ),
             brave=self.provider_config("BRAVE", enabled_default=True, budget_default=2000.0),
@@ -238,6 +272,19 @@ class EnvironmentConfigLoader:
                     "ARGUS_WOLFRAM_MONTHLY_BUDGET_USD", 2000.0
                 ),
                 timeout_seconds=self.get_int("ARGUS_WOLFRAM_TIMEOUT_SECONDS", 15),
+            ),
+            node=NodeConfig(
+                role=self.get_str("ARGUS_NODE_ROLE", "primary"),
+                egress_type=self.get_str("ARGUS_EGRESS_TYPE", "unknown"),
+                machine_name=self.get_str("ARGUS_MACHINE_NAME", ""),
+                trusted_tailnet=self.get_bool("ARGUS_TRUSTED_TAILNET", False),
+            ),
+            residential=ResidentialConfig(
+                endpoints=res_endpoints,
+                shared_secret=self.get_str("ARGUS_RESIDENTIAL_SHARED_SECRET"),
+                timeout_seconds=self.get_int("ARGUS_RESIDENTIAL_TIMEOUT_SECONDS", 30),
+                allowed_cidrs=res_allowed_cidrs,
+                policy=self.get_str("ARGUS_RESIDENTIAL_POLICY", "fallback"),
             ),
             host=self.get_str("ARGUS_HOST", "127.0.0.1"),
             port=self.get_int("ARGUS_PORT", 8000),

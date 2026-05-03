@@ -19,7 +19,7 @@ router = APIRouter()
 @router.post("/extract", response_model=ExtractResponse)
 async def extract(req: ExtractRequest):
     """Extract clean text content from a URL."""
-    result = await extract_url(req.url, domain=req.domain)
+    result = await extract_url(req.url, domain=req.domain, mode=req.mode)
     cr = result.completeness_result
     return ExtractResponse(
         url=result.url,
@@ -38,6 +38,14 @@ async def extract(req: ExtractRequest):
         truncation_type=cr.truncation_type if cr else None,
         completeness_signals=cr.signals if cr else None,
         recommended_action=cr.recommended_action if cr else None,
+        # Provenance
+        source_type=getattr(result, "source_type", None),
+        egress=getattr(result, "egress", None),
+        machine=getattr(result, "machine", None),
+        auth_used=getattr(result, "auth_used", False),
+        cookies_used=getattr(result, "cookies_used", False),
+        archive_used=getattr(result, "archive_used", False),
+        cost=getattr(result, "cost", 0.0),
     )
 
 

@@ -14,6 +14,7 @@ Retrieval platform for AI agents. Argus routes search across 14 providers, recov
 
 **Features at a glance:**
 
+- **Topology-aware acquisition** — Argus knows if it's on a residential IP or datacenter, routing search and extraction automatically to avoid blocks and minimize network hops.
 - **14 providers, one API** — free-first tier routing, budget-exhausted providers skipped automatically
 - **Zero-key start** — `pip install argus-search` gives you DuckDuckGo + Yahoo immediately, no accounts needed
 - **SearXNG self-host = 70+ engines** — Google, Bing, Yahoo, Startpage, Ecosia, Qwant and more via one Docker container
@@ -99,15 +100,17 @@ One command to install, one JSON block to connect. No server to run, no keys to 
 Got a Raspberry Pi running Pi-hole? A Mac Mini on your desk? An old laptop? That's enough to run the full stack — SearXNG (your own private search engine, disabled by default) plus local JS-rendering content extraction.
 
 ```bash
+# Optional: tell Argus it has residential egress to optimize routing
+export ARGUS_EGRESS_TYPE=residential
 ARGUS_SEARXNG_ENABLED=true docker compose up -d    # SearXNG + Argus
 ```
 
 | What you have | What you get |
 |--------------|-------------|
 | **Any machine with Python 3.11+** | DuckDuckGo + API providers (no server) |
-| **Raspberry Pi 4 / old laptop** (4GB+) | Everything — SearXNG, all providers, Crawl4AI, Obscura |
+| **Home server / old laptop** (4GB+) | Everything — SearXNG, all providers, Crawl4AI, Obscura |
 | **Mac Mini M1+** (8GB+) | Full stack with headroom |
-| **Free cloud VM** (1GB) | SearXNG + search providers (skip Crawl4AI) |
+| **Free cloud VM** (1GB) | SearXNG + search providers (use residential workers for extraction) |
 
 SearXNG takes 512MB of RAM and gives you a private Google-style search engine (disabled by default — set `ARGUS_SEARXNG_ENABLED=true`) that nobody can rate-limit, block, or charge for. It runs alongside Pi-hole on hardware millions of people already own.
 
@@ -482,8 +485,12 @@ All config via environment variables. See `.env.example` for the full list. Miss
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `ARGUS_NODE_ROLE` | `primary` | `primary`, `worker`, `caller`, or `dev` |
+| `ARGUS_EGRESS_TYPE` | `unknown` | `residential`, `datacenter`, or `unknown` |
+| `ARGUS_RESIDENTIAL_POLICY` | `fallback` | `off`, `fallback`, `prefer_on_datacenter`, `prefer_for_domains`, or `always` |
 | `ARGUS_SEARXNG_ENABLED` | `false` | Set `true` when you have a SearXNG Docker container |
 | `ARGUS_SEARXNG_BASE_URL` | `http://127.0.0.1:8080` | SearXNG endpoint |
+| `ARGUS_SEARXNG_RESIDENTIAL_BASE_URL` | — | Remote residential SearXNG endpoint (e.g. over Tailscale) |
 | `ARGUS_BRAVE_API_KEY` | — | Brave Search API key |
 | `ARGUS_SERPER_API_KEY` | — | Serper API key |
 | `ARGUS_TAVILY_API_KEY` | — | Tavily API key |

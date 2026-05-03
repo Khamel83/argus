@@ -4,7 +4,7 @@
 class TestConfig:
     def test_load_config_defaults(self):
         from argus.config import load_config
-        cfg = load_config()
+        cfg = load_config(environ={})
         assert cfg.env == "development"
         assert cfg.log_level == "INFO"
         assert cfg.cache_ttl_hours == 168

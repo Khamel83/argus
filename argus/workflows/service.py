@@ -566,6 +566,8 @@ class WorkflowService:
                 role=role,
                 source_type=source_type,
                 extractor=result.extractor.value if result.extractor else None,
+                egress=result.egress,
+                machine=result.machine,
                 metadata={
                     "lead_text": _lead_text(result.text),
                     "quality_passed": getattr(result, "quality_passed", True),
@@ -671,6 +673,8 @@ class WorkflowService:
         role: str,
         source_type: str,
         extractor: str | None,
+        egress: str | None = None,
+        machine: str | None = None,
         metadata: dict[str, Any],
     ) -> StoredDocument:
         from argus.corpus.paths import slugify
@@ -687,6 +691,8 @@ class WorkflowService:
                     f"- Source type: {source_type}",
                     f"- Role: {role}",
                     f"- Extractor: {extractor or 'unknown'}",
+                    f"- Egress: {egress or 'unknown'}",
+                    f"- Machine: {machine or 'unknown'}",
                     f"- Word count: {word_count}",
                     "",
                     text,
@@ -707,6 +713,8 @@ class WorkflowService:
             role=role,
             source_type=source_type,
             extractor=extractor,
+            egress=egress,
+            machine=machine,
             metadata=metadata,
         )
 

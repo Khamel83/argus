@@ -54,7 +54,14 @@ def _workflow_to_dict(result):
         "report_path": result.report_path,
         "manifest_path": result.manifest_path,
         "artifacts": [artifact.__dict__ for artifact in result.artifacts],
-        "documents": [document.__dict__ for document in result.documents],
+        "documents": [
+            {
+                **document.__dict__,
+                "egress": getattr(document, "egress", None),
+                "machine": getattr(document, "machine", None),
+            }
+            for document in result.documents
+        ],
         "citations": [citation.__dict__ for citation in result.citations],
         "summary_sections": [section.__dict__ for section in result.summary_sections],
         "metadata": result.metadata,
@@ -147,7 +154,15 @@ def search(query, mode, max_results, providers, as_json, session):
             "query": resp.query,
             "mode": resp.mode.value,
             "results": [
-                {"url": r.url, "title": r.title, "snippet": r.snippet, "provider": r.provider.value if r.provider else None, "score": r.score}
+                {
+                    "url": r.url,
+                    "title": r.title,
+                    "snippet": r.snippet,
+                    "provider": r.provider.value if r.provider else None,
+                    "score": r.score,
+                    "egress": r.metadata.get("egress") if r.metadata else None,
+                    "machine": r.metadata.get("machine") if r.metadata else None,
+                }
                 for r in resp.results
             ],
             "total_results": resp.total_results,
@@ -208,6 +223,9 @@ def extract(url, as_json, domain):
             "date": result.date,
             "word_count": result.word_count,
             "extractor": result.extractor.value if result.extractor else None,
+            "egress": result.egress,
+            "machine": result.machine,
+            "source_type": result.source_type,
         }
         click.echo(json.dumps(data, indent=2))
     else:

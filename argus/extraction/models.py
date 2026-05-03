@@ -43,3 +43,12 @@ class ExtractedContent:
     quality_reason: Optional[str] = None
     extractors_tried: list = field(default_factory=list)
     completeness_result: Optional["CompletenessResult"] = None
+
+    # Provenance metadata
+    source_type: Optional[str] = None  # live|authenticated|residential|wayback|archive|paid_api|search_recovery
+    egress: str = "unknown"  # residential|datacenter|local|unknown
+    machine: Optional[str] = None
+    auth_used: bool = False
+    cookies_used: bool = False
+    archive_used: bool = False
+    cost: float = 0.0

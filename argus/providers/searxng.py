@@ -40,8 +40,22 @@ class SearXNGProvider(BaseProvider):
         return ProviderStatus.ENABLED
 
     async def search(self, query: SearchQuery) -> Tuple[List[SearchResult], ProviderTrace]:
+        from argus.config import get_config
+        config = get_config()
         start = time.monotonic()
-        url = f"{self._config.base_url.rstrip('/')}/search"
+
+        # Decide which URL to use
+        use_residential = query.metadata.get("prefer_residential", False)
+        base_url = self._config.base_url
+        egress = config.node.egress_type
+        machine = config.node.machine_name or None
+
+        if use_residential and self._config.residential_base_url:
+            base_url = self._config.residential_base_url
+            egress = "residential"
+            machine = None  # Remote residential node unknown here unless we add more metadata
+
+        url = f"{base_url.rstrip('/')}/search"
 
         params = {
             "q": query.query,
@@ -56,7 +70,7 @@ class SearXNGProvider(BaseProvider):
                 resp.raise_for_status()
                 data = resp.json()
 
-            results = self._normalize(data.get("results", []))
+            results = self._normalize(data.get("results", []), egress=egress, machine=machine)
             latency_ms = int((time.monotonic() - start) * 1000)
 
             trace = ProviderTrace(
@@ -78,13 +92,13 @@ class SearXNGProvider(BaseProvider):
             )
             return [], trace
 
-    def _normalize(self, raw_results: list) -> List[SearchResult]:
+    def _normalize(self, raw_results: list, egress: str = "unknown", machine: str = None) -> List[SearchResult]:
         results = []
         for i, item in enumerate(raw_results):
             url = item.get("url") or ""
             if not url:
                 continue
-            results.append(SearchResult(
+            res = SearchResult(
                 url=url,
                 title=item.get("title", ""),
                 snippet=item.get("content", ""),
@@ -98,8 +112,12 @@ class SearXNGProvider(BaseProvider):
                     "published_date": item.get("publishedDate"),
                     "author": item.get("author", ""),
                     "category": item.get("category", ""),
+                    "egress": egress,
                 },
-            ))
+            )
+            if machine:
+                res.metadata["machine"] = machine
+            results.append(res)
         return results
 
     @staticmethod

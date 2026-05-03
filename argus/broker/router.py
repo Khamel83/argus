@@ -85,6 +85,14 @@ class SearchBroker:
             logger.debug("Cache hit for query: %s (mode=%s)", query.query, query.mode)
             return cached
 
+        # Phase 4/5: Residential Search Policy
+        res_policy = self._config.residential.policy
+        if res_policy != "off":
+            if res_policy == "always":
+                query.metadata["prefer_residential"] = True
+            elif res_policy == "prefer_on_datacenter" and self._config.node.egress_type != "residential":
+                query.metadata["prefer_residential"] = True
+
         provider_order = resolve_routing(query.mode, query.providers)
         outcome = await self._executor.execute(query, provider_order)
         response = self._pipeline.build_response(

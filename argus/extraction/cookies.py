@@ -12,44 +12,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from argus.config import get_config
 from argus.logging import get_logger
 
 logger = get_logger("extraction.cookies")
 
-COOKIE_DIR = Path(os.getenv("ARGUS_COOKIE_DIR", "~/.config/argus/cookies")).expanduser()
-HEALTH_FILE = COOKIE_DIR / "health.json"
 
-# Rate limit: max 1 authenticated request per 10s per domain
-AUTH_RATE_LIMIT_SECONDS = int(os.getenv("ARGUS_AUTH_RATE_LIMIT", "10"))
+def _get_cookie_dir() -> Path:
+    config = get_config()
+    path = os.getenv("ARGUS_COOKIE_DIR")
+    if path:
+        return Path(path).expanduser()
+    return Path("~/.config/argus/cookies").expanduser()
 
-# Domains that typically need authentication for full content
-PAYWALL_DOMAINS = {
-    "nytimes.com", "nyt.com", "nl.nytimes.com",
-    "wsj.com",
-    "bloomberg.com",
-    "ft.com",
-    "stratechery.com", "stratechery.passport.online",
-    "newyorker.com",
-    "theathletic.com",
-    "theeconomist.com", "economist.com",
-    "washingtonpost.com",
-    "theinformation.com",
-    "technologyreview.com",
-    "platformer.news",
-    "espn.com",
-    "latimes.com",
-    "chicagotribune.com",
-}
 
-# Track last request time per domain for rate limiting
-_last_auth_request: dict[str, float] = {}
+def _get_health_file() -> Path:
+    return _get_cookie_dir() / "health.json"
 
 
 def _load_health() -> dict:
     """Load cookie health state from disk."""
-    if HEALTH_FILE.exists():
+    health_file = _get_health_file()
+    if health_file.exists():
         try:
-            return json.loads(HEALTH_FILE.read_text())
+            return json.loads(health_file.read_text())
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to load cookie health: %s", e)
     return {}
@@ -57,23 +43,25 @@ def _load_health() -> dict:
 
 def _save_health(health: dict) -> None:
     """Persist cookie health state to disk."""
-    COOKIE_DIR.mkdir(parents=True, exist_ok=True)
+    cookie_dir = _get_cookie_dir()
+    cookie_dir.mkdir(parents=True, exist_ok=True)
     try:
-        HEALTH_FILE.write_text(json.dumps(health, indent=2))
+        _get_health_file().write_text(json.dumps(health, indent=2))
     except OSError as e:
         logger.error("Failed to save cookie health: %s", e)
 
 
 def get_cookie_path(domain: str) -> Optional[Path]:
     """Return the cookie file path for a domain, or None if no cookies."""
-    path = COOKIE_DIR / f"{domain}.json"
+    cookie_dir = _get_cookie_dir()
+    path = cookie_dir / f"{domain}.json"
     if path.exists():
         return path
     # Try stripping subdomains (e.g., nl.nytimes.com → nytimes.com)
     parts = domain.split(".")
     if len(parts) > 2:
         parent = ".".join(parts[-2:])
-        parent_path = COOKIE_DIR / f"{parent}.json"
+        parent_path = cookie_dir / f"{parent}.json"
         if parent_path.exists():
             return parent_path
     return None
@@ -107,9 +95,11 @@ def can_authenticate(domain: str) -> bool:
         return False
 
     # Rate limit check
+    config = get_config()
+    auth_rate_limit = int(os.getenv("ARGUS_AUTH_RATE_LIMIT", "10"))
     now = time.monotonic()
     last = _last_auth_request.get(domain, 0)
-    if now - last < AUTH_RATE_LIMIT_SECONDS:
+    if now - last < auth_rate_limit:
         return False
 
     return True

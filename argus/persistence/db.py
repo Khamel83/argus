@@ -106,6 +106,8 @@ def persist_search(query_text: str, mode: str, response: SearchResponse) -> Opti
                 provider=r.provider.value if r.provider else "",
                 score=r.score,
                 final_rank=rank,
+                egress=r.metadata.get("egress") if r.metadata else None,
+                machine=r.metadata.get("machine") if r.metadata else None,
                 metadata_json=json.dumps(r.metadata) if r.metadata else None,
             )
             session.add(result_row)
@@ -201,6 +203,8 @@ class WorkflowPersistenceGateway:
                             artifact_path=document["artifact_path"],
                             extractor=document.get("extractor"),
                             word_count=document.get("word_count", 0),
+                            egress=document.get("egress"),
+                            machine=document.get("machine"),
                             metadata_json=json.dumps(document.get("metadata", {})),
                         )
                     )

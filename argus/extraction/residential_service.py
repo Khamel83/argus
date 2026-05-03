@@ -27,6 +27,8 @@ import time
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
+from argus.config import get_config
+
 app = FastAPI(title="Argus Residential Extractor", version="1.0.0")
 
 # Realistic browser User-Agents — rotate per request to avoid fingerprinting
@@ -39,28 +41,12 @@ _USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 ]
 
-BIND = os.getenv("ARGUS_BIND_HOST", os.getenv("ARGUS_BIND", "127.0.0.1"))
-PORT = int(os.getenv("ARGUS_PORT", "8123"))
-TIMEOUT = int(os.getenv("ARGUS_RESIDENTIAL_TIMEOUT_SECONDS", "25"))
-CRAWL4AI_ENABLED = os.getenv("ARGUS_CRAWL4AI_ENABLED", "").lower() in ("1", "true")
-
 _start_time = time.time()
 _request_count = 0
 
 
-def _shared_secret() -> str:
-    return os.getenv("ARGUS_RESIDENTIAL_SHARED_SECRET", "").strip()
-
-
-def _allowed_cidrs() -> list[str]:
-    raw = os.getenv(
-        "ARGUS_RESIDENTIAL_ALLOWED_CIDRS",
-        "127.0.0.1/32,::1/128,100.64.0.0/10,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
-    )
-    return [item.strip() for item in raw.split(",") if item.strip()]
-
-
 def _client_allowed(client_host: str | None) -> bool:
+    config = get_config()
     if not client_host or client_host in {"localhost", "testclient"}:
         return True
 
@@ -69,7 +55,7 @@ def _client_allowed(client_host: str | None) -> bool:
     except ValueError:
         return False
 
-    for cidr in _allowed_cidrs():
+    for cidr in config.residential.allowed_cidrs:
         try:
             if client_ip in ipaddress.ip_network(cidr, strict=False):
                 return True
@@ -97,21 +83,34 @@ class ExtractResponse(BaseModel):
 
 @app.get("/health")
 async def health():
+    config = get_config()
+    crawl4ai_enabled = os.getenv("ARGUS_CRAWL4AI_ENABLED", "").lower() in ("1", "true")
     return {
         "status": "ok",
         "uptime_seconds": round(time.time() - _start_time),
         "requests": _request_count,
         "trafilatura": True,
         "playwright": _check_playwright(),
-        "crawl4ai": CRAWL4AI_ENABLED,
+        "crawl4ai": crawl4ai_enabled,
         "obscura": shutil.which("obscura") is not None,
+        "node": {
+            "role": config.node.role,
+            "egress": config.node.egress_type,
+            "machine": config.node.machine_name,
+        }
     }
+
+
+from argus.extraction.rate_limit import DomainRateLimiter
+
+_worker_domain_limiter = DomainRateLimiter(max_requests=5, window_seconds=60)
 
 
 @app.post("/extract")
 async def extract(req: ExtractRequest, request: Request):
     global _request_count
-    secret = _shared_secret()
+    config = get_config()
+    secret = config.residential.shared_secret
     if not secret:
         raise HTTPException(status_code=503, detail="residential shared secret not configured")
 
@@ -123,35 +122,48 @@ async def extract(req: ExtractRequest, request: Request):
     if auth_header != f"Bearer {secret}":
         raise HTTPException(status_code=401, detail="authentication required")
 
-    _request_count += 1
     url = req.url
-
     # SSRF protection — block private/internal IPs
     safe, reason = _is_safe_url(url)
     if not safe:
         raise HTTPException(status_code=400, detail=f"SSRF blocked: {reason}")
 
+    # Rate limiting
+    allowed, retry_after = _worker_domain_limiter.is_allowed(url)
+    if not allowed:
+        raise HTTPException(status_code=429, detail=f"Rate limit exceeded, retry after {retry_after}s")
+
+    _request_count += 1
+
     cookies = req.cookies
     # Try trafilatura first (fast, local HTTP)
     result = await _extract_trafilatura(url, cookies)
     if result.get("text") and len(result["text"].split()) >= 50:
-        return ExtractResponse(url=url, extractor="trafilatura", **result)
+        # Post-redirect SSRF check
+        if result.get("url") and result["url"] != url:
+            safe, reason = _is_safe_url(result["url"])
+            if not safe:
+                raise HTTPException(status_code=400, detail=f"SSRF blocked on redirect: {reason}")
+        return ExtractResponse(url=result.get("url", url), extractor="trafilatura", **result)
+
+    # ... (rest of extract function logic should similarly check final URL)
 
     # Try obscura (stealth CLI)
     obscura_path = shutil.which("obscura")
     if obscura_path:
-        result = await _extract_obscura(url)
+        result = await _extract_obscura(url, config.residential.timeout_seconds)
         if result.get("text") and len(result["text"].split()) >= 50:
             return ExtractResponse(url=url, extractor="obscura", **result)
 
     # Try playwright (full browser)
     if _check_playwright():
-        result = await _extract_playwright(url, cookies)
+        result = await _extract_playwright(url, config.residential.timeout_seconds, cookies)
         if result.get("text") and len(result["text"].split()) >= 100:
             return ExtractResponse(url=url, extractor="playwright", **result)
 
     # Try crawl4ai if enabled
-    if CRAWL4AI_ENABLED:
+    crawl4ai_enabled = os.getenv("ARGUS_CRAWL4AI_ENABLED", "").lower() in ("1", "true")
+    if crawl4ai_enabled:
         result = await _extract_crawl4ai(url)
         if result.get("text") and len(result["text"].split()) >= 50:
             return ExtractResponse(url=url, extractor="crawl4ai", **result)
@@ -204,6 +216,7 @@ def _is_safe_url(url: str) -> tuple[bool, str]:
 async def _extract_trafilatura(url: str, cookies: list[dict] | None = None) -> dict:
     try:
         import trafilatura
+        import httpx
         loop = asyncio.get_event_loop()
         ua = random.choice(_USER_AGENTS)
         headers = {"User-Agent": ua}
@@ -211,9 +224,13 @@ async def _extract_trafilatura(url: str, cookies: list[dict] | None = None) -> d
             cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies if "name" in c and "value" in c)
             if cookie_str:
                 headers["Cookie"] = cookie_str
-        downloaded = await loop.run_in_executor(
-            None, trafilatura.fetch_url, url, headers
-        )
+
+        # Get final URL
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+            resp = await client.get(url, headers=headers)
+            final_url = str(resp.url)
+            downloaded = resp.text
+
         if not downloaded:
             return {"error": "trafilatura: failed to fetch"}
         extracted = await loop.run_in_executor(None, trafilatura.bare_extraction, downloaded)
@@ -221,6 +238,7 @@ async def _extract_trafilatura(url: str, cookies: list[dict] | None = None) -> d
             return {"error": "trafilatura: no content"}
         text = extracted["text"]
         return {
+            "url": final_url,
             "title": extracted.get("title", ""),
             "text": text,
             "author": extracted.get("author", ""),
@@ -231,7 +249,7 @@ async def _extract_trafilatura(url: str, cookies: list[dict] | None = None) -> d
         return {"error": f"trafilatura: {e}"}
 
 
-async def _extract_obscura(url: str) -> dict:
+async def _extract_obscura(url: str, timeout: int) -> dict:
     try:
         proc = await asyncio.create_subprocess_exec(
             "obscura", "fetch", url, "--dump", "text", "--stealth", "--quiet",
@@ -239,7 +257,7 @@ async def _extract_obscura(url: str) -> dict:
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=TIMEOUT)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
             proc.kill()
             await proc.communicate()
@@ -254,7 +272,7 @@ async def _extract_obscura(url: str) -> dict:
         return {"error": f"obscura: {e}"}
 
 
-async def _extract_playwright(url: str, cookies: list[dict] | None = None) -> dict:
+async def _extract_playwright(url: str, timeout: int, cookies: list[dict] | None = None) -> dict:
     try:
         from playwright.async_api import async_playwright
 
@@ -270,8 +288,9 @@ async def _extract_playwright(url: str, cookies: list[dict] | None = None) -> di
             else:
                 context = None
                 page = await browser.new_page()
-            await page.goto(url, wait_until="domcontentloaded", timeout=TIMEOUT * 1000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
             await asyncio.sleep(1)
+            final_url = page.url
             title = await page.title()
             text = await page.evaluate("""() => {
                 const els = document.querySelectorAll('script, style, nav, footer, header, aside, iframe, noscript');
@@ -287,6 +306,7 @@ async def _extract_playwright(url: str, cookies: list[dict] | None = None) -> di
             if not text or len(text.split()) < 100:
                 return {"error": "playwright: too little content"}
             return {
+                "url": final_url,
                 "title": title or "",
                 "text": text,
                 "word_count": len(text.split()),
@@ -317,4 +337,7 @@ async def _extract_crawl4ai(url: str) -> dict:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host=BIND, port=PORT)
+    config = get_config()
+    bind = os.getenv("ARGUS_BIND_HOST", os.getenv("ARGUS_BIND", config.host))
+    port = int(os.getenv("ARGUS_PORT", str(config.port)))
+    uvicorn.run(app, host=bind, port=port)

@@ -55,6 +55,8 @@ class SearchResultSchema(BaseModel):
     domain: str = ""
     provider: Optional[str] = None
     score: float = 0.0
+    egress: Optional[str] = None
+    machine: Optional[str] = None
 
 
 class ProviderTraceSchema(BaseModel):
@@ -96,6 +98,7 @@ class ProviderTestRequest(BaseModel):
 class ExtractRequest(BaseModel):
     url: str = Field(..., min_length=1, max_length=2048, description="URL to extract content from")
     domain: Optional[str] = Field(None, description="Domain hint for authenticated extraction (e.g. nytimes.com)")
+    mode: str = Field("default", description="Extraction mode: default, archive_ingest")
 
     @field_validator("url")
     @classmethod
@@ -108,6 +111,13 @@ class ExtractRequest(BaseModel):
         hostname = parsed.hostname or ""
         if hostname in ("localhost", "127.0.0.1", "::1") or hostname.startswith(("10.", "172.16.", "192.168.", "169.254.")):
             raise ValueError("Private/internal URLs are not allowed")
+        return v
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v: str) -> str:
+        if v not in ("default", "archive_ingest"):
+            raise ValueError("Invalid extraction mode")
         return v
 
 
@@ -129,6 +139,15 @@ class ExtractResponse(BaseModel):
     truncation_type: Optional[str] = None
     completeness_signals: Optional[list[str]] = None
     recommended_action: Optional[str] = None
+
+    # Provenance metadata
+    source_type: Optional[str] = None
+    egress: Optional[str] = None
+    machine: Optional[str] = None
+    auth_used: bool = False
+    cookies_used: bool = False
+    archive_used: bool = False
+    cost: float = 0.0
 
 
 class AssessContentRequest(BaseModel):
@@ -193,6 +212,8 @@ class StoredDocumentSchema(BaseModel):
     role: str = "source"
     source_type: str = "web"
     extractor: Optional[str] = None
+    egress: Optional[str] = None
+    machine: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

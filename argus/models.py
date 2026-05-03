@@ -53,6 +53,7 @@ class SearchQuery:
     mode: SearchMode = SearchMode.DISCOVERY
     max_results: int = 10
     providers: Optional[List[ProviderName]] = None  # override routing policy
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

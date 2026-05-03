@@ -25,6 +25,7 @@ import os
 
 import httpx
 
+from argus.config import get_config
 from argus.extraction.cache import ExtractionCache
 from argus.extraction.completeness import assess_completeness
 from argus.extraction.models import ExtractedContent, ExtractorName
@@ -36,9 +37,7 @@ from argus.logging import get_logger
 
 logger = get_logger("extraction")
 
-DEFAULT_TIMEOUT = int(os.getenv("ARGUS_EXTRACTION_TIMEOUT_SECONDS", "10"))
 JINA_READER_URL = "https://r.jina.ai/"
-JINA_API_KEY = os.getenv("ARGUS_JINA_API_KEY", "")
 
 # Shared cache — lives for the process lifetime
 _cache = ExtractionCache(
@@ -100,13 +99,38 @@ def _safe_final_url(original_url: str, final_url: str) -> tuple[bool, str]:
     return is_safe_url(final_url)
 
 
-async def _extract_trafilatura(url: str) -> ExtractedContent:
+def _populate_provenance(result: ExtractedContent):
+    """Fill in provenance metadata based on extractor and current config."""
+    config = get_config()
+    result.machine = config.node.machine_name or None
+
+    if result.extractor in (ExtractorName.AUTH,):
+        result.source_type = "authenticated"
+        result.auth_used = True
+        result.cookies_used = True
+        result.egress = config.node.egress_type
+    elif result.extractor in (ExtractorName.RESIDENTIAL,):
+        result.source_type = "residential"
+        result.egress = "residential"
+    elif result.extractor in (ExtractorName.TRAFILATURA, ExtractorName.CRAWL4AI, ExtractorName.OBSCURA, ExtractorName.PLAYWRIGHT):
+        result.source_type = "live"
+        result.egress = config.node.egress_type
+    elif result.extractor in (ExtractorName.WAYBACK, ExtractorName.ARCHIVE_IS):
+        result.source_type = "archive"
+        result.archive_used = True
+        result.egress = "datacenter" if config.node.egress_type != "residential" else "residential"
+    elif result.extractor in (ExtractorName.JINA, ExtractorName.VALYU_CONTENTS, ExtractorName.FIRECRAWL, ExtractorName.YOU_CONTENTS):
+        result.source_type = "paid_api"
+        result.egress = "datacenter"
+
+
+async def _extract_trafilatura(url: str, timeout: int = 10) -> ExtractedContent:
     """Extract content using trafilatura (local, no API call)."""
     import trafilatura
 
     loop = asyncio.get_event_loop()
 
-    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         resp = await client.get(url, headers={"User-Agent": "Argus/1.0"})
         resp.raise_for_status()
         final_url = str(resp.url)
@@ -121,7 +145,7 @@ async def _extract_trafilatura(url: str) -> ExtractedContent:
 
     extracted = await loop.run_in_executor(None, trafilatura.bare_extraction, downloaded)
     if not extracted or not extracted.get("text"):
-        return ExtractedContent(url=url, error="trafilatura: no content extracted")
+        return ExtractedContent(url=final_url, error="trafilatura: no content extracted")
 
     text = extracted["text"]
     return ExtractedContent(
@@ -135,15 +159,19 @@ async def _extract_trafilatura(url: str) -> ExtractedContent:
     )
 
 
-async def _extract_jina(url: str) -> ExtractedContent:
+async def _extract_jina(url: str, timeout: int = 10) -> ExtractedContent:
     """Extract content using Jina Reader API (external fallback)."""
+    config = get_config()
+    jina_key = config.brave.api_key  # Wait, Jina doesn't have its own Config yet, but it's in env
+    jina_key = os.getenv("ARGUS_JINA_API_KEY", "")
+
     headers = {"Accept": "text/plain"}
-    if JINA_API_KEY:
-        headers["Authorization"] = f"Bearer {JINA_API_KEY}"
+    if jina_key:
+        headers["Authorization"] = f"Bearer {jina_key}"
 
     reader_url = f"{JINA_READER_URL}{url}"
 
-    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.get(reader_url, headers=headers, follow_redirects=True)
         resp.raise_for_status()
 
@@ -172,17 +200,23 @@ def get_extraction_cache() -> ExtractionCache:
     return _cache
 
 
-async def extract_url(url: str, domain: str = None) -> ExtractedContent:
+async def extract_url(url: str, domain: str = None, mode: str = "default") -> ExtractedContent:
     """Extract clean content from a URL using the integrated fallback chain.
+
+    Modes:
+      - default: standard fallback chain
+      - archive_ingest: optimized for durability and provenance (Atlas-style)
 
     Chain:
       SSRF → cache → rate limit → auth → QG → trafilatura → QG →
       crawl4ai → QG → obscura → QG → playwright → QG → residential → QG →
       jina → QG → valyu_contents → QG → firecrawl → QG → you_contents → QG →
-      wayback → QG → archive.is → QG → return best result (even if all quality gates failed)
-
-    Results are cached in memory — same URL within TTL returns cached result.
+      wayback → QG → archive.is → QG → return best result
     """
+    config = get_config()
+    from argus.extraction.domain_memory import get_domain_memory
+    dm = get_domain_memory()
+
     # SSRF check
     safe, reason = is_safe_url(url)
     if not safe:
@@ -208,10 +242,50 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
     def track_attempt(name: str, result: ExtractedContent):
         """Track which extractors were tried and keep the best result."""
         extractors_tried.append(name)
+        _populate_provenance(result)
         nonlocal best_result
         if result.text and result.word_count > 0:
             if best_result is None or result.word_count > best_result.word_count:
                 best_result = result
+
+    # Phase 4: Residential Egress Policy
+    res_policy = config.residential.policy
+    use_residential_early = False
+    if res_policy == "always":
+        use_residential_early = True
+    elif res_policy == "prefer_on_datacenter" and config.node.egress_type != "residential":
+        use_residential_early = True
+    elif res_policy == "prefer_for_domains" and domain and dm.should_prefer_residential(domain, "extraction"):
+        use_residential_early = True
+    elif mode == "archive_ingest" and config.node.egress_type != "residential":
+        use_residential_early = True
+
+    async def run_residential_step():
+        if config.node.egress_type == "residential":
+            return None # Already residential, local steps are already residential egress
+
+        try:
+            from argus.extraction.residential_extractor import extract_residential, _is_configured
+            if _is_configured():
+                res_result = await extract_residential(url, domain=domain or "")
+                track_attempt("residential", res_result)
+                if res_result.text and not res_result.error:
+                    passed, r_reason = _run_quality_gate(res_result.text, url, "residential")
+                    res_result.quality_passed = passed
+                    res_result.quality_reason = r_reason if not passed else None
+                    res_result.extractors_tried = list(extractors_tried)
+                    if passed:
+                        res_result.completeness_result = assess_completeness(res_result.text, url)
+                        if not _should_continue_for_completeness(res_result, step=6):
+                            logger.info("Extracted %s via residential (%d words)", url[:60], res_result.word_count)
+                            if domain:
+                                dm.record_residential_success(domain)
+                            return res_result
+                elif domain:
+                    dm.record_datacenter_failure(domain, res_result.error)
+        except Exception as e:
+            logger.warning("Residential extraction failed for %s: %s", url[:60], e)
+        return None
 
     # Step 1: Auth extraction (if cookies available for paywall domain)
     if domain:
@@ -219,7 +293,7 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
             from argus.extraction.auth_extractor import extract_authenticated
 
             result = await extract_authenticated(url, domain)
-            extractors_tried.append("auth")
+            track_attempt("auth", result)
             if result and result.text and not result.error:
                 passed, reason = _run_quality_gate(result.text, url, "auth")
                 result.quality_passed = passed
@@ -231,266 +305,156 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
                         logger.info("Extracted %s via auth (%d words)", url[:60], result.word_count)
                         _cache.put(url, result)
                         return result
-                    logger.debug("Auth passed quality but appears truncated (%s) — continuing chain",
-                                 result.completeness_result.truncation_type)
-                track_attempt("auth", result)
         except Exception as e:
             logger.debug("Auth extraction not available: %s", e)
 
-    # Step 2: Trafilatura (local, fast)
-    try:
-        result = await _extract_trafilatura(url)
-        track_attempt("trafilatura", result)
-        if result.text and not result.error:
-            passed, reason = _run_quality_gate(result.text, url, "trafilatura")
-            result.quality_passed = passed
-            result.quality_reason = reason if not passed else None
-            result.extractors_tried = list(extractors_tried)
-            if passed:
-                result.completeness_result = assess_completeness(result.text, url)
-                if not _should_continue_for_completeness(result, step=2):
-                    logger.info("Extracted %s via trafilatura (%d words)", url[:60], result.word_count)
-                    _cache.put(url, result)
-                    return result
-                logger.debug("Trafilatura passed quality but appears truncated (%s) — continuing chain",
-                             result.completeness_result.truncation_type)
-            else:
-                logger.debug("Trafilatura content failed quality gate: %s", reason)
-    except Exception as e:
-        logger.warning("Trafilatura failed for %s: %s", url[:60], e)
+    # Policy-driven residential trigger (Early)
+    if use_residential_early and res_policy != "off":
+        res_res = await run_residential_step()
+        if res_res:
+            _cache.put(url, res_res)
+            return res_res
 
-    # Step 3: Crawl4AI (self-hosted, JS rendering)
-    if os.getenv("ARGUS_CRAWL4AI_ENABLED", "").lower() in ("1", "true"):
+    # Local Extractors (Steps 2-5)
+    for step_num, step_name, extractor_func in [
+        (2, "trafilatura", _extract_trafilatura),
+        (3, "crawl4ai", None),
+        (4, "obscura", None),
+        (5, "playwright", None),
+    ]:
         try:
-            from argus.extraction.crawl4ai_extractor import extract_crawl4ai
+            if step_name == "crawl4ai":
+                if os.getenv("ARGUS_CRAWL4AI_ENABLED", "").lower() not in ("1", "true"):
+                    continue
+                from argus.extraction.crawl4ai_extractor import extract_crawl4ai as extractor_func
+            elif step_name == "obscura":
+                from argus.extraction.obscura_extractor import extract_obscura as extractor_func
+            elif step_name == "playwright":
+                from argus.extraction.playwright_extractor import extract_playwright as extractor_func
 
-            result = await extract_crawl4ai(url)
-            track_attempt("crawl4ai", result)
+            result = await extractor_func(url)
+            track_attempt(step_name, result)
             if result.text and not result.error:
-                passed, reason = _run_quality_gate(result.text, url, "crawl4ai")
+                passed, reason = _run_quality_gate(result.text, url, step_name)
                 result.quality_passed = passed
                 result.quality_reason = reason if not passed else None
                 result.extractors_tried = list(extractors_tried)
                 if passed:
                     result.completeness_result = assess_completeness(result.text, url)
-                    if not _should_continue_for_completeness(result, step=3):
-                        logger.info("Extracted %s via crawl4ai (%d words)", url[:60], result.word_count)
+                    if not _should_continue_for_completeness(result, step=step_num):
+                        logger.info("Extracted %s via %s (%d words)", url[:60], step_name, result.word_count)
                         _cache.put(url, result)
                         return result
-                    logger.debug("Crawl4AI passed quality but appears truncated (%s) — continuing chain",
-                                 result.completeness_result.truncation_type)
-                else:
-                    logger.debug("Crawl4AI content failed quality gate: %s", reason)
         except Exception as e:
-            logger.warning("Crawl4AI failed for %s: %s", url[:60], e)
+            logger.warning("%s failed for %s: %s", step_name.capitalize(), url[:60], e)
 
-    # Step 4: Obscura CLI (local headless browser, stealth mode — requires obscura binary on PATH)
-    try:
-        from argus.extraction.obscura_extractor import extract_obscura
+    # Step 6: Residential extraction (Fallback if not already tried early)
+    if not use_residential_early and res_policy != "off":
+        res_res = await run_residential_step()
+        if res_res:
+            _cache.put(url, res_res)
+            return res_res
 
-        result = await extract_obscura(url)
-        track_attempt("obscura", result)
-        if result.text and not result.error:
-            passed, reason = _run_quality_gate(result.text, url, "obscura")
-            result.quality_passed = passed
-            result.quality_reason = reason if not passed else None
-            result.extractors_tried = list(extractors_tried)
-            if passed:
-                result.completeness_result = assess_completeness(result.text, url)
-                if not _should_continue_for_completeness(result, step=4):
-                    logger.info("Extracted %s via obscura (%d words)", url[:60], result.word_count)
-                    _cache.put(url, result)
-                    return result
-                logger.debug("Obscura passed quality but appears truncated (%s) — continuing chain",
-                             result.completeness_result.truncation_type)
-            else:
-                logger.debug("Obscura content failed quality gate: %s", reason)
-    except Exception as e:
-        logger.warning("Obscura failed for %s: %s", url[:60], e)
+    # External APIs (Steps 7-10)
+    external_steps = [
+        (7, "jina", _extract_jina),
+        (8, "valyu_contents", None),
+        (9, "firecrawl", None),
+        (10, "you_contents", None),
+    ]
 
-    # Step 5: Playwright (local headless browser — uses Obscura CDP if ARGUS_OBSCURA_CDP_URL is set)
-    try:
-        from argus.extraction.playwright_extractor import extract_playwright
+    for step_num, step_name, extractor_func in external_steps:
+        # For archive_ingest mode, we try archive recovery before paid APIs
+        if mode == "archive_ingest" and step_num == 7:
+            # We'll come back to paid APIs if archives fail
+            break
 
-        result = await extract_playwright(url)
-        track_attempt("playwright", result)
-        if result.text and not result.error:
-            passed, reason = _run_quality_gate(result.text, url, "playwright")
-            result.quality_passed = passed
-            result.quality_reason = reason if not passed else None
-            result.extractors_tried = list(extractors_tried)
-            if passed:
-                result.completeness_result = assess_completeness(result.text, url)
-                if not _should_continue_for_completeness(result, step=5):
-                    logger.info("Extracted %s via playwright (%d words)", url[:60], result.word_count)
-                    _cache.put(url, result)
-                    return result
-                logger.debug("Playwright passed quality but appears truncated (%s) — continuing chain",
-                             result.completeness_result.truncation_type)
-            else:
-                logger.debug("Playwright content failed quality gate: %s", reason)
-    except Exception as e:
-        logger.warning("Playwright failed for %s: %s", url[:60], e)
-
-    # Step 6: Residential extraction (remote service over Tailscale, residential IP)
-    try:
-        from argus.extraction.residential_extractor import extract_residential, _is_configured
-
-        if _is_configured():
-            result = await extract_residential(url, domain=domain or "")
-            track_attempt("residential", result)
-            if result.text and not result.error:
-                passed, reason = _run_quality_gate(result.text, url, "residential")
-                result.quality_passed = passed
-                result.quality_reason = reason if not passed else None
-                result.extractors_tried = list(extractors_tried)
-                if passed:
-                    result.completeness_result = assess_completeness(result.text, url)
-                    if not _should_continue_for_completeness(result, step=6):
-                        logger.info("Extracted %s via residential (%d words)", url[:60], result.word_count)
-                        _cache.put(url, result)
-                        return result
-                    logger.debug("Residential passed quality but appears truncated (%s) — continuing chain",
-                                 result.completeness_result.truncation_type)
-                else:
-                    logger.debug("Residential content failed quality gate: %s", reason)
-    except Exception as e:
-        logger.warning("Residential extraction failed for %s: %s", url[:60], e)
-
-    # Step 7: Jina Reader (external API, free tier rate-limited)
-    try:
-        result = await _extract_jina(url)
-        track_attempt("jina", result)
-        if result.text and not result.error:
-            passed, reason = _run_quality_gate(result.text, url, "jina")
-            result.quality_passed = passed
-            result.quality_reason = reason if not passed else None
-            result.extractors_tried = list(extractors_tried)
-            if passed:
-                result.completeness_result = assess_completeness(result.text, url)
-                logger.info("Extracted %s via Jina (%d words)", url[:60], result.word_count)
-                _track_jina_usage(result.word_count)
-                if not _should_continue_for_completeness(result, step=7):
-                    _cache.put(url, result)
-                    return result
-                logger.debug("Jina passed quality but appears truncated (%s) — continuing chain",
-                             result.completeness_result.truncation_type)
-            logger.debug("Jina content failed quality gate: %s", reason)
-    except Exception as e:
-        logger.warning("Jina failed for %s: %s", url[:60], e)
-
-    # Step 8: Valyu Contents API ($0.001/URL, cheapest external option)
-    try:
-        from argus.extraction.valyu_extractor import extract_valyu_contents
-
-        result = await extract_valyu_contents(url)
-        track_attempt("valyu_contents", result)
-        if result.text and not result.error:
-            passed, reason = _run_quality_gate(result.text, url, "valyu_contents")
-            result.quality_passed = passed
-            result.quality_reason = reason if not passed else None
-            result.extractors_tried = list(extractors_tried)
-            if passed:
-                result.completeness_result = assess_completeness(result.text, url)
-                if not _should_continue_for_completeness(result, step=8):
-                    logger.info("Extracted %s via Valyu Contents (%d words)", url[:60], result.word_count)
-                    _cache.put(url, result)
-                    return result
-                logger.debug("Valyu Contents passed quality but appears truncated (%s) — continuing chain",
-                             result.completeness_result.truncation_type)
-            logger.debug("Valyu Contents failed quality gate: %s", reason)
-    except Exception as e:
-        logger.warning("Valyu Contents failed for %s: %s", url[:60], e)
-
-    # Step 9: Firecrawl (external API, 1 credit/page, best Markdown quality)
-    try:
-        from argus.extraction.firecrawl_extractor import extract_firecrawl
-
-        result = await extract_firecrawl(url)
-        track_attempt("firecrawl", result)
-        if result.text and not result.error:
-            passed, reason = _run_quality_gate(result.text, url, "firecrawl")
-            result.quality_passed = passed
-            result.quality_reason = reason if not passed else None
-            result.extractors_tried = list(extractors_tried)
-            if passed:
-                result.completeness_result = assess_completeness(result.text, url)
-                if not _should_continue_for_completeness(result, step=9):
-                    logger.info("Extracted %s via Firecrawl (%d words)", url[:60], result.word_count)
-                    _cache.put(url, result)
-                    return result
-                logger.debug("Firecrawl passed quality but appears truncated (%s) — continuing chain",
-                             result.completeness_result.truncation_type)
-            logger.debug("Firecrawl content failed quality gate: %s", reason)
-    except Exception as e:
-        logger.warning("Firecrawl failed for %s: %s", url[:60], e)
-
-    # Step 10: You.com Contents API ($1/1k pages, cheaper than Jina)
-    if os.getenv("ARGUS_YOU_CONTENTS_ENABLED", "").lower() in ("1", "true"):
         try:
-            from argus.extraction.you_extractor import extract_you_contents
+            if step_name == "valyu_contents":
+                from argus.extraction.valyu_extractor import extract_valyu_contents as extractor_func
+            elif step_name == "firecrawl":
+                from argus.extraction.firecrawl_extractor import extract_firecrawl as extractor_func
+            elif step_name == "you_contents":
+                if os.getenv("ARGUS_YOU_CONTENTS_ENABLED", "").lower() not in ("1", "true"):
+                    continue
+                from argus.extraction.you_extractor import extract_you_contents as extractor_func
 
-            result = await extract_you_contents(url)
-            track_attempt("you_contents", result)
+            result = await extractor_func(url)
+            track_attempt(step_name, result)
             if result.text and not result.error:
-                passed, reason = _run_quality_gate(result.text, url, "you_contents")
+                passed, reason = _run_quality_gate(result.text, url, step_name)
                 result.quality_passed = passed
                 result.quality_reason = reason if not passed else None
                 result.extractors_tried = list(extractors_tried)
                 if passed:
                     result.completeness_result = assess_completeness(result.text, url)
-                    if not _should_continue_for_completeness(result, step=10):
-                        logger.info("Extracted %s via You.com Contents (%d words)", url[:60], result.word_count)
+                    if step_name == "jina":
+                        _track_jina_usage(result.word_count)
+                    if not _should_continue_for_completeness(result, step=step_num):
+                        logger.info("Extracted %s via %s (%d words)", url[:60], step_name, result.word_count)
                         _cache.put(url, result)
                         return result
-                    logger.debug("You.com Contents passed quality but appears truncated (%s) — continuing chain",
-                                 result.completeness_result.truncation_type)
-                logger.debug("You.com Contents failed quality gate: %s", reason)
         except Exception as e:
-            logger.warning("You.com Contents failed for %s: %s", url[:60], e)
+            logger.warning("%s failed for %s: %s", step_name.capitalize(), url[:60], e)
 
-    # Step 11: Wayback Machine
-    try:
-        from argus.extraction.wayback_extractor import extract_wayback
+    # Step 11 & 12: Archive Recovery
+    for step_num, step_name, extractor_func in [
+        (11, "wayback", None),
+        (12, "archive_is", None),
+    ]:
+        try:
+            if step_name == "wayback":
+                from argus.extraction.wayback_extractor import extract_wayback as extractor_func
+            elif step_name == "archive_is":
+                from argus.extraction.archive_extractor import extract_archive_is as extractor_func
 
-        result = await extract_wayback(url)
-        track_attempt("wayback", result)
-        if result.text and not result.error:
-            passed, reason = _run_quality_gate(result.text, url, "wayback")
-            result.quality_passed = passed
-            result.quality_reason = reason if not passed else None
-            result.extractors_tried = list(extractors_tried)
-            if passed:
-                result.completeness_result = assess_completeness(result.text, url)
-                if not _should_continue_for_completeness(result, step=11):
-                    logger.info("Extracted %s via wayback (%d words)", url[:60], result.word_count)
+            result = await extractor_func(url)
+            track_attempt(step_name, result)
+            if result.text and not result.error:
+                passed, reason = _run_quality_gate(result.text, url, step_name)
+                result.quality_passed = passed
+                result.quality_reason = reason if not passed else None
+                result.extractors_tried = list(extractors_tried)
+                if passed:
+                    result.completeness_result = assess_completeness(result.text, url)
+                    logger.info("Extracted %s via %s (%d words)", url[:60], step_name, result.word_count)
                     _cache.put(url, result)
                     return result
-                logger.debug("Wayback passed quality but appears truncated (%s) — continuing chain",
-                             result.completeness_result.truncation_type)
-            logger.debug("Wayback content failed quality gate: %s", reason)
-    except Exception as e:
-        logger.warning("Wayback failed for %s: %s", url[:60], e)
+        except Exception as e:
+            logger.warning("%s failed for %s: %s", step_name.capitalize(), url[:60], e)
 
-    # Step 12: Archive.is
-    try:
-        from argus.extraction.archive_extractor import extract_archive_is
+    # If archive_ingest and we haven't tried paid APIs yet, try them now
+    if mode == "archive_ingest":
+        for step_num, step_name, extractor_func in external_steps:
+            try:
+                if step_name == "jina":
+                    extractor_func = _extract_jina
+                elif step_name == "valyu_contents":
+                    from argus.extraction.valyu_extractor import extract_valyu_contents as extractor_func
+                elif step_name == "firecrawl":
+                    from argus.extraction.firecrawl_extractor import extract_firecrawl as extractor_func
+                elif step_name == "you_contents":
+                    if os.getenv("ARGUS_YOU_CONTENTS_ENABLED", "").lower() not in ("1", "true"):
+                        continue
+                    from argus.extraction.you_extractor import extract_you_contents as extractor_func
 
-        result = await extract_archive_is(url)
-        track_attempt("archive_is", result)
-        if result.text and not result.error:
-            passed, reason = _run_quality_gate(result.text, url, "archive_is")
-            result.quality_passed = passed
-            result.quality_reason = reason if not passed else None
-            result.extractors_tried = list(extractors_tried)
-            if passed:
-                result.completeness_result = assess_completeness(result.text, url)
-                logger.info("Extracted %s via archive.is (%d words)", url[:60], result.word_count)
-                _cache.put(url, result)
-                return result
-            logger.debug("Archive.is content failed quality gate: %s", reason)
-    except Exception as e:
-        logger.warning("Archive.is failed for %s: %s", url[:60], e)
+                result = await extractor_func(url)
+                track_attempt(step_name, result)
+                if result.text and not result.error:
+                    passed, reason = _run_quality_gate(result.text, url, step_name)
+                    result.quality_passed = passed
+                    result.quality_reason = reason if not passed else None
+                    result.extractors_tried = list(extractors_tried)
+                    if passed:
+                        result.completeness_result = assess_completeness(result.text, url)
+                        if step_name == "jina":
+                            _track_jina_usage(result.word_count)
+                        if not _should_continue_for_completeness(result, step=step_num):
+                            logger.info("Extracted %s via %s (%d words)", url[:60], step_name, result.word_count)
+                            _cache.put(url, result)
+                            return result
+            except Exception as e:
+                logger.warning("%s failed for %s: %s", step_name.capitalize(), url[:60], e)
 
     # All extractors tried — return best result even if quality failed
     if best_result:
@@ -514,6 +478,7 @@ async def extract_url(url: str, domain: str = None) -> ExtractedContent:
         quality_reason="all_extractors_failed",
         extractors_tried=extractors_tried,
     )
+    _populate_provenance(result)
     return result
 
 
