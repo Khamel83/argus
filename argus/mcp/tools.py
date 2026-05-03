@@ -2,7 +2,6 @@
 MCP tool definitions for Argus.
 """
 
-import json
 from typing import Any, Callable, Optional
 
 from argus.broker.router import SearchBroker
@@ -22,36 +21,30 @@ _STATUS_DISPLAY = {
 
 
 def _serialize_response(resp) -> str:
-    results = []
-    for r in resp.results:
-        results.append({
-            "url": r.url,
-            "title": r.title,
-            "snippet": r.snippet,
-            "provider": r.provider.value if r.provider else None,
-            "score": round(r.score, 4),
-        })
+    """Return markdown-formatted search results for LLM consumption."""
+    providers_used = [t.provider.value for t in resp.traces if t.results_count and t.results_count > 0]
+    provider_str = ", ".join(providers_used) if providers_used else "none"
+    cached_str = " (cached)" if resp.cached else ""
 
-    traces = []
-    for t in resp.traces:
-        traces.append({
-            "provider": t.provider.value,
-            "status": t.status,
-            "results_count": t.results_count,
-            "latency_ms": t.latency_ms,
-            "error": t.error,
-        })
+    lines = [
+        f"## Search Results: {resp.query!r}",
+        f"Mode: {resp.mode.value} | {resp.total_results} results | via {provider_str}{cached_str}",
+        "",
+    ]
 
-    return json.dumps({
-        "query": resp.query,
-        "mode": resp.mode.value,
-        "results": results,
-        "total_results": resp.total_results,
-        "cached": resp.cached,
-        "traces": traces,
-        "run_id": resp.search_run_id,
-        "budget_warnings": resp.budget_warnings,
-    }, indent=2)
+    for i, r in enumerate(resp.results, 1):
+        title = r.title or "(no title)"
+        snippet = r.snippet or ""
+        lines.append(f"{i}. **{title}**")
+        lines.append(f"   URL: {r.url}")
+        if snippet:
+            lines.append(f"   {snippet}")
+        lines.append("")
+
+    if resp.budget_warnings:
+        lines.append("**Budget warnings:** " + "; ".join(resp.budget_warnings))
+
+    return "\n".join(lines)
 
 
 async def search_web(
@@ -74,9 +67,8 @@ async def search_web(
 
     if session_id:
         resp, sid = await broker.search_with_session(q, session_id=session_id)
-        result = json.loads(_serialize_response(resp))
-        result["session_id"] = sid
-        return json.dumps(result, indent=2)
+        md = _serialize_response(resp)
+        return md + f"\n_Session ID: {sid}_"
 
     resp = await broker.search(q)
     return _serialize_response(resp)
@@ -115,15 +107,12 @@ async def recover_url(
     try:
         archive_result = await _try_archive_ph(url)
         if archive_result:
-            result = json.loads(_serialize_response(resp))
-            result["results"].append(archive_result)
-            result["total_results"] = len(result["results"])
-            result["archive_ph_used"] = True
-            return json.dumps(result, indent=2)
+            md = _serialize_response(resp)
+            ar = archive_result
+            md += f"\n{len(resp.results) + 1}. **{ar.get('title', '(archive)')}** _(archive.ph)_\n   URL: {ar['url']}\n   {ar.get('snippet', '')}\n"
+            return md
     except Exception as e:
-        json_resp = json.loads(_serialize_response(resp))
-        json_resp["archive_ph_error"] = str(e)
-        return json.dumps(json_resp, indent=2)
+        return _serialize_response(resp) + f"\n_archive.ph error: {e}_"
 
     return _serialize_response(resp)
 
@@ -192,19 +181,18 @@ def search_health(broker: SearchBroker) -> str:
     """
     from argus.models import ProviderName
 
-    providers = {}
+    lines = ["## Search Provider Health", ""]
+    lines.append(f"{'Provider':<20} {'Status':<25} {'Failures'}")
+    lines.append("-" * 55)
+
     for pname in ProviderName:
         status = broker.get_provider_status(pname)
         raw = status["effective_status"]
-        status["display_status"] = _STATUS_DISPLAY.get(
-            raw if isinstance(raw, str) else raw.value, str(raw)
-        )
-        providers[pname.value] = status
+        display = _STATUS_DISPLAY.get(raw if isinstance(raw, str) else raw.value, str(raw))
+        failures = status.get("consecutive_failures", 0)
+        lines.append(f"{pname.value:<20} {display:<25} {failures}")
 
-    return json.dumps({
-        "providers": providers,
-        "health_tracking": broker.health_tracker.get_all_status(),
-    }, indent=2)
+    return "\n".join(lines)
 
 
 def search_budgets(broker: SearchBroker) -> str:
@@ -214,16 +202,20 @@ def search_budgets(broker: SearchBroker) -> str:
     """
     from argus.models import ProviderName
 
-    budgets = {}
-    for pname in ProviderName:
-        budgets[pname.value] = {
-            "remaining": broker.budget_tracker.get_remaining_budget(pname),
-            "monthly_usage": broker.budget_tracker.get_monthly_usage(pname),
-            "usage_count": broker.budget_tracker.get_usage_count(pname),
-            "exhausted": broker.budget_tracker.is_budget_exhausted(pname),
-        }
+    lines = ["## Search Provider Budgets", ""]
+    lines.append(f"{'Provider':<20} {'Remaining':<12} {'Used/Month':<12} {'Total Used':<12} {'Status'}")
+    lines.append("-" * 70)
 
-    return json.dumps({"budgets": budgets}, indent=2)
+    for pname in ProviderName:
+        remaining = broker.budget_tracker.get_remaining_budget(pname)
+        monthly = broker.budget_tracker.get_monthly_usage(pname)
+        total = broker.budget_tracker.get_usage_count(pname)
+        exhausted = broker.budget_tracker.is_budget_exhausted(pname)
+        status = "EXHAUSTED" if exhausted else ("unlimited" if remaining == 0 else "ok")
+        rem_str = "unlimited" if remaining == 0 else str(remaining)
+        lines.append(f"{pname.value:<20} {rem_str:<12} {monthly:<12} {total:<12} {status}")
+
+    return "\n".join(lines)
 
 
 async def test_provider_mcp(
@@ -242,38 +234,27 @@ async def test_provider_mcp(
     try:
         pname = ProviderName(provider)
     except ValueError:
-        return json.dumps({"error": f"Unknown provider: {provider}"})
+        return f"**Error:** Unknown provider: {provider}"
 
     prov = broker._providers.get(pname)
     if prov is None:
-        return json.dumps({"error": f"Provider not registered: {provider}"})
+        return f"**Error:** Provider not registered: {provider}"
 
     if not prov.is_available():
-        return json.dumps({
-            "provider": provider,
-            "available": False,
-            "status": prov.status().value,
-            "skipped": "provider is not available",
-        }, indent=2)
+        return f"**{provider}** — UNAVAILABLE (status: {prov.status().value})"
 
     q = SearchQuery(query=query, mode=SearchMode.DISCOVERY, max_results=3)
     results, trace = await prov.search(q)
 
-    return json.dumps({
-        "provider": provider,
-        "available": prov.is_available(),
-        "status": prov.status().value,
-        "trace": {
-            "status": trace.status,
-            "results_count": trace.results_count,
-            "latency_ms": trace.latency_ms,
-            "error": trace.error,
-        },
-        "sample_results": [
-            {"url": r.url, "title": r.title, "snippet": r.snippet[:100]}
-            for r in results[:3]
-        ],
-    }, indent=2)
+    lines = [
+        f"## Provider Test: {provider}",
+        f"Status: {prov.status().value} | {trace.status} | {trace.results_count} results | {trace.latency_ms}ms",
+    ]
+    if trace.error:
+        lines.append(f"Error: {trace.error}")
+    for i, r in enumerate(results[:3], 1):
+        lines.append(f"\n{i}. **{r.title}**\n   {r.url}\n   {r.snippet[:100] if r.snippet else ''}")
+    return "\n".join(lines)
 
 
 async def valyu_answer(query: str, fast_mode: bool = False) -> str:
@@ -287,21 +268,30 @@ async def valyu_answer(query: str, fast_mode: bool = False) -> str:
 
     result = await _answer(query, fast_mode=fast_mode)
 
-    return json.dumps({
-        "answer": result.answer,
-        "sources": [
-            {"title": s.get("title", ""), "url": s.get("url", "")}
-            for s in result.sources[:10]
-        ],
-        "cost_usd": result.cost_usd,
-        "tx_id": result.tx_id,
-        "error": result.error,
-    }, indent=2)
+    if result.error:
+        return f"**valyu_answer error:** {result.error}"
+
+    lines = [result.answer or "(no answer)", ""]
+    if result.sources:
+        lines.append("**Sources:**")
+        for s in result.sources[:10]:
+            title = s.get("title", "")
+            url = s.get("url", "")
+            if title and url:
+                lines.append(f"- [{title}]({url})")
+            elif url:
+                lines.append(f"- {url}")
+
+    return "\n".join(lines)
 
 
 def argus_paths() -> str:
     """Show the resolved Argus runtime storage layout."""
-    return json.dumps(describe_corpus_paths(), indent=2)
+    paths = describe_corpus_paths()
+    lines = ["## Argus Storage Paths", ""]
+    for k, v in paths.items():
+        lines.append(f"- **{k}**: {v}")
+    return "\n".join(lines)
 
 
 async def extract_content(url: str, domain: str = None) -> str:
@@ -315,37 +305,69 @@ async def extract_content(url: str, domain: str = None) -> str:
 
     result = await extract_url(url, domain=domain)
 
-    return json.dumps({
-        "url": result.url,
-        "title": result.title,
-        "text": result.text,
-        "author": result.author,
-        "date": result.date,
-        "word_count": result.word_count,
-        "extractor": result.extractor.value if result.extractor else None,
-        "error": result.error,
-    }, indent=2)
+    if result.error:
+        return f"**Extraction failed:** {result.error}\nURL: {result.url}"
+
+    meta_parts = []
+    if result.author:
+        meta_parts.append(f"Author: {result.author}")
+    if result.date:
+        meta_parts.append(f"Date: {result.date}")
+    if result.word_count:
+        meta_parts.append(f"Words: {result.word_count}")
+    if result.extractor:
+        meta_parts.append(f"Extractor: {result.extractor.value}")
+
+    lines = [
+        f"# {result.title or result.url}",
+        f"URL: {result.url}",
+    ]
+    if meta_parts:
+        lines.append(" | ".join(meta_parts))
+    lines.append("")
+    if result.text:
+        lines.append(result.text)
+
+    return "\n".join(lines)
 
 
 def _serialize_workflow(result) -> str:
-    return json.dumps(
-        {
-            "run_id": result.run_id,
-            "kind": result.kind.value,
-            "status": result.status.value,
-            "target": result.target,
-            "snapshot_dir": result.snapshot_dir,
-            "report_path": result.report_path,
-            "manifest_path": result.manifest_path,
-            "artifacts": [artifact.__dict__ for artifact in result.artifacts],
-            "documents": [document.__dict__ for document in result.documents],
-            "citations": [citation.__dict__ for citation in result.citations],
-            "summary_sections": [section.__dict__ for section in result.summary_sections],
-            "metadata": result.metadata,
-            "error": result.error,
-        },
-        indent=2,
-    )
+    if result.error:
+        return f"**Workflow error ({result.kind.value}):** {result.error}\nTarget: {result.target}"
+
+    lines = [
+        f"## {result.kind.value.replace('_', ' ').title()}: {result.target}",
+        f"Status: {result.status.value} | Run: {result.run_id}",
+        "",
+    ]
+
+    if result.summary_sections:
+        for section in result.summary_sections:
+            lines.append(f"### {section.heading}")
+            lines.append(section.body)
+            lines.append("")
+    elif result.report_path:
+        try:
+            import os
+            if os.path.isfile(result.report_path):
+                with open(result.report_path) as f:
+                    lines.append(f.read())
+            else:
+                lines.append(f"_Report saved to: {result.report_path}_")
+        except Exception:
+            lines.append(f"_Report saved to: {result.report_path}_")
+
+    if result.documents:
+        lines.append(f"\n**{len(result.documents)} documents processed**")
+        for doc in result.documents[:5]:
+            lines.append(f"- {doc.title or doc.url}")
+        if len(result.documents) > 5:
+            lines.append(f"- ... and {len(result.documents) - 5} more")
+
+    if result.snapshot_dir:
+        lines.append(f"\n_Artifacts saved to: {result.snapshot_dir}_")
+
+    return "\n".join(lines)
 
 
 def _make_progress_callback(ctx: Any) -> Callable[[int, int, str], None] | None:
@@ -414,9 +436,16 @@ def cookie_health() -> str:
     from argus.extraction.cookies import get_health_summary
 
     summary = get_health_summary()
-    return json.dumps({
-        "domains": summary,
-        "total_domains": len(summary),
-        "stale": [d for d, s in summary.items() if s["status"] == "stale"],
-        "refresh_needed": [d for d, s in summary.items() if s.get("stale_warning")],
-    }, indent=2)
+    stale = [d for d, s in summary.items() if s["status"] == "stale"]
+    refresh = [d for d, s in summary.items() if s.get("stale_warning")]
+
+    lines = [f"## Cookie Health ({len(summary)} domains)", ""]
+    for domain, s in summary.items():
+        status = s.get("status", "unknown")
+        reqs = s.get("request_count", 0)
+        flag = " ⚠ stale" if s.get("stale_warning") else ""
+        lines.append(f"- **{domain}**: {status}, {reqs} requests{flag}")
+
+    if refresh:
+        lines.append(f"\n**Needs refresh:** {', '.join(refresh)}")
+    return "\n".join(lines)

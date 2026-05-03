@@ -588,50 +588,92 @@ def mcp_serve(transport, host, port):
 
 
 @mcp.command(name="init")
-@click.option("--global", "global_", is_flag=True, help="Add to ~/.claude.json (all projects)")
-def mcp_init(global_):
-    """Add Argus MCP server config to this project or globally."""
+@click.option("--global", "global_", is_flag=True, help="Add to ~/.claude.json (all projects, Claude Code only)")
+@click.option("--client", default="all", type=click.Choice(["all", "claude", "opencode", "gemini", "codex"]),
+              help="Target client (default: all)")
+@click.option("--url", "remote_url", default=None, envvar="ARGUS_REMOTE_URL",
+              help="Remote Argus server URL (e.g. http://100.x.x.x:8271). "
+                   "Also reads ARGUS_REMOTE_URL env var. If set, generates remote config instead of local stdio.")
+@click.option("--key", "api_key", default=None, envvar="ARGUS_API_KEY",
+              help="API key for remote server. Also reads ARGUS_API_KEY env var.")
+def mcp_init(global_, client, remote_url, api_key):
+    """Add Argus MCP server config to this project or globally.
+
+    By default writes a local stdio config to .mcp.json (Claude Code, OpenCode, Cursor).
+    Pass --url (or set ARGUS_REMOTE_URL) to generate a remote streamable-http config instead —
+    use this when Argus runs on a homelab or cloud server shared across machines.
+
+    \b
+    Examples:
+      argus mcp init                                    # local stdio
+      argus mcp init --url http://100.112.130.100:8271  # remote, reads ARGUS_API_KEY from env
+      argus mcp init --client gemini                    # print gemini mcp add command only
+    """
     import json
+    import os
     import sys
     from pathlib import Path
 
     argus_bin = str(Path(sys.argv[0]).resolve())
-    entry = {
-        "command": argus_bin,
-        "args": ["mcp", "serve"],
-        "description": "Argus retrieval platform — search, extract, recover articles, capture sites, and build research packs",
-    }
 
-    if global_:
-        config_path = Path.home() / ".claude.json"
-        scope = "global (~/.claude.json)"
+    if remote_url:
+        mcp_url = remote_url.rstrip("/") + "/mcp"
+        entry = {"type": "http", "url": mcp_url}
+        if api_key:
+            entry["headers"] = {"Authorization": f"Bearer {api_key}"}
+        mode = f"remote ({mcp_url})"
     else:
-        config_path = Path(".mcp.json")
-        scope = "project (.mcp.json)"
+        entry = {
+            "command": argus_bin,
+            "args": ["mcp", "serve"],
+            "description": "Argus search broker",
+        }
+        mode = "local stdio"
 
-    config_path.touch(mode=0o644, exist_ok=True)
-    try:
-        data = json.loads(config_path.read_text()) if config_path.stat().st_size else {}
-    except json.JSONDecodeError:
-        click.echo(f"Warning: {config_path} had invalid JSON, starting fresh.", err=True)
-        data = {}
+    write_json = client in ("all", "claude", "opencode")
 
-    servers = data.setdefault("mcpServers", {})
+    if write_json:
+        if global_:
+            config_path = Path.home() / ".claude.json"
+            scope = f"global (~/.claude.json) — {mode}"
+        else:
+            config_path = Path(".mcp.json")
+            scope = f"project (.mcp.json) — {mode}"
 
-    if "argus" in servers:
-        if servers["argus"] != entry:
+        config_path.touch(mode=0o644, exist_ok=True)
+        try:
+            data = json.loads(config_path.read_text()) if config_path.stat().st_size else {}
+        except json.JSONDecodeError:
+            click.echo(f"Warning: {config_path} had invalid JSON, starting fresh.", err=True)
+            data = {}
+
+        servers = data.setdefault("mcpServers", {})
+
+        if "argus" in servers and servers["argus"] != entry:
             if not click.confirm(f"argus MCP config already exists in {scope}. Overwrite?", default=False):
                 click.echo("Aborted.")
                 return
-        servers["argus"] = entry
-        action = "Updated"
-    else:
-        servers["argus"] = entry
-        action = "Added"
 
-    config_path.write_text(json.dumps(data, indent=2) + "\n")
-    click.echo(f"{action} argus MCP to {scope}")
-    click.echo("Restart Claude Code in this project to connect.")
+        servers["argus"] = entry
+        action = "Updated" if "argus" in servers else "Added"
+        config_path.write_text(json.dumps(data, indent=2) + "\n")
+        click.echo(f"{action} argus MCP ({scope})  — Claude Code, OpenCode, Cursor read this file")
+
+    if client in ("all", "gemini"):
+        click.echo("\nGemini CLI — run once to register:")
+        if remote_url:
+            mcp_url = remote_url.rstrip("/") + "/mcp"
+            click.echo(f"  gemini mcp add argus {mcp_url}")
+            if api_key:
+                click.echo("  (Gemini CLI does not support auth headers — use local stdio or a Tailscale-trusted network)")
+        else:
+            click.echo(f"  gemini mcp add argus {argus_bin} mcp serve")
+
+    if client in ("all", "codex"):
+        click.echo("\nCodex — no MCP support yet; use the Argus HTTP API directly.")
+
+    if client == "all":
+        click.echo("\nRestart your AI client to connect.")
 
 
 @mcp.command(name="check")

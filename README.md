@@ -356,12 +356,17 @@ On each client:
 
 | Client | Config |
 |--------|--------|
-| **Claude Code** | `{"mcpServers":{"argus":{"type":"sse","url":"http://<server>:8001/mcp","headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` |
+| **Claude Code** | `{"mcpServers":{"argus":{"type":"http","url":"http://<server>:8001/mcp","headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` |
+| **OpenCode** | `{"mcpServers":{"argus":{"type":"http","url":"http://<server>:8001/mcp","headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` |
+| **Cursor** | `{"mcpServers":{"argus":{"type":"http","url":"http://<server>:8001/mcp","headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` |
+| **Gemini CLI** | `gemini mcp add argus http://<server>:8001/mcp` (no auth header support — use on a Tailscale-trusted network) |
 | **Antigravity** | `{"mcpServers":{"argus":{"serverUrl":"http://<server>:8001/mcp","headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` |
 
 With [Tailscale](https://tailscale.com), `<server>` is your machine's Tailscale IP (e.g. `100.x.x.x`). One server, every machine on your mesh gets search.
 
-**Transports**: `stdio` (default, for local), `sse` (legacy remote), `streamable-http` (modern remote — required for Antigravity). Remote HTTP transports require `ARGUS_API_KEY`.
+`argus mcp init` generates the right config automatically — set `ARGUS_REMOTE_URL` and `ARGUS_API_KEY` in your shell profile on each client machine, then run `argus mcp init` (or `argus mcp init --global`).
+
+**Transports**: `stdio` (default, for local), `sse` (legacy remote), `streamable-http` (modern remote, `"type":"http"` in config). Remote HTTP transports require `ARGUS_API_KEY`.
 
 Available tools:
 - Local `stdio`: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `cookie_health`, `valyu_answer`
