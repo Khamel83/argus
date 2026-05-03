@@ -2,7 +2,14 @@
 
 ## Overview
 
-Search infrastructure for AI agents: 14 providers, intelligent credit-aware routing, WolframAlpha computed answers, and a 12-step content extraction chain. Provider adapters: SearXNG (self-hosted, aggregates 70+ engines, disabled by default), DuckDuckGo, Yahoo (scraped), GitHub, WolframAlpha (free API, computed answers), Brave, Tavily, Exa, Linkup (monthly free tiers), Serper, Parallel AI, You.com, Valyu, SearchAPI. Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
+Search infrastructure for AI agents: 14 providers, topology-aware routing, WolframAlpha computed answers, and a 12-step content extraction chain. Provider adapters: SearXNG (self-hosted, aggregates 70+ engines, disabled by default), DuckDuckGo, Yahoo (scraped), GitHub, WolframAlpha (free API, computed answers), Brave, Tavily, Exa, Linkup (monthly free tiers), Serper, Parallel AI, You.com, Valyu, SearchAPI. Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
+
+## Features
+- **Topology-aware acquisition** — Argus knows if it's on a residential IP or datacenter, routing search and extraction automatically to avoid blocks and minimize network hops.
+- **Adaptive Domain Memory** — Learns which domains fail from datacenter IPs but succeed from residential ones, automatically routing future requests for those domains to residential egress.
+- **Universal Provenance** — Every search result and extraction is tagged with `egress` (residential|datacenter), `machine`, and `source_type`.
+- **Intelligent Routing** — Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically.
+- **12-step Extraction** — Trafilatura → Crawl4AI → Playwright → Jina → Valyu → Firecrawl → You → Archive with quality gates and completeness assessment.
 
 ## Two Deployment Tiers
 
@@ -11,15 +18,12 @@ Search infrastructure for AI agents: 14 providers, intelligent credit-aware rout
 - Add WOLFRAM_APP_ID for computed answers (math, facts, conversions — 2,000 free/month)
 - Add API keys for 7,000+ more free monthly queries
 - Extraction via external APIs only (Jina, Valyu Contents, Firecrawl, You.com Contents, Wayback)
-- Runs on any machine with Python 3.11+ (laptop, Mac Mini, Pi, cloud VM)
-- No Docker, no database server, no API keys required to start
+- Default SQLite persistence (no database server required)
+- Works on any machine with Python 3.11+ (laptop, Mac Mini, Pi, cloud VM)
 
 ### Tier 2: Full install on hardware you already have
-- Raspberry Pi 3 (1GB): SearXNG + all search providers. Fits alongside Pi-hole (SearXNG ~512MB, Pi-hole ~100MB).
 - Raspberry Pi 4 (4GB): Everything — SearXNG, all providers, Crawl4AI local JS extraction, Obscura stealth browser.
-- Mac Mini M1+ (8GB): Full stack with headroom for other services.
-- Any old laptop (4GB+): Full stack via Docker.
-- Free cloud VM (1GB): SearXNG + search. No Crawl4AI (use external APIs for extraction).
+- Home Server (homelab): Set `ARGUS_EGRESS_TYPE=residential` to optimize routing and skip external workers.
 - `docker compose up -d` for one-command setup
 
 ## Key Commands
@@ -29,16 +33,11 @@ Search infrastructure for AI agents: 14 providers, intelligent credit-aware rout
 cp .env.example .env                    # configure providers and DB
 pip install "argus-search[mcp]"         # install from PyPI (with MCP support)
 pip install "argus-search[mcp,crawl4ai]" # with Crawl4AI extractor
-# or from source: pip install -e ".[mcp]"
-
-# Zero-config search (no API keys needed)
-argus search -q "python web frameworks"  # uses DuckDuckGo automatically
 
 # Run
 argus serve                   # HTTP API on :8000
 argus mcp serve               # MCP server (stdio)
-argus mcp serve --transport sse --port 8001         # SSE (legacy remote)
-argus mcp serve --transport streamable-http --port 8001  # Antigravity, modern remote
+argus mcp serve --transport streamable-http --port 8001  # modern remote
 
 # Search
 argus search -q "query" --mode discovery
@@ -52,41 +51,30 @@ argus doctor                  # full setup check (config, providers, connectivit
 argus health                  # provider status
 argus budgets                 # budget status + token balances
 argus mcp check               # validate MCP server setup
-argus test-provider -p brave
-argus set-balance -s jina -b 9833638   # set token balance for a service
-
-# MCP setup
-argus mcp init                 # add MCP config to this project (warns before overwrite)
-
-# Test
-pytest tests/
 ```
 
 ## Architecture
 
 ```
 Caller (CLI/HTTP/MCP/Python)
-  → SearchBroker
-    → routing policy (tier-sorted, mode-specific within tiers)
-      → provider executor (budget check → health check → search → early stop)
+  → SearchBroker (topology-aware)
+    → routing policy (tier-sorted, egress-policy)
+      → provider executor (budget → health → search → provenance injection)
     → result pipeline (cache → dedupe → RRF ranking → response)
   → SessionStore (optional, per-request)
-    → query refinement from prior context
-  → Extractor (on demand)
-    → trafilatura → crawl4ai → playwright → jina →
-      valyu_contents → firecrawl → you_contents → wayback → archive.is
+  → Extractor (12-step chain with topology awareness)
+    → Adaptive Domain Memory (SQLite)
 ```
 
 | Module | Responsibility |
 |--------|---------------|
-| `argus/broker/` | Tier-based routing, ranking, dedup, caching, health, budgets |
-| `argus/providers/` | Provider adapters (one per search API) |
-| `argus/extraction/` | 12-step URL extraction fallback chain with quality gates |
-| `argus/sessions/` | Multi-turn session store and query refinement |
-| `argus/api/` | FastAPI HTTP endpoints |
-| `argus/cli/` | Click CLI commands |
-| `argus/mcp/` | MCP server for LLM integration |
-| `argus/persistence/` | PostgreSQL query/result storage |
+| `argus/broker/` | Tier-based routing, ranking, topology-aware search, caching, budgets |
+| `argus/providers/` | Provider adapters with egress/machine metadata injection |
+| `argus/extraction/` | 12-step extraction with topology awareness, adaptive domain memory, and quality gates |
+| `argus/api/` | FastAPI HTTP endpoints with provenance metadata |
+| `argus/cli/` | Click CLI commands (supports `--json` provenance) |
+| `argus/mcp/` | MCP server for LLM integration with rich provenance tools |
+| `argus/persistence/` | SQLite (default) or PostgreSQL query/result storage |
 
 ## Provider Tiers
 
@@ -96,55 +84,23 @@ Caller (CLI/HTTP/MCP/Python)
 | 1 (monthly) | Brave (2k/mo), Tavily (1k/mo), Exa (1k/mo), Linkup (1k/mo) | Recurring monthly |
 | 3 (one-time) | Serper (2.5k), Parallel (4k), You.com ($20), SearchAPI, Valyu ($10) | Don't come back |
 
-Routing sorts by tier first (free → monthly → one-time), then preserves mode-specific ordering within each tier. Budget enforcement skips exhausted providers automatically.
-
-WolframAlpha is unique: it returns computed answers (math, conversions, facts), not a list of URLs. It only activates in grounding and research modes. Queries it can't compute return empty — no error, no health penalty. WOLFRAM_APP_ID is in the secrets vault.
-
-Yahoo is a Tier 0 scraped provider. It will be auto-disabled by the health tracker if Yahoo HTML changes. No API key needed.
-
-SearXNG is a Tier 0 self-hosted provider but **disabled by default** — it requires Docker. Set `ARGUS_SEARXNG_ENABLED=true` when you have a SearXNG container running. DuckDuckGo and Yahoo provide free search without any setup.
-
-## Interfaces
-
-| Interface | How to use |
-|-----------|-----------|
-| HTTP API | `POST /api/search`, `POST /api/extract`, `POST /api/assess-content`, `POST /api/recover-url`, `POST /api/expand` — OpenAPI at `/docs` |
-| CLI | `argus search`, `argus extract`, `argus recover-url`, `argus doctor`, `argus health`, `argus budgets`, `argus set-balance` |
-| MCP | `argus mcp serve` — tools: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `valyu_answer`. Transports: stdio (default), `--transport sse` (legacy remote), `--transport streamable-http` (Antigravity, modern clients). Progress notifications on long-running workflows. |
-| MCP setup | `argus mcp init` — writes config. `argus mcp check` — validates setup. |
-| MCP Registry | [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io/servers/io.github.Khamel83/argus) — `io.github.Khamel83/argus` |
-| Python | `from argus.broker.router import create_broker`, `from argus.extraction import extract_url`, `from argus.providers.valyu_answer import valyu_answer` |
-
 ## Search Modes
 
-Each mode defines which providers are best suited for that query type. Routing sorts by credit tier first, then preserves mode-specific ordering within each tier. Budget-exhausted providers are skipped.
-
-| Mode | Use case | Actual runtime order |
-|------|----------|---------------------|
-| `discovery` | Related pages, canonical sources | SearXNG → DuckDuckGo → Yahoo → GitHub → Brave → Exa → Tavily → Linkup → Serper → Parallel → You → Valyu |
-| `recovery` | Dead/moved URL | SearXNG → DuckDuckGo → Yahoo → Brave → Tavily → Exa → Linkup → Serper → Parallel → You → Valyu |
-| `grounding` | Fact-checking + computed answers | SearXNG → DuckDuckGo → Yahoo → **Wolfram** → Brave → Linkup → Serper → Parallel → You → Valyu |
-| `research` | Broad exploratory | SearXNG → DuckDuckGo → Yahoo → **Wolfram** → GitHub → Tavily → Exa → Brave → Linkup → Serper → Parallel → You → Valyu |
-
-Free providers (SearXNG, DuckDuckGo) always lead. SearXNG is skipped when disabled. Within-tier ordering reflects provider strengths per query type.
+| Mode | Use case |
+|------|----------|
+| `discovery` | Related pages, canonical sources |
+| `recovery` | Dead/moved URL |
+| `grounding` | Fact-checking + computed answers |
+| `research` | Broad exploratory |
 
 ## Content Extraction
 
 12-step fallback chain with quality gates and completeness assessment between every step:
 
 ```
-trafilatura (local, fast) → Crawl4AI (local, JS rendering) →
-Obscura (local, stealth headless browser — optional binary) →
-Playwright (local, headless Chrome or Obscura CDP) → Jina Reader (external API) →
-Valyu Contents ($0.001/URL) → Firecrawl (1 credit/page) →
-You.com Contents ($1/1k pages) → Wayback Machine → archive.is
+trafilatura → Crawl4AI → Obscura → Playwright → Jina Reader →
+Valyu Contents → Firecrawl → You.com Contents → Wayback Machine → archive.is
 ```
-
-First 4 extractors need local install. Last 6 are external APIs that work anywhere. SSRF protection blocks private IPs. Results cached in memory (168h TTL). Domain rate limiting (10 req/min/domain). Authenticated extraction via cookies for paywall domains (NYT, Bloomberg, etc.).
-
-**Completeness assessment** (`argus/extraction/completeness.py`): runs after every quality gate pass. Detects feed-level truncation (not just paywalls) via five signals: `trailing_ellipsis`, `feed_marker` ("Read more", WordPress RSS footers), `mid_sentence_end`, `abrupt_final_para`, `word_cap` (common RSS limits). Confidence ≥ 0.85 = continue chain; returned in API response as `is_complete`, `completeness_confidence`, `truncation_type`, `completeness_signals`, `recommended_action`. Use `POST /api/assess-content` to assess text you already have without triggering extraction.
-
-Obscura (https://github.com/h4ckf0r0day/obscura): optional Rust headless browser binary (~70MB, 30MB RAM). No API key, no rate limit. Two modes: (1) CLI step — install binary on PATH, Argus auto-detects via `shutil.which`. (2) CDP backend — run `obscura serve --stealth --port 9222`, set `ARGUS_OBSCURA_CDP_URL=ws://127.0.0.1:9222` to make Playwright connect to it instead of launching Chrome. CDP mode enables stealth (navigator.webdriver=undefined, fingerprint randomization) and LP.getMarkdown for DOM-to-Markdown output.
 
 ## Multi-Turn Sessions
 
@@ -152,16 +108,19 @@ Pass `session_id` to search to enable conversational refinement. The broker reme
 
 ## Configuration
 
-All config via env vars (see `.env.example`). Missing API keys degrade gracefully — providers are skipped, not errors. Budget values are query counts (not USD): 0 = unlimited, set to enforce credit tracking. Secrets can be resolved from an optional `secrets` CLI vault — batch-loaded at startup for fast init.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ARGUS_NODE_ROLE` | `primary` | `primary`, `worker`, `caller`, or `dev` |
+| `ARGUS_EGRESS_TYPE` | `unknown` | `residential`, `datacenter`, or `unknown` |
+| `ARGUS_RESIDENTIAL_POLICY` | `fallback` | `off`, `fallback`, `prefer_on_datacenter`, `prefer_for_domains`, or `always` |
+| `ARGUS_DB_URL` | `sqlite:///.../argus.db` | Main database URL |
 
 ## Conventions
 
 - Provider adapters must never leak provider-specific shapes outside `argus/providers/`
-- All search results are `SearchResult`: url, title, snippet, domain, provider, score
-- Extracted content is `ExtractedContent`: url, title, text, author, date, word_count
+- All search results are `SearchResult`: url, title, snippet, domain, provider, score, egress, machine
+- Extracted content is `ExtractedContent`: url, title, text, author, date, word_count, egress, machine, source_type
 - Routes prefixed with `/api`
-- Free/self-hosted-first: DuckDuckGo and Yahoo are the fallback floor; SearXNG requires Docker
 - Token balances persist in SQLite alongside budget tracking
-- Budget env var is named `MONTHLY_BUDGET_USD` but values are query counts (legacy naming)
-- Version bumps must update `pyproject.toml` AND `server.json` (top-level + packages[0])
-- `README.md` must retain `<!-- mcp-name: io.github.Khamel83/argus -->` (PyPI verification for MCP Registry)
+- Version bumps must update `pyproject.toml` AND `server.json`
+- `README.md` must retain `<!-- mcp-name: io.github.Khamel83/argus -->`

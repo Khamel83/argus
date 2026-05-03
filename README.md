@@ -477,7 +477,7 @@ query arrives → cache? → build provider queue → execute sequentially → R
 
 5. **Dedup and truncate.** URLs are normalized (stripped `www.`, tracking params like `utm_*`, trailing slashes) and deduplicated. The merged list is truncated to `max_results` (default 10).
 
-6. **Cache and persist.** The final response is written to the in-memory cache and persisted to PostgreSQL. Provider traces (which were called, which were skipped and why) are included in the response for observability.
+6. **Cache and persist.** The final response is written to the in-memory cache and persisted to the local SQLite database (default) or PostgreSQL. Search results and extractions include rich provenance metadata (`egress`, `machine`, `source_type`) for downstream audit.
 
 ## Configuration
 
