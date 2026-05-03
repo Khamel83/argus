@@ -70,6 +70,8 @@ class ArgusConfig:
     github: ProviderConfig = field(default_factory=ProviderConfig)
     yahoo: ProviderConfig = field(default_factory=ProviderConfig)
     wolfram: ProviderConfig = field(default_factory=ProviderConfig)
+    jina: ProviderConfig = field(default_factory=ProviderConfig)
+    firecrawl: ProviderConfig = field(default_factory=ProviderConfig)
     node: NodeConfig = field(default_factory=NodeConfig)
     residential: ResidentialConfig = field(default_factory=ResidentialConfig)
     host: str = "127.0.0.1"
@@ -276,6 +278,14 @@ class EnvironmentConfigLoader:
                     "ARGUS_WOLFRAM_MONTHLY_BUDGET_USD", 2000.0
                 ),
                 timeout_seconds=self.get_int("ARGUS_WOLFRAM_TIMEOUT_SECONDS", 15),
+            ),
+            jina=ProviderConfig(
+                enabled=self.get_bool("ARGUS_JINA_ENABLED", True),
+                api_key=self.get_str("ARGUS_JINA_API_KEY", secret_keys=("JINA_API_KEY",)),
+            ),
+            firecrawl=ProviderConfig(
+                enabled=self.get_bool("ARGUS_FIRECRAWL_ENABLED", True),
+                api_key=self.get_str("ARGUS_FIRECRAWL_API_KEY", secret_keys=("FIRECRAWL_API_KEY",)),
             ),
             node=NodeConfig(
                 role=self.get_str("ARGUS_NODE_ROLE", "primary"),

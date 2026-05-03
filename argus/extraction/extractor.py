@@ -162,8 +162,7 @@ async def _extract_trafilatura(url: str, timeout: int = 10) -> ExtractedContent:
 async def _extract_jina(url: str, timeout: int = 10) -> ExtractedContent:
     """Extract content using Jina Reader API (external fallback)."""
     config = get_config()
-    jina_key = config.brave.api_key  # Wait, Jina doesn't have its own Config yet, but it's in env
-    jina_key = os.getenv("ARGUS_JINA_API_KEY", "")
+    jina_key = config.jina.api_key
 
     headers = {"Accept": "text/plain"}
     if jina_key:

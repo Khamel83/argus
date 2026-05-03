@@ -10,18 +10,19 @@ import os
 
 import httpx
 
+from argus.config import get_config
 from argus.extraction.models import ExtractedContent, ExtractorName
 from argus.logging import get_logger
 
 logger = get_logger("extraction.firecrawl")
 
 FIRECRAWL_API_URL = "https://api.firecrawl.dev/v1/scrape"
-TIMEOUT = int(os.getenv("ARGUS_EXTRACTION_TIMEOUT_SECONDS", "30"))
 
 
 async def extract_firecrawl(url: str) -> ExtractedContent:
     """Extract content from a URL using the Firecrawl v2 API."""
-    api_key = os.getenv("ARGUS_FIRECRAWL_API_KEY", "")
+    config = get_config()
+    api_key = config.firecrawl.api_key
     if not api_key:
         return ExtractedContent(url=url, error="firecrawl: no API key configured")
 
@@ -32,7 +33,7 @@ async def extract_firecrawl(url: str) -> ExtractedContent:
     body = {"url": url}
 
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=config.firecrawl.timeout_seconds) as client:
             resp = await client.post(FIRECRAWL_API_URL, json=body, headers=headers)
             resp.raise_for_status()
             data = resp.json()
