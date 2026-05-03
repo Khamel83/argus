@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-05-03
+
+### Added
+- **Topology-aware acquisition** — Argus now recognizes its egress environment (residential vs. datacenter) and node role (primary, worker, caller). Optimized for "homelab-first" retrieval.
+- **Adaptive Domain Memory** — SQLite-backed system that learns which domains require residential egress due to datacenter IP blocks. Automatically routes future requests for those domains to residential endpoints.
+- **Universal Provenance** — Every search result and extraction is now tagged with `egress` (residential|datacenter), `machine`, and `source_type`. Exported via API, CLI JSON, and MCP tools.
+- **`archive_ingest` extraction mode** — Optimized fallback chain for Atlas-style archival ingestion. Prioritizes local residential and archive recovery (Wayback, Archive.is) before spending credits on paid APIs.
+- **Residential Search Support** — SearXNG provider now supports an optional `ARGUS_SEARXNG_RESIDENTIAL_BASE_URL` to route searches through trusted residential nodes over Tailscale.
+- **Hardened Worker Safety** — Residential worker service now includes per-domain rate limiting and post-redirect SSRF validation for all fetched URLs.
+
+### Changed
+- **"Zero-Config" Persistence** — Default database switched from PostgreSQL to **SQLite** (located in `~/.local/share/argus/argus.db`). Enables search history and domain memory out-of-the-box.
+- **Centralized Extractor Config** — Jina and Firecrawl extractors now use the centralized `ArgusConfig` for API keys and timeouts, consistent with the rest of the system.
+- **Documentation Overhaul** — README, AGENTS.md, and CLAUDE.md rewritten to reflect the residential-first architecture and remove stale OCI-centric primary assumptions.
+
 ## [1.5.1] - 2026-04-29
 
 ### Changed
