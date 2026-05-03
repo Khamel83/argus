@@ -356,15 +356,34 @@ On each client:
 
 | Client | Config |
 |--------|--------|
-| **Claude Code** | `{"mcpServers":{"argus":{"type":"http","url":"http://<server>:8001/mcp","headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` |
-| **OpenCode** | `{"mcpServers":{"argus":{"type":"http","url":"http://<server>:8001/mcp","headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` |
-| **Cursor** | `{"mcpServers":{"argus":{"type":"http","url":"http://<server>:8001/mcp","headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` |
-| **Gemini CLI** | `gemini mcp add argus http://<server>:8001/mcp` (no auth header support — use on a Tailscale-trusted network) |
-| **Antigravity** | `{"mcpServers":{"argus":{"serverUrl":"http://<server>:8001/mcp","headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` |
+| **Claude Code** | `{"mcpServers":{"argus":{"type":"http","url":"http://<server>:<port>/mcp","headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` in `~/.claude.json` (global) or `.mcp.json` (project) |
+| **OpenCode** | Same as Claude Code — reads `.mcp.json` and `~/.claude.json` |
+| **Cursor** | Same as Claude Code — reads `.mcp.json` |
+| **Codex CLI** | `[mcp_servers.argus]` section in `~/.codex/config.toml` with `url` and `bearer_token_env_var = "ARGUS_API_KEY"` — key must also be exported in `~/.zshrc` |
+| **Gemini CLI** | `gemini mcp add argus http://<server>:<port>/mcp` (no auth header support — use on a Tailscale-trusted network) |
+| **Antigravity** | `{"mcpServers":{"argus":{"serverUrl":"http://<server>:<port>/mcp","headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` |
 
 With [Tailscale](https://tailscale.com), `<server>` is your machine's Tailscale IP (e.g. `100.x.x.x`). One server, every machine on your mesh gets search.
 
-`argus mcp init` generates the right config automatically — set `ARGUS_REMOTE_URL` and `ARGUS_API_KEY` in your shell profile on each client machine, then run `argus mcp init` (or `argus mcp init --global`).
+**One-command provisioning (no argus install needed on client machines):**
+
+```bash
+# Load secrets, then push config to any machine:
+eval $(secrets decrypt argus | grep -E 'ARGUS_REMOTE_URL|ARGUS_API_KEY' | sed 's/^/export /')
+
+curl -s https://raw.githubusercontent.com/Khamel83/argus/main/scripts/provision-mcp-client.sh | bash -s local              # this machine
+curl -s https://raw.githubusercontent.com/Khamel83/argus/main/scripts/provision-mcp-client.sh | bash -s user@100.x.x.x    # remote machine
+```
+
+The script writes `~/.claude.json`, `~/.codex/config.toml`, and `~/.zshrc` on the target. Requires Python 3 (standard on macOS/Linux). No argus installation needed on client machines.
+
+`argus mcp init` also generates configs automatically for all clients — run with `ARGUS_REMOTE_URL` and `ARGUS_API_KEY` set:
+```bash
+argus mcp init --global              # Claude Code + OpenCode + Cursor (writes ~/.claude.json)
+argus mcp init --client codex        # Codex (writes ~/.codex/config.toml + exports to ~/.zshrc)
+argus mcp init --client gemini       # prints gemini mcp add command
+argus mcp init --global --client all # everything above
+```
 
 **Transports**: `stdio` (default, for local), `sse` (legacy remote), `streamable-http` (modern remote, `"type":"http"` in config). Remote HTTP transports require `ARGUS_API_KEY`.
 
