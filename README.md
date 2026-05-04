@@ -450,7 +450,7 @@ Caller (CLI/HTTP/MCP/Python) → SearchBroker → tier-sorted providers → RRF 
 | `argus/api/` | FastAPI HTTP endpoints |
 | `argus/cli/` | Click CLI commands |
 | `argus/mcp/` | MCP server for LLM integration |
-| `argus/persistence/` | PostgreSQL query/result storage |
+| `argus/persistence/` | SQLite (default) or PostgreSQL query/result storage |
 
 Add new providers or extractors with a single adapter file. See [CONTRIBUTING.md](CONTRIBUTING.md) for the interface.
 
