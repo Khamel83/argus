@@ -19,7 +19,7 @@
 > Tier 0 (free): SearXNG (self-hosted, disabled by default — enable if Docker is running), DuckDuckGo (no key), Yahoo (scraped), GitHub (free), WolframAlpha (2k/mo computed answers)
 > Tier 1 (monthly recurring): Brave (2k/mo), Tavily (1k/mo), Exa (1k/mo), Linkup (1k/mo)
 > Tier 3 (one-time credits): Serper (2.5k), Parallel AI (4k), You.com ($20), Valyu ($10), SearchAPI
-> Routing: always queries free providers first, then monthly, then one-time. Exhausted providers skipped. Topology-aware routing optimizes for residential egress (homelab) automatically.
+> Routing: always queries free providers first, then monthly, then one-time. Exhausted providers skipped. Topology-aware routing optimizes for residential egress (e.g. homelab) automatically.
 
 ## Content Extraction
 

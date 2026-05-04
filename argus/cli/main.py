@@ -619,7 +619,7 @@ def mcp_init(global_, client, remote_url, api_key):
 
     By default writes a local stdio config to .mcp.json (Claude Code, OpenCode, Cursor).
     Pass --url (or set ARGUS_REMOTE_URL) to generate a remote streamable-http config instead —
-    use this when Argus runs on a homelab or cloud server shared across machines.
+    use this when Argus runs on a home server or cloud server shared across machines.
 
     \b
     Examples:
