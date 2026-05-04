@@ -315,23 +315,24 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
             return res_res
 
     # Local Extractors (Steps 2-5)
-    for step_num, step_name, extractor_func in [
+    for step_num, step_name, static_extractor in [
         (2, "trafilatura", _extract_trafilatura),
         (3, "crawl4ai", None),
         (4, "obscura", None),
         (5, "playwright", None),
     ]:
         try:
+            current_extractor = static_extractor
             if step_name == "crawl4ai":
                 if os.getenv("ARGUS_CRAWL4AI_ENABLED", "").lower() not in ("1", "true"):
                     continue
-                from argus.extraction.crawl4ai_extractor import extract_crawl4ai as extractor_func
+                from argus.extraction.crawl4ai_extractor import extract_crawl4ai as current_extractor
             elif step_name == "obscura":
-                from argus.extraction.obscura_extractor import extract_obscura as extractor_func
+                from argus.extraction.obscura_extractor import extract_obscura as current_extractor
             elif step_name == "playwright":
-                from argus.extraction.playwright_extractor import extract_playwright as extractor_func
+                from argus.extraction.playwright_extractor import extract_playwright as current_extractor
 
-            result = await extractor_func(url)
+            result = await current_extractor(url)
             track_attempt(step_name, result)
             if result.text and not result.error:
                 passed, reason = _run_quality_gate(result.text, url, step_name)
@@ -362,23 +363,24 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
         (10, "you_contents", None),
     ]
 
-    for step_num, step_name, extractor_func in external_steps:
+    for step_num, step_name, static_extractor in external_steps:
         # For archive_ingest mode, we try archive recovery before paid APIs
         if mode == "archive_ingest" and step_num == 7:
             # We'll come back to paid APIs if archives fail
             break
 
         try:
+            current_extractor = static_extractor
             if step_name == "valyu_contents":
-                from argus.extraction.valyu_extractor import extract_valyu_contents as extractor_func
+                from argus.extraction.valyu_extractor import extract_valyu_contents as current_extractor
             elif step_name == "firecrawl":
-                from argus.extraction.firecrawl_extractor import extract_firecrawl as extractor_func
+                from argus.extraction.firecrawl_extractor import extract_firecrawl as current_extractor
             elif step_name == "you_contents":
                 if os.getenv("ARGUS_YOU_CONTENTS_ENABLED", "").lower() not in ("1", "true"):
                     continue
-                from argus.extraction.you_extractor import extract_you_contents as extractor_func
+                from argus.extraction.you_extractor import extract_you_contents as current_extractor
 
-            result = await extractor_func(url)
+            result = await current_extractor(url)
             track_attempt(step_name, result)
             if result.text and not result.error:
                 passed, reason = _run_quality_gate(result.text, url, step_name)
@@ -424,20 +426,21 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
 
     # If archive_ingest and we haven't tried paid APIs yet, try them now
     if mode == "archive_ingest":
-        for step_num, step_name, extractor_func in external_steps:
+        for step_num, step_name, static_extractor in external_steps:
             try:
+                current_extractor = static_extractor
                 if step_name == "jina":
-                    extractor_func = _extract_jina
+                    current_extractor = _extract_jina
                 elif step_name == "valyu_contents":
-                    from argus.extraction.valyu_extractor import extract_valyu_contents as extractor_func
+                    from argus.extraction.valyu_extractor import extract_valyu_contents as current_extractor
                 elif step_name == "firecrawl":
-                    from argus.extraction.firecrawl_extractor import extract_firecrawl as extractor_func
+                    from argus.extraction.firecrawl_extractor import extract_firecrawl as current_extractor
                 elif step_name == "you_contents":
                     if os.getenv("ARGUS_YOU_CONTENTS_ENABLED", "").lower() not in ("1", "true"):
                         continue
-                    from argus.extraction.you_extractor import extract_you_contents as extractor_func
+                    from argus.extraction.you_extractor import extract_you_contents as current_extractor
 
-                result = await extractor_func(url)
+                result = await current_extractor(url)
                 track_attempt(step_name, result)
                 if result.text and not result.error:
                     passed, reason = _run_quality_gate(result.text, url, step_name)

@@ -12,14 +12,34 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from argus.config import get_config
 from argus.logging import get_logger
 
 logger = get_logger("extraction.cookies")
 
+# Domains that typically need authentication for full content
+PAYWALL_DOMAINS = {
+    "nytimes.com", "nyt.com", "nl.nytimes.com",
+    "wsj.com",
+    "bloomberg.com",
+    "ft.com",
+    "stratechery.com", "stratechery.passport.online",
+    "newyorker.com",
+    "theathletic.com",
+    "theeconomist.com", "economist.com",
+    "washingtonpost.com",
+    "theinformation.com",
+    "technologyreview.com",
+    "platformer.news",
+    "espn.com",
+    "latimes.com",
+    "chicagotribune.com",
+}
+
+# Track last request time per domain for rate limiting
+_last_auth_request: dict[str, float] = {}
+
 
 def _get_cookie_dir() -> Path:
-    config = get_config()
     path = os.getenv("ARGUS_COOKIE_DIR")
     if path:
         return Path(path).expanduser()
@@ -95,7 +115,6 @@ def can_authenticate(domain: str) -> bool:
         return False
 
     # Rate limit check
-    config = get_config()
     auth_rate_limit = int(os.getenv("ARGUS_AUTH_RATE_LIMIT", "10"))
     now = time.monotonic()
     last = _last_auth_request.get(domain, 0)

@@ -6,8 +6,6 @@ Extracts clean markdown from URLs via POST https://api.firecrawl.dev/v1/scrape.
 Gated by ARGUS_FIRECRAWL_API_KEY env var.
 """
 
-import os
-
 import httpx
 
 from argus.config import get_config

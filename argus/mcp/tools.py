@@ -442,7 +442,6 @@ def cookie_health() -> str:
     from argus.extraction.cookies import get_health_summary
 
     summary = get_health_summary()
-    stale = [d for d, s in summary.items() if s["status"] == "stale"]
     refresh = [d for d, s in summary.items() if s.get("stale_warning")]
 
     lines = [f"## Cookie Health ({len(summary)} domains)", ""]

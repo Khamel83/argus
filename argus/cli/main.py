@@ -627,8 +627,6 @@ def mcp_init(global_, client, remote_url, api_key):
       argus mcp init --url http://argus.local:8271  # remote, reads ARGUS_API_KEY from env
       argus mcp init --client gemini                    # print gemini mcp add command only
     """
-    import json
-    import os
     import sys
     from pathlib import Path
 
@@ -688,9 +686,6 @@ def mcp_init(global_, client, remote_url, api_key):
             click.echo(f"  gemini mcp add argus {argus_bin} mcp serve")
 
     if client in ("all", "codex"):
-        import shutil
-        import subprocess
-
         toml_path = Path.home() / ".codex" / "config.toml"
         if not toml_path.parent.exists():
             click.echo("\nCodex — ~/.codex/ not found; is Codex installed?")
@@ -746,7 +741,6 @@ def mcp_init(global_, client, remote_url, api_key):
 @mcp.command(name="check")
 def mcp_check():
     """Validate MCP server setup: package, transport, and authentication."""
-    import sys
     from pathlib import Path
 
     checks = []

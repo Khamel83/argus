@@ -8,7 +8,7 @@ import shutil
 import socket
 import time
 from contextlib import asynccontextmanager
-from typing import Dict, Any
+from typing import Dict
 
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
