@@ -203,12 +203,19 @@ def search(query, mode, max_results, providers, as_json, session):
 @cli.command()
 @click.option("--url", "-u", required=True, help="URL to extract content from")
 @click.option("--domain", "-d", help="Domain hint for authenticated extraction (e.g. nytimes.com)")
+@click.option(
+    "--mode",
+    "-m",
+    default="default",
+    type=click.Choice(["default", "archive_ingest"]),
+    help="Extraction mode: default or archive_ingest",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def extract(url, as_json, domain):
+def extract(url, domain, mode, as_json):
     """Extract clean text content from a URL."""
     from argus.extraction import extract_url
 
-    result = _run(extract_url(url, domain=domain))
+    result = _run(extract_url(url, domain=domain, mode=mode))
 
     if result.error:
         click.echo(f"Error: {result.error}", err=True)
@@ -223,6 +230,7 @@ def extract(url, as_json, domain):
             "date": result.date,
             "word_count": result.word_count,
             "extractor": result.extractor.value if result.extractor else None,
+            "mode": mode,
             "egress": result.egress,
             "machine": result.machine,
             "source_type": result.source_type,
