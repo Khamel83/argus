@@ -624,7 +624,7 @@ def mcp_init(global_, client, remote_url, api_key):
     \b
     Examples:
       argus mcp init                                    # local stdio
-      argus mcp init --url http://100.112.130.100:8271  # remote, reads ARGUS_API_KEY from env
+      argus mcp init --url http://argus.local:8271  # remote, reads ARGUS_API_KEY from env
       argus mcp init --client gemini                    # print gemini mcp add command only
     """
     import json
