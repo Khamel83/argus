@@ -12,6 +12,7 @@
 3. Site capture and summary workflow.
 4. Docs plus research pack workflow.
 5. End-to-end evals and public-product refinements.
+6. Topology-aware acquisition and provenance (Completed 2026-05-03).
 
 ## Storage Defaults
 - Runtime data is stored outside the repo checkout by default.

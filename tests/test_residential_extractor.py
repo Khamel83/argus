@@ -36,7 +36,7 @@ def _mock_config(endpoints=None, shared_secret="shared-secret", policy="fallback
 
 
 class TestResidentialExtractor:
-    """Tests for the residential extractor client (runs on oci-dev)."""
+    """Tests for the residential extractor client."""
 
     @pytest.mark.asyncio
     async def test_not_configured(self):

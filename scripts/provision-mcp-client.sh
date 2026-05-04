@@ -1,31 +1,25 @@
 #!/usr/bin/env bash
 # provision-mcp-client.sh — push Argus MCP config to a client machine (no argus install needed)
 #
-# Usage (from oci-dev, with secrets loaded):
+# Usage (with secrets loaded):
 #   eval $(cd ~/github/oneshot && secrets decrypt argus | grep -E 'ARGUS_REMOTE_URL|ARGUS_API_KEY' | sed 's/^/export /')
-#   ./scripts/provision-mcp-client.sh khamel83@100.64.121.72   # MBA
-#   ./scripts/provision-mcp-client.sh khamel83@100.113.216.27  # macmini
-#   ./scripts/provision-mcp-client.sh local                    # this machine
+#   ./scripts/provision-mcp-client.sh user@host             # remote machine
+#   ./scripts/provision-mcp-client.sh local                 # this machine
 
 set -euo pipefail
 
 TARGET="${1:-}"
-ARGUS_REMOTE_URL="${ARGUS_REMOTE_URL:-http://100.112.130.100:8271}"
+ARGUS_REMOTE_URL="${ARGUS_REMOTE_URL:-http://localhost:8271}"
 ARGUS_API_KEY="${ARGUS_API_KEY:-}"
 MCP_URL="${ARGUS_REMOTE_URL%/}/mcp"
 
 if [[ -z "$ARGUS_API_KEY" ]]; then
-    echo "Error: ARGUS_API_KEY is not set. Load from secrets first:" >&2
-    echo "  eval \$(cd ~/github/oneshot && secrets decrypt argus | grep -E 'ARGUS_REMOTE_URL|ARGUS_API_KEY' | sed 's/^/export /')" >&2
+    echo "Error: ARGUS_API_KEY is not set. Load from secrets first." >&2
     exit 1
 fi
 
 if [[ -z "$TARGET" ]]; then
     echo "Usage: $0 <user@host | local>" >&2
-    echo "Known machines:" >&2
-    echo "  khamel83@100.64.121.72   (MBA)" >&2
-    echo "  khamel83@100.113.216.27  (macmini)" >&2
-    echo "  local                    (this machine)" >&2
     exit 1
 fi
 

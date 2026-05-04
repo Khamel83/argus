@@ -1,7 +1,7 @@
 """
 Residential extraction — sends extraction requests to remote services over Tailscale.
 
-Routes browser-based extraction through residential IPs (homelab/macmini) to bypass
+Routes browser-based extraction through residential IPs to bypass
 datacenter IP blocks. Supports multiple endpoints with automatic failover and
 per-endpoint circuit breakers with TTL recovery.
 
