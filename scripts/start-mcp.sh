@@ -33,7 +33,7 @@ _load_vault argus_auth
 
 export ARGUS_SEARXNG_BASE_URL="${ARGUS_SEARXNG_BASE_URL:-http://127.0.0.1:8080}"
 
-export ARGUS_MCP_HOST="${ARGUS_MCP_HOST:-127.0.0.1}"
+export ARGUS_MCP_HOST="${ARGUS_MCP_HOST:-0.0.0.0}"
 export ARGUS_MCP_PORT="${ARGUS_MCP_PORT:-8001}"
 
 exec argus mcp serve --transport streamable-http --host "$ARGUS_MCP_HOST" --port "$ARGUS_MCP_PORT"

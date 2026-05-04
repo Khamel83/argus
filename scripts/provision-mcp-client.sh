@@ -30,19 +30,35 @@ from pathlib import Path
 mcp_url = "${MCP_URL}"
 api_key = "${ARGUS_API_KEY}"
 
-# 1. ~/.claude.json (Claude Code, OpenCode, Cursor)
-claude_path = Path.home() / ".claude.json"
-try:
-    data = json.loads(claude_path.read_text()) if claude_path.exists() and claude_path.stat().st_size else {}
-except json.JSONDecodeError:
-    data = {}
-data.setdefault("mcpServers", {})["argus"] = {
-    "type": "http",
-    "url": mcp_url,
-    "headers": {"Authorization": f"Bearer {api_key}"},
-}
-claude_path.write_text(json.dumps(data, indent=2) + "\n")
-print(f"[claude.json] written: {mcp_url}")
+# 1. Configuration files (Claude Code, OpenCode, Cursor, Claude Desktop)
+config_paths = [
+    Path.home() / ".claude.json",
+    Path.home() / ".cursor" / "mcp.json",
+]
+
+# Add Claude Desktop based on OS
+if os.uname().sysname == "Darwin":
+    config_paths.append(Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json")
+else:
+    config_paths.append(Path.home() / ".config" / "Claude" / "claude_desktop_config.json")
+
+for config_path in config_paths:
+    # Only write if the directory exists (except for project-level .mcp.json which we don't do here)
+    if not config_path.parent.exists():
+        continue
+    
+    try:
+        data = json.loads(config_path.read_text()) if config_path.exists() and config_path.stat().st_size else {}
+    except json.JSONDecodeError:
+        data = {}
+    
+    data.setdefault("mcpServers", {})["argus"] = {
+        "type": "http",
+        "url": mcp_url,
+        "headers": {"Authorization": f"Bearer {api_key}"},
+    }
+    config_path.write_text(json.dumps(data, indent=2) + "\n")
+    print(f"[{config_path.name}] written: {mcp_url}")
 
 # 2. ~/.codex/config.toml (Codex CLI)
 codex_path = Path.home() / ".codex" / "config.toml"
@@ -58,7 +74,15 @@ if codex_path.parent.exists():
 else:
     print("[codex config.toml] skipped — ~/.codex not found (Codex not installed here)")
 
-# 3. ~/.zshrc / ~/.bashrc — export ARGUS_API_KEY for Codex
+# 3. Gemini CLI
+import subprocess
+try:
+    subprocess.run(["gemini", "mcp", "add", "argus", mcp_url, "-t", "http", "-H", f"Authorization: Bearer {api_key}", "--trust", "--scope", "user"], capture_output=True)
+    print(f"[gemini] added argus MCP: {mcp_url}")
+except FileNotFoundError:
+    print("[gemini] skipped — gemini command not found")
+
+# 4. ~/.zshrc / ~/.bashrc — export ARGUS_API_KEY for Codex
 for rc_name in [".zshrc", ".bashrc"]:
     rc = Path.home() / rc_name
     if rc.exists():

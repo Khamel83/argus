@@ -363,7 +363,7 @@ On each client:
 | **OpenCode** | Same as Claude Code — reads `.mcp.json` and `~/.claude.json` |
 | **Cursor** | Same as Claude Code — reads `.mcp.json` |
 | **Codex CLI** | `[mcp_servers.argus]` section in `~/.codex/config.toml` with `url` and `bearer_token_env_var = "ARGUS_API_KEY"` — key must also be exported in `~/.zshrc` |
-| **Gemini CLI** | `gemini mcp add argus http://<server>:<port>/mcp` (no auth header support — use on a Tailscale-trusted network) |
+| **Gemini CLI** | `gemini mcp add argus http://<server>:<port>/mcp -t http -H "Authorization: Bearer <ARGUS_API_KEY>"` |
 | **Antigravity** | `{"mcpServers":{"argus":{"serverUrl":"http://<server>:<port>/mcp","headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` |
 
 With [Tailscale](https://tailscale.com), `<server>` is your machine's Tailscale IP (e.g. `100.x.x.x`). One server, every machine on your mesh gets search.
