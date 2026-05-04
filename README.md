@@ -9,6 +9,7 @@
 [![CI](https://github.com/Khamel83/argus/actions/workflows/ci.yml/badge.svg)](https://github.com/Khamel83/argus/actions/workflows/ci.yml)
 [![MCP Registry](https://img.shields.io/badge/MCP-Registry-blue)](https://registry.modelcontextprotocol.io/servers/io.github.Khamel83/argus)
 [![Docker](https://img.shields.io/badge/ghcr.io-khamel83%2Fargus-blue)](https://github.com/Khamel83/argus/pkgs/container/argus)
+[![SafeSkill 50/100](https://img.shields.io/badge/SafeSkill-50%2F100_Use%20with%20Caution-orange)](https://safeskill.dev/scan/khamel83-argus)
 
 Retrieval platform for AI agents. Argus routes search across 14 providers, recovers dead URLs, captures important site content, builds local docs-plus-research packs, and persists everything with traceable local artifacts.
 
