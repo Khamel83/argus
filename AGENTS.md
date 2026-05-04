@@ -23,7 +23,7 @@ Search infrastructure for AI agents: 14 providers, topology-aware routing, Wolfr
 
 ### Tier 2: Full install on hardware you already have
 - Raspberry Pi 4 (4GB): Everything — SearXNG, all providers, Crawl4AI local JS extraction, Obscura stealth browser.
-- Home Server (homelab): Set `ARGUS_EGRESS_TYPE=residential` to optimize routing and skip external workers.
+- Home Server (e.g. homelab): Set `ARGUS_EGRESS_TYPE=residential` to optimize routing and skip external workers.
 - `docker compose up -d` for one-command setup
 
 ## Key Commands
