@@ -9,7 +9,7 @@ description = "Retrieval platform for AI agents — 14 search providers, 12-step
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
-keywords = ["mcp", "mcp-server", "search", "search-api", "search-broker", "content-extraction", "ai-agents", "llm-tools", "web-search", "fastapi", "brave-search", "serper", "tavily", "exa", "searxng", "trafilatura", "jina", "you-com", "linkup", "parallel-ai", "crawl4ai"]
+keywords = ["mcp", "mcp-server", "search", "search-api", "search-broker", "content-extraction", "ai-agents", "llm-tools", "web-search", "fastapi", "brave-search", "serper", "tavily", "exa", "searxng", "trafilatura", "jina", "you-com", "linkup", "parallel-ai", "crawl4ai", "acquisition-layer", "topology-aware"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

@@ -89,7 +89,7 @@ def create_app(
     app = FastAPI(
         title="Argus",
         description="Retrieval platform for AI agents",
-        version="1.0.0",
+        version="1.6.0",
         lifespan=lifespan,
     )
     app.state.get_broker = _build_broker_provider(broker, broker_factory)

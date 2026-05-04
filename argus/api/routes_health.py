@@ -14,6 +14,8 @@ def get_broker(request: Request) -> SearchBroker:
 
 @router.get("/health")
 async def health(broker: SearchBroker = Depends(get_broker)):
+    from argus import __version__
+
     all_providers = {}
     for pname in ProviderName:
         status = broker.get_provider_status(pname)
@@ -24,11 +26,10 @@ async def health(broker: SearchBroker = Depends(get_broker)):
         for s in all_providers.values()
     )
 
-    return Response(
-        content='{"status": "ok"}' if healthy else '{"status": "degraded"}',
-        media_type="application/json",
-        status_code=200,
-    )
+    return {
+        "status": "ok" if healthy else "degraded",
+        "version": __version__,
+    }
 
 
 @router.get("/admin/health/detail")

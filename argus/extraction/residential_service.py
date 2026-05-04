@@ -98,10 +98,12 @@ class ExtractResponse(BaseModel):
 
 @app.get("/health")
 async def health():
+    from argus import __version__
     config = get_config()
     crawl4ai_enabled = os.getenv("ARGUS_CRAWL4AI_ENABLED", "").lower() in ("1", "true")
     return {
         "status": "ok",
+        "version": __version__,
         "uptime_seconds": round(time.time() - _start_time),
         "requests": _request_count,
         "trafilatura": True,
