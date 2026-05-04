@@ -5,4 +5,4 @@ Routes queries across multiple web-search providers with config-driven
 fallback, health tracking, budget management, and normalized results.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.6.0"

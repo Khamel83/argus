@@ -10,6 +10,10 @@ services:
       - ARGUS_HOST=0.0.0.0
       - ARGUS_PORT=8000
       - ARGUS_BUDGET_DB_PATH=/app/argus_budgets.db
+      - ARGUS_NODE_ROLE=${ARGUS_NODE_ROLE:-primary}
+      - ARGUS_EGRESS_TYPE=${ARGUS_EGRESS_TYPE:-unknown}
+      - ARGUS_MACHINE_NAME=${ARGUS_MACHINE_NAME:-}
+      - ARGUS_RESIDENTIAL_POLICY=${ARGUS_RESIDENTIAL_POLICY:-fallback}
     volumes:
       - argus-data:/app
     restart: unless-stopped
