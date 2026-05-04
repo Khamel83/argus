@@ -1,6 +1,6 @@
 # Argus
 
-> Search infrastructure for AI agents. 14 providers (SearXNG 70+ engines, DuckDuckGo, Yahoo, GitHub, WolframAlpha computed answers, Brave, Tavily, Exa, Linkup, Serper, Parallel AI, You.com, Valyu, SearchAPI) with tier-based routing, RRF ranking, 12-step content extraction with completeness assessment, retrieval workflows, and budget enforcement. Works immediately with DuckDuckGo + Yahoo (no API keys). 7,000+ free monthly queries with API keys.
+> Search infrastructure for AI agents. 14 providers with topology-aware routing, RRF ranking, 12-step content extraction with completeness assessment, rich provenance tracking (egress/machine), retrieval workflows, and budget enforcement. Works immediately with DuckDuckGo + Yahoo (no API keys). 7,000+ free monthly queries with API keys.
 
 ## Installation
 

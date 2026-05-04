@@ -5,9 +5,8 @@ After=network-online.target
 
 [Service]
 Type=simple
-User=ubuntu
-WorkingDirectory=/home/ubuntu/github/argus
-ExecStart=/bin/bash /home/ubuntu/github/argus/scripts/start-server.sh
+WorkingDirectory=%h/github/argus
+ExecStart=/bin/bash %h/github/argus/scripts/start-server.sh
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1

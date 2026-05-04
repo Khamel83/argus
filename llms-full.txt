@@ -1,6 +1,6 @@
 # Argus
 
-> Argus is search infrastructure for AI agents. 14 providers with tier-based credit routing, Reciprocal Rank Fusion ranking, WolframAlpha computed answers, 12-step content extraction with completeness assessment, retrieval workflows, corpus storage, and budget enforcement. Works immediately with DuckDuckGo + Yahoo — no API keys needed. Add API keys for 7,000+ free monthly queries. Connect via HTTP, CLI, MCP server, or Python import.
+> Argus is search infrastructure for AI agents. 14 providers with topology-aware routing, Reciprocal Rank Fusion ranking, WolframAlpha computed answers, 12-step content extraction with completeness assessment, universal provenance tracking (egress/machine/source), retrieval workflows, corpus storage, and budget enforcement. Works immediately with DuckDuckGo + Yahoo — no API keys needed. Add API keys for 7,000+ free monthly queries. Connect via HTTP, CLI, MCP server, or Python import.
 
 ## What It Does
 
@@ -16,12 +16,10 @@
 
 ## Providers
 
-> Tier 0 (free): SearXNG (self-hosted, disabled by default — enable in .env when Docker container is running), DuckDuckGo (no key), Yahoo (scraped, no key), GitHub (free, rate-limited), WolframAlpha (2k/mo computed answers, free API key)
+> Tier 0 (free): SearXNG (self-hosted, disabled by default — enable if Docker is running), DuckDuckGo (no key), Yahoo (scraped), GitHub (free), WolframAlpha (2k/mo computed answers)
 > Tier 1 (monthly recurring): Brave (2k/mo), Tavily (1k/mo), Exa (1k/mo), Linkup (1k/mo)
 > Tier 3 (one-time credits): Serper (2.5k), Parallel AI (4k), You.com ($20), Valyu ($10), SearchAPI
-> WolframAlpha returns computed answers (math, conversions, facts) not URL lists. Best in grounding+research modes.
-> Yahoo is fragile (scraped HTML) — auto-disabled by health tracker if structure changes. No API key needed.
-> Routing: always queries free providers first, then monthly, then one-time. Exhausted providers skipped.
+> Routing: always queries free providers first, then monthly, then one-time. Exhausted providers skipped. Topology-aware routing optimizes for residential egress (homelab) automatically.
 
 ## Content Extraction
 
@@ -93,8 +91,8 @@
 
 ## Architecture
 
-> Caller (CLI/HTTP/MCP/Python) → SearchBroker → routing policy (tier-sorted, mode-specific) → provider executor (budget check → health check → search → early stop) → cache → dedupe → RRF ranking → response
-> Provider adapters in argus/providers/. Broker in argus/broker/. Extractor in argus/extraction/. API in argus/api/. CLI in argus/cli/. MCP in argus/mcp/. Sessions in argus/sessions/. Workflows in argus/workflows/. Corpus in argus/corpus/.
+> Caller (CLI/HTTP/MCP/Python) → SearchBroker (topology-aware) → routing policy (tier-sorted, egress-policy) → provider executor (budget check → health check → search → provenance injection) → cache → dedupe → RRF ranking → response
+> 12-step content extraction with quality gates, completeness assessment, and adaptive domain memory (SQLite).
 
 ## Documentation
 
