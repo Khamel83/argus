@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export PATH="/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 _load_env_file() {
     local file="$1"
@@ -25,7 +26,7 @@ _load_vault() {
     done < <(secrets decrypt "$name" 2>/dev/null || true)
 }
 
-_load_env_file "/home/ubuntu/github/argus/.env"
+_load_env_file "$repo_root/.env"
 _load_vault argus_keys
 _load_vault research_keys
 _load_vault argus_auth
