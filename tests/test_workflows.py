@@ -81,6 +81,31 @@ async def test_recover_article_writes_report(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_get_run_loads_persisted_state_after_restart(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARGUS_DATA_ROOT", str(tmp_path / "data"))
+
+    from argus.workflows import WorkflowService
+    from argus.workflows import service as workflow_service_module
+
+    async def fake_extract(url, domain=None):
+        return _extract_result(url, title="Recovered Post", words=180)
+
+    monkeypatch.setattr(workflow_service_module, "extract_url", fake_extract)
+
+    first_service = WorkflowService(StubBroker())
+    created = await first_service.recover_article(url="https://dead.example.com/post")
+
+    restarted_service = WorkflowService(StubBroker())
+    loaded = restarted_service.get_run(created.run_id)
+
+    assert loaded is not None
+    assert loaded.run_id == created.run_id
+    assert loaded.status.value == "completed"
+    assert loaded.report_path == created.report_path
+    assert loaded.documents[0].url == "https://archive.example.com/post"
+
+
+@pytest.mark.asyncio
 async def test_capture_site_creates_current_research_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("ARGUS_DATA_ROOT", str(tmp_path / "data"))
 

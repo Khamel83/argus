@@ -68,6 +68,17 @@ def _json_default(value: Any):
     raise TypeError(f"Unsupported JSON value: {type(value)!r}")
 
 
+def _parse_dt(value: Any) -> datetime | None:
+    if value is None or isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
 def _slug_from_url(url: str) -> str:
     parsed = urlparse(url)
     seed = f"{parsed.netloc}{parsed.path}".strip("/") or parsed.netloc or "target"
@@ -155,7 +166,22 @@ class WorkflowService:
         return describe_corpus_paths()
 
     def get_run(self, run_id: str) -> WorkflowResult | None:
-        return self._runs.get(run_id)
+        run = self._runs.get(run_id)
+        if run is not None:
+            return run
+
+        state_path = self._paths.workflow_runs_dir / f"{run_id}.json"
+        if not state_path.exists():
+            return None
+
+        try:
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+            run = self._deserialize_run(payload)
+            self._runs[run.run_id] = run
+            return run
+        except Exception as exc:
+            logger.warning("Failed to load persisted workflow run %s: %s", run_id, exc)
+            return None
 
     def import_legacy_docs_cache(self, source_root: str) -> dict[str, Any]:
         return mirror_legacy_docs_cache(source_root, self._paths)
@@ -854,6 +880,29 @@ class WorkflowService:
             "metadata": run.metadata,
             "error": run.error,
         }
+
+    def _deserialize_run(self, payload: dict[str, Any]) -> WorkflowResult:
+        return WorkflowResult(
+            run_id=payload["run_id"],
+            kind=WorkflowKind(payload["kind"]),
+            status=WorkflowStatus(payload["status"]),
+            target=payload["target"],
+            created_at=_parse_dt(payload.get("created_at")) or datetime.now(tz=None),
+            started_at=_parse_dt(payload.get("started_at")),
+            finished_at=_parse_dt(payload.get("finished_at")),
+            status_url=payload.get("status_url"),
+            snapshot_dir=payload.get("snapshot_dir", ""),
+            report_path=payload.get("report_path"),
+            manifest_path=payload.get("manifest_path"),
+            artifacts=[WorkflowArtifact(**artifact) for artifact in payload.get("artifacts", [])],
+            documents=[StoredDocument(**document) for document in payload.get("documents", [])],
+            citations=[CitationRef(**citation) for citation in payload.get("citations", [])],
+            summary_sections=[
+                SummarySection(**section) for section in payload.get("summary_sections", [])
+            ],
+            metadata=payload.get("metadata", {}),
+            error=payload.get("error"),
+        )
 
     def _write_run_state(self, run: WorkflowResult) -> None:
         payload = self._serialize_run(run)
