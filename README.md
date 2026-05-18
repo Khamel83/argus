@@ -67,10 +67,11 @@ argus build-research-pack -t "example sdk" --official-url "https://docs.example.
 
 Works on any machine with Python 3.11+ — laptop, Mac Mini, Raspberry Pi, cloud VM. Nothing to host.
 
-**For MCP (Claude Code, Cursor, VS Code):**
+**For MCP (Claude Code, Codex, OpenCode, Cursor, VS Code):**
 
 ```bash
-pipx install argus-search[mcp] && argus mcp serve
+pipx install argus-search[mcp]
+argus mcp init --global --client all
 ```
 
 Then add to your MCP config:
@@ -93,7 +94,7 @@ Or install from the [MCP Registry](https://registry.modelcontextprotocol.io/serv
 }
 ```
 
-One command to install, one JSON block to connect. No server to run, no keys to configure.
+One command to install, one command to connect. No server to run, no keys to configure.
 
 ### Mode 2: Full Stack Server
 
@@ -335,7 +336,7 @@ Install and run on the same machine as your MCP client:
 
 Use the full path if `argus` isn't on PATH: `"/home/you/.local/bin/argus"`.
 
-Works with **Claude Code**, **Cursor**, and any stdio-based MCP client.
+Works with **Claude Code**, **Codex CLI**, **OpenCode**, **Cursor**, and any stdio-based MCP client. Use `argus mcp init --global --client all` to write native client configs for the current machine.
 
 **Option B — Self-hosted server (remote clients over Tailscale)**
 
@@ -360,7 +361,7 @@ On each client:
 | Client | Config |
 |--------|--------|
 | **Claude Code** | `{"mcpServers":{"argus":{"type":"http","url":"http://<server>:<port>/mcp","headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` in `~/.claude.json` (global) or `.mcp.json` (project) |
-| **OpenCode** | Same as Claude Code — reads `.mcp.json` and `~/.claude.json` |
+| **OpenCode** | `{"mcp":{"argus":{"type":"remote","url":"http://<server>:<port>/mcp","enabled":true,"headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` in `~/.config/opencode/config.json` (global) or `.opencode/opencode.json` (project) |
 | **Cursor** | Same as Claude Code — reads `.mcp.json` |
 | **Codex CLI** | `[mcp_servers.argus]` section in `~/.codex/config.toml` with `url` and `bearer_token_env_var = "ARGUS_API_KEY"` — key must also be exported in `~/.zshrc` |
 | **Gemini CLI** | `gemini mcp add argus http://<server>:<port>/mcp -t http -H "Authorization: Bearer <ARGUS_API_KEY>"` |
@@ -368,22 +369,24 @@ On each client:
 
 With [Tailscale](https://tailscale.com), `<server>` is your machine's Tailscale IP (e.g. `100.x.x.x`). One server, every machine on your mesh gets search.
 
-**One-command provisioning (no argus install needed on client machines):**
+**One-command provisioning:**
 
 ```bash
 # Load secrets, then push config to any machine:
 eval $(secrets decrypt argus | grep -E 'ARGUS_REMOTE_URL|ARGUS_API_KEY' | sed 's/^/export /')
 
-curl -s https://raw.githubusercontent.com/Khamel83/argus/main/scripts/provision-mcp-client.sh | bash -s local              # this machine
+curl -s https://raw.githubusercontent.com/Khamel83/argus/main/scripts/provision-mcp-client.sh | bash -s local              # this machine; uses local stdio if argus is installed
 curl -s https://raw.githubusercontent.com/Khamel83/argus/main/scripts/provision-mcp-client.sh | bash -s user@100.x.x.x    # remote machine
 ```
 
-The script writes `~/.claude.json`, `~/.codex/config.toml`, and `~/.zshrc` on the target. Requires Python 3 (standard on macOS/Linux). No argus installation needed on client machines.
+The script writes Claude/Cursor, Codex, and OpenCode configs on the target. In local mode it prefers stdio and does not require `ARGUS_API_KEY`; remote HTTP mode still requires `ARGUS_REMOTE_URL` and `ARGUS_API_KEY`. Requires Python 3 (standard on macOS/Linux).
 
-`argus mcp init` also generates configs automatically for all clients — run with `ARGUS_REMOTE_URL` and `ARGUS_API_KEY` set:
+`argus mcp init` also generates configs automatically:
 ```bash
-argus mcp init --global              # Claude Code + OpenCode + Cursor (writes ~/.claude.json)
-argus mcp init --client codex        # Codex (writes ~/.codex/config.toml + exports to ~/.zshrc)
+argus mcp init --global              # local stdio for Claude Code + OpenCode + Cursor
+argus mcp init --client codex        # local stdio for Codex (writes ~/.codex/config.toml)
+argus mcp init --client opencode     # local stdio for OpenCode
+ARGUS_REMOTE_URL=http://argus.local:8271 ARGUS_API_KEY=... argus mcp init --global --client all
 argus mcp init --client gemini       # prints gemini mcp add command
 argus mcp init --global --client all # everything above
 ```

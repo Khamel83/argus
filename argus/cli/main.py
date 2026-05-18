@@ -670,28 +670,49 @@ def mcp_init(global_, client, remote_url, api_key, transport):
         }
         mode = "local stdio"
 
+    if remote_url:
+        opencode_entry = {
+            "type": "remote",
+            "url": entry["url"],
+            "enabled": True,
+        }
+        if api_key:
+            opencode_entry["headers"] = {"Authorization": f"Bearer {api_key}"}
+    else:
+        opencode_entry = {
+            "type": "local",
+            "command": [argus_bin, "mcp", "serve"],
+            "enabled": True,
+            "timeout": 10000,
+        }
+
     write_json = client in ("all", "claude", "opencode")
 
     if write_json:
-        # 1. Claude Code & OpenCode (global ~/.claude.json or project .mcp.json)
+        # 1. Claude Code (global ~/.claude.json or project .mcp.json)
         # 2. Cursor (global ~/.cursor/mcp.json or project .cursor/mcp.json)
         paths = []
-        if global_:
-            paths.append(Path.home() / ".claude.json")
-            paths.append(Path.home() / ".cursor" / "mcp.json")
-            # Claude Desktop (macOS and Linux)
-            if sys.platform == "darwin":
-                paths.append(Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json")
+        if client in ("all", "claude"):
+            if global_:
+                paths.append(Path.home() / ".claude.json")
+                paths.append(Path.home() / ".cursor" / "mcp.json")
+                # Claude Desktop (macOS and Linux)
+                if sys.platform == "darwin":
+                    paths.append(Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json")
+                else:
+                    paths.append(Path.home() / ".config" / "Claude" / "claude_desktop_config.json")
+                scope_name = "global"
             else:
-                paths.append(Path.home() / ".config" / "Claude" / "claude_desktop_config.json")
-            scope_name = "global"
+                paths.append(Path(".mcp.json"))
+                paths.append(Path(".cursor") / "mcp.json")
+                scope_name = "project"
         else:
-            paths.append(Path(".mcp.json"))
-            paths.append(Path(".cursor") / "mcp.json")
-            scope_name = "project"
+            scope_name = "global" if global_ else "project"
 
         updated_paths = []
         for config_path in paths:
+            if global_ and not config_path.parent.exists():
+                continue
             # For .cursor/mcp.json, ensure directory exists
             if config_path.name == "mcp.json" and config_path.parent.name == ".cursor":
                 if global_:
@@ -727,6 +748,32 @@ def mcp_init(global_, client, remote_url, api_key, transport):
                 click.echo(f"  - {p}")
         else:
             click.echo(f"No configuration files updated for {client}.")
+
+    if client in ("all", "opencode"):
+        opencode_path = (
+            Path.home() / ".config" / "opencode" / "config.json"
+            if global_
+            else Path(".opencode") / "opencode.json"
+        )
+        if global_ and not opencode_path.parent.exists():
+            click.echo("\nOpenCode — ~/.config/opencode/ not found; is OpenCode installed?")
+        else:
+            opencode_path.parent.mkdir(parents=True, exist_ok=True)
+            opencode_path.touch(mode=0o644, exist_ok=True)
+            try:
+                data = json.loads(opencode_path.read_text()) if opencode_path.stat().st_size else {}
+            except json.JSONDecodeError:
+                data = {}
+
+            servers = data.setdefault("mcp", {})
+            if "argus" in servers and servers["argus"] != opencode_entry:
+                if not click.confirm(f"argus MCP config already exists in {opencode_path}. Overwrite?", default=False):
+                    servers = None
+
+            if servers is not None:
+                servers["argus"] = opencode_entry
+                opencode_path.write_text(json.dumps(data, indent=2) + "\n")
+                click.echo(f"\nOpenCode — updated {opencode_path} with argus MCP ({mode})")
 
     if client in ("all", "gemini"):
         click.echo("\nGemini CLI — run once to register:")

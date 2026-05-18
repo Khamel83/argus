@@ -1,3 +1,5 @@
+import json
+
 from click.testing import CliRunner
 
 
@@ -33,3 +35,40 @@ def test_extract_cli_passes_archive_ingest_mode(monkeypatch):
         "mode": "archive_ingest",
     }
     assert '"mode": "archive_ingest"' in result.output
+
+
+def test_mcp_init_writes_opencode_native_local_config(tmp_path, monkeypatch):
+    from argus.cli import main as cli_main
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".config" / "opencode").mkdir(parents=True)
+
+    result = CliRunner().invoke(
+        cli_main.cli,
+        ["mcp", "init", "--global", "--client", "opencode"],
+    )
+
+    assert result.exit_code == 0, result.output
+    config = json.loads((tmp_path / ".config" / "opencode" / "config.json").read_text())
+    argus = config["mcp"]["argus"]
+    assert argus["type"] == "local"
+    assert argus["command"][-2:] == ["mcp", "serve"]
+    assert argus["enabled"] is True
+
+
+def test_mcp_init_writes_codex_local_stdio_config(tmp_path, monkeypatch):
+    from argus.cli import main as cli_main
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".codex").mkdir()
+
+    result = CliRunner().invoke(
+        cli_main.cli,
+        ["mcp", "init", "--global", "--client", "codex"],
+    )
+
+    assert result.exit_code == 0, result.output
+    config = (tmp_path / ".codex" / "config.toml").read_text()
+    assert "[mcp_servers.argus]" in config
+    assert 'args = ["mcp", "serve"]' in config
+    assert "bearer_token_env_var" not in config
