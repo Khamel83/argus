@@ -6,17 +6,18 @@ Structured enough to be useful, quiet enough to not dump full payloads.
 
 import logging
 import sys
+from typing import IO
 from typing import Optional
 
 
-def setup_logging(level: Optional[str] = None) -> logging.Logger:
+def setup_logging(level: Optional[str] = None, stream: IO[str] | None = None) -> logging.Logger:
     """Set up Argus logging. Call once at startup."""
     config_level = (level or "INFO").upper()
 
     fmt = "%(asctime)s %(levelname)-5s [%(name)s] %(message)s"
     datefmt = "%Y-%m-%d %H:%M:%S"
 
-    handler = logging.StreamHandler(sys.stdout)
+    handler = logging.StreamHandler(stream or sys.stderr)
     handler.setFormatter(logging.Formatter(fmt, datefmt=datefmt))
 
     # Root logger

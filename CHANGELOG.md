@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Budget discrepancy where Valyu was showing 0 usage despite credit depletion due to untracked extraction calls.
 - Untracked Valyu Answer API usage now records returned USD cost in the budget store.
 - Paid providers are skipped when free providers have already satisfied the requested result count, unless the caller explicitly requests providers.
+- MCP stdio startup no longer writes Argus log lines to stdout before JSON-RPC initialization.
 
 ## [1.6.0] - 2026-05-03
 
