@@ -4,10 +4,10 @@ The repository version and the published package version are separate until a re
 
 As of 2026-05-18:
 
-- Repository metadata is prepared for `1.6.1`.
-- PyPI `argus-search` is still published at `1.3.3`.
-- GitHub tags on remote currently stop at `v1.5.0`.
-- A GitHub release or manual workflow dispatch is required to publish PyPI and MCP Registry updates.
+- Repository metadata is `1.6.1`.
+- PyPI `argus-search` is published at `1.6.1`.
+- GitHub release `v1.6.1` has been created.
+- MCP Registry publication for `v1.6.1` completed through the publish workflow.
 
 ## Version files
 
@@ -71,6 +71,10 @@ Check:
 
 - PyPI: https://pypi.org/project/argus-search/
 - MCP Registry: https://registry.modelcontextprotocol.io/servers/io.github.Khamel83/argus
+
+The `v1.6.1` publish run completed successfully at:
+
+https://github.com/Khamel83/argus/actions/runs/26066266300
 
 ## If PyPI is behind
 
