@@ -74,7 +74,7 @@ pipx install argus-search[mcp]
 argus mcp init --global --client all
 ```
 
-Then add to your MCP config:
+That writes native config for Claude Code, Codex CLI, OpenCode, and Cursor. Restart the client after configuration. For manual stdio setup:
 
 ```json
 {"mcpServers": {"argus": {"command": "argus", "args": ["mcp", "serve"]}}}
@@ -95,6 +95,8 @@ Or install from the [MCP Registry](https://registry.modelcontextprotocol.io/serv
 ```
 
 One command to install, one command to connect. No server to run, no keys to configure.
+
+See [MCP Client Setup](docs/mcp-clients.md) for exact config files, verification commands, remote HTTP setup, and troubleshooting.
 
 ### Mode 2: Full Stack Server
 
@@ -338,6 +340,8 @@ Use the full path if `argus` isn't on PATH: `"/home/you/.local/bin/argus"`.
 
 Works with **Claude Code**, **Codex CLI**, **OpenCode**, **Cursor**, and any stdio-based MCP client. Use `argus mcp init --global --client all` to write native client configs for the current machine.
 
+Detailed client setup and verification commands live in [docs/mcp-clients.md](docs/mcp-clients.md).
+
 **Option B — Self-hosted server (remote clients over Tailscale)**
 
 Run Argus on one machine, connect every client over the network. No local install on clients.
@@ -390,6 +394,10 @@ ARGUS_REMOTE_URL=http://argus.local:8271 ARGUS_API_KEY=... argus mcp init --glob
 argus mcp init --client gemini       # prints gemini mcp add command
 argus mcp init --global --client all # everything above
 ```
+
+### Release Status
+
+Pushing `main` does not publish PyPI. Package and MCP Registry publication happens through the GitHub publish workflow on release creation or manual dispatch. See [docs/releasing.md](docs/releasing.md) for version sync, preflight checks, and publish verification.
 
 **Transports**: `stdio` (default, for local), `sse` (legacy remote), `streamable-http` (modern remote, `"type":"http"` in config). Remote HTTP transports require `ARGUS_API_KEY`.
 

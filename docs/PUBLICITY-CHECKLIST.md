@@ -4,7 +4,7 @@
 
 | Platform | Auto-updates? | What updates automatically |
 |----------|---------------|----------------------|
-| PyPI | Only on new tag | Version, description — but only when you push a `v*` tag |
+| PyPI | Only after GitHub publish workflow succeeds | Version, description — pushing `main` is not enough |
 | Glama | Daily GitHub sync | README, server info, score badge, tools list |
 | Smithery | Scans GitHub | README metadata, repo info |
 | PulseMCP | Scans GitHub | README metadata, repo info |
@@ -12,7 +12,7 @@
 | awesome lists (all) | **Never** | Static entry — one-liner you submitted. To update, submit a new PR |
 | modelcontextprotocol/servers | **Never** | Static entry. Submit new PR to update |
 
-**Bottom line:** PyPI, Glama, Smithery, PulseMCP, and mcp.so all pull from GitHub automatically. Your README badges, description, and version update on their own. The awesome lists are static — the one-liner you submit today is what stays forever (unless you send a new PR to update it).
+**Bottom line:** PyPI updates only through the release workflow. Glama, Smithery, PulseMCP, and mcp.so may pull from GitHub on their own schedules. The awesome lists are static — the one-liner you submit today is what stays forever unless you send a new PR to update it.
 
 ---
 
@@ -171,8 +171,10 @@ Do them in this order for maximum impact:
 
 ## Future updates: what you need to do vs what's automatic
 
+**Release workflow required:**
+- PyPI version — only when the publish workflow succeeds for a GitHub release or manual dispatch. See `docs/releasing.md`.
+
 **Automatic (just push code to GitHub, no action needed):**
-- PyPI version — only when you tag a new release (`git tag v1.0.1 && git push origin v1.0.1`)
 - Glama score/tools — resyncs daily
 - Smithery/PulseMCP/mcp.so — pull from GitHub on their schedule
 

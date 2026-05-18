@@ -8,8 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+### Changed
+
+### Fixed
+
+## [1.6.1] - 2026-05-18
+
+### Added
 - **Valyu Credits Balance Checker** — New `check-balances` integration for Valyu AI (`GET /v1/credits/balance`).
 - **Valyu Extraction Tracking** — Extraction calls to Valyu Contents API are now properly recorded against the budget tracker ($0.001/URL).
+- **Native MCP client provisioning** — `argus mcp init --global --client all` now writes native local-stdio configs for Claude Code, Codex CLI, and OpenCode.
+- **MCP client documentation** — Added explicit setup, verification, and troubleshooting docs for Claude Code, Codex, and OpenCode.
 
 ### Changed
 - **USD-aware Budget Tracking** — Valyu provider now tracks usage in USD instead of query counts.
@@ -17,12 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI Budget Display** — `argus budgets` now displays USD for Valyu (e.g., `$8.32` spent, `$1.68` remaining).
 - **Default Valyu Budget** — Updated default Valyu budget from 10,000 queries to $10.0 to reflect USD tracking.
 - **Limited Provider Defaults** — API-key providers with finite credits are now opt-in; having a key in env/secrets no longer enables spend by itself.
+- **CLI version reporting** — `argus --version` now reports Argus' package version directly instead of querying unrelated `argus` distribution metadata.
 
 ### Fixed
 - Budget discrepancy where Valyu was showing 0 usage despite credit depletion due to untracked extraction calls.
 - Untracked Valyu Answer API usage now records returned USD cost in the budget store.
 - Paid providers are skipped when free providers have already satisfied the requested result count, unless the caller explicitly requests providers.
 - MCP stdio startup no longer writes Argus log lines to stdout before JSON-RPC initialization.
+- Codex TOML replacement now handles existing `args = ["mcp", "serve"]` arrays without leaving malformed orphan array lines.
+- OpenCode setup now writes OpenCode's native `mcp.argus` config shape instead of relying on Claude-style config compatibility.
 
 ## [1.6.0] - 2026-05-03
 
