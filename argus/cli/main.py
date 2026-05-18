@@ -376,8 +376,16 @@ def budgets():
         count = broker.budget_tracker.get_usage_count(pname)
         exhausted = broker.budget_tracker.is_budget_exhausted(pname)
 
-        budget_str = f"{remaining:.0f} queries" if remaining is not None else "unlimited"
-        usage_str = f"{usage:.0f} queries"
+        # Valyu uses USD units
+        unit = "USD" if pname == ProviderName.VALYU else "queries"
+
+        if unit == "USD":
+            budget_str = f"${remaining:,.2f}" if remaining is not None else "unlimited"
+            usage_str = f"${usage:,.2f}"
+        else:
+            budget_str = f"{remaining:.0f} queries" if remaining is not None else "unlimited"
+            usage_str = f"{usage:.0f} queries"
+
         status = "EXHAUSTED" if exhausted else "ok"
         click.echo(
             f"  {pname.value:12s} remaining={budget_str:14s} "
@@ -425,8 +433,13 @@ def check_balances():
         if b.error:
             click.echo(f"  {b.provider.value:12s} ERROR: {b.error}")
         elif b.remaining is not None:
-            limit_str = f"/{b.limit:.0f}" if b.limit else ""
-            click.echo(f"  {b.provider.value:12s} {b.remaining:.0f} {b.unit} remaining {limit_str} (via {b.source})")
+            if b.unit == "usd":
+                limit_str = f"/${b.limit:,.2f}" if b.limit else ""
+                remaining = f"${b.remaining:,.2f}"
+            else:
+                limit_str = f"/{b.limit:.0f}" if b.limit else ""
+                remaining = f"{b.remaining:.0f}"
+            click.echo(f"  {b.provider.value:12s} {remaining} {b.unit} remaining {limit_str} (via {b.source})")
         else:
             click.echo(f"  {b.provider.value:12s} no credit data available")
 

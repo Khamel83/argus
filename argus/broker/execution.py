@@ -19,7 +19,7 @@ _COST_ESTIMATES = {
     ProviderName.PARALLEL: 1.0,
     ProviderName.LINKUP: 1.0,
     ProviderName.YOU: 1.0,
-    ProviderName.VALYU: 1.0,
+    ProviderName.VALYU: 0.0015,  # ~$1.50 per 1k fast searches
     ProviderName.SEARCHAPI: 1.0,
 }
 
@@ -102,6 +102,16 @@ class ProviderExecutor:
 
             tier = self._budgets.get_provider_tier(pname)
 
+            if query.providers is None and tier > 0 and total_results_so_far >= query.max_results:
+                traces.append(
+                    ProviderTrace(
+                        provider=pname,
+                        status="skipped",
+                        error="free results satisfied query",
+                    )
+                )
+                continue
+
             # Tier 0: always query (free, unlimited)
             # Tier 1/3: check budget pace before spending credits
             if tier > 0:
@@ -150,7 +160,14 @@ class ProviderExecutor:
             results, trace = await provider.search(query)
             if trace.status == "success":
                 self._health.record_success(provider_name)
-                cost = _COST_ESTIMATES.get(provider_name, 0.0)
+
+                # Use actual cost if provided by trace, otherwise estimate
+                cost = 0.0
+                if trace.credit_info and "cost_usd" in trace.credit_info:
+                    cost = trace.credit_info["cost_usd"]
+                else:
+                    cost = _COST_ESTIMATES.get(provider_name, 0.0)
+
                 self._budgets.record_usage(provider_name, cost)
                 trace.budget_remaining = self._budgets.get_remaining_budget(provider_name)
                 trace.results_count = len(results)

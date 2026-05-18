@@ -481,7 +481,7 @@ query arrives → cache? → build provider queue → execute sequentially → R
 
 ## Configuration
 
-All config via environment variables. See `.env.example` for the full list. Missing keys degrade gracefully — providers are skipped, not errors.
+All config via environment variables. See `.env.example` for the full list. Limited API-key providers are opt-in: set both the API key and `ARGUS_<PROVIDER>_ENABLED=true`. Missing keys degrade gracefully — providers are skipped, not errors.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -491,6 +491,7 @@ All config via environment variables. See `.env.example` for the full list. Miss
 | `ARGUS_SEARXNG_ENABLED` | `false` | Set `true` when you have a SearXNG Docker container |
 | `ARGUS_SEARXNG_BASE_URL` | `http://127.0.0.1:8080` | SearXNG endpoint |
 | `ARGUS_SEARXNG_RESIDENTIAL_BASE_URL` | — | Remote residential SearXNG endpoint (e.g. over Tailscale) |
+| `ARGUS_<PROVIDER>_ENABLED` | `false` for limited API-key providers | Opt in to providers that consume limited credits or quotas |
 | `ARGUS_BRAVE_API_KEY` | — | Brave Search API key |
 | `ARGUS_SERPER_API_KEY` | — | Serper API key |
 | `ARGUS_TAVILY_API_KEY` | — | Tavily API key |
@@ -502,7 +503,7 @@ All config via environment variables. See `.env.example` for the full list. Miss
 | `ARGUS_FIRECRAWL_API_KEY` | — | Firecrawl API key (content extraction) |
 | `ARGUS_GITHUB_API_KEY` | — | GitHub token (higher rate limit) |
 | `ARGUS_DATA_ROOT` | platformdirs user data dir | Override the Argus runtime corpus root |
-| `ARGUS_*_MONTHLY_BUDGET_USD` | 0 (unlimited) | Query-count budget per provider |
+| `ARGUS_*_MONTHLY_BUDGET_USD` | provider-specific | Query-count budget for most providers; USD budget for Valyu |
 | `ARGUS_CRAWL4AI_ENABLED` | false | Enable Crawl4AI extraction step |
 | `ARGUS_YOU_CONTENTS_ENABLED` | false | Enable You.com Contents API extraction |
 | `ARGUS_OBSCURA_CDP_URL` | — | Obscura CDP endpoint (e.g. `ws://127.0.0.1:9222`) — makes Playwright use Obscura as its browser engine |

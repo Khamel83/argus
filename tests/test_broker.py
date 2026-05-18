@@ -43,6 +43,7 @@ class StubProvider:
             latency_ms=self.trace.latency_ms,
             error=self.trace.error,
             budget_remaining=self.trace.budget_remaining,
+            credit_info=self.trace.credit_info,
         )
 
 
@@ -523,6 +524,38 @@ class TestBudgets:
         assert b.is_budget_exhausted(ProviderName.SERPER) is False
         assert b.get_monthly_usage(ProviderName.SERPER) == 0.0
 
+    @pytest.mark.asyncio
+    async def test_provider_executor_records_actual_valyu_cost(self):
+        from argus.broker.budgets import BudgetTracker
+        from argus.broker.execution import ProviderExecutor
+        from argus.broker.health import HealthTracker
+
+        provider = StubProvider(
+            name=ProviderName.VALYU,
+            results=[SearchResult(url="https://example.com", title="Result", snippet="ok")],
+            trace=ProviderTrace(
+                provider=ProviderName.VALYU,
+                status="success",
+                credit_info={"cost_usd": 0.0042},
+            ),
+        )
+        budget = BudgetTracker()
+        budget.set_budget(ProviderName.VALYU, 10.0)
+        executor = ProviderExecutor(
+            providers={ProviderName.VALYU: provider},
+            health_tracker=HealthTracker(),
+            budget_tracker=budget,
+        )
+
+        outcome = await executor.execute(
+            SearchQuery(query="cost", providers=[ProviderName.VALYU]),
+            [ProviderName.VALYU],
+        )
+
+        assert outcome.live_providers_used == 1
+        assert budget.get_monthly_usage(ProviderName.VALYU) == 0.0042
+        assert outcome.traces[0].budget_remaining == 9.9958
+
 
 # --- Router ---
 
@@ -540,7 +573,7 @@ class TestRouter:
 
     @pytest.mark.asyncio
     async def test_free_providers_always_queried(self, monkeypatch):
-        """Tier 0 (SearXNG, DuckDuckGo) are always queried regardless of results."""
+        """Tier 0 providers are always queried; paid fallback runs if free results are insufficient."""
         from argus.broker.router import SearchBroker
 
         monkeypatch.setattr(
@@ -576,9 +609,40 @@ class TestRouter:
 
         assert searxng.calls == 1
         assert ddg.calls == 1
-        # Brave has no budget set, so it's unlimited — should also be queried
+        # Free results are below max_results, so the paid fallback is still useful.
         assert paid.calls == 1
         assert response.total_results == 3
+
+    @pytest.mark.asyncio
+    async def test_paid_provider_skipped_when_free_results_satisfy_query(self, monkeypatch):
+        from argus.broker.router import SearchBroker
+
+        monkeypatch.setattr(
+            "argus.persistence.db.SearchPersistenceGateway.record_completed_search",
+            lambda self, query, response: None,
+        )
+
+        free_results = [
+            SearchResult(url=f"https://example.com/{i}", title=f"Free {i}", snippet="ok", provider=ProviderName.DUCKDUCKGO)
+            for i in range(5)
+        ]
+        free = StubProvider(name=ProviderName.DUCKDUCKGO, results=free_results)
+        paid = StubProvider(
+            name=ProviderName.VALYU,
+            results=[SearchResult(url="https://paid.example.com", title="Paid", snippet="ok", provider=ProviderName.VALYU)],
+        )
+        broker = SearchBroker(providers={ProviderName.DUCKDUCKGO: free, ProviderName.VALYU: paid})
+
+        response = await broker.search(
+            SearchQuery(query="free is enough", mode=SearchMode.DISCOVERY, max_results=5)
+        )
+
+        assert free.calls == 1
+        assert paid.calls == 0
+        assert any(
+            trace.provider == ProviderName.VALYU and trace.error == "free results satisfied query"
+            for trace in response.traces
+        )
 
     @pytest.mark.asyncio
     async def test_paid_provider_skipped_when_over_pace(self, monkeypatch):
@@ -658,6 +722,7 @@ class TestRouter:
             SearchQuery(
                 query="under pace",
                 mode=SearchMode.DISCOVERY,
+                max_results=2,
                 providers=[ProviderName.SEARXNG, ProviderName.BRAVE],
             )
         )

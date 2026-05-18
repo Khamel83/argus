@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Valyu Credits Balance Checker** — New `check-balances` integration for Valyu AI (`GET /v1/credits/balance`).
+- **Valyu Extraction Tracking** — Extraction calls to Valyu Contents API are now properly recorded against the budget tracker ($0.001/URL).
+
+### Changed
+- **USD-aware Budget Tracking** — Valyu provider now tracks usage in USD instead of query counts.
+- **Actual Cost Tracking** — Valyu search now uses the `total_deduction_dollars` returned by the API for precise budget deduction.
+- **CLI Budget Display** — `argus budgets` now displays USD for Valyu (e.g., `$8.32` spent, `$1.68` remaining).
+- **Default Valyu Budget** — Updated default Valyu budget from 10,000 queries to $10.0 to reflect USD tracking.
+- **Limited Provider Defaults** — API-key providers with finite credits are now opt-in; having a key in env/secrets no longer enables spend by itself.
+
+### Fixed
+- Budget discrepancy where Valyu was showing 0 usage despite credit depletion due to untracked extraction calls.
+- Untracked Valyu Answer API usage now records returned USD cost in the budget store.
+- Paid providers are skipped when free providers have already satisfied the requested result count, unless the caller explicitly requests providers.
+
 ## [1.6.0] - 2026-05-03
 
 ### Added

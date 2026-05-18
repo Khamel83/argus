@@ -56,6 +56,20 @@ async def extract_valyu_contents(url: str) -> ExtractedContent:
         if not text or len(text.strip()) < 50:
             return ExtractedContent(url=url, error="valyu_contents: content too short")
 
+        # Record usage: $0.001 per URL
+        try:
+            from argus.broker.budgets import BudgetTracker
+            from argus.models import ProviderName
+            import os
+
+            tracker = BudgetTracker(persist_path=os.environ.get("ARGUS_BUDGET_DB_PATH"))
+            try:
+                tracker.record_usage(ProviderName.VALYU, cost=0.001)
+            finally:
+                tracker.close()
+        except Exception as e:
+            logger.warning("Failed to record Valyu extraction usage: %s", e)
+
         return ExtractedContent(
             url=url,
             title=page.get("title", ""),

@@ -204,6 +204,30 @@ async def check_linkup(api_key: str) -> ProviderBalance:
         return ProviderBalance(provider=ProviderName.LINKUP, error=str(e))
 
 
+async def check_valyu(api_key: str) -> ProviderBalance:
+    """GET https://api.valyu.ai/v1/credits/balance — returns success, credits, currency."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                "https://api.valyu.ai/v1/credits/balance",
+                headers={"X-API-Key": api_key},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        credits = data.get("credits")
+        return ProviderBalance(
+            provider=ProviderName.VALYU,
+            remaining=credits,
+            unit="usd",
+            source="api",
+            raw=data,
+        )
+    except Exception as e:
+        logger.warning("Valyu balance check failed: %s", e)
+        return ProviderBalance(provider=ProviderName.VALYU, error=str(e))
+
+
 # Mapping: provider -> checker function
 _CHECKERS = {
     ProviderName.TAVILY: check_tavily,
@@ -211,6 +235,7 @@ _CHECKERS = {
     ProviderName.BRAVE: check_brave,
     ProviderName.PARALLEL: check_parallel,
     ProviderName.LINKUP: check_linkup,
+    ProviderName.VALYU: check_valyu,
 }
 
 

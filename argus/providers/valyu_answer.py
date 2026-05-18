@@ -10,14 +10,17 @@ Callers opt in explicitly. Does not participate in broker routing.
 """
 
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Optional
 
 import httpx
 
+from argus.broker.budgets import BudgetTracker
 from argus.config import get_config
 from argus.logging import get_logger
+from argus.models import ProviderName
 
 logger = get_logger("providers.valyu_answer")
 
@@ -34,6 +37,17 @@ class ValyuAnswerResult:
     ai_usage: dict = field(default_factory=dict)
     tx_id: str = ""
     error: Optional[str] = None
+
+
+def _record_valyu_answer_usage(cost_usd: float) -> None:
+    if cost_usd <= 0:
+        return
+
+    tracker = BudgetTracker(persist_path=os.environ.get("ARGUS_BUDGET_DB_PATH"))
+    try:
+        tracker.record_usage(ProviderName.VALYU, cost=cost_usd)
+    finally:
+        tracker.close()
 
 
 async def valyu_answer(
@@ -101,10 +115,12 @@ async def valyu_answer(
                     # metadata event
                     elif "success" in data and "cost" in data:
                         cost_info = data.get("cost", {})
+                        cost_usd = cost_info.get("total_deduction_dollars", 0)
+                        _record_valyu_answer_usage(cost_usd)
                         return ValyuAnswerResult(
                             answer="".join(answer_chunks),
                             sources=data.get("search_results", sources),
-                            cost_usd=cost_info.get("total_deduction_dollars", 0),
+                            cost_usd=cost_usd,
                             ai_usage=data.get("ai_usage", {}),
                             tx_id=data.get("tx_id", ""),
                         )
