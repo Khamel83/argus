@@ -8,6 +8,7 @@ import sys
 
 import click
 
+from argus import __version__
 from argus.logging import get_logger
 
 logger = get_logger("cli")
@@ -96,7 +97,7 @@ def _print_workflow_result(result, as_json: bool):
 
 
 @click.group()
-@click.version_option(package_name="argus")
+@click.version_option(version=__version__, prog_name="argus")
 def cli():
     """Argus — standalone search broker."""
     pass
@@ -815,7 +816,7 @@ def mcp_init(global_, client, remote_url, api_key, transport):
                 # Remove old section (everything from [mcp_servers.argus] to next [section])
                 import re
                 toml_text = re.sub(
-                    r"\n\[mcp_servers\.argus\][^\[]*",
+                    r"(?ms)\n\[mcp_servers\.argus\].*?(?=\n\[|\Z)",
                     new_section,
                     toml_text,
                 )

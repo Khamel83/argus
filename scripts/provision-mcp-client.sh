@@ -120,7 +120,7 @@ if codex_path.parent.exists():
             "bearer_token_env_var = \"ARGUS_API_KEY\"\n"
         )
     if "[mcp_servers.argus]" in toml_text:
-        toml_text = re.sub(r"\n\[mcp_servers\.argus\][^\[]*", new_section, toml_text)
+        toml_text = re.sub(r"(?ms)\n\[mcp_servers\.argus\].*?(?=\n\[|\Z)", new_section, toml_text)
     else:
         toml_text = toml_text.rstrip("\n") + new_section
     codex_path.write_text(toml_text)

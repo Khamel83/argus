@@ -3,6 +3,16 @@ import json
 from click.testing import CliRunner
 
 
+def test_cli_version_reports_argus_package_version():
+    from argus import __version__
+    from argus.cli import main as cli_main
+
+    result = CliRunner().invoke(cli_main.cli, ["--version"])
+
+    assert result.exit_code == 0
+    assert result.output.strip() == f"argus, version {__version__}"
+
+
 def test_extract_cli_passes_archive_ingest_mode(monkeypatch):
     from argus.cli import main as cli_main
     from argus.extraction.models import ExtractedContent, ExtractorName
@@ -72,3 +82,34 @@ def test_mcp_init_writes_codex_local_stdio_config(tmp_path, monkeypatch):
     assert "[mcp_servers.argus]" in config
     assert 'args = ["mcp", "serve"]' in config
     assert "bearer_token_env_var" not in config
+
+
+def test_mcp_init_replaces_existing_codex_section_with_args_array(tmp_path, monkeypatch):
+    from argus.cli import main as cli_main
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir()
+    (codex_dir / "config.toml").write_text(
+        '[model_aliases]\n'
+        '"gpt-5.3-codex" = "gpt-5.4"\n'
+        '\n'
+        '[mcp_servers.argus]\n'
+        'command = "/old/argus"\n'
+        'args = ["mcp", "serve"]\n'
+        '\n'
+        '[mcp_servers.janus]\n'
+        'command = "janus-mcp"\n'
+    )
+
+    result = CliRunner().invoke(
+        cli_main.cli,
+        ["mcp", "init", "--global", "--client", "codex"],
+    )
+
+    assert result.exit_code == 0, result.output
+    config = (codex_dir / "config.toml").read_text()
+    assert config.count('[mcp_servers.argus]') == 1
+    assert config.count('args = ["mcp", "serve"]') == 1
+    assert '\n["mcp", "serve"]' not in config
+    assert '[mcp_servers.janus]' in config
