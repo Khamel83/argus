@@ -593,6 +593,9 @@ def doctor(as_json):
         click.echo("Some checks failed. See above for details.")
         if needs_key:
             click.echo(f"  {needs_key} providers need API keys — add them to .env or secrets vault.")
+
+
+@cli.command()
 @click.option("--host", "-h", default="127.0.0.1", help="Bind host")
 @click.option("--port", "-p", default=8000, help="Bind port")
 @click.option("--reload", is_flag=True, help="Auto-reload on code changes")

@@ -34,6 +34,8 @@ dependencies = [
     "trafilatura>=1.6.0",
     "ddgs>=9.0",
     "playwright>=1.40.0",
+    "jinja2>=3.1.0",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
@@ -60,6 +62,9 @@ Issues = "https://github.com/Khamel83/argus/issues"
 
 [tool.setuptools.packages.find]
 include = ["argus*"]
+
+[tool.setuptools.package-data]
+"argus.api" = ["templates/*.html"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

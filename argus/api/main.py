@@ -19,6 +19,7 @@ from argus.auth import (
 )
 from argus.api.rate_limit import RateLimiter
 from argus.api.routes_admin import router as admin_router
+from argus.api.routes_dashboard import router as dashboard_router
 from argus.api.routes_extract import router as extract_router
 from argus.api.routes_health import router as health_router
 from argus.api.routes_search import router as search_router
@@ -185,6 +186,7 @@ def create_app(
     app.include_router(admin_router, prefix="/api")
     app.include_router(extract_router, prefix="/api")
     app.include_router(workflows_router, prefix="/api")
+    app.include_router(dashboard_router)
     return app
 
 

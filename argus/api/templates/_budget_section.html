@@ -1,0 +1,65 @@
+<section id="budget-section"
+         hx-get="/dashboard/fragments/budget"
+         hx-trigger="every 60s"
+         hx-swap="outerHTML">
+
+  {% if exhausted or over_pace %}
+  <div class="mb-4 space-y-2">
+    {% for b in exhausted %}
+    <div class="p-3 bg-red-950 border border-red-800 rounded flex items-center gap-3">
+      <span class="px-2 py-1 bg-red-700 text-xs font-bold rounded uppercase">Exhausted</span>
+      <span class="text-red-100"><b>{{ b.provider }}</b> has burned through its budget ({{ b.used }} / {{ b.budget }} queries).</span>
+    </div>
+    {% endfor %}
+    {% for b in over_pace %}
+    <div class="p-3 bg-yellow-950 border border-yellow-800 rounded flex items-center gap-3">
+      <span class="px-2 py-1 bg-yellow-700 text-xs font-bold rounded uppercase">Over pace</span>
+      <span class="text-yellow-100"><b>{{ b.provider }}</b> will exhaust within 7 days at the current rate. {{ b.remaining }} queries remain.</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <h2 class="text-lg font-semibold mb-3">Provider budgets</h2>
+  {% if budget_state %}
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+    {% for b in budget_state %}
+    {% set bar_color =
+        'bg-red-600' if b.status == 'exhausted'
+        else ('bg-yellow-500' if b.status in ('over_pace', 'warning')
+              else 'bg-green-500') %}
+    {% set badge_color =
+        'bg-red-700' if b.status == 'exhausted'
+        else ('bg-yellow-700' if b.status == 'over_pace'
+              else ('bg-yellow-600' if b.status == 'warning'
+                    else 'bg-green-700')) %}
+    {% set badge_text =
+        'Exhausted' if b.status == 'exhausted'
+        else ('Over pace' if b.status == 'over_pace'
+              else ('Warning' if b.status == 'warning'
+                    else 'OK')) %}
+    <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+      <div class="flex items-start justify-between mb-2">
+        <div>
+          <div class="font-semibold text-gray-100">{{ b.provider }}</div>
+          <div class="text-xs text-gray-500">Tier {{ b.tier }}</div>
+        </div>
+        <span class="px-2 py-0.5 text-xs font-bold rounded {{ badge_color }} text-white">{{ badge_text }}</span>
+      </div>
+      <div class="text-sm text-gray-300 mb-1">{{ b.used }} of {{ b.budget }} used</div>
+      <div class="w-full bg-gray-800 rounded-full h-2 mb-2 overflow-hidden">
+        <div class="{{ bar_color }} h-2" style="width: {{ b.pct_used }}%"></div>
+      </div>
+      <div class="flex justify-between text-xs text-gray-400">
+        <span>{{ b.remaining }} remaining</span>
+        <span>{{ b.used_today }} today</span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="p-4 bg-gray-900 border border-gray-800 rounded text-sm text-gray-400">
+    No budgets configured. Set <code class="text-gray-300">{PROVIDER}_MONTHLY_BUDGET_USD</code> env vars to track usage.
+  </div>
+  {% endif %}
+</section>
