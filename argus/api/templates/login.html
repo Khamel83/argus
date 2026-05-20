@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block title %}Sign in — Argus{% endblock %}
+
+{% block content %}
+<div class="max-w-md mx-auto mt-16">
+  <div class="bg-gray-900 border border-gray-800 rounded-lg p-6 shadow-lg">
+    <h1 class="text-xl font-semibold mb-1">Argus Dashboard</h1>
+    <p class="text-sm text-gray-400 mb-6">Enter the admin API key to continue.</p>
+    {% if error %}
+    <div class="mb-4 p-3 bg-red-950 border border-red-800 rounded text-sm text-red-200">
+      {{ error }}
+    </div>
+    {% endif %}
+    <form method="post" action="/dashboard/login" class="space-y-4">
+      <div>
+        <label for="admin_key" class="block text-sm text-gray-300 mb-1">Admin key</label>
+        <input type="password" id="admin_key" name="admin_key" autofocus required
+               class="w-full bg-gray-950 border border-gray-700 rounded px-3 py-2 text-gray-100 focus:outline-none focus:border-blue-500" />
+      </div>
+      <button type="submit"
+              class="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded transition">
+        Sign in
+      </button>
+    </form>
+    <p class="mt-4 text-xs text-gray-500">
+      The key is checked against <code class="text-gray-400">ARGUS_ADMIN_API_KEY</code>.
+    </p>
+  </div>
+</div>
+{% endblock %}

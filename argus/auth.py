@@ -81,7 +81,11 @@ def is_admin_path(path: str) -> bool:
 
 
 def is_public_path(path: str) -> bool:
-    return path == "/api/health"
+    if path == "/api/health":
+        return True
+    if path.startswith("/dashboard"):
+        return True
+    return False
 
 
 def is_caller_path(path: str) -> bool:

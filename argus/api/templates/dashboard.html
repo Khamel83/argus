@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block title %}Argus Usage Dashboard{% endblock %}
+
+{% block nav_extra %}
+<span>Machine: <span class="text-gray-200">{{ machine_name }}</span></span>
+<span>Egress: <span class="text-gray-200">{{ egress_type }}</span></span>
+<a href="/dashboard/logout" class="text-gray-400 hover:text-gray-200">Logout</a>
+{% endblock %}
+
+{% block content %}
+
+{% include "_budget_section.html" %}
+
+<section class="mt-8">
+  <h2 class="text-lg font-semibold mb-3">Queries per day (30d, stacked by machine)</h2>
+  <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+    <canvas id="dailyChart" height="80"></canvas>
+  </div>
+</section>
+
+<div class="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+  <section>
+    <h2 class="text-lg font-semibold mb-3">Usage by machine (30d)</h2>
+    <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+      {% if machines %}
+      <table class="w-full text-sm">
+        <thead class="bg-gray-800 text-gray-300 text-xs uppercase">
+          <tr>
+            <th class="text-left px-3 py-2">Machine</th>
+            <th class="text-right px-3 py-2">Total</th>
+            <th class="text-right px-3 py-2">Today</th>
+            <th class="text-left px-3 py-2">Last seen</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-800">
+          {% for m in machines %}
+          <tr>
+            <td class="px-3 py-2 font-mono text-gray-100">{{ m.machine }}</td>
+            <td class="px-3 py-2 text-right text-gray-200">{{ m.total }}</td>
+            <td class="px-3 py-2 text-right text-gray-200">{{ m.today }}</td>
+            <td class="px-3 py-2 text-gray-400 font-mono text-xs">{{ m.last_seen }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="p-4 text-sm text-gray-400">No search results recorded yet.</div>
+      {% endif %}
+    </div>
+  </section>
+
+  <section>
+    <h2 class="text-lg font-semibold mb-3">Provider activity (7d)</h2>
+    <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+      {% if provider_activity %}
+      <table class="w-full text-sm">
+        <thead class="bg-gray-800 text-gray-300 text-xs uppercase">
+          <tr>
+            <th class="text-left px-3 py-2">Provider</th>
+            <th class="text-right px-3 py-2">Calls</th>
+            <th class="text-right px-3 py-2">Success</th>
+            <th class="text-right px-3 py-2">Avg ms</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-800">
+          {% for p in provider_activity %}
+          <tr>
+            <td class="px-3 py-2 text-gray-100">{{ p.provider }}</td>
+            <td class="px-3 py-2 text-right text-gray-200">{{ p.calls }}</td>
+            <td class="px-3 py-2 text-right">
+              {% if p.success_rate >= 95 %}
+                <span class="text-green-400">{{ p.success_rate }}%</span>
+              {% elif p.success_rate >= 80 %}
+                <span class="text-yellow-400">{{ p.success_rate }}%</span>
+              {% else %}
+                <span class="text-red-400">{{ p.success_rate }}%</span>
+              {% endif %}
+            </td>
+            <td class="px-3 py-2 text-right text-gray-400">{{ p.avg_latency_ms }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="p-4 text-sm text-gray-400">No provider calls recorded yet.</div>
+      {% endif %}
+    </div>
+  </section>
+</div>
+
+<script>
+  (function() {
+    const data = {{ chart_data_json|safe }};
+    const ctx = document.getElementById('dailyChart');
+    if (!ctx || !data.labels.length) {
+      if (ctx) {
+        ctx.parentElement.innerHTML = '<div class="text-sm text-gray-400 py-8 text-center">No query data in the last 30 days.</div>';
+      }
+      return;
+    }
+    new Chart(ctx, {
+      type: 'bar',
+      data: data,
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { labels: { color: '#d1d5db' } },
+        },
+        scales: {
+          x: {
+            stacked: true,
+            ticks: { color: '#9ca3af' },
+            grid: { color: '#1f2937' },
+          },
+          y: {
+            stacked: true,
+            beginAtZero: true,
+            ticks: { color: '#9ca3af' },
+            grid: { color: '#1f2937' },
+          },
+        },
+      },
+    });
+  })();
+</script>
+
+{% endblock %}
