@@ -113,3 +113,51 @@ def test_mcp_init_replaces_existing_codex_section_with_args_array(tmp_path, monk
     assert config.count('args = ["mcp", "serve"]') == 1
     assert '\n["mcp", "serve"]' not in config
     assert '[mcp_servers.janus]' in config
+
+
+def test_search_free_flag_sets_free_only_on_query(monkeypatch):
+    from argus.cli import main as cli_main
+
+    seen = {}
+
+    def fake_create_broker():
+        class FakeBroker:
+            async def search(self, q, compute_attribution=False):
+                seen["free_only"] = q.free_only
+                from argus.models import SearchResponse, SearchMode
+                return SearchResponse(query=q.query, mode=q.mode, results=[])
+        return FakeBroker()
+
+    monkeypatch.setattr("argus.broker.router.create_broker", fake_create_broker)
+
+    result = CliRunner().invoke(
+        cli_main.cli,
+        ["search", "-q", "hello world", "--free"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen.get("free_only") is True
+
+
+def test_search_without_free_flag_leaves_free_only_false(monkeypatch):
+    from argus.cli import main as cli_main
+
+    seen = {}
+
+    def fake_create_broker():
+        class FakeBroker:
+            async def search(self, q, compute_attribution=False):
+                seen["free_only"] = q.free_only
+                from argus.models import SearchResponse, SearchMode
+                return SearchResponse(query=q.query, mode=q.mode, results=[])
+        return FakeBroker()
+
+    monkeypatch.setattr("argus.broker.router.create_broker", fake_create_broker)
+
+    result = CliRunner().invoke(
+        cli_main.cli,
+        ["search", "-q", "hello world"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen.get("free_only") is False

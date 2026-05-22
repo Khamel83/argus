@@ -127,8 +127,9 @@ def paths(as_json):
 @click.option("--providers", "-p", multiple=False, help="Override providers (comma-separated)")
 @click.option("--session", "-s", default=None, help="Session ID for multi-turn context")
 @click.option("--attribution", is_flag=True, help="Show per-provider Shapley attribution for each result's score")
+@click.option("--free", "free_only", is_flag=True, help="Only use free (tier 0) providers: SearXNG, DuckDuckGo, Yahoo, GitHub, WolframAlpha")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def search(query, mode, max_results, providers, as_json, session, attribution):
+def search(query, mode, max_results, providers, as_json, session, attribution, free_only):
     """Execute a search query.
 
     Modes:
@@ -142,7 +143,7 @@ def search(query, mode, max_results, providers, as_json, session, attribution):
 
     broker = create_broker()
     override = [ProviderName(item.strip()) for item in providers.split(",")] if providers else None
-    q = SearchQuery(query=query, mode=SearchMode(mode), max_results=max_results, providers=override)
+    q = SearchQuery(query=query, mode=SearchMode(mode), max_results=max_results, providers=override, free_only=free_only)
 
     if session:
         resp, sid = _run(
