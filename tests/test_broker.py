@@ -932,3 +932,17 @@ class TestRouter:
         assert response.results[0].score_attribution == {
             ProviderName.SEARXNG.value: response.results[0].score
         }
+
+
+# --- FreeOnly ---
+
+class TestFreeOnly:
+    def test_search_query_free_only_defaults_false(self):
+        from argus.models import SearchQuery
+        q = SearchQuery(query="test")
+        assert q.free_only is False
+
+    def test_search_query_free_only_can_be_set(self):
+        from argus.models import SearchQuery
+        q = SearchQuery(query="test", free_only=True)
+        assert q.free_only is True
