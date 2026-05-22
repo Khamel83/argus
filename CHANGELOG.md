@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-05-22
+
 ### Added
 - `examples/` directory with runnable Python SDK examples (`basic_search.py`,
   `extract_and_recover.py`, `research_pack.py`) and per-client MCP quickstart.
@@ -24,8 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pull request template expanded with type-of-change, testing, docs, and
   breaking-change sections (was previously truncated mid-checklist).
 - `pyproject.toml` `[project.urls]` now exposes a `Changelog` URL.
-
-### Fixed
 
 ## [1.6.1] - 2026-05-18
 

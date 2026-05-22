@@ -2,10 +2,10 @@
 
 The repository version and the published package version are separate until a release is published.
 
-As of 2026-05-18:
+As of 2026-05-22:
 
-- Repository metadata is `1.6.1`.
-- PyPI `argus-search` is published at `1.6.1`.
+- Repository metadata is `1.6.2`.
+- PyPI `argus-search` is published at `1.6.1` (latest release).
 - GitHub release `v1.6.1` has been created.
 - MCP Registry publication for `v1.6.1` completed through the publish workflow.
 
@@ -54,9 +54,9 @@ The workflow builds the package, uploads to PyPI with `PYPI_API_TOKEN`, then pub
 Recommended release flow:
 
 ```bash
-git tag v1.6.1
-git push origin v1.6.1
-gh release create v1.6.1 --title "v1.6.1" --notes-file RELEASE_NOTES.md
+git tag v1.6.2
+git push origin v1.6.2
+gh release create v1.6.2 --title "v1.6.2" --notes-file RELEASE_NOTES.md
 ```
 
 After the workflow completes, verify:

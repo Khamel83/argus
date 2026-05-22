@@ -52,5 +52,6 @@ CLAUDE.local.md
 1shot/
 docs/sessions/
 docs/LLM-OVERVIEW.md
+docs/042826_plan.md
 .mcpregistry_*
 .sweep-notes.md

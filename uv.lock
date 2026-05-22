@@ -196,17 +196,19 @@ wheels = [
 
 [[package]]
 name = "argus-search"
-version = "1.6.1"
+version = "1.6.2"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
     { name = "ddgs" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "jinja2" },
     { name = "platformdirs" },
     { name = "playwright" },
     { name = "psycopg2-binary" },
     { name = "pydantic" },
+    { name = "python-multipart" },
     { name = "pyyaml" },
     { name = "sqlalchemy" },
     { name = "trafilatura" },
@@ -234,6 +236,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
+    { name = "jinja2", specifier = ">=3.1.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0.0" },
     { name = "platformdirs", specifier = ">=4.3.0" },
     { name = "playwright", specifier = ">=1.40.0" },
@@ -241,6 +244,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.5.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
+    { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "sqlalchemy", specifier = ">=2.0.0" },
     { name = "trafilatura", specifier = ">=1.6.0" },
