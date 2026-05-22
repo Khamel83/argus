@@ -39,6 +39,15 @@ def _serialize_response(resp) -> str:
         lines.append(f"{i}. **{title}**")
         lines.append(f"   URL: {r.url}")
         lines.append(f"   Egress: {egress}")
+        if r.score_attribution:
+            attribution = ", ".join(
+                f"{provider}: {value:.4f}"
+                for provider, value in sorted(
+                    r.score_attribution.items(),
+                    key=lambda item: -item[1],
+                )
+            )
+            lines.append(f"   Score attribution: {attribution}")
         if snippet:
             lines.append(f"   {snippet}")
         lines.append("")
@@ -55,6 +64,7 @@ async def search_web(
     mode: str = "discovery",
     max_results: int = 10,
     session_id: str = None,
+    include_attribution: bool = False,
 ) -> str:
     """Search the web using the Argus broker.
 
@@ -63,16 +73,21 @@ async def search_web(
         mode: Search mode (recovery, discovery, grounding, research)
         max_results: Maximum results to return
         session_id: Optional session ID for multi-turn context
+        include_attribution: Include per-provider score attribution
     """
     search_mode = SearchMode(mode)
     q = SearchQuery(query=query, mode=search_mode, max_results=max_results)
 
     if session_id:
-        resp, sid = await broker.search_with_session(q, session_id=session_id)
+        resp, sid = await broker.search_with_session(
+            q,
+            session_id=session_id,
+            compute_attribution=include_attribution,
+        )
         md = _serialize_response(resp)
         return md + f"\n_Session ID: {sid}_"
 
-    resp = await broker.search(q)
+    resp = await broker.search(q, compute_attribution=include_attribution)
     return _serialize_response(resp)
 
 

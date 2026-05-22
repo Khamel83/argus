@@ -12,7 +12,7 @@
       {{ error }}
     </div>
     {% endif %}
-    <form method="post" action="/dashboard/login" class="space-y-4">
+    <form method="post" action="{{ root_path }}/dashboard/login" class="space-y-4">
       <div>
         <label for="admin_key" class="block text-sm text-gray-300 mb-1">Admin key</label>
         <input type="password" id="admin_key" name="admin_key" autofocus required

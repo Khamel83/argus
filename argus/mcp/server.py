@@ -78,9 +78,22 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
 
     # Register tools
     @mcp.tool()
-    async def search_web(query: str, mode: str = "discovery", max_results: int = 10, session_id: str = None) -> str:
+    async def search_web(
+        query: str,
+        mode: str = "discovery",
+        max_results: int = 10,
+        session_id: str = None,
+        include_attribution: bool = False,
+    ) -> str:
         """Search the web using the Argus broker."""
-        return await mcp_tools.search_web(broker, query, mode, max_results, session_id)
+        return await mcp_tools.search_web(
+            broker,
+            query,
+            mode,
+            max_results,
+            session_id,
+            include_attribution,
+        )
 
     @mcp.tool()
     async def recover_url(url: str, title: str = None, domain: str = None) -> str:

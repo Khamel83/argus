@@ -78,9 +78,13 @@ class SearchBroker:
     def budget_tracker(self) -> BudgetTracker:
         return self._budgets
 
-    async def search(self, query: SearchQuery) -> SearchResponse:
+    async def search(self, query: SearchQuery, compute_attribution: bool = False) -> SearchResponse:
         cache_run_id = os.urandom(8).hex()
-        cached = self._pipeline.get_cached(query, cache_run_id)
+        cached = self._pipeline.get_cached(
+            query,
+            cache_run_id,
+            compute_attribution=compute_attribution,
+        )
         if cached is not None:
             logger.debug("Cache hit for query: %s (mode=%s)", query.query, query.mode)
             return cached
@@ -100,6 +104,7 @@ class SearchBroker:
             outcome.provider_results,
             outcome.traces,
             budget_warnings=outcome.budget_pace_warnings,
+            compute_attribution=compute_attribution,
         )
 
         logger.info(
@@ -118,11 +123,17 @@ class SearchBroker:
         return response
 
     async def search_with_session(
-        self, query: SearchQuery, session_id: Optional[str] = None
+        self,
+        query: SearchQuery,
+        session_id: Optional[str] = None,
+        compute_attribution: bool = False,
     ) -> tuple[SearchResponse, Optional[str]]:
         return await self._session_service.search_with_session(
             query,
-            self.search,
+            lambda effective_query: self.search(
+                effective_query,
+                compute_attribution=compute_attribution,
+            ),
             session_id=session_id,
         )
 

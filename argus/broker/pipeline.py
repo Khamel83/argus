@@ -22,16 +22,25 @@ class SearchResultPipeline:
         self._cache = cache
         self._persistence = persistence or SearchPersistenceGateway()
 
-    def get_cached(self, query: SearchQuery, run_id: str) -> SearchResponse | None:
-        cached = self._cache.get(query.query, query.mode)
+    def get_cached(
+        self,
+        query: SearchQuery,
+        run_id: str,
+        compute_attribution: bool = False,
+    ) -> SearchResponse | None:
+        cached = self._cache.get(
+            query.query,
+            query.mode,
+            include_attribution=compute_attribution,
+        )
         if cached is None:
             return None
         cached.search_run_id = run_id
         cached.cached = True
         return cached
 
-    def build_response(self, query: SearchQuery, provider_results: dict, traces: list, budget_warnings: list | None = None) -> SearchResponse:
-        merged = reciprocal_rank_fusion(provider_results)
+    def build_response(self, query: SearchQuery, provider_results: dict, traces: list, budget_warnings: list | None = None, compute_attribution: bool = False) -> SearchResponse:
+        merged = reciprocal_rank_fusion(provider_results, compute_attribution=compute_attribution)
         final_results = dedupe_results(merged)[: query.max_results]
         response = SearchResponse(
             query=query.query,
@@ -44,6 +53,11 @@ class SearchResultPipeline:
             budget_warnings=budget_warnings or [],
         )
         if final_results:
-            self._cache.put(query.query, query.mode, response)
+            self._cache.put(
+                query.query,
+                query.mode,
+                response,
+                include_attribution=compute_attribution,
+            )
         self._persistence.record_completed_search(query, response)
         return response

@@ -126,8 +126,9 @@ def paths(as_json):
 @click.option("--max-results", "-n", default=10, help="Max results")
 @click.option("--providers", "-p", multiple=False, help="Override providers (comma-separated)")
 @click.option("--session", "-s", default=None, help="Session ID for multi-turn context")
+@click.option("--attribution", is_flag=True, help="Show per-provider Shapley attribution for each result's score")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def search(query, mode, max_results, providers, as_json, session):
+def search(query, mode, max_results, providers, as_json, session, attribution):
     """Execute a search query.
 
     Modes:
@@ -144,10 +145,16 @@ def search(query, mode, max_results, providers, as_json, session):
     q = SearchQuery(query=query, mode=SearchMode(mode), max_results=max_results, providers=override)
 
     if session:
-        resp, sid = _run(broker.search_with_session(q, session_id=session))
+        resp, sid = _run(
+            broker.search_with_session(
+                q,
+                session_id=session,
+                compute_attribution=attribution,
+            )
+        )
         session_id = sid
     else:
-        resp = _run(broker.search(q))
+        resp = _run(broker.search(q, compute_attribution=attribution))
         session_id = None
 
     if as_json:
@@ -161,6 +168,7 @@ def search(query, mode, max_results, providers, as_json, session):
                     "snippet": r.snippet,
                     "provider": r.provider.value if r.provider else None,
                     "score": r.score,
+                    "score_attribution": r.score_attribution if attribution else None,
                     "egress": r.metadata.get("egress") if r.metadata else None,
                     "machine": r.metadata.get("machine") if r.metadata else None,
                 }
@@ -186,6 +194,12 @@ def search(query, mode, max_results, providers, as_json, session):
             click.echo(f"     {r.url}")
             if r.snippet:
                 click.echo(f"     {r.snippet[:120]}")
+            if attribution and r.score_attribution:
+                parts = "  ".join(
+                    f"{p}: {v:.4f}"
+                    for p, v in sorted(r.score_attribution.items(), key=lambda x: -x[1])
+                )
+                click.echo(f"     score: {r.score:.4f}  [{parts}]")
             click.echo()
 
         if resp.traces:
@@ -596,17 +610,23 @@ def doctor(as_json):
 
 
 @cli.command()
-@click.option("--host", "-h", default="127.0.0.1", help="Bind host")
-@click.option("--port", "-p", default=8000, help="Bind port")
+@click.option("--host", "-h", default=None, help="Bind host (env: ARGUS_BIND_HOST, default: 127.0.0.1)")
+@click.option("--port", "-p", default=None, type=int, help="Bind port (env: ARGUS_PORT, default: 8000)")
 @click.option("--reload", is_flag=True, help="Auto-reload on code changes")
 def serve(host, port, reload):
-    """Start the Argus API server."""
+    """Start the Argus API server.
+
+    Bind address resolves in this order: CLI flag → ARGUS_BIND_HOST env → 127.0.0.1.
+    Set ARGUS_BIND_HOST=0.0.0.0 in .env (or the environment) to expose externally.
+    """
     import os
-    os.environ.setdefault("ARGUS_HOST", host)
-    os.environ.setdefault("ARGUS_PORT", str(port))
+    bind_host = host or os.environ.get("ARGUS_BIND_HOST", "127.0.0.1")
+    bind_port = port or int(os.environ.get("ARGUS_PORT", "8000"))
+    os.environ.setdefault("ARGUS_HOST", bind_host)
+    os.environ.setdefault("ARGUS_PORT", str(bind_port))
 
     import uvicorn
-    uvicorn.run("argus.api.main:app", host=host, port=port, reload=reload)
+    uvicorn.run("argus.api.main:app", host=bind_host, port=bind_port, reload=reload)
 
 
 @cli.group()

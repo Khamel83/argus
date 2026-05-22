@@ -5,7 +5,7 @@
 {% block nav_extra %}
 <span>Machine: <span class="text-gray-200">{{ machine_name }}</span></span>
 <span>Egress: <span class="text-gray-200">{{ egress_type }}</span></span>
-<a href="/dashboard/logout" class="text-gray-400 hover:text-gray-200">Logout</a>
+<a href="{{ root_path }}/dashboard/logout" class="text-gray-400 hover:text-gray-200">Logout</a>
 {% endblock %}
 
 {% block content %}

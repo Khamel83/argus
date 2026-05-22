@@ -82,6 +82,49 @@ class TestSearchEndpoint:
         assert data["cached"] is True
 
     @pytest.mark.asyncio
+    async def test_search_endpoint_can_include_attribution(self):
+        from argus.api.main import create_app
+        from argus.models import ProviderName, SearchMode, SearchResponse, SearchResult
+
+        mock_broker = MagicMock()
+        mock_broker.search = AsyncMock(return_value=SearchResponse(
+            query="test",
+            mode=SearchMode.DISCOVERY,
+            results=[
+                SearchResult(
+                    url="https://example.com",
+                    title="Test",
+                    snippet="A page",
+                    provider=ProviderName.DUCKDUCKGO,
+                    score=0.5,
+                    score_attribution={"duckduckgo": 0.5},
+                )
+            ],
+            total_results=1,
+        ))
+        mock_broker.cache = MagicMock()
+        mock_broker.health_tracker = MagicMock()
+        mock_broker.budget_tracker = MagicMock()
+
+        from fastapi.testclient import TestClient
+        client = TestClient(create_app(broker=mock_broker))
+
+        resp = client.post(
+            "/api/search",
+            json={
+                "query": "test",
+                "mode": "discovery",
+                "include_attribution": True,
+            },
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["results"][0]["score_attribution"] == {"duckduckgo": 0.5}
+        mock_broker.search.assert_awaited_once()
+        assert mock_broker.search.await_args.kwargs["compute_attribution"] is True
+
+    @pytest.mark.asyncio
     async def test_search_invalid_mode_returns_400(self):
         from argus.api.main import create_app
         from fastapi.testclient import TestClient

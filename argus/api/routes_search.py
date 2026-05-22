@@ -20,7 +20,7 @@ def get_broker(request: Request) -> SearchBroker:
     return request.app.state.get_broker()
 
 
-def _to_response(resp) -> SearchResponse:
+def _to_response(resp, include_attribution: bool = False) -> SearchResponse:
     return SearchResponse(
         query=resp.query,
         mode=resp.mode.value,
@@ -34,6 +34,7 @@ def _to_response(resp) -> SearchResponse:
                 score=r.score,
                 egress=r.metadata.get("egress") if r.metadata else None,
                 machine=r.metadata.get("machine") if r.metadata else None,
+                score_attribution=r.score_attribution if include_attribution else {},
             )
             for r in resp.results
         ],
@@ -64,13 +65,17 @@ async def search(req: SearchRequest, broker: SearchBroker = Depends(get_broker))
     )
 
     if req.session_id:
-        resp, session_id = await broker.search_with_session(query, session_id=req.session_id)
-        response = _to_response(resp)
+        resp, session_id = await broker.search_with_session(
+            query,
+            session_id=req.session_id,
+            compute_attribution=req.include_attribution,
+        )
+        response = _to_response(resp, include_attribution=req.include_attribution)
         response.session_id = session_id
         return response
 
-    resp = await broker.search(query)
-    return _to_response(resp)
+    resp = await broker.search(query, compute_attribution=req.include_attribution)
+    return _to_response(resp, include_attribution=req.include_attribution)
 
 
 @router.post("/recover-url", response_model=SearchResponse)
