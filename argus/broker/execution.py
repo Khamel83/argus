@@ -102,6 +102,10 @@ class ProviderExecutor:
 
             tier = self._budgets.get_provider_tier(pname)
 
+            if query.free_only and tier > 0:
+                traces.append(ProviderTrace(provider=pname, status="skipped", error="free_only mode"))
+                continue
+
             if query.providers is None and tier > 0 and total_results_so_far >= query.max_results:
                 traces.append(
                     ProviderTrace(

@@ -946,3 +946,71 @@ class TestFreeOnly:
         from argus.models import SearchQuery
         q = SearchQuery(query="test", free_only=True)
         assert q.free_only is True
+
+    @pytest.mark.asyncio
+    async def test_free_only_skips_paid_providers_even_when_results_insufficient(self, monkeypatch):
+        """free_only=True must skip tier > 0 providers regardless of result count."""
+        from argus.broker.budgets import BudgetTracker
+        from argus.broker.execution import ProviderExecutor
+        from argus.broker.health import HealthTracker
+
+        free_provider = StubProvider(
+            name=ProviderName.DUCKDUCKGO,
+            results=[
+                SearchResult(url="https://free.com/1", title="Free 1", snippet="ok", provider=ProviderName.DUCKDUCKGO)
+            ],
+        )
+        paid_provider = StubProvider(
+            name=ProviderName.BRAVE,
+            results=[
+                SearchResult(url="https://paid.com/1", title="Paid 1", snippet="ok", provider=ProviderName.BRAVE)
+            ],
+        )
+
+        executor = ProviderExecutor(
+            providers={ProviderName.DUCKDUCKGO: free_provider, ProviderName.BRAVE: paid_provider},
+            health_tracker=HealthTracker(),
+            budget_tracker=BudgetTracker(),
+        )
+
+        q = SearchQuery(query="test", free_only=True, max_results=10)
+        outcome = await executor.execute(q, [ProviderName.DUCKDUCKGO, ProviderName.BRAVE])
+
+        assert free_provider.calls == 1
+        assert paid_provider.calls == 0
+        assert any(
+            t.provider == ProviderName.BRAVE and t.error == "free_only mode"
+            for t in outcome.traces
+        )
+
+    @pytest.mark.asyncio
+    async def test_free_only_false_does_not_gate_paid_providers(self, monkeypatch):
+        """free_only=False (default) must not affect paid provider execution."""
+        from argus.broker.budgets import BudgetTracker
+        from argus.broker.execution import ProviderExecutor
+        from argus.broker.health import HealthTracker
+
+        free_provider = StubProvider(
+            name=ProviderName.DUCKDUCKGO,
+            results=[
+                SearchResult(url="https://free.com/1", title="Free 1", snippet="ok", provider=ProviderName.DUCKDUCKGO)
+            ],
+        )
+        paid_provider = StubProvider(
+            name=ProviderName.BRAVE,
+            results=[
+                SearchResult(url="https://paid.com/1", title="Paid 1", snippet="ok", provider=ProviderName.BRAVE)
+            ],
+        )
+
+        executor = ProviderExecutor(
+            providers={ProviderName.DUCKDUCKGO: free_provider, ProviderName.BRAVE: paid_provider},
+            health_tracker=HealthTracker(),
+            budget_tracker=BudgetTracker(),
+        )
+
+        q = SearchQuery(query="test", free_only=False, max_results=10)
+        outcome = await executor.execute(q, [ProviderName.DUCKDUCKGO, ProviderName.BRAVE])
+
+        assert free_provider.calls == 1
+        assert paid_provider.calls == 1
