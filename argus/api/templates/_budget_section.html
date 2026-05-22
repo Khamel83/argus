@@ -7,13 +7,13 @@
   <div class="mb-4 space-y-2">
     {% for b in exhausted %}
     <div class="p-3 bg-red-950 border border-red-800 rounded flex items-center gap-3">
-      <span class="px-2 py-1 bg-red-700 text-xs font-bold rounded uppercase">Exhausted</span>
+      <span class="px-2 py-0.5 bg-red-700 text-xs font-bold rounded uppercase">Exhausted</span>
       <span class="text-red-100"><b>{{ b.provider }}</b> has burned through its budget ({{ b.used }} / {{ b.budget }} queries).</span>
     </div>
     {% endfor %}
     {% for b in over_pace %}
     <div class="p-3 bg-yellow-950 border border-yellow-800 rounded flex items-center gap-3">
-      <span class="px-2 py-1 bg-yellow-700 text-xs font-bold rounded uppercase">Over pace</span>
+      <span class="px-2 py-0.5 bg-yellow-700 text-xs font-bold rounded uppercase">Over pace</span>
       <span class="text-yellow-100"><b>{{ b.provider }}</b> will exhaust within 7 days at the current rate. {{ b.remaining }} queries remain.</span>
     </div>
     {% endfor %}
