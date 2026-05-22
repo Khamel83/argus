@@ -39,4 +39,30 @@ One change per PR makes review easier. If it's two logically separate things, it
 5. Add tests in `tests/test_providers.py`
 6. Add to routing policies in `argus/broker/policies.py` and budget tiers in `argus/broker/budgets.py`
 
-The DuckDuckGo provider is a good reference — it's simple and doesn't need an API key.
+The DuckDuckGo provider is a good reference — it's simple and doesn't need an API key. See [docs/providers.md](docs/providers.md) for the full provider and extractor reference.
+
+## Testing the MCP server locally
+
+```bash
+# Stdio (default — what most clients use)
+argus mcp serve
+
+# Streamable HTTP (remote-style)
+ARGUS_API_KEY=test-key argus mcp serve --transport streamable-http --port 8001
+curl -H "Authorization: Bearer test-key" http://127.0.0.1:8001/mcp
+```
+
+`argus mcp check` validates that the config Argus would write is reachable
+from the client's perspective.
+
+## Releasing
+
+Releases are cut from `main` via the GitHub publish workflow — see
+[docs/releasing.md](docs/releasing.md) for the version sync, preflight, and
+publish-verify steps. Do **not** bump `pyproject.toml` or `server.json` as part
+of an unrelated PR.
+
+## Troubleshooting
+
+If you hit something unexpected during local development, check
+[docs/troubleshooting.md](docs/troubleshooting.md) before filing an issue.
