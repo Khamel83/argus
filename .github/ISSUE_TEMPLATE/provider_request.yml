@@ -1,0 +1,53 @@
+name: Provider request
+description: Request support for a new search or extraction provider.
+title: "[Provider] "
+labels: ["enhancement", "provider"]
+body:
+  - type: input
+    id: name
+    attributes:
+      label: Provider name
+      placeholder: e.g. Kagi, You.com Smart Search, etc.
+    validations:
+      required: true
+  - type: input
+    id: url
+    attributes:
+      label: Provider homepage / API docs URL
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What does this provider do?
+      options:
+        - Web search
+        - Content extraction (URL → text)
+        - Computed answers (math, facts)
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: tier
+    attributes:
+      label: Cost / credit model
+      options:
+        - Free unlimited
+        - Free monthly tier (recurring)
+        - One-time signup credit
+        - Paid only
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why this provider?
+      description: What does it do better than existing providers (coverage, freshness, price, region, etc.)?
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Rate limits, auth quirks, API shape, known issues, etc.

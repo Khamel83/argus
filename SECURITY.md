@@ -6,7 +6,18 @@ Only the latest release is actively maintained. Check [PyPI](https://pypi.org/pr
 
 ## Reporting a Vulnerability
 
-If you find a security vulnerability, please open a [GitHub issue](https://github.com/Khamel83/argus/issues/new?template=bug_report.md) with the `security` label.
+Please report security issues privately — **do not open a public GitHub issue**.
+
+Preferred: open a [private security advisory](https://github.com/Khamel83/argus/security/advisories/new)
+on this repository. That keeps the report visible only to the maintainers until a
+fix is ready.
+
+If you cannot use GitHub Security Advisories, email the maintainer at
+`security@khamel.com` with a description, reproduction steps, and any proposed
+mitigation.
+
+Expect an initial acknowledgement within a few days. We aim to resolve confirmed
+vulnerabilities and publish a fix before disclosing details.
 
 ## What Argus Handles
 

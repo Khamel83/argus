@@ -1,0 +1,3 @@
+# Default owner for everything in the repo.
+# More specific lines below override the catch-all.
+*       @Khamel83

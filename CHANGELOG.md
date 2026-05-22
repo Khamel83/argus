@@ -8,8 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `examples/` directory with runnable Python SDK examples (`basic_search.py`,
+  `extract_and_recover.py`, `research_pack.py`) and per-client MCP quickstart.
+- `docs/README.md` index, `docs/providers.md` reference (previously linked from
+  the main README but missing), and `docs/troubleshooting.md`.
+- `.github/CODEOWNERS`, plus YAML-form issue templates for bug reports, feature
+  requests, provider requests, and extraction failures.
 
 ### Changed
+- `SECURITY.md` now directs vulnerability reports to GitHub Security Advisories
+  (private) instead of the public issue tracker.
+- `CLAUDE.md` reduced to a short pointer; `AGENTS.md` becomes the canonical
+  guide for AI coding agents. Purpose headers added to `AGENTS.md`,
+  `CONTEXT.md`, and `LLM-OVERVIEW.md`.
+- Pull request template expanded with type-of-change, testing, docs, and
+  breaking-change sections (was previously truncated mid-checklist).
+- `pyproject.toml` `[project.urls]` now exposes a `Changelog` URL.
 
 ### Fixed
 

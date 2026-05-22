@@ -58,6 +58,7 @@ argus = "argus.cli.main:cli"
 Homepage = "https://github.com/Khamel83/argus"
 Repository = "https://github.com/Khamel83/argus"
 Documentation = "https://github.com/Khamel83/argus#readme"
+Changelog = "https://github.com/Khamel83/argus/blob/main/CHANGELOG.md"
 Issues = "https://github.com/Khamel83/argus/issues"
 
 [tool.setuptools.packages.find]
