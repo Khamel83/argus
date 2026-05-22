@@ -1,4 +1,13 @@
 # LLM Overview — argus
+
+> **What this file is for:** a machine-generated snapshot of repo state (recent
+> commits, env vars in use, top-level layout) intended for LLM agents that want
+> a quick situational summary without crawling the whole repo. It is regenerated
+> by a daily cron — **do not hand-edit this file**, your changes will be
+> overwritten. For the curated AI-agent guide see [AGENTS.md](AGENTS.md); for
+> user docs see [README.md](README.md); for the structured tool/CLI surface see
+> [llms.txt](llms.txt) and [llms-full.txt](llms-full.txt).
+
 *Updated: 2026-05-10 07:35 UTC | Tier: standard | Auto-updated: daily cron*
 
 ## What This Is

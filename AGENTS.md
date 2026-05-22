@@ -1,4 +1,11 @@
-# Project Instructions
+# AGENTS.md — Argus
+
+> **What this file is for:** the canonical guide for AI coding agents working in
+> this repository (Claude Code, Codex, Cursor, Copilot, OpenCode, and friends).
+> Human contributors should start with [CONTRIBUTING.md](CONTRIBUTING.md);
+> background on the project lives in [CONTEXT.md](CONTEXT.md) and
+> [README.md](README.md). [CLAUDE.md](CLAUDE.md) is a short pointer back here
+> with Claude-Code-specific notes.
 
 ## Overview
 
