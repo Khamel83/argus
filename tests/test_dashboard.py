@@ -149,6 +149,74 @@ def test_chart_data_stacks_machines():
     assert labels["beta"] == [3, 0]
 
 
+def test_provider_activity_excludes_skipped_rows():
+    """get_provider_activity must not count rows where status='skipped'."""
+    import os
+    import sqlite3
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """CREATE TABLE provider_usage (
+            id INTEGER PRIMARY KEY,
+            provider TEXT,
+            status TEXT,
+            latency_ms INTEGER,
+            created_at TEXT
+        )"""
+    )
+    conn.executemany(
+        "INSERT INTO provider_usage (provider, status, latency_ms, created_at) VALUES (?, ?, ?, datetime('now'))",
+        [
+            ("yahoo", "skipped", 0),
+            ("yahoo", "skipped", 0),
+            ("brave", "success", 150),
+            ("brave", "success", 200),
+            ("brave", "skipped", 0),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    os.environ["ARGUS_DB_URL"] = f"sqlite:///{db_path}"
+    from argus.config import reset_config
+    reset_config()
+
+    from argus.api import usage as u
+    rows = u.get_provider_activity()
+
+    # yahoo has only skipped rows — must not appear
+    assert all(r["provider"] != "yahoo" for r in rows), f"yahoo should not appear: {rows}"
+    # brave appears with 2 attempts (not 3)
+    brave_rows = [r for r in rows if r["provider"] == "brave"]
+    assert len(brave_rows) == 1
+    assert brave_rows[0]["calls"] == 2
+
+    os.unlink(db_path)
+
+
+def test_dashboard_renders_attempted_column_header(monkeypatch):
+    """Provider activity table must show 'Attempted' not 'Calls'."""
+    import os
+    os.environ["ARGUS_ADMIN_API_KEY"] = "test-key"
+
+    from argus.api import usage as u
+    monkeypatch.setattr(
+        u,
+        "get_provider_activity",
+        lambda days=7: [{"provider": "brave", "calls": 5, "successes": 5, "avg_latency_ms": 120, "success_rate": 100.0}],
+    )
+
+    from fastapi.testclient import TestClient
+    client = TestClient(_build_app("test-key"))
+    resp = client.get("/dashboard", cookies={"argus_dash": "test-key"})
+    assert resp.status_code == 200
+    assert "Attempted" in resp.text
+
+
 def test_open_access_when_no_admin_key_configured():
     import os
 

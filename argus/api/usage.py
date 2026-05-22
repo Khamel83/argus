@@ -111,6 +111,7 @@ def get_provider_activity(days: int = 7) -> list[dict[str, Any]]:
                    ROUND(AVG(latency_ms)) AS avg_latency_ms
             FROM provider_usage
             WHERE created_at >= datetime('now', ?)
+              AND status != 'skipped'
             GROUP BY provider
             ORDER BY calls DESC
             """,
