@@ -65,6 +65,7 @@ async def search_web(
     max_results: int = 10,
     session_id: str = None,
     include_attribution: bool = False,
+    free_only: bool = False,
 ) -> str:
     """Search the web using the Argus broker.
 
@@ -74,9 +75,10 @@ async def search_web(
         max_results: Maximum results to return
         session_id: Optional session ID for multi-turn context
         include_attribution: Include per-provider score attribution
+        free_only: Only use free search providers
     """
     search_mode = SearchMode(mode)
-    q = SearchQuery(query=query, mode=search_mode, max_results=max_results)
+    q = SearchQuery(query=query, mode=search_mode, max_results=max_results, free_only=free_only)
 
     if session_id:
         resp, sid = await broker.search_with_session(

@@ -84,6 +84,7 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
         max_results: int = 10,
         session_id: str = None,
         include_attribution: bool = False,
+        free_only: bool = False,
     ) -> str:
         """Search the web using the Argus broker."""
         return await mcp_tools.search_web(
@@ -93,6 +94,7 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
             max_results,
             session_id,
             include_attribution,
+            free_only,
         )
 
     @mcp.tool()
