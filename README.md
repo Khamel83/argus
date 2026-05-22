@@ -22,6 +22,8 @@ Retrieval platform for AI agents. Argus routes search across 14 providers, recov
 - **Opinionated retrieval workflows** — recover dead articles, capture important pages from a site, and build local docs-plus-research packs
 - **Argus-owned corpus storage** — runtime data goes to a writable user data directory, not your repo checkout
 - **Multi-turn sessions** — pass `session_id` for conversational context across searches
+- **Score attribution** — optionally show which providers contributed to each fused RRF score
+- **Usage dashboard** — inspect provider budgets, recent query volume, and machine-level usage at `/dashboard`
 - **4 search modes** — discovery, research, recovery, grounding
 - **Dead URL recovery** — `/recover-url` with Wayback Machine and archive fallbacks
 - **4 integration paths** — HTTP API, CLI, MCP server, Python SDK
@@ -38,6 +40,7 @@ _Built for AI agent builders, RAG pipelines, and ops teams who need reliable sea
 - [Opinionated Workflows](#opinionated-workflows)
 - [Providers](#providers)
 - [HTTP API](#http-api)
+- [Dashboard](#dashboard)
 - [Integration](#integration)
   - [CLI](#cli)
   - [MCP](#mcp)
@@ -219,6 +222,11 @@ curl -X POST http://localhost:8000/api/search \
   -H "Content-Type: application/json" \
   -d '{"query": "python web frameworks", "mode": "discovery", "max_results": 5}'
 
+# Search with score attribution
+curl -X POST http://localhost:8000/api/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "python web frameworks", "include_attribution": true}'
+
 # Multi-turn search (conversational refinement)
 curl -X POST http://localhost:8000/api/search \
   -H "Content-Type: application/json" \
@@ -262,7 +270,16 @@ Tier-based routing always applies first. Within each tier, the mode selects prov
   "query": "python web frameworks",
   "mode": "discovery",
   "results": [
-    {"url": "https://fastapi.tiangolo.com", "title": "FastAPI", "snippet": "Modern Python web framework", "score": 0.942}
+    {
+      "url": "https://fastapi.tiangolo.com",
+      "title": "FastAPI",
+      "snippet": "Modern Python web framework",
+      "provider": "duckduckgo",
+      "score": 0.0164,
+      "score_attribution": {"duckduckgo": 0.0164},
+      "egress": "unknown",
+      "machine": null
+    }
   ],
   "total_results": 1,
   "cached": false,
@@ -273,6 +290,12 @@ Tier-based routing always applies first. Within each tier, the mode selects prov
 ```
 
 Each result includes `url`, `title`, `snippet`, `domain`, `provider`, and `score`. The `traces` array shows which providers were called and their outcomes.
+
+When `include_attribution` is true, each result also includes
+`score_attribution`: a provider-to-score map that decomposes the result's
+Reciprocal Rank Fusion score. RRF is additive, so each provider's attribution is
+exactly its own rank contribution, and the values sum to `score`. Attribution is
+off by default and cached separately from non-attributed searches.
 
 #### Budgets
 
@@ -288,6 +311,43 @@ Each result includes `url`, `title`, `snippet`, `domain`, `provider`, and `score
 
 Each provider tracks usage. Tier 1 (monthly) uses a 30-day rolling window; tier 3 (one-time) uses a lifetime counter that never resets. When a provider hits its budget, Argus skips it and moves to the next. Free providers (DuckDuckGo, GitHub) have no limit. SearXNG is free but disabled by default. Set `ARGUS_*_MONTHLY_BUDGET_USD` to enforce custom limits per provider.
 
+## Dashboard
+
+Run the HTTP server and open `/dashboard`:
+
+```bash
+argus serve
+# http://127.0.0.1:8000/dashboard
+```
+
+The dashboard shows provider budget burn, over-pace and exhausted providers,
+query volume for the last 30 days, usage by machine, and recent provider
+activity. Budget cards refresh automatically.
+
+Set `ARGUS_ADMIN_API_KEY` to require dashboard login. If no admin key is set,
+the dashboard is open to anyone who can reach the server, which is suitable only
+for trusted local use.
+
+For subpath deployment behind a reverse proxy, set `ARGUS_ROOT_PATH` to the
+external path prefix:
+
+```bash
+ARGUS_ROOT_PATH=/argus argus serve
+```
+
+That makes dashboard redirects, links, and HTMX fragment URLs work when the
+proxy serves Argus at a path such as `https://khamel.com/argus/`.
+
+For direct public HTTPS, the repo includes a Caddy profile:
+
+```bash
+ARGUS_DOMAIN=argus.example.com ACME_EMAIL=you@example.com \
+  docker compose --profile proxy up -d
+```
+
+For an existing Authentik/nginx deployment, keep authentication at the proxy
+layer and set `ARGUS_ROOT_PATH` to the public prefix.
+
 ## Integration
 
 ### CLI
@@ -295,6 +355,7 @@ Each provider tracks usage. Tier 1 (monthly) uses a 30-day rolling window; tier 
 ```bash
 argus search -q "python web framework"              # zero-config, uses DuckDuckGo
 argus search -q "python web framework" --mode research -n 20
+argus search -q "python web framework" --attribution # show per-provider score attribution
 argus search -q "fastapi" --session my-session       # multi-turn context
 argus extract -u "https://example.com/article"       # extract clean text
 argus extract -u "https://example.com/article" -d nytimes.com  # auth extraction
@@ -405,6 +466,9 @@ Available tools:
 - Local `stdio`: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `cookie_health`, `valyu_answer`
 - Remote HTTP MCP: `search_web`, `extract_content`, `recover_url`, `expand_links`, `valyu_answer`; authenticated remote servers also expose `search_health`, `search_budgets`, `test_provider`, and `cookie_health`
 
+`search_web` accepts `include_attribution=true` to include per-provider score
+attribution in the Markdown response.
+
 ### Python
 
 ```python
@@ -415,10 +479,12 @@ from argus.extraction import extract_url
 broker = create_broker()
 
 response = await broker.search(
-    SearchQuery(query="python web frameworks", mode=SearchMode.DISCOVERY, max_results=10)
+    SearchQuery(query="python web frameworks", mode=SearchMode.DISCOVERY, max_results=10),
+    compute_attribution=True,
 )
 for r in response.results:
     print(f"{r.title}: {r.url} (score: {r.score:.3f})")
+    print(r.score_attribution)
 
 content = await extract_url(response.results[0].url)
 print(content.title)
@@ -471,7 +537,7 @@ Add new providers or extractors with a single adapter file. See [CONTRIBUTING.md
 query arrives → cache? → build provider queue → execute sequentially → RRF fuse → dedup → respond
 ```
 
-1. **Cache check.** `SearchCache` hashes `normalized_query:mode` (SHA256). Hit returns immediately with a TTL of 168 hours (7 days).
+1. **Cache check.** `SearchCache` hashes the normalized query, mode, and whether attribution was requested (SHA256). Hit returns immediately with a TTL of 168 hours (7 days).
 
 2. **Provider queue.** `resolve_routing()` takes the mode-specific preference list and stable-sorts by tier: tier 0 (free) first, tier 1 (monthly) next, tier 3 (one-time) last. Example for discovery mode:
    ```
@@ -488,7 +554,7 @@ query arrives → cache? → build provider queue → execute sequentially → R
 
 5. **Dedup and truncate.** URLs are normalized (stripped `www.`, tracking params like `utm_*`, trailing slashes) and deduplicated. The merged list is truncated to `max_results` (default 10).
 
-6. **Cache and persist.** The final response is written to the in-memory cache and persisted to the local SQLite database (default) or PostgreSQL. Search results and extractions include rich provenance metadata (`egress`, `machine`, `source_type`) for downstream audit.
+6. **Cache and persist.** The final response is written to the in-memory cache and persisted to the local SQLite database (default) or PostgreSQL. Search results and extractions include rich provenance metadata (`egress`, `machine`, `source_type`) for downstream audit. Existing databases are upgraded additively for these provenance columns at startup.
 
 ## Configuration
 
@@ -520,6 +586,11 @@ All config via environment variables. See `.env.example` for the full list. Limi
 | `ARGUS_OBSCURA_CDP_URL` | — | Obscura CDP endpoint (e.g. `ws://127.0.0.1:9222`) — makes Playwright use Obscura as its browser engine |
 | `ARGUS_OBSCURA_TIMEOUT_SECONDS` | 20 | Timeout for Obscura CLI subprocess calls |
 | `ARGUS_CACHE_TTL_HOURS` | 168 | Result cache TTL |
+| `ARGUS_BIND_HOST` | `127.0.0.1` | Host used by `argus serve` unless `--host` is passed |
+| `ARGUS_PORT` | `8000` | Port used by `argus serve` unless `--port` is passed |
+| `ARGUS_API_KEY` | — | Required for non-local HTTP API and remote MCP callers |
+| `ARGUS_ADMIN_API_KEY` | — | Enables dashboard login and admin API authentication |
+| `ARGUS_ROOT_PATH` | — | Public subpath prefix for dashboard links and redirects, e.g. `/argus` |
 
 ## When Not To Use Argus
 

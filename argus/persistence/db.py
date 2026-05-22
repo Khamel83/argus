@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Generator, Optional
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from argus.config import get_config
@@ -43,6 +43,7 @@ def init_db(db_url: Optional[str] = None):
     _engine = create_engine(db_url, pool_pre_ping=True)
     _session_factory = sessionmaker(bind=_engine)
     Base.metadata.create_all(_engine)
+    _ensure_schema_compat(_engine)
     logger.info("Database initialized and tables created")
 
 
@@ -50,6 +51,48 @@ def get_engine():
     if _engine is None:
         init_db()
     return _engine
+
+
+def _ensure_schema_compat(engine) -> None:
+    """Apply lightweight additive migrations for pre-migration installs.
+
+    SQLAlchemy's create_all creates missing tables but does not add columns to
+    existing tables. Argus keeps persistence best-effort, so additive column
+    upgrades live here until the project adopts a formal migration tool.
+    """
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    additive_columns = {
+        "search_results": {
+            "egress": "VARCHAR(50)",
+            "machine": "VARCHAR(100)",
+            "metadata_json": "TEXT",
+        },
+        "corpus_documents": {
+            "egress": "VARCHAR(50)",
+            "machine": "VARCHAR(100)",
+            "metadata_json": "TEXT",
+        },
+    }
+
+    with engine.begin() as conn:
+        for table_name, columns in additive_columns.items():
+            if table_name not in existing_tables:
+                continue
+            existing_columns = {
+                column["name"]
+                for column in inspector.get_columns(table_name)
+            }
+            for column_name, column_type in columns.items():
+                if column_name in existing_columns:
+                    continue
+                conn.execute(
+                    text(
+                        f"ALTER TABLE {table_name} "
+                        f"ADD COLUMN {column_name} {column_type}"
+                    )
+                )
+                logger.info("Added missing column %s.%s", table_name, column_name)
 
 
 def get_session_factory():
