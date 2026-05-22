@@ -1,0 +1,58 @@
+name: Extraction failure
+description: Argus failed to extract clean content from a URL where it should have worked.
+title: "[Extract] "
+labels: ["bug", "extraction"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Argus tries up to twelve methods to extract a page. If all of them failed
+        on a URL that looks like it should be extractable, this template captures
+        the right details for us to reproduce and debug.
+  - type: input
+    id: url
+    attributes:
+      label: URL
+      description: The exact URL that failed to extract. If the site requires auth, say so below.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to get back?
+      description: e.g. "The article body, around 800 words" or "Just the README section".
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What did Argus return?
+      description: Paste the output of `argus extract -u "<url>" --json`. Redact any sensitive content.
+      render: json
+    validations:
+      required: true
+  - type: dropdown
+    id: site-kind
+    attributes:
+      label: What kind of site is this?
+      options:
+        - Static HTML article
+        - JS-rendered SPA
+        - Paywalled / login required
+        - PDF
+        - Anti-bot protected (Cloudflare, PerimeterX, etc.)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Argus version
+      description: Output of `argus --version`.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Does the same URL extract correctly elsewhere (Reader View, Jina, etc.)?

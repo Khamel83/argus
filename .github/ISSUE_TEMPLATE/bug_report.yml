@@ -1,0 +1,77 @@
+name: Bug report
+description: Something in Argus is not working as expected.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please fill out the
+        sections below — small details often turn out to matter.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Minimal commands or code to reproduce. Include the exact CLI invocation or HTTP request if relevant.
+      placeholder: |
+        1. argus search -q "..."
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Argus version
+      description: Output of `argus --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Install method
+      options:
+        - pip / pipx
+        - uv
+        - Docker
+        - Local clone (editable install)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `python --version`.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 14.5 / Ubuntu 24.04 / etc.
+    validations:
+      required: true
+  - type: textarea
+    id: providers
+    attributes:
+      label: Providers configured
+      description: Which providers are enabled? (`argus health` output is ideal.)
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / tracebacks
+      description: Paste any relevant log output. Redact API keys.
+      render: shell
