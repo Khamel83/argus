@@ -31,6 +31,15 @@ COOKIE_NAME = "argus_dash"
 COOKIE_MAX_AGE = 86400  # 1 day
 
 
+def _is_https(request: Request) -> bool:
+    """True when the original request arrived over HTTPS.
+
+    Checks X-Forwarded-Proto set by Caddy/Cloudflare and the raw scheme.
+    """
+    proto = request.headers.get("x-forwarded-proto", "").lower()
+    return proto == "https" or request.url.scheme == "https"
+
+
 def _check_auth(request: Request) -> bool:
     auth = request.app.state.auth_config
     if not auth.has_admin_key():
@@ -131,7 +140,8 @@ async def login_submit(request: Request, admin_key: str = Form("")):
         admin_key.strip(),
         max_age=COOKIE_MAX_AGE,
         httponly=True,
-        samesite="strict",
+        samesite="lax",
+        secure=_is_https(request),
     )
     return response
 

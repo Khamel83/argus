@@ -604,17 +604,23 @@ def doctor(as_json):
 
 
 @cli.command()
-@click.option("--host", "-h", default="127.0.0.1", help="Bind host")
-@click.option("--port", "-p", default=8000, help="Bind port")
+@click.option("--host", "-h", default=None, help="Bind host (env: ARGUS_BIND_HOST, default: 127.0.0.1)")
+@click.option("--port", "-p", default=None, type=int, help="Bind port (env: ARGUS_PORT, default: 8000)")
 @click.option("--reload", is_flag=True, help="Auto-reload on code changes")
 def serve(host, port, reload):
-    """Start the Argus API server."""
+    """Start the Argus API server.
+
+    Bind address resolves in this order: CLI flag → ARGUS_BIND_HOST env → 127.0.0.1.
+    Set ARGUS_BIND_HOST=0.0.0.0 in .env (or the environment) to expose externally.
+    """
     import os
-    os.environ.setdefault("ARGUS_HOST", host)
-    os.environ.setdefault("ARGUS_PORT", str(port))
+    bind_host = host or os.environ.get("ARGUS_BIND_HOST", "127.0.0.1")
+    bind_port = port or int(os.environ.get("ARGUS_PORT", "8000"))
+    os.environ.setdefault("ARGUS_HOST", bind_host)
+    os.environ.setdefault("ARGUS_PORT", str(bind_port))
 
     import uvicorn
-    uvicorn.run("argus.api.main:app", host=host, port=port, reload=reload)
+    uvicorn.run("argus.api.main:app", host=bind_host, port=bind_port, reload=reload)
 
 
 @cli.group()

@@ -1,0 +1,27 @@
+# Argus reverse proxy — automatic HTTPS via Let's Encrypt.
+#
+# Usage:
+#   1. Set ARGUS_DOMAIN and ACME_EMAIL in .env
+#   2. docker compose --profile proxy up -d
+#      OR: caddy run --config Caddyfile (if running Argus directly, not in Docker)
+#
+# Cloudflare users:
+#   - SSL/TLS mode must be "Full" or "Full (strict)" in the Cloudflare dashboard.
+#   - "Full (strict)" requires a Cloudflare Origin Certificate installed on the machine
+#     (free, valid 15 years). Caddy's Let's Encrypt cert also works for "Full (strict)".
+#   - Caddy automatically renews the Let's Encrypt cert every 60 days.
+#
+# Non-Docker (Argus runs as a systemd service on port 8005):
+#   Replace argus:8000 below with localhost:8005 (or whatever ARGUS_PORT is set to).
+
+{
+    email {$ACME_EMAIL}
+}
+
+{$ARGUS_DOMAIN} {
+    # Forward real client IP from Cloudflare header.
+    # Remove this block if you are not behind Cloudflare.
+    header_up X-Real-IP {header.CF-Connecting-IP}
+
+    reverse_proxy argus:8000
+}
