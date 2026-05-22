@@ -16,13 +16,18 @@ class SearchCache:
         self._store: dict[str, tuple[SearchResponse, float]] = {}
         self._ttl = ttl_hours * 3600
 
-    def _key(self, query: str, mode: SearchMode) -> str:
+    def _key(self, query: str, mode: SearchMode, include_attribution: bool = False) -> str:
         normalized = query.strip().lower()
-        raw = f"{normalized}:{mode.value}"
+        raw = f"{normalized}:{mode.value}:attribution={include_attribution}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
-    def get(self, query: str, mode: SearchMode) -> Optional[SearchResponse]:
-        key = self._key(query, mode)
+    def get(
+        self,
+        query: str,
+        mode: SearchMode,
+        include_attribution: bool = False,
+    ) -> Optional[SearchResponse]:
+        key = self._key(query, mode, include_attribution=include_attribution)
         if key in self._store:
             response, ts = self._store[key]
             if time.time() - ts < self._ttl:
@@ -30,8 +35,14 @@ class SearchCache:
             del self._store[key]
         return None
 
-    def put(self, query: str, mode: SearchMode, response: SearchResponse) -> None:
-        key = self._key(query, mode)
+    def put(
+        self,
+        query: str,
+        mode: SearchMode,
+        response: SearchResponse,
+        include_attribution: bool = False,
+    ) -> None:
+        key = self._key(query, mode, include_attribution=include_attribution)
         self._store[key] = (response, time.time())
 
     def clear(self) -> None:

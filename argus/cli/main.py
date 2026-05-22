@@ -145,7 +145,13 @@ def search(query, mode, max_results, providers, as_json, session, attribution):
     q = SearchQuery(query=query, mode=SearchMode(mode), max_results=max_results, providers=override)
 
     if session:
-        resp, sid = _run(broker.search_with_session(q, session_id=session))
+        resp, sid = _run(
+            broker.search_with_session(
+                q,
+                session_id=session,
+                compute_attribution=attribution,
+            )
+        )
         session_id = sid
     else:
         resp = _run(broker.search(q, compute_attribution=attribution))

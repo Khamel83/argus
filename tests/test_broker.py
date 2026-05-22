@@ -262,6 +262,28 @@ class TestCache:
         assert cache.get("test", SearchMode.DISCOVERY) is r1
         assert cache.get("test", SearchMode.GROUNDING) is r2
 
+    def test_attribution_variants_separate(self):
+        from argus.broker.cache import SearchCache
+        from argus.models import SearchResponse
+
+        cache = SearchCache()
+        plain = SearchResponse(query="test", mode=SearchMode.DISCOVERY, results=[])
+        attributed = SearchResponse(query="test", mode=SearchMode.DISCOVERY, results=[])
+
+        cache.put("test", SearchMode.DISCOVERY, plain)
+        cache.put(
+            "test",
+            SearchMode.DISCOVERY,
+            attributed,
+            include_attribution=True,
+        )
+
+        assert cache.get("test", SearchMode.DISCOVERY) is plain
+        assert (
+            cache.get("test", SearchMode.DISCOVERY, include_attribution=True)
+            is attributed
+        )
+
     def test_case_insensitive(self):
         from argus.broker.cache import SearchCache
         from argus.models import SearchResponse
@@ -873,3 +895,40 @@ class TestRouter:
 
         assert response.total_results == 1
         assert response.results[0].url == "https://example.com"
+
+    @pytest.mark.asyncio
+    async def test_session_search_can_compute_attribution(self, monkeypatch):
+        from argus.broker.router import SearchBroker
+
+        monkeypatch.setattr(
+            "argus.persistence.db.persist_search",
+            lambda query_text, mode, response: "run-id",
+        )
+
+        primary = StubProvider(
+            name=ProviderName.SEARXNG,
+            results=[
+                SearchResult(
+                    url="https://example.com",
+                    title="Result",
+                    snippet="ok",
+                    provider=ProviderName.SEARXNG,
+                )
+            ],
+        )
+        broker = SearchBroker(providers={ProviderName.SEARXNG: primary})
+
+        response, sid = await broker.search_with_session(
+            SearchQuery(
+                query="session attribution",
+                mode=SearchMode.DISCOVERY,
+                providers=[ProviderName.SEARXNG],
+            ),
+            session_id="attr-session",
+            compute_attribution=True,
+        )
+
+        assert sid == "attr-session"
+        assert response.results[0].score_attribution == {
+            ProviderName.SEARXNG.value: response.results[0].score
+        }

@@ -19,6 +19,7 @@ class SearchRequest(BaseModel):
     max_results: int = Field(10, ge=1, le=50, description="Maximum results to return")
     providers: Optional[List[str]] = Field(None, description="Override provider routing order")
     session_id: Optional[str] = Field(None, description="Session ID for multi-turn context")
+    include_attribution: bool = Field(False, description="Include per-provider score attribution")
 
     @field_validator("query")
     @classmethod
@@ -57,6 +58,7 @@ class SearchResultSchema(BaseModel):
     score: float = 0.0
     egress: Optional[str] = None
     machine: Optional[str] = None
+    score_attribution: dict[str, float] = Field(default_factory=dict)
 
 
 class ProviderTraceSchema(BaseModel):
