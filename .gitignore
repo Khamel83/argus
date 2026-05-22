@@ -19,6 +19,8 @@ venv/
 
 # Testing
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
 .coverage
 htmlcov/
 
@@ -51,3 +53,4 @@ CLAUDE.local.md
 docs/sessions/
 docs/LLM-OVERVIEW.md
 .mcpregistry_*
+.sweep-notes.md
