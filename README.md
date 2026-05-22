@@ -355,6 +355,7 @@ layer and set `ARGUS_ROOT_PATH` to the public prefix.
 ```bash
 argus search -q "python web framework"              # zero-config, uses DuckDuckGo
 argus search -q "python web framework" --mode research -n 20
+argus search -q "python web framework" --free        # free providers only (no paid API calls)
 argus search -q "python web framework" --attribution # show per-provider score attribution
 argus search -q "fastapi" --session my-session       # multi-turn context
 argus extract -u "https://example.com/article"       # extract clean text
@@ -466,8 +467,7 @@ Available tools:
 - Local `stdio`: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `cookie_health`, `valyu_answer`
 - Remote HTTP MCP: `search_web`, `extract_content`, `recover_url`, `expand_links`, `valyu_answer`; authenticated remote servers also expose `search_health`, `search_budgets`, `test_provider`, and `cookie_health`
 
-`search_web` accepts `include_attribution=true` to include per-provider score
-attribution in the Markdown response.
+`search_web` accepts `free_only=true` to restrict results to free (tier-0) providers only, and `include_attribution=true` to include per-provider score attribution in the Markdown response.
 
 ### Python
 

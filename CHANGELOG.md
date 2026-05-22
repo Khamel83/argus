@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`free_only` mode** — `SearchQuery.free_only=True` constrains a search to tier-0 (free) providers only: SearXNG, DuckDuckGo, Yahoo, GitHub, WolframAlpha. Paid providers are skipped before budget or health checks. Exposed as `--free` on the CLI and as `free_only: bool = False` on the MCP `search_web` tool.
+
+### Fixed
+- **Dashboard "Attempted" column** — Provider activity now excludes `status='skipped'` rows from the count. Providers that were only ever skipped (e.g. Yahoo when free results satisfy the query) no longer appear in the table at all. The column is renamed "Calls" → "Attempted" to reflect what the number means.
+
 ## [1.6.2] - 2026-05-22
 
 ### Added
