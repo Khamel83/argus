@@ -11,6 +11,7 @@ of the project's "trust local" defaults).
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, Form, Request
@@ -26,6 +27,11 @@ router = APIRouter()
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+
+# When Argus is served under a subpath (e.g. /argus/ via nginx), set
+# ARGUS_ROOT_PATH=/argus so that template links and redirects resolve correctly.
+ROOT_PATH = os.environ.get("ARGUS_ROOT_PATH", "").rstrip("/")
+templates.env.globals["root_path"] = ROOT_PATH
 
 COOKIE_NAME = "argus_dash"
 COOKIE_MAX_AGE = 86400  # 1 day
@@ -134,7 +140,7 @@ async def login_submit(request: Request, admin_key: str = Form("")):
             {"error": "Invalid admin key."},
             status_code=401,
         )
-    response = RedirectResponse("/dashboard", status_code=303)
+    response = RedirectResponse(f"{ROOT_PATH}/dashboard", status_code=303)
     response.set_cookie(
         COOKIE_NAME,
         admin_key.strip(),
@@ -148,7 +154,7 @@ async def login_submit(request: Request, admin_key: str = Form("")):
 
 @router.get("/dashboard/logout")
 async def logout(request: Request):
-    response = RedirectResponse("/dashboard/login", status_code=303)
+    response = RedirectResponse(f"{ROOT_PATH}/dashboard/login", status_code=303)
     response.delete_cookie(COOKIE_NAME)
     return response
 
@@ -156,7 +162,7 @@ async def logout(request: Request):
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     if not _check_auth(request):
-        return RedirectResponse("/dashboard/login", status_code=303)
+        return RedirectResponse(f"{ROOT_PATH}/dashboard/login", status_code=303)
 
     broker = _get_broker(request)
     budget_state = _build_budget_state(broker)
