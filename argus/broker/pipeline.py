@@ -30,8 +30,8 @@ class SearchResultPipeline:
         cached.cached = True
         return cached
 
-    def build_response(self, query: SearchQuery, provider_results: dict, traces: list, budget_warnings: list | None = None) -> SearchResponse:
-        merged = reciprocal_rank_fusion(provider_results)
+    def build_response(self, query: SearchQuery, provider_results: dict, traces: list, budget_warnings: list | None = None, compute_attribution: bool = False) -> SearchResponse:
+        merged = reciprocal_rank_fusion(provider_results, compute_attribution=compute_attribution)
         final_results = dedupe_results(merged)[: query.max_results]
         response = SearchResponse(
             query=query.query,

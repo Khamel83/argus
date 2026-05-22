@@ -126,8 +126,9 @@ def paths(as_json):
 @click.option("--max-results", "-n", default=10, help="Max results")
 @click.option("--providers", "-p", multiple=False, help="Override providers (comma-separated)")
 @click.option("--session", "-s", default=None, help="Session ID for multi-turn context")
+@click.option("--attribution", is_flag=True, help="Show per-provider Shapley attribution for each result's score")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def search(query, mode, max_results, providers, as_json, session):
+def search(query, mode, max_results, providers, as_json, session, attribution):
     """Execute a search query.
 
     Modes:
@@ -147,7 +148,7 @@ def search(query, mode, max_results, providers, as_json, session):
         resp, sid = _run(broker.search_with_session(q, session_id=session))
         session_id = sid
     else:
-        resp = _run(broker.search(q))
+        resp = _run(broker.search(q, compute_attribution=attribution))
         session_id = None
 
     if as_json:
@@ -161,6 +162,7 @@ def search(query, mode, max_results, providers, as_json, session):
                     "snippet": r.snippet,
                     "provider": r.provider.value if r.provider else None,
                     "score": r.score,
+                    "score_attribution": r.score_attribution if attribution else None,
                     "egress": r.metadata.get("egress") if r.metadata else None,
                     "machine": r.metadata.get("machine") if r.metadata else None,
                 }
@@ -186,6 +188,12 @@ def search(query, mode, max_results, providers, as_json, session):
             click.echo(f"     {r.url}")
             if r.snippet:
                 click.echo(f"     {r.snippet[:120]}")
+            if attribution and r.score_attribution:
+                parts = "  ".join(
+                    f"{p}: {v:.4f}"
+                    for p, v in sorted(r.score_attribution.items(), key=lambda x: -x[1])
+                )
+                click.echo(f"     score: {r.score:.4f}  [{parts}]")
             click.echo()
 
         if resp.traces:

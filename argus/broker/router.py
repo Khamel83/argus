@@ -78,7 +78,7 @@ class SearchBroker:
     def budget_tracker(self) -> BudgetTracker:
         return self._budgets
 
-    async def search(self, query: SearchQuery) -> SearchResponse:
+    async def search(self, query: SearchQuery, compute_attribution: bool = False) -> SearchResponse:
         cache_run_id = os.urandom(8).hex()
         cached = self._pipeline.get_cached(query, cache_run_id)
         if cached is not None:
@@ -100,6 +100,7 @@ class SearchBroker:
             outcome.provider_results,
             outcome.traces,
             budget_warnings=outcome.budget_pace_warnings,
+            compute_attribution=compute_attribution,
         )
 
         logger.info(

@@ -67,6 +67,10 @@ class SearchResult:
     score: float = 0.0
     raw_rank: int = 0
     metadata: Dict[str, Any] = field(default_factory=dict)
+    # Per-provider Shapley attribution for this result's RRF score.
+    # Keys are provider names; values sum to self.score.
+    # Populated only when attribution is requested.
+    score_attribution: Dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
