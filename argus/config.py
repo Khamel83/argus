@@ -27,6 +27,13 @@ class ProviderConfig:
 
 
 @dataclass(frozen=True)
+class EgressNode:
+    name: str  # "oci-dev", "macmini"
+    url: str  # "http://100.126.13.70:8273"
+    shared_secret: str  # shared across all nodes
+
+
+@dataclass(frozen=True)
 class NodeConfig:
     role: str = "primary"  # primary|worker|caller|dev
     egress_type: str = "unknown"  # residential|datacenter|unknown
@@ -36,7 +43,6 @@ class NodeConfig:
 
 @dataclass(frozen=True)
 class ResidentialConfig:
-    endpoints: list[str] = field(default_factory=list)
     shared_secret: str = ""
     timeout_seconds: int = 30
     allowed_cidrs: list[str] = field(default_factory=lambda: [
@@ -74,6 +80,7 @@ class ArgusConfig:
     firecrawl: ProviderConfig = field(default_factory=ProviderConfig)
     node: NodeConfig = field(default_factory=NodeConfig)
     residential: ResidentialConfig = field(default_factory=ResidentialConfig)
+    egress_nodes: list[EgressNode] = field(default_factory=list)
     host: str = "127.0.0.1"
     port: int = 8000
     allow_mcp: bool = False
@@ -213,10 +220,6 @@ class EnvironmentConfigLoader:
         )
 
     def load(self) -> ArgusConfig:
-        res_endpoints_raw = self.get_str("ARGUS_RESIDENTIAL_ENDPOINTS")
-        legacy_res_url = self.get_str("ARGUS_RESIDENTIAL_EXTRACTOR_URL")
-        res_endpoints = [u.strip() for u in res_endpoints_raw.split(",") if u.strip()] if res_endpoints_raw else ([legacy_res_url] if legacy_res_url else [])
-
         res_allowed_cidrs_raw = self.get_str(
             "ARGUS_RESIDENTIAL_ALLOWED_CIDRS",
             "127.0.0.1/32,::1/128,100.64.0.0/10,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
@@ -226,6 +229,22 @@ class EnvironmentConfigLoader:
         from argus.corpus.paths import resolve_data_root
         data_root = resolve_data_root()
         default_db = f"sqlite:///{data_root}/argus.db"
+
+        # Parse ARGUS_EGRESS_NODES=name:url,name:url
+        _egress_secret = self.get_str("ARGUS_EGRESS_SHARED_SECRET")
+        _egress_nodes_raw = self.get_str("ARGUS_EGRESS_NODES", "")
+        _egress_nodes: list[EgressNode] = []
+        for entry in _egress_nodes_raw.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            parts = entry.split(":", 1)
+            if len(parts) == 2:
+                _egress_nodes.append(EgressNode(
+                    name=parts[0].strip(),
+                    url=parts[1].strip(),
+                    shared_secret=_egress_secret,
+                ))
 
         return ArgusConfig(
             env=self.get_str("ARGUS_ENV", "development"),
@@ -294,7 +313,6 @@ class EnvironmentConfigLoader:
                 trusted_tailnet=self.get_bool("ARGUS_TRUSTED_TAILNET", False),
             ),
             residential=ResidentialConfig(
-                endpoints=res_endpoints,
                 shared_secret=self.get_str("ARGUS_RESIDENTIAL_SHARED_SECRET"),
                 timeout_seconds=self.get_int("ARGUS_RESIDENTIAL_TIMEOUT_SECONDS", 30),
                 allowed_cidrs=res_allowed_cidrs,
@@ -306,6 +324,7 @@ class EnvironmentConfigLoader:
             allow_web_ui=self.get_bool("ARGUS_ALLOW_WEB_UI"),
             log_full_results=self.get_bool("ARGUS_LOG_FULL_RESULTS"),
             log_provider_payloads=self.get_bool("ARGUS_LOG_PROVIDER_PAYLOADS"),
+            egress_nodes=_egress_nodes,
         )
 
 

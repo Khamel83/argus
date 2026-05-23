@@ -54,6 +54,7 @@ class SearchQuery:
     max_results: int = 10
     providers: Optional[List[ProviderName]] = None  # override routing policy
     free_only: bool = False
+    caller: str = ""  # e.g. "media_rename", "atlas", "mcp", "cli", ""
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -84,6 +85,7 @@ class ProviderTrace:
     error: Optional[str] = None
     budget_remaining: Optional[float] = None
     credit_info: Optional[dict] = None  # raw credit/rate-limit data from provider
+    egress: str = "local"  # "local" | egress node name e.g. "oci-dev"
 
 
 @dataclass

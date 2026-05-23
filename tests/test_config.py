@@ -99,6 +99,40 @@ class TestModels:
         assert resp.cached is False
 
 
+class TestEgressNodes:
+    def test_egress_node_parsed_from_env(self, monkeypatch):
+        monkeypatch.setenv("ARGUS_EGRESS_NODES", "oci-dev:http://100.1.2.3:8273")
+        monkeypatch.setenv("ARGUS_EGRESS_SHARED_SECRET", "mysecret")
+        from argus.config import load_config
+        cfg = load_config()
+        assert len(cfg.egress_nodes) == 1
+        assert cfg.egress_nodes[0].name == "oci-dev"
+        assert cfg.egress_nodes[0].url == "http://100.1.2.3:8273"
+        assert cfg.egress_nodes[0].shared_secret == "mysecret"
+
+    def test_egress_nodes_multiple(self, monkeypatch):
+        monkeypatch.setenv(
+            "ARGUS_EGRESS_NODES",
+            "oci-dev:http://100.1.2.3:8273,macmini:http://100.4.5.6:8273"
+        )
+        monkeypatch.setenv("ARGUS_EGRESS_SHARED_SECRET", "s")
+        from argus.config import load_config
+        cfg = load_config()
+        assert len(cfg.egress_nodes) == 2
+        assert cfg.egress_nodes[1].name == "macmini"
+
+    def test_egress_nodes_empty_by_default(self):
+        from argus.config import ArgusConfig
+        cfg = ArgusConfig()
+        assert cfg.egress_nodes == []
+
+    def test_residential_config_has_no_endpoints(self):
+        from argus.config import ResidentialConfig
+        import dataclasses
+        field_names = {f.name for f in dataclasses.fields(ResidentialConfig)}
+        assert "endpoints" not in field_names
+
+
 class TestLogging:
     def test_setup_logging(self):
         from argus.logging import setup_logging, get_logger
