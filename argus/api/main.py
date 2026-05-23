@@ -43,8 +43,7 @@ def _build_rate_limiter() -> RateLimiter:
 
 def _build_broker_provider(
     broker: Optional[SearchBroker],
-    broker_factory: Optional[Callable[[], SearchBroker]],
-    broker_initialized: Optional[asyncio.Event] = None,
+    broker_factory: Optional[Callable[[], SearchBroker]] = None,
 ) -> Callable[[], SearchBroker]:
     current = broker
     factory = broker_factory or create_broker
@@ -53,8 +52,6 @@ def _build_broker_provider(
         nonlocal current
         if current is None:
             current = factory()
-            if broker_initialized is not None:
-                broker_initialized.set()
         return current
 
     return get_broker
@@ -82,18 +79,16 @@ def create_app(
 ) -> FastAPI:
     auth_config = AuthConfig.from_env()
 
-    # Broker singleton with event signaling for probe startup
-    broker_initialized = asyncio.Event()
-
     @asynccontextmanager
     async def lifespan_with_probes(app: FastAPI):
-        # Background probe task — started once broker is first initialized
+        # Initialize broker in lifespan startup (not lazily on first request)
+        b = app.state.get_broker()
+
+        # Background probe task — runs immediately on startup, then every 30 min
         probe_task: asyncio.Task | None = None
 
-        async def _run_probes_once_initialized() -> None:
-            """Wait for broker to be initialized, then run probes every 30 min."""
-            await broker_initialized.wait()  # wait until first broker access
-            b = app.state.get_broker()
+        async def _run_probes_background() -> None:
+            """Run probes every 30 min, starting immediately."""
             from argus.config import get_config
             cfg = get_config()
             while True:
@@ -106,7 +101,7 @@ def create_app(
                     logger.warning("Reachability probe failed: %s", exc)
                 await asyncio.sleep(30 * 60)
 
-        probe_task = asyncio.create_task(_run_probes_once_initialized())
+        probe_task = asyncio.create_task(_run_probes_background())
 
         yield
 
@@ -119,7 +114,6 @@ def create_app(
                 pass
 
         try:
-            b = app.state.get_broker()
             b.budget_tracker.close()
         except Exception as exc:
             logger.warning("Failed to close broker budget tracker: %s", exc)
@@ -132,7 +126,7 @@ def create_app(
     )
 
     # Broker singleton
-    app.state.get_broker = _build_broker_provider(broker, broker_factory, broker_initialized)
+    app.state.get_broker = _build_broker_provider(broker, broker_factory)
     app.state.get_workflows = _build_workflow_provider(app.state.get_broker)
     app.state.rate_limiter = rate_limiter or _build_rate_limiter()
     app.state.auth_config = auth_config
