@@ -188,13 +188,46 @@ ARGUS_EGRESS_SHARED_SECRET=<new secret, add to vault>
 
 ---
 
+## Per-Caller Attribution
+
+Multiple projects call argus (media_rename, atlas, future callers). The dashboard should show one level below machine: which project is responsible for which searches, provider usage, and costs.
+
+### How it flows
+
+`SearchQuery` gets an optional `caller` field:
+
+```python
+@dataclass
+class SearchQuery:
+    ...
+    caller: str = ""   # e.g. "media_rename", "atlas", "mcp", "cli"
+```
+
+Callers set this at the call site:
+- CLI: `--caller` option (defaults to `"cli"`)
+- MCP tool: hardcoded `"mcp"` in `search_web`
+- HTTP API: `caller` field in `SearchRequest` (optional, default `""`)
+- Homelab `argus.py`: passes `"media_rename"`
+
+### How it persists
+
+`caller` is written to the provider call log row in SQLite alongside `provider`, `status`, `created_at`. No schema migration needed if the column is added as `TEXT DEFAULT ''`.
+
+### Dashboard surface
+
+The existing provider activity table gains a **Callers** column showing which projects drove calls to each provider. A secondary breakdown view (expandable or separate fragment) shows per-caller: total attempted, success rate, estimated cost.
+
+The secrets flow is unchanged — `caller` is not sensitive, it's just a string label the client self-reports. Callers can lie, but there's no threat model here; this is internal observability only.
+
+---
+
 ## What Does NOT Change
 
 - All provider implementations (`yahoo.py`, `duckduckgo.py`, etc.)
-- Budget and health tracking logic
-- HTTP API, MCP server, dashboard
+- Budget and health tracking logic (extended with `caller` column, not replaced)
+- HTTP API, MCP server, dashboard structure
 - `free_only` flag semantics
-- `SearchQuery`, `SearchResult`, `ProviderTrace` models
+- `ProviderTrace` and `SearchResult` models (only `SearchQuery` gains `caller`)
 - Test suite structure (worker server gets its own test file)
 
 ---
