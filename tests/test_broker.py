@@ -876,7 +876,7 @@ class TestRouter:
 
         monkeypatch.setattr(
             "argus.persistence.db.persist_search",
-            lambda query_text, mode, response: (_ for _ in ()).throw(RuntimeError("persist failed")),
+            lambda query, response: (_ for _ in ()).throw(RuntimeError("persist failed")),
         )
 
         primary = StubProvider(
@@ -902,7 +902,7 @@ class TestRouter:
 
         monkeypatch.setattr(
             "argus.persistence.db.persist_search",
-            lambda query_text, mode, response: "run-id",
+            lambda query, response: "run-id",
         )
 
         primary = StubProvider(
