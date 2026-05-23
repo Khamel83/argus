@@ -631,6 +631,24 @@ def serve(host, port, reload):
     uvicorn.run("argus.api.main:app", host=bind_host, port=bind_port, reload=reload)
 
 
+@cli.command()
+@click.option("--bind", default=None, envvar="ARGUS_WORKER_BIND",
+              help="Host:port to bind (default 0.0.0.0:8273)")
+def worker(bind: str):
+    """Start an Argus egress worker — minimal provider executor over HTTP."""
+    import uvicorn
+    from argus.worker.server import create_worker_app
+
+    host, port = "0.0.0.0", 8273
+    if bind:
+        parts = bind.rsplit(":", 1)
+        if len(parts) == 2:
+            host, port = parts[0], int(parts[1])
+
+    app = create_worker_app()
+    uvicorn.run(app, host=host, port=port)
+
+
 @cli.group()
 def mcp():
     """Configure and run the Argus MCP server."""
