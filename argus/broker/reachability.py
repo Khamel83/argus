@@ -1,10 +1,15 @@
 """Provider reachability matrix — tracks which egress can reach which provider."""
 
-import time
+from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+import time
 
 from argus.models import ProviderName
+
+if TYPE_CHECKING:
+    from argus.providers.base import BaseProvider
+    from argus.config import EgressNode
 
 
 @dataclass
@@ -81,3 +86,41 @@ class ReachabilityMatrix:
                 },
             }
         return result
+
+    async def probe_all(
+        self,
+        local_providers: "dict[ProviderName, BaseProvider]",
+        egress_nodes: "list[EgressNode]",
+    ) -> None:
+        """Probe all tier-0 providers locally and through each egress node."""
+        from argus.broker.budgets import PROVIDER_TIERS
+        from argus.models import SearchMode, SearchQuery
+        from argus.broker.remote_provider import RemoteProviderClient
+
+        tier_0 = [p for p, t in PROVIDER_TIERS.items() if t == 0]
+        probe_query = SearchQuery(
+            query="argus probe", mode=SearchMode.DISCOVERY, max_results=1
+        )
+
+        for pname in tier_0:
+            # Probe local
+            provider = local_providers.get(pname)
+            if provider is not None and provider.is_available():
+                try:
+                    _, trace = await provider.search(probe_query)
+                    reachable = trace.status == "success"
+                    self.update_probe("local", pname, reachable=reachable,
+                                      latency_ms=trace.latency_ms)
+                except Exception:
+                    self.update_probe("local", pname, reachable=False, latency_ms=0)
+
+            # Probe each remote node
+            for node in egress_nodes:
+                try:
+                    remote = RemoteProviderClient(pname, node)
+                    _, trace = await remote.search(probe_query)
+                    reachable = trace.status == "success"
+                    self.update_probe(node.name, pname, reachable=reachable,
+                                      latency_ms=trace.latency_ms)
+                except Exception:
+                    self.update_probe(node.name, pname, reachable=False, latency_ms=0)
