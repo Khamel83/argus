@@ -21,6 +21,7 @@ class SearchRequest(BaseModel):
     session_id: Optional[str] = Field(None, description="Session ID for multi-turn context")
     include_attribution: bool = Field(False, description="Include per-provider score attribution")
     free_only: bool = Field(False, description="Only use free (tier-0) providers: SearXNG, DuckDuckGo, Yahoo, GitHub, WolframAlpha")
+    caller: str = Field("", description="Caller identifier for attribution (e.g. 'atlas', 'media_rename')")
 
     @field_validator("query")
     @classmethod

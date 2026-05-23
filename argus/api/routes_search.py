@@ -63,6 +63,7 @@ async def search(req: SearchRequest, broker: SearchBroker = Depends(get_broker))
         max_results=req.max_results,
         providers=[ProviderName(provider) for provider in req.providers] if req.providers else None,
         free_only=req.free_only,
+        caller=req.caller,
     )
 
     if req.session_id:

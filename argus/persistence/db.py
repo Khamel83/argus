@@ -120,13 +120,13 @@ def get_session() -> Generator[Session, None, None]:
         session.close()
 
 
-def persist_search(query_text: str, mode: str, response: SearchResponse) -> Optional[str]:
+def persist_search(query: SearchQuery, response: SearchResponse) -> Optional[str]:
     """Persist a complete search query, run, results, and traces."""
     run_id = response.search_run_id or uuid.uuid4().hex[:16]
 
     with get_session() as session:
         # Upsert query
-        q_row = SearchQueryRow(query_text=query_text, mode=mode, max_results=response.total_results)
+        q_row = SearchQueryRow(query_text=query.query, mode=query.mode.value, max_results=response.total_results)
         session.add(q_row)
         session.flush()
 
@@ -169,6 +169,8 @@ def persist_search(query_text: str, mode: str, response: SearchResponse) -> Opti
                 latency_ms=trace.latency_ms,
                 error=trace.error,
                 budget_remaining=trace.budget_remaining,
+                caller=query.caller,
+                egress=trace.egress,
             )
             session.add(usage_row)
 
@@ -181,7 +183,7 @@ class SearchPersistenceGateway:
 
     def record_completed_search(self, query: SearchQuery, response: SearchResponse) -> Optional[str]:
         try:
-            return persist_search(query.query, query.mode.value, response)
+            return persist_search(query, response)
         except Exception as exc:
             logger.warning("Failed to persist search: %s", exc)
             return None

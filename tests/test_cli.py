@@ -161,3 +161,51 @@ def test_search_without_free_flag_leaves_free_only_false(monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert seen.get("free_only") is False
+
+
+def test_search_caller_flag_sets_caller_on_query(monkeypatch):
+    from argus.cli import main as cli_main
+
+    seen = {}
+
+    def fake_create_broker():
+        class FakeBroker:
+            async def search(self, q, compute_attribution=False):
+                seen["caller"] = q.caller
+                from argus.models import SearchResponse, SearchMode
+                return SearchResponse(query=q.query, mode=q.mode, results=[])
+        return FakeBroker()
+
+    monkeypatch.setattr("argus.broker.router.create_broker", fake_create_broker)
+
+    result = CliRunner().invoke(
+        cli_main.cli,
+        ["search", "-q", "test", "--caller", "my_project"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen.get("caller") == "my_project"
+
+
+def test_search_caller_defaults_to_cli(monkeypatch):
+    from argus.cli import main as cli_main
+
+    seen = {}
+
+    def fake_create_broker():
+        class FakeBroker:
+            async def search(self, q, compute_attribution=False):
+                seen["caller"] = q.caller
+                from argus.models import SearchResponse, SearchMode
+                return SearchResponse(query=q.query, mode=q.mode, results=[])
+        return FakeBroker()
+
+    monkeypatch.setattr("argus.broker.router.create_broker", fake_create_broker)
+
+    result = CliRunner().invoke(
+        cli_main.cli,
+        ["search", "-q", "test"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen.get("caller") == "cli"
