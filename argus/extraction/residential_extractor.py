@@ -51,7 +51,7 @@ _endpoint_health = _EndpointHealth()
 
 def _is_configured() -> bool:
     config = get_config()
-    return bool(config.residential.endpoints)
+    return bool(config.egress_nodes)
 
 
 def _load_cookies_for_domain(domain: str) -> Optional[list[dict]]:
@@ -132,7 +132,8 @@ async def extract_residential(url: str, domain: str = "") -> ExtractedContent:
     cookies = _load_cookies_for_domain(domain) if domain else None
 
     last_error = "residential: all endpoints unavailable"
-    for endpoint in config.residential.endpoints:
+    for node in config.egress_nodes:
+        endpoint = node.url
         if not _endpoint_health.is_healthy(endpoint):
             logger.debug("Skipping unhealthy endpoint %s", endpoint)
             continue

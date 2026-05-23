@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
 from argus.extraction.models import ExtractorName
-from argus.config import ArgusConfig, ResidentialConfig, NodeConfig
+from argus.config import ArgusConfig, ResidentialConfig, NodeConfig, EgressNode
 
 
 def _mock_http_client(response_or_side_effect):
@@ -23,15 +23,19 @@ def _mock_http_client(response_or_side_effect):
     return mock_cls
 
 
-def _mock_config(endpoints=None, shared_secret="shared-secret", policy="fallback", role="primary", egress="unknown", env="development"):
+def _mock_config(endpoint_urls=None, shared_secret="shared-secret", policy="fallback", role="primary", egress="unknown", env="development"):
+    urls = endpoint_urls or []
     return ArgusConfig(
         env=env,
         node=NodeConfig(role=role, egress_type=egress),
         residential=ResidentialConfig(
-            endpoints=endpoints or [],
             shared_secret=shared_secret,
             policy=policy,
-        )
+        ),
+        egress_nodes=[
+            EgressNode(name=f"node{i}", url=url, shared_secret=shared_secret)
+            for i, url in enumerate(urls)
+        ],
     )
 
 
@@ -42,7 +46,7 @@ class TestResidentialExtractor:
     async def test_not_configured(self):
         from argus.extraction.residential_extractor import extract_residential
 
-        with patch("argus.extraction.residential_extractor.get_config", return_value=_mock_config(endpoints=[])):
+        with patch("argus.extraction.residential_extractor.get_config", return_value=_mock_config(endpoint_urls=[])):
             result = await extract_residential("https://example.com")
             assert result.error == "residential: not configured"
 
@@ -50,7 +54,7 @@ class TestResidentialExtractor:
     async def test_shared_secret_required(self):
         from argus.extraction.residential_extractor import extract_residential
 
-        with patch("argus.extraction.residential_extractor.get_config", return_value=_mock_config(endpoints=["http://10.0.0.1:8123"], shared_secret="")):
+        with patch("argus.extraction.residential_extractor.get_config", return_value=_mock_config(endpoint_urls=["http://10.0.0.1:8123"], shared_secret="")):
             result = await extract_residential("https://example.com")
             assert result.error == "residential: shared secret not configured"
 
@@ -69,7 +73,7 @@ class TestResidentialExtractor:
             "word_count": 15,
         }
 
-        cfg = _mock_config(endpoints=["http://10.0.0.1:8123"], shared_secret="shared-secret")
+        cfg = _mock_config(endpoint_urls=["http://10.0.0.1:8123"], shared_secret="shared-secret")
         with patch("argus.extraction.residential_extractor.get_config", return_value=cfg), \
              patch("argus.extraction.residential_extractor.httpx.AsyncClient", _mock_http_client(mock_response)):
             result = await extract_residential("https://example.com")
@@ -109,7 +113,7 @@ class TestResidentialExtractor:
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_cls.return_value = mock_client
 
-        cfg = _mock_config(endpoints=["http://10.0.0.1:8123", "http://10.0.0.2:8123"], shared_secret="shared-secret")
+        cfg = _mock_config(endpoint_urls=["http://10.0.0.1:8123", "http://10.0.0.2:8123"], shared_secret="shared-secret")
         with patch("argus.extraction.residential_extractor.get_config", return_value=cfg), \
              patch("argus.extraction.residential_extractor.httpx.AsyncClient", mock_cls):
             result = await extract_residential("https://example.com")
@@ -122,7 +126,7 @@ class TestResidentialExtractor:
 
         import httpx
 
-        cfg = _mock_config(endpoints=["http://10.0.0.1:8123"], shared_secret="shared-secret")
+        cfg = _mock_config(endpoint_urls=["http://10.0.0.1:8123"], shared_secret="shared-secret")
         with patch("argus.extraction.residential_extractor.get_config", return_value=cfg), \
              patch("argus.extraction.residential_extractor.httpx.AsyncClient", _mock_http_client(httpx.ConnectError("refused"))):
             result = await extract_residential("https://example.com")
@@ -135,7 +139,7 @@ class TestResidentialExtractor:
 
         _endpoint_health.mark_unhealthy("http://10.0.0.1:8123")
 
-        cfg = _mock_config(endpoints=["http://10.0.0.1:8123"], shared_secret="shared-secret")
+        cfg = _mock_config(endpoint_urls=["http://10.0.0.1:8123"], shared_secret="shared-secret")
         with patch("argus.extraction.residential_extractor.get_config", return_value=cfg), \
              patch("argus.extraction.residential_extractor.httpx.AsyncClient") as mock_cls:
             result = await extract_residential("https://example.com")
@@ -165,7 +169,7 @@ class TestResidentialExtractor:
         time.sleep(0.02)
         assert _endpoint_health.is_healthy("http://10.0.0.1:8123")
 
-        cfg = _mock_config(endpoints=["http://10.0.0.1:8123"], shared_secret="shared-secret")
+        cfg = _mock_config(endpoint_urls=["http://10.0.0.1:8123"], shared_secret="shared-secret")
         with patch("argus.extraction.residential_extractor.get_config", return_value=cfg), \
              patch("argus.extraction.residential_extractor.httpx.AsyncClient", _mock_http_client(mock_response)):
             result = await extract_residential("https://example.com")
@@ -188,7 +192,7 @@ class TestResidentialExtractor:
 
         mock_cookies = [{"name": "session", "value": "abc123"}]
 
-        cfg = _mock_config(endpoints=["http://10.0.0.1:8123"], shared_secret="shared-secret")
+        cfg = _mock_config(endpoint_urls=["http://10.0.0.1:8123"], shared_secret="shared-secret")
         with patch("argus.extraction.residential_extractor.get_config", return_value=cfg), \
              patch("argus.extraction.residential_extractor._load_cookies_for_domain", return_value=mock_cookies), \
              patch("argus.extraction.residential_extractor.httpx.AsyncClient") as mock_cls:
