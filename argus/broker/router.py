@@ -9,8 +9,9 @@ from argus.broker.execution import ProviderExecutor
 from argus.broker.health import HealthTracker
 from argus.broker.pipeline import SearchResultPipeline
 from argus.broker.policies import resolve_routing
+from argus.broker.reachability import ReachabilityMatrix
 from argus.broker.session_flow import SessionSearchService
-from argus.config import get_config
+from argus.config import EgressNode, get_config
 from argus.logging import get_logger
 from argus.models import ProviderName, SearchQuery, SearchResponse
 from argus.persistence.db import SearchPersistenceGateway
@@ -30,6 +31,8 @@ class SearchBroker:
         executor: Optional[ProviderExecutor] = None,
         result_pipeline: Optional[SearchResultPipeline] = None,
         session_service: Optional[SessionSearchService] = None,
+        reachability: ReachabilityMatrix | None = None,
+        egress_nodes: dict[str, EgressNode] | None = None,
     ):
         self._providers = providers
         self._cache = cache or SearchCache()
@@ -39,10 +42,14 @@ class SearchBroker:
         )
         self._config = get_config()
         self._session_store = session_store
+        self._reachability = reachability or ReachabilityMatrix()
+        self._egress_nodes = egress_nodes or {}
         self._executor = executor or ProviderExecutor(
             providers=self._providers,
             health_tracker=self._health,
             budget_tracker=self._budgets,
+            reachability=self._reachability,
+            egress_nodes=self._egress_nodes,
         )
         self._pipeline = result_pipeline or SearchResultPipeline(
             cache=self._cache,
@@ -178,6 +185,8 @@ def create_broker() -> SearchBroker:
     from argus.providers.yahoo import YahooProvider
 
     config = get_config()
+    egress_nodes = {n.name: n for n in config.egress_nodes}
+    reachability = ReachabilityMatrix()
 
     providers: dict[ProviderName, BaseProvider] = {
         ProviderName.SEARXNG: SearXNGProvider(config.searxng),
@@ -199,4 +208,9 @@ def create_broker() -> SearchBroker:
     from argus.sessions import SessionStore
 
     session_store = SessionStore()
-    return SearchBroker(providers=providers, session_store=session_store)
+    return SearchBroker(
+        providers=providers,
+        session_store=session_store,
+        reachability=reachability,
+        egress_nodes=egress_nodes,
+    )

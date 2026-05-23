@@ -5,6 +5,8 @@ from typing import Dict, List, Sequence
 
 from argus.broker.budgets import BudgetTracker, PROVIDER_TIERS
 from argus.broker.health import HealthTracker
+from argus.broker.reachability import ReachabilityMatrix
+from argus.config import EgressNode
 from argus.logging import get_logger
 from argus.models import ProviderName, ProviderTrace, SearchQuery, SearchResult
 from argus.providers.base import BaseProvider
@@ -42,10 +44,14 @@ class ProviderExecutor:
         health_tracker: HealthTracker,
         budget_tracker: BudgetTracker,
         routing_policy=None,  # kept for backward compat, not used
+        reachability: ReachabilityMatrix | None = None,
+        egress_nodes: dict[str, EgressNode] | None = None,
     ):
         self._providers = providers
         self._health = health_tracker
         self._budgets = budget_tracker
+        self._reachability = reachability or ReachabilityMatrix()
+        self._egress_nodes = egress_nodes or {}
 
     def _should_query_paid(self, provider: ProviderName, tier: int) -> tuple[bool, str]:
         """Decide whether to query a paid provider based on budget pace.
@@ -98,6 +104,35 @@ class ProviderExecutor:
                         error=f"health: {health_status.value}",
                     )
                 )
+                continue
+
+            # Reachability check — route to worker if local is blocked
+            best_egress = self._reachability.best_egress(pname)
+            if best_egress is None:
+                traces.append(ProviderTrace(
+                    provider=pname, status="skipped", error="no reachable egress"
+                ))
+                continue
+            if best_egress != "local":
+                node = self._egress_nodes.get(best_egress)
+                if node is None:
+                    traces.append(ProviderTrace(
+                        provider=pname, status="skipped",
+                        error=f"egress node {best_egress!r} not found in config"
+                    ))
+                    continue
+                from argus.broker.remote_provider import RemoteProviderClient
+                remote = RemoteProviderClient(pname, node)
+                results, trace = await remote.search(query)
+                traces.append(trace)
+                if trace.status == "success":
+                    live_providers_used += 1
+                    provider_results[pname.value] = results
+                    total_results_so_far += len(results)
+                    self._health.record_success(pname)
+                    self._budgets.record_usage(pname, _COST_ESTIMATES.get(pname, 0.0))
+                else:
+                    self._health.record_failure(pname)
                 continue
 
             tier = self._budgets.get_provider_tier(pname)

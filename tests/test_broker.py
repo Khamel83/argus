@@ -1014,3 +1014,116 @@ class TestFreeOnly:
 
         assert free_provider.calls == 1
         assert paid_provider.calls == 1
+
+
+# --- Remote egress routing ---
+
+def _make_executor(reachability=None, egress_nodes=None):
+    """Build a ProviderExecutor with mocked providers for egress routing tests."""
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.broker.budgets import BudgetTracker
+
+    mock_provider = StubProvider(
+        name=ProviderName.YAHOO,
+        results=[SearchResult(url="https://yahoo.com/r", title="R", snippet="s", provider=ProviderName.YAHOO)],
+    )
+
+    return (
+        ProviderExecutor(
+            providers={ProviderName.YAHOO: mock_provider},
+            health_tracker=HealthTracker(),
+            budget_tracker=BudgetTracker(),
+            reachability=reachability,
+            egress_nodes=egress_nodes or {},
+        ),
+        mock_provider,
+    )
+
+
+@pytest.mark.asyncio
+async def test_executor_routes_to_remote_when_local_blocked():
+    from argus.broker.reachability import ReachabilityMatrix
+    from argus.config import EgressNode
+
+    matrix = ReachabilityMatrix()
+    matrix.update_probe("local", ProviderName.YAHOO, reachable=False, latency_ms=0)
+    matrix.update_probe("oci-dev", ProviderName.YAHOO, reachable=True, latency_ms=100)
+
+    node = EgressNode(name="oci-dev", url="http://worker:8273", shared_secret="s")
+    executor, local_provider = _make_executor(
+        reachability=matrix,
+        egress_nodes={"oci-dev": node},
+    )
+
+    fake_result = SearchResult(
+        url="https://yahoo.com/r", title="R", snippet="s",
+        provider=ProviderName.YAHOO
+    )
+    fake_trace = ProviderTrace(
+        provider=ProviderName.YAHOO, status="success",
+        results_count=1, latency_ms=90, egress="oci-dev"
+    )
+
+    # Patch RemoteProviderClient to return our fake result
+    import argus.broker.remote_provider as rp_module
+    original = rp_module.RemoteProviderClient
+
+    class FakeRemote:
+        def __init__(self, *a, **kw): pass
+        async def search(self, q):
+            return [fake_result], fake_trace
+
+    rp_module.RemoteProviderClient = FakeRemote
+    try:
+        query = SearchQuery(query="test", mode=SearchMode.DISCOVERY, max_results=5)
+        outcome = await executor.execute(query, [ProviderName.YAHOO])
+    finally:
+        rp_module.RemoteProviderClient = original
+
+    assert outcome.live_providers_used == 1
+    assert "yahoo" in outcome.provider_results
+    assert local_provider.calls == 0  # local should NOT have been called
+
+
+@pytest.mark.asyncio
+async def test_executor_skips_when_no_egress_available():
+    from argus.broker.reachability import ReachabilityMatrix
+
+    matrix = ReachabilityMatrix()
+    matrix.update_probe("local", ProviderName.YAHOO, reachable=False, latency_ms=0)
+    # No workers registered at all
+
+    executor, local_provider = _make_executor(reachability=matrix, egress_nodes={})
+
+    query = SearchQuery(query="test", mode=SearchMode.DISCOVERY, max_results=5)
+    outcome = await executor.execute(query, [ProviderName.YAHOO])
+
+    assert outcome.live_providers_used == 0
+    skipped = [t for t in outcome.traces if t.status == "skipped"]
+    assert any("no reachable egress" in (t.error or "") for t in skipped)
+
+
+@pytest.mark.asyncio
+async def test_executor_uses_local_when_reachable():
+    from argus.broker.reachability import ReachabilityMatrix
+    from unittest.mock import AsyncMock
+
+    matrix = ReachabilityMatrix()
+    matrix.update_probe("local", ProviderName.YAHOO, reachable=True, latency_ms=50)
+
+    executor, local_provider = _make_executor(reachability=matrix)
+
+    fake_result = SearchResult(url="u", title="t", snippet="s", provider=ProviderName.YAHOO)
+    fake_trace = ProviderTrace(provider=ProviderName.YAHOO, status="success", results_count=1)
+
+    original_search = local_provider.search
+    async def patched_search(q):
+        local_provider.calls += 1
+        return [fake_result], fake_trace
+    local_provider.search = patched_search
+
+    query = SearchQuery(query="test", mode=SearchMode.DISCOVERY, max_results=5)
+    outcome = await executor.execute(query, [ProviderName.YAHOO])
+
+    assert local_provider.calls == 1
