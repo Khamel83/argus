@@ -169,6 +169,7 @@ async def dashboard(request: Request):
     daily = usage_queries.get_daily_query_counts(days=30)
     machines = usage_queries.get_machine_summary(days=30)
     provider_activity = usage_queries.get_provider_activity(days=7)
+    caller_activity = usage_queries.get_caller_activity(days=7)
     chart_data = _build_chart_data(daily)
 
     exhausted = [b for b in budget_state if b["status"] == "exhausted"]
@@ -184,6 +185,7 @@ async def dashboard(request: Request):
             "budget_state": budget_state,
             "machines": machines,
             "provider_activity": provider_activity,
+            "caller_activity": caller_activity,
             "chart_data_json": json.dumps(chart_data),
             "exhausted": exhausted,
             "over_pace": over_pace,

@@ -40,6 +40,20 @@ async def health_detail(broker: SearchBroker = Depends(get_broker)):
 
     health_all = broker.health_tracker.get_all_status()
 
+    reachability = broker._reachability.get_all()
+    for pname_str, entry in providers.items():
+        try:
+            pname = ProviderName(pname_str)
+            r = reachability.get(pname)
+            if r:
+                entry["best_egress"] = r["best"]
+                entry["egress_probes"] = r["probes"]
+            else:
+                entry["best_egress"] = "local"
+                entry["egress_probes"] = {}
+        except ValueError:
+            pass
+
     return {
         "status": "ok",
         "providers": providers,

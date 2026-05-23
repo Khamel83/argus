@@ -130,3 +130,37 @@ def get_provider_activity(days: int = 7) -> list[dict[str, Any]]:
         return []
     finally:
         conn.close()
+
+
+def get_caller_activity(days: int = 7) -> list[dict[str, Any]]:
+    """Return per-caller call counts and success rate."""
+    conn = _connect()
+    if conn is None:
+        return []
+    try:
+        cur = conn.execute(
+            """
+            SELECT COALESCE(NULLIF(caller, ''), 'unknown') AS caller,
+                   COUNT(*) AS attempted,
+                   SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successes
+            FROM provider_usage
+            WHERE created_at >= datetime('now', ?)
+              AND status != 'skipped'
+            GROUP BY caller
+            ORDER BY attempted DESC
+            """,
+            (f"-{int(days)} days",),
+        )
+        rows = []
+        for row in cur.fetchall():
+            d = dict(row)
+            attempted = d.get("attempted") or 0
+            successes = d.get("successes") or 0
+            d["success_rate"] = round(100.0 * successes / attempted, 1) if attempted else 0.0
+            rows.append(d)
+        return rows
+    except sqlite3.Error as exc:
+        logger.warning("usage: caller_activity failed: %s", exc)
+        return []
+    finally:
+        conn.close()
