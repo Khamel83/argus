@@ -86,6 +86,8 @@ class ProviderUsageRow(Base):
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     budget_remaining: Mapped[float | None] = mapped_column(Float, nullable=True)
+    caller: Mapped[str] = mapped_column(String(100), nullable=False, server_default="")
+    egress: Mapped[str] = mapped_column(String(50), nullable=False, server_default="local")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     run: Mapped["SearchRunRow"] = relationship(back_populates="traces")

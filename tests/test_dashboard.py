@@ -240,3 +240,12 @@ def test_open_access_when_no_admin_key_configured():
     resp = client.get("/dashboard")
     assert resp.status_code == 200
     assert "Provider budgets" in resp.text
+
+
+def test_provider_usage_row_has_caller_and_egress():
+    from argus.persistence.models import ProviderUsageRow
+    from sqlalchemy import inspect as sql_inspect
+    mapper = sql_inspect(ProviderUsageRow)
+    column_names = {c.name for c in mapper.columns}
+    assert "caller" in column_names
+    assert "egress" in column_names

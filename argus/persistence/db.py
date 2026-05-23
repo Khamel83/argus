@@ -73,6 +73,10 @@ def _ensure_schema_compat(engine) -> None:
             "machine": "VARCHAR(100)",
             "metadata_json": "TEXT",
         },
+        "provider_usage": {
+            "caller": "VARCHAR(100) NOT NULL DEFAULT ''",
+            "egress": "VARCHAR(50) NOT NULL DEFAULT 'local'",
+        },
     }
 
     with engine.begin() as conn:
