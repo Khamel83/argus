@@ -33,6 +33,7 @@ PAYWALL_DOMAINS = {
     "espn.com",
     "latimes.com",
     "chicagotribune.com",
+    "google.com", "gemini.google.com",
 }
 
 # Track last request time per domain for rate limiting
