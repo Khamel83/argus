@@ -560,6 +560,8 @@ query arrives → cache? → build provider queue → execute sequentially → R
 
 All config via environment variables. See `.env.example` for the full list. Limited API-key providers are opt-in: set both the API key and `ARGUS_<PROVIDER>_ENABLED=true`. Missing keys degrade gracefully — providers are skipped, not errors.
 
+When running from the repo, Argus now auto-loads `.env` and `.env.local` (without overriding already-exported environment variables). Disable this behavior with `ARGUS_AUTOLOAD_DOTENV=false`.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ARGUS_NODE_ROLE` | `primary` | `primary`, `worker`, `caller`, or `dev` |
@@ -588,6 +590,7 @@ All config via environment variables. See `.env.example` for the full list. Limi
 | `ARGUS_CACHE_TTL_HOURS` | 168 | Result cache TTL |
 | `ARGUS_BIND_HOST` | `127.0.0.1` | Host used by `argus serve` unless `--host` is passed |
 | `ARGUS_PORT` | `8000` | Port used by `argus serve` unless `--port` is passed |
+| `ARGUS_AUTOLOAD_DOTENV` | `true` | Auto-load `.env` / `.env.local` from cwd and repo root for CLI/API/MCP processes |
 | `ARGUS_API_KEY` | — | Required for non-local HTTP API and remote MCP callers |
 | `ARGUS_ADMIN_API_KEY` | — | Enables dashboard login and admin API authentication |
 | `ARGUS_ROOT_PATH` | — | Public subpath prefix for dashboard links and redirects, e.g. `/argus` |

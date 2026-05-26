@@ -5,9 +5,61 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Mapping, Optional
 
 _log = logging.getLogger("argus.config")
+
+
+def _load_dotenv_file(path: Path) -> None:
+    """Load KEY=VALUE pairs from a dotenv file into process env without overriding existing values."""
+    if not path.exists() or not path.is_file():
+        return
+
+    try:
+        for raw_line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if not key or key in os.environ:
+                continue
+            value = value.strip().strip("'").strip('"')
+            os.environ[key] = value
+    except Exception:
+        # Best effort only; config can still be sourced from exported env/secrets.
+        return
+
+
+def _autoload_dotenv() -> None:
+    """Best-effort dotenv loading for local developer UX.
+
+    Order: repo/project .env, then .env.local in current working directory.
+    Existing exported environment variables always win.
+    Set ARGUS_AUTOLOAD_DOTENV=false to disable.
+    """
+    if os.environ.get("ARGUS_AUTOLOAD_DOTENV", "true").lower() in {"0", "false", "no"}:
+        return
+
+    candidates: list[Path] = []
+    cwd = Path.cwd()
+    candidates.extend([cwd / ".env", cwd / ".env.local"])
+
+    # If running from an installed package within the repo checkout, include repo root.
+    repo_root = Path(__file__).resolve().parents[1]
+    candidates.extend([repo_root / ".env", repo_root / ".env.local"])
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        _load_dotenv_file(resolved)
+
+
+_autoload_dotenv()
 
 
 @dataclass(frozen=True)
