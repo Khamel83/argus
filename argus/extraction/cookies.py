@@ -195,6 +195,7 @@ def load_editthiscookie_json(path: Path) -> list[dict]:
         raw_cookies = raw_cookies.get("cookies", [raw_cookies])
 
     sanitized = []
+    expired_count = 0
     for cookie in raw_cookies:
         # Skip cookies without essential fields
         if not cookie.get("name") or not cookie.get("value"):
@@ -218,12 +219,22 @@ def load_editthiscookie_json(path: Path) -> list[dict]:
             if ss in ("Strict", "Lax", "None", "no_restriction", "unspecified"):
                 c["sameSite"] = "None" if ss == "no_restriction" else ("Lax" if ss == "unspecified" else ss)
         if cookie.get("expirationDate"):
-            # Only set expires if it's in the future
             exp = cookie["expirationDate"]
             if exp > time.time():
                 c["expires"] = exp
+            else:
+                expired_count += 1
+                continue
 
         sanitized.append(c)
 
-    logger.info("Loaded %d cookies from %s", len(sanitized), path.name)
+    if expired_count:
+        logger.warning(
+            "Filtered %d expired cookies from %s (%d remaining)",
+            expired_count, path.name, len(sanitized),
+        )
+    if not sanitized:
+        logger.warning("No valid (non-expired) cookies in %s", path.name)
+    else:
+        logger.info("Loaded %d cookies from %s", len(sanitized), path.name)
     return sanitized
