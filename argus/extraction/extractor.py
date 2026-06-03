@@ -238,9 +238,11 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
     extractors_tried = []
     best_result = None  # Keep the best (longest) result even if quality fails
 
-    def track_attempt(name: str, result: ExtractedContent):
+    def track_attempt(name: str, result: ExtractedContent | None):
         """Track which extractors were tried and keep the best result."""
         extractors_tried.append(name)
+        if result is None:
+            return
         _populate_provenance(result)
         nonlocal best_result
         if result.text and result.word_count > 0:
@@ -305,7 +307,7 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
                         _cache.put(url, result)
                         return result
         except Exception as e:
-            logger.debug("Auth extraction not available: %s", e)
+            logger.warning("Auth extraction failed for %s: %s", url[:60], e)
 
     # Policy-driven residential trigger (Early)
     if use_residential_early and res_policy != "off":

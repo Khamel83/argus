@@ -102,11 +102,13 @@ async def extract_authenticated(url: str, domain: str) -> Optional[ExtractedCont
         return None
 
     if not can_authenticate(domain):
-        return None
+        logger.warning("Cannot authenticate for %s: cookies unavailable, stale, or rate-limited", domain)
+        return ExtractedContent(url=url, error=f"auth: cannot authenticate for {domain}")
 
     context = await _get_context(domain)
     if context is None:
-        return None
+        logger.warning("Auth context unavailable for %s: cookies may have expired", domain)
+        return ExtractedContent(url=url, error=f"auth: no browser context for {domain}")
 
     status_code = 0
     try:
