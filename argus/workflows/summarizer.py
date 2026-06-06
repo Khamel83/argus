@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Sequence
+
+import httpx
 
 from argus.config import get_config
 from argus.logging import get_logger
@@ -150,8 +153,106 @@ class ValyuSummarizer(BaseSummarizer):
         ]
 
 
-def get_summarizer() -> BaseSummarizer:
+@dataclass
+class LLMSummarizer(BaseSummarizer):
+    """Uses the gateway LLM to synthesize a structured answer from search results."""
+
+    def __init__(self, gateway_url: str = "", gateway_key: str = ""):
+        self.gateway_url = gateway_url or os.getenv("ARGUS_GATEWAY_URL", "")
+        self.gateway_key = gateway_key or os.getenv("ARGUS_GATEWAY_KEY", "")
+
+    async def summarize(
+        self,
+        *,
+        title: str,
+        prompt: str,
+        documents: Sequence[StoredDocument],
+        citations: Sequence[CitationRef],
+    ) -> list[SummarySection]:
+        if not documents:
+            return [
+                SummarySection(
+                    heading="No Results",
+                    body="Argus could not find relevant sources for this query.",
+                    citation_ids=[],
+                )
+            ]
+
+        context_parts = []
+        for i, doc in enumerate(documents[:20]):
+            text = doc.metadata.get("lead_text", "") or ""
+            if not text:
+                continue
+            context_parts.append(f"[Source {i+1}] {doc.title or doc.url}\n{text[:2000]}")
+        context = "\n\n".join(context_parts)
+
+        system_prompt = (
+            "You are a research assistant. Given search results and a user query, "
+            "produce a concise, well-structured answer. Cite sources by [Source N]. "
+            "If the results don't answer the query, say so clearly."
+        )
+        user_prompt = f"Query: {prompt}\n\nSearch Results:\n{context}"
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{self.gateway_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.gateway_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "cheap",
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    "temperature": 0.2,
+                },
+            )
+            if resp.status_code != 200:
+                raise RuntimeError(f"gateway returned {resp.status_code}: {resp.text[:200]}")
+            body = resp.json()
+            answer = body.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+        return [
+            SummarySection(heading="Answer", body=answer, citation_ids=[c.id for c in citations[:10]]),
+        ]
+
+
+def get_summarizer(kind: str = "extractive") -> BaseSummarizer:
+    """Return a summarizer instance based on the requested ``kind``.
+
+    Parameters
+    ----------
+    kind: str
+        The summarizer type. Supported values are:
+        - "extractive": Simple deterministic summarizer.
+        - "valyu": Uses Valyu service when an API key is configured; otherwise falls back.
+        - "llm": Uses the gateway LLM for synthesis.
+
+    The function always provides an ``ExtractiveSummarizer`` as a fallback
+    to guarantee a usable summarizer even when the requested kind cannot be
+    instantiated (e.g., missing configuration).
+    """
     fallback = ExtractiveSummarizer()
-    if get_config().valyu.api_key:
-        return ValyuSummarizer(fallback=fallback)
+    kind = kind.lower()
+    if kind == "valyu":
+        if get_config().valyu.api_key:
+            return ValyuSummarizer(fallback=fallback)
+        else:
+            logger.info("Valyu API key not configured; using fallback extractive summarizer.")
+            return fallback
+    if kind == "llm":
+        return LLMSummarizer()
+    if kind == "extractive":
+        return ExtractiveSummarizer()
+    # Unknown kind – default to fallback
+    logger.warning(f"Unknown summarizer kind '{kind}'; using fallback.")
     return fallback
+
+
+_SUMMARIZERS: dict[str, type[BaseSummarizer]] = {
+    "extractive": ExtractiveSummarizer,
+    "valyu": ValyuSummarizer,
+    "llm": LLMSummarizer,
+}

@@ -254,6 +254,20 @@ class CaptureSiteWorkflowRequest(BaseModel):
 
 
 class BuildResearchPackWorkflowRequest(BaseModel):
-    topic: str = Field(..., min_length=1, max_length=500)
-    official_url: Optional[str] = None
-    max_research_pages: int = Field(40, ge=1, le=100)
+    """Request schema for building a research pack.
+
+    Attributes:
+        topic: The research topic.
+        official_url: Optional URL of official documentation.
+        max_research_pages: Maximum number of external research pages to capture.
+    """
+    topic: str = Field(..., min_length=1, max_length=200, description="Research topic name")
+    official_url: Optional[str] = Field(None, description="Official documentation URL if known")
+    max_research_pages: int = Field(40, ge=1, le=200, description="Maximum external research pages to retrieve")
+
+
+
+class SearchAndSummarizeWorkflowRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=1000, description="Search query to research and summarize")
+    max_search_results: int = Field(5, ge=1, le=20, description="Number of search results to extract")
+

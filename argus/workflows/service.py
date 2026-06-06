@@ -229,6 +229,111 @@ class WorkflowService:
         )
         return run
 
+    async def start_search_and_summarize(
+        self,
+        *,
+        query: str,
+        max_search_results: int = 5,
+    ) -> WorkflowResult:
+        """Start a background search-and-summarize workflow.
+
+        Returns a pending WorkflowResult; the actual work runs in the background.
+        """
+        run = self._create_run(WorkflowKind.SEARCH_AND_SUMMARIZE, query)
+        asyncio.create_task(
+            self._execute_run(
+                run.run_id,
+                self._search_and_summarize_impl,
+                query=query,
+                max_search_results=max_search_results,
+            )
+        )
+        return run
+
+    async def search_and_summarize(
+        self,
+        *,
+        query: str,
+        max_search_results: int = 5,
+    ) -> WorkflowResult:
+        """Run a search-and-summarize workflow synchronously and return the result."""
+        run = self._create_run(WorkflowKind.SEARCH_AND_SUMMARIZE, query)
+        return await self._execute_run(
+            run.run_id,
+            self._search_and_summarize_impl,
+            query=query,
+            max_search_results=max_search_results,
+        )
+
+    async def _search_and_summarize_impl(
+        self,
+        run: WorkflowResult,
+        *,
+        query: str,
+        max_search_results: int = 5,
+    ) -> WorkflowResult:
+        """Implementation of the search-and-summarize workflow.
+
+        Performs a search, extracts up to ``max_search_results`` pages, and uses the
+        LLMSummarizer to synthesize a concise answer.
+        """
+        # Perform search
+        search_result = await self._broker.search(
+            SearchQuery(
+                query=query,
+                mode=SearchMode.DISCOVERY,
+                max_results=max_search_results,
+                free_only=False,
+            )
+        )
+
+        docs: list[StoredDocument] = []
+        citations: list[CitationRef] = []
+        for result in search_result.results[:max_search_results]:
+            try:
+                extracted = await extract_url(result.url)
+            except Exception:
+                continue
+            doc_id = str(uuid.uuid4())
+            doc = StoredDocument(
+                id=doc_id,
+                url=result.url,
+                title=extracted.title or result.title,
+                artifact_path="",
+                word_count=len(extracted.text.split()) if extracted.text else 0,
+                domain=result.url.split("/")[2] if "//" in result.url else "",
+                metadata={"lead_text": (extracted.text or "")[:3000]},
+            )
+            docs.append(doc)
+            citation_ref = CitationRef(
+                id=doc_id,
+                title=result.title,
+                url=result.url,
+                artifact_path="",
+            )
+            citations.append(citation_ref)
+
+        run.documents = docs
+        run.citations = citations
+
+        # Summarize using LLM
+        summarizer = get_summarizer("llm")
+        sections = await summarizer.summarize(
+            title=query,
+            prompt=query,
+            documents=docs,
+            citations=citations,
+        )
+        run.summary_sections = sections
+
+        # Finalize run state
+        self._finalize_run(
+            run,
+            title=query,
+            report_name="report.md",
+        )
+        return run
+
     async def recover_article(self, *, url: str, title: str | None = None, domain: str | None = None) -> WorkflowResult:
         run = self._create_run(WorkflowKind.RECOVER_ARTICLE, url)
         return await self._execute_run(run.run_id, self._recover_article_impl, url=url, title=title, domain=domain)
