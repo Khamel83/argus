@@ -12,6 +12,7 @@ class WorkflowKind(str, Enum):
     RECOVER_ARTICLE = "recover-article"
     CAPTURE_SITE = "capture-site"
     BUILD_RESEARCH_PACK = "build-research-pack"
+    SEARCH_AND_SUMMARIZE = "search-and-summarize"
 
 
 class WorkflowStatus(str, Enum):

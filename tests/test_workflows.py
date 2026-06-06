@@ -169,3 +169,52 @@ async def test_build_research_pack_populates_docs_cache(monkeypatch, tmp_path):
     assert (docs_cache_dir / "README.md").exists()
     index_text = (tmp_path / "data" / "docs" / "cache" / ".index.md").read_text(encoding="utf-8")
     assert "| docs-example-com | https://docs.example.com |" in index_text
+
+
+@pytest.mark.asyncio
+async def test_search_and_summarize_workflow(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARGUS_DATA_ROOT", str(tmp_path / "data"))
+    monkeypatch.setenv("ARGUS_GATEWAY_URL", "https://gateway.example.com")
+    monkeypatch.setenv("ARGUS_GATEWAY_KEY", "fake-key")
+
+    from argus.workflows import WorkflowService
+    from argus.workflows import service as workflow_service_module
+    import httpx
+
+    async def fake_extract(url, domain=None):
+        return _extract_result(url, title="Source Title", words=100)
+
+    monkeypatch.setattr(workflow_service_module, "extract_url", fake_extract)
+
+    # Mock gateway HTTP client POST response
+    class FakeResponse:
+        def __init__(self, status_code, json_data):
+            self.status_code = status_code
+            self._json_data = json_data
+        def json(self):
+            return self._json_data
+        @property
+        def text(self):
+            return "ok"
+
+    async def fake_post(self, url, headers=None, json=None):
+        return FakeResponse(200, {
+            "choices": [{
+                "message": {
+                    "content": "This is a synthesized summary answer referencing [Source 1]."
+                }
+            }]
+        })
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    service = WorkflowService(StubBroker())
+    result = await service.search_and_summarize(query="what is search workflow", max_search_results=2)
+
+    assert result.status.value == "completed"
+    assert result.report_path is not None
+    assert result.manifest_path is not None
+    assert len(result.summary_sections) == 1
+    assert result.summary_sections[0].heading == "Answer"
+    assert "synthesized summary answer" in result.summary_sections[0].body
+

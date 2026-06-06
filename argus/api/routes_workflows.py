@@ -13,7 +13,9 @@ from argus.api.schemas import (
     SummarySectionSchema,
     WorkflowArtifactSchema,
     WorkflowRunResponse,
+    SearchAndSummarizeWorkflowRequest,
 )
+
 from argus.workflows import WorkflowService
 
 router = APIRouter()
@@ -76,6 +78,18 @@ async def build_research_pack(
         topic=req.topic,
         official_url=req.official_url,
         max_research_pages=req.max_research_pages,
+    )
+    return _to_response(run)
+
+
+@router.post("/workflows/search-and-summarize", response_model=WorkflowRunResponse)
+async def search_and_summarize(
+    req: SearchAndSummarizeWorkflowRequest,
+    workflows: WorkflowService = Depends(get_workflows),
+):
+    run = await workflows.start_search_and_summarize(
+        query=req.query,
+        max_search_results=req.max_search_results,
     )
     return _to_response(run)
 
