@@ -132,3 +132,46 @@ Pass `session_id` to search to enable conversational refinement. The broker reme
 - Token balances persist in SQLite alongside budget tracking
 - Version bumps must update `pyproject.toml` AND `server.json`
 - `README.md` must retain `<!-- mcp-name: io.github.Khamel83/argus -->`
+
+## Agent Usage Contract
+
+Argus is internet retrieval, not personal memory. Use it when you need web search, URL recovery, link expansion, or page extraction. Do not use it as a note store or a substitute for Maya.
+
+### MCP usage
+
+Use MCP only from an AI harness that can speak MCP natively. The core tools are:
+
+- `search_web` — web search and ranking across providers.
+- `extract_content` — extract readable content from a URL.
+- `recover_url` — recover moved or dead URLs.
+- `expand_links` — expand a page into related links for follow-up retrieval.
+
+Use MCP when the caller is an interactive agent session, and prefer the MCP tools over shelling out. For scripts, jobs, or direct service integrations, use HTTP instead.
+
+### HTTP usage
+
+- Search: `POST /api/search`
+- Extraction: `POST /api/extract`
+- Auth headers: `Authorization: Bearer $ARGUS_API_KEY` or `X-API-Key: $ARGUS_API_KEY`
+- Privileged admin routes: `Authorization: Bearer $ARGUS_ADMIN_API_KEY` or `X-Admin-API-Key: $ARGUS_ADMIN_API_KEY`
+
+Example search payload:
+
+```json
+{
+  "query": "python web frameworks",
+  "mode": "discovery",
+  "max_results": 5
+}
+```
+
+Modes:
+
+- `discovery` — find canonical sources and related pages.
+- `research` — broad exploratory retrieval.
+- `recovery` — find moved or dead URLs.
+- `grounding` — fact-checking and computed-answer support.
+
+### Canonical transport policy
+
+See [maya/docs/CONTEXT-CONTRACT.md](https://github.com/Khamel83/maya/blob/main/docs/CONTEXT-CONTRACT.md) for the cross-service transport and role contract.
