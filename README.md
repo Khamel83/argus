@@ -469,6 +469,24 @@ Available tools:
 
 `search_web` accepts `free_only=true` to restrict results to free (tier-0) providers only, and `include_attribution=true` to include per-provider score attribution in the Markdown response.
 
+
+### Using Argus from MCP vs HTTP
+
+Two transports, one rule: **agents use MCP, everything else uses HTTP.**
+
+- **MCP** (`argus mcp serve`, or remote streamable-http on the canonical
+  deployment) — for AI harnesses that speak MCP natively: Claude Code,
+  Cursor, Codex, Hermes. Core tools: `search_web`, `extract_content`,
+  `recover_url`, `expand_links`, `build_research_pack` (+
+  `read_pack_file` for piping pack artifacts onward).
+- **HTTP** (`POST /api/search`, `POST /api/extract`,
+  `POST /api/workflows/...`) — for scripts, cron jobs, and service
+  integrations (e.g. Clio). Send `Authorization: Bearer $ARGUS_API_KEY`
+  and always set `"caller"` in the request body for attribution.
+
+The cross-service transport and role contract for the wider fleet
+(Clio / Maya / Hermes / Argus) is canonical in
+[khamel83/maya docs/CONTEXT-CONTRACT.md](https://github.com/Khamel83/maya/blob/main/docs/CONTEXT-CONTRACT.md).
 ### Python
 
 ```python

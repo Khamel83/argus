@@ -9,9 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **`free_only` mode** — `SearchQuery.free_only=True` constrains a search to tier-0 (free) providers only: SearXNG, DuckDuckGo, Yahoo, GitHub, WolframAlpha. Paid providers are skipped before budget or health checks. Exposed as `--free` on the CLI and as `free_only: bool = False` on the MCP `search_web` tool.
+- **Per-caller provider tier caps** — `ARGUS_CALLER_TIER_CAPS=clio*:1,hermes*:1` enforces, server-side, that matching callers never route to providers above the given tier (e.g. tier-3 one-time-credit providers). Enforced in the broker regardless of client flags.
+- **Machine-readable research packs (MCP)** — `build_research_pack` accepts `response_format="json"` returning a run manifest (files, sizes, paths); new `read_pack_file` MCP tool returns utf-8/base64 file content so agents can pipe pack artifacts to other services (e.g. Maya `POST /ingest/file`) without shell access. Closes #19.
+- **Caller attribution on extract + workflows** — `POST /api/extract` and workflow endpoints accept `caller`; workflow-driven broker searches are tagged (`workflows` via HTTP service, `mcp` via MCP tools).
 
 ### Fixed
 - **Dashboard "Attempted" column** — Provider activity now excludes `status='skipped'` rows from the count. Providers that were only ever skipped (e.g. Yahoo when free results satisfy the query) no longer appear in the table at all. The column is renamed "Calls" → "Attempted" to reflect what the number means.
+- **`free_only` now applies to remote-egress searches** — the tier check previously ran after the remote-worker branch, so `free_only` (and now caller caps) never filtered searches delegated to egress workers.
 
 ## [1.6.2] - 2026-05-22
 

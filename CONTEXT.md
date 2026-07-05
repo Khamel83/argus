@@ -40,3 +40,25 @@ datacenter), `machine` (the hostname that performed the fetch), and
 `source_type` (search, extract, recover, etc.). The HTTP, CLI, and MCP surfaces
 all expose these fields so downstream consumers can audit where a result came
 from.
+
+### Caller attribution
+
+Every HTTP/MCP/CLI entry point accepts a `caller` string (e.g. `clio-lane-b`,
+`hermes`, `mcp`) persisted with each search for the per-caller dashboard.
+Fleet callers must always set it; unattributed traffic shows as `unknown`.
+
+### Caller tier caps
+
+Server-side spending guardrail: `ARGUS_CALLER_TIER_CAPS` maps fnmatch
+caller patterns to a maximum provider tier. Motivated by the 2026-05
+unexplained Valyu credit burn (see hermes `docs/ARGUS-VALVU-AUDIT.md`):
+automated callers (Clio jobs, Hermes) are capped at tier 1 so one-time
+credits (tier 3) can only be spent by interactive/uncapped callers.
+
+### Canonical deployment
+
+One Argus for the fleet: the mac mini (`omars-mac-mini` on Tailscale,
+residential egress), run by launchd from `/Users/macmini/github/argus` —
+HTTP API on `:8300`, streamable-http MCP on `:8301`. Chosen 2026-07-05
+over the drifted alternatives (Clio pointing at `:8005`, a Docker argus
+on homelab). See `docs/adr/0001-canonical-deployment.md`.

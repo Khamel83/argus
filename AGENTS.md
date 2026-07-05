@@ -122,6 +122,7 @@ Pass `session_id` to search to enable conversational refinement. The broker reme
 | `ARGUS_RESIDENTIAL_POLICY` | `fallback` | `off`, `fallback`, `prefer_on_datacenter`, `prefer_for_domains`, or `always` |
 | `ARGUS_DB_URL` | `sqlite:///.../argus.db` | Main database URL |
 | `ARGUS_AUTOLOAD_DOTENV` | `true` | Auto-load `.env` / `.env.local` from cwd and repo root (does not override exported env vars) |
+| `ARGUS_CALLER_TIER_CAPS` | (empty) | Per-caller max provider tier, fnmatch patterns (e.g. `clio*:1,hermes*:1`) |
 
 ## Conventions
 
