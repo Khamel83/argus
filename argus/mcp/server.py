@@ -166,6 +166,17 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
             ctx=ctx,
         )
 
+    @mcp.tool()
+    def read_pack_file(path: str, max_bytes: int = 262144, offset: int = 0) -> str:
+        """Read a file produced by an Argus workflow (research pack, report, capture).
+
+        Returns JSON with utf-8 or base64 content plus truncation info.
+        Use after build_research_pack(response_format="json") to fetch each
+        manifest file, e.g. to forward into Maya POST /ingest/file.
+        Paths must be inside the Argus data root.
+        """
+        return mcp_tools.read_pack_file(path, max_bytes=max_bytes, offset=offset)
+
     if expose_admin_tools:
         @mcp.tool()
         def search_health() -> str:

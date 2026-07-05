@@ -518,3 +518,52 @@ def cookie_health() -> str:
     if refresh:
         lines.append(f"\n**Needs refresh:** {', '.join(refresh)}")
     return "\n".join(lines)
+
+
+def read_pack_file(path: str, max_bytes: int = 262144, offset: int = 0) -> str:
+    """Read a workflow artifact file from inside the Argus data root.
+
+    Returns JSON: {path, size, offset, bytes_returned, truncated,
+    encoding: "utf-8"|"base64", content}. Rejects paths outside the
+    Argus data root (research packs, docs cache, snapshots all live there).
+    """
+    import base64
+    import json
+    from pathlib import Path
+
+    from argus.corpus.paths import resolve_data_root
+
+    root = Path(resolve_data_root()).resolve()
+    target = Path(path).resolve()
+    if not (target == root or target.is_relative_to(root)):
+        return json.dumps(
+            {"error": "path is outside the Argus data root", "data_root": str(root)}
+        )
+    if not target.is_file():
+        return json.dumps({"error": "file not found", "path": str(target)})
+
+    size = target.stat().st_size
+    max_bytes = max(1, min(max_bytes, 1_048_576))
+    offset = max(0, offset)
+    with open(target, "rb") as handle:
+        handle.seek(offset)
+        chunk = handle.read(max_bytes)
+
+    try:
+        content = chunk.decode("utf-8")
+        encoding = "utf-8"
+    except UnicodeDecodeError:
+        content = base64.b64encode(chunk).decode("ascii")
+        encoding = "base64"
+
+    return json.dumps(
+        {
+            "path": str(target),
+            "size": size,
+            "offset": offset,
+            "bytes_returned": len(chunk),
+            "truncated": offset + len(chunk) < size,
+            "encoding": encoding,
+            "content": content,
+        }
+    )
