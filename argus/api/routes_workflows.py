@@ -53,6 +53,8 @@ async def recover_article(
     workflows: WorkflowService = Depends(get_workflows),
 ):
     run = await workflows.start_recover_article(url=req.url, title=req.title, domain=req.domain)
+    if req.caller:
+        run.metadata["caller"] = req.caller
     return _to_response(run)
 
 
@@ -66,6 +68,8 @@ async def capture_site(
         soft_page_limit=req.soft_page_limit,
         hard_page_limit=req.hard_page_limit,
     )
+    if req.caller:
+        run.metadata["caller"] = req.caller
     return _to_response(run)
 
 
@@ -79,6 +83,8 @@ async def build_research_pack(
         official_url=req.official_url,
         max_research_pages=req.max_research_pages,
     )
+    if req.caller:
+        run.metadata["caller"] = req.caller
     return _to_response(run)
 
 
@@ -91,6 +97,8 @@ async def search_and_summarize(
         query=req.query,
         max_search_results=req.max_search_results,
     )
+    if req.caller:
+        run.metadata["caller"] = req.caller
     return _to_response(run)
 
 

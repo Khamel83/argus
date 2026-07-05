@@ -148,12 +148,14 @@ class WorkflowService:
         *,
         corpus_paths: CorpusPaths | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
+        caller: str = "workflows",
     ):
         self._broker = broker
         self._paths = corpus_paths or get_corpus_paths()
         self._runs: dict[str, WorkflowResult] = {}
         self._persistence = WorkflowPersistenceGateway()
         self._progress = progress_callback
+        self._caller = caller or "workflows"
 
     def _report(self, current: int, total: int, message: str) -> None:
         if self._progress:
@@ -284,6 +286,7 @@ class WorkflowService:
                 mode=SearchMode.DISCOVERY,
                 max_results=max_search_results,
                 free_only=False,
+                caller=self._caller,
             )
         )
 
@@ -411,7 +414,7 @@ class WorkflowService:
         if domain:
             query_parts.append(domain)
         resp = await self._broker.search(
-            SearchQuery(query=" ".join(query_parts), mode=SearchMode.RECOVERY, max_results=10)
+            SearchQuery(query=" ".join(query_parts), mode=SearchMode.RECOVERY, max_results=10, caller=self._caller)
         )
         candidates = []
         seen = {normalize_url(url)}
@@ -605,7 +608,7 @@ class WorkflowService:
 
     async def _discover_official_docs_url(self, topic: str) -> str | None:
         resp = await self._broker.search(
-            SearchQuery(query=f"{topic} official docs", mode=SearchMode.DISCOVERY, max_results=8)
+            SearchQuery(query=f"{topic} official docs", mode=SearchMode.DISCOVERY, max_results=8, caller=self._caller)
         )
         for result in resp.results:
             if any(keyword in result.url.lower() for keyword in ("/docs", "docs.", "/reference", "/api")):
@@ -619,6 +622,7 @@ class WorkflowService:
                 query=f"{topic} documentation tutorial guide comparison best practices",
                 mode=SearchMode.RESEARCH,
                 max_results=max(limit * 2, 20),
+                caller=self._caller,
             )
         )
         urls: list[str] = []

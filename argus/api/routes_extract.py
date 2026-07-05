@@ -2,6 +2,10 @@
 Content extraction endpoint.
 """
 
+from argus.logging import get_logger
+
+logger = get_logger("api.extract")
+
 from fastapi import APIRouter
 
 from argus.api.schemas import (
@@ -19,6 +23,8 @@ router = APIRouter()
 @router.post("/extract", response_model=ExtractResponse)
 async def extract(req: ExtractRequest):
     """Extract clean text content from a URL."""
+    if req.caller:
+        logger.info("extract caller=%s url=%s", req.caller, req.url)
     result = await extract_url(req.url, domain=req.domain, mode=req.mode)
     cr = result.completeness_result
     return ExtractResponse(

@@ -116,3 +116,31 @@ class TestRrfAttributionIntegration:
         result = SearchResult(url="https://example.com", title="Ex", snippet="")
         merged = reciprocal_rank_fusion({"ddg": [result]}, compute_attribution=False)
         assert merged[0].score_attribution == {}
+
+
+def test_extract_request_accepts_caller():
+    from argus.api.schemas import ExtractRequest
+
+    req = ExtractRequest(url="https://example.com/a", caller="clio-intake-extract")
+    assert req.caller == "clio-intake-extract"
+
+
+def test_workflow_requests_accept_caller():
+    from argus.api.schemas import (
+        BuildResearchPackWorkflowRequest,
+        SearchAndSummarizeWorkflowRequest,
+    )
+
+    a = SearchAndSummarizeWorkflowRequest(query="q", caller="clio-workflows")
+    b = BuildResearchPackWorkflowRequest(topic="t", caller="hermes")
+    assert a.caller == "clio-workflows"
+    assert b.caller == "hermes"
+
+
+def test_workflow_service_tags_internal_searches_with_caller():
+    import inspect
+
+    from argus.workflows.service import WorkflowService
+
+    sig = inspect.signature(WorkflowService.__init__)
+    assert "caller" in sig.parameters

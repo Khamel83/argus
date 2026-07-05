@@ -456,7 +456,7 @@ async def recover_dead_article(
     ctx: Any = None,
 ) -> str:
     """Recover a dead article into a local citation-backed report."""
-    result = await WorkflowService(broker, progress_callback=_make_progress_callback(ctx)).recover_article(
+    result = await WorkflowService(broker, progress_callback=_make_progress_callback(ctx), caller="mcp").recover_article(
         url=url, title=title, domain=domain,
     )
     return _serialize_workflow(result)
@@ -470,7 +470,7 @@ async def capture_site(
     ctx: Any = None,
 ) -> str:
     """Capture the important pages from a site and summarize them."""
-    result = await WorkflowService(broker, progress_callback=_make_progress_callback(ctx)).capture_site(
+    result = await WorkflowService(broker, progress_callback=_make_progress_callback(ctx), caller="mcp").capture_site(
         url=url,
         soft_page_limit=soft_page_limit,
         hard_page_limit=hard_page_limit,
@@ -487,7 +487,7 @@ async def build_research_pack(
     ctx: Any = None,
 ) -> str:
     """Build a combined official-docs and external-research pack."""
-    result = await WorkflowService(broker, progress_callback=_make_progress_callback(ctx)).build_research_pack(
+    result = await WorkflowService(broker, progress_callback=_make_progress_callback(ctx), caller="mcp").build_research_pack(
         topic=topic,
         official_url=official_url,
         max_research_pages=max_research_pages,
