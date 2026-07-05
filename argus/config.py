@@ -139,6 +139,7 @@ class ArgusConfig:
     allow_web_ui: bool = False
     log_full_results: bool = False
     log_provider_payloads: bool = False
+    caller_tier_caps: dict[str, int] = field(default_factory=dict)
 
 
 class SecretsResolver:
@@ -298,6 +299,20 @@ class EnvironmentConfigLoader:
                     shared_secret=_egress_secret,
                 ))
 
+        # Parse ARGUS_CALLER_TIER_CAPS=clio*:1,hermes*:1
+        # fnmatch pattern -> max provider tier that caller may use.
+        _caps_raw = self.get_str("ARGUS_CALLER_TIER_CAPS", "")
+        _caller_tier_caps: dict[str, int] = {}
+        for entry in _caps_raw.split(","):
+            entry = entry.strip()
+            if not entry or ":" not in entry:
+                continue
+            pattern, _, cap = entry.rpartition(":")
+            try:
+                _caller_tier_caps[pattern.strip()] = int(cap.strip())
+            except ValueError:
+                continue
+
         return ArgusConfig(
             env=self.get_str("ARGUS_ENV", "development"),
             log_level=self.get_str("ARGUS_LOG_LEVEL", "INFO"),
@@ -377,6 +392,7 @@ class EnvironmentConfigLoader:
             log_full_results=self.get_bool("ARGUS_LOG_FULL_RESULTS"),
             log_provider_payloads=self.get_bool("ARGUS_LOG_PROVIDER_PAYLOADS"),
             egress_nodes=_egress_nodes,
+            caller_tier_caps=_caller_tier_caps,
         )
 
 

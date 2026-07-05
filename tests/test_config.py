@@ -145,3 +145,35 @@ class TestLogging:
         from argus.logging import get_logger
         log = get_logger("test")
         assert log.name == "argus.test"
+
+
+class _NullSecrets:
+    def get(self, key):
+        return None
+
+
+class TestCallerTierCaps:
+    def test_parses_caller_tier_caps(self):
+        from argus.config import EnvironmentConfigLoader
+
+        loader = EnvironmentConfigLoader(
+            environ={"ARGUS_CALLER_TIER_CAPS": "clio*:1,hermes*:1, atlas:0"},
+            secrets_resolver=_NullSecrets(),
+        )
+        config = loader.load()
+        assert config.caller_tier_caps == {"clio*": 1, "hermes*": 1, "atlas": 0}
+
+    def test_caller_tier_caps_default_empty(self):
+        from argus.config import EnvironmentConfigLoader
+
+        loader = EnvironmentConfigLoader(environ={}, secrets_resolver=_NullSecrets())
+        assert loader.load().caller_tier_caps == {}
+
+    def test_caller_tier_caps_skips_malformed_entries(self):
+        from argus.config import EnvironmentConfigLoader
+
+        loader = EnvironmentConfigLoader(
+            environ={"ARGUS_CALLER_TIER_CAPS": "clio*:notanumber,,hermes:1"},
+            secrets_resolver=_NullSecrets(),
+        )
+        assert loader.load().caller_tier_caps == {"hermes": 1}
