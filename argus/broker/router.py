@@ -50,6 +50,7 @@ class SearchBroker:
             budget_tracker=self._budgets,
             reachability=self._reachability,
             egress_nodes=self._egress_nodes,
+            caller_tier_caps=self._config.caller_tier_caps,
         )
         self._pipeline = result_pipeline or SearchResultPipeline(
             cache=self._cache,

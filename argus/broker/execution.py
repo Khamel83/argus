@@ -1,3 +1,18 @@
+import fnmatch
+from typing import Mapping
+
+
+def caller_tier_cap(caller: str, caps: Mapping[str, int]) -> int | None:
+    """Max provider tier this caller may use, or None if uncapped.
+
+    Patterns are fnmatch-style; the most restrictive matching cap wins.
+    """
+    if not caller or not caps:
+        return None
+    matches = [cap for pattern, cap in caps.items() if fnmatch.fnmatch(caller, pattern)]
+    return min(matches) if matches else None
+
+
 """Provider execution services for the search broker."""
 
 from dataclasses import dataclass, field
@@ -46,12 +61,14 @@ class ProviderExecutor:
         routing_policy=None,  # kept for backward compat, not used
         reachability: ReachabilityMatrix | None = None,
         egress_nodes: dict[str, EgressNode] | None = None,
+        caller_tier_caps: Mapping[str, int] | None = None,
     ):
         self._providers = providers
         self._health = health_tracker
         self._budgets = budget_tracker
         self._reachability = reachability or ReachabilityMatrix()
         self._egress_nodes = egress_nodes or {}
+        self._caller_tier_caps = dict(caller_tier_caps or {})
 
     def _should_query_paid(self, provider: ProviderName, tier: int) -> tuple[bool, str]:
         """Decide whether to query a paid provider based on budget pace.
@@ -106,6 +123,21 @@ class ProviderExecutor:
                 )
                 continue
 
+            tier = self._budgets.get_provider_tier(pname)
+
+            cap = caller_tier_cap(query.caller, self._caller_tier_caps)
+            if cap is not None and tier > cap:
+                traces.append(ProviderTrace(
+                    provider=pname,
+                    status="skipped",
+                    error=f"caller tier cap: caller {query.caller!r} limited to tier <= {cap}",
+                ))
+                continue
+
+            if query.free_only and tier > 0:
+                traces.append(ProviderTrace(provider=pname, status="skipped", error="free_only mode"))
+                continue
+
             # Reachability check — route to worker if local is blocked
             best_egress = self._reachability.best_egress(pname)
             if best_egress is None:
@@ -135,11 +167,6 @@ class ProviderExecutor:
                     self._health.record_failure(pname)
                 continue
 
-            tier = self._budgets.get_provider_tier(pname)
-
-            if query.free_only and tier > 0:
-                traces.append(ProviderTrace(provider=pname, status="skipped", error="free_only mode"))
-                continue
 
             if query.providers is None and tier > 0 and total_results_so_far >= query.max_results:
                 traces.append(
