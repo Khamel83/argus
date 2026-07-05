@@ -356,6 +356,48 @@ async def extract_content(url: str, domain: str = None) -> str:
     return "\n".join(lines)
 
 
+def _serialize_workflow_json(result) -> str:
+    """Machine-readable workflow result: run metadata plus a file manifest.
+
+    Designed so an MCP agent can enumerate pack files and fetch each one via
+    read_pack_file, then forward them (e.g. to Maya POST /ingest/file)
+    without shelling out.
+    """
+    import os
+    import json
+
+    files = []
+    seen: set[str] = set()
+    candidate_paths = []
+    if result.artifacts:
+        candidate_paths.extend([a.path for a in result.artifacts])
+    if result.documents:
+        candidate_paths.extend([d.artifact_path for d in result.documents])
+    for path in candidate_paths:
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            size = None
+        files.append({"path": path, "bytes": size})
+
+    payload = {
+        "run_id": result.run_id,
+        "kind": result.kind.value,
+        "status": result.status.value,
+        "target": result.target,
+        "error": result.error,
+        "report_path": result.report_path,
+        "manifest_path": result.manifest_path,
+        "snapshot_dir": result.snapshot_dir,
+        "pack_dir": result.metadata.get("current_dir") if result.metadata else None,
+        "files": files,
+    }
+    return json.dumps(payload, indent=2)
+
+
 def _serialize_workflow(result) -> str:
     if result.error:
         return f"**Workflow error ({result.kind.value}):** {result.error}\nTarget: {result.target}"
@@ -441,6 +483,7 @@ async def build_research_pack(
     topic: str,
     official_url: Optional[str] = None,
     max_research_pages: int = 40,
+    response_format: str = "markdown",
     ctx: Any = None,
 ) -> str:
     """Build a combined official-docs and external-research pack."""
@@ -449,6 +492,8 @@ async def build_research_pack(
         official_url=official_url,
         max_research_pages=max_research_pages,
     )
+    if response_format == "json":
+        return _serialize_workflow_json(result)
     return _serialize_workflow(result)
 
 

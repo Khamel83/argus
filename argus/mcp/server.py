@@ -147,14 +147,22 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
         topic: str,
         official_url: str = None,
         max_research_pages: int = 40,
+        response_format: str = "markdown",
         ctx: McpContext = None,
     ) -> str:
-        """Build a local pack with official docs plus external research."""
+        """Build a local pack with official docs plus external research.
+
+        Set response_format="json" for a machine-readable manifest
+        (run_id, status, file list with paths/sizes) — use with
+        read_pack_file to pipe pack contents to another service
+        (e.g. Maya POST /ingest/file) without shell access.
+        """
         return await mcp_tools.build_research_pack(
             broker,
             topic,
             official_url=official_url,
             max_research_pages=max_research_pages,
+            response_format=response_format,
             ctx=ctx,
         )
 
