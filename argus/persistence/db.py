@@ -40,6 +40,13 @@ def init_db(db_url: Optional[str] = None):
     if db_url is None:
         db_url = get_config().db_url
 
+    if db_url.startswith("sqlite:///"):
+        db_path_str = db_url[9:]
+        if db_path_str:
+            from pathlib import Path
+            db_path = Path(db_path_str).expanduser().resolve()
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+
     _engine = create_engine(db_url, pool_pre_ping=True)
     _session_factory = sessionmaker(bind=_engine)
     Base.metadata.create_all(_engine)
