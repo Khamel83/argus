@@ -1,0 +1,38 @@
+schema: homelab.project/v1
+project:
+  id: argus
+  name: Argus
+  repository: https://github.com/Khamel83/argus
+  kind: service
+  lifecycle: development
+  owner: homelab
+monitoring:
+  state: standby
+runtime:
+  production:
+    host: homelab
+    managed_by: unknown
+    unit: argus
+    sync_mode: homelab-native
+health:
+  source: homelab service registry
+  checks:
+  - id: argus.http
+    type: catalog
+    name: argus.http
+    severity: high
+    repair_id: null
+observability:
+  event_sink: homelab-api:/observations
+  evidence_policy: sanitized
+dependencies:
+  required: []
+  optional: []
+secrets:
+  broker_consumer: argus
+  references: []
+operations:
+  repair_ids: []
+docs:
+  index: README.md
+  operations: docs/OPERATIONS.md
