@@ -25,6 +25,7 @@ class ExtractorName(str, Enum):
     YOU_CONTENTS = "you_contents"
     VALYU_CONTENTS = "valyu_contents"
     FIRECRAWL = "firecrawl"
+    YOUTUBE = "youtube"
 
 
 @dataclass

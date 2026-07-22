@@ -112,7 +112,7 @@ def _populate_provenance(result: ExtractedContent):
     elif result.extractor in (ExtractorName.RESIDENTIAL,):
         result.source_type = "residential"
         result.egress = "residential"
-    elif result.extractor in (ExtractorName.TRAFILATURA, ExtractorName.CRAWL4AI, ExtractorName.OBSCURA, ExtractorName.PLAYWRIGHT):
+    elif result.extractor in (ExtractorName.YOUTUBE, ExtractorName.TRAFILATURA, ExtractorName.CRAWL4AI, ExtractorName.OBSCURA, ExtractorName.PLAYWRIGHT):
         result.source_type = "live"
         result.egress = config.node.egress_type
     elif result.extractor in (ExtractorName.WAYBACK, ExtractorName.ARCHIVE_IS):
@@ -226,6 +226,22 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
     if cached is not None:
         logger.debug("Extraction cache hit for %s", url[:60])
         return cached
+
+    # YouTube watch pages are application shells rather than article pages.
+    # Route them through the free metadata/caption adapter and do not spend
+    # external extractor budget on a source those extractors cannot recover.
+    from argus.extraction.youtube_extractor import normalize_youtube_input
+
+    if normalize_youtube_input(url) is not None:
+        from argus.extraction.youtube_extractor import extract_youtube
+
+        result = await extract_youtube(url)
+        _populate_provenance(result)
+        if not result.extractors_tried:
+            result.extractors_tried = ["youtube"]
+        if not result.error:
+            _cache.put(url, result)
+        return result
 
     # Domain rate limit
     allowed, retry_after = _domain_limiter.is_allowed(url)
