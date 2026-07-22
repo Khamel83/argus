@@ -153,9 +153,9 @@ async def _extract_trafilatura(url: str, timeout: int = 10) -> ExtractedContent:
     text = extracted["text"]
     return ExtractedContent(
         url=final_url,
-        title=extracted.get("title", ""),
+        title=extracted.get("title") or "",
         text=text,
-        author=extracted.get("author", ""),
+        author=extracted.get("author") or "",
         date=extracted.get("date"),
         word_count=len(text.split()),
         extractor=ExtractorName.TRAFILATURA,

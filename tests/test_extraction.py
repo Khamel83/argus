@@ -76,8 +76,8 @@ class TestTrafilaturaExtractor:
             def as_dict(self):
                 return {
                     "text": "Document shaped content.",
-                    "title": "Document title",
-                    "author": "Author",
+                    "title": None,
+                    "author": None,
                     "date": "2026-07-22",
                 }
 
@@ -97,7 +97,8 @@ class TestTrafilaturaExtractor:
             result = await _extract_trafilatura("https://example.com")
 
         assert result.text == "Document shaped content."
-        assert result.title == "Document title"
+        assert result.title == ""
+        assert result.author == ""
         assert result.extractor == ExtractorName.TRAFILATURA
 
     @pytest.mark.asyncio
