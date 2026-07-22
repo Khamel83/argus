@@ -144,7 +144,10 @@ async def _extract_trafilatura(url: str, timeout: int = 10) -> ExtractedContent:
         return ExtractedContent(url=url, error="trafilatura: failed to fetch URL")
 
     extracted = await loop.run_in_executor(None, trafilatura.bare_extraction, downloaded)
-    if not extracted or not extracted.get("text"):
+    if extracted is not None and not isinstance(extracted, dict):
+        as_dict = getattr(extracted, "as_dict", None)
+        extracted = as_dict() if callable(as_dict) else None
+    if not isinstance(extracted, dict) or not extracted.get("text"):
         return ExtractedContent(url=final_url, error="trafilatura: no content extracted")
 
     text = extracted["text"]

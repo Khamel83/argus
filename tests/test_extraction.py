@@ -69,6 +69,38 @@ class TestTrafilaturaExtractor:
             assert result.word_count == 2
 
     @pytest.mark.asyncio
+    async def test_trafilatura_document_result_is_normalized(self):
+        from argus.extraction.extractor import _extract_trafilatura
+
+        class DocumentLike:
+            def as_dict(self):
+                return {
+                    "text": "Document shaped content.",
+                    "title": "Document title",
+                    "author": "Author",
+                    "date": "2026-07-22",
+                }
+
+        mock_response = MagicMock()
+        mock_response.text = "<html><body><article>Content</article></body></html>"
+        mock_response.url = "https://example.com"
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("argus.extraction.extractor.httpx.AsyncClient") as mock_client_cls, \
+             patch("trafilatura.bare_extraction", return_value=DocumentLike()):
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+
+            result = await _extract_trafilatura("https://example.com")
+
+        assert result.text == "Document shaped content."
+        assert result.title == "Document title"
+        assert result.extractor == ExtractorName.TRAFILATURA
+
+    @pytest.mark.asyncio
     async def test_trafilatura_fetch_fails(self):
         from argus.extraction.extractor import _extract_trafilatura
 
