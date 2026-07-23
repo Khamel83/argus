@@ -242,6 +242,7 @@ async def _extract_trafilatura(url: str, cookies: list[dict] | None = None) -> d
         import trafilatura
         import httpx
         from urllib.parse import urlparse
+        from argus.extraction.trafilatura_result import normalize_trafilatura_result
 
         loop = asyncio.get_event_loop()
         ua = random.choice(_USER_AGENTS)
@@ -285,15 +286,16 @@ async def _extract_trafilatura(url: str, cookies: list[dict] | None = None) -> d
         if not downloaded:
             return {"error": "trafilatura: failed to fetch"}
         extracted = await loop.run_in_executor(None, trafilatura.bare_extraction, downloaded)
-        if not extracted or not extracted.get("text"):
+        normalized = normalize_trafilatura_result(extracted)
+        if normalized is None:
             return {"error": "trafilatura: no content"}
-        text = extracted["text"]
+        text = normalized.text
         return {
             "url": final_url,
-            "title": extracted.get("title", ""),
+            "title": normalized.title,
             "text": text,
-            "author": extracted.get("author", ""),
-            "date": extracted.get("date"),
+            "author": normalized.author,
+            "date": normalized.date,
             "word_count": len(text.split()),
         }
     except Exception as e:
