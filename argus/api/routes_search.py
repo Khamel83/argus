@@ -1,6 +1,6 @@
 """Search endpoints."""
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from argus.api.schemas import (
     ExpandRequest,
@@ -12,12 +12,31 @@ from argus.api.schemas import (
 )
 from argus.broker.router import SearchBroker
 from argus.models import ProviderName, SearchMode, SearchQuery
+from argus.persistence.search_ledger import SearchLedgerRepository
 
 router = APIRouter()
 
 
 def get_broker(request: Request) -> SearchBroker:
     return request.app.state.get_broker()
+
+
+def get_search_repository(request: Request) -> SearchLedgerRepository:
+    return request.app.state.get_search_repository()
+
+
+def _accept_or_503(
+    repository: SearchLedgerRepository,
+    query: SearchQuery,
+    response,
+) -> None:
+    try:
+        repository.accept(query, response)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Search could not be durably accepted",
+        ) from exc
 
 
 def _to_response(resp, include_attribution: bool = False) -> SearchResponse:
@@ -56,7 +75,11 @@ def _to_response(resp, include_attribution: bool = False) -> SearchResponse:
 
 
 @router.post("/search", response_model=SearchResponse)
-async def search(req: SearchRequest, broker: SearchBroker = Depends(get_broker)):
+async def search(
+    req: SearchRequest,
+    broker: SearchBroker = Depends(get_broker),
+    repository: SearchLedgerRepository = Depends(get_search_repository),
+):
     query = SearchQuery(
         query=req.query,
         mode=SearchMode(req.mode),
@@ -71,12 +94,19 @@ async def search(req: SearchRequest, broker: SearchBroker = Depends(get_broker))
             query,
             session_id=req.session_id,
             compute_attribution=req.include_attribution,
+            persist_legacy=False,
         )
         response = _to_response(resp, include_attribution=req.include_attribution)
         response.session_id = session_id
+        _accept_or_503(repository, query, resp)
         return response
 
-    resp = await broker.search(query, compute_attribution=req.include_attribution)
+    resp = await broker.search(
+        query,
+        compute_attribution=req.include_attribution,
+        persist_legacy=False,
+    )
+    _accept_or_503(repository, query, resp)
     return _to_response(resp, include_attribution=req.include_attribution)
 
 

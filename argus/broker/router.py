@@ -86,7 +86,12 @@ class SearchBroker:
     def budget_tracker(self) -> BudgetTracker:
         return self._budgets
 
-    async def search(self, query: SearchQuery, compute_attribution: bool = False) -> SearchResponse:
+    async def search(
+        self,
+        query: SearchQuery,
+        compute_attribution: bool = False,
+        persist_legacy: bool = True,
+    ) -> SearchResponse:
         cache_run_id = os.urandom(8).hex()
         cached = self._pipeline.get_cached(
             query,
@@ -113,6 +118,7 @@ class SearchBroker:
             outcome.traces,
             budget_warnings=outcome.budget_pace_warnings,
             compute_attribution=compute_attribution,
+            persist_legacy=persist_legacy,
         )
 
         logger.info(
@@ -135,12 +141,14 @@ class SearchBroker:
         query: SearchQuery,
         session_id: Optional[str] = None,
         compute_attribution: bool = False,
+        persist_legacy: bool = True,
     ) -> tuple[SearchResponse, Optional[str]]:
         return await self._session_service.search_with_session(
             query,
             lambda effective_query: self.search(
                 effective_query,
                 compute_attribution=compute_attribution,
+                persist_legacy=persist_legacy,
             ),
             session_id=session_id,
         )

@@ -34,6 +34,49 @@ jobs:
       - name: Run tests
         run: uv run --python ${{ matrix.python-version }} pytest tests/ -v --tb=short
 
+  postgres-ledger:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+        env:
+          POSTGRES_DB: argus_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d argus_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ARGUS_AUTOLOAD_DOTENV: "false"
+      ARGUS_DISABLE_SECRET_RESOLUTION: "true"
+      ARGUS_EGRESS_TYPE: "unknown"
+      ARGUS_RESIDENTIAL_POLICY: "off"
+      ARGUS_TEST_POSTGRES_URL: postgresql+psycopg2://postgres:postgres@127.0.0.1:5432/argus_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: python -m pip install uv==0.11.26
+
+      - name: Sync dependencies
+        run: uv sync --frozen --python 3.12 --extra dev --extra mcp
+
+      - name: Run PostgreSQL ledger contract
+        run: |
+          uv run --python 3.12 pytest \
+            tests/test_search_ledger.py \
+            tests/test_api.py::TestSearchEndpoint::test_postgresql_constraint_failure_returns_503_and_rolls_back_ledger \
+            -v --tb=short
+
   production-config:
     runs-on: ubuntu-latest
     env:

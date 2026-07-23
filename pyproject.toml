@@ -26,6 +26,7 @@ dependencies = [
     "uvicorn[standard]>=0.30.0",
     "pydantic>=2.5.0",
     "sqlalchemy>=2.0.0",
+    "alembic>=1.13.0",
     "psycopg2-binary>=2.9.0",
     "httpx>=0.27.0",
     "click>=8.1.0",
@@ -67,6 +68,15 @@ include = ["argus*"]
 
 [tool.setuptools.package-data]
 "argus.api" = ["templates/*.html"]
+
+[tool.setuptools.data-files]
+"." = ["alembic.ini"]
+"migrations" = ["migrations/env.py", "migrations/script.py.mako"]
+"migrations/versions" = [
+    "migrations/versions/0001_search_ledger.py",
+    "migrations/versions/0002_acceptance_fingerprint.py",
+    "migrations/versions/0003_request_routing_fields.py",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

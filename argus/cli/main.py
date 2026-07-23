@@ -990,6 +990,62 @@ def corpus():
     pass
 
 
+@cli.group()
+def ledger():
+    """Manage the durable search ledger."""
+    pass
+
+
+@ledger.command(name="reconcile-legacy")
+@click.option("--source", required=True, help="Legacy SQLAlchemy database URL")
+@click.option(
+    "--target",
+    default=None,
+    help="Ledger SQLAlchemy database URL (defaults to ARGUS_DB_URL)",
+)
+@click.option(
+    "--apply",
+    is_flag=True,
+    help="Apply imports; without this flag the command only reports changes",
+)
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def reconcile_legacy(source, target, apply, as_json):
+    """Report or import legacy search runs. Defaults to a non-mutating dry run."""
+    from pathlib import Path
+
+    from argus.config import get_config
+    from argus.persistence.reconcile import reconcile_legacy_state
+    from argus.persistence.search_ledger import (
+        create_read_only_search_ledger_repository,
+        create_search_ledger_repository,
+    )
+
+    target_url = target or get_config().db_url
+    if not apply and target_url.startswith("sqlite:///"):
+        target_path = Path(target_url.removeprefix("sqlite:///")).expanduser()
+        if target_path.exists():
+            repository = create_read_only_search_ledger_repository(target_url)
+        else:
+            repository = create_search_ledger_repository(
+                "sqlite:///:memory:",
+                create_schema=True,
+            )
+    else:
+        repository = create_search_ledger_repository(
+            target_url,
+            create_schema=False if not apply else None,
+        )
+    report = reconcile_legacy_state(source, repository, apply=apply)
+    if as_json:
+        _emit_json(report)
+        return
+    click.echo("Legacy search reconciliation:")
+    for key in ("source", "imported", "skipped", "conflicting"):
+        click.echo(f"  {key}: {report[key]}")
+    if not apply:
+        click.echo("Dry run only; pass --apply to mutate the target.")
+
+
 @corpus.command(name="import-docs-cache")
 @click.option("--source", "-s", required=True, type=click.Path(exists=True), help="Path to legacy docs-cache root")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")

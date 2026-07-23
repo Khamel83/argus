@@ -7,6 +7,16 @@ import pytest
 from argus.api.schemas import SearchRequest, RecoverUrlRequest, ExpandRequest, ProviderTestRequest
 
 
+@pytest.fixture(autouse=True)
+def isolated_api_ledger(tmp_path, monkeypatch):
+    from argus.config import reset_config
+
+    monkeypatch.setenv("ARGUS_DB_URL", f"sqlite:///{tmp_path / 'api-ledger.db'}")
+    reset_config()
+    yield
+    reset_config()
+
+
 # --- Schemas ---
 
 class TestSchemas:
@@ -45,6 +55,187 @@ class TestSchemas:
 # --- API Integration ---
 
 class TestSearchEndpoint:
+    def test_real_broker_ledger_failure_leaves_no_legacy_completed_run(
+        self,
+        tmp_path,
+    ):
+        from fastapi.testclient import TestClient
+        from sqlalchemy import func, select
+
+        from argus.api.main import create_app
+        from argus.broker.router import SearchBroker
+        from argus.models import (
+            ProviderName,
+            ProviderStatus,
+            ProviderTrace,
+            SearchResult,
+        )
+        from argus.persistence.db import get_session_factory, init_db
+        from argus.persistence.models import SearchRunRow
+
+        class StubProvider:
+            name = ProviderName.DUCKDUCKGO
+
+            def is_available(self):
+                return True
+
+            def status(self):
+                return ProviderStatus.ENABLED
+
+            async def search(self, query):
+                return (
+                    [
+                        SearchResult(
+                            url="https://example.com/not-accepted",
+                            title="Not accepted",
+                            snippet="Must not become a legacy completed run",
+                            provider=self.name,
+                        )
+                    ],
+                    ProviderTrace(
+                        provider=self.name,
+                        status="success",
+                        results_count=1,
+                    ),
+                )
+
+        class FailingRepository:
+            def accept(self, query, response):
+                raise RuntimeError("commit failed")
+
+        legacy_path = tmp_path / "legacy-completed.db"
+        init_db(f"sqlite:///{legacy_path}")
+        broker = SearchBroker(providers={ProviderName.DUCKDUCKGO: StubProvider()})
+        client = TestClient(
+            create_app(broker=broker, search_repository=FailingRepository())
+        )
+
+        response = client.post(
+            "/api/search",
+            json={
+                "query": "must be atomically accepted",
+                "mode": "discovery",
+                "providers": ["duckduckgo"],
+            },
+        )
+
+        assert response.status_code == 503
+        with get_session_factory()() as session:
+            assert session.scalar(select(func.count()).select_from(SearchRunRow)) == 0
+
+    def test_postgresql_constraint_failure_returns_503_and_rolls_back_ledger(
+        self,
+        migrated_postgres_ledger,
+    ):
+        from fastapi.testclient import TestClient
+        from sqlalchemy import func, select
+
+        from argus.api.main import create_app
+        from argus.models import (
+            ProviderName,
+            ProviderTrace,
+            SearchMode,
+            SearchResponse,
+            SearchResult,
+        )
+        from argus.persistence.search_ledger import (
+            ContentIdentityRow,
+            DeliveryIntentRow,
+            NormalizedResultRow,
+            ProviderAttemptRow,
+            ResultProvenanceRow,
+            RetrievalRequestRow,
+            RetrievalRunRow,
+        )
+
+        broker = MagicMock()
+        broker.search = AsyncMock(
+            return_value=SearchResponse(
+                query="postgres commit failure",
+                mode=SearchMode.DISCOVERY,
+                results=[
+                    SearchResult(
+                        url="https://example.com/postgres-failure",
+                        title="PostgreSQL failure",
+                        snippet="Must not be acknowledged",
+                        provider=ProviderName.DUCKDUCKGO,
+                    )
+                ],
+                traces=[
+                    ProviderTrace(
+                        provider=ProviderName.DUCKDUCKGO,
+                        status="success",
+                        results_count=1,
+                        egress="x" * 51,
+                    )
+                ],
+                total_results=1,
+                search_run_id="postgres-api-db-error",
+            )
+        )
+        broker.cache = MagicMock()
+        broker.health_tracker = MagicMock()
+        broker.budget_tracker = MagicMock()
+        client = TestClient(
+            create_app(
+                broker=broker,
+                search_repository=migrated_postgres_ledger,
+            )
+        )
+
+        response = client.post(
+            "/api/search",
+            json={"query": "postgres commit failure", "mode": "discovery"},
+        )
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Search could not be durably accepted"
+        tables = (
+            RetrievalRequestRow,
+            RetrievalRunRow,
+            ProviderAttemptRow,
+            NormalizedResultRow,
+            ResultProvenanceRow,
+            ContentIdentityRow,
+            DeliveryIntentRow,
+        )
+        with migrated_postgres_ledger.session_factory() as session:
+            assert all(
+                session.scalar(select(func.count()).select_from(table)) == 0
+                for table in tables
+            )
+
+    @pytest.mark.asyncio
+    async def test_search_does_not_acknowledge_when_ledger_commit_fails(self):
+        from argus.api.main import create_app
+        from argus.models import SearchMode, SearchResponse
+
+        class FailingRepository:
+            def accept(self, query, response):
+                raise RuntimeError("commit failed")
+
+        mock_broker = MagicMock()
+        mock_broker.search = AsyncMock(return_value=SearchResponse(
+            query="test",
+            mode=SearchMode.DISCOVERY,
+            results=[],
+            total_results=0,
+            search_run_id="failed-ledger",
+        ))
+        mock_broker.cache = MagicMock()
+        mock_broker.health_tracker = MagicMock()
+        mock_broker.budget_tracker = MagicMock()
+
+        from fastapi.testclient import TestClient
+        client = TestClient(
+            create_app(broker=mock_broker, search_repository=FailingRepository())
+        )
+
+        resp = client.post("/api/search", json={"query": "test", "mode": "discovery"})
+
+        assert resp.status_code == 503
+        assert resp.json()["detail"] == "Search could not be durably accepted"
+
     @pytest.mark.asyncio
     async def test_search_returns_results(self):
         from argus.api.main import create_app
@@ -101,6 +292,7 @@ class TestSearchEndpoint:
                 )
             ],
             total_results=1,
+            search_run_id="attribution-1",
         ))
         mock_broker.cache = MagicMock()
         mock_broker.health_tracker = MagicMock()
@@ -123,6 +315,7 @@ class TestSearchEndpoint:
         assert data["results"][0]["score_attribution"] == {"duckduckgo": 0.5}
         mock_broker.search.assert_awaited_once()
         assert mock_broker.search.await_args.kwargs["compute_attribution"] is True
+        assert mock_broker.search.await_args.kwargs["persist_legacy"] is False
 
     @pytest.mark.asyncio
     async def test_search_invalid_mode_returns_400(self):
