@@ -204,7 +204,10 @@ class EnvironmentConfigLoader:
         secrets_resolver: SecretsResolver | None = None,
     ):
         self._environ = environ if environ is not None else os.environ
-        self._secrets = secrets_resolver or SubprocessSecretsResolver()
+        if self.get_bool("ARGUS_DISABLE_SECRET_RESOLUTION", False):
+            self._secrets = SecretsResolver()
+        else:
+            self._secrets = secrets_resolver or SubprocessSecretsResolver()
 
     def get_str(
         self,

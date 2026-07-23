@@ -4,7 +4,7 @@
 class TestConfig:
     def test_load_config_defaults(self):
         from argus.config import load_config
-        cfg = load_config(environ={})
+        cfg = load_config(environ={"ARGUS_DISABLE_SECRET_RESOLUTION": "true"})
         assert cfg.env == "development"
         assert cfg.log_level == "INFO"
         assert cfg.cache_ttl_hours == 168
@@ -38,6 +38,24 @@ class TestConfig:
 
         assert cfg.brave.api_key == "secret-key"
         assert cfg.db_url == "sqlite:///secret.db"
+
+    def test_disable_secret_resolution_prevents_fallback_to_machine_secrets(self):
+        from argus.config import SecretsResolver, load_config
+
+        class RaisingSecrets(SecretsResolver):
+            def get(self, key: str) -> str:
+                raise AssertionError(f"machine secret lookup attempted for {key}")
+
+        cfg = load_config(
+            environ={
+                "ARGUS_DISABLE_SECRET_RESOLUTION": "true",
+                "ARGUS_DB_URL": "sqlite:////tmp/argus-test-data/argus.db",
+            },
+            secrets_resolver=RaisingSecrets(),
+        )
+
+        assert cfg.brave.api_key == ""
+        assert cfg.db_url == "sqlite:////tmp/argus-test-data/argus.db"
 
     def test_get_config_singleton(self):
         from argus.config import get_config, reset_config

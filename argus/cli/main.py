@@ -4,6 +4,7 @@ Argus CLI — command-line interface to the search broker.
 
 import asyncio
 import json
+import os
 import sys
 
 import click
@@ -117,6 +118,32 @@ def paths(as_json):
     click.echo("Argus data paths:")
     for key, value in payload.items():
         click.echo(f"  {key}: {value}")
+
+
+@cli.command(name="image-admission")
+@click.option(
+    "--manifest",
+    "manifest_path",
+    default=lambda: os.environ.get("ARGUS_RUNTIME_MANIFEST", "/app/runtime-manifest.json"),
+    show_default="/app/runtime-manifest.json",
+    type=click.Path(path_type=str),
+    help="Baked runtime manifest to validate without network access.",
+)
+def image_admission(manifest_path):
+    """Validate the image's baked identity and capabilities without network access."""
+    from argus.runtime_manifest import RuntimeManifestError, admit_runtime_manifest
+
+    try:
+        manifest = admit_runtime_manifest(manifest_path, package_version=__version__)
+    except RuntimeManifestError as error:
+        raise click.ClickException(str(error)) from error
+
+    click.echo(
+        "admitted "
+        f"revision={manifest['source_revision']} "
+        f"version={manifest['package_version']} "
+        f"lock={manifest['lock_sha256']}"
+    )
 
 
 @cli.command()

@@ -330,6 +330,7 @@ class TestExtractUrl:
 
         monkeypatch.setenv("ARGUS_CRAWL4AI_ENABLED", "true")
         monkeypatch.setenv("ARGUS_YOU_CONTENTS_ENABLED", "true")
+        monkeypatch.setenv("ARGUS_RESIDENTIAL_POLICY", "fallback")
         monkeypatch.setattr("argus.extraction.residential_extractor._is_configured", lambda: True)
         _cache.clear()
         _domain_limiter.clear()
