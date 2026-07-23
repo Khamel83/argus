@@ -1,6 +1,6 @@
 """Health and budget endpoints."""
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Request
 
 from argus.broker.router import SearchBroker
 from argus.models import ProviderName
@@ -34,6 +34,8 @@ async def health(broker: SearchBroker = Depends(get_broker)):
 
 @router.get("/admin/health/detail")
 async def health_detail(broker: SearchBroker = Depends(get_broker)):
+    from argus.extraction.playwright_extractor import browser_capability_status
+
     providers = {}
     for pname in ProviderName:
         providers[pname.value] = broker.get_provider_status(pname)
@@ -58,6 +60,9 @@ async def health_detail(broker: SearchBroker = Depends(get_broker)):
         "status": "ok",
         "providers": providers,
         "health_tracking": health_all,
+        "runtime": {
+            "browser": browser_capability_status(),
+        },
     }
 
 

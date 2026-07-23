@@ -577,6 +577,7 @@ class TestAuthEnforcement:
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
+        assert "browser" in resp.json()["runtime"]
 
 
 class TestWorkflowEndpoints:

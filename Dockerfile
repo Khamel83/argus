@@ -1,6 +1,6 @@
 FROM ghcr.io/astral-sh/uv:0.11.26@sha256:3d868e555f8f1dbc324afa005066cd11e1053fc4743b9808ca8025283e65efa5 AS uv
 
-FROM python:3.12.13-slim-bookworm@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b AS builder
+FROM mcr.microsoft.com/playwright/python:v1.58.0-noble@sha256:678457c4c323b981d8b4befc57b95366bb1bb6aa30057b1269f6b171e8d9975a AS builder
 
 WORKDIR /app
 COPY --from=uv /uv /uvx /bin/
@@ -23,7 +23,7 @@ RUN /app/.venv/bin/python scripts/build_runtime_manifest.py \
     --source-revision "${VCS_REF}" \
     --lock-file uv.lock
 
-FROM python:3.12.13-slim-bookworm@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b
+FROM mcr.microsoft.com/playwright/python:v1.58.0-noble@sha256:678457c4c323b981d8b4befc57b95366bb1bb6aa30057b1269f6b171e8d9975a
 
 WORKDIR /app
 
@@ -35,7 +35,9 @@ COPY alembic.ini ./
 COPY migrations/ ./migrations/
 
 ENV PATH="/app/.venv/bin:${PATH}" \
-    ARGUS_RUNTIME_MANIFEST=/app/runtime-manifest.json
+    ARGUS_RUNTIME_MANIFEST=/app/runtime-manifest.json \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    HOME=/home/argus
 
 ARG IMAGE_ADMISSION_POLICY=production
 RUN case "${IMAGE_ADMISSION_POLICY}" in \

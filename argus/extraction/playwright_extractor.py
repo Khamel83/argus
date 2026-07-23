@@ -20,6 +20,7 @@ import os
 from argus.extraction.models import ExtractedContent, ExtractorName
 from argus.extraction.ssrf import is_safe_url
 from argus.logging import get_logger
+from argus.runtime_manifest import inspect_playwright_browser_capability
 
 logger = get_logger("extraction.playwright")
 
@@ -108,7 +109,7 @@ async def _get_browser():
 
             _browser = await _playwright_instance.chromium.launch(
                 headless=True,
-                args=['--no-sandbox', '--disable-setuid-sandbox'],
+                chromium_sandbox=True,
             )
             return _browser
         except Exception as e:
@@ -212,3 +213,29 @@ async def reset_browser():
     async with _get_browser_lock():
         await _close_browser_resources()
         _browser_unavailable = False
+
+
+def browser_capability_status() -> dict[str, object]:
+    """Return sanitized declared, installed, and loaded browser state."""
+    status = inspect_playwright_browser_capability()
+    loaded = bool(_browser and _browser.is_connected())
+    loaded_source = (
+        "obscura_cdp"
+        if loaded and _using_obscura_cdp
+        else "local_chromium"
+        if loaded
+        else None
+    )
+    status["loaded"] = loaded
+    status["loaded_source"] = loaded_source
+    status["sandboxed"] = loaded and loaded_source == "local_chromium"
+    status["matches_declared"] = (
+        status.get("declared") is status.get("available")
+        if not loaded
+        else (
+            status.get("declared") is True
+            and status.get("available") is True
+            and loaded_source == "local_chromium"
+        )
+    )
+    return status
