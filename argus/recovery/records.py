@@ -8,9 +8,7 @@ import os
 import re
 import stat
 import tempfile
-import uuid
 from contextlib import contextmanager
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,7 +23,7 @@ from argus.recovery.operator import (
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SNAPSHOT = re.compile(r"^\d{8}T\d{6}Z$")
 _SNAPSHOT_MARKER = ".argus-backup-set.json"
-_MAX_TOMBSTONE_ENTRIES = 4096
+_MAX_RETENTION_ENTRIES = 4096
 _RESTORE_CHECKS = (
     "schema",
     "row_counts",
@@ -330,22 +328,19 @@ def record_verified_restore(
         )
 
 
-def prune_snapshots(
+def plan_snapshot_retention(
     root: Path | str,
     *,
     live_data: Path | str,
-    apply: bool = False,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Securely tombstone expired owned snapshots without deleting pathnames."""
+    """Build a bounded, sanitized retention plan without mutating the filesystem."""
     root_path = Path(root)
     live_path = Path(live_data)
     if not root_path.is_absolute() or not live_path.is_absolute():
         raise ValueError("backup root and live data directory must be absolute")
     root_fd = _open_directory_no_follow(root_path, label="backup root")
     live_fd = -1
-    tombstoned: list[str] = []
-    reclaimed_bytes = 0
     try:
         root_metadata = os.fstat(root_fd)
         _assert_path_matches_descriptor(root_path, root_metadata, label="backup root")
@@ -388,55 +383,80 @@ def prune_snapshots(
             live_metadata,
             label="live data directory",
         )
-        names = []
-        for name in sorted(os.listdir(root_fd)):
+        root_names = sorted(os.listdir(root_fd))
+        if len(root_names) > _MAX_RETENTION_ENTRIES:
+            raise ValueError("backup root exceeds retention planning entry limit")
+        names: list[str] = []
+        entry_count = [0]
+        for name in root_names:
             if _SNAPSHOT.fullmatch(name) is None:
                 continue
             metadata = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
             if stat.S_ISLNK(metadata.st_mode):
                 raise ValueError("refusing timestamp-named symlink")
             if not stat.S_ISDIR(metadata.st_mode):
-                continue
-            if _read_snapshot_owner_at(root_fd, name) == root_id:
-                names.append(name)
+                raise ValueError("timestamp-named entry must be a real directory")
+            snapshot_fd = os.open(
+                name,
+                os.O_RDONLY
+                | os.O_DIRECTORY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_CLOEXEC", 0),
+                dir_fd=root_fd,
+            )
+            try:
+                opened = os.fstat(snapshot_fd)
+                if _identity(opened) != _identity(metadata):
+                    raise ValueError("snapshot changed during retention planning")
+                owner = _read_snapshot_owner_fd(snapshot_fd)
+                _validate_snapshot_tree(
+                    snapshot_fd,
+                    root_metadata.st_dev,
+                    entry_count=entry_count,
+                )
+                if owner == root_id:
+                    names.append(name)
+            finally:
+                os.close(snapshot_fd)
+            _assert_entry_matches_descriptor(root_fd, name, metadata)
         kept = retained_snapshot_names(names, now=now)
         candidates = sorted(set(names) - kept)
-        if apply:
-            for name in candidates:
-                _assert_path_matches_descriptor(
-                    root_path,
-                    root_metadata,
-                    label="backup root",
-                )
-                _assert_path_matches_descriptor(
-                    live_path,
-                    live_metadata,
-                    label="live data directory",
-                )
-                reclaimed = _tombstone_owned_snapshot(
-                    root_fd,
-                    name,
-                    root_id,
-                    root_device=root_metadata.st_dev,
-                    root_path=root_path,
-                    root_metadata=root_metadata,
-                )
-                if reclaimed is not None:
-                    tombstoned.append(name)
-                    reclaimed_bytes += reclaimed
+        if sorted(os.listdir(root_fd)) != root_names:
+            raise ValueError("backup root changed during retention planning")
+        _assert_path_matches_descriptor(root_path, root_metadata, label="backup root")
+        _assert_path_matches_descriptor(
+            live_path,
+            live_metadata,
+            label="live data directory",
+        )
     finally:
         if live_fd >= 0:
             os.close(live_fd)
         os.close(root_fd)
+    observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     return {
-        "applied": apply,
+        "schema_version": 1,
+        "observed_at": observed.isoformat(),
+        "policy": {"daily": 7, "weekly": 5, "monthly": 12},
+        "owned_snapshot_count": len(names),
         "kept": sorted(kept),
-        "planned_tombstones": [] if apply else candidates,
-        "tombstoned": tombstoned,
-        "payload_bytes_reclaimed": reclaimed_bytes,
-        # Automatic retention intentionally never removes filesystem names.
-        "removed": [],
+        "expire_candidates": candidates,
+        "mutation_performed": False,
+        "production_reclamation_required": True,
     }
+
+
+def prune_snapshots(
+    root: Path | str,
+    *,
+    live_data: Path | str,
+    apply: bool = False,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Compatibility wrapper for the now strictly read-only retention planner."""
+    if apply:
+        raise ValueError("automatic retention is read-only; apply is forbidden")
+    return plan_snapshot_retention(root, live_data=live_data, now=now)
 
 
 def _open_directory_no_follow(path: Path, *, label: str) -> int:
@@ -475,7 +495,8 @@ def _read_json_at(directory_fd: int, name: str) -> dict[str, Any]:
             name,
             os.O_RDONLY
             | getattr(os, "O_NOFOLLOW", 0)
-            | getattr(os, "O_CLOEXEC", 0),
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOATIME", 0),
             dir_fd=directory_fd,
         )
         try:
@@ -503,27 +524,13 @@ def _read_json_at(directory_fd: int, name: str) -> dict[str, Any]:
     return payload
 
 
-def _read_snapshot_owner_at(directory_fd: int, name: str) -> str | None:
-    """Read an owned snapshot marker without following either directory symlink."""
-    try:
-        child_fd = os.open(
-            name,
-            os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
-            dir_fd=directory_fd,
-        )
-    except OSError:
-        return None
-    try:
-        return _read_snapshot_owner_fd(child_fd)
-    finally:
-        os.close(child_fd)
-
-
 def _read_snapshot_owner_fd(directory_fd: int) -> str | None:
     try:
         marker_fd = os.open(
             _SNAPSHOT_MARKER,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NOATIME", 0),
             dir_fd=directory_fd,
         )
     except OSError:
@@ -552,291 +559,121 @@ def _read_snapshot_owner_fd(directory_fd: int) -> str | None:
     return root_id if isinstance(root_id, str) else None
 
 
-@dataclass
-class _HeldSnapshot:
-    """No-follow descriptors held from validation through byte reclamation."""
-
-    files: list[tuple[int, int, bool]] = field(default_factory=list)
-    directories: list[int] = field(default_factory=list)
-    marker_fd: int | None = None
-
-    def close(self) -> None:
-        for descriptor, _, _ in reversed(self.files):
-            os.close(descriptor)
-        for descriptor in reversed(self.directories):
-            os.close(descriptor)
-
-
-def _tombstone_owned_snapshot(
-    directory_fd: int,
-    name: str,
-    root_id: str,
-    *,
-    root_device: int,
-    root_path: Path,
-    root_metadata: os.stat_result,
-) -> int | None:
-    """Quarantine and reclaim owned regular-file bytes through held descriptors."""
-    if _SNAPSHOT.fullmatch(name) is None:
-        raise ValueError("refusing unsafe retention target")
-    original_metadata = os.stat(
-        name,
-        dir_fd=directory_fd,
-        follow_symlinks=False,
-    )
-    if not stat.S_ISDIR(original_metadata.st_mode):
-        raise ValueError("refusing non-directory retention target")
-    quarantine = f".pruning.{name}.{uuid.uuid4().hex}"
-    os.rename(name, quarantine, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
-    try:
-        quarantine_fd = os.open(
-            quarantine,
-            os.O_RDONLY
-            | os.O_DIRECTORY
-            | getattr(os, "O_NOFOLLOW", 0)
-            | getattr(os, "O_CLOEXEC", 0),
-            dir_fd=directory_fd,
-        )
-    except OSError:
-        return None
-    held: _HeldSnapshot | None = None
-    try:
-        quarantine_metadata = os.fstat(quarantine_fd)
-        if _identity(quarantine_metadata) != _identity(original_metadata):
-            return None
-        if _read_snapshot_owner_fd(quarantine_fd) != root_id:
-            _restore_quarantine(
-                directory_fd,
-                quarantine,
-                name,
-                quarantine_metadata,
-            )
-            return None
-        try:
-            held = _hold_snapshot_tree(
-                quarantine_fd,
-                root_device,
-            )
-            _assert_path_matches_descriptor(
-                root_path,
-                root_metadata,
-                label="backup root",
-            )
-            _assert_entry_matches_descriptor(
-                directory_fd,
-                quarantine,
-                quarantine_fd,
-            )
-            return _reclaim_snapshot_bytes(
-                held,
-                root_id=root_id,
-                source_snapshot=name,
-                root_directory_fd=quarantine_fd,
-                expected_device=root_device,
-            )
-        except Exception:
-            # Once ownership is revalidated, any structural anomaly leaves the
-            # set inert under its quarantine name for explicit operator review.
-            raise
-    finally:
-        if held is not None:
-            held.close()
-        os.close(quarantine_fd)
-
-
-def _restore_quarantine(
-    directory_fd: int,
-    quarantine: str,
-    name: str,
-    expected: os.stat_result,
-) -> None:
-    try:
-        current = os.stat(
-            quarantine,
-            dir_fd=directory_fd,
-            follow_symlinks=False,
-        )
-        if _identity(current) != _identity(expected):
-            return
-        os.rename(
-            quarantine,
-            name,
-            src_dir_fd=directory_fd,
-            dst_dir_fd=directory_fd,
-        )
-    except OSError:
-        pass
-
-
 def _identity(metadata: os.stat_result) -> tuple[int, int, int]:
     return metadata.st_dev, metadata.st_ino, stat.S_IFMT(metadata.st_mode)
 
 
-def _hold_snapshot_tree(
+def _stable_signature(metadata: os.stat_result) -> tuple[int, ...]:
+    return (
+        *_identity(metadata),
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _validate_snapshot_tree(
     directory_fd: int,
     expected_device: int,
     *,
-    max_entries: int = _MAX_TOMBSTONE_ENTRIES,
-) -> _HeldSnapshot:
-    """Validate a tree and hold every directory and regular-file descriptor."""
-    held = _HeldSnapshot()
-    entry_count = 0
-
-    def visit(parent_fd: int, *, root: bool) -> None:
-        nonlocal entry_count
-        for child in sorted(os.listdir(parent_fd)):
-            entry_count += 1
-            if entry_count > max_entries:
-                raise ValueError("snapshot exceeds secure tombstone entry limit")
+    entry_count: list[int],
+) -> None:
+    """Validate one observed tree using read-only, no-follow operations."""
+    before = os.fstat(directory_fd)
+    if before.st_dev != expected_device or not stat.S_ISDIR(before.st_mode):
+        raise ValueError("refusing snapshot containing a device boundary")
+    names = sorted(os.listdir(directory_fd))
+    observed: dict[str, tuple[int, ...]] = {}
+    for child in names:
+        entry_count[0] += 1
+        if entry_count[0] > _MAX_RETENTION_ENTRIES:
+            raise ValueError("snapshot exceeds retention planning entry limit")
+        try:
+            metadata = os.stat(
+                child,
+                dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+        except OSError as error:
+            raise ValueError("snapshot changed during retention planning") from error
+        if metadata.st_dev != expected_device:
+            raise ValueError("refusing snapshot containing a device boundary")
+        observed[child] = _stable_signature(metadata)
+        if stat.S_ISDIR(metadata.st_mode):
             try:
-                metadata = os.stat(
+                child_fd = os.open(
                     child,
-                    dir_fd=parent_fd,
-                    follow_symlinks=False,
+                    os.O_RDONLY
+                    | os.O_DIRECTORY
+                    | getattr(os, "O_NOFOLLOW", 0)
+                    | getattr(os, "O_CLOEXEC", 0),
+                    dir_fd=directory_fd,
                 )
             except OSError as error:
                 raise ValueError(
-                    "snapshot changed during secure tombstoning"
+                    "snapshot changed during retention planning"
                 ) from error
-            if metadata.st_dev != expected_device:
-                raise ValueError("refusing snapshot containing a device boundary")
-            if stat.S_ISDIR(metadata.st_mode):
-                try:
-                    child_fd = os.open(
-                        child,
-                        os.O_RDONLY
-                        | os.O_DIRECTORY
-                        | getattr(os, "O_NOFOLLOW", 0)
-                        | getattr(os, "O_CLOEXEC", 0),
-                        dir_fd=parent_fd,
-                    )
-                except OSError as error:
-                    raise ValueError(
-                        "snapshot changed during secure tombstoning"
-                    ) from error
-                opened = os.fstat(child_fd)
-                if _identity(opened) != _identity(metadata):
-                    os.close(child_fd)
-                    raise ValueError("snapshot changed during secure tombstoning")
-                held.directories.append(child_fd)
-                visit(child_fd, root=False)
-                continue
-            if not stat.S_ISREG(metadata.st_mode):
-                raise ValueError(
-                    "refusing links or special files during secure tombstoning"
+            try:
+                if _identity(os.fstat(child_fd)) != _identity(metadata):
+                    raise ValueError("snapshot changed during retention planning")
+                _validate_snapshot_tree(
+                    child_fd,
+                    expected_device,
+                    entry_count=entry_count,
                 )
+            finally:
+                os.close(child_fd)
+        elif stat.S_ISREG(metadata.st_mode):
             if metadata.st_nlink != 1:
                 raise ValueError("refusing regular file with unsafe link count")
             try:
                 child_fd = os.open(
                     child,
-                    os.O_RDWR
-                    | os.O_NONBLOCK
+                    os.O_RDONLY
                     | getattr(os, "O_NOFOLLOW", 0)
-                    | getattr(os, "O_CLOEXEC", 0),
-                    dir_fd=parent_fd,
+                    | getattr(os, "O_CLOEXEC", 0)
+                    | getattr(os, "O_NOATIME", 0),
+                    dir_fd=directory_fd,
                 )
             except OSError as error:
                 raise ValueError(
-                    "snapshot changed during secure tombstoning"
+                    "snapshot changed during retention planning"
                 ) from error
-            opened = os.fstat(child_fd)
-            if (
-                _identity(opened) != _identity(metadata)
-                or opened.st_dev != expected_device
-                or opened.st_nlink != 1
-                or not stat.S_ISREG(opened.st_mode)
-            ):
+            try:
+                if _stable_signature(os.fstat(child_fd)) != observed[child]:
+                    raise ValueError("snapshot changed during retention planning")
+            finally:
                 os.close(child_fd)
-                raise ValueError("snapshot changed during secure tombstoning")
-            is_marker = root and child == _SNAPSHOT_MARKER
-            held.files.append((child_fd, opened.st_size, is_marker))
-            if is_marker:
-                held.marker_fd = child_fd
-
-    try:
-        root_metadata = os.fstat(directory_fd)
-        if root_metadata.st_dev != expected_device or not stat.S_ISDIR(
-            root_metadata.st_mode
-        ):
-            raise ValueError("refusing snapshot containing a device boundary")
-        visit(directory_fd, root=True)
-        if held.marker_fd is None:
-            raise ValueError("owned snapshot marker changed during validation")
-        return held
-    except Exception:
-        held.close()
-        raise
+        else:
+            raise ValueError(
+                "refusing links or special files during retention planning"
+            )
+    if sorted(os.listdir(directory_fd)) != names:
+        raise ValueError("snapshot changed during retention planning")
+    for child, signature in observed.items():
+        try:
+            current = os.stat(
+                child,
+                dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+        except OSError as error:
+            raise ValueError("snapshot changed during retention planning") from error
+        if _stable_signature(current) != signature:
+            raise ValueError("snapshot changed during retention planning")
+    if _stable_signature(os.fstat(directory_fd)) != _stable_signature(before):
+        raise ValueError("snapshot changed during retention planning")
 
 
 def _assert_entry_matches_descriptor(
     parent_fd: int,
     name: str,
-    descriptor: int,
+    metadata: os.stat_result,
 ) -> None:
     try:
         current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
     except OSError as error:
-        raise ValueError("snapshot changed during secure tombstoning") from error
-    if _identity(current) != _identity(os.fstat(descriptor)):
-        raise ValueError("snapshot changed during secure tombstoning")
-
-
-def _reclaim_snapshot_bytes(
-    held: _HeldSnapshot,
-    *,
-    root_id: str,
-    source_snapshot: str,
-    root_directory_fd: int,
-    expected_device: int,
-) -> int:
-    """Reclaim payload bytes only from held, prevalidated regular-file inodes."""
-    if held.marker_fd is None:
-        raise ValueError("owned snapshot marker changed during validation")
-    for descriptor, _, _ in held.files:
-        metadata = os.fstat(descriptor)
-        if (
-            metadata.st_dev != expected_device
-            or metadata.st_nlink != 1
-            or not stat.S_ISREG(metadata.st_mode)
-        ):
-            raise ValueError("snapshot changed during secure tombstoning")
-
-    reclaimed = 0
-    for descriptor, original_size, is_marker in held.files:
-        metadata = os.fstat(descriptor)
-        if (
-            metadata.st_dev != expected_device
-            or metadata.st_nlink != 1
-            or not stat.S_ISREG(metadata.st_mode)
-        ):
-            raise ValueError("snapshot changed during secure tombstoning")
-        os.ftruncate(descriptor, 0)
-        if not is_marker:
-            reclaimed += original_size
-
-    marker = (
-        json.dumps(
-            {
-                "root_id": root_id,
-                "schema_version": 1,
-                "source_snapshot": source_snapshot,
-                "state": "secure-tombstone",
-                "payload_bytes_reclaimed": reclaimed,
-                "tombstoned_at": datetime.now(timezone.utc).isoformat(),
-            },
-            sort_keys=True,
-        ).encode("utf-8")
-        + b"\n"
-    )
-    os.lseek(held.marker_fd, 0, os.SEEK_SET)
-    written = 0
-    while written < len(marker):
-        written += os.write(held.marker_fd, marker[written:])
-
-    for descriptor, _, _ in held.files:
-        os.fsync(descriptor)
-    for descriptor in reversed(held.directories):
-        os.fsync(descriptor)
-    os.fsync(root_directory_fd)
-    return reclaimed
+        raise ValueError("snapshot changed during retention planning") from error
+    if _stable_signature(current) != _stable_signature(metadata):
+        raise ValueError("snapshot changed during retention planning")

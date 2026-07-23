@@ -41,7 +41,6 @@ python3 "$script_dir/postgres_recovery.py" record-backup \
     --backup-set "$final" \
     --root "$ARGUS_BACKUP_ROOT" \
     --live-data "$POSTGRES_LIVE_DATA_DIR"
-python3 "$script_dir/postgres_recovery.py" prune \
+python3 "$script_dir/postgres_recovery.py" retention-plan \
     --root "$ARGUS_BACKUP_ROOT" \
-    --live-data "$POSTGRES_LIVE_DATA_DIR" \
-    --apply
+    --live-data "$POSTGRES_LIVE_DATA_DIR"

@@ -76,6 +76,29 @@ def test_schema_promotion_gate_cli_exits_nonzero_without_evidence(tmp_path):
     assert json.loads(result.stdout)["state"] == "blocked"
 
 
+def test_retention_cli_has_no_apply_or_prune_mode(tmp_path):
+    forbidden_apply = _run(
+        "retention-plan",
+        "--root",
+        str(tmp_path / "backups"),
+        "--live-data",
+        str(tmp_path / "live"),
+        "--apply",
+    )
+    removed_prune = _run(
+        "prune",
+        "--root",
+        str(tmp_path / "backups"),
+        "--live-data",
+        str(tmp_path / "live"),
+    )
+
+    assert forbidden_apply.returncode != 0
+    assert "unrecognized arguments: --apply" in forbidden_apply.stderr
+    assert removed_prune.returncode != 0
+    assert "invalid choice" in removed_prune.stderr
+
+
 def test_import_rejects_credentialed_url_without_echoing_secret():
     result = _run(
         "import",

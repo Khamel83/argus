@@ -21,7 +21,7 @@ from argus.recovery.operator import (
     validate_scratch_database,
 )
 from argus.recovery.records import (
-    prune_snapshots,
+    plan_snapshot_retention,
     record_verified_backup,
     record_verified_restore,
 )
@@ -47,13 +47,12 @@ def _parser() -> argparse.ArgumentParser:
     alias.add_argument("--primary", default="homelab-postgres")
     alias.add_argument("--compatibility", default="atlas-postgres")
 
-    prune = commands.add_parser(
-        "prune",
-        help="securely tombstone expired sets without deleting pathnames",
+    retention = commands.add_parser(
+        "retention-plan",
+        help="print a read-only retention candidate plan",
     )
-    prune.add_argument("--root", type=Path, required=True)
-    prune.add_argument("--live-data", type=Path, required=True)
-    prune.add_argument("--apply", action="store_true")
+    retention.add_argument("--root", type=Path, required=True)
+    retention.add_argument("--live-data", type=Path, required=True)
 
     manifest = commands.add_parser("create-backup-manifest")
     manifest.add_argument("--stage", type=Path, required=True)
@@ -119,11 +118,10 @@ def run(arguments: list[str] | None = None) -> int:
             args.primary,
             args.compatibility,
         )
-    elif args.command == "prune":
-        result = prune_snapshots(
+    elif args.command == "retention-plan":
+        result = plan_snapshot_retention(
             args.root,
             live_data=args.live_data,
-            apply=args.apply,
         )
     elif args.command == "record-backup":
         record_verified_backup(

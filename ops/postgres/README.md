@@ -34,23 +34,18 @@ validate the temporary `atlas-postgres` compatibility alias before migration.
    `python3 postgres_recovery.py initialize-backup-root --root /backup/argus
    --live-data /var/lib/postgresql/data`. Initialization rejects equal,
    ancestor, descendant, missing, symlinked, or group/world-writable paths and
-   writes the ownership marker required by backup and pruning.
+   writes the ownership marker required by backup and retention planning.
 5. Schedule `backup_shared_postgres.sh` on the homelab. The destination must be
    covered by separate storage protection. Each set binds dump checksums to
    source schema fingerprints and per-table counts for both tenants. Retention
    considers only owned sets and is the union of 7 daily, 5 weekly, and
-   12 monthly sets. Automatic retention uses secure tombstoning: it atomically
-   moves an expired owned set to a `.pruning.*` name, validates the complete
-   tree through no-follow file descriptors, and truncates only validated,
-   single-link regular files through those held descriptors. It never unlinks
-   files or removes directories.
-   Tombstones are excluded from active retention counts, but their directory
-   and file names remain. Dump payload bytes are reclaimed; inode, directory,
-   and small sanitized marker metadata remain and must be included in capacity
-   planning. Removing tombstone metadata is a separate, explicit operator
-   procedure outside this automatic workflow. Any validation anomaly leaves
-   the unmodified set quarantined and excluded from future automatic retention
-   until an operator inspects it.
+   12 monthly sets. `retention-plan` validates owned snapshot trees and prints
+   bounded, sanitized JSON containing only the observed policy, keep set, and
+   expiration candidates. It is strictly read-only: it does not rename,
+   truncate, unlink, remove, chmod, or rewrite any filesystem entry. Symlinks,
+   special files, mount/device crossings, unsafe hard links, and concurrent
+   tree changes fail the plan. Actual deletion, reclamation, and scheduling
+   remain an explicit production operator procedure outside this toolkit.
 6. Run `verify_restore.sh` with operator-named `argus_restore_*` and
    `atlas_restore_*` targets. It verifies the backup manifest, refuses
    production database names, compares every restored table count and schema
@@ -67,9 +62,9 @@ validate the temporary `atlas-postgres` compatibility alias before migration.
 - [x] Atlas and Argus runtime roles are denied cross-tenant database access
 - [x] Backup and restore artifacts contain no role password verifiers
 - [x] Backup roots and snapshot sets carry validated ownership markers
-- [x] Secure tombstoning rejects links, special files, mount/device crossings,
-      unowned sets, unsafe link counts, and changed targets before reclamation
-- [x] Automatic retention never unlinks names or removes directories
+- [x] Read-only retention planning rejects links, special files, mount/device
+      crossings, unsafe link counts, and concurrently changed snapshots
+- [x] Retention planning emits bounded sanitized evidence without mutation
 - [x] Retention selects 7 daily, 5 weekly, and 12 monthly restore sets
 - [x] Restore targets require explicit validated Atlas/Argus scratch names
 - [x] Import is dry-run-first, idempotent, and reports before/after counts
@@ -84,6 +79,7 @@ validate the temporary `atlas-postgres` compatibility alias before migration.
 - [ ] Production `homelab-postgres` identity and `atlas-postgres` alias approved
 - [ ] Production import reconciliation approved and completed
 - [ ] Production backup schedule approved and enabled
+- [ ] Production retention deletion/reclamation procedure approved and enabled
 - [ ] Production backup destination verified outside live PGDATA
 - [ ] Production isolated restore approved and verified
 - [ ] Production schema-promotion evidence reviewed
