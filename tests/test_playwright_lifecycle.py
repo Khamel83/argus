@@ -278,3 +278,26 @@ def test_loaded_browser_without_declared_manifest_is_reported_as_mismatch(monkey
 
     assert status["loaded_source"] == "local_chromium"
     assert status["matches_declared"] is False
+
+
+def test_declared_but_missing_unloaded_browser_is_a_mismatch(monkeypatch):
+    import argus.extraction.playwright_extractor as extractor
+
+    monkeypatch.setattr(extractor, "_browser", None)
+    monkeypatch.setattr(
+        extractor,
+        "inspect_playwright_browser_capability",
+        MagicMock(
+            return_value={
+                "declared": True,
+                "available": False,
+                "sandbox_required": True,
+                "degraded_reason": "browser_artifact_unavailable",
+            }
+        ),
+    )
+
+    status = extractor.browser_capability_status()
+
+    assert status["loaded"] is False
+    assert status["matches_declared"] is False

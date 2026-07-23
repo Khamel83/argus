@@ -14,11 +14,15 @@ def _browser_contract(browser_root) -> dict[str, str]:
     browser_dir = browser_root / f"chromium_headless_shell-{contract['revision']}"
     executable = browser_dir / "chrome-headless-shell-linux64" / "chrome-headless-shell"
     executable.parent.mkdir(parents=True)
-    executable.write_bytes(b"test browser")
+    executable.write_text(
+        f"#!/bin/sh\necho 'HeadlessChrome {contract['browser_version']}'\n",
+        encoding="utf-8",
+    )
     executable.chmod(0o755)
     return {
         **contract,
         "browser_root": os.fspath(browser_root),
+        "executable_sha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
     }
 
 
@@ -95,6 +99,44 @@ def test_image_admission_rejects_playwright_browser_revision_drift(tmp_path):
         assert "browser contract" in str(error).lower()
     else:
         raise AssertionError("production admission must reject browser revision drift")
+
+
+def test_image_admission_rejects_tampered_browser_binary(tmp_path):
+    from argus.runtime_manifest import RuntimeManifestError, admit_runtime_manifest
+
+    lock_path = tmp_path / "uv.lock"
+    manifest = _manifest(lock_path)
+    executable = next(
+        (tmp_path / "ms-playwright").rglob("chrome-headless-shell")
+    )
+    executable.write_text("#!/bin/sh\necho 'forged browser'\n", encoding="utf-8")
+    manifest_path = tmp_path / "runtime-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    try:
+        admit_runtime_manifest(manifest_path, package_version="1.6.2")
+    except RuntimeManifestError as error:
+        assert "identity" in str(error).lower()
+    else:
+        raise AssertionError("production admission must reject a changed browser binary")
+
+
+def test_missing_browser_status_preserves_declared_degraded_capability(tmp_path):
+    from argus.runtime_manifest import inspect_playwright_browser_capability
+
+    lock_path = tmp_path / "uv.lock"
+    manifest = _manifest(lock_path)
+    for executable_name in ("chrome-headless-shell", "headless_shell"):
+        for executable in (tmp_path / "ms-playwright").rglob(executable_name):
+            executable.unlink()
+    manifest_path = tmp_path / "runtime-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    status = inspect_playwright_browser_capability(manifest_path)
+
+    assert status["declared"] is True
+    assert status["available"] is False
+    assert status["degraded_reason"] == "browser_artifact_unavailable"
 
 
 def test_production_image_admission_rejects_a_local_revision_marker(tmp_path):

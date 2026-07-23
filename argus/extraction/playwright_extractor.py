@@ -229,9 +229,13 @@ def browser_capability_status() -> dict[str, object]:
     status["loaded"] = loaded
     status["loaded_source"] = loaded_source
     status["sandboxed"] = loaded and loaded_source == "local_chromium"
-    status["matches_declared"] = not loaded or (
-        status.get("declared") is True
-        and status.get("available") is True
-        and loaded_source == "local_chromium"
+    status["matches_declared"] = (
+        status.get("declared") is status.get("available")
+        if not loaded
+        else (
+            status.get("declared") is True
+            and status.get("available") is True
+            and loaded_source == "local_chromium"
+        )
     )
     return status

@@ -49,3 +49,24 @@ def test_seccomp_profile_only_adds_user_namespace_syscalls():
     }
 
     assert {"clone", "setns", "unshare"} <= added
+
+
+def test_canary_classifies_browser_and_playwright_driver_processes():
+    from scripts.browser_canary import _runtime_kind
+
+    assert (
+        _runtime_kind(
+            "/ms-playwright/chromium_headless_shell-1208/"
+            "chrome-headless-shell-linux64/chrome-headless-shell"
+        )
+        == "browser"
+    )
+    assert (
+        _runtime_kind(
+            "/app/.venv/lib/python3.12/site-packages/playwright/driver/node "
+            "/app/.venv/lib/python3.12/site-packages/playwright/driver/"
+            "package/cli.js run-driver"
+        )
+        == "playwright_driver"
+    )
+    assert _runtime_kind("python /canary/browser_canary.py") is None

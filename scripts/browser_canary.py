@@ -52,7 +52,15 @@ def _oom_events() -> int:
         return 0
 
 
-def _browser_processes() -> list[dict[str, object]]:
+def _runtime_kind(command: str) -> str | None:
+    if any(marker in command for marker in ("chrome-headless-shell", "chromium")):
+        return "browser"
+    if "playwright/driver" in command or "playwright/driver/package/cli.js" in command:
+        return "playwright_driver"
+    return None
+
+
+def _runtime_processes() -> list[dict[str, object]]:
     processes: list[dict[str, object]] = []
     for proc_dir in Path("/proc").iterdir():
         if not proc_dir.name.isdigit():
@@ -62,13 +70,15 @@ def _browser_processes() -> list[dict[str, object]]:
             status = (proc_dir / "status").read_text(encoding="utf-8")
         except (FileNotFoundError, PermissionError, UnicodeDecodeError):
             continue
-        if not any(marker in command for marker in ("chrome-headless-shell", "chromium")):
+        kind = _runtime_kind(command)
+        if kind is None:
             continue
         uid_line = next(line for line in status.splitlines() if line.startswith("Uid:"))
         real_uid = int(uid_line.split()[1])
         processes.append(
             {
                 "pid": int(proc_dir.name),
+                "kind": kind,
                 "uid": real_uid,
                 "no_sandbox": "--no-sandbox" in command,
             }
@@ -76,13 +86,13 @@ def _browser_processes() -> list[dict[str, object]]:
     return processes
 
 
-async def _wait_for_browser_exit() -> list[dict[str, object]]:
+async def _wait_for_runtime_exit() -> list[dict[str, object]]:
     for _ in range(50):
-        remaining = _browser_processes()
+        remaining = _runtime_processes()
         if not remaining:
             return []
         await asyncio.sleep(0.1)
-    return _browser_processes()
+    return _runtime_processes()
 
 
 async def run(expect_missing: bool, attempts: int, memory_limit_mib: int) -> None:
@@ -108,8 +118,13 @@ async def run(expect_missing: bool, attempts: int, memory_limit_mib: int) -> Non
         if expect_missing:
             assert runtime_starts == 1, runtime_starts
             assert all(result.error == "playwright: not available" for result in results)
-            assert extractor.browser_capability_status()["loaded"] is False
-            live_processes = _browser_processes()
+            status = extractor.browser_capability_status()
+            assert status["declared"] is True
+            assert status["available"] is False
+            assert status["loaded"] is False
+            assert status["matches_declared"] is False
+            assert status["degraded_reason"] == "browser_artifact_unavailable"
+            live_processes = _runtime_processes()
             assert not live_processes, live_processes
         else:
             assert runtime_starts == 1, runtime_starts
@@ -120,15 +135,18 @@ async def run(expect_missing: bool, attempts: int, memory_limit_mib: int) -> Non
             assert status["available"] is True
             assert status["loaded"] is True
             assert status["sandboxed"] is True
-            live_processes = _browser_processes()
-            assert live_processes
+            live_processes = _runtime_processes()
+            browser_processes = [
+                process for process in live_processes if process["kind"] == "browser"
+            ]
+            assert browser_processes
             assert all(process["uid"] != 0 for process in live_processes)
-            assert not any(process["no_sandbox"] for process in live_processes)
+            assert not any(process["no_sandbox"] for process in browser_processes)
     finally:
         playwright.async_api.async_playwright = real_factory
         await extractor.close_browser()
 
-    remaining = await _wait_for_browser_exit()
+    remaining = await _wait_for_runtime_exit()
     peak_bytes = _memory_peak_bytes()
     oom_after = _oom_events()
     assert not remaining, remaining
@@ -144,7 +162,7 @@ async def run(expect_missing: bool, attempts: int, memory_limit_mib: int) -> Non
                 "runtime_starts": runtime_starts,
                 "peak_mib": round(peak_bytes / 1024 / 1024, 2),
                 "oom_events": oom_after - oom_before,
-                "orphan_browser_processes": len(remaining),
+                "orphan_runtime_processes": len(remaining),
                 "uid": os.getuid(),
             },
             sort_keys=True,

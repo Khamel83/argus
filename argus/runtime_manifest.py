@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +72,19 @@ def _find_headless_shell(browser_root: Path, revision: str) -> Path | None:
     return None
 
 
+def playwright_browser_artifact(
+    browser_root: Path | str,
+    revision: str,
+) -> tuple[Path, str]:
+    """Resolve and hash the exact Playwright headless-shell artifact."""
+    executable = _find_headless_shell(Path(browser_root), revision)
+    if executable is None:
+        raise RuntimeManifestError(
+            "Playwright-matched Chromium headless shell is missing or not executable"
+        )
+    return executable, hashlib.sha256(executable.read_bytes()).hexdigest()
+
+
 def _validate_browser_contract(browser: object) -> Path:
     if not isinstance(browser, dict):
         raise RuntimeManifestError("runtime manifest is missing browser contract")
@@ -86,10 +100,36 @@ def _validate_browser_contract(browser: object) -> Path:
     browser_root = browser.get("browser_root")
     if not isinstance(browser_root, str) or not Path(browser_root).is_absolute():
         raise RuntimeManifestError("runtime manifest has an invalid browser root")
-    executable = _find_headless_shell(Path(browser_root), installed["revision"])
-    if executable is None:
+    executable, actual_digest = playwright_browser_artifact(
+        browser_root,
+        installed["revision"],
+    )
+    declared_digest = browser.get("executable_sha256")
+    if (
+        not isinstance(declared_digest, str)
+        or not _LOCK_SHA256.fullmatch(declared_digest)
+        or declared_digest != actual_digest
+    ):
+        raise RuntimeManifestError("Chromium headless shell identity does not match manifest")
+    try:
+        version_result = subprocess.run(
+            [executable, "--version"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
         raise RuntimeManifestError(
-            "Playwright-matched Chromium headless shell is missing or not executable"
+            "Chromium headless shell version probe failed"
+        ) from error
+    version_output = f"{version_result.stdout}\n{version_result.stderr}"
+    if (
+        version_result.returncode != 0
+        or installed["browser_version"] not in version_output
+    ):
+        raise RuntimeManifestError(
+            "Chromium headless shell version does not match Playwright contract"
         )
     return executable
 
@@ -103,24 +143,43 @@ def inspect_playwright_browser_capability(
     )
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        capabilities = manifest.get("capabilities", {})
-        declared = capabilities.get("playwright_browser") is True
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {
+            "declared": False,
+            "available": False,
+            "sandbox_required": True,
+            "degraded_reason": "runtime_manifest_unavailable",
+        }
+
+    capabilities = manifest.get("capabilities", {})
+    declared = (
+        isinstance(capabilities, dict)
+        and capabilities.get("playwright_browser") is True
+    )
+    if not declared:
+        return {
+            "declared": False,
+            "available": False,
+            "sandbox_required": True,
+        }
+    try:
         executable = _validate_browser_contract(manifest.get("browser"))
         browser = manifest["browser"]
         return {
-            "declared": declared,
-            "available": declared,
+            "declared": True,
+            "available": True,
             "sandbox_required": True,
             "playwright_version": browser["playwright_version"],
             "revision": browser["revision"],
             "browser_version": browser["browser_version"],
             "executable": executable.name,
         }
-    except (OSError, json.JSONDecodeError, RuntimeManifestError, TypeError):
+    except (OSError, RuntimeManifestError, TypeError):
         return {
-            "declared": False,
+            "declared": True,
             "available": False,
             "sandbox_required": True,
+            "degraded_reason": "browser_artifact_unavailable",
         }
 
 
