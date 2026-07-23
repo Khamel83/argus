@@ -26,9 +26,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install uv
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install uv
+        run: python -m pip install uv==0.11.26
 
       - name: Sync dependencies
         run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra mcp
@@ -52,7 +50,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        run: python -m pip install uv
+        run: python -m pip install uv==0.11.26
 
       - name: Sync frozen production dependencies
         run: uv sync --frozen --extra dev --extra mcp
@@ -81,7 +79,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        run: python3 -m pip install uv
+        run: python3 -m pip install uv==0.11.26
 
       - name: Check llms.txt freshness
         run: |
