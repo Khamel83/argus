@@ -21,8 +21,8 @@ tier 1 before tier 3.
 | 1 (monthly recurring) | Tavily | `tavily.py` | Disabled | 1,000 free queries/month. |
 | 1 (monthly recurring) | Exa | `exa.py` | Disabled | 1,000 free queries/month. |
 | 1 (monthly recurring) | Linkup | `linkup.py` | Disabled | 1,000 free queries/month. |
+| 1 (monthly recurring) | Parallel AI | `parallel.py` | Disabled | $5 monthly credit with card on file, up to 5,000 searches/month. |
 | 3 (one-time credit) | Serper | `serper.py` | Disabled | 2,500 lifetime credits. |
-| 3 (one-time credit) | Parallel AI | `parallel.py` | Disabled | 4,000 lifetime credits. |
 | 3 (one-time credit) | You.com | `you.py` | Disabled | $20 lifetime credit. |
 | 3 (one-time credit) | Valyu | `valyu.py` | Disabled | $10 lifetime credit. USD budget tracking. |
 | 3 (one-time credit) | SearchAPI | `searchapi.py` | Disabled | Paid only. |

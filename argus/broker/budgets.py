@@ -22,8 +22,8 @@ logger = get_logger("broker.budgets")
 
 # Provider tiers — used by routing to prioritize recurring credits over one-time.
 # Tier 0: Free/unlimited (SearXNG, DuckDuckGo, Yahoo, GitHub, Wolfram)
-# Tier 1: Monthly recurring credits (Brave, Tavily, Exa, Linkup)
-# Tier 3: One-time signup credits (Serper, Parallel, You, SearchAPI, Valyu)
+# Tier 1: Monthly recurring credits (Brave, Tavily, Exa, Linkup, Parallel)
+# Tier 3: One-time signup credits (Serper, You, SearchAPI, Valyu)
 PROVIDER_TIERS: dict[ProviderName, int] = {
     ProviderName.SEARXNG: 0,     # free, unlimited (self-hosted, 70+ engines)
     ProviderName.DUCKDUCKGO: 0,  # free, unlimited (scrapes DDG)
@@ -34,8 +34,8 @@ PROVIDER_TIERS: dict[ProviderName, int] = {
     ProviderName.TAVILY: 1,      # monthly recurring
     ProviderName.LINKUP: 1,      # monthly recurring
     ProviderName.EXA: 1,         # monthly recurring
+    ProviderName.PARALLEL: 1,    # monthly recurring ($5 / up to 5k searches)
     ProviderName.SERPER: 3,      # one-time credits
-    ProviderName.PARALLEL: 3,    # one-time credits
     ProviderName.YOU: 3,         # one-time credits
     ProviderName.SEARCHAPI: 3,   # one-time/placeholder
     ProviderName.VALYU: 3,       # one-time credits ($10)

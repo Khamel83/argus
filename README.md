@@ -199,8 +199,8 @@ The repo includes `.python-version` with `3.12` so `uv`, `pyenv`, and similar to
 | Tavily | Monthly recurring | 1,000 queries/month | [signup](https://app.tavily.com/sign-up) |
 | Exa | Monthly recurring | 1,000 queries/month | [signup](https://dashboard.exa.ai/signup) |
 | Linkup | Monthly recurring | 1,000 queries/month | [signup](https://linkup.so) |
+| Parallel AI | Monthly recurring | $5 credit with card on file, up to 5,000 searches/month | [signup](https://parallel.ai) |
 | Serper | One-time signup | 2,500 credits | [signup](https://serper.dev/signup) |
-| Parallel AI | One-time signup | 4,000 credits | [signup](https://parallel.ai) |
 | You.com | One-time signup | $20 credit | [platform](https://you.com/platform) |
 | Valyu | One-time signup | $10 credit | [platform](https://platform.valyu.ai) |
 
@@ -208,7 +208,7 @@ The repo includes `.python-version` with `3.12` so `uv`, `pyenv`, and similar to
 
 ² WolframAlpha returns **computed answers** (math, unit conversions, factual lookups), not web search results. It only activates in `grounding` and `research` modes. Queries it can't compute (general web searches) return empty — no error, no health penalty.
 
-**7,000+ free queries/month** from recurring free-tier providers alone (WolframAlpha 2k + Brave 2k + Tavily 1k + Exa 1k + Linkup 1k). DuckDuckGo, Yahoo, and GitHub have no monthly cap. SearXNG is disabled by default (enable in `.env`). Routing priority: **Tier 0** (free: SearXNG*, DuckDuckGo, Yahoo, GitHub, WolframAlpha) → **Tier 1** (monthly recurring: Brave, Tavily, Exa, Linkup) → **Tier 3** (one-time: Serper, Parallel, You.com, Valyu, SearchAPI). Budget-exhausted providers are skipped automatically.
+**12,000+ free queries/month** from recurring free-tier providers alone (WolframAlpha 2k + Brave 2k + Tavily 1k + Exa 1k + Linkup 1k + Parallel up to 5k). DuckDuckGo, Yahoo, and GitHub have no monthly cap. SearXNG is disabled by default (enable in `.env`). Routing priority: **Tier 0** (free: SearXNG*, DuckDuckGo, Yahoo, GitHub, WolframAlpha) → **Tier 1** (monthly recurring: Brave, Tavily, Exa, Linkup, Parallel) → **Tier 3** (one-time: Serper, You.com, Valyu, SearchAPI). Budget-exhausted providers are skipped automatically.
 
 ## HTTP API
 
@@ -572,7 +572,7 @@ query arrives → cache? → build provider queue → execute sequentially → R
 
 2. **Provider queue.** `resolve_routing()` takes the mode-specific preference list and stable-sorts by tier: tier 0 (free) first, tier 1 (monthly) next, tier 3 (one-time) last. Example for discovery mode:
    ```
-   searxng → duckduckgo → yahoo → github → brave → exa → tavily → linkup → serper → parallel → you → valyu
+   searxng → duckduckgo → yahoo → github → brave → exa → tavily → linkup → parallel → serper → you → valyu
    ```
 
 3. **Sequential execution with gates.** Each provider is checked in order. Four gates must pass before an API call:

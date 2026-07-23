@@ -112,6 +112,17 @@ class TestPolicies:
         result = resolve_routing(SearchMode.DISCOVERY, override)
         assert result == [ProviderName.BRAVE, ProviderName.SERPER]
 
+    def test_parallel_recurring_credit_routes_before_one_time_providers(self):
+        from argus.broker.budgets import PROVIDER_TIERS
+        from argus.broker.policies import resolve_routing
+
+        assert PROVIDER_TIERS[ProviderName.PARALLEL] == 1
+        result = resolve_routing(
+            SearchMode.RESEARCH,
+            [ProviderName.SERPER, ProviderName.PARALLEL],
+        )
+        assert result == [ProviderName.PARALLEL, ProviderName.SERPER]
+
     def test_no_override_uses_policy(self):
         from argus.broker.policies import resolve_routing
         result = resolve_routing(SearchMode.DISCOVERY, None)
@@ -506,6 +517,21 @@ class TestBudgets:
         # Old entries should age out — 0 usage
         assert b.get_monthly_usage(ProviderName.BRAVE) == 0.0
         assert b.is_budget_exhausted(ProviderName.BRAVE) is False
+
+    def test_parallel_monthly_usage_ages_out_instead_of_becoming_lifetime(self):
+        from argus.broker.budgets import BudgetTracker
+        import time
+
+        b = BudgetTracker()
+        b.set_budget(ProviderName.PARALLEL, 5000.0)
+        old_ts = time.time() - (31 * 24 * 3600)
+        b._usage[ProviderName.PARALLEL].append((old_ts, 1.0))
+
+        assert b.get_provider_tier(ProviderName.PARALLEL) == 1
+        assert b.get_monthly_usage(ProviderName.PARALLEL) == 0.0
+        assert b.get_usage_count(ProviderName.PARALLEL) == 0
+        assert b.get_remaining_budget(ProviderName.PARALLEL) == 5000.0
+        assert b.daily_pace(ProviderName.PARALLEL) == 5000.0 / 30.0
 
     def test_tier3_daily_pace_is_inf(self):
         """Tier-3 providers should have infinite daily pace — never over pace."""

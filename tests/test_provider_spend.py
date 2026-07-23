@@ -1209,6 +1209,98 @@ def test_every_paid_provider_has_a_finite_conservative_estimator():
     )
 
 
+def test_parallel_recurring_credit_expires_from_budget_without_deleting_history(
+    tmp_path,
+):
+    from argus.persistence.provider_spend import ProviderSpendAttemptRow
+
+    repository = _repository(tmp_path)
+    reservation = repository.reserve(
+        provider=ProviderName.PARALLEL,
+        conservative_charge=1.0,
+        budget_limit=5000.0,
+        caller_identity="maya",
+        caller_label="",
+        idempotency_key="parallel-last-month",
+        created_at=datetime.now(tz=None) - timedelta(days=31),
+    )
+    repository.settle(
+        reservation.attempt_id,
+        actual_charge=1.0,
+        outcome="success",
+    )
+
+    assert repository.provider_summary(
+        ProviderName.PARALLEL,
+        budget_limit=5000.0,
+    ) == {
+        "provider": "parallel",
+        "budget_limit": 5000.0,
+        "argus_estimated_charge": 0.0,
+        "uncertain_charge": 0.0,
+        "remaining": 5000.0,
+        "estimate_source": "argus",
+        "provider_snapshot": None,
+    }
+    attempts = repository.list_attempts(provider=ProviderName.PARALLEL)
+    assert len(attempts) == 1
+    assert attempts[0].status == "settled"
+    with repository.session_factory() as session:
+        assert session.get(
+            ProviderSpendAttemptRow,
+            reservation.attempt_id,
+        ).tier == 1
+
+
+@pytest.mark.asyncio
+async def test_parallel_uses_monthly_credit_reservation_without_provider_network(
+    tmp_path,
+):
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.models import ProviderStatus
+
+    repository = _repository(tmp_path)
+
+    class Provider:
+        name = ProviderName.PARALLEL
+
+        def is_available(self):
+            return True
+
+        def status(self):
+            return ProviderStatus.ENABLED
+
+        async def search(self, query):
+            return [], ProviderTrace(provider=self.name, status="success")
+
+    budgets = BudgetTracker()
+    budgets.set_budget(ProviderName.PARALLEL, 5000.0)
+    executor = ProviderExecutor(
+        providers={ProviderName.PARALLEL: Provider()},
+        health_tracker=HealthTracker(),
+        budget_tracker=budgets,
+        spend_repository=repository,
+    )
+    await executor.execute(
+        SearchQuery(
+            query="monthly parallel",
+            caller="maya",
+            metadata={"attempt_scope": "parallel-monthly"},
+        ),
+        [ProviderName.PARALLEL],
+    )
+
+    attempt = repository.list_attempts(provider=ProviderName.PARALLEL)[0]
+    assert attempt.reserved_charge == 1.0
+    assert attempt.actual_charge == 1.0
+    assert repository.provider_summary(
+        ProviderName.PARALLEL,
+        budget_limit=5000.0,
+    )["remaining"] == 4999.0
+
+
 @pytest.mark.asyncio
 async def test_nonfinite_actual_charge_keeps_reservation_uncertain_without_legacy_usage(
     tmp_path,
@@ -1738,3 +1830,46 @@ def test_postgresql_direct_overrun_settlement_is_idempotent(
     assert outcomes[0].actual_charge == 0.04
     assert outcomes[0].estimator_violation is True
     assert outcomes[0].reservation_overrun == 0.01
+
+
+def test_postgresql_parallel_monthly_rollover_preserves_history(
+    postgres_ledger_url,
+):
+    from alembic import command
+    from alembic.config import Config
+
+    from argus.persistence.provider_spend import create_provider_spend_repository
+
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", postgres_ledger_url.replace("%", "%%"))
+    command.downgrade(config, "base")
+    command.upgrade(config, "head")
+    repository = create_provider_spend_repository(
+        postgres_ledger_url,
+        create_schema=False,
+    )
+    reservation = repository.reserve(
+        provider=ProviderName.PARALLEL,
+        conservative_charge=1.0,
+        budget_limit=5000.0,
+        caller_identity="maya",
+        caller_label="",
+        idempotency_key="pg-parallel-last-month",
+        created_at=datetime.now(tz=None) - timedelta(days=31),
+    )
+    repository.settle(
+        reservation.attempt_id,
+        actual_charge=1.0,
+        outcome="success",
+    )
+
+    summary = repository.provider_summary(
+        ProviderName.PARALLEL,
+        budget_limit=5000.0,
+    )
+    assert summary["argus_estimated_charge"] == 0.0
+    assert summary["remaining"] == 5000.0
+    attempts = repository.list_attempts(provider=ProviderName.PARALLEL)
+    assert [attempt.attempt_id for attempt in attempts] == [
+        reservation.attempt_id
+    ]

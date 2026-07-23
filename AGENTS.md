@@ -9,7 +9,7 @@
 
 ## Overview
 
-Search infrastructure for AI agents: 14 providers, topology-aware routing, WolframAlpha computed answers, and a 12-step content extraction chain. Provider adapters: SearXNG (self-hosted, aggregates 70+ engines, disabled by default), DuckDuckGo, Yahoo (scraped), GitHub, WolframAlpha (free API, computed answers), Brave, Tavily, Exa, Linkup (monthly free tiers), Serper, Parallel AI, You.com, Valyu, SearchAPI. Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
+Search infrastructure for AI agents: 14 providers, topology-aware routing, WolframAlpha computed answers, and a 12-step content extraction chain. Provider adapters: SearXNG (self-hosted, aggregates 70+ engines, disabled by default), DuckDuckGo, Yahoo (scraped), GitHub, WolframAlpha (free API, computed answers), Brave, Tavily, Exa, Linkup, Parallel AI (monthly free tiers), Serper, You.com, Valyu, SearchAPI. Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
 
 ## Features
 - **Topology-aware acquisition** — Argus knows if it's on a residential IP or datacenter, routing search and extraction automatically to avoid blocks and minimize network hops.
@@ -23,7 +23,7 @@ Search infrastructure for AI agents: 14 providers, topology-aware routing, Wolfr
 ### Tier 1: No server (API keys only)
 - `pip install argus-search` — works immediately with DuckDuckGo + Yahoo
 - Add WOLFRAM_APP_ID for computed answers (math, facts, conversions — 2,000 free/month)
-- Add API keys for 7,000+ more free monthly queries
+- Add API keys for 12,000+ more free monthly queries
 - Extraction via external APIs only (Jina, Valyu Contents, Firecrawl, You.com Contents, Wayback)
 - Default SQLite persistence (no database server required)
 - Works on any machine with Python 3.11+ (laptop, Mac Mini, Pi, cloud VM)
@@ -88,8 +88,8 @@ Caller (CLI/HTTP/MCP/Python)
 | Tier | Providers | Credits |
 |------|-----------|---------|
 | 0 (free) | SearXNG (70+ engines, disabled by default — enable if you have Docker), DuckDuckGo, Yahoo (scraped), GitHub, WolframAlpha (2k/mo, API key) | Unlimited or free recurring |
-| 1 (monthly) | Brave (2k/mo), Tavily (1k/mo), Exa (1k/mo), Linkup (1k/mo) | Recurring monthly |
-| 3 (one-time) | Serper (2.5k), Parallel (4k), You.com ($20), SearchAPI, Valyu ($10) | Don't come back |
+| 1 (monthly) | Brave (2k/mo), Tavily (1k/mo), Exa (1k/mo), Linkup (1k/mo), Parallel (up to 5k/mo) | Recurring monthly |
+| 3 (one-time) | Serper (2.5k), You.com ($20), SearchAPI, Valyu ($10) | Don't come back |
 
 ## Search Modes
 

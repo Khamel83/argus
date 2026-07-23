@@ -97,6 +97,24 @@ def test_budget_fragment_returns_html_when_authed():
     assert 'hx-trigger="every 60s"' in resp.text
 
 
+def test_parallel_budget_status_identifies_monthly_recurring_tier():
+    from argus.api.routes_dashboard import _build_budget_state
+    from argus.broker.budgets import BudgetTracker
+    from argus.models import ProviderName
+
+    broker = MagicMock()
+    broker.budget_tracker = BudgetTracker()
+    broker.budget_tracker.set_budget(ProviderName.PARALLEL, 5000.0)
+
+    row = _build_budget_state(broker)[0]
+
+    assert row["provider"] == "parallel"
+    assert row["tier"] == 1
+    assert row["budget"] == 5000
+    assert row["remaining"] == 5000
+    assert row["status"] == "ok"
+
+
 def test_logout_clears_cookie():
     from fastapi.testclient import TestClient
 

@@ -6,8 +6,8 @@ Providers are then sorted by tier (credit-aware) as the primary key,
 preserving mode-specific ordering within each tier.
 
 Tier 0: Free/unlimited or free recurring (SearXNG, DuckDuckGo, Yahoo, GitHub, Wolfram) — always first
-Tier 1: Monthly recurring credits (Brave, Tavily, Exa, Linkup)
-Tier 3: One-time credits (Serper, Parallel, You.com, SearchAPI, Valyu) — always last
+Tier 1: Monthly recurring credits (Brave, Tavily, Exa, Linkup, Parallel)
+Tier 3: One-time credits (Serper, You.com, SearchAPI, Valyu) — always last
 Note: GitHub is free (tier 0) but only useful for code/repo queries, not general web search.
 """
 

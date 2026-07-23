@@ -12,6 +12,8 @@ class TestConfig:
         assert cfg.duckduckgo.enabled is True
         assert cfg.brave.enabled is False
         assert cfg.serper.enabled is False
+        assert cfg.parallel.enabled is False
+        assert cfg.parallel.monthly_budget_usd == 5000.0
         assert cfg.searchapi.enabled is False
         assert cfg.valyu.enabled is False
         assert cfg.wolfram.enabled is False
