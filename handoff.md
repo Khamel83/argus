@@ -138,9 +138,16 @@ Capability, recovery, and operations:
 
 Independent follow-ons:
 
-- [ ] [Correct Parallel's recurring-credit tier](https://github.com/Khamel83/argus/issues/21)
-  — durable paid-provider accounting is merged; isolated implementation has
-  started from `e570e64`.
+- [x] [Correct Parallel's recurring-credit tier](https://github.com/Khamel83/argus/issues/21)
+  — merged PR
+  [fix: classify Parallel credits as monthly recurring](https://github.com/Khamel83/argus/pull/53)
+  as `d81b919`. Parallel now routes as tier 1 with an eligible-account
+  5,000-search rolling monthly allowance while historical attempts remain
+  durable. Runtime, caller caps, status surfaces, and operator documentation
+  agree on the card-on-file eligibility condition. Final evidence was 526
+  passed and 15 skipped locally, real PostgreSQL rollover coverage, independent
+  review, and all seven CI jobs. No provider call or credit spend occurred;
+  the `[skip ci]` merge triggered no deployment.
 - [x] [Normalize Trafilatura output and audit extraction quality](https://github.com/Khamel83/argus/issues/43)
   — merged PR
   [fix: normalize Trafilatura results and preserve quality decisions](https://github.com/Khamel83/argus/pull/48)
