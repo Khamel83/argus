@@ -7,6 +7,8 @@ import copy
 import hashlib
 import json
 import re
+import threading
+import time
 import unicodedata
 from collections import Counter
 from datetime import datetime, timezone
@@ -22,6 +24,7 @@ from urllib.parse import (
 
 import httpx
 
+from argus.api.lifecycle import LifecycleCapability
 from argus.models import SearchQuery, SearchResponse
 
 
@@ -60,6 +63,7 @@ _MAX_URL_QUERY_FIELDS = 64
 _MAX_URL_OUTPUT_BYTES = 2048
 _MAYA_MAX_RETRIEVAL_BODY_BYTES = 10 * 1024 * 1024
 _MAYA_TRANSPORT_HEADROOM_BYTES = 1024 * 1024
+_MAYA_RECEIPT_MAX_BYTES = 64 * 1024
 MAYA_RETRIEVAL_PAYLOAD_MAX_BYTES = (
     _MAYA_MAX_RETRIEVAL_BODY_BYTES - _MAYA_TRANSPORT_HEADROOM_BYTES
 )
@@ -571,6 +575,9 @@ def excludes_capture(caller: str, *, user_visible: bool = True) -> bool:
 class MayaOutboxDispatcher:
     """Deliver a claimed outbox batch with at-least-once semantics."""
 
+    lifecycle_capability = LifecycleCapability.COOPERATIVE_BOUNDED
+    dispatch_capability = LifecycleCapability.COOPERATIVE_BOUNDED
+
     def __init__(
         self,
         repository,
@@ -601,7 +608,13 @@ class MayaOutboxDispatcher:
             ),
         )
 
-    def run_once(self) -> dict[str, int]:
+    def run_once(
+        self,
+        *,
+        stop_event: threading.Event | None = None,
+    ) -> dict[str, int]:
+        if stop_event is not None and stop_event.is_set():
+            return {}
         now = self.clock()
         claimed = self.repository.claim_maya_outbox(
             now=now,
@@ -617,9 +630,14 @@ class MayaOutboxDispatcher:
         }
         with httpx.Client(
             transport=self.transport,
-            timeout=self.timeout_seconds,
+            timeout=httpx.Timeout(
+                self.timeout_seconds,
+                read=min(1.0, self.timeout_seconds),
+            ),
         ) as client:
             for item in claimed:
+                if stop_event is not None and stop_event.is_set():
+                    break
                 outcome = self._deliver_one(client, headers, item)
                 outcomes[outcome] += 1
         return dict(outcomes)
@@ -627,10 +645,10 @@ class MayaOutboxDispatcher:
     def _deliver_one(self, client, headers, item) -> str:
         now = self.clock()
         try:
-            response = client.post(
-                self.endpoint,
-                headers=headers,
-                content=item["payload_json"],
+            response = self._post_with_total_deadline(
+                client,
+                headers,
+                item["payload_json"],
             )
         except httpx.HTTPError as exc:
             status = self.repository.fail_maya_outbox(
@@ -695,6 +713,45 @@ class MayaOutboxDispatcher:
             now=now,
         )
         return self._failure_outcome(status)
+
+    def _post_with_total_deadline(
+        self,
+        client: httpx.Client,
+        headers: dict[str, str],
+        payload_json: str,
+    ) -> httpx.Response:
+        """Read one bounded receipt within a wall-clock delivery deadline."""
+        deadline = time.monotonic() + self.timeout_seconds
+        with client.stream(
+            "POST",
+            self.endpoint,
+            headers=headers,
+            content=payload_json,
+        ) as response:
+            content = bytearray()
+            for chunk in response.iter_bytes():
+                if time.monotonic() > deadline:
+                    raise httpx.ReadTimeout(
+                        "Maya delivery exceeded its total deadline",
+                        request=response.request,
+                    )
+                content.extend(chunk)
+                if len(content) > _MAYA_RECEIPT_MAX_BYTES:
+                    raise httpx.DecodingError(
+                        "Maya receipt exceeded its response budget",
+                        request=response.request,
+                    )
+            if time.monotonic() > deadline:
+                raise httpx.ReadTimeout(
+                    "Maya delivery exceeded its total deadline",
+                    request=response.request,
+                )
+            return httpx.Response(
+                status_code=response.status_code,
+                headers=response.headers,
+                content=bytes(content),
+                request=response.request,
+            )
 
     @staticmethod
     def _failure_outcome(status: str | None) -> str:

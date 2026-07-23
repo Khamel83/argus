@@ -123,7 +123,12 @@ def _configure_public_evidence(broker):
 
 
 def _runtime_repository():
+    from argus.api.lifecycle import LifecycleCapability
+
     repository = MagicMock()
+    repository.lifecycle_capability = LifecycleCapability.COOPERATIVE_BOUNDED
+    repository.operational_status_capability = LifecycleCapability.COOPERATIVE_BOUNDED
+    repository.compaction_capability = LifecycleCapability.COOPERATIVE_BOUNDED
     repository.operational_status.return_value = {
         "backend": "postgresql",
         "connected": True,
@@ -1561,6 +1566,318 @@ def test_provider_evidence_snapshot_and_probe_updates_share_owner_loop():
     assert owner_threads["snapshot"] != threading.get_ident()
 
 
+def test_blocked_repository_status_stops_before_lifespan_cleanup(monkeypatch):
+    import threading
+    import time
+
+    from fastapi.testclient import TestClient
+
+    import argus.extraction.playwright_extractor as extractor
+    from argus.api.lifecycle import LifecycleCapability
+    from argus.api.main import create_app
+
+    entered = threading.Event()
+    release_external = threading.Event()
+    cleanup: list[str] = []
+    repository = _runtime_repository()
+    repository.lifecycle_capability = LifecycleCapability.COOPERATIVE_BOUNDED
+
+    def operational_status(*, now=None, stop_event=None):
+        entered.set()
+        (stop_event or release_external).wait()
+        cleanup.append("repository-status-stopped")
+        return repository.operational_status.return_value
+
+    repository.operational_status.side_effect = operational_status
+    repository.close.side_effect = lambda: cleanup.append("repository")
+    broker = _runtime_broker()
+    broker.budget_tracker.close.side_effect = lambda: cleanup.append("budget")
+
+    async def close_browser():
+        cleanup.append("browser")
+
+    monkeypatch.setattr(extractor, "close_browser", close_browser)
+    service = _service()
+    started = time.monotonic()
+    try:
+        with TestClient(
+            create_app(
+                broker=broker,
+                search_repository=repository,
+                operational_status=service,
+            )
+        ):
+            assert entered.wait(timeout=1)
+            status_before_shutdown = service.full_status()
+        elapsed = time.monotonic() - started
+
+        assert elapsed < 0.5
+        assert not any(
+            thread.name == "argus-lifecycle" for thread in threading.enumerate()
+        )
+        assert service.full_status() == status_before_shutdown
+        assert cleanup == [
+            "repository-status-stopped",
+            "browser",
+            "budget",
+            "repository",
+        ]
+    finally:
+        release_external.set()
+
+
+def test_blocked_maya_dispatch_stops_before_lifespan_cleanup(
+    monkeypatch,
+):
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
+    import argus.config as config_module
+    import argus.extraction.playwright_extractor as extractor
+    import argus.persistence.maya_outbox as maya_outbox
+    from argus.api.lifecycle import LifecycleCapability
+    from argus.api.main import create_app
+
+    entered = threading.Event()
+    release_external = threading.Event()
+    cleanup: list[str] = []
+    capture = SimpleNamespace(
+        endpoint="http://maya/captures",
+        token="dedicated-token",
+        timeout_seconds=1,
+        batch_size=1,
+        poll_seconds=1,
+        acknowledged_retention_days=1,
+    )
+    monkeypatch.setattr(
+        config_module,
+        "get_config",
+        lambda: SimpleNamespace(egress_nodes=[], maya_capture=capture),
+    )
+
+    class Dispatcher:
+        lifecycle_capability = LifecycleCapability.COOPERATIVE_BOUNDED
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run_once(self, *, stop_event=None):
+            entered.set()
+            (stop_event or release_external).wait()
+            cleanup.append("maya-dispatch-stopped")
+            return {}
+
+    monkeypatch.setattr(maya_outbox, "MayaOutboxDispatcher", Dispatcher)
+    repository = _runtime_repository()
+    repository.lifecycle_capability = LifecycleCapability.COOPERATIVE_BOUNDED
+    repository.close.side_effect = lambda: cleanup.append("repository")
+    broker = _runtime_broker()
+    broker.budget_tracker.close.side_effect = lambda: cleanup.append("budget")
+
+    async def close_browser():
+        cleanup.append("browser")
+
+    monkeypatch.setattr(extractor, "close_browser", close_browser)
+    service = _service()
+    started = time.monotonic()
+    try:
+        with TestClient(
+            create_app(
+                broker=broker,
+                search_repository=repository,
+                operational_status=service,
+            )
+        ):
+            assert entered.wait(timeout=1)
+            status_before_shutdown = service.full_status()
+        elapsed = time.monotonic() - started
+
+        assert elapsed < 0.5
+        assert not any(
+            thread.name == "argus-lifecycle" for thread in threading.enumerate()
+        )
+        assert service.full_status() == status_before_shutdown
+        assert cleanup == [
+            "maya-dispatch-stopped",
+            "browser",
+            "budget",
+            "repository",
+        ]
+    finally:
+        release_external.set()
+
+
+def test_blocked_maya_compaction_stops_before_lifespan_cleanup(
+    monkeypatch,
+):
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
+    import argus.config as config_module
+    import argus.extraction.playwright_extractor as extractor
+    import argus.persistence.maya_outbox as maya_outbox
+    from argus.api.lifecycle import LifecycleCapability
+    from argus.api.main import create_app
+
+    entered = threading.Event()
+    release_external = threading.Event()
+    cleanup: list[str] = []
+    capture = SimpleNamespace(
+        endpoint="http://maya/captures",
+        token="dedicated-token",
+        timeout_seconds=1,
+        batch_size=1,
+        poll_seconds=1,
+        acknowledged_retention_days=1,
+    )
+    monkeypatch.setattr(
+        config_module,
+        "get_config",
+        lambda: SimpleNamespace(egress_nodes=[], maya_capture=capture),
+    )
+
+    class Dispatcher:
+        lifecycle_capability = LifecycleCapability.COOPERATIVE_BOUNDED
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run_once(self, *, stop_event=None):
+            return {"acknowledged": 1}
+
+    monkeypatch.setattr(maya_outbox, "MayaOutboxDispatcher", Dispatcher)
+    repository = _runtime_repository()
+    repository.lifecycle_capability = LifecycleCapability.COOPERATIVE_BOUNDED
+
+    def compact_maya_outbox(*, stop_event=None, **kwargs):
+        entered.set()
+        (stop_event or release_external).wait()
+        cleanup.append("maya-compaction-stopped")
+        return 0
+
+    repository.compact_maya_outbox.side_effect = compact_maya_outbox
+    repository.close.side_effect = lambda: cleanup.append("repository")
+    broker = _runtime_broker()
+    broker.budget_tracker.close.side_effect = lambda: cleanup.append("budget")
+
+    async def close_browser():
+        cleanup.append("browser")
+
+    monkeypatch.setattr(extractor, "close_browser", close_browser)
+    service = _service()
+    started = time.monotonic()
+    try:
+        with TestClient(
+            create_app(
+                broker=broker,
+                search_repository=repository,
+                operational_status=service,
+            )
+        ):
+            assert entered.wait(timeout=1)
+            status_before_shutdown = service.full_status()
+        elapsed = time.monotonic() - started
+
+        assert elapsed < 0.5
+        assert not any(
+            thread.name == "argus-lifecycle" for thread in threading.enumerate()
+        )
+        assert service.full_status() == status_before_shutdown
+        assert cleanup == [
+            "maya-compaction-stopped",
+            "browser",
+            "budget",
+            "repository",
+        ]
+    finally:
+        release_external.set()
+
+
+@pytest.mark.parametrize(
+    "unsafe_operation",
+    ["repository_status", "maya_dispatch", "maya_compaction"],
+)
+def test_uncooperative_background_operation_is_never_launched(
+    unsafe_operation,
+    monkeypatch,
+):
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
+    import argus.config as config_module
+    import argus.persistence.maya_outbox as maya_outbox
+    from argus.api.lifecycle import LifecycleCapability
+    from argus.api.main import create_app
+
+    release_external = threading.Event()
+    calls = 0
+    capture = SimpleNamespace(
+        endpoint="http://maya/captures",
+        token="dedicated-token",
+        timeout_seconds=1,
+        batch_size=1,
+        poll_seconds=0.01,
+        acknowledged_retention_days=1,
+    )
+    monkeypatch.setattr(
+        config_module,
+        "get_config",
+        lambda: SimpleNamespace(egress_nodes=[], maya_capture=capture),
+    )
+    repository = _runtime_repository()
+
+    def never_return(**kwargs):
+        nonlocal calls
+        calls += 1
+        release_external.wait()
+        return {}
+
+    if unsafe_operation == "repository_status":
+        repository.operational_status_capability = LifecycleCapability.BLOCKING_UNSAFE
+        repository.operational_status.side_effect = never_return
+    elif unsafe_operation == "maya_compaction":
+        repository.compaction_capability = LifecycleCapability.BLOCKING_UNSAFE
+        repository.compact_maya_outbox.side_effect = never_return
+
+    class Dispatcher:
+        dispatch_capability = (
+            LifecycleCapability.BLOCKING_UNSAFE
+            if unsafe_operation == "maya_dispatch"
+            else LifecycleCapability.COOPERATIVE_BOUNDED
+        )
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run_once(self, *, stop_event=None):
+            if unsafe_operation == "maya_dispatch":
+                return never_return()
+            return {}
+
+    monkeypatch.setattr(maya_outbox, "MayaOutboxDispatcher", Dispatcher)
+    try:
+        with TestClient(
+            create_app(
+                broker=_runtime_broker(),
+                search_repository=repository,
+                operational_status=_service(),
+            )
+        ):
+            time.sleep(0.05)
+        assert calls == 0
+    finally:
+        release_external.set()
+
+
 def test_startup_remains_initialized_across_runtime_authority_loss_and_recovery():
     from argus.operations.status import refresh_operational_status
 
@@ -1741,6 +2058,7 @@ def test_broker_construction_failure_recovers_without_process_restart(
     from fastapi.testclient import TestClient
 
     import argus.api.main as api_main
+    from argus.api.lifecycle import LifecycleCapability
     from argus.api.rate_limit import RateLimiter
 
     monkeypatch.setattr(api_main, "_AUTHORITY_RETRY_SECONDS", 0.01, raising=False)
@@ -1758,6 +2076,7 @@ def test_broker_construction_failure_recovers_without_process_restart(
         allow_recovery.wait(timeout=2)
         return broker
 
+    broker_factory.lifecycle_capability = LifecycleCapability.COOPERATIVE_BOUNDED
     service = _service()
     app = api_main.create_app(
         broker_factory=broker_factory,
@@ -1928,6 +2247,7 @@ def test_maya_worker_uses_real_dispatcher_outcomes(
     outcomes,
     expected_state,
 ):
+    import threading
     import time
     from types import SimpleNamespace
 
@@ -1936,6 +2256,7 @@ def test_maya_worker_uses_real_dispatcher_outcomes(
     import argus.api.main as api_main
     import argus.config as config_module
     import argus.persistence.maya_outbox as maya_outbox
+    from argus.api.lifecycle import LifecycleCapability
 
     capture = SimpleNamespace(
         endpoint="http://maya/captures",
@@ -1950,21 +2271,24 @@ def test_maya_worker_uses_real_dispatcher_outcomes(
     calls = 0
 
     class Dispatcher:
+        lifecycle_capability = LifecycleCapability.COOPERATIVE_BOUNDED
+
         def __init__(self, *args, **kwargs):
             pass
 
-        def run_once(self):
+        def run_once(self, *, stop_event=None):
             nonlocal calls
             calls += 1
             return outcomes
 
     monkeypatch.setattr(maya_outbox, "MayaOutboxDispatcher", Dispatcher)
     service = _service(production=True)
+    repository = _runtime_repository()
 
     with TestClient(
         api_main.create_app(
             broker=_runtime_broker(),
-            search_repository=_runtime_repository(),
+            search_repository=repository,
             operational_status=service,
         )
     ):
@@ -1972,6 +2296,11 @@ def test_maya_worker_uses_real_dispatcher_outcomes(
         while calls == 0 and time.monotonic() < deadline:
             time.sleep(0.01)
         assert calls > 0
+        assert repository.operational_status.call_count > 0
+        assert isinstance(
+            repository.operational_status.call_args.kwargs["stop_event"],
+            threading.Event,
+        )
         assert service.full_status()["dependencies"]["maya"]["state"] == expected_state
 
 
@@ -1986,6 +2315,7 @@ def test_outbox_compaction_failure_does_not_rewrite_maya_delivery_evidence(
     import argus.api.main as api_main
     import argus.config as config_module
     import argus.persistence.maya_outbox as maya_outbox
+    from argus.api.lifecycle import LifecycleCapability
 
     capture = SimpleNamespace(
         endpoint="http://maya/captures",
@@ -2003,10 +2333,12 @@ def test_outbox_compaction_failure_does_not_rewrite_maya_delivery_evidence(
     delivered = False
 
     class Dispatcher:
+        lifecycle_capability = LifecycleCapability.COOPERATIVE_BOUNDED
+
         def __init__(self, *args, **kwargs):
             pass
 
-        def run_once(self):
+        def run_once(self, *, stop_event=None):
             nonlocal delivered
             delivered = True
             return {"acknowledged": 1}

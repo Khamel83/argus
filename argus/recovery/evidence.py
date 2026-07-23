@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -114,8 +118,7 @@ def evaluate_recovery_evidence(
     restore_verified = (
         restore_scope_complete
         and restore.get("schema_head") == EXPECTED_SCHEMA_HEAD
-        and restore.get("backup_manifest_sha256")
-        == backup.get("manifest_sha256")
+        and restore.get("backup_manifest_sha256") == backup.get("manifest_sha256")
         and all(checks.get(name) is True for name in REQUIRED_RESTORE_CHECKS)
     )
 
@@ -170,11 +173,7 @@ def evaluate_promotion_gate(
     return {
         "allowed": allowed,
         "state": (
-            "ready"
-            if allowed and not reasons
-            else "degraded"
-            if allowed
-            else "blocked"
+            "ready" if allowed and not reasons else "degraded" if allowed else "blocked"
         ),
         "schema_change": schema_change,
         "reasons": reasons,
@@ -187,3 +186,56 @@ def recovery_status_from_environment() -> dict[str, Any]:
     if not path:
         return _unavailable("recovery_evidence_not_configured")
     return evaluate_recovery_evidence(path)
+
+
+def lifecycle_recovery_status_from_environment(
+    *,
+    stop_event: threading.Event,
+    timeout_seconds: float = 2.0,
+) -> dict[str, Any]:
+    """Read recovery evidence behind a terminable process boundary."""
+    path = os.environ.get("ARGUS_RECOVERY_EVIDENCE_PATH", "").strip()
+    if not path:
+        return _unavailable("recovery_evidence_not_configured")
+    if stop_event.is_set():
+        return _unavailable("recovery_evidence_unavailable")
+    process = subprocess.Popen(
+        [sys.executable, "-m", __name__, "--lifecycle-status", path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    deadline = time.monotonic() + max(0.1, timeout_seconds)
+    while process.poll() is None:
+        if stop_event.is_set() or time.monotonic() >= deadline:
+            process.terminate()
+            try:
+                process.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            return _unavailable("recovery_evidence_unavailable")
+        stop_event.wait(0.02)
+    stdout, _ = process.communicate()
+    if process.returncode != 0:
+        return _unavailable("recovery_evidence_unavailable")
+    try:
+        status = json.loads(stdout)
+    except (TypeError, json.JSONDecodeError):
+        return _unavailable("recovery_evidence_invalid")
+    return (
+        status
+        if isinstance(status, dict)
+        else _unavailable("recovery_evidence_invalid")
+    )
+
+
+def _lifecycle_status_main() -> int:
+    if len(sys.argv) != 3 or sys.argv[1] != "--lifecycle-status":
+        return 2
+    print(json.dumps(evaluate_recovery_evidence(sys.argv[2])))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_lifecycle_status_main())

@@ -22,6 +22,12 @@ from argus.auth import (
     is_public_path,
 )
 from argus.api.rate_limit import RateLimiter
+from argus.api.lifecycle import (
+    LifecycleCapability,
+    LifecycleOperation,
+    LifecycleWorker,
+    UnsafeLifecycleOperation,
+)
 from argus.api.routes_admin import router as admin_router
 from argus.api.routes_dashboard import router as dashboard_router
 from argus.api.routes_extract import router as extract_router
@@ -126,10 +132,34 @@ def create_app(
             b: SearchBroker | None = None
             repository: SearchLedgerRepository | None = None
             child_tasks: list[asyncio.Task] = []
+            worker = LifecycleWorker()
+            broker_factory_capability = (
+                LifecycleCapability.COOPERATIVE_BOUNDED
+                if broker is not None or broker_factory is None
+                else getattr(
+                    broker_factory,
+                    "lifecycle_capability",
+                    LifecycleCapability.BLOCKING_UNSAFE,
+                )
+            )
+            repository_factory_capability = LifecycleCapability.COOPERATIVE_BOUNDED
             try:
                 while b is None:
                     try:
-                        b = await asyncio.to_thread(app.state.get_broker)
+                        b = await worker.run(
+                            LifecycleOperation(
+                                name="broker-initialization",
+                                capability=broker_factory_capability,
+                                call=lambda stop_event: app.state.get_broker(),
+                            )
+                        )
+                    except UnsafeLifecycleOperation as exc:
+                        app.state.operational_status.mark_initialization_failed(
+                            source="startup",
+                            reason="broker_initialization_unsafe",
+                        )
+                        logger.warning("%s", str(exc))
+                        await asyncio.sleep(_AUTHORITY_RETRY_SECONDS)
                     except Exception as exc:
                         app.state.operational_status.mark_initialization_failed(
                             source="startup",
@@ -145,8 +175,14 @@ def create_app(
 
                 while repository is None:
                     try:
-                        repository = await asyncio.to_thread(
-                            app.state.get_search_repository
+                        repository = await worker.run(
+                            LifecycleOperation(
+                                name="repository-initialization",
+                                capability=repository_factory_capability,
+                                call=lambda stop_event: (
+                                    app.state.get_search_repository()
+                                ),
+                            )
                         )
                     except Exception as exc:
                         app.state.operational_status.mark_initialization_failed(
@@ -163,7 +199,9 @@ def create_app(
 
                 from argus.config import get_config
                 from argus.operations.status import refresh_operational_status
-                from argus.recovery.evidence import recovery_status_from_environment
+                from argus.recovery.evidence import (
+                    lifecycle_recovery_status_from_environment,
+                )
 
                 browser_status_reader = None
                 try:
@@ -172,12 +210,30 @@ def create_app(
                     )
 
                     browser_status_reader = browser_capability_status
-                    browser_status = await asyncio.to_thread(browser_status_reader)
+                    browser_status = await worker.run(
+                        LifecycleOperation(
+                            name="browser-capability-status",
+                            capability=LifecycleCapability.COOPERATIVE_BOUNDED,
+                            call=lambda stop_event: (
+                                _unavailable_browser_status()
+                                if stop_event.is_set()
+                                else browser_status_reader()
+                            ),
+                        )
+                    )
                 except Exception:
                     browser_status = _unavailable_browser_status()
                 try:
-                    recovery_status = await asyncio.to_thread(
-                        recovery_status_from_environment
+                    recovery_status = await worker.run(
+                        LifecycleOperation(
+                            name="recovery-evidence-status",
+                            capability=LifecycleCapability.COOPERATIVE_BOUNDED,
+                            call=lambda stop_event: (
+                                lifecycle_recovery_status_from_environment(
+                                    stop_event=stop_event
+                                )
+                            ),
+                        )
                     )
                 except Exception:
                     recovery_status = {
@@ -193,37 +249,89 @@ def create_app(
                         return {}
 
                 provider_evidence = _provider_evidence_snapshot()
-                await asyncio.to_thread(
-                    refresh_operational_status,
-                    app.state.operational_status,
-                    broker=b,
-                    repository=repository,
-                    browser_status=browser_status,
-                    recovery_status=recovery_status,
-                    provider_evidence=provider_evidence,
+                repository_capability = getattr(
+                    repository,
+                    "operational_status_capability",
+                    getattr(
+                        repository,
+                        "lifecycle_capability",
+                        LifecycleCapability.BLOCKING_UNSAFE,
+                    ),
+                )
+                compaction_capability = getattr(
+                    repository,
+                    "compaction_capability",
+                    getattr(
+                        repository,
+                        "lifecycle_capability",
+                        LifecycleCapability.BLOCKING_UNSAFE,
+                    ),
+                )
+                await worker.run(
+                    LifecycleOperation(
+                        name="repository-operational-status",
+                        capability=repository_capability,
+                        call=lambda stop_event: refresh_operational_status(
+                            app.state.operational_status,
+                            broker=b,
+                            repository=repository,
+                            browser_status=browser_status,
+                            recovery_status=recovery_status,
+                            provider_evidence=provider_evidence,
+                            stop_event=stop_event,
+                        ),
+                    )
                 )
 
                 async def _refresh_status_background() -> None:
                     while True:
                         await asyncio.sleep(15)
                         try:
-                            current_recovery = await asyncio.to_thread(
-                                recovery_status_from_environment
+                            current_recovery = await worker.run(
+                                LifecycleOperation(
+                                    name="recovery-evidence-status",
+                                    capability=(
+                                        LifecycleCapability.COOPERATIVE_BOUNDED
+                                    ),
+                                    call=lambda stop_event: (
+                                        lifecycle_recovery_status_from_environment(
+                                            stop_event=stop_event
+                                        )
+                                    ),
+                                )
                             )
                             current_browser = (
-                                await asyncio.to_thread(browser_status_reader)
+                                await worker.run(
+                                    LifecycleOperation(
+                                        name="browser-capability-status",
+                                        capability=(
+                                            LifecycleCapability.COOPERATIVE_BOUNDED
+                                        ),
+                                        call=lambda stop_event: (
+                                            _unavailable_browser_status()
+                                            if stop_event.is_set()
+                                            else browser_status_reader()
+                                        ),
+                                    )
+                                )
                                 if browser_status_reader is not None
                                 else _unavailable_browser_status()
                             )
                             provider_evidence = _provider_evidence_snapshot()
-                            await asyncio.to_thread(
-                                refresh_operational_status,
-                                app.state.operational_status,
-                                broker=b,
-                                repository=repository,
-                                browser_status=current_browser,
-                                recovery_status=current_recovery,
-                                provider_evidence=provider_evidence,
+                            await worker.run(
+                                LifecycleOperation(
+                                    name="repository-operational-status",
+                                    capability=repository_capability,
+                                    call=lambda stop_event: refresh_operational_status(
+                                        app.state.operational_status,
+                                        broker=b,
+                                        repository=repository,
+                                        browser_status=current_browser,
+                                        recovery_status=current_recovery,
+                                        provider_evidence=provider_evidence,
+                                        stop_event=stop_event,
+                                    ),
+                                )
                             )
                         except Exception as exc:
                             logger.warning(
@@ -256,9 +364,26 @@ def create_app(
                         timeout_seconds=cfg.timeout_seconds,
                         batch_size=cfg.batch_size,
                     )
+                    dispatcher_capability = getattr(
+                        dispatcher,
+                        "dispatch_capability",
+                        getattr(
+                            dispatcher,
+                            "lifecycle_capability",
+                            LifecycleCapability.BLOCKING_UNSAFE,
+                        ),
+                    )
                     while True:
                         try:
-                            outcomes = await asyncio.to_thread(dispatcher.run_once)
+                            outcomes = await worker.run(
+                                LifecycleOperation(
+                                    name="maya-outbox-dispatch",
+                                    capability=dispatcher_capability,
+                                    call=lambda stop_event: dispatcher.run_once(
+                                        stop_event=stop_event
+                                    ),
+                                )
+                            )
                             app.state.operational_status.observe_maya_delivery(
                                 outcomes,
                                 ttl=timedelta(seconds=max(15, cfg.poll_seconds * 3)),
@@ -278,12 +403,24 @@ def create_app(
                         else:
                             try:
                                 now = datetime.now(tz=None)
-                                await asyncio.to_thread(
-                                    repository.compact_maya_outbox,
-                                    acknowledged_before=now
-                                    - timedelta(days=cfg.acknowledged_retention_days),
-                                    limit=100,
-                                    now=now,
+                                await worker.run(
+                                    LifecycleOperation(
+                                        name="maya-outbox-compaction",
+                                        capability=compaction_capability,
+                                        call=lambda stop_event: (
+                                            repository.compact_maya_outbox(
+                                                acknowledged_before=now
+                                                - timedelta(
+                                                    days=(
+                                                        cfg.acknowledged_retention_days
+                                                    )
+                                                ),
+                                                limit=100,
+                                                now=now,
+                                                stop_event=stop_event,
+                                            )
+                                        ),
+                                    )
                                 )
                             except Exception as exc:
                                 logger.warning(
@@ -326,6 +463,7 @@ def create_app(
                     type(exc).__name__,
                 )
             finally:
+                worker.request_stop()
                 for task in child_tasks:
                     task.cancel()
                 for task in child_tasks:
@@ -333,6 +471,12 @@ def create_app(
                         await task
                     except asyncio.CancelledError:
                         pass
+                    except Exception as exc:
+                        logger.warning(
+                            "Background worker stopped with error: %s",
+                            type(exc).__name__,
+                        )
+                await worker.aclose()
                 try:
                     from argus.extraction.playwright_extractor import close_browser
 
@@ -344,12 +488,22 @@ def create_app(
                     )
                 if b is not None:
                     try:
-                        await asyncio.to_thread(b.budget_tracker.close)
+                        b.budget_tracker.close()
                     except Exception as exc:
                         logger.warning(
                             "Failed to close broker budget tracker: %s",
                             type(exc).__name__,
                         )
+                if repository is not None:
+                    close_repository = getattr(repository, "close", None)
+                    if callable(close_repository):
+                        try:
+                            close_repository()
+                        except Exception as exc:
+                            logger.warning(
+                                "Failed to close search repository: %s",
+                                type(exc).__name__,
+                            )
 
         authority_task = asyncio.create_task(_run_authority_workers())
         yield

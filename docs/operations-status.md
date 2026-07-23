@@ -65,6 +65,12 @@ unlimited and is distinct from numeric zero.
   with complete healthy reachability, health, cooldown, and balance evidence
   remains, status is `unready`. Fresh-process zeroed health records are not
   evidence: missing or degraded provider health cannot prove a usable path.
+- Background reachability probes run only for async-native adapters so
+  lifespan shutdown can cancel and join every in-flight probe. Blocking-only
+  adapters such as DuckDuckGo are not probed locally at startup; their
+  fresh-process reachability remains unknown until a real search or async
+  remote-egress probe records evidence. Configuration alone never invents
+  reachability.
 - Stale or unknown evidence is never reported as healthy.
 
 The authority refreshes this cached evidence in the background every
@@ -75,6 +81,22 @@ Broker and repository construction failures are also retried in the
 background. Liveness remains available during those failures, startup and
 readiness remain unready, and successful reconstruction transitions the same
 service instance back to current cached evidence.
+
+Synchronous authority work runs on one lifespan-owned, joinable worker.
+Adapters must explicitly declare cooperative bounded lifecycle support:
+database connections and statements have five-second driver deadlines, Maya
+HTTP calls enforce the configured wall-clock deadline (maximum 120 seconds)
+with at most a one-second active read, and batch operations check the lifespan
+stop signal between items. Thus production worker stop latency is bounded by
+the active unit: five seconds for DB-only work or 126 seconds for a Maya
+delivery plus its final DB statement. Shutdown stops scheduling, signals the
+worker, joins it, then closes browser, budget, and repository resources.
+Undeclared or blocking-unsafe operations are not launched and degrade cached
+status instead. Recovery-file reads use a separately terminable helper process
+with a two-second deadline; browser process inspection has a one-second
+subprocess deadline. If shutdown interrupts a claimed Maya batch, unprocessed
+durable payloads remain leased rather than deleted and become eligible for
+retry when their existing lease expires.
 
 ## Identity and correlation
 

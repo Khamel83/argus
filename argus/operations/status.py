@@ -1096,23 +1096,36 @@ def refresh_operational_status(
     browser_status: Mapping[str, Any] | None = None,
     recovery_status: Mapping[str, Any] | None = None,
     provider_evidence: Mapping[str, Any] | None = None,
+    stop_event: threading.Event | None = None,
     now: datetime | None = None,
 ) -> None:
     """Refresh cached evidence without making provider or external network probes."""
     from argus.recovery.database import EXPECTED_SCHEMA_HEAD
 
+    if stop_event is not None and stop_event.is_set():
+        return
     observed = _aware(now or service._clock())
     try:
-        authority = repository.operational_status(now=observed)
+        authority = repository.operational_status(
+            now=observed,
+            stop_event=stop_event,
+        )
     except TypeError:
         # Simple adapters and test doubles may not accept a clock.
         try:
-            authority = repository.operational_status()
+            authority = repository.operational_status(now=observed)
+        except TypeError:
+            try:
+                authority = repository.operational_status()
+            except Exception:
+                authority = None
         except Exception:
             authority = None
     except Exception:
         authority = None
 
+    if stop_event is not None and stop_event.is_set():
+        return
     if not isinstance(authority, Mapping):
         for name in ("postgresql", "schema", "outbox"):
             service.observe_dependency(

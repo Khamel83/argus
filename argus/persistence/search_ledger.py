@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -32,6 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from argus.config import get_config
+from argus.api.lifecycle import LifecycleCapability
 from argus.models import SearchQuery, SearchResponse
 from argus.persistence.maya_outbox import (
     excludes_capture,
@@ -44,6 +46,32 @@ from argus.persistence.maya_outbox import (
 
 class LedgerBase(DeclarativeBase):
     pass
+
+
+_DATABASE_OPERATION_TIMEOUT_SECONDS = 5
+
+
+def _bounded_engine_options(url: str) -> dict:
+    """Driver deadlines backing the cooperative lifecycle declaration."""
+    if url.startswith("sqlite:"):
+        return {"connect_args": {"timeout": _DATABASE_OPERATION_TIMEOUT_SECONDS}}
+    if url.startswith(("postgresql:", "postgresql+")):
+        timeout_ms = _DATABASE_OPERATION_TIMEOUT_SECONDS * 1000
+        return {
+            "connect_args": {
+                "connect_timeout": _DATABASE_OPERATION_TIMEOUT_SECONDS,
+                "options": (
+                    f"-c statement_timeout={timeout_ms} -c lock_timeout={timeout_ms}"
+                ),
+                "keepalives": 1,
+                "keepalives_idle": _DATABASE_OPERATION_TIMEOUT_SECONDS,
+                "keepalives_interval": 2,
+                "keepalives_count": 2,
+                "tcp_user_timeout": timeout_ms * 2,
+            },
+            "pool_timeout": _DATABASE_OPERATION_TIMEOUT_SECONDS,
+        }
+    return {"pool_timeout": _DATABASE_OPERATION_TIMEOUT_SECONDS}
 
 
 class RetrievalRequestRow(LedgerBase):
@@ -500,15 +528,28 @@ def _safe_persisted_url(value: str) -> str:
 
 
 class SearchLedgerRepository(Protocol):
+    lifecycle_capability: object
+
     def accept(
         self, query: SearchQuery, response: SearchResponse
     ) -> AcceptanceReceipt: ...
 
-    def operational_status(self, *, now: datetime | None = None) -> dict: ...
+    def operational_status(
+        self,
+        *,
+        now: datetime | None = None,
+        stop_event: threading.Event | None = None,
+    ) -> dict: ...
+
+    def close(self) -> None: ...
 
 
 class SqlAlchemySearchLedgerRepository:
     """Store one accepted retrieval in one database transaction."""
+
+    lifecycle_capability = LifecycleCapability.COOPERATIVE_BOUNDED
+    operational_status_capability = LifecycleCapability.COOPERATIVE_BOUNDED
+    compaction_capability = LifecycleCapability.COOPERATIVE_BOUNDED
 
     def __init__(self, session_factory: sessionmaker):
         self.session_factory = session_factory
@@ -1253,7 +1294,10 @@ class SqlAlchemySearchLedgerRepository:
         acknowledged_before: datetime,
         limit: int = 100,
         now: datetime | None = None,
+        stop_event: threading.Event | None = None,
     ) -> int:
+        if stop_event is not None and stop_event.is_set():
+            return 0
         compacted_at = now or datetime.now(tz=None)
         with self.session_factory.begin() as session:
             statement = (
@@ -1269,14 +1313,23 @@ class SqlAlchemySearchLedgerRepository:
             if session.get_bind().dialect.name == "postgresql":
                 statement = statement.with_for_update(skip_locked=True)
             rows = list(session.scalars(statement))
+            if stop_event is not None and stop_event.is_set():
+                return 0
             for row in rows:
                 row.payload_json = None
                 row.payload_compacted_at = compacted_at
                 row.updated_at = compacted_at
             return len(rows)
 
-    def operational_status(self, *, now: datetime | None = None) -> dict:
+    def operational_status(
+        self,
+        *,
+        now: datetime | None = None,
+        stop_event: threading.Event | None = None,
+    ) -> dict:
         """Return bounded authority/schema/outbox truth for cached status refresh."""
+        if stop_event is not None and stop_event.is_set():
+            return {}
         observed_at = now or datetime.now(tz=None)
         if observed_at.tzinfo is not None:
             observed_at = observed_at.replace(tzinfo=None)
@@ -1284,18 +1337,41 @@ class SqlAlchemySearchLedgerRepository:
             backend = session.get_bind().dialect.name
             session.execute(text("SELECT 1"))
             schema_head = "sqlite-managed"
-            if backend == "postgresql":
+            if backend == "postgresql" and not (
+                stop_event is not None and stop_event.is_set()
+            ):
                 schema_head = session.execute(
                     text("SELECT version_num FROM alembic_version")
                 ).scalar_one()
+        if stop_event is not None and stop_event.is_set():
+            return {}
+        outbox = self.maya_outbox_status(
+            now=observed_at,
+            stop_event=stop_event,
+        )
+        if stop_event is not None and stop_event.is_set():
+            return {}
         return {
             "backend": backend,
             "connected": True,
             "schema_head": schema_head,
-            "outbox": self.maya_outbox_status(now=observed_at),
+            "outbox": outbox,
         }
 
-    def maya_outbox_status(self, *, now: datetime | None = None) -> dict:
+    def close(self) -> None:
+        """Dispose idle connections after lifecycle-owned work has joined."""
+        engine = self.session_factory.kw.get("bind")
+        if engine is not None:
+            engine.dispose()
+
+    def maya_outbox_status(
+        self,
+        *,
+        now: datetime | None = None,
+        stop_event: threading.Event | None = None,
+    ) -> dict:
+        if stop_event is not None and stop_event.is_set():
+            return {}
         observed_at = now or datetime.now(tz=None)
         with self.session_factory() as session:
             counts = {
@@ -1307,16 +1383,22 @@ class SqlAlchemySearchLedgerRepository:
                     ).group_by(DeliveryIntentRow.status)
                 )
             }
+            if stop_event is not None and stop_event.is_set():
+                return {}
             oldest_pending = session.scalar(
                 select(func.min(DeliveryIntentRow.created_at)).where(
                     DeliveryIntentRow.status.in_(("pending", "retry", "delivering"))
                 )
             )
+            if stop_event is not None and stop_event.is_set():
+                return {}
             oldest_dead = session.scalar(
                 select(func.min(DeliveryIntentRow.created_at)).where(
                     DeliveryIntentRow.status == "dead_letter"
                 )
             )
+            if stop_event is not None and stop_event.is_set():
+                return {}
             dead_letter_payload_bytes = session.scalar(
                 select(
                     func.coalesce(
@@ -1573,7 +1655,11 @@ def create_search_ledger_repository(
         if path and path != ":memory:":
             Path(path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
 
-    engine = create_engine(url, pool_pre_ping=True)
+    engine = create_engine(
+        url,
+        pool_pre_ping=True,
+        **_bounded_engine_options(url),
+    )
     should_create = is_sqlite if create_schema is None else create_schema
     if should_create:
         if not is_sqlite:
@@ -1596,7 +1682,11 @@ def create_read_only_search_ledger_repository(
     raw_path = db_url.removeprefix("sqlite:///")
     path = Path(raw_path).expanduser().resolve()
     read_only_url = f"sqlite:///file:{quote(str(path), safe='/')}?mode=ro&uri=true"
-    engine = create_engine(read_only_url, pool_pre_ping=True)
+    engine = create_engine(
+        read_only_url,
+        pool_pre_ping=True,
+        **_bounded_engine_options(read_only_url),
+    )
     return SqlAlchemySearchLedgerRepository(
         sessionmaker(bind=engine, expire_on_commit=False)
     )
