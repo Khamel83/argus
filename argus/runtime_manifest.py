@@ -110,7 +110,7 @@ def inspect_playwright_browser_capability(
         return {
             "declared": declared,
             "available": declared,
-            "sandboxed": True,
+            "sandbox_required": True,
             "playwright_version": browser["playwright_version"],
             "revision": browser["revision"],
             "browser_version": browser["browser_version"],
@@ -120,7 +120,7 @@ def inspect_playwright_browser_capability(
         return {
             "declared": False,
             "available": False,
-            "sandboxed": True,
+            "sandbox_required": True,
         }
 
 

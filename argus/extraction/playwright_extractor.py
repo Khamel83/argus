@@ -218,5 +218,16 @@ async def reset_browser():
 def browser_capability_status() -> dict[str, object]:
     """Return sanitized declared, installed, and loaded browser state."""
     status = inspect_playwright_browser_capability()
-    status["loaded"] = bool(_browser and _browser.is_connected())
+    loaded = bool(_browser and _browser.is_connected())
+    loaded_source = (
+        "obscura_cdp"
+        if loaded and _using_obscura_cdp
+        else "local_chromium"
+        if loaded
+        else None
+    )
+    status["loaded"] = loaded
+    status["loaded_source"] = loaded_source
+    status["sandboxed"] = loaded and loaded_source == "local_chromium"
+    status["matches_declared"] = not loaded or loaded_source == "local_chromium"
     return status
