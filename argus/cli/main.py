@@ -4,6 +4,7 @@ Argus CLI — command-line interface to the search broker.
 
 import asyncio
 import json
+import os
 import sys
 
 import click
@@ -117,6 +118,49 @@ def paths(as_json):
     click.echo("Argus data paths:")
     for key, value in payload.items():
         click.echo(f"  {key}: {value}")
+
+
+@cli.command(name="image-admission")
+@click.option(
+    "--manifest",
+    "manifest_path",
+    default=lambda: os.environ.get("ARGUS_RUNTIME_MANIFEST", "/app/runtime-manifest.json"),
+    show_default="/app/runtime-manifest.json",
+    type=click.Path(path_type=str),
+    help="Baked runtime manifest to validate without network access.",
+)
+@click.option(
+    "--allow-development-revision",
+    is_flag=True,
+    help="Validate a local image without granting production admission.",
+)
+def image_admission(manifest_path, allow_development_revision):
+    """Validate the image's baked identity and capabilities without network access."""
+    from argus.runtime_manifest import (
+        RuntimeManifestError,
+        admit_runtime_manifest,
+    )
+
+    try:
+        manifest = admit_runtime_manifest(
+            manifest_path,
+            package_version=__version__,
+            allow_development_revision=allow_development_revision,
+        )
+    except RuntimeManifestError as error:
+        raise click.ClickException(str(error)) from error
+
+    admission_status = (
+        "development-validated"
+        if allow_development_revision
+        else "production-admitted"
+    )
+    click.echo(
+        f"{admission_status} "
+        f"revision={manifest['source_revision']} "
+        f"version={manifest['package_version']} "
+        f"lock={manifest['lock_sha256']}"
+    )
 
 
 @cli.command()
@@ -568,7 +612,7 @@ def doctor(as_json):
     # 4. DuckDuckGo probe
     try:
         from argus.providers.duckduckgo import DuckDuckGoProvider
-        ddg = DuckDuckGoProvider()
+        ddg = DuckDuckGoProvider(cfg.duckduckgo)
         checks.append(("DuckDuckGo", ddg.is_available(), "available" if ddg.is_available() else "not available"))
     except Exception as e:
         checks.append(("DuckDuckGo", False, str(e)))

@@ -91,6 +91,23 @@ class TestSearXNGProvider:
         assert "connection refused" in trace.error
 
 
+# --- DuckDuckGo ---
+
+class TestDuckDuckGoProvider:
+    @pytest.mark.asyncio
+    async def test_disabled_provider_skips_without_calling_the_network(self):
+        from argus.providers.duckduckgo import DuckDuckGoProvider
+
+        provider = DuckDuckGoProvider(ProviderConfig(enabled=False))
+
+        results, trace = await provider.search(SearchQuery(query="must stay offline"))
+
+        assert provider.is_available() is False
+        assert provider.status() == ProviderStatus.DISABLED_BY_CONFIG
+        assert results == []
+        assert trace.status == "skipped"
+
+
 # --- Brave ---
 
 class TestBraveProvider:

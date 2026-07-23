@@ -4,16 +4,36 @@
 class TestConfig:
     def test_load_config_defaults(self):
         from argus.config import load_config
-        cfg = load_config(environ={})
+        cfg = load_config(environ={"ARGUS_DISABLE_SECRET_RESOLUTION": "true"})
         assert cfg.env == "development"
         assert cfg.log_level == "INFO"
         assert cfg.cache_ttl_hours == 168
         assert cfg.searxng.enabled is False  # off by default; requires Docker
+        assert cfg.duckduckgo.enabled is True
         assert cfg.brave.enabled is False
         assert cfg.serper.enabled is False
         assert cfg.searchapi.enabled is False
         assert cfg.valyu.enabled is False
         assert cfg.wolfram.enabled is False
+
+    def test_duckduckgo_can_be_explicitly_disabled(self):
+        from argus.config import load_config
+
+        cfg = load_config(environ={
+            "ARGUS_DISABLE_SECRET_RESOLUTION": "true",
+            "ARGUS_DUCKDUCKGO_ENABLED": "false",
+        })
+
+        assert cfg.duckduckgo.enabled is False
+
+    def test_provider_control_prefixes_cover_every_search_provider(self):
+        from argus.models import ProviderName
+        from argus.provider_controls import PROVIDER_ENV_PREFIXES
+
+        controlled = {name.lower() for name in PROVIDER_ENV_PREFIXES}
+        expected = {provider.value for provider in ProviderName if provider.value != "cache"}
+
+        assert controlled == expected
 
     def test_load_config_from_env(self, monkeypatch):
         monkeypatch.setenv("ARGUS_BRAVE_API_KEY", "test-key")
@@ -38,6 +58,24 @@ class TestConfig:
 
         assert cfg.brave.api_key == "secret-key"
         assert cfg.db_url == "sqlite:///secret.db"
+
+    def test_disable_secret_resolution_prevents_fallback_to_machine_secrets(self):
+        from argus.config import SecretsResolver, load_config
+
+        class RaisingSecrets(SecretsResolver):
+            def get(self, key: str) -> str:
+                raise AssertionError(f"machine secret lookup attempted for {key}")
+
+        cfg = load_config(
+            environ={
+                "ARGUS_DISABLE_SECRET_RESOLUTION": "true",
+                "ARGUS_DB_URL": "sqlite:////tmp/argus-test-data/argus.db",
+            },
+            secrets_resolver=RaisingSecrets(),
+        )
+
+        assert cfg.brave.api_key == ""
+        assert cfg.db_url == "sqlite:////tmp/argus-test-data/argus.db"
 
     def test_get_config_singleton(self):
         from argus.config import get_config, reset_config
