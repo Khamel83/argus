@@ -347,6 +347,7 @@ class TestExtractUrl:
         assert result.completeness_result.is_complete is False
         assert result.completeness_result.recommended_action == "try_full_fetch"
         assert mock_chain["archive_is"].await_count == 1
+        assert result.attempts[-1].extractor == "archive_is"
 
     @pytest.mark.asyncio
     async def test_all_low_quality_content_remains_rejected(self, mock_chain):

@@ -97,7 +97,7 @@ def _build_budget_state(broker: SearchBroker) -> list[dict]:
 
 
 def _build_chart_data(daily_rows: list[dict]) -> dict:
-    """Reshape daily query counts into Chart.js stacked bar format."""
+    """Reshape daily retrieval-operation counts into Chart.js data."""
     if not daily_rows:
         return {"labels": [], "datasets": []}
 

@@ -1027,6 +1027,43 @@ class SqlAlchemySearchLedgerRepository:
                 )
             )
 
+    def import_session(self, snapshot) -> None:
+        """Import one complete legacy session in a single transaction."""
+        with self.session_factory.begin() as session:
+            if session.get(RetrievalSessionRow, snapshot.id) is not None:
+                raise AcceptanceConflictError(
+                    f"session {snapshot.id!r} already exists"
+                )
+            session.add(
+                RetrievalSessionRow(
+                    id=snapshot.id,
+                    created_at=snapshot.created_at,
+                )
+            )
+            session.flush()
+            for ordinal, query in enumerate(snapshot.queries):
+                query_id = uuid.uuid4().hex
+                session.add(
+                    SessionQueryRow(
+                        id=query_id,
+                        session_id=snapshot.id,
+                        ordinal=ordinal,
+                        query_text=query.query,
+                        mode=query.mode,
+                        queried_at=query.timestamp,
+                        results_count=query.results_count,
+                    )
+                )
+                session.flush()
+                for url in query.extracted_urls:
+                    session.add(
+                        SessionExtractedUrlRow(
+                            id=uuid.uuid4().hex,
+                            query_id=query_id,
+                            url=_safe_persisted_url(url),
+                        )
+                    )
+
     @staticmethod
     def _ensure_content_identity(session, content_hash, url, created_at):
         values = {

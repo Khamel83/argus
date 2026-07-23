@@ -1,7 +1,6 @@
 """Session store backed by the authoritative persistence repository."""
 
 import uuid
-from datetime import datetime
 from typing import Dict, Optional
 
 from argus.logging import get_logger

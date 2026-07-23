@@ -1,5 +1,3 @@
-from datetime import datetime
-
 import pytest
 from sqlalchemy import event, func, select
 
@@ -135,7 +133,6 @@ def test_extraction_transaction_rolls_back_every_row(tmp_path):
     )
 
     repository = _repository(tmp_path)
-    engine = repository.session_factory.kw["bind"]
 
     @event.listens_for(ExtractionArtifactRow, "before_insert")
     def fail_artifact_insert(mapper, connection, target):
@@ -343,6 +340,38 @@ def test_legacy_session_import_is_dry_run_first_and_idempotent(tmp_path):
     assert repository.load_session("legacy").queries[0].extracted_urls == [
         "https://example.com/old"
     ]
+
+
+def test_session_snapshot_import_rolls_back_as_one_transaction(tmp_path):
+    from argus.persistence.search_ledger import (
+        RetrievalSessionRow,
+        SessionExtractedUrlRow,
+        SessionQueryRow,
+    )
+    from argus.sessions.models import Session
+
+    repository = _repository(tmp_path)
+
+    @event.listens_for(SessionExtractedUrlRow, "before_insert")
+    def fail_url_insert(mapper, connection, target):
+        raise RuntimeError("injected URL failure")
+
+    snapshot = Session(
+        id="atomic-import",
+        queries=[
+            QueryRecord(
+                query="legacy query",
+                extracted_urls=["https://example.com/legacy"],
+            )
+        ],
+    )
+    with pytest.raises(RuntimeError, match="injected URL failure"):
+        repository.import_session(snapshot)
+
+    event.remove(SessionExtractedUrlRow, "before_insert", fail_url_insert)
+    with repository.session_factory() as session:
+        for table in (RetrievalSessionRow, SessionQueryRow, SessionExtractedUrlRow):
+            assert session.scalar(select(func.count()).select_from(table)) == 0
 
 
 def test_extract_endpoint_durably_records_before_acknowledging(tmp_path, monkeypatch):

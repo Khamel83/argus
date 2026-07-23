@@ -142,22 +142,26 @@ def reconcile_legacy_sessions(
             report["imported"] += 1
             if not apply:
                 continue
-            repository.create_session(
-                session_id,
-                datetime.fromtimestamp(legacy_session["created_at"]),
-            )
-            for query in expected:
-                ordinal = repository.append_session_query(
-                    session_id,
-                    query=query["query"],
-                    mode=query["mode"],
-                    timestamp=query["timestamp"],
-                    results_count=query["results_count"],
+            from argus.sessions.models import QueryRecord, Session
+
+            repository.import_session(
+                Session(
+                    id=session_id,
+                    created_at=datetime.fromtimestamp(
+                        legacy_session["created_at"]
+                    ),
+                    queries=[
+                        QueryRecord(
+                            query=query["query"],
+                            mode=query["mode"],
+                            timestamp=query["timestamp"],
+                            results_count=query["results_count"],
+                            extracted_urls=query["extracted_urls"],
+                        )
+                        for query in expected
+                    ],
                 )
-                for url in query["extracted_urls"]:
-                    repository.append_session_extracted_url(
-                        session_id, ordinal, url
-                    )
+            )
     return report
 
 

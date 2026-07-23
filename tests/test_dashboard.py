@@ -71,7 +71,7 @@ def test_dashboard_renders_when_authenticated():
     resp = client.get("/dashboard", cookies={"argus_dash": "the-real-key"})
     assert resp.status_code == 200
     assert "Provider budgets" in resp.text
-    assert "Queries per day" in resp.text
+    assert "Retrieval operations per day" in resp.text
     assert "Usage by machine" in resp.text
     assert "brave" in resp.text  # one of the budgets we set
 

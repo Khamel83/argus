@@ -2,10 +2,6 @@
 Content extraction endpoint.
 """
 
-from argus.logging import get_logger
-
-logger = get_logger("api.extract")
-
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from argus.api.schemas import (
@@ -16,7 +12,9 @@ from argus.api.schemas import (
 )
 from argus.extraction import extract_url
 from argus.extraction.completeness import assess_completeness
+from argus.logging import get_logger
 
+logger = get_logger("api.extract")
 router = APIRouter()
 
 

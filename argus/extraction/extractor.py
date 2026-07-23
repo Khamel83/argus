@@ -563,6 +563,7 @@ async def _extract_url_unpersisted(
         best_quality_result.quality_passed = True
         best_quality_result.quality_reason = None
         best_quality_result.extractors_tried = extractors_tried
+        best_quality_result.attempts = list(attempts)
         _cache.put(url, best_quality_result)
         logger.warning(
             "Completeness fallbacks exhausted for %s, returning valid incomplete "
