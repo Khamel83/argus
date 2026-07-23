@@ -1,6 +1,6 @@
 # Argus Audit and Work Handoff
 
-Last updated: 2026-07-22 America/Los_Angeles
+Last updated: 2026-07-23 America/Los_Angeles
 
 ## Purpose
 
@@ -83,12 +83,23 @@ Immediate frontier:
 
 State and integration:
 
-- [ ] [Persist extraction and session operations in the authoritative ledger](https://github.com/Khamel83/argus/issues/34)
-  — unblocked and in implementation on an isolated issue branch.
+- [x] [Persist extraction and session operations in the authoritative ledger](https://github.com/Khamel83/argus/issues/34)
+  — merged PR
+  [feat: persist extraction and sessions transactionally](https://github.com/Khamel83/argus/pull/51)
+  as `43f28dc`. The authoritative extraction/session ledger now fails closed in
+  persistent mode, records cache attempts truthfully, sanitizes URLs before
+  idempotency checks, and uses conflict-safe PostgreSQL/SQLite writes for
+  cross-worker session and URL concurrency. Two independent rereview rounds
+  closed seven Important findings. Final evidence was 459 passed and 9 skipped
+  locally plus all seven CI jobs, including real PostgreSQL concurrency and
+  both production image canaries. The `[skip ci]` merge triggered no workflow
+  or deployment.
 - [ ] [Reserve and reconcile paid-provider spending durably](https://github.com/Khamel83/argus/issues/35)
-  — unblocked and in implementation on an isolated issue branch.
+  — review fixes are in implementation on an isolated issue branch, rebasing
+  onto issue 34 as the next migration.
 - [ ] [Deliver user-visible retrievals to Maya through a transactional outbox](https://github.com/Khamel83/argus/issues/36)
-  — blocked by the extraction/session ledger and Maya capture interface.
+  — both blockers are closed; implementation has started from `43f28dc` on an
+  isolated issue branch.
 - [ ] [Make HTTP the sole Argus execution authority and MCP stateless](https://github.com/Khamel83/argus/issues/37)
   — blocked by durable provider accounting and the Maya outbox.
 
