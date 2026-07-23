@@ -25,6 +25,18 @@ def upgrade() -> None:
         sa.Column("status", sa.String(32), nullable=False),
         sa.Column("outcome", sa.String(100), nullable=True),
         sa.Column("reserved_charge", sa.Float(), nullable=False),
+        sa.Column(
+            "estimator_violation",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.false(),
+        ),
+        sa.Column(
+            "reservation_overrun",
+            sa.Float(),
+            nullable=False,
+            server_default="0",
+        ),
         sa.Column("actual_charge", sa.Float(), nullable=True),
         sa.Column("usage", sa.Float(), nullable=False),
         sa.Column("caller_identity", sa.String(100), nullable=False),
@@ -57,6 +69,10 @@ def upgrade() -> None:
             "provider",
             "provider_reference",
             name="uq_provider_snapshot_reference",
+        ),
+        sa.UniqueConstraint(
+            "related_attempt_id",
+            name="uq_provider_snapshot_attempt",
         ),
     )
     op.create_index(

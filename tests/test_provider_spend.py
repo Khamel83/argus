@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
+import json
 
 import pytest
 from sqlalchemy import func, select
@@ -253,6 +254,163 @@ def test_authoritative_reconciliation_records_snapshot_freshness_and_is_idempote
         "authoritative_charge": 1.0,
     }
 
+def test_authoritative_charge_overrun_increases_obligation_and_is_audited(tmp_path):
+    from argus.persistence.provider_spend import SpendAuditRow
+
+    repository = _repository(tmp_path)
+    reservation = repository.reserve(
+        provider=ProviderName.BRAVE,
+        conservative_charge=1.0,
+        budget_limit=10.0,
+        caller_identity="maya",
+        caller_label="",
+        idempotency_key="overrun-attempt",
+    )
+    kwargs = {
+        "provider": ProviderName.BRAVE,
+        "balance": 8.0,
+        "observed_at": datetime.now(tz=None),
+        "actor_identity": "provider:brave",
+        "idempotency_key": "overrun-snapshot",
+        "provider_reference": "brave-overrun-1",
+        "related_attempt_id": reservation.attempt_id,
+        "authoritative_charge": 2.0,
+    }
+
+    first = repository.record_provider_snapshot(**kwargs)
+    second = repository.record_provider_snapshot(**kwargs)
+
+    assert second == first
+    attempt = repository.get_attempt(reservation.attempt_id)
+    assert attempt.status == "uncertain"
+    assert attempt.reserved_charge == 2.0
+    assert attempt.estimator_violation is True
+    assert attempt.reservation_overrun == 1.0
+    assert repository.provider_summary(
+        ProviderName.BRAVE, budget_limit=10.0
+    )["remaining"] == 8.0
+    with repository.session_factory() as session:
+        audit = session.scalar(
+            select(SpendAuditRow).where(
+                SpendAuditRow.action == "provider_snapshot"
+            )
+        )
+    state = json.loads(audit.after_json)
+    assert state["estimator_violation"] is True
+    assert state["reservation_overrun"] == 1.0
+
+    repository.resolve(
+        reservation.attempt_id,
+        actual_charge=2.0,
+        outcome="charged",
+        source="provider",
+        actor_identity="provider:brave",
+        idempotency_key="overrun-resolution",
+        provider_snapshot_id=first.snapshot_id,
+    )
+    assert repository.provider_summary(
+        ProviderName.BRAVE, budget_limit=10.0
+    )["remaining"] == 8.0
+
+
+@pytest.mark.parametrize(
+    ("balance", "authoritative_charge"),
+    [
+        (float("inf"), 0.5),
+        (float("nan"), 0.5),
+        (9.5, float("inf")),
+        (9.5, float("nan")),
+    ],
+)
+def test_snapshot_rejects_nonfinite_values_before_database_work(
+    tmp_path,
+    balance,
+    authoritative_charge,
+):
+    from argus.persistence.provider_spend import (
+        ProviderBalanceSnapshotRow,
+        SpendAuditRow,
+    )
+
+    repository = _repository(tmp_path)
+    reservation = repository.reserve(
+        provider=ProviderName.BRAVE,
+        conservative_charge=1.0,
+        budget_limit=10.0,
+        caller_identity="maya",
+        caller_label="",
+        idempotency_key="finite-attempt",
+    )
+    with repository.session_factory() as session:
+        before_audits = session.scalar(
+            select(func.count()).select_from(SpendAuditRow)
+        )
+
+    with pytest.raises(ValueError, match="finite"):
+        repository.record_provider_snapshot(
+            provider=ProviderName.BRAVE,
+            balance=balance,
+            observed_at=datetime.now(tz=None),
+            actor_identity="provider:brave",
+            idempotency_key="invalid-numeric-snapshot",
+            provider_reference="invalid-numeric-reference",
+            related_attempt_id=reservation.attempt_id,
+            authoritative_charge=authoritative_charge,
+        )
+
+    with repository.session_factory() as session:
+        assert session.scalar(
+            select(func.count()).select_from(ProviderBalanceSnapshotRow)
+        ) == 0
+        assert session.scalar(
+            select(func.count()).select_from(SpendAuditRow)
+        ) == before_audits
+    attempt = repository.get_attempt(reservation.attempt_id)
+    assert attempt.status == "uncertain"
+    assert attempt.reserved_charge == 1.0
+    json.dumps(
+        repository.provider_summary(ProviderName.BRAVE, budget_limit=10.0),
+        allow_nan=False,
+    )
+
+
+@pytest.mark.parametrize("actual_charge", [float("inf"), float("nan")])
+def test_resolution_rejects_nonfinite_charge_before_database_work(
+    tmp_path,
+    actual_charge,
+):
+    from argus.persistence.provider_spend import SpendAuditRow
+
+    repository = _repository(tmp_path)
+    reservation = repository.reserve(
+        provider=ProviderName.BRAVE,
+        conservative_charge=1.0,
+        budget_limit=10.0,
+        caller_identity="maya",
+        caller_label="",
+        idempotency_key="finite-resolution-attempt",
+    )
+    with repository.session_factory() as session:
+        before_audits = session.scalar(
+            select(func.count()).select_from(SpendAuditRow)
+        )
+
+    with pytest.raises(ValueError, match="finite"):
+        repository.resolve(
+            reservation.attempt_id,
+            actual_charge=actual_charge,
+            outcome="charged",
+            source="operator",
+            actor_identity="admin",
+            idempotency_key="invalid-numeric-resolution",
+        )
+
+    assert repository.get_attempt(reservation.attempt_id).status == "uncertain"
+    with repository.session_factory() as session:
+        assert session.scalar(
+            select(func.count()).select_from(SpendAuditRow)
+        ) == before_audits
+
 
 def test_reconciliation_fault_rolls_back_attempt_and_audit(tmp_path):
     from argus.persistence.provider_spend import SpendAuditRow
@@ -422,6 +580,46 @@ def test_provider_reference_cannot_reconcile_multiple_obligations(tmp_path):
         repository.get_attempt(reservation.attempt_id).status
         for reservation in reservations
     ) == ["resolved", "uncertain"]
+
+def test_concurrent_authoritative_snapshots_cannot_double_reconcile_attempt(tmp_path):
+    from argus.persistence.provider_spend import SpendConflictError
+
+    repository = _repository(tmp_path)
+    reservation = repository.reserve(
+        provider=ProviderName.BRAVE,
+        conservative_charge=1.0,
+        budget_limit=10.0,
+        caller_identity="maya",
+        caller_label="",
+        idempotency_key="single-evidence-attempt",
+    )
+    barrier = Barrier(2)
+
+    def record(index):
+        barrier.wait()
+        try:
+            return repository.record_provider_snapshot(
+                provider=ProviderName.BRAVE,
+                balance=8.0,
+                observed_at=datetime.now(tz=None),
+                actor_identity="provider:brave",
+                idempotency_key=f"single-evidence-{index}",
+                provider_reference=f"single-evidence-reference-{index}",
+                related_attempt_id=reservation.attempt_id,
+                authoritative_charge=2.0 + index,
+            )
+        except Exception as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(record, range(2)))
+
+    assert sum(hasattr(value, "snapshot_id") for value in outcomes) == 1
+    assert sum(isinstance(value, SpendConflictError) for value in outcomes) == 1
+    winner = next(value for value in outcomes if hasattr(value, "snapshot_id"))
+    attempt = repository.get_attempt(reservation.attempt_id)
+    assert attempt.reserved_charge == winner.authoritative_charge
+    assert attempt.reservation_overrun == winner.authoritative_charge - 1.0
 
 
 def test_concurrent_reservations_cannot_overspend_budget(tmp_path):
@@ -721,6 +919,64 @@ async def test_valyu_reservation_estimate_respects_result_cap(
     assert attempt.reserved_charge == pytest.approx(expected_reservation)
     assert attempt.actual_charge == pytest.approx(expected_reservation)
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("credit_info", "expected_status", "expected_actual"),
+    [
+        ({"tx_id": "missing-charge"}, "uncertain", None),
+        ({"tx_id": "zero-charge", "cost_usd": 0.0}, "settled", 0.0),
+    ],
+)
+async def test_valyu_only_settles_when_charge_is_authoritatively_reported(
+    tmp_path,
+    credit_info,
+    expected_status,
+    expected_actual,
+):
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+
+    repository = _repository(tmp_path)
+
+    class Provider:
+        name = ProviderName.VALYU
+
+        def is_available(self):
+            return True
+
+        async def search(self, query):
+            return [], ProviderTrace(
+                provider=self.name,
+                status="success",
+                credit_info=credit_info,
+            )
+
+    budgets = BudgetTracker()
+    budgets.set_budget(ProviderName.VALYU, 1.0)
+    executor = ProviderExecutor(
+        providers={ProviderName.VALYU: Provider()},
+        health_tracker=HealthTracker(),
+        budget_tracker=budgets,
+        spend_repository=repository,
+    )
+
+    await executor.execute(
+        SearchQuery(
+            query="authoritative",
+            max_results=20,
+            providers=[ProviderName.VALYU],
+            caller="maya",
+            metadata={"attempt_scope": f"valyu-{expected_status}"},
+        ),
+        [ProviderName.VALYU],
+    )
+
+    attempt = repository.list_attempts(provider=ProviderName.VALYU)[0]
+    assert attempt.status == expected_status
+    assert attempt.actual_charge == expected_actual
+    assert budgets.get_monthly_usage(ProviderName.VALYU) == 0.0
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("max_results", [0, -1])
@@ -993,6 +1249,64 @@ def test_admin_spend_interfaces_are_authenticated_and_audited(tmp_path, monkeypa
         create_app(broker=broker, spend_repository=repository)
     )
 
+    invalid_resolution = client.post(
+        f"/api/admin/provider-spend/attempts/{reservation.attempt_id}/resolve",
+        headers={
+            "X-Admin-API-Key": "admin-secret",
+            "Content-Type": "application/json",
+        },
+        content=(
+            '{"actual_charge":1e999,"outcome":"charged","source":"operator",'
+            '"idempotency_key":"invalid-resolution"}'
+        ),
+    )
+    invalid_snapshot = client.post(
+        "/api/admin/provider-spend/brave/snapshots",
+        headers={
+            "X-Admin-API-Key": "admin-secret",
+            "X-Provider-Reconciliation-Key": "brave-reconciliation-secret",
+            "Content-Type": "application/json",
+        },
+        content=(
+            '{"balance":1e999,"observed_at":"'
+            + datetime.now(tz=None).isoformat()
+            + '","provider_reference":"invalid-admin-event",'
+            f'"related_attempt_id":"{snapshot_reservation.attempt_id}",'
+            '"authoritative_charge":1.0,"idempotency_key":"invalid-admin-snapshot"}'
+        ),
+    )
+    invalid_nan_snapshot = client.post(
+        "/api/admin/provider-spend/brave/snapshots",
+        headers={
+            "X-Admin-API-Key": "admin-secret",
+            "X-Provider-Reconciliation-Key": "brave-reconciliation-secret",
+            "Content-Type": "application/json",
+        },
+        content=(
+            '{"balance":1999.0,"observed_at":"'
+            + datetime.now(tz=None).isoformat()
+            + '","provider_reference":"invalid-admin-nan-event",'
+            f'"related_attempt_id":"{snapshot_reservation.attempt_id}",'
+            '"authoritative_charge":NaN,'
+            '"idempotency_key":"invalid-admin-nan-snapshot"}'
+        ),
+    )
+    invalid_inf_snapshot = client.post(
+        "/api/admin/provider-spend/brave/snapshots",
+        headers={
+            "X-Admin-API-Key": "admin-secret",
+            "X-Provider-Reconciliation-Key": "brave-reconciliation-secret",
+            "Content-Type": "application/json",
+        },
+        content=(
+            '{"balance":Infinity,"observed_at":"'
+            + datetime.now(tz=None).isoformat()
+            + '","provider_reference":"invalid-admin-inf-event",'
+            f'"related_attempt_id":"{snapshot_reservation.attempt_id}",'
+            '"authoritative_charge":1.0,'
+            '"idempotency_key":"invalid-admin-inf-snapshot"}'
+        ),
+    )
     unauthorized = client.get("/api/admin/provider-spend")
     uncertain = client.get(
         "/api/admin/provider-spend/attempts?status=uncertain",
@@ -1032,6 +1346,10 @@ def test_admin_spend_interfaces_are_authenticated_and_audited(tmp_path, monkeypa
     )
 
     assert unauthorized.status_code == 401
+    assert invalid_resolution.status_code == 422
+    assert invalid_snapshot.status_code == 422
+    assert invalid_nan_snapshot.status_code == 422
+    assert invalid_inf_snapshot.status_code == 422
     assert uncertain.status_code == 200
     assert reservation.attempt_id in {
         attempt["attempt_id"] for attempt in uncertain.json()["attempts"]
@@ -1042,6 +1360,7 @@ def test_admin_spend_interfaces_are_authenticated_and_audited(tmp_path, monkeypa
     brave = next(row for row in summary.json()["providers"] if row["provider"] == "brave")
     assert brave["estimate_source"] == "argus"
     assert brave["provider_snapshot"]["source"] == "provider"
+    json.dumps(summary.json(), allow_nan=False)
 
 
 def test_alembic_migration_creates_provider_spend_schema(tmp_path):
@@ -1200,3 +1519,61 @@ def test_postgresql_provider_reference_replay_is_race_safe(postgres_ledger_url):
         repository.get_attempt(reservation.attempt_id).status
         for reservation in reservations
     ) == ["resolved", "uncertain"]
+
+
+def test_postgresql_authoritative_overrun_is_race_safe(postgres_ledger_url):
+    from alembic import command
+    from alembic.config import Config
+
+    from argus.persistence.provider_spend import (
+        SpendConflictError,
+        create_provider_spend_repository,
+    )
+
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", postgres_ledger_url.replace("%", "%%"))
+    command.downgrade(config, "base")
+    command.upgrade(config, "head")
+    repository = create_provider_spend_repository(
+        postgres_ledger_url,
+        create_schema=False,
+    )
+    reservation = repository.reserve(
+        provider=ProviderName.BRAVE,
+        conservative_charge=1.0,
+        budget_limit=10.0,
+        caller_identity="maya",
+        caller_label="",
+        idempotency_key="pg-overrun-attempt",
+    )
+    barrier = Barrier(2)
+
+    def record(index):
+        barrier.wait()
+        try:
+            return repository.record_provider_snapshot(
+                provider=ProviderName.BRAVE,
+                balance=8.0,
+                observed_at=datetime.now(tz=None),
+                actor_identity="provider:brave",
+                idempotency_key=f"pg-overrun-snapshot-{index}",
+                provider_reference=f"pg-overrun-reference-{index}",
+                related_attempt_id=reservation.attempt_id,
+                authoritative_charge=2.0 + index,
+            )
+        except Exception as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(record, range(2)))
+
+    assert sum(hasattr(value, "snapshot_id") for value in outcomes) == 1
+    assert sum(isinstance(value, SpendConflictError) for value in outcomes) == 1
+    winner = next(value for value in outcomes if hasattr(value, "snapshot_id"))
+    attempt = repository.get_attempt(reservation.attempt_id)
+    assert attempt.reserved_charge == winner.authoritative_charge
+    assert attempt.estimator_violation is True
+    assert attempt.reservation_overrun == winner.authoritative_charge - 1.0
+    assert repository.provider_summary(
+        ProviderName.BRAVE, budget_limit=10.0
+    )["remaining"] == 10.0 - winner.authoritative_charge

@@ -1,12 +1,14 @@
 """FastAPI application for Argus search broker."""
 
 import asyncio
+import math
 import os
 import uuid
 from contextlib import asynccontextmanager
 from typing import Callable, Optional
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -136,6 +138,26 @@ def create_app(
         version="1.6.2",
         lifespan=lifespan_with_probes,
     )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(
+        request: Request, exc: RequestValidationError
+    ):
+        def json_safe(value):
+            if isinstance(value, float) and not math.isfinite(value):
+                return str(value)
+            if isinstance(value, BaseException):
+                return str(value)
+            if isinstance(value, dict):
+                return {key: json_safe(item) for key, item in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [json_safe(item) for item in value]
+            return value
+
+        return JSONResponse(
+            status_code=422,
+            content={"detail": json_safe(exc.errors())},
+        )
 
     # Broker singleton
     app.state.get_broker = _build_broker_provider(broker, broker_factory)

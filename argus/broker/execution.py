@@ -216,7 +216,7 @@ class ProviderExecutor:
                     continue
                 try:
                     results, trace = await remote.search(query)
-                    uncertain = not self._trace_charge_known(trace)
+                    uncertain = not self._trace_charge_known(pname, trace)
                 except Exception as exc:
                     # Network failures can occur after the provider accepted
                     # work. The durable reservation remains uncertain.
@@ -347,13 +347,20 @@ class ProviderExecutor:
                 cost = 0.0
                 if trace.credit_info and "cost_usd" in trace.credit_info:
                     cost = float(trace.credit_info["cost_usd"])
-                else:
+                elif provider_name != ProviderName.VALYU:
                     cost = _COST_ESTIMATES.get(provider_name, 0.0)
 
                 if math.isfinite(cost) and cost >= 0:
                     self._budgets.record_usage(provider_name, cost)
                 trace.budget_remaining = self._budgets.get_remaining_budget(provider_name)
                 trace.results_count = len(results)
+                if trace.credit_info and "cost_usd" in trace.credit_info:
+                    reported_cost = float(trace.credit_info["cost_usd"])
+                    if not math.isfinite(reported_cost) or reported_cost < 0:
+                        trace.error = (
+                            "provider returned an invalid charge; "
+                            "reservation left uncertain"
+                        )
 
                 # Inject provenance metadata if not already set by the provider
                 from argus.config import get_config
@@ -366,7 +373,9 @@ class ProviderExecutor:
 
             elif trace.status == "error":
                 self._health.record_failure(provider_name)
-            return results, trace, not self._trace_charge_known(trace)
+            return results, trace, not self._trace_charge_known(
+                provider_name, trace
+            )
         except Exception as exc:
             logger.warning("Provider %s raised unhandled: %s", provider_name, exc)
             self._health.record_failure(provider_name)
@@ -443,9 +452,18 @@ class ProviderExecutor:
         )["remaining"]
 
     @staticmethod
-    def _trace_charge_known(trace: ProviderTrace) -> bool:
+    def _trace_charge_known(
+        provider: ProviderName, trace: ProviderTrace
+    ) -> bool:
         if trace.status == "success":
-            return True
+            if provider != ProviderName.VALYU:
+                return True
+            return bool(
+                trace.credit_info
+                and "cost_usd" in trace.credit_info
+                and math.isfinite(float(trace.credit_info["cost_usd"]))
+                and float(trace.credit_info["cost_usd"]) >= 0
+            )
         if not trace.credit_info:
             return False
         return (

@@ -106,6 +106,8 @@ async def provider_spend_attempts(
                 "status": attempt.status,
                 "outcome": attempt.outcome,
                 "reserved_charge": attempt.reserved_charge,
+                "estimator_violation": attempt.estimator_violation,
+                "reservation_overrun": attempt.reservation_overrun,
                 "actual_charge": attempt.actual_charge,
                 "usage": attempt.usage,
                 "caller_identity": attempt.caller_identity,

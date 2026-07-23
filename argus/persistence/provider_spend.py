@@ -48,6 +48,12 @@ class ProviderSpendAttemptRow(SpendBase):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     outcome: Mapped[str | None] = mapped_column(String(100), nullable=True)
     reserved_charge: Mapped[float] = mapped_column(Float, nullable=False)
+    estimator_violation: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    reservation_overrun: Mapped[float] = mapped_column(
+        Float, nullable=False, default=0.0
+    )
     actual_charge: Mapped[float | None] = mapped_column(Float, nullable=True)
     usage: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     caller_identity: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -65,6 +71,10 @@ class ProviderBalanceSnapshotRow(SpendBase):
             "provider",
             "provider_reference",
             name="uq_provider_snapshot_reference",
+        ),
+        UniqueConstraint(
+            "related_attempt_id",
+            name="uq_provider_snapshot_attempt",
         ),
     )
 
@@ -108,6 +118,8 @@ class SpendAttempt:
     status: str
     outcome: str | None
     reserved_charge: float
+    estimator_violation: bool
+    reservation_overrun: float
     actual_charge: float | None
     usage: float
     caller_identity: str
@@ -158,6 +170,8 @@ def _attempt(row: ProviderSpendAttemptRow) -> SpendAttempt:
         status=row.status,
         outcome=row.outcome,
         reserved_charge=row.reserved_charge,
+        estimator_violation=row.estimator_violation,
+        reservation_overrun=row.reservation_overrun,
         actual_charge=row.actual_charge,
         usage=row.usage,
         caller_identity=row.caller_identity,
@@ -172,6 +186,8 @@ def _attempt_state(row: ProviderSpendAttemptRow) -> dict:
         "status": row.status,
         "outcome": row.outcome,
         "reserved_charge": row.reserved_charge,
+        "estimator_violation": row.estimator_violation,
+        "reservation_overrun": row.reservation_overrun,
         "actual_charge": row.actual_charge,
         "usage": row.usage,
         "resolution_source": row.resolution_source,
@@ -240,6 +256,8 @@ class ProviderSpendRepository:
                     status="uncertain",
                     outcome=None,
                     reserved_charge=conservative_charge,
+                    estimator_violation=False,
+                    reservation_overrun=0.0,
                     actual_charge=None,
                     usage=0.0,
                     caller_identity=caller_identity,
@@ -420,8 +438,12 @@ class ProviderSpendRepository:
             raise ValueError("provider snapshot requires provider-scoped identity")
         if not provider_reference.strip():
             raise ValueError("provider reference is required")
-        if authoritative_charge < 0:
-            raise ValueError("authoritative charge must be non-negative")
+        if not math.isfinite(balance) or balance < 0:
+            raise ValueError("provider balance must be finite and non-negative")
+        if not math.isfinite(authoritative_charge) or authoritative_charge < 0:
+            raise ValueError(
+                "authoritative charge must be finite and non-negative"
+            )
         payload = {
             "provider": provider.value,
             "balance": balance,
@@ -463,10 +485,15 @@ class ProviderSpendRepository:
                     raise ValueError(
                         "provider snapshot attempt must still be uncertain"
                     )
+                before_attempt = _attempt_state(attempt)
                 if authoritative_charge > attempt.reserved_charge:
-                    raise ValueError(
-                        "authoritative charge exceeds the reserved charge"
+                    original_reservation = attempt.reserved_charge
+                    attempt.reserved_charge = authoritative_charge
+                    attempt.estimator_violation = True
+                    attempt.reservation_overrun += (
+                        authoritative_charge - original_reservation
                     )
+                    attempt.updated_at = now
                 row = ProviderBalanceSnapshotRow(
                     id=uuid.uuid4().hex,
                     provider=provider.value,
@@ -486,6 +513,8 @@ class ProviderSpendRepository:
                 self._audit_snapshot(
                     session,
                     row=row,
+                    attempt=attempt,
+                    before_attempt=before_attempt,
                     actor=actor_identity,
                     request_hash=request_hash,
                 )
@@ -527,6 +556,16 @@ class ProviderSpendRepository:
                 if replayed is not None:
                     raise SpendConflictError(
                         "provider reference already used for another obligation"
+                    )
+                attempt_snapshot = session.scalar(
+                    select(ProviderBalanceSnapshotRow).where(
+                        ProviderBalanceSnapshotRow.related_attempt_id
+                        == related_attempt_id,
+                    )
+                )
+                if attempt_snapshot is not None:
+                    raise SpendConflictError(
+                        "provider attempt already has authoritative evidence"
                     )
                 raise RuntimeError("snapshot integrity conflict was not visible")
 
@@ -570,6 +609,8 @@ class ProviderSpendRepository:
                     status="settled",
                     outcome=outcome,
                     reserved_charge=0.0,
+                    estimator_violation=False,
+                    reservation_overrun=0.0,
                     actual_charge=0.0,
                     usage=usage,
                     caller_identity=caller_identity,
@@ -785,6 +826,8 @@ class ProviderSpendRepository:
         session,
         *,
         row: ProviderBalanceSnapshotRow,
+        attempt: ProviderSpendAttemptRow,
+        before_attempt: dict,
         actor: str,
         request_hash: str,
     ) -> None:
@@ -797,7 +840,7 @@ class ProviderSpendRepository:
                 actor_identity=actor,
                 idempotency_key=row.idempotency_key,
                 request_hash=request_hash,
-                before_json=None,
+                before_json=_canonical(before_attempt),
                 after_json=_canonical(
                     {
                         "balance": row.balance,
@@ -806,6 +849,9 @@ class ProviderSpendRepository:
                         "provider_reference": row.provider_reference,
                         "related_attempt_id": row.related_attempt_id,
                         "authoritative_charge": row.authoritative_charge,
+                        "estimator_violation": attempt.estimator_violation,
+                        "reservation_overrun": attempt.reservation_overrun,
+                        "accounted_obligation": attempt.reserved_charge,
                     }
                 ),
                 created_at=datetime.now(tz=None),
