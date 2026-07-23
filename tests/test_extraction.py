@@ -315,6 +315,59 @@ class TestExtractUrl:
         assert result.quality_passed is True
 
     @pytest.mark.asyncio
+    async def test_quality_passed_incomplete_content_is_not_relabelled_as_quality_failed(
+        self,
+        mock_chain,
+    ):
+        """A completeness retry must not erase a successful quality evaluation."""
+        from argus.extraction.extractor import extract_url, _cache, _domain_limiter
+
+        _cache.clear()
+        _domain_limiter.clear()
+
+        # Sanitized substantial content: it passes the 100-word quality floor,
+        # while the trailing ellipsis deliberately asks completeness to retry.
+        incomplete_text = " ".join(f"word-{index}" for index in range(137)) + "..."
+        mock_chain["trafilatura"].return_value = ExtractedContent(
+            url="https://example.com/article",
+            title="Sanitized fixture",
+            text=incomplete_text,
+            word_count=len(incomplete_text.split()),
+            extractor=ExtractorName.TRAFILATURA,
+        )
+
+        result = await extract_url("https://example.com/article")
+
+        assert result.extractor == ExtractorName.TRAFILATURA
+        assert result.quality_passed is True
+        assert result.quality_reason is None
+        assert result.completeness_result is not None
+        assert result.completeness_result.is_complete is False
+        assert result.completeness_result.recommended_action == "try_full_fetch"
+        assert mock_chain["archive_is"].await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_all_low_quality_content_remains_rejected(self, mock_chain):
+        from argus.extraction.extractor import extract_url, _cache, _domain_limiter
+
+        _cache.clear()
+        _domain_limiter.clear()
+
+        mock_chain["trafilatura"].return_value = ExtractedContent(
+            url="https://example.com/article",
+            title="Sanitized short fixture",
+            text=_good_text(50),
+            word_count=50,
+            extractor=ExtractorName.TRAFILATURA,
+        )
+
+        result = await extract_url("https://example.com/article")
+
+        assert result.extractor == ExtractorName.TRAFILATURA
+        assert result.quality_passed is False
+        assert result.quality_reason == "all_extractors_quality_failed"
+
+    @pytest.mark.asyncio
     async def test_extractors_tried_tracked(self, mock_chain):
         from argus.extraction.extractor import extract_url, _cache, _domain_limiter
 

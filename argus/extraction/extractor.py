@@ -33,6 +33,7 @@ from argus.extraction.quality_gate import QualityGate
 from argus.extraction.soft_404 import is_soft_404
 from argus.extraction.rate_limit import DomainRateLimiter
 from argus.extraction.ssrf import is_safe_url
+from argus.extraction.trafilatura_result import normalize_trafilatura_result
 from argus.logging import get_logger
 
 logger = get_logger("extraction")
@@ -144,19 +145,17 @@ async def _extract_trafilatura(url: str, timeout: int = 10) -> ExtractedContent:
         return ExtractedContent(url=url, error="trafilatura: failed to fetch URL")
 
     extracted = await loop.run_in_executor(None, trafilatura.bare_extraction, downloaded)
-    if extracted is not None and not isinstance(extracted, dict):
-        as_dict = getattr(extracted, "as_dict", None)
-        extracted = as_dict() if callable(as_dict) else None
-    if not isinstance(extracted, dict) or not extracted.get("text"):
+    normalized = normalize_trafilatura_result(extracted)
+    if normalized is None:
         return ExtractedContent(url=final_url, error="trafilatura: no content extracted")
 
-    text = extracted["text"]
+    text = normalized.text
     return ExtractedContent(
         url=final_url,
-        title=extracted.get("title") or "",
+        title=normalized.title,
         text=text,
-        author=extracted.get("author") or "",
-        date=extracted.get("date"),
+        author=normalized.author,
+        date=normalized.date,
         word_count=len(text.split()),
         extractor=ExtractorName.TRAFILATURA,
     )
@@ -256,6 +255,7 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
 
     extractors_tried = []
     best_result = None  # Keep the best (longest) result even if quality fails
+    best_quality_result = None
 
     def track_attempt(name: str, result: ExtractedContent | None):
         """Track which extractors were tried and keep the best result."""
@@ -267,6 +267,15 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
         if result.text and result.word_count > 0:
             if best_result is None or result.word_count > best_result.word_count:
                 best_result = result
+
+    def track_quality_pass(result: ExtractedContent):
+        """Keep a valid-but-incomplete result while later fallbacks run."""
+        nonlocal best_quality_result
+        if (
+            best_quality_result is None
+            or result.word_count > best_quality_result.word_count
+        ):
+            best_quality_result = result
 
     # Phase 4: Residential Egress Policy
     res_policy = config.residential.policy
@@ -295,6 +304,7 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
                     res_result.quality_reason = r_reason if not passed else None
                     res_result.extractors_tried = list(extractors_tried)
                     if passed:
+                        track_quality_pass(res_result)
                         res_result.completeness_result = assess_completeness(res_result.text, url)
                         if not _should_continue_for_completeness(res_result, step=6):
                             logger.info("Extracted %s via residential (%d words)", url[:60], res_result.word_count)
@@ -320,6 +330,7 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
                 result.quality_reason = reason if not passed else None
                 result.extractors_tried = list(extractors_tried)
                 if passed:
+                    track_quality_pass(result)
                     result.completeness_result = assess_completeness(result.text, url)
                     if not _should_continue_for_completeness(result, step=1):
                         logger.info("Extracted %s via auth (%d words)", url[:60], result.word_count)
@@ -361,6 +372,7 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
                 result.quality_reason = reason if not passed else None
                 result.extractors_tried = list(extractors_tried)
                 if passed:
+                    track_quality_pass(result)
                     result.completeness_result = assess_completeness(result.text, url)
                     if not _should_continue_for_completeness(result, step=step_num):
                         logger.info("Extracted %s via %s (%d words)", url[:60], step_name, result.word_count)
@@ -409,6 +421,7 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
                 result.quality_reason = reason if not passed else None
                 result.extractors_tried = list(extractors_tried)
                 if passed:
+                    track_quality_pass(result)
                     result.completeness_result = assess_completeness(result.text, url)
                     if step_name == "jina":
                         _track_jina_usage(result.word_count)
@@ -438,6 +451,7 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
                 result.quality_reason = reason if not passed else None
                 result.extractors_tried = list(extractors_tried)
                 if passed:
+                    track_quality_pass(result)
                     result.completeness_result = assess_completeness(result.text, url)
                     logger.info("Extracted %s via %s (%d words)", url[:60], step_name, result.word_count)
                     _cache.put(url, result)
@@ -469,6 +483,7 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
                     result.quality_reason = reason if not passed else None
                     result.extractors_tried = list(extractors_tried)
                     if passed:
+                        track_quality_pass(result)
                         result.completeness_result = assess_completeness(result.text, url)
                         if step_name == "jina":
                             _track_jina_usage(result.word_count)
@@ -478,6 +493,23 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
                             return result
             except Exception as e:
                 logger.warning("%s failed for %s: %s", step_name.capitalize(), url[:60], e)
+
+    # A quality-passed result may have triggered completeness fallbacks. If none
+    # recovered a more complete page, preserve that quality decision rather
+    # than falsely reporting that every quality gate failed.
+    if best_quality_result:
+        best_quality_result.quality_passed = True
+        best_quality_result.quality_reason = None
+        best_quality_result.extractors_tried = extractors_tried
+        _cache.put(url, best_quality_result)
+        logger.warning(
+            "Completeness fallbacks exhausted for %s, returning valid incomplete "
+            "content (%d words via %s)",
+            url[:60],
+            best_quality_result.word_count,
+            best_quality_result.extractor,
+        )
+        return best_quality_result
 
     # All extractors tried — return best result even if quality failed
     if best_result:

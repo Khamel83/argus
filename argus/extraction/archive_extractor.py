@@ -16,6 +16,7 @@ from typing import Optional
 import httpx
 
 from argus.extraction.models import ExtractedContent, ExtractorName
+from argus.extraction.trafilatura_result import normalize_trafilatura_result
 from argus.logging import get_logger
 
 logger = get_logger("extraction.archive_is")
@@ -151,15 +152,17 @@ async def _extract_archive(url: str) -> ExtractedContent:
             None, lambda: trafilatura.bare_extraction(downloaded)
         )
 
-        if not extracted or not extracted.get("text"):
+        normalized = normalize_trafilatura_result(extracted)
+        if normalized is None:
             return ExtractedContent(url=url, error="archive_is: extraction returned no text")
 
-        text = extracted["text"]
+        text = normalized.text
         return ExtractedContent(
             url=url,
-            title=extracted.get("title", ""),
+            title=normalized.title,
             text=text,
-            author=extracted.get("author", ""),
+            author=normalized.author,
+            date=normalized.date,
             word_count=len(text.split()),
             extractor=ExtractorName.ARCHIVE_IS,
         )

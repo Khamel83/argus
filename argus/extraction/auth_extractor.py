@@ -18,6 +18,7 @@ from argus.extraction.cookies import (
 )
 from argus.extraction.models import ExtractedContent, ExtractorName
 from argus.extraction.ssrf import is_safe_url
+from argus.extraction.trafilatura_result import normalize_trafilatura_result
 from argus.logging import get_logger
 
 logger = get_logger("extraction.auth")
@@ -181,7 +182,5 @@ def _extract_from_html(html: str) -> str:
     """Extract clean text from rendered HTML using trafilatura."""
     import trafilatura
 
-    result = trafilatura.bare_extraction(html)
-    if result and result.get("text"):
-        return result["text"]
-    return ""
+    result = normalize_trafilatura_result(trafilatura.bare_extraction(html))
+    return result.text if result is not None else ""

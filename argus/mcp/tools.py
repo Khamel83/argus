@@ -6,6 +6,7 @@ from typing import Any, Callable, Optional
 
 from argus.broker.router import SearchBroker
 from argus.corpus import describe_corpus_paths
+from argus.extraction.trafilatura_result import normalize_trafilatura_result
 from argus.models import SearchMode, SearchQuery
 from argus.workflows import WorkflowService
 
@@ -164,12 +165,13 @@ async def _try_archive_ph(url: str) -> Optional[dict]:
         import trafilatura
         loop = __import__("asyncio").get_event_loop()
         extracted = await loop.run_in_executor(None, trafilatura.bare_extraction, html)
+        normalized = normalize_trafilatura_result(extracted)
 
-        if extracted and extracted.get("text") and len(extracted["text"]) > 200:
+        if normalized is not None and len(normalized.text) > 200:
             return {
                 "url": str(resp.url),
-                "title": extracted.get("title", ""),
-                "snippet": extracted["text"][:200],
+                "title": normalized.title,
+                "snippet": normalized.text[:200],
                 "domain": "archive.ph",
                 "provider": "archive_ph",
                 "score": 0.8,
