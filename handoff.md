@@ -125,7 +125,17 @@ Capability, recovery, and operations:
 - [ ] [Expose truthful readiness, runtime identity, and bounded operational evidence](https://github.com/Khamel83/argus/issues/39)
   — blocked by the sole HTTP authority and declared browser capability.
 - [ ] [Run Argus on shared homelab PostgreSQL with verified recovery](https://github.com/Khamel83/argus/issues/40)
-  — blocked by the search and extraction/session ledgers.
+  — the safe pre-production toolkit merged in
+  [feat: add safe shared PostgreSQL recovery toolkit](https://github.com/Khamel83/argus/pull/52)
+  as `8f5e2e1` after five safety-review rounds. It provides least-privilege
+  tenant provisioning, credential-free backup and isolated restore
+  verification, recovery evidence and schema-promotion gates, plus a
+  strictly read-only signed 7/5/12 retention plan. Automatic deletion was
+  removed because pathname/inode races could not be made safely automatic.
+  The issue deliberately remains open: production provisioning, scheduling,
+  deletion/reclamation, restore proof, evidence review, and cutover are
+  unchecked and require separate authorization. The `[skip ci]` merge
+  triggered no deployment.
 - [ ] [Promote immutable homelab releases with rollback proof](https://github.com/Khamel83/argus/issues/41)
   — blocked by hermetic image CI, truthful health/identity, and verified
   PostgreSQL recovery.
