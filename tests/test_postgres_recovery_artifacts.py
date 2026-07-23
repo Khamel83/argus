@@ -199,6 +199,10 @@ def test_provisioning_sql_scrubs_managed_role_acl_before_allowlist():
     assert sql.count(
         "REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public"
     ) >= 2
+    assert sql.count("REVOKE ALL PRIVILEGES ON %s %I.%I") >= 2
+    assert sql.count("GRANT USAGE ON %s %I.%I") >= 2
+    assert sql.count("REVOKE ALL PRIVILEGES ON TYPES FROM") >= 2
+    assert "'type'" in sql
     assert sql.count("unexpected managed-role object owner") >= 2
     assert sql.count("FROM pg_namespace") >= 4
     assert sql.count("\\gexec") >= 10

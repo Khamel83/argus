@@ -108,6 +108,9 @@ DO $ownership$
 DECLARE
     poisoned text;
 BEGIN
+    -- Supported tenant-owned classes: schemas; relations (tables,
+    -- partitions, views, materialized views, sequences, foreign tables);
+    -- routines; and user-defined types (including enums and domains).
     SELECT format('%s %I.%I owned by %I', object_kind, schema_name, object_name, owner_name)
     INTO poisoned
     FROM (
@@ -126,6 +129,12 @@ BEGIN
         FROM pg_proc p
         JOIN pg_namespace n ON n.oid = p.pronamespace
         JOIN pg_roles owner ON owner.oid = p.proowner
+        UNION ALL
+        SELECT 'type', n.nspname, t.typname, owner.rolname
+        FROM pg_type t
+        JOIN pg_namespace n ON n.oid = t.typnamespace
+        JOIN pg_roles owner ON owner.oid = t.typowner
+        WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
     ) AS objects
     WHERE owner_name IN (
         'atlas_owner', 'atlas_migration', 'atlas_runtime', 'atlas_readonly', 'atlas_backup',
@@ -167,6 +176,20 @@ SELECT format(
 FROM pg_namespace
 WHERE nspname !~ '^pg_' AND nspname <> 'information_schema'
 \gexec
+SELECT format(
+    'REVOKE ALL PRIVILEGES ON %s %I.%I FROM PUBLIC, atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup, argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup',
+    CASE WHEN t.typtype = 'd' THEN 'DOMAIN' ELSE 'TYPE' END,
+    n.nspname,
+    t.typname
+)
+FROM pg_type t
+JOIN pg_namespace n ON n.oid = t.typnamespace
+LEFT JOIN pg_class c ON c.oid = t.typrelid
+WHERE n.nspname !~ '^pg_'
+  AND n.nspname <> 'information_schema'
+  AND t.typelem = 0
+  AND (t.typrelid = 0 OR c.relkind = 'c')
+\gexec
 
 REVOKE ALL PRIVILEGES ON SCHEMA public FROM PUBLIC;
 REVOKE ALL PRIVILEGES ON SCHEMA public FROM
@@ -193,6 +216,19 @@ GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public
 GRANT SELECT ON ALL SEQUENCES IN SCHEMA public
     TO atlas_readonly, atlas_backup;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO atlas_runtime;
+SELECT format(
+    'GRANT USAGE ON %s %I.%I TO atlas_runtime, atlas_readonly, atlas_backup',
+    CASE WHEN t.typtype = 'd' THEN 'DOMAIN' ELSE 'TYPE' END,
+    n.nspname,
+    t.typname
+)
+FROM pg_type t
+JOIN pg_namespace n ON n.oid = t.typnamespace
+LEFT JOIN pg_class c ON c.oid = t.typrelid
+WHERE n.nspname = 'public'
+  AND t.typelem = 0
+  AND (t.typrelid = 0 OR c.relkind = 'c')
+\gexec
 ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
     REVOKE ALL PRIVILEGES ON TABLES FROM
         atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
@@ -208,6 +244,12 @@ ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
         atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
         argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
 ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON TYPES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON TYPES FROM
+        atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+        argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
+ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO atlas_runtime;
 ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
     GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO atlas_runtime;
@@ -215,12 +257,15 @@ ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
     GRANT SELECT ON TABLES TO atlas_readonly, atlas_backup;
 ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
     GRANT EXECUTE ON FUNCTIONS TO atlas_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
+    GRANT USAGE ON TYPES TO atlas_runtime, atlas_readonly, atlas_backup;
 
 \connect argus
 DO $ownership$
 DECLARE
     poisoned text;
 BEGIN
+    -- Keep this class list in lockstep with the Atlas ownership check above.
     SELECT format('%s %I.%I owned by %I', object_kind, schema_name, object_name, owner_name)
     INTO poisoned
     FROM (
@@ -239,6 +284,12 @@ BEGIN
         FROM pg_proc p
         JOIN pg_namespace n ON n.oid = p.pronamespace
         JOIN pg_roles owner ON owner.oid = p.proowner
+        UNION ALL
+        SELECT 'type', n.nspname, t.typname, owner.rolname
+        FROM pg_type t
+        JOIN pg_namespace n ON n.oid = t.typnamespace
+        JOIN pg_roles owner ON owner.oid = t.typowner
+        WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
     ) AS objects
     WHERE owner_name IN (
         'atlas_owner', 'atlas_migration', 'atlas_runtime', 'atlas_readonly', 'atlas_backup',
@@ -280,6 +331,20 @@ SELECT format(
 FROM pg_namespace
 WHERE nspname !~ '^pg_' AND nspname <> 'information_schema'
 \gexec
+SELECT format(
+    'REVOKE ALL PRIVILEGES ON %s %I.%I FROM PUBLIC, atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup, argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup',
+    CASE WHEN t.typtype = 'd' THEN 'DOMAIN' ELSE 'TYPE' END,
+    n.nspname,
+    t.typname
+)
+FROM pg_type t
+JOIN pg_namespace n ON n.oid = t.typnamespace
+LEFT JOIN pg_class c ON c.oid = t.typrelid
+WHERE n.nspname !~ '^pg_'
+  AND n.nspname <> 'information_schema'
+  AND t.typelem = 0
+  AND (t.typrelid = 0 OR c.relkind = 'c')
+\gexec
 
 REVOKE ALL PRIVILEGES ON SCHEMA public FROM PUBLIC;
 REVOKE ALL PRIVILEGES ON SCHEMA public FROM
@@ -306,6 +371,19 @@ GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public
 GRANT SELECT ON ALL SEQUENCES IN SCHEMA public
     TO argus_readonly, argus_backup;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO argus_runtime;
+SELECT format(
+    'GRANT USAGE ON %s %I.%I TO argus_runtime, argus_readonly, argus_backup',
+    CASE WHEN t.typtype = 'd' THEN 'DOMAIN' ELSE 'TYPE' END,
+    n.nspname,
+    t.typname
+)
+FROM pg_type t
+JOIN pg_namespace n ON n.oid = t.typnamespace
+LEFT JOIN pg_class c ON c.oid = t.typrelid
+WHERE n.nspname = 'public'
+  AND t.typelem = 0
+  AND (t.typrelid = 0 OR c.relkind = 'c')
+\gexec
 ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
     REVOKE ALL PRIVILEGES ON TABLES FROM
         atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
@@ -321,6 +399,12 @@ ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
         atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
         argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
 ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON TYPES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON TYPES FROM
+        atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+        argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
+ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO argus_runtime;
 ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
     GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO argus_runtime;
@@ -328,3 +412,5 @@ ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
     GRANT SELECT ON TABLES TO argus_readonly, argus_backup;
 ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
     GRANT EXECUTE ON FUNCTIONS TO argus_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
+    GRANT USAGE ON TYPES TO argus_runtime, argus_readonly, argus_backup;

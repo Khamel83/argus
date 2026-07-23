@@ -582,26 +582,28 @@ def test_pruning_revalidates_ownership_after_atomic_quarantine(tmp_path, monkeyp
 
     root, live, root_id = _owned_root(tmp_path)
     target = _owned_snapshot(root, "20260701T000000Z", root_id)
+    target_inode = target.stat().st_ino
     for age in range(20):
         timestamp = NOW - timedelta(days=age)
         _owned_snapshot(root, timestamp.strftime("%Y%m%dT%H%M%SZ"), root_id)
-    original = records._read_snapshot_owner_at
-    quarantined_calls = 0
+    original = records._read_snapshot_owner_fd
+    target_calls = 0
 
-    def changed_owner(directory_fd, name):
-        nonlocal quarantined_calls
-        if name.startswith(f".pruning.{target.name}."):
-            quarantined_calls += 1
-            return "different-root"
-        return original(directory_fd, name)
+    def changed_owner(directory_fd):
+        nonlocal target_calls
+        if records.os.fstat(directory_fd).st_ino == target_inode:
+            target_calls += 1
+            if target_calls == 2:
+                return "different-root"
+        return original(directory_fd)
 
-    monkeypatch.setattr(records, "_read_snapshot_owner_at", changed_owner)
+    monkeypatch.setattr(records, "_read_snapshot_owner_fd", changed_owner)
 
     report = records.prune_snapshots(root, live_data=live, apply=True, now=NOW)
 
     assert target.name not in report["removed"]
     assert target.is_dir()
-    assert quarantined_calls == 1
+    assert target_calls == 2
 
 
 def test_pruning_refuses_backup_root_path_swap_after_open(tmp_path, monkeypatch):
@@ -665,3 +667,58 @@ def test_pruning_refuses_nested_device_boundary(tmp_path, monkeypatch):
 
     assert target.is_dir()
     assert boundary.is_dir()
+
+
+def test_pruning_refuses_quarantine_name_swap_after_descriptor_validation(
+    tmp_path,
+    monkeypatch,
+):
+    import threading
+
+    import pytest
+
+    import argus.recovery.records as records
+
+    root, live, root_id = _owned_root(tmp_path)
+    target = _owned_snapshot(root, "20260701T000000Z", root_id)
+    (target / "validated-data").write_text("original", encoding="utf-8")
+    decoy = root / "decoy"
+    decoy.mkdir()
+    sentinel = decoy / "must-survive"
+    sentinel.write_text("unrelated", encoding="utf-8")
+    for age in range(20):
+        timestamp = NOW - timedelta(days=age)
+        _owned_snapshot(root, timestamp.strftime("%Y%m%dT%H%M%SZ"), root_id)
+
+    validated = threading.Event()
+    swapped = threading.Event()
+    original = records._tree_stays_on_device_fd
+
+    def pause_after_validation(directory_fd, expected_device):
+        result = original(directory_fd, expected_device)
+        validated.set()
+        assert swapped.wait(timeout=5)
+        return result
+
+    def swap_target():
+        assert validated.wait(timeout=5)
+        quarantine = next(root.glob(f".pruning.{target.name}.*"))
+        quarantine.rename(root / "validated-snapshot")
+        decoy.rename(quarantine)
+        swapped.set()
+
+    monkeypatch.setattr(
+        records,
+        "_tree_stays_on_device_fd",
+        pause_after_validation,
+    )
+    adversary = threading.Thread(target=swap_target)
+    adversary.start()
+    with pytest.raises(ValueError, match="changed during descriptor-bound deletion"):
+        records.prune_snapshots(root, live_data=live, apply=True, now=NOW)
+    adversary.join(timeout=5)
+
+    surviving_sentinels = list(root.rglob("must-survive"))
+    assert len(surviving_sentinels) == 1
+    assert surviving_sentinels[0].read_text(encoding="utf-8") == "unrelated"
+    assert (root / "validated-snapshot" / "validated-data").is_file()

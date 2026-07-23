@@ -16,10 +16,23 @@ DATABASE_URL = os.getenv("ARGUS_TEST_POSTGRES_URL", "")
 DISPOSABLE_OPT_IN = (
     os.getenv("ARGUS_TEST_ALLOW_PROVISIONING") == "disposable-only"
 )
+PSQL_EXECUTABLE = os.getenv("ARGUS_TEST_PSQL") or shutil.which("psql")
+
+if DISPOSABLE_OPT_IN and not DATABASE_URL:
+    raise RuntimeError(
+        "ARGUS_TEST_ALLOW_PROVISIONING requires ARGUS_TEST_POSTGRES_URL"
+    )
+if DISPOSABLE_OPT_IN and (
+    not PSQL_EXECUTABLE
+    or not os.access(PSQL_EXECUTABLE, os.X_OK)
+):
+    raise RuntimeError(
+        "ARGUS_TEST_ALLOW_PROVISIONING requires the psql executable"
+    )
 
 pytestmark = pytest.mark.skipif(
-    not DATABASE_URL or not DISPOSABLE_OPT_IN or shutil.which("psql") is None,
-    reason="requires an explicitly disposable PostgreSQL server and psql",
+    not DISPOSABLE_OPT_IN,
+    reason="requires ARGUS_TEST_ALLOW_PROVISIONING=disposable-only",
 )
 
 MANAGED_ROLES = (
@@ -48,7 +61,7 @@ def _psql(
     if url.password:
         environment["PGPASSWORD"] = url.password
     command = [
-        "psql",
+        str(PSQL_EXECUTABLE),
         "--no-psqlrc",
         "--set",
         "ON_ERROR_STOP=1",
@@ -106,10 +119,40 @@ def test_provisioning_scrubs_poisoned_acl_and_rejects_object_ownership():
 
         _psql(
             """
+            CREATE TYPE public.poisoned_enum AS ENUM ('unsafe');
+            ALTER TYPE public.poisoned_enum OWNER TO atlas_runtime;
+            """,
+            database="atlas",
+        )
+        poisoned_enum = _psql(file=script, check=False)
+        assert poisoned_enum.returncode != 0
+        assert "unexpected managed-role object owner in atlas" in (
+            poisoned_enum.stderr
+        )
+        _psql("DROP TYPE public.poisoned_enum", database="atlas")
+
+        _psql(
+            """
+            CREATE DOMAIN public.poisoned_domain AS text;
+            ALTER DOMAIN public.poisoned_domain OWNER TO atlas_readonly;
+            """,
+            database="atlas",
+        )
+        poisoned_domain = _psql(file=script, check=False)
+        assert poisoned_domain.returncode != 0
+        assert "unexpected managed-role object owner in atlas" in (
+            poisoned_domain.stderr
+        )
+        _psql("DROP DOMAIN public.poisoned_domain", database="atlas")
+
+        _psql(
+            """
             SET ROLE atlas_migration;
             CREATE TABLE public.acl_probe (id bigserial PRIMARY KEY);
             CREATE FUNCTION public.acl_probe_fn()
                 RETURNS integer LANGUAGE sql AS 'SELECT 1';
+            CREATE TYPE public.acl_probe_enum AS ENUM ('safe');
+            CREATE DOMAIN public.acl_probe_domain AS text;
             RESET ROLE;
             SET ROLE atlas_owner;
             CREATE SCHEMA private_probe;
@@ -126,6 +169,10 @@ def test_provisioning_scrubs_poisoned_acl_and_rejects_object_ownership():
                 TO argus_runtime, atlas_readonly;
             GRANT ALL PRIVILEGES ON FUNCTION public.acl_probe_fn()
                 TO argus_runtime, atlas_readonly;
+            GRANT ALL PRIVILEGES ON TYPE public.acl_probe_enum
+                TO argus_runtime;
+            GRANT ALL PRIVILEGES ON DOMAIN public.acl_probe_domain
+                TO argus_runtime;
             GRANT ALL PRIVILEGES ON SCHEMA private_probe TO argus_runtime;
             GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA private_probe
                 TO argus_runtime;
@@ -182,12 +229,24 @@ def test_provisioning_scrubs_poisoned_acl_and_rejects_object_ownership():
                     'argus_runtime',
                     'private_probe.acl_probe_fn()',
                     'EXECUTE'
+                ),
+                has_type_privilege(
+                    'argus_runtime', 'public.acl_probe_enum', 'USAGE'
+                ),
+                has_type_privilege(
+                    'argus_runtime', 'public.acl_probe_domain', 'USAGE'
+                ),
+                has_type_privilege(
+                    'atlas_runtime', 'public.acl_probe_enum', 'USAGE'
+                ),
+                has_type_privilege(
+                    'atlas_readonly', 'public.acl_probe_domain', 'USAGE'
                 );
             """,
             database="atlas",
         )
         assert result.stdout.strip() == (
-            "f|f|f|f|f|t|f|f|t|t|f|f|f|f"
+            "f|f|f|f|f|t|f|f|t|t|f|f|f|f|f|f|t|t"
         )
     finally:
         _cleanup()

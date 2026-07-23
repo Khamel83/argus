@@ -57,6 +57,7 @@ jobs:
       ARGUS_RESIDENTIAL_POLICY: "off"
       ARGUS_TEST_POSTGRES_URL: postgresql+psycopg2://postgres:postgres@127.0.0.1:5432/argus_test
       ARGUS_TEST_ALLOW_PROVISIONING: disposable-only
+      ARGUS_TEST_PSQL: /usr/bin/psql
     steps:
       - uses: actions/checkout@v4
 
@@ -72,7 +73,11 @@ jobs:
         run: uv sync --frozen --python 3.12 --extra dev --extra mcp
 
       - name: Install PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          test -x "$ARGUS_TEST_PSQL"
+          "$ARGUS_TEST_PSQL" --version
 
       - name: Run PostgreSQL ledger contract
         run: |
