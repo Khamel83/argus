@@ -11,7 +11,8 @@ from argus.api.schemas import (
     ProviderTraceSchema,
 )
 from argus.broker.router import SearchBroker
-from argus.models import ProviderName, SearchMode, SearchQuery
+from argus.models import ProviderName, SearchMode, SearchQuery, SearchResult
+from argus.recovery.archive_ph import try_archive_ph
 from argus.persistence.search_ledger import SearchLedgerRepository
 
 router = APIRouter()
@@ -70,6 +71,7 @@ def _to_response(resp, include_attribution: bool = False) -> SearchResponse:
         ],
         total_results=resp.total_results,
         cached=resp.cached,
+        budget_warnings=resp.budget_warnings,
         search_run_id=resp.search_run_id,
     )
 
@@ -85,7 +87,9 @@ async def search(
         query=req.query,
         mode=SearchMode(req.mode),
         max_results=req.max_results,
-        providers=[ProviderName(provider) for provider in req.providers] if req.providers else None,
+        providers=[ProviderName(provider) for provider in req.providers]
+        if req.providers
+        else None,
         free_only=req.free_only,
         caller=getattr(request.state, "caller_identity", "") or "unknown",
         metadata={"caller_label": req.caller},
@@ -117,6 +121,7 @@ async def recover_url(
     req: RecoverUrlRequest,
     request: Request,
     broker: SearchBroker = Depends(get_broker),
+    repository: SearchLedgerRepository = Depends(get_search_repository),
 ):
     query_parts = [req.url]
     if req.title:
@@ -131,7 +136,25 @@ async def recover_url(
         caller=getattr(request.state, "caller_identity", "") or "unknown",
     )
 
-    resp = await broker.search(search_query)
+    resp = await broker.search(search_query, persist_legacy=False)
+    if not resp.results:
+        try:
+            archived = await try_archive_ph(req.url)
+        except Exception:
+            archived = None
+        if archived:
+            resp.results.append(
+                SearchResult(
+                    url=archived["url"],
+                    title=archived["title"],
+                    snippet=archived["snippet"],
+                    domain=archived["domain"],
+                    score=archived["score"],
+                    metadata={"source_type": "archive_ph"},
+                )
+            )
+            resp.total_results = len(resp.results)
+    _accept_or_503(repository, search_query, resp)
     return _to_response(resp)
 
 
@@ -140,6 +163,7 @@ async def expand(
     req: ExpandRequest,
     request: Request,
     broker: SearchBroker = Depends(get_broker),
+    repository: SearchLedgerRepository = Depends(get_search_repository),
 ):
     query_text = req.query
     if req.context:
@@ -152,5 +176,6 @@ async def expand(
         caller=getattr(request.state, "caller_identity", "") or "unknown",
     )
 
-    resp = await broker.search(search_query)
+    resp = await broker.search(search_query, persist_legacy=False)
+    _accept_or_503(repository, search_query, resp)
     return _to_response(resp)

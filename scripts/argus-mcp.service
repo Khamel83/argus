@@ -11,6 +11,13 @@ ExecStart=/bin/bash /opt/argus/scripts/start-mcp.sh
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+Environment=ARGUS_ENV=production
+Environment=ARGUS_NODE_ROLE=caller
+EnvironmentFile=/etc/argus/mcp.env
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
 SyslogIdentifier=argus-mcp
 StandardOutput=journal
 StandardError=journal

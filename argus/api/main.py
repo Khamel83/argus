@@ -37,6 +37,7 @@ from argus.persistence.search_ledger import (
 from argus.workflows import WorkflowService
 
 logger = get_logger("api")
+_HTTP_API_AUTHORITY_CAPABILITY = object()
 
 
 def _build_rate_limiter() -> RateLimiter:
@@ -53,7 +54,13 @@ def _build_broker_provider(
     broker_factory: Optional[Callable[[], SearchBroker]] = None,
 ) -> Callable[[], SearchBroker]:
     current = broker
-    factory = broker_factory or create_broker
+    if broker_factory is None:
+        def factory():
+            return create_broker(
+                authority_capability=_HTTP_API_AUTHORITY_CAPABILITY
+            )
+    else:
+        factory = broker_factory
 
     def get_broker() -> SearchBroker:
         nonlocal current
@@ -72,7 +79,10 @@ def _build_workflow_provider(
     def get_workflows() -> WorkflowService:
         nonlocal current
         if current is None:
-            current = WorkflowService(broker_provider())
+            current = WorkflowService(
+                broker_provider(),
+                authority_capability=_HTTP_API_AUTHORITY_CAPABILITY,
+            )
         return current
 
     return get_workflows
@@ -87,6 +97,10 @@ def create_app(
     spend_repository=None,
 ) -> FastAPI:
     auth_config = AuthConfig.from_env()
+    production_mode = (
+        os.environ.get("ARGUS_ENV", "development").strip().lower()
+        == "production"
+    )
 
     @asynccontextmanager
     async def lifespan_with_probes(app: FastAPI):
@@ -293,7 +307,7 @@ def create_app(
             request.state.caller_identity = "admin"
             return await call_next(request)
 
-        if is_caller_path(path) and not is_local:
+        if is_caller_path(path) and (production_mode or not is_local):
             if not auth.has_caller_key():
                 return JSONResponse(
                     status_code=503,

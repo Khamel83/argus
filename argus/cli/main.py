@@ -33,6 +33,7 @@ def _run(coro):
         loop = None
     if loop and loop.is_running():
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor() as pool:
             return pool.submit(asyncio.run, coro).result()
     return asyncio.run(coro)
@@ -40,6 +41,29 @@ def _run(coro):
 
 def _emit_json(payload):
     click.echo(json.dumps(payload, indent=2))
+
+
+def _http_authority_client():
+    """Return the configured HTTP authority client for remote/production CLI."""
+    from argus.authority import (
+        AuthorityConfigurationError,
+        HttpAuthorityClient,
+        adapter_execution_mode,
+        authority_client_config,
+    )
+
+    mode = adapter_execution_mode()
+    if mode == "http":
+        try:
+            config = authority_client_config(adapter="cli")
+        except AuthorityConfigurationError as exc:
+            raise click.ClickException(str(exc)) from exc
+        return HttpAuthorityClient(config)
+    if os.environ.get("ARGUS_ENV", "development").strip().lower() == "production":
+        raise click.ClickException(
+            "Production CLI requires ARGUS_AUTHORITY_URL and authority authentication"
+        )
+    return None
 
 
 def _workflow_to_dict(result):
@@ -97,6 +121,22 @@ def _print_workflow_result(result, as_json: bool):
             click.echo()
 
 
+def _print_workflow_payload(payload: dict, as_json: bool):
+    if as_json:
+        _emit_json(payload)
+        return
+    click.echo(f"Run: {payload.get('run_id')}")
+    click.echo(f"Workflow: {payload.get('kind')}")
+    click.echo(f"Status: {payload.get('status')}")
+    click.echo(f"Target: {payload.get('target')}")
+    if payload.get("report_path"):
+        click.echo(f"Report: {payload['report_path']}")
+    if payload.get("manifest_path"):
+        click.echo(f"Manifest: {payload['manifest_path']}")
+    if payload.get("error"):
+        click.echo("Error: workflow failed")
+
+
 @click.group()
 @click.version_option(version=__version__, prog_name="argus")
 def cli():
@@ -124,7 +164,9 @@ def paths(as_json):
 @click.option(
     "--manifest",
     "manifest_path",
-    default=lambda: os.environ.get("ARGUS_RUNTIME_MANIFEST", "/app/runtime-manifest.json"),
+    default=lambda: os.environ.get(
+        "ARGUS_RUNTIME_MANIFEST", "/app/runtime-manifest.json"
+    ),
     show_default="/app/runtime-manifest.json",
     type=click.Path(path_type=str),
     help="Baked runtime manifest to validate without network access.",
@@ -151,9 +193,7 @@ def image_admission(manifest_path, allow_development_revision):
         raise click.ClickException(str(error)) from error
 
     admission_status = (
-        "development-validated"
-        if allow_development_revision
-        else "production-admitted"
+        "development-validated" if allow_development_revision else "production-admitted"
     )
     click.echo(
         f"{admission_status} "
@@ -165,16 +205,46 @@ def image_admission(manifest_path, allow_development_revision):
 
 @cli.command()
 @click.option("--query", "-q", required=True, help="Search query")
-@click.option("--mode", "-m", default="discovery", type=click.Choice(["recovery", "discovery", "grounding", "research"]),
-              help="recovery (find dead URLs), discovery (general search), grounding (fact-checking), research (deep multi-provider)")
+@click.option(
+    "--mode",
+    "-m",
+    default="discovery",
+    type=click.Choice(["recovery", "discovery", "grounding", "research"]),
+    help="recovery (find dead URLs), discovery (general search), grounding (fact-checking), research (deep multi-provider)",
+)
 @click.option("--max-results", "-n", default=10, help="Max results")
-@click.option("--providers", "-p", multiple=False, help="Override providers (comma-separated)")
+@click.option(
+    "--providers", "-p", multiple=False, help="Override providers (comma-separated)"
+)
 @click.option("--session", "-s", default=None, help="Session ID for multi-turn context")
-@click.option("--attribution", is_flag=True, help="Show per-provider Shapley attribution for each result's score")
-@click.option("--free", "free_only", is_flag=True, help="Only use free (tier 0) providers: SearXNG, DuckDuckGo, Yahoo, GitHub, WolframAlpha")
-@click.option("--caller", default="cli", help="Caller identifier for attribution (e.g. project name)")
+@click.option(
+    "--attribution",
+    is_flag=True,
+    help="Show per-provider Shapley attribution for each result's score",
+)
+@click.option(
+    "--free",
+    "free_only",
+    is_flag=True,
+    help="Only use free (tier 0) providers: SearXNG, DuckDuckGo, Yahoo, GitHub, WolframAlpha",
+)
+@click.option(
+    "--caller",
+    default="cli",
+    help="Caller identifier for attribution (e.g. project name)",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def search(query, mode, max_results, providers, as_json, session, attribution, free_only, caller):
+def search(
+    query,
+    mode,
+    max_results,
+    providers,
+    as_json,
+    session,
+    attribution,
+    free_only,
+    caller,
+):
     """Execute a search query.
 
     Modes:
@@ -183,12 +253,62 @@ def search(query, mode, max_results, providers, as_json, session, attribution, f
       grounding   Fact-checking and finding authoritative sources
       research    Deep multi-provider search for research tasks
     """
+    authority = _http_authority_client()
+    if authority is not None:
+        request = {
+            "query": query,
+            "mode": mode,
+            "max_results": max_results,
+            "include_attribution": attribution,
+            "free_only": free_only,
+            "caller": caller,
+        }
+        if providers:
+            request["providers"] = [item.strip() for item in providers.split(",")]
+        if session:
+            request["session_id"] = session
+        response = _run(authority.search(request))
+        if as_json:
+            output = dict(response)
+            output["run_id"] = output.pop("search_run_id", None)
+            _emit_json(output)
+            return
+        click.echo(f"Query: {response.get('query', query)}")
+        click.echo(
+            f"Mode: {response.get('mode', mode)} | "
+            f"Results: {response.get('total_results', 0)} | "
+            f"Cached: {response.get('cached', False)}"
+        )
+        click.echo(f"Run ID: {response.get('search_run_id')}")
+        if response.get("session_id"):
+            click.echo(f"Session: {response['session_id']}")
+        click.echo()
+        for index, result in enumerate(response.get("results") or [], 1):
+            provider = f" [{result['provider']}]" if result.get("provider") else ""
+            click.echo(f"  {index}. {result.get('title', '')}{provider}")
+            click.echo(f"     {result.get('url', '')}")
+            if result.get("snippet"):
+                click.echo(f"     {result['snippet'][:120]}")
+            click.echo()
+        return
+
     from argus.broker.router import create_broker
     from argus.models import ProviderName, SearchMode, SearchQuery
 
     broker = create_broker()
-    override = [ProviderName(item.strip()) for item in providers.split(",")] if providers else None
-    q = SearchQuery(query=query, mode=SearchMode(mode), max_results=max_results, providers=override, free_only=free_only, caller=caller)
+    override = (
+        [ProviderName(item.strip()) for item in providers.split(",")]
+        if providers
+        else None
+    )
+    q = SearchQuery(
+        query=query,
+        mode=SearchMode(mode),
+        max_results=max_results,
+        providers=override,
+        free_only=free_only,
+        caller=caller,
+    )
 
     if session:
         resp, sid = _run(
@@ -229,7 +349,9 @@ def search(query, mode, max_results, providers, as_json, session, attribution, f
         click.echo(json.dumps(data, indent=2))
     else:
         click.echo(f"Query: {resp.query}")
-        click.echo(f"Mode: {resp.mode.value} | Results: {resp.total_results} | Cached: {resp.cached}")
+        click.echo(
+            f"Mode: {resp.mode.value} | Results: {resp.total_results} | Cached: {resp.cached}"
+        )
         click.echo(f"Run ID: {resp.search_run_id}")
         if session_id:
             click.echo(f"Session: {session_id}")
@@ -251,7 +373,9 @@ def search(query, mode, max_results, providers, as_json, session, attribution, f
         if resp.traces:
             click.echo("Provider traces:")
             for t in resp.traces:
-                click.echo(f"  {t.provider.value}: {t.status} ({t.results_count} results, {t.latency_ms}ms)")
+                click.echo(
+                    f"  {t.provider.value}: {t.status} ({t.results_count} results, {t.latency_ms}ms)"
+                )
                 if t.error:
                     click.echo(f"    Error: {t.error}")
 
@@ -263,7 +387,9 @@ def search(query, mode, max_results, providers, as_json, session, attribution, f
 
 @cli.command()
 @click.option("--url", "-u", required=True, help="URL to extract content from")
-@click.option("--domain", "-d", help="Domain hint for authenticated extraction (e.g. nytimes.com)")
+@click.option(
+    "--domain", "-d", help="Domain hint for authenticated extraction (e.g. nytimes.com)"
+)
 @click.option(
     "--mode",
     "-m",
@@ -274,6 +400,39 @@ def search(query, mode, max_results, providers, as_json, session, attribution, f
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def extract(url, domain, mode, as_json):
     """Extract clean text content from a URL."""
+    authority = _http_authority_client()
+    if authority is not None:
+        result = _run(
+            authority.request(
+                "POST",
+                "/api/extract",
+                payload={
+                    "url": url,
+                    "domain": domain,
+                    "mode": mode,
+                    "caller": "cli",
+                },
+            )
+        )
+        if result.get("error"):
+            raise click.ClickException("Extraction failed")
+        if as_json:
+            _emit_json(result)
+            return
+        if result.get("title"):
+            click.echo(f"Title: {result['title']}")
+        if result.get("author"):
+            click.echo(f"Author: {result['author']}")
+        if result.get("date"):
+            click.echo(f"Date: {result['date']}")
+        click.echo(
+            f"Words: {result.get('word_count', 0)} | "
+            f"Extractor: {result.get('extractor') or 'unknown'}"
+        )
+        click.echo()
+        click.echo(result.get("text") or "")
+        return
+
     from argus.extraction import extract_url
 
     result = _run(extract_url(url, domain=domain, mode=mode, caller="cli"))
@@ -304,7 +463,9 @@ def extract(url, domain, mode, as_json):
             click.echo(f"Author: {result.author}")
         if result.date:
             click.echo(f"Date: {result.date}")
-        click.echo(f"Words: {result.word_count} | Extractor: {result.extractor.value if result.extractor else 'unknown'}")
+        click.echo(
+            f"Words: {result.word_count} | Extractor: {result.extractor.value if result.extractor else 'unknown'}"
+        )
         click.echo()
         click.echo(result.text)
 
@@ -316,6 +477,23 @@ def extract(url, domain, mode, as_json):
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def recover_article(url, title, domain, as_json):
     """Recover a dead article into a citation-backed local report."""
+    authority = _http_authority_client()
+    if authority is not None:
+        result = _run(
+            authority.request(
+                "POST",
+                "/api/workflows/recover-article",
+                payload={
+                    "url": url,
+                    "title": title,
+                    "domain": domain,
+                    "caller": "cli",
+                },
+            )
+        )
+        _print_workflow_payload(result, as_json)
+        return
+
     from argus.broker.router import create_broker
     from argus.workflows import WorkflowService
 
@@ -331,6 +509,34 @@ def recover_article(url, title, domain, as_json):
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def recover_url(url, title, domain, as_json):
     """Recover a dead or moved URL."""
+    authority = _http_authority_client()
+    if authority is not None:
+        response = _run(
+            authority.request(
+                "POST",
+                "/api/recover-url",
+                payload={
+                    "url": url,
+                    "title": title,
+                    "domain": domain,
+                },
+            )
+        )
+        if as_json:
+            _emit_json(
+                {
+                    "url": url,
+                    "results": response.get("results") or [],
+                }
+            )
+            return
+        click.echo(f"Recovery for: {url}")
+        click.echo(f"Results: {response.get('total_results', 0)}")
+        for index, result in enumerate(response.get("results") or [], 1):
+            click.echo(f"  {index}. {result.get('title', '')}")
+            click.echo(f"     {result.get('url', '')}")
+        return
+
     from argus.broker.router import create_broker
     from argus.models import SearchMode, SearchQuery
 
@@ -341,7 +547,9 @@ def recover_url(url, title, domain, as_json):
     if domain:
         query_parts.append(domain)
 
-    q = SearchQuery(query=" ".join(query_parts), mode=SearchMode.RECOVERY, max_results=10)
+    q = SearchQuery(
+        query=" ".join(query_parts), mode=SearchMode.RECOVERY, max_results=10
+    )
     resp = _run(broker.search(q))
 
     if as_json:
@@ -368,6 +576,23 @@ def recover_url(url, title, domain, as_json):
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def capture_site(url, soft_page_limit, hard_page_limit, as_json):
     """Capture the important parts of a site and summarize them with references."""
+    authority = _http_authority_client()
+    if authority is not None:
+        result = _run(
+            authority.request(
+                "POST",
+                "/api/workflows/capture-site",
+                payload={
+                    "url": url,
+                    "soft_page_limit": soft_page_limit,
+                    "hard_page_limit": hard_page_limit,
+                    "caller": "cli",
+                },
+            )
+        )
+        _print_workflow_payload(result, as_json)
+        return
+
     from argus.broker.router import create_broker
     from argus.workflows import WorkflowService
 
@@ -385,10 +610,29 @@ def capture_site(url, soft_page_limit, hard_page_limit, as_json):
 @cli.command(name="build-research-pack")
 @click.option("--topic", "-t", required=True, help="Topic or product to research")
 @click.option("--official-url", default=None, help="Optional official docs URL")
-@click.option("--max-research-pages", default=40, type=int, help="Max non-official research pages")
+@click.option(
+    "--max-research-pages", default=40, type=int, help="Max non-official research pages"
+)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def build_research_pack(topic, official_url, max_research_pages, as_json):
     """Build a local pack with official docs plus external research."""
+    authority = _http_authority_client()
+    if authority is not None:
+        result = _run(
+            authority.request(
+                "POST",
+                "/api/workflows/build-research-pack",
+                payload={
+                    "topic": topic,
+                    "official_url": official_url,
+                    "max_research_pages": max_research_pages,
+                    "caller": "cli",
+                },
+            )
+        )
+        _print_workflow_payload(result, as_json)
+        return
+
     from argus.broker.router import create_broker
     from argus.workflows import WorkflowService
 
@@ -406,6 +650,14 @@ def build_research_pack(topic, official_url, max_research_pages, as_json):
 @cli.command()
 def health():
     """Show provider health status."""
+    authority = _http_authority_client()
+    if authority is not None:
+        response = _run(authority.request("GET", "/api/provider-health"))
+        for provider, status in (response.get("providers") or {}).items():
+            raw = status.get("effective_status", "unknown")
+            click.echo(f"  {provider:12s} {_STATUS_DISPLAY.get(raw, raw)}")
+        return
+
     from argus.broker.router import create_broker
     from argus.models import ProviderName
 
@@ -420,12 +672,26 @@ def health():
     if all_health:
         click.echo("Health tracking:")
         for pname, info in all_health.items():
-            click.echo(f"  {pname.value}: failures={info['consecutive_failures']} cooldown={info['in_cooldown']}")
+            click.echo(
+                f"  {pname.value}: failures={info['consecutive_failures']} cooldown={info['in_cooldown']}"
+            )
 
 
 @cli.command()
 def budgets():
     """Show provider budget status."""
+    authority = _http_authority_client()
+    if authority is not None:
+        response = _run(authority.request("GET", "/api/budgets"))
+        click.echo("Provider budgets:")
+        for provider, summary in (response.get("providers") or {}).items():
+            click.echo(
+                f"  {provider:12s} remaining={summary.get('remaining')} "
+                f"estimated={summary.get('argus_estimated_charge')} "
+                f"uncertain={summary.get('uncertain_charge')}"
+            )
+        return
+
     from argus.broker.router import create_broker
     from argus.models import ProviderName
 
@@ -438,9 +704,7 @@ def budgets():
         )
         snapshot = summary.get("provider_snapshot")
         snapshot_text = (
-            f" provider_observed_at={snapshot['observed_at']}"
-            if snapshot
-            else ""
+            f" provider_observed_at={snapshot['observed_at']}" if snapshot else ""
         )
         click.echo(
             f"  {pname.value:12s} remaining={summary['remaining']} "
@@ -495,7 +759,9 @@ def check_balances():
             else:
                 limit_str = f"/{b.limit:.0f}" if b.limit else ""
                 remaining = f"{b.remaining:.0f}"
-            click.echo(f"  {b.provider.value:12s} {remaining} {b.unit} remaining {limit_str} (via {b.source})")
+            click.echo(
+                f"  {b.provider.value:12s} {remaining} {b.unit} remaining {limit_str} (via {b.source})"
+            )
         else:
             click.echo(f"  {b.provider.value:12s} no credit data available")
 
@@ -506,7 +772,9 @@ def check_balances():
 
 @cli.command()
 @click.option("--service", "-s", required=True, help="Service name (e.g. jina)")
-@click.option("--balance", "-b", required=True, type=float, help="Current token balance")
+@click.option(
+    "--balance", "-b", required=True, type=float, help="Current token balance"
+)
 def set_balance(service, balance):
     """Set a token balance for an extraction service."""
     from argus.broker.router import create_broker
@@ -514,7 +782,9 @@ def set_balance(service, balance):
     broker = create_broker()
     store = broker.budget_tracker._store
     if store is None:
-        click.echo("Budget persistence not enabled. Set ARGUS_BUDGET_DB_PATH in .env", err=True)
+        click.echo(
+            "Budget persistence not enabled. Set ARGUS_BUDGET_DB_PATH in .env", err=True
+        )
         sys.exit(1)
 
     store.set_token_balance(service, balance)
@@ -573,6 +843,7 @@ def doctor(as_json):
     # 1. Config loads
     try:
         from argus.config import get_config
+
         cfg = get_config()
         checks.append(("Config", True, f"env={cfg.env}, log={cfg.log_level}"))
     except Exception as e:
@@ -584,7 +855,9 @@ def doctor(as_json):
     for pname in ProviderName:
         status = broker.get_provider_status(pname)
         raw = status["effective_status"]
-        display = _STATUS_DISPLAY.get(raw if isinstance(raw, str) else raw.value, str(raw))
+        display = _STATUS_DISPLAY.get(
+            raw if isinstance(raw, str) else raw.value, str(raw)
+        )
         if display == "OK" or display == "HEALTHY":
             ready += 1
         elif display == "MISSING KEY":
@@ -595,37 +868,50 @@ def doctor(as_json):
     try:
         import urllib.request
         import urllib.error
+
         cfg = get_config()
         if cfg.searxng.enabled:
             req = urllib.request.Request(cfg.searxng.base_url, method="HEAD")
             urllib.request.urlopen(req, timeout=5)
             checks.append(("SearXNG", True, f"reachable at {cfg.searxng.base_url}"))
         else:
-            checks.append(("SearXNG", None, "disabled (enable in .env if you have Docker)"))
+            checks.append(
+                ("SearXNG", None, "disabled (enable in .env if you have Docker)")
+            )
     except Exception:
         checks.append(("SearXNG", False, "not reachable — check Docker container"))
 
     # 4. DuckDuckGo probe
     try:
         from argus.providers.duckduckgo import DuckDuckGoProvider
+
         ddg = DuckDuckGoProvider(cfg.duckduckgo)
-        checks.append(("DuckDuckGo", ddg.is_available(), "available" if ddg.is_available() else "not available"))
+        checks.append(
+            (
+                "DuckDuckGo",
+                ddg.is_available(),
+                "available" if ddg.is_available() else "not available",
+            )
+        )
     except Exception as e:
         checks.append(("DuckDuckGo", False, str(e)))
 
     # 5. MCP package
     try:
         import mcp.server.fastmcp  # noqa: F401
+
         checks.append(("MCP package", True, "installed"))
     except ImportError:
         checks.append(("MCP package", False, "pip install 'argus-search[mcp]'"))
 
     if as_json:
-        _emit_json({
-            "checks": [{"name": n, "ok": ok, "detail": d} for n, ok, d in checks],
-            "providers_ready": ready,
-            "providers_need_keys": needs_key,
-        })
+        _emit_json(
+            {
+                "checks": [{"name": n, "ok": ok, "detail": d} for n, ok, d in checks],
+                "providers_ready": ready,
+                "providers_need_keys": needs_key,
+            }
+        )
         return
 
     # Human output
@@ -648,12 +934,25 @@ def doctor(as_json):
     else:
         click.echo("Some checks failed. See above for details.")
         if needs_key:
-            click.echo(f"  {needs_key} providers need API keys — add them to .env or secrets vault.")
+            click.echo(
+                f"  {needs_key} providers need API keys — add them to .env or secrets vault."
+            )
 
 
 @cli.command()
-@click.option("--host", "-h", default=None, help="Bind host (env: ARGUS_BIND_HOST, default: 127.0.0.1)")
-@click.option("--port", "-p", default=None, type=int, help="Bind port (env: ARGUS_PORT, default: 8000)")
+@click.option(
+    "--host",
+    "-h",
+    default=None,
+    help="Bind host (env: ARGUS_BIND_HOST, default: 127.0.0.1)",
+)
+@click.option(
+    "--port",
+    "-p",
+    default=None,
+    type=int,
+    help="Bind port (env: ARGUS_PORT, default: 8000)",
+)
 @click.option("--reload", is_flag=True, help="Auto-reload on code changes")
 def serve(host, port, reload):
     """Start the Argus API server.
@@ -662,18 +961,24 @@ def serve(host, port, reload):
     Set ARGUS_BIND_HOST=0.0.0.0 in .env (or the environment) to expose externally.
     """
     import os
+
     bind_host = host or os.environ.get("ARGUS_BIND_HOST", "127.0.0.1")
     bind_port = port or int(os.environ.get("ARGUS_PORT", "8000"))
     os.environ.setdefault("ARGUS_HOST", bind_host)
     os.environ.setdefault("ARGUS_PORT", str(bind_port))
 
     import uvicorn
+
     uvicorn.run("argus.api.main:app", host=bind_host, port=bind_port, reload=reload)
 
 
 @cli.command()
-@click.option("--bind", default=None, envvar="ARGUS_WORKER_BIND",
-              help="Host:port to bind (default 0.0.0.0:8273)")
+@click.option(
+    "--bind",
+    default=None,
+    envvar="ARGUS_WORKER_BIND",
+    help="Host:port to bind (default 0.0.0.0:8273)",
+)
 def worker(bind: str):
     """Start an Argus egress worker — minimal provider executor over HTTP."""
     import uvicorn
@@ -696,9 +1001,18 @@ def mcp():
 
 
 @mcp.command(name="serve")
-@click.option("--transport", "-t", default="stdio", type=click.Choice(["stdio", "sse", "streamable-http"]))
-@click.option("--host", "-h", default="127.0.0.1", help="Host for SSE/streamable-http transport")
-@click.option("--port", "-p", default=8001, help="Port for SSE/streamable-http transport")
+@click.option(
+    "--transport",
+    "-t",
+    default="stdio",
+    type=click.Choice(["stdio", "sse", "streamable-http"]),
+)
+@click.option(
+    "--host", "-h", default="127.0.0.1", help="Host for SSE/streamable-http transport"
+)
+@click.option(
+    "--port", "-p", default=8001, help="Port for SSE/streamable-http transport"
+)
 def mcp_serve(transport, host, port):
     """Start MCP server. Use stdio for Claude/Cursor, sse or streamable-http for remote access."""
     try:
@@ -711,25 +1025,52 @@ def mcp_serve(transport, host, port):
 
 
 @mcp.command(name="init")
-@click.option("--global", "global_", is_flag=True, help="Add to ~/.claude.json (all projects, Claude Code only)")
-@click.option("--client", default="all", type=click.Choice(["all", "claude", "opencode", "gemini", "codex"]),
-              help="Target client (default: all)")
-@click.option("--url", "remote_url", default=None, envvar="ARGUS_REMOTE_URL",
-              help="Remote Argus server URL (e.g. http://100.x.x.x:8271). "
-                   "Also reads ARGUS_REMOTE_URL env var. If set, generates remote config instead of local stdio.")
-@click.option("--key", "api_key", default=None, envvar="ARGUS_API_KEY",
-              help="API key for remote server. Also reads ARGUS_API_KEY env var.")
-@click.option("--transport", "-t", default="streamable-http", type=click.Choice(["sse", "streamable-http"]),
-              help="Transport for remote config (default: streamable-http)")
+@click.option(
+    "--global",
+    "global_",
+    is_flag=True,
+    help="Add to ~/.claude.json (all projects, Claude Code only)",
+)
+@click.option(
+    "--client",
+    default="all",
+    type=click.Choice(["all", "claude", "opencode", "gemini", "codex"]),
+    help="Target client (default: all)",
+)
+@click.option(
+    "--url",
+    "remote_url",
+    default=None,
+    envvar="ARGUS_REMOTE_URL",
+    help="Remote Argus server URL (e.g. http://100.x.x.x:8271). "
+    "Also reads ARGUS_REMOTE_URL env var. If set, generates remote config instead of local stdio.",
+)
+@click.option(
+    "--key",
+    "api_key",
+    default=None,
+    envvar="ARGUS_API_KEY",
+    help="API key for remote server. Also reads ARGUS_API_KEY env var.",
+)
+@click.option(
+    "--transport",
+    "-t",
+    default="streamable-http",
+    type=click.Choice(["sse", "streamable-http"]),
+    help="Transport for remote config (default: streamable-http)",
+)
 def mcp_init(global_, client, remote_url, api_key, transport):
     """Add Argus MCP server config to this project or globally.
 
-    By default writes a local stdio config to .mcp.json (Claude Code, OpenCode, Cursor).
+    By default writes a local stdio adapter config to .mcp.json (Claude Code,
+    OpenCode, Cursor). The adapter requires ARGUS_AUTHORITY_URL and
+    ARGUS_AUTHORITY_TOKEN in its environment. Local broker execution requires
+    explicit development-only ARGUS_MCP_STANDALONE=true.
     Pass --url (or set ARGUS_REMOTE_URL) to generate a remote config instead.
 
     \b
     Examples:
-      argus mcp init                                    # local stdio
+      argus mcp init                                    # local stdio HTTP adapter
       argus mcp init --url http://argus.local:8271      # remote streamable-http
       argus mcp init --url http://argus.local:8271 -t sse # remote sse
       argus mcp init --client gemini                    # print gemini mcp add command only
@@ -737,12 +1078,36 @@ def mcp_init(global_, client, remote_url, api_key, transport):
     import sys
     from pathlib import Path
 
+    local_execution_mode = None
+    if not remote_url:
+        from argus.authority import (
+            AuthorityConfigurationError,
+            adapter_execution_mode,
+            authority_client_config,
+        )
+
+        local_execution_mode = adapter_execution_mode()
+        if local_execution_mode == "http":
+            try:
+                authority_client_config(adapter="mcp")
+            except AuthorityConfigurationError as exc:
+                raise click.ClickException(str(exc)) from exc
+        elif local_execution_mode != "standalone":
+            raise click.ClickException(
+                "Local MCP requires ARGUS_AUTHORITY_URL and "
+                "ARGUS_AUTHORITY_TOKEN; explicit development standalone "
+                "requires ARGUS_MCP_STANDALONE=true"
+            )
+
     argus_bin = str(Path(sys.argv[0]).resolve())
 
     if remote_url:
         path = "/mcp" if transport == "streamable-http" else "/sse"
         mcp_url = remote_url.rstrip("/") + path
-        entry = {"type": "http" if transport == "streamable-http" else "sse", "url": mcp_url}
+        entry = {
+            "type": "http" if transport == "streamable-http" else "sse",
+            "url": mcp_url,
+        }
         if api_key:
             entry["headers"] = {"Authorization": f"Bearer {api_key}"}
         mode = f"remote {transport} ({mcp_url})"
@@ -752,6 +1117,8 @@ def mcp_init(global_, client, remote_url, api_key, transport):
             "args": ["mcp", "serve"],
             "description": "Argus search broker",
         }
+        if local_execution_mode == "standalone":
+            entry["env"] = {"ARGUS_MCP_STANDALONE": "true"}
         mode = "local stdio"
 
     if remote_url:
@@ -769,6 +1136,8 @@ def mcp_init(global_, client, remote_url, api_key, transport):
             "enabled": True,
             "timeout": 10000,
         }
+        if local_execution_mode == "standalone":
+            opencode_entry["environment"] = {"ARGUS_MCP_STANDALONE": "true"}
 
     write_json = client in ("all", "claude", "opencode")
 
@@ -782,9 +1151,20 @@ def mcp_init(global_, client, remote_url, api_key, transport):
                 paths.append(Path.home() / ".cursor" / "mcp.json")
                 # Claude Desktop (macOS and Linux)
                 if sys.platform == "darwin":
-                    paths.append(Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json")
+                    paths.append(
+                        Path.home()
+                        / "Library"
+                        / "Application Support"
+                        / "Claude"
+                        / "claude_desktop_config.json"
+                    )
                 else:
-                    paths.append(Path.home() / ".config" / "Claude" / "claude_desktop_config.json")
+                    paths.append(
+                        Path.home()
+                        / ".config"
+                        / "Claude"
+                        / "claude_desktop_config.json"
+                    )
                 scope_name = "global"
             else:
                 paths.append(Path(".mcp.json"))
@@ -809,7 +1189,11 @@ def mcp_init(global_, client, remote_url, api_key, transport):
 
             config_path.touch(mode=0o644, exist_ok=True)
             try:
-                data = json.loads(config_path.read_text()) if config_path.stat().st_size else {}
+                data = (
+                    json.loads(config_path.read_text())
+                    if config_path.stat().st_size
+                    else {}
+                )
             except json.JSONDecodeError:
                 data = {}
 
@@ -819,7 +1203,10 @@ def mcp_init(global_, client, remote_url, api_key, transport):
                 continue
 
             if "argus" in servers:
-                if not click.confirm(f"argus MCP config already exists in {config_path}. Overwrite?", default=False):
+                if not click.confirm(
+                    f"argus MCP config already exists in {config_path}. Overwrite?",
+                    default=False,
+                ):
                     continue
 
             servers["argus"] = entry
@@ -840,24 +1227,35 @@ def mcp_init(global_, client, remote_url, api_key, transport):
             else Path(".opencode") / "opencode.json"
         )
         if global_ and not opencode_path.parent.exists():
-            click.echo("\nOpenCode — ~/.config/opencode/ not found; is OpenCode installed?")
+            click.echo(
+                "\nOpenCode — ~/.config/opencode/ not found; is OpenCode installed?"
+            )
         else:
             opencode_path.parent.mkdir(parents=True, exist_ok=True)
             opencode_path.touch(mode=0o644, exist_ok=True)
             try:
-                data = json.loads(opencode_path.read_text()) if opencode_path.stat().st_size else {}
+                data = (
+                    json.loads(opencode_path.read_text())
+                    if opencode_path.stat().st_size
+                    else {}
+                )
             except json.JSONDecodeError:
                 data = {}
 
             servers = data.setdefault("mcp", {})
             if "argus" in servers and servers["argus"] != opencode_entry:
-                if not click.confirm(f"argus MCP config already exists in {opencode_path}. Overwrite?", default=False):
+                if not click.confirm(
+                    f"argus MCP config already exists in {opencode_path}. Overwrite?",
+                    default=False,
+                ):
                     servers = None
 
             if servers is not None:
                 servers["argus"] = opencode_entry
                 opencode_path.write_text(json.dumps(data, indent=2) + "\n")
-                click.echo(f"\nOpenCode — updated {opencode_path} with argus MCP ({mode})")
+                click.echo(
+                    f"\nOpenCode — updated {opencode_path} with argus MCP ({mode})"
+                )
 
     if client in ("all", "gemini"):
         click.echo("\nGemini CLI — run once to register:")
@@ -866,11 +1264,18 @@ def mcp_init(global_, client, remote_url, api_key, transport):
             mcp_url = remote_url.rstrip("/") + path
             t_flag = "http" if transport == "streamable-http" else "sse"
             if api_key:
-                click.echo(f"  gemini mcp add argus {mcp_url} -t {t_flag} -H \"Authorization: Bearer {api_key}\"")
+                click.echo(
+                    f'  gemini mcp add argus {mcp_url} -t {t_flag} -H "Authorization: Bearer {api_key}"'
+                )
             else:
                 click.echo(f"  gemini mcp add argus {mcp_url} -t {t_flag}")
         else:
-            click.echo(f"  gemini mcp add argus {argus_bin} mcp serve")
+            prefix = (
+                "env ARGUS_MCP_STANDALONE=true "
+                if local_execution_mode == "standalone"
+                else ""
+            )
+            click.echo(f"  gemini mcp add argus {prefix}{argus_bin} mcp serve")
 
     if client in ("all", "codex"):
         toml_path = Path.home() / ".codex" / "config.toml"
@@ -894,10 +1299,13 @@ def mcp_init(global_, client, remote_url, api_key, transport):
                     f'command = "{argus_bin}"\n'
                     f'args = ["mcp", "serve"]\n'
                 )
+                if local_execution_mode == "standalone":
+                    new_section += 'env = { ARGUS_MCP_STANDALONE = "true" }\n'
 
             if "[mcp_servers.argus]" in toml_text:
                 # Remove old section (everything from [mcp_servers.argus] to next [section])
                 import re
+
                 toml_text = re.sub(
                     r"(?ms)\n\[mcp_servers\.argus\].*?(?=\n\[|\Z)",
                     new_section,
@@ -907,7 +1315,9 @@ def mcp_init(global_, client, remote_url, api_key, transport):
                 toml_text = toml_text.rstrip("\n") + new_section
 
             toml_path.write_text(toml_text)
-            click.echo(f"\nCodex — updated ~/.codex/config.toml with argus MCP ({remote_url or 'local stdio'})")
+            click.echo(
+                f"\nCodex — updated ~/.codex/config.toml with argus MCP ({remote_url or 'local stdio'})"
+            )
 
             # Ensure ARGUS_API_KEY is exported in shell profile (Codex reads it as env var)
             if api_key and remote_url:
@@ -917,8 +1327,12 @@ def mcp_init(global_, client, remote_url, api_key, transport):
                 rc_text = rc_path.read_text() if rc_path.exists() else ""
                 if "ARGUS_API_KEY" not in rc_text:
                     with rc_path.open("a") as f:
-                        f.write(f"\n# Argus MCP bearer token\nexport ARGUS_API_KEY={api_key}\n")
-                    click.echo(f"  Added ARGUS_API_KEY to {rc_path.name} (run: source ~/{rc_path.name})")
+                        f.write(
+                            f"\n# Argus MCP bearer token\nexport ARGUS_API_KEY={api_key}\n"
+                        )
+                    click.echo(
+                        f"  Added ARGUS_API_KEY to {rc_path.name} (run: source ~/{rc_path.name})"
+                    )
                 else:
                     click.echo(f"  ARGUS_API_KEY already in {rc_path.name}")
 
@@ -936,6 +1350,7 @@ def mcp_check():
     # 1. MCP package
     try:
         import mcp.server.fastmcp  # noqa: F401
+
         checks.append(("MCP package", True, "installed"))
     except ImportError:
         checks.append(("MCP package", False, "pip install 'argus-search[mcp]'"))
@@ -943,9 +1358,12 @@ def mcp_check():
     # 2. FastMCP Context (for progress notifications)
     try:
         from mcp.server.fastmcp import Context  # noqa: F401
+
         checks.append(("Progress notifications", True, "Context available"))
     except Exception:
-        checks.append(("Progress notifications", False, "MCP version may not support Context"))
+        checks.append(
+            ("Progress notifications", False, "MCP version may not support Context")
+        )
 
     # 3. Config file exists
     config_paths = [Path(".mcp.json"), Path.home() / ".claude.json"]
@@ -959,12 +1377,56 @@ def mcp_check():
                 break
         except Exception:
             pass
-    checks.append(("MCP config file", has_argus, f"found in {p}" if has_argus else "run 'argus mcp init'"))
+    checks.append(
+        (
+            "MCP config file",
+            has_argus,
+            f"found in {p}" if has_argus else "run 'argus mcp init'",
+        )
+    )
 
-    # 4. API key for remote access
+    # 4. HTTP execution authority (or explicit development standalone)
+    from argus.authority import (
+        AuthorityConfigurationError,
+        adapter_execution_mode,
+        authority_client_config,
+    )
+
+    adapter_mode = adapter_execution_mode()
+    if adapter_mode == "http":
+        try:
+            config = authority_client_config(adapter="mcp")
+            checks.append(("HTTP execution authority", True, config.base_url))
+        except AuthorityConfigurationError as exc:
+            checks.append(("HTTP execution authority", False, str(exc)))
+    elif adapter_mode == "standalone":
+        checks.append(
+            (
+                "HTTP execution authority",
+                True,
+                "explicit development standalone",
+            )
+        )
+    else:
+        checks.append(
+            (
+                "HTTP execution authority",
+                False,
+                "set ARGUS_AUTHORITY_URL and ARGUS_AUTHORITY_TOKEN",
+            )
+        )
+
+    # 5. Listener key for remote MCP transport
     from argus.auth import AuthConfig
+
     auth = AuthConfig.from_env()
-    checks.append(("ARGUS_API_KEY (remote)", auth.has_caller_key(), "set" if auth.has_caller_key() else "needed for SSE/streamable-http transport"))
+    checks.append(
+        (
+            "ARGUS_API_KEY (remote MCP)",
+            auth.has_caller_key(),
+            "set" if auth.has_caller_key() else "needed only for remote transport",
+        )
+    )
 
     # Report
     all_ok = True
@@ -1093,7 +1555,13 @@ def reconcile_sessions(source, target, apply, as_json):
 
 
 @corpus.command(name="import-docs-cache")
-@click.option("--source", "-s", required=True, type=click.Path(exists=True), help="Path to legacy docs-cache root")
+@click.option(
+    "--source",
+    "-s",
+    required=True,
+    type=click.Path(exists=True),
+    help="Path to legacy docs-cache root",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def import_docs_cache(source, as_json):
     """Import a legacy docs-cache tree into Argus-owned storage."""
@@ -1113,12 +1581,28 @@ def import_docs_cache(source, as_json):
 @cli.group()
 def cookies():
     """Manage browser cookies for authenticated extraction."""
-    pass
+    if os.environ.get("ARGUS_ENV", "development").strip().lower() == "production":
+        raise click.ClickException(
+            "Production cookie operations are reserved for the "
+            "HTTP API execution authority"
+        )
 
 
 @cookies.command(name="import")
-@click.option("--domain", "-d", default=None, help="Domain (e.g. nytimes.com). Inferred from cookies if omitted.")
-@click.option("--file", "-f", "filepath", default=None, type=click.Path(exists=True), help="EditThisCookie JSON file. If omitted, imports all from inbox.")
+@click.option(
+    "--domain",
+    "-d",
+    default=None,
+    help="Domain (e.g. nytimes.com). Inferred from cookies if omitted.",
+)
+@click.option(
+    "--file",
+    "-f",
+    "filepath",
+    default=None,
+    type=click.Path(exists=True),
+    help="EditThisCookie JSON file. If omitted, imports all from inbox.",
+)
 def cookies_import(domain, filepath):
     """Import cookies from EditThisCookie JSON exports.
 
@@ -1131,7 +1615,12 @@ def cookies_import(domain, filepath):
     Domain is auto-detected from cookie data. Override with -d if needed.
     """
     from pathlib import Path
-    from argus.extraction.cookies import COOKIE_DIR, load_editthiscookie_json, _load_health, _save_health
+    from argus.extraction.cookies import (
+        COOKIE_DIR,
+        load_editthiscookie_json,
+        _load_health,
+        _save_health,
+    )
 
     cookie_dir = COOKIE_DIR
     inbox_dir = cookie_dir / "inbox"
@@ -1145,7 +1634,9 @@ def cookies_import(domain, filepath):
         files = sorted(inbox_dir.glob("*.json"))
         if not files:
             click.echo(f"No cookie files found in {inbox_dir}")
-            click.echo("\nDrop EditThisCookie JSON exports there, then re-run this command.")
+            click.echo(
+                "\nDrop EditThisCookie JSON exports there, then re-run this command."
+            )
             return
     else:
         click.echo(f"No inbox directory at {inbox_dir}")
@@ -1153,6 +1644,7 @@ def cookies_import(domain, filepath):
         return
 
     from datetime import datetime, timezone
+
     imported = 0
 
     for f in files:
@@ -1193,6 +1685,7 @@ def cookies_import(domain, filepath):
 
             # Pick the most common base domain
             from collections import Counter
+
             inferred = Counter(domains_seen).most_common(1)[0][0]
 
         dest = cookie_dir / f"{inferred}.json"
@@ -1205,6 +1698,7 @@ def cookies_import(domain, filepath):
 
         # Copy to destination
         import shutil
+
         shutil.copy2(f, dest)
 
         # Record health
@@ -1239,15 +1733,23 @@ def cookies_health():
     if not summary:
         click.echo("No cookies configured.")
         click.echo(f"\nCookie directory: {COOKIE_DIR}")
-        click.echo("Import cookies with: argus cookies import -d nytimes.com -f cookies.json")
+        click.echo(
+            "Import cookies with: argus cookies import -d nytimes.com -f cookies.json"
+        )
         return
 
     click.echo("Cookie health:\n")
     for domain, info in summary.items():
         status_emoji = "OK" if info["status"] == "healthy" else "STALE"
-        age = f"{info['days_since_used']}d ago" if info['days_since_used'] is not None else "never"
+        age = (
+            f"{info['days_since_used']}d ago"
+            if info["days_since_used"] is not None
+            else "never"
+        )
         warning = " [REFRESH NEEDED]" if info.get("stale_warning") else ""
-        click.echo(f"  {domain:30s} [{status_emoji:5s}]  used: {age},  requests: {info['request_count']}{warning}")
+        click.echo(
+            f"  {domain:30s} [{status_emoji:5s}]  used: {age},  requests: {info['request_count']}{warning}"
+        )
 
     # Show what cookies are available on disk
     click.echo(f"\nCookie directory: {COOKIE_DIR}")

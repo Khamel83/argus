@@ -1,6 +1,6 @@
 """Health and budget endpoints."""
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from argus.broker.router import SearchBroker
 from argus.models import ProviderName
@@ -10,6 +10,67 @@ router = APIRouter()
 
 def get_broker(request: Request) -> SearchBroker:
     return request.app.state.get_broker()
+
+
+@router.get("/capabilities")
+async def capabilities():
+    """Return value-free truth about the HTTP execution authority."""
+    return {
+        "schema_version": "1.0",
+        "execution_authority": "http-api",
+        "role": "primary",
+        "capabilities": {
+            "search": True,
+            "extraction": True,
+            "recovery": True,
+            "expansion": True,
+            "provider_health": True,
+            "budgets": True,
+            "workflows": True,
+        },
+    }
+
+
+@router.get("/provider-health")
+async def provider_health(broker: SearchBroker = Depends(get_broker)):
+    try:
+        providers = {
+            pname.value: broker.get_provider_status(pname)
+            for pname in ProviderName
+            if pname != ProviderName.CACHE
+        }
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Execution authority state unavailable",
+        ) from exc
+    healthy = any(
+        status["effective_status"] in ("enabled", "healthy")
+        for status in providers.values()
+    )
+    return {
+        "status": "ok" if healthy else "degraded",
+        "providers": providers,
+    }
+
+
+@router.get("/budgets")
+async def caller_budgets(broker: SearchBroker = Depends(get_broker)):
+    try:
+        providers = {}
+        for pname in ProviderName:
+            if pname == ProviderName.CACHE:
+                continue
+            providers[pname.value] = broker.spend_repository.provider_summary(
+                pname,
+                budget_limit=broker.budget_tracker.get_budget_limit(pname),
+            )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Execution authority state unavailable",
+        ) from exc
+    return {"providers": providers}
 
 
 @router.get("/health")
@@ -22,8 +83,7 @@ async def health(broker: SearchBroker = Depends(get_broker)):
         all_providers[pname.value] = status
 
     healthy = any(
-        s["effective_status"] in ("enabled", "healthy")
-        for s in all_providers.values()
+        s["effective_status"] in ("enabled", "healthy") for s in all_providers.values()
     )
 
     return {

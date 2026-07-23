@@ -44,12 +44,19 @@ The DuckDuckGo provider is a good reference — it's simple and doesn't need an 
 ## Testing the MCP server locally
 
 ```bash
-# Stdio (default — what most clients use)
-argus mcp serve
+# Stdio adapter (default — what most clients use)
+ARGUS_AUTHORITY_URL=http://127.0.0.1:8000 \
+ARGUS_AUTHORITY_TOKEN=test-key argus mcp serve
 
 # Streamable HTTP (remote-style)
-ARGUS_API_KEY=test-key argus mcp serve --transport streamable-http --port 8001
+ARGUS_API_KEY=test-key \
+ARGUS_AUTHORITY_URL=http://127.0.0.1:8000 \
+ARGUS_AUTHORITY_TOKEN=test-key \
+argus mcp serve --transport streamable-http --port 8001
 curl -H "Authorization: Bearer test-key" http://127.0.0.1:8001/mcp
+
+# Explicit standalone development compatibility
+ARGUS_MCP_STANDALONE=true argus mcp serve
 ```
 
 `argus mcp check` validates that the config Argus would write is reachable

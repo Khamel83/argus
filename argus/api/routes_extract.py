@@ -2,6 +2,8 @@
 Content extraction endpoint.
 """
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from argus.api.schemas import (
@@ -25,18 +27,33 @@ def get_persistence_repository(request: Request):
 @router.post("/extract", response_model=ExtractResponse)
 async def extract(
     req: ExtractRequest,
+    request: Request,
     repository=Depends(get_persistence_repository),
 ):
     """Extract clean text content from a URL."""
     if req.caller:
         logger.info("extract caller=%s url=%s", req.caller, req.url)
+    production_mode = (
+        os.environ.get("ARGUS_ENV", "development").strip().lower()
+        == "production"
+    )
+    authenticated_caller = (
+        getattr(request.state, "caller_identity", "") or "unknown"
+    )
     try:
+        from argus.api.main import _HTTP_API_AUTHORITY_CAPABILITY
+
         result = await extract_url(
             req.url,
             domain=req.domain,
             mode=req.mode,
-            caller=req.caller,
+            caller=(
+                authenticated_caller
+                if production_mode
+                else req.caller or authenticated_caller
+            ),
             repository=repository,
+            authority_capability=_HTTP_API_AUTHORITY_CAPABILITY,
         )
     except Exception as exc:
         raise HTTPException(

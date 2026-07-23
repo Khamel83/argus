@@ -34,7 +34,11 @@ class SearchBroker:
         reachability: ReachabilityMatrix | None = None,
         egress_nodes: dict[str, EgressNode] | None = None,
         spend_repository=None,
+        authority_capability: object | None = None,
     ):
+        from argus.authority import broker_construction_allowed
+
+        broker_construction_allowed(authority_capability=authority_capability)
         self._providers = providers
         self._cache = cache or SearchCache()
         self._health = health_tracker or HealthTracker()
@@ -191,8 +195,11 @@ class SearchBroker:
         }
 
 
-def create_broker() -> SearchBroker:
+def create_broker(*, authority_capability: object | None = None) -> SearchBroker:
     """Factory: create a SearchBroker with all configured providers."""
+    from argus.authority import broker_construction_allowed
+
+    broker_construction_allowed(authority_capability=authority_capability)
     from argus.providers.brave import BraveProvider
     from argus.providers.duckduckgo import DuckDuckGoProvider
     from argus.providers.exa import ExaProvider
@@ -237,4 +244,5 @@ def create_broker() -> SearchBroker:
         session_store=session_store,
         reachability=reachability,
         egress_nodes=egress_nodes,
+        authority_capability=authority_capability,
     )

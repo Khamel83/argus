@@ -53,6 +53,7 @@ def test_mcp_init_writes_opencode_native_local_config(tmp_path, monkeypatch):
     from argus.cli import main as cli_main
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("ARGUS_MCP_STANDALONE", "true")
     (tmp_path / ".config" / "opencode").mkdir(parents=True)
 
     result = CliRunner().invoke(
@@ -66,12 +67,14 @@ def test_mcp_init_writes_opencode_native_local_config(tmp_path, monkeypatch):
     assert argus["type"] == "local"
     assert argus["command"][-2:] == ["mcp", "serve"]
     assert argus["enabled"] is True
+    assert argus["environment"] == {"ARGUS_MCP_STANDALONE": "true"}
 
 
 def test_mcp_init_writes_codex_local_stdio_config(tmp_path, monkeypatch):
     from argus.cli import main as cli_main
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("ARGUS_MCP_STANDALONE", "true")
     (tmp_path / ".codex").mkdir()
 
     result = CliRunner().invoke(
@@ -83,24 +86,28 @@ def test_mcp_init_writes_codex_local_stdio_config(tmp_path, monkeypatch):
     config = (tmp_path / ".codex" / "config.toml").read_text()
     assert "[mcp_servers.argus]" in config
     assert 'args = ["mcp", "serve"]' in config
+    assert 'env = { ARGUS_MCP_STANDALONE = "true" }' in config
     assert "bearer_token_env_var" not in config
 
 
-def test_mcp_init_replaces_existing_codex_section_with_args_array(tmp_path, monkeypatch):
+def test_mcp_init_replaces_existing_codex_section_with_args_array(
+    tmp_path, monkeypatch
+):
     from argus.cli import main as cli_main
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("ARGUS_MCP_STANDALONE", "true")
     codex_dir = tmp_path / ".codex"
     codex_dir.mkdir()
     (codex_dir / "config.toml").write_text(
-        '[model_aliases]\n'
+        "[model_aliases]\n"
         '"gpt-5.3-codex" = "gpt-5.4"\n'
-        '\n'
-        '[mcp_servers.argus]\n'
+        "\n"
+        "[mcp_servers.argus]\n"
         'command = "/old/argus"\n'
         'args = ["mcp", "serve"]\n'
-        '\n'
-        '[mcp_servers.janus]\n'
+        "\n"
+        "[mcp_servers.janus]\n"
         'command = "janus-mcp"\n'
     )
 
@@ -111,10 +118,25 @@ def test_mcp_init_replaces_existing_codex_section_with_args_array(tmp_path, monk
 
     assert result.exit_code == 0, result.output
     config = (codex_dir / "config.toml").read_text()
-    assert config.count('[mcp_servers.argus]') == 1
+    assert config.count("[mcp_servers.argus]") == 1
     assert config.count('args = ["mcp", "serve"]') == 1
     assert '\n["mcp", "serve"]' not in config
-    assert '[mcp_servers.janus]' in config
+    assert "[mcp_servers.janus]" in config
+
+
+def test_mcp_init_rejects_unconfigured_local_adapter(tmp_path, monkeypatch):
+    from argus.cli import main as cli_main
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    result = CliRunner().invoke(
+        cli_main.cli,
+        ["mcp", "init", "--client", "claude"],
+    )
+
+    assert result.exit_code != 0
+    assert "ARGUS_AUTHORITY_URL" in result.output
+    assert not (tmp_path / ".mcp.json").exists()
 
 
 def test_search_free_flag_sets_free_only_on_query(monkeypatch):
@@ -127,7 +149,9 @@ def test_search_free_flag_sets_free_only_on_query(monkeypatch):
             async def search(self, q, compute_attribution=False):
                 seen["free_only"] = q.free_only
                 from argus.models import SearchResponse
+
                 return SearchResponse(query=q.query, mode=q.mode, results=[])
+
         return FakeBroker()
 
     monkeypatch.setattr("argus.broker.router.create_broker", fake_create_broker)
@@ -151,7 +175,9 @@ def test_search_without_free_flag_leaves_free_only_false(monkeypatch):
             async def search(self, q, compute_attribution=False):
                 seen["free_only"] = q.free_only
                 from argus.models import SearchResponse
+
                 return SearchResponse(query=q.query, mode=q.mode, results=[])
+
         return FakeBroker()
 
     monkeypatch.setattr("argus.broker.router.create_broker", fake_create_broker)
@@ -175,7 +201,9 @@ def test_search_caller_flag_sets_caller_on_query(monkeypatch):
             async def search(self, q, compute_attribution=False):
                 seen["caller"] = q.caller
                 from argus.models import SearchResponse
+
                 return SearchResponse(query=q.query, mode=q.mode, results=[])
+
         return FakeBroker()
 
     monkeypatch.setattr("argus.broker.router.create_broker", fake_create_broker)
@@ -199,7 +227,9 @@ def test_search_caller_defaults_to_cli(monkeypatch):
             async def search(self, q, compute_attribution=False):
                 seen["caller"] = q.caller
                 from argus.models import SearchResponse
+
                 return SearchResponse(query=q.query, mode=q.mode, results=[])
+
         return FakeBroker()
 
     monkeypatch.setattr("argus.broker.router.create_broker", fake_create_broker)

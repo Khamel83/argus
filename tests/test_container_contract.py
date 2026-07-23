@@ -12,10 +12,13 @@ ROOT = Path(__file__).parents[1]
 def test_production_image_uses_matched_digest_pinned_playwright_base():
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
-    assert dockerfile.count(
-        "mcr.microsoft.com/playwright/python:v1.58.0-noble"
-        "@sha256:678457c4c323b981d8b4befc57b95366bb1bb6aa30057b1269f6b171e8d9975a"
-    ) == 2
+    assert (
+        dockerfile.count(
+            "mcr.microsoft.com/playwright/python:v1.58.0-noble"
+            "@sha256:678457c4c323b981d8b4befc57b95366bb1bb6aa30057b1269f6b171e8d9975a"
+        )
+        == 2
+    )
     assert "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright" in dockerfile
     assert "USER argus" in dockerfile
 
@@ -32,8 +35,7 @@ def test_compose_bounds_browser_resources_and_enables_sandbox_profile():
     assert "no-new-privileges:true" in service["security_opt"]
     assert "seccomp=./docker/playwright-seccomp.json" in service["security_opt"]
     assert any(
-        mount.startswith("/tmp:") and "size=256m" in mount
-        for mount in service["tmpfs"]
+        mount.startswith("/tmp:") and "size=256m" in mount for mount in service["tmpfs"]
     )
 
 
@@ -70,3 +72,21 @@ def test_canary_classifies_browser_and_playwright_driver_processes():
         == "playwright_driver"
     )
     assert _runtime_kind("python /canary/browser_canary.py") is None
+
+
+def test_production_mcp_launcher_loads_only_adapter_configuration():
+    launcher = (ROOT / "scripts" / "start-mcp.sh").read_text()
+    unit = (ROOT / "scripts" / "argus-mcp.service").read_text()
+    installer = (ROOT / "scripts" / "install-systemd.sh").read_text()
+
+    assert 'source "$repo_root/.env"' not in launcher
+    assert "secrets decrypt" not in launcher
+    assert "argus_keys" not in launcher
+    assert "research_keys" not in launcher
+    assert "ARGUS_SEARXNG_BASE_URL" not in launcher
+    assert "ARGUS_AUTHORITY_URL" in launcher
+    assert "ARGUS_AUTHORITY_TOKEN" in launcher
+    assert "EnvironmentFile=/etc/argus/mcp.env" in unit
+    assert "ReadWritePaths=" not in unit
+    assert "ARGUS_MCP_ENV_FILE" in installer
+    assert 'install -m 0600 "$ARGUS_MCP_ENV_FILE" /etc/argus/mcp.env' in installer
