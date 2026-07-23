@@ -104,12 +104,21 @@ State and integration:
   evidence was 521 passed and 14 skipped locally, real PostgreSQL concurrency,
   and all seven CI jobs. The `[skip ci]` merge triggered no workflow or
   deployment.
-- [ ] [Deliver user-visible retrievals to Maya through a transactional outbox](https://github.com/Khamel83/argus/issues/36)
-  — both blockers are closed. The non-migration implementation passed 472
-  local tests and direct Maya contract validation; it is rebasing onto
-  `e570e64` to add migration 0006 and real PostgreSQL evidence.
+- [x] [Deliver user-visible retrievals to Maya through a transactional outbox](https://github.com/Khamel83/argus/issues/36)
+  — merged PR
+  [feat: deliver retrievals through a durable Maya outbox](https://github.com/Khamel83/argus/pull/54)
+  as `cf2bca7`. Search and extraction acceptance now commits bounded sanitized
+  Maya parent/page payloads atomically with the Argus ledger; leased delivery,
+  additive-child retries, dead letters, recovery, compaction, probe
+  suppression, and admin evidence are restart-safe. Independent review covered
+  nested/encoded sanitizer cases, the Maya 10 MiB transport limit, additive
+  receipt semantics, and stale-worker races. Final evidence included 712
+  passed and 37 skipped locally, 220 isolated PostgreSQL tests, direct Maya
+  contract tests, and all seven CI jobs. The `[skip ci]` merge triggered no
+  deployment.
 - [ ] [Make HTTP the sole Argus execution authority and MCP stateless](https://github.com/Khamel83/argus/issues/37)
-  — blocked by durable provider accounting and the Maya outbox.
+  — both blockers are closed; isolated implementation has started from
+  `cf2bca7`.
 
 Capability, recovery, and operations:
 
