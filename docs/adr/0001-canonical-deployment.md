@@ -1,7 +1,7 @@
 # 0001 — One canonical Argus on the mac mini (launchd, :8300/:8301)
 
 Date: 2026-07-05
-Status: accepted
+Status: superseded by ADR-0002
 
 ## Context
 
