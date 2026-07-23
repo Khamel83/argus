@@ -9,6 +9,8 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
 
 COPY pyproject.toml uv.lock README.md ./
+COPY alembic.ini ./
+COPY migrations/ ./migrations/
 RUN uv sync --frozen --no-dev --extra mcp --no-install-project
 
 COPY argus/ ./argus/
@@ -29,6 +31,8 @@ COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/argus /app/argus
 COPY --from=builder /app/uv.lock /app/uv.lock
 COPY --from=builder /app/runtime-manifest.json /app/runtime-manifest.json
+COPY alembic.ini ./
+COPY migrations/ ./migrations/
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     ARGUS_RUNTIME_MANIFEST=/app/runtime-manifest.json

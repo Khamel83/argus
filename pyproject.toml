@@ -69,6 +69,14 @@ include = ["argus*"]
 [tool.setuptools.package-data]
 "argus.api" = ["templates/*.html"]
 
+[tool.setuptools.data-files]
+"." = ["alembic.ini"]
+"migrations" = ["migrations/env.py", "migrations/script.py.mako"]
+"migrations/versions" = [
+    "migrations/versions/0001_search_ledger.py",
+    "migrations/versions/0002_acceptance_fingerprint.py",
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

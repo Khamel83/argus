@@ -53,6 +53,9 @@ class RetrievalRunRow(LedgerBase):
         ForeignKey("retrieval_requests.id"), nullable=False, unique=True
     )
     search_run_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    acceptance_fingerprint: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     total_results: Mapped[int] = mapped_column(Integer, nullable=False)
     cached: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -135,6 +138,119 @@ class AcceptanceReceipt:
     delivery_intent_id: str
 
 
+@dataclass(frozen=True)
+class DurableAcceptanceSnapshot:
+    stored_fingerprint: str | None
+    state: dict
+
+
+class AcceptanceConflictError(RuntimeError):
+    """A public run ID was already committed with a different payload."""
+
+
+def acceptance_state(query: SearchQuery, response: SearchResponse) -> dict:
+    """Return the canonical immutable state written by ``accept``."""
+    run_id = response.search_run_id
+    if not run_id:
+        raise ValueError("accepted retrieval requires a search_run_id")
+
+    attempts = [
+        {
+            "provider": trace.provider.value,
+            "status": trace.status,
+            "results_count": trace.results_count,
+            "latency_ms": trace.latency_ms,
+            "error": trace.error,
+            "budget_remaining": trace.budget_remaining,
+            "egress": trace.egress,
+        }
+        for trace in response.traces
+    ]
+    attempts.sort(key=_canonical_json)
+
+    results = []
+    for rank, result in enumerate(response.results):
+        if not result.url:
+            raise ValueError("normalized search results require a URL")
+        canonical_url = result.url.strip()
+        content_hash = hashlib.sha256(canonical_url.encode("utf-8")).hexdigest()
+        provider = result.provider.value if result.provider else ""
+        metadata = _normalize_json_value(dict(result.metadata))
+        results.append(
+            {
+                "normalized": {
+                    "url": result.url,
+                    "title": result.title,
+                    "snippet": result.snippet,
+                    "domain": result.domain,
+                    "provider": provider,
+                    "score": result.score,
+                    "final_rank": rank,
+                },
+                "content_identity": {
+                    "content_hash": content_hash,
+                    "canonical_url": canonical_url,
+                },
+                "provenance": {
+                    "provider": provider,
+                    "egress": metadata.get("egress"),
+                    "machine": metadata.get("machine"),
+                    "source_type": metadata.get("source_type", "search"),
+                    "metadata": metadata,
+                },
+            }
+        )
+
+    return {
+        "request": {
+            "query_text": query.query,
+            "mode": query.mode.value,
+            "max_results": query.max_results,
+            "caller": query.caller,
+        },
+        "run": {
+            "search_run_id": run_id,
+            "status": "accepted",
+            "total_results": len(response.results),
+            "cached": response.cached,
+        },
+        "attempts": attempts,
+        "results": results,
+        "delivery_intent": {
+            "destination": "maya",
+            "status": "pending",
+            "payload": {
+                "search_run_id": run_id,
+                "result_count": len(response.results),
+            },
+        },
+    }
+
+
+def acceptance_fingerprint(state: dict) -> str:
+    return hashlib.sha256(_canonical_json(state).encode("utf-8")).hexdigest()
+
+
+def _canonical_json(value) -> str:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+
+
+def _normalize_json_value(value):
+    return json.loads(_canonical_json(value))
+
+
+def _parse_json_value(value: str | None):
+    try:
+        return json.loads(value or "{}")
+    except (TypeError, ValueError):
+        return {"__invalid_json__": value}
+
+
 class SearchLedgerRepository(Protocol):
     def accept(
         self, query: SearchQuery, response: SearchResponse
@@ -150,21 +266,28 @@ class SqlAlchemySearchLedgerRepository:
     def accept(
         self, query: SearchQuery, response: SearchResponse
     ) -> AcceptanceReceipt:
+        fingerprint = acceptance_fingerprint(acceptance_state(query, response))
         try:
-            return self._accept_once(query, response)
+            return self._accept_once(query, response, fingerprint)
         except IntegrityError:
             # A concurrent request with the same public run ID may win the
             # unique-key race after our initial lookup. Acknowledge only after
             # its complete transaction, including delivery intent, is visible.
             for _ in range(100):
-                receipt = self._existing_receipt(response.search_run_id)
+                receipt = self._existing_receipt(
+                    response.search_run_id,
+                    fingerprint,
+                )
                 if receipt is not None:
                     return receipt
                 time.sleep(0.01)
             raise
 
     def _accept_once(
-        self, query: SearchQuery, response: SearchResponse
+        self,
+        query: SearchQuery,
+        response: SearchResponse,
+        fingerprint: str,
     ) -> AcceptanceReceipt:
         run_id = response.search_run_id
         if not run_id:
@@ -177,18 +300,10 @@ class SqlAlchemySearchLedgerRepository:
                 )
             )
             if existing is not None:
-                delivery_id = session.scalar(
-                    select(DeliveryIntentRow.id).where(
-                        DeliveryIntentRow.run_id == existing.id
-                    )
-                )
-                if delivery_id is None:
-                    raise RuntimeError(
-                        f"retrieval {run_id!r} exists without delivery intent"
-                    )
-                return AcceptanceReceipt(
-                    run_id=existing.search_run_id,
-                    delivery_intent_id=delivery_id,
+                return self._receipt_for_existing(
+                    session,
+                    existing,
+                    fingerprint,
                 )
 
             now = datetime.now(tz=None)
@@ -209,6 +324,7 @@ class SqlAlchemySearchLedgerRepository:
                     id=ledger_run_id,
                     request_id=request_id,
                     search_run_id=run_id,
+                    acceptance_fingerprint=fingerprint,
                     status="accepted",
                     total_results=len(response.results),
                     cached=response.cached,
@@ -287,23 +403,174 @@ class SqlAlchemySearchLedgerRepository:
 
         return AcceptanceReceipt(run_id=run_id, delivery_intent_id=delivery_id)
 
-    def _existing_receipt(self, run_id: str | None) -> AcceptanceReceipt | None:
+    def _existing_receipt(
+        self,
+        run_id: str | None,
+        fingerprint: str,
+    ) -> AcceptanceReceipt | None:
         if not run_id:
             return None
         with self.session_factory() as session:
-            row = session.execute(
-                select(RetrievalRunRow.search_run_id, DeliveryIntentRow.id)
-                .join(
-                    DeliveryIntentRow,
-                    DeliveryIntentRow.run_id == RetrievalRunRow.id,
-                )
+            row = session.scalar(
+                select(RetrievalRunRow)
                 .where(RetrievalRunRow.search_run_id == run_id)
-            ).one_or_none()
+            )
             if row is None:
                 return None
-            return AcceptanceReceipt(
-                run_id=row.search_run_id,
-                delivery_intent_id=row.id,
+            return self._receipt_for_existing(
+                session,
+                row,
+                fingerprint,
+            )
+
+    @staticmethod
+    def _receipt_for_existing(
+        session,
+        row: RetrievalRunRow,
+        fingerprint: str,
+    ) -> AcceptanceReceipt:
+        if row.acceptance_fingerprint != fingerprint:
+            raise AcceptanceConflictError(
+                f"retrieval {row.search_run_id!r} has a different durable payload"
+            )
+        delivery_id = session.scalar(
+            select(DeliveryIntentRow.id).where(
+                DeliveryIntentRow.run_id == row.id
+            )
+        )
+        if delivery_id is None:
+            raise AcceptanceConflictError(
+                f"retrieval {row.search_run_id!r} is incomplete"
+            )
+        return AcceptanceReceipt(
+            run_id=row.search_run_id,
+            delivery_intent_id=delivery_id,
+        )
+
+    def load_acceptance_snapshot(
+        self,
+        search_run_id: str,
+    ) -> DurableAcceptanceSnapshot | None:
+        """Read the complete durable state for reconciliation."""
+        with self.session_factory() as session:
+            pair = session.execute(
+                select(RetrievalRequestRow, RetrievalRunRow)
+                .join(
+                    RetrievalRunRow,
+                    RetrievalRunRow.request_id == RetrievalRequestRow.id,
+                )
+                .where(RetrievalRunRow.search_run_id == search_run_id)
+            ).one_or_none()
+            if pair is None:
+                return None
+            request, run = pair
+
+            attempts = [
+                {
+                    "provider": row.provider,
+                    "status": row.status,
+                    "results_count": row.results_count,
+                    "latency_ms": row.latency_ms,
+                    "error": row.error,
+                    "budget_remaining": row.budget_remaining,
+                    "egress": row.egress,
+                }
+                for row in session.scalars(
+                    select(ProviderAttemptRow).where(
+                        ProviderAttemptRow.run_id == run.id
+                    )
+                )
+            ]
+            attempts.sort(key=_canonical_json)
+
+            result_rows = session.execute(
+                select(
+                    NormalizedResultRow,
+                    ContentIdentityRow,
+                    ResultProvenanceRow,
+                )
+                .outerjoin(
+                    ContentIdentityRow,
+                    ContentIdentityRow.content_hash
+                    == NormalizedResultRow.content_hash,
+                )
+                .outerjoin(
+                    ResultProvenanceRow,
+                    ResultProvenanceRow.result_id == NormalizedResultRow.id,
+                )
+                .where(NormalizedResultRow.run_id == run.id)
+                .order_by(NormalizedResultRow.final_rank)
+            ).all()
+            results = []
+            for normalized, identity, provenance in result_rows:
+                results.append(
+                    {
+                        "normalized": {
+                            "url": normalized.url,
+                            "title": normalized.title,
+                            "snippet": normalized.snippet,
+                            "domain": normalized.domain,
+                            "provider": normalized.provider,
+                            "score": normalized.score,
+                            "final_rank": normalized.final_rank,
+                        },
+                        "content_identity": (
+                            {
+                                "content_hash": identity.content_hash,
+                                "canonical_url": identity.canonical_url,
+                            }
+                            if identity is not None
+                            else None
+                        ),
+                        "provenance": (
+                            {
+                                "provider": provenance.provider,
+                                "egress": provenance.egress,
+                                "machine": provenance.machine,
+                                "source_type": provenance.source_type,
+                                "metadata": _parse_json_value(
+                                    provenance.metadata_json
+                                ),
+                            }
+                            if provenance is not None
+                            else None
+                        ),
+                    }
+                )
+
+            delivery = session.scalar(
+                select(DeliveryIntentRow).where(
+                    DeliveryIntentRow.run_id == run.id
+                )
+            )
+            state = {
+                "request": {
+                    "query_text": request.query_text,
+                    "mode": request.mode,
+                    "max_results": request.max_results,
+                    "caller": request.caller,
+                },
+                "run": {
+                    "search_run_id": run.search_run_id,
+                    "status": run.status,
+                    "total_results": run.total_results,
+                    "cached": run.cached,
+                },
+                "attempts": attempts,
+                "results": results,
+                "delivery_intent": (
+                    {
+                        "destination": delivery.destination,
+                        "status": delivery.status,
+                        "payload": _parse_json_value(delivery.payload_json),
+                    }
+                    if delivery is not None
+                    else None
+                ),
+            }
+            return DurableAcceptanceSnapshot(
+                stored_fingerprint=run.acceptance_fingerprint,
+                state=state,
             )
 
     @staticmethod

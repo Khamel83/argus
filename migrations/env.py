@@ -13,7 +13,13 @@ if (
     config.get_main_option("sqlalchemy.url") == "sqlite:///argus.db"
     and os.environ.get("ARGUS_DB_URL")
 ):
-    config.set_main_option("sqlalchemy.url", os.environ["ARGUS_DB_URL"])
+    # ConfigParser treats percent signs as interpolation syntax. SQLAlchemy
+    # URLs commonly contain percent-encoded credentials, so escape them only
+    # for storage in Alembic's Config object.
+    config.set_main_option(
+        "sqlalchemy.url",
+        os.environ["ARGUS_DB_URL"].replace("%", "%%"),
+    )
 
 target_metadata = LedgerBase.metadata
 

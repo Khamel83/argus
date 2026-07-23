@@ -1,8 +1,12 @@
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import redirect_stdout
+from io import StringIO
 import json
+from threading import Barrier
 
 import pytest
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, select, text
+from sqlalchemy.exc import DataError
 from sqlalchemy.orm import sessionmaker
 
 from argus.models import (
@@ -139,7 +143,7 @@ def test_sqlite_repository_is_idempotent_for_same_run(tmp_path):
     assert _table_counts(repository)["retrieval_runs"] == 1
 
 
-def test_concurrent_same_run_is_acknowledged_only_after_one_complete_commit(tmp_path):
+def test_concurrent_same_payload_same_run_is_idempotent(tmp_path):
     repository = _sqlite_repository(tmp_path)
     query = SearchQuery(query="atomic search")
 
@@ -156,6 +160,48 @@ def test_concurrent_same_run_is_acknowledged_only_after_one_complete_commit(tmp_
     assert counts["retrieval_runs"] == 1
     assert counts["normalized_results"] == 1
     assert counts["delivery_intents"] == 1
+
+
+def test_same_run_rejects_a_different_payload(tmp_path):
+    from argus.persistence.search_ledger import AcceptanceConflictError
+
+    repository = _sqlite_repository(tmp_path)
+    query = SearchQuery(query="atomic search")
+    repository.accept(query, _response())
+    changed = _response()
+    changed.results[0].title = "Different title"
+
+    with pytest.raises(AcceptanceConflictError):
+        repository.accept(query, changed)
+
+
+def test_concurrent_same_run_accepts_one_payload_and_rejects_the_other(tmp_path):
+    from argus.persistence.search_ledger import (
+        AcceptanceConflictError,
+        AcceptanceReceipt,
+    )
+
+    repository = _sqlite_repository(tmp_path)
+    query = SearchQuery(query="atomic search")
+    first = _response()
+    second = _response(url="https://example.com/different")
+    barrier = Barrier(2)
+
+    def accept(response):
+        barrier.wait()
+        try:
+            return repository.accept(query, response)
+        except Exception as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(accept, (first, second)))
+
+    assert sum(isinstance(outcome, AcceptanceReceipt) for outcome in outcomes) == 1
+    assert sum(
+        isinstance(outcome, AcceptanceConflictError) for outcome in outcomes
+    ) == 1
+    assert _table_counts(repository)["retrieval_runs"] == 1
 
 
 def test_postgresql_repository_concurrent_acceptance_is_complete(postgres_ledger_url):
@@ -181,6 +227,57 @@ def test_postgresql_repository_concurrent_acceptance_is_complete(postgres_ledger
     assert counts["content_identities"] == 1
 
 
+def test_postgresql_concurrent_same_payload_same_run_is_idempotent(
+    postgres_ledger_url,
+):
+    from argus.persistence.search_ledger import create_search_ledger_repository
+
+    _migrate_postgresql_ledger(postgres_ledger_url)
+    repository = create_search_ledger_repository(postgres_ledger_url)
+    query = SearchQuery(query="atomic search")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        receipts = list(pool.map(lambda _: repository.accept(query, _response()), range(2)))
+
+    assert receipts[0] == receipts[1]
+    assert _table_counts(repository)["retrieval_runs"] == 1
+
+
+def test_postgresql_concurrent_different_payload_same_run_conflicts(
+    postgres_ledger_url,
+):
+    from argus.persistence.search_ledger import (
+        AcceptanceConflictError,
+        AcceptanceReceipt,
+        create_search_ledger_repository,
+    )
+
+    _migrate_postgresql_ledger(postgres_ledger_url)
+    repository = create_search_ledger_repository(postgres_ledger_url)
+    query = SearchQuery(query="atomic search")
+    barrier = Barrier(2)
+
+    def accept(response):
+        barrier.wait()
+        try:
+            return repository.accept(query, response)
+        except Exception as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(
+            pool.map(
+                accept,
+                (_response(), _response(url="https://example.com/different")),
+            )
+        )
+
+    assert sum(isinstance(outcome, AcceptanceReceipt) for outcome in outcomes) == 1
+    assert sum(
+        isinstance(outcome, AcceptanceConflictError) for outcome in outcomes
+    ) == 1
+
+
 def test_postgresql_repository_rolls_back_partial_acceptance(postgres_ledger_url):
     from argus.persistence.search_ledger import create_search_ledger_repository
 
@@ -189,6 +286,22 @@ def test_postgresql_repository_rolls_back_partial_acceptance(postgres_ledger_url
 
     with pytest.raises(Exception):
         repository.accept(SearchQuery(query="atomic search"), _response(url=None))
+
+    assert all(count == 0 for count in _table_counts(repository).values())
+
+
+def test_postgresql_real_constraint_error_rolls_back_partial_acceptance(
+    postgres_ledger_url,
+):
+    from argus.persistence.search_ledger import create_search_ledger_repository
+
+    _migrate_postgresql_ledger(postgres_ledger_url)
+    repository = create_search_ledger_repository(postgres_ledger_url)
+    response = _response(run_id="db-error")
+    response.traces[0].egress = "x" * 51
+
+    with pytest.raises(DataError):
+        repository.accept(SearchQuery(query="atomic search"), response)
 
     assert all(count == 0 for count in _table_counts(repository).values())
 
@@ -214,6 +327,24 @@ def test_alembic_migration_creates_search_ledger(tmp_path):
         "content_identities",
         "delivery_intents",
     } <= tables
+
+
+def test_alembic_offline_mode_accepts_percent_encoded_credentials(monkeypatch):
+    from alembic import command
+    from alembic.config import Config
+
+    monkeypatch.setenv(
+        "ARGUS_DB_URL",
+        "postgresql+psycopg2://test:pa%2Fss@invalid.example/argus_test",
+    )
+    config = Config("alembic.ini")
+    output = StringIO()
+    config.output_buffer = output
+
+    with redirect_stdout(output):
+        command.upgrade(config, "head", sql=True)
+
+    assert "CREATE TABLE retrieval_requests" in output.getvalue()
 
 
 def _create_legacy_search_database(path):
@@ -291,6 +422,49 @@ def test_legacy_reconciliation_is_dry_run_by_default_and_idempotent(tmp_path):
         "conflicting": 0,
     }
     assert _table_counts(repository)["retrieval_runs"] == 1
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "UPDATE retrieval_requests SET max_results = 99",
+        "UPDATE retrieval_runs SET cached = 1",
+        "DELETE FROM provider_attempts",
+        "UPDATE normalized_results SET title = 'changed'",
+        "DELETE FROM result_provenance",
+        "UPDATE content_identities SET canonical_url = 'https://changed.example/'",
+        "UPDATE delivery_intents SET status = 'sent'",
+    ],
+    ids=[
+        "request",
+        "run",
+        "attempts",
+        "normalized-result",
+        "provenance",
+        "content-identity",
+        "delivery-intent",
+    ],
+)
+def test_legacy_reconciliation_reports_incomplete_or_changed_state_as_conflict(
+    tmp_path,
+    mutation,
+):
+    from argus.persistence.reconcile import reconcile_legacy_state
+
+    source = tmp_path / "legacy-conflict.db"
+    _create_legacy_search_database(source)
+    repository = _sqlite_repository(tmp_path)
+    reconcile_legacy_state(f"sqlite:///{source}", repository, apply=True)
+
+    with repository.session_factory.begin() as session:
+        session.execute(text(mutation))
+
+    assert reconcile_legacy_state(f"sqlite:///{source}", repository) == {
+        "source": 1,
+        "imported": 0,
+        "skipped": 0,
+        "conflicting": 1,
+    }
 
 
 def test_legacy_reconciliation_cli_is_dry_run_by_default(tmp_path):
