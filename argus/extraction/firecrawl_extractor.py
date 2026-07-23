@@ -19,6 +19,12 @@ FIRECRAWL_API_URL = "https://api.firecrawl.dev/v1/scrape"
 
 async def extract_firecrawl(url: str) -> ExtractedContent:
     """Extract content from a URL using the Firecrawl v2 API."""
+    return ExtractedContent(
+        url=url,
+        error="firecrawl disabled: durable spend reservation is required",
+    )
+
+    # Kept below for re-enablement once extraction uses the spend gateway.
     config = get_config()
     api_key = config.firecrawl.api_key
     if not api_key:

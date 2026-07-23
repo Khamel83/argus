@@ -1,12 +1,14 @@
 """FastAPI application for Argus search broker."""
 
 import asyncio
+import math
 import os
 import uuid
 from contextlib import asynccontextmanager
 from typing import Callable, Optional
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -81,6 +83,7 @@ def create_app(
     broker_factory: Optional[Callable[[], SearchBroker]] = None,
     rate_limiter: Optional[RateLimiter] = None,
     search_repository: Optional[SearchLedgerRepository] = None,
+    spend_repository=None,
 ) -> FastAPI:
     auth_config = AuthConfig.from_env()
 
@@ -136,6 +139,26 @@ def create_app(
         lifespan=lifespan_with_probes,
     )
 
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(
+        request: Request, exc: RequestValidationError
+    ):
+        def json_safe(value):
+            if isinstance(value, float) and not math.isfinite(value):
+                return str(value)
+            if isinstance(value, BaseException):
+                return str(value)
+            if isinstance(value, dict):
+                return {key: json_safe(item) for key, item in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [json_safe(item) for item in value]
+            return value
+
+        return JSONResponse(
+            status_code=422,
+            content={"detail": json_safe(exc.errors())},
+        )
+
     # Broker singleton
     app.state.get_broker = _build_broker_provider(broker, broker_factory)
     ledger_repository = search_repository
@@ -147,6 +170,23 @@ def create_app(
         return ledger_repository
 
     app.state.get_search_repository = get_search_repository
+    current_spend_repository = spend_repository
+
+    def get_spend_repository():
+        nonlocal current_spend_repository
+        if current_spend_repository is None:
+            current_spend_repository = getattr(
+                app.state.get_broker(), "_spend_repository", None
+            )
+        if current_spend_repository is None:
+            from argus.persistence.provider_spend import (
+                create_provider_spend_repository,
+            )
+
+            current_spend_repository = create_provider_spend_repository()
+        return current_spend_repository
+
+    app.state.get_spend_repository = get_spend_repository
     app.state.get_workflows = _build_workflow_provider(app.state.get_broker)
     app.state.rate_limiter = rate_limiter or _build_rate_limiter()
     app.state.auth_config = auth_config
@@ -156,7 +196,14 @@ def create_app(
             CORSMiddleware,
             allow_origins=list(auth_config.cors_origins),
             allow_methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Admin-API-Key", "X-Request-Id"],
+            allow_headers=[
+                "Authorization",
+                "Content-Type",
+                "X-API-Key",
+                "X-Admin-API-Key",
+                "X-Provider-Reconciliation-Key",
+                "X-Request-Id",
+            ],
         )
 
     @app.middleware("http")
@@ -178,6 +225,9 @@ def create_app(
             "x-admin-api-key",
         )
         auth = request.app.state.auth_config
+        request.state.caller_identity = (
+            auth.identity_for_token(token) or ("local" if is_local else "")
+        )
 
         if is_public_path(path):
             return await call_next(request)
@@ -194,6 +244,7 @@ def create_app(
                     content={"error": "Admin authentication required"},
                     headers={"WWW-Authenticate": "Bearer"},
                 )
+            request.state.caller_identity = "admin"
             return await call_next(request)
 
         if is_caller_path(path) and not is_local:

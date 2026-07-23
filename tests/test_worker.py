@@ -103,3 +103,34 @@ def test_exec_returns_results_on_success():
             assert data["trace"]["status"] == "success"
             assert len(data["results"]) == 1
             assert data["results"][0]["url"] == "https://example.com"
+
+
+@pytest.mark.parametrize("secret", ["s", ""])
+def test_exec_fails_closed_for_paid_providers_without_calling_adapter(secret):
+    with patch.dict(
+        "os.environ",
+        {
+            "ARGUS_EGRESS_SHARED_SECRET": secret,
+            "ARGUS_MACHINE_NAME": "test-worker",
+        },
+        clear=True,
+    ):
+        with patch("argus.worker.server._get_provider") as get_provider:
+            from argus.worker.server import create_worker_app
+
+            client = TestClient(create_worker_app())
+            headers = {"Authorization": "Bearer s"} if secret else {}
+            response = client.post(
+                "/exec",
+                json={
+                    "provider": "brave",
+                    "query": "must not spend",
+                    "max_results": 1,
+                    "mode": "discovery",
+                },
+                headers=headers,
+            )
+
+    assert response.status_code == 403
+    assert "paid providers" in response.json()["detail"]
+    get_provider.assert_not_called()

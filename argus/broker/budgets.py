@@ -106,6 +106,10 @@ class BudgetTracker:
         """
         self._budgets[provider] = budget
 
+    def get_budget_limit(self, provider: ProviderName) -> float:
+        """Return the configured cap, or zero when the provider is uncapped."""
+        return self._budgets.get(provider, 0.0)
+
     def record_usage(self, provider: ProviderName, cost: float = 1.0) -> None:
         """Record one query against a provider's budget."""
         self._usage[provider].append((time.time(), cost))

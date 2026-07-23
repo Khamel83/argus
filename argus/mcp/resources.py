@@ -31,11 +31,10 @@ def provider_budgets_resource(broker: SearchBroker) -> str:
 
     budgets = {}
     for pname in ProviderName:
-        budgets[pname.value] = {
-            "remaining": broker.budget_tracker.get_remaining_budget(pname),
-            "monthly_usage": broker.budget_tracker.get_monthly_usage(pname),
-            "exhausted": broker.budget_tracker.is_budget_exhausted(pname),
-        }
+        budgets[pname.value] = broker.spend_repository.provider_summary(
+            pname,
+            budget_limit=broker.budget_tracker.get_budget_limit(pname),
+        )
 
     return json.dumps(budgets, indent=2)
 

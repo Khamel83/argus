@@ -188,8 +188,21 @@ class WorkflowService:
     def import_legacy_docs_cache(self, source_root: str) -> dict[str, Any]:
         return mirror_legacy_docs_cache(source_root, self._paths)
 
-    async def start_recover_article(self, *, url: str, title: str | None = None, domain: str | None = None) -> WorkflowResult:
-        run = self._create_run(WorkflowKind.RECOVER_ARTICLE, url)
+    async def start_recover_article(
+        self,
+        *,
+        url: str,
+        title: str | None = None,
+        domain: str | None = None,
+        caller_identity: str | None = None,
+        caller_label: str = "",
+    ) -> WorkflowResult:
+        run = self._create_run(
+            WorkflowKind.RECOVER_ARTICLE,
+            url,
+            caller_identity=caller_identity,
+            caller_label=caller_label,
+        )
         asyncio.create_task(self._execute_run(run.run_id, self._recover_article_impl, url=url, title=title, domain=domain))
         return run
 
@@ -199,8 +212,15 @@ class WorkflowService:
         url: str,
         soft_page_limit: int = 75,
         hard_page_limit: int = 200,
+        caller_identity: str | None = None,
+        caller_label: str = "",
     ) -> WorkflowResult:
-        run = self._create_run(WorkflowKind.CAPTURE_SITE, url)
+        run = self._create_run(
+            WorkflowKind.CAPTURE_SITE,
+            url,
+            caller_identity=caller_identity,
+            caller_label=caller_label,
+        )
         asyncio.create_task(
             self._execute_run(
                 run.run_id,
@@ -218,8 +238,15 @@ class WorkflowService:
         topic: str,
         official_url: str | None = None,
         max_research_pages: int = 40,
+        caller_identity: str | None = None,
+        caller_label: str = "",
     ) -> WorkflowResult:
-        run = self._create_run(WorkflowKind.BUILD_RESEARCH_PACK, topic)
+        run = self._create_run(
+            WorkflowKind.BUILD_RESEARCH_PACK,
+            topic,
+            caller_identity=caller_identity,
+            caller_label=caller_label,
+        )
         asyncio.create_task(
             self._execute_run(
                 run.run_id,
@@ -236,12 +263,19 @@ class WorkflowService:
         *,
         query: str,
         max_search_results: int = 5,
+        caller_identity: str | None = None,
+        caller_label: str = "",
     ) -> WorkflowResult:
         """Start a background search-and-summarize workflow.
 
         Returns a pending WorkflowResult; the actual work runs in the background.
         """
-        run = self._create_run(WorkflowKind.SEARCH_AND_SUMMARIZE, query)
+        run = self._create_run(
+            WorkflowKind.SEARCH_AND_SUMMARIZE,
+            query,
+            caller_identity=caller_identity,
+            caller_label=caller_label,
+        )
         asyncio.create_task(
             self._execute_run(
                 run.run_id,
@@ -286,7 +320,8 @@ class WorkflowService:
                 mode=SearchMode.DISCOVERY,
                 max_results=max_search_results,
                 free_only=False,
-                caller=self._caller,
+                caller=self._caller_for_run(run),
+                metadata={"caller_label": run.metadata.get("caller_label", "")},
             )
         )
 
@@ -337,8 +372,21 @@ class WorkflowService:
         )
         return run
 
-    async def recover_article(self, *, url: str, title: str | None = None, domain: str | None = None) -> WorkflowResult:
-        run = self._create_run(WorkflowKind.RECOVER_ARTICLE, url)
+    async def recover_article(
+        self,
+        *,
+        url: str,
+        title: str | None = None,
+        domain: str | None = None,
+        caller_identity: str | None = None,
+        caller_label: str = "",
+    ) -> WorkflowResult:
+        run = self._create_run(
+            WorkflowKind.RECOVER_ARTICLE,
+            url,
+            caller_identity=caller_identity,
+            caller_label=caller_label,
+        )
         return await self._execute_run(run.run_id, self._recover_article_impl, url=url, title=title, domain=domain)
 
     async def capture_site(
@@ -347,8 +395,15 @@ class WorkflowService:
         url: str,
         soft_page_limit: int = 75,
         hard_page_limit: int = 200,
+        caller_identity: str | None = None,
+        caller_label: str = "",
     ) -> WorkflowResult:
-        run = self._create_run(WorkflowKind.CAPTURE_SITE, url)
+        run = self._create_run(
+            WorkflowKind.CAPTURE_SITE,
+            url,
+            caller_identity=caller_identity,
+            caller_label=caller_label,
+        )
         return await self._execute_run(
             run.run_id,
             self._capture_site_impl,
@@ -363,8 +418,15 @@ class WorkflowService:
         topic: str,
         official_url: str | None = None,
         max_research_pages: int = 40,
+        caller_identity: str | None = None,
+        caller_label: str = "",
     ) -> WorkflowResult:
-        run = self._create_run(WorkflowKind.BUILD_RESEARCH_PACK, topic)
+        run = self._create_run(
+            WorkflowKind.BUILD_RESEARCH_PACK,
+            topic,
+            caller_identity=caller_identity,
+            caller_label=caller_label,
+        )
         return await self._execute_run(
             run.run_id,
             self._build_research_pack_impl,
@@ -373,7 +435,14 @@ class WorkflowService:
             max_research_pages=max_research_pages,
         )
 
-    def _create_run(self, kind: WorkflowKind, target: str) -> WorkflowResult:
+    def _create_run(
+        self,
+        kind: WorkflowKind,
+        target: str,
+        *,
+        caller_identity: str | None = None,
+        caller_label: str = "",
+    ) -> WorkflowResult:
         run_id = uuid.uuid4().hex[:12]
         slug = _slug_from_url(target) if target.startswith(("http://", "https://")) else _slug_from_url(f"https://{target}")
         snapshot_dir = self._paths.snapshots_dir / kind.value / slug / run_id
@@ -385,9 +454,16 @@ class WorkflowService:
             target=target,
             status_url=f"/api/workflows/{run_id}",
             snapshot_dir=str(snapshot_dir),
+            metadata={
+                "caller_identity": caller_identity or self._caller,
+                "caller_label": caller_label,
+            },
         )
         self._runs[run_id] = run
         return run
+
+    def _caller_for_run(self, run: WorkflowResult) -> str:
+        return str(run.metadata.get("caller_identity") or self._caller)
 
     async def _execute_run(self, run_id: str, handler, **kwargs) -> WorkflowResult:
         run = self._runs[run_id]
@@ -414,7 +490,13 @@ class WorkflowService:
         if domain:
             query_parts.append(domain)
         resp = await self._broker.search(
-            SearchQuery(query=" ".join(query_parts), mode=SearchMode.RECOVERY, max_results=10, caller=self._caller)
+            SearchQuery(
+                query=" ".join(query_parts),
+                mode=SearchMode.RECOVERY,
+                max_results=10,
+                caller=self._caller_for_run(run),
+                metadata={"caller_label": run.metadata.get("caller_label", "")},
+            )
         )
         candidates = []
         seen = {normalize_url(url)}
@@ -537,7 +619,9 @@ class WorkflowService:
         max_research_pages: int,
     ):
         self._report(0, 4, "Discovering official documentation URL...")
-        official = official_url or await self._discover_official_docs_url(topic)
+        official = official_url or await self._discover_official_docs_url(
+            topic, run=run
+        )
         if not official:
             raise ValueError("Could not determine an official documentation URL")
 
@@ -552,7 +636,12 @@ class WorkflowService:
             hard_page_limit=120,
         )
         self._report(2, 4, f"Captured {len(official_docs)} official docs, searching for external research...")
-        research_urls = await self._discover_research_urls(topic, official_url=official, limit=max_research_pages)
+        research_urls = await self._discover_research_urls(
+            topic,
+            official_url=official,
+            limit=max_research_pages,
+            run=run,
+        )
         research_docs, research_citations = await self._capture_explicit_urls(
             run,
             research_urls,
@@ -606,23 +695,39 @@ class WorkflowService:
             docs_cache_url=official,
         )
 
-    async def _discover_official_docs_url(self, topic: str) -> str | None:
+    async def _discover_official_docs_url(
+        self, topic: str, *, run: WorkflowResult
+    ) -> str | None:
         resp = await self._broker.search(
-            SearchQuery(query=f"{topic} official docs", mode=SearchMode.DISCOVERY, max_results=8, caller=self._caller)
+            SearchQuery(
+                query=f"{topic} official docs",
+                mode=SearchMode.DISCOVERY,
+                max_results=8,
+                caller=self._caller_for_run(run),
+                metadata={"caller_label": run.metadata.get("caller_label", "")},
+            )
         )
         for result in resp.results:
             if any(keyword in result.url.lower() for keyword in ("/docs", "docs.", "/reference", "/api")):
                 return result.url
         return resp.results[0].url if resp.results else None
 
-    async def _discover_research_urls(self, topic: str, *, official_url: str, limit: int) -> list[str]:
+    async def _discover_research_urls(
+        self,
+        topic: str,
+        *,
+        official_url: str,
+        limit: int,
+        run: WorkflowResult,
+    ) -> list[str]:
         official_root = _domain_root(urlparse(official_url).netloc)
         resp = await self._broker.search(
             SearchQuery(
                 query=f"{topic} documentation tutorial guide comparison best practices",
                 mode=SearchMode.RESEARCH,
                 max_results=max(limit * 2, 20),
-                caller=self._caller,
+                caller=self._caller_for_run(run),
+                metadata={"caller_label": run.metadata.get("caller_label", "")},
             )
         )
         urls: list[str] = []

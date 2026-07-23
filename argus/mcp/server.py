@@ -23,18 +23,27 @@ logger = get_logger("mcp.server")
 class StaticTokenVerifier:
     """Minimal bearer-token verifier for remote MCP transports."""
 
-    def __init__(self, api_key: str):
-        self._api_key = api_key
+    def __init__(self, auth_config: AuthConfig):
+        self._auth_config = auth_config
 
     async def verify_token(self, token: str) -> AccessToken | None:
-        if not self._api_key or token != self._api_key:
+        identity = self._auth_config.identity_for_token(token)
+        if identity is None:
             return None
         return AccessToken(
             token=token,
-            client_id="argus-mcp",
+            client_id=identity,
             scopes=["mcp"],
             expires_at=int(time.time()) + 3600,
         )
+
+
+def _mcp_caller_identity() -> str:
+    """Return the authenticated MCP principal, or the local transport identity."""
+    from mcp.server.auth.middleware.auth_context import get_access_token
+
+    access_token = get_access_token()
+    return access_token.client_id if access_token else "local-mcp"
 
 
 def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 8001):
@@ -58,8 +67,7 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
 
     if use_remote_auth and not auth_config.has_caller_key():
         raise SystemExit(
-            "Remote MCP requires ARGUS_API_KEY. Set it in .env or:\n"
-            "  export ARGUS_API_KEY=your-key"
+            "Remote MCP requires ARGUS_CALLER_CREDENTIALS_JSON or ARGUS_API_KEY."
         )
 
     mcp_kwargs: dict[str, Any] = {"host": host, "port": port}
@@ -70,7 +78,7 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
             resource_server_url=resource_server_url,
             required_scopes=["mcp"],
         )
-        mcp_kwargs["token_verifier"] = StaticTokenVerifier(auth_config.caller_api_key)
+        mcp_kwargs["token_verifier"] = StaticTokenVerifier(auth_config)
 
     mcp = FastMCP("argus", **mcp_kwargs)
 
@@ -96,18 +104,41 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
             session_id,
             include_attribution,
             free_only,
-            caller,
+            _mcp_caller_identity(),
+            caller_label=caller,
         )
 
     @mcp.tool()
-    async def recover_url(url: str, title: str = None, domain: str = None) -> str:
+    async def recover_url(
+        url: str,
+        title: str = None,
+        domain: str = None,
+        caller: str = "mcp",
+    ) -> str:
         """Recover a dead, moved, or unavailable URL."""
-        return await mcp_tools.recover_url(broker, url, title, domain)
+        return await mcp_tools.recover_url(
+            broker,
+            url,
+            title,
+            domain,
+            caller_identity=_mcp_caller_identity(),
+            caller_label=caller,
+        )
 
     @mcp.tool()
-    async def expand_links(query: str, context: str = None) -> str:
+    async def expand_links(
+        query: str,
+        context: str = None,
+        caller: str = "mcp",
+    ) -> str:
         """Expand a query with related links for discovery."""
-        return await mcp_tools.expand_links(broker, query, context)
+        return await mcp_tools.expand_links(
+            broker,
+            query,
+            context,
+            caller_identity=_mcp_caller_identity(),
+            caller_label=caller,
+        )
 
     @mcp.tool()
     async def extract_content(url: str, domain: str = None) -> str:
@@ -127,12 +158,32 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
     from mcp.server.fastmcp import Context as McpContext
 
     @mcp.tool()
-    async def recover_dead_article(url: str, title: str = None, domain: str = None, ctx: McpContext = None) -> str:
+    async def recover_dead_article(
+        url: str,
+        title: str = None,
+        domain: str = None,
+        caller: str = "mcp",
+        ctx: McpContext = None,
+    ) -> str:
         """Recover a dead article into a local report with citations."""
-        return await mcp_tools.recover_dead_article(broker, url, title, domain, ctx=ctx)
+        return await mcp_tools.recover_dead_article(
+            broker,
+            url,
+            title,
+            domain,
+            ctx=ctx,
+            caller_identity=_mcp_caller_identity(),
+            caller_label=caller,
+        )
 
     @mcp.tool()
-    async def capture_site(url: str, soft_page_limit: int = 75, hard_page_limit: int = 200, ctx: McpContext = None) -> str:
+    async def capture_site(
+        url: str,
+        soft_page_limit: int = 75,
+        hard_page_limit: int = 200,
+        caller: str = "mcp",
+        ctx: McpContext = None,
+    ) -> str:
         """Capture the important parts of a site and summarize them."""
         return await mcp_tools.capture_site(
             broker,
@@ -140,6 +191,8 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
             soft_page_limit=soft_page_limit,
             hard_page_limit=hard_page_limit,
             ctx=ctx,
+            caller_identity=_mcp_caller_identity(),
+            caller_label=caller,
         )
 
     @mcp.tool()
@@ -148,6 +201,7 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
         official_url: str = None,
         max_research_pages: int = 40,
         response_format: str = "markdown",
+        caller: str = "mcp",
         ctx: McpContext = None,
     ) -> str:
         """Build a local pack with official docs plus external research.
@@ -164,6 +218,8 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
             max_research_pages=max_research_pages,
             response_format=response_format,
             ctx=ctx,
+            caller_identity=_mcp_caller_identity(),
+            caller_label=caller,
         )
 
     @mcp.tool()
@@ -191,7 +247,13 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
         @mcp.tool()
         async def test_provider(provider: str, query: str = "argus") -> str:
             """Smoke-test a single provider."""
-            return await mcp_tools.test_provider_mcp(broker, provider, query)
+            return await mcp_tools.test_provider_mcp(
+                broker,
+                provider,
+                query,
+                caller_identity=_mcp_caller_identity(),
+                caller_label="mcp-admin-smoke",
+            )
 
         @mcp.tool()
         def cookie_health() -> str:

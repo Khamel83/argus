@@ -394,6 +394,39 @@ class TestValyuProvider:
         assert trace.credit_info["cost_usd"] == 0.0015
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("reported_charge", "has_authoritative_charge"),
+        [(None, False), (0.0, True)],
+    )
+    async def test_search_preserves_missing_charge_distinct_from_explicit_zero(
+        self,
+        reported_charge,
+        has_authoritative_charge,
+    ):
+        from argus.providers.valyu import ValyuProvider
+
+        provider = ValyuProvider(
+            ProviderConfig(enabled=True, api_key="val_test_key")
+        )
+        payload = {"success": True, "tx_id": "tx-test", "results": []}
+        if reported_charge is not None:
+            payload["total_deduction_dollars"] = reported_charge
+
+        with patch("argus.providers.valyu.httpx.AsyncClient") as mock_client_cls:
+            mock_client_cls.return_value.post = AsyncMock(
+                return_value=_make_mock_response(payload)
+            )
+            mock_client_cls.return_value.__aenter__ = AsyncMock(
+                return_value=mock_client_cls.return_value
+            )
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            _, trace = await provider.search(SearchQuery(query="test"))
+
+        assert ("cost_usd" in trace.credit_info) is has_authoritative_charge
+        if has_authoritative_charge:
+            assert trace.credit_info["cost_usd"] == 0.0
+
+    @pytest.mark.asyncio
     async def test_search_handles_api_error(self):
         from argus.providers.valyu import ValyuProvider
         p = ValyuProvider(ProviderConfig(enabled=True, api_key="val_test_key"))

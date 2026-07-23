@@ -3,6 +3,7 @@ Pydantic request/response schemas for the HTTP API.
 """
 
 import re
+from datetime import datetime
 from typing import Any, List, Optional, Set
 
 from pydantic import BaseModel, Field, field_validator
@@ -97,6 +98,23 @@ class ExpandRequest(BaseModel):
 class ProviderTestRequest(BaseModel):
     provider: str = Field(..., description="Provider name to test")
     query: str = Field("argus", description="Test query")
+
+
+class SpendResolutionRequest(BaseModel):
+    actual_charge: float = Field(..., ge=0, allow_inf_nan=False)
+    outcome: str = Field(..., min_length=1, max_length=100)
+    source: str = Field(..., pattern="^(operator|provider)$")
+    idempotency_key: str = Field(..., min_length=1, max_length=255)
+    provider_snapshot_id: Optional[str] = Field(None, max_length=32)
+
+
+class ProviderSnapshotRequest(BaseModel):
+    balance: float = Field(..., ge=0, allow_inf_nan=False)
+    observed_at: datetime
+    provider_reference: str = Field(..., min_length=1, max_length=255)
+    related_attempt_id: str = Field(..., min_length=1, max_length=32)
+    authoritative_charge: float = Field(..., ge=0, allow_inf_nan=False)
+    idempotency_key: str = Field(..., min_length=1, max_length=255)
 
 
 class ExtractRequest(BaseModel):

@@ -63,6 +63,11 @@ async def valyu_answer(
     This is a standalone function, not a broker provider.
     Callers opt in explicitly when they want synthesized answers.
     """
+    return ValyuAnswerResult(
+        error="valyu_answer disabled: durable spend reservation is required"
+    )
+
+    # Kept below for re-enablement once this endpoint uses the spend gateway.
     config = get_config()
     if not config.valyu.api_key:
         return ValyuAnswerResult(error="valyu_answer: no API key configured")

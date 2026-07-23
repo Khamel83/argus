@@ -22,6 +22,12 @@ TIMEOUT = int(os.getenv("ARGUS_EXTRACTION_TIMEOUT_SECONDS", "15"))
 
 async def extract_valyu_contents(url: str) -> ExtractedContent:
     """Extract content from a URL using the Valyu Contents API."""
+    return ExtractedContent(
+        url=url,
+        error="valyu_contents disabled: durable spend reservation is required",
+    )
+
+    # Kept below for re-enablement once extraction uses the spend gateway.
     config = get_config()
     if not config.valyu.api_key:
         return ExtractedContent(url=url, error="valyu_contents: no API key configured")

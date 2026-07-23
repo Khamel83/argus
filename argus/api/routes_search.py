@@ -77,6 +77,7 @@ def _to_response(resp, include_attribution: bool = False) -> SearchResponse:
 @router.post("/search", response_model=SearchResponse)
 async def search(
     req: SearchRequest,
+    request: Request,
     broker: SearchBroker = Depends(get_broker),
     repository: SearchLedgerRepository = Depends(get_search_repository),
 ):
@@ -86,7 +87,8 @@ async def search(
         max_results=req.max_results,
         providers=[ProviderName(provider) for provider in req.providers] if req.providers else None,
         free_only=req.free_only,
-        caller=req.caller,
+        caller=getattr(request.state, "caller_identity", "") or "unknown",
+        metadata={"caller_label": req.caller},
     )
 
     if req.session_id:
@@ -111,7 +113,11 @@ async def search(
 
 
 @router.post("/recover-url", response_model=SearchResponse)
-async def recover_url(req: RecoverUrlRequest, broker: SearchBroker = Depends(get_broker)):
+async def recover_url(
+    req: RecoverUrlRequest,
+    request: Request,
+    broker: SearchBroker = Depends(get_broker),
+):
     query_parts = [req.url]
     if req.title:
         query_parts.append(req.title)
@@ -122,6 +128,7 @@ async def recover_url(req: RecoverUrlRequest, broker: SearchBroker = Depends(get
         query=" ".join(query_parts),
         mode=SearchMode.RECOVERY,
         max_results=10,
+        caller=getattr(request.state, "caller_identity", "") or "unknown",
     )
 
     resp = await broker.search(search_query)
@@ -129,7 +136,11 @@ async def recover_url(req: RecoverUrlRequest, broker: SearchBroker = Depends(get
 
 
 @router.post("/expand", response_model=SearchResponse)
-async def expand(req: ExpandRequest, broker: SearchBroker = Depends(get_broker)):
+async def expand(
+    req: ExpandRequest,
+    request: Request,
+    broker: SearchBroker = Depends(get_broker),
+):
     query_text = req.query
     if req.context:
         query_text = f"{req.query} {req.context}"
@@ -138,6 +149,7 @@ async def expand(req: ExpandRequest, broker: SearchBroker = Depends(get_broker))
         query=query_text,
         mode=SearchMode.DISCOVERY,
         max_results=15,
+        caller=getattr(request.state, "caller_identity", "") or "unknown",
     )
 
     resp = await broker.search(search_query)

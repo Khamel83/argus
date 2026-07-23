@@ -25,6 +25,8 @@ from argus.providers.base import BaseProvider
 logger = get_logger("providers.valyu")
 
 VALYU_API_BASE = "https://api.valyu.ai/v1/search"
+VALYU_RESULT_CAP = 20
+VALYU_UNIT_PRICE_USD = 0.0015
 
 
 class ValyuProvider(BaseProvider):
@@ -57,7 +59,7 @@ class ValyuProvider(BaseProvider):
         }
         payload = {
             "query": query.query,
-            "max_num_results": min(query.max_results, 20),
+            "max_num_results": min(query.max_results, VALYU_RESULT_CAP),
             "search_type": "web",
             "fast_mode": True,
         }
@@ -83,16 +85,19 @@ class ValyuProvider(BaseProvider):
             results = self._normalize(raw_results)
             latency_ms = int((time.monotonic() - start) * 1000)
 
+            credit_info = {
+                "total_characters": data.get("total_characters", 0),
+                "tx_id": data.get("tx_id", ""),
+            }
+            if data.get("total_deduction_dollars") is not None:
+                credit_info["cost_usd"] = data["total_deduction_dollars"]
+
             trace = ProviderTrace(
                 provider=self.name,
                 status="success",
                 results_count=len(results),
                 latency_ms=latency_ms,
-                credit_info={
-                    "cost_usd": data.get("total_deduction_dollars", 0),
-                    "total_characters": data.get("total_characters", 0),
-                    "tx_id": data.get("tx_id", ""),
-                },
+                credit_info=credit_info,
             )
             return results, trace
 

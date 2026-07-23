@@ -11,7 +11,6 @@ Auth: Authorization: Bearer <ARGUS_EGRESS_SHARED_SECRET>
 from __future__ import annotations
 
 import os
-from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
@@ -88,9 +87,17 @@ def create_worker_app() -> FastAPI:
         _check_auth(request)
 
         try:
-            provider = _get_provider(req.provider)
+            provider_name = ProviderName(req.provider)
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Unknown provider: {req.provider!r}")
+        from argus.broker.budgets import PROVIDER_TIERS
+
+        if PROVIDER_TIERS.get(provider_name, 99) > 0:
+            raise HTTPException(
+                status_code=403,
+                detail="paid providers cannot execute on an egress worker",
+            )
+        provider = _get_provider(req.provider)
 
         query = SearchQuery(
             query=req.query,

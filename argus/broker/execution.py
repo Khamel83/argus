@@ -1,5 +1,19 @@
+"""Provider execution services for the search broker."""
+
 import fnmatch
-from typing import Mapping
+import math
+import uuid
+from dataclasses import dataclass, field
+from typing import Dict, List, Mapping, Sequence
+
+from argus.broker.budgets import BudgetTracker, PROVIDER_TIERS
+from argus.broker.health import HealthTracker
+from argus.broker.reachability import ReachabilityMatrix
+from argus.config import EgressNode
+from argus.logging import get_logger
+from argus.models import ProviderName, ProviderTrace, SearchQuery, SearchResult
+from argus.providers.base import BaseProvider
+from argus.providers.valyu import VALYU_RESULT_CAP, VALYU_UNIT_PRICE_USD
 
 
 def caller_tier_cap(caller: str, caps: Mapping[str, int]) -> int | None:
@@ -13,19 +27,6 @@ def caller_tier_cap(caller: str, caps: Mapping[str, int]) -> int | None:
     return min(matches) if matches else None
 
 
-"""Provider execution services for the search broker."""
-
-from dataclasses import dataclass, field
-from typing import Dict, List, Sequence
-
-from argus.broker.budgets import BudgetTracker, PROVIDER_TIERS
-from argus.broker.health import HealthTracker
-from argus.broker.reachability import ReachabilityMatrix
-from argus.config import EgressNode
-from argus.logging import get_logger
-from argus.models import ProviderName, ProviderTrace, SearchQuery, SearchResult
-from argus.providers.base import BaseProvider
-
 logger = get_logger("broker.execution")
 
 _COST_ESTIMATES = {
@@ -36,12 +37,43 @@ _COST_ESTIMATES = {
     ProviderName.PARALLEL: 1.0,
     ProviderName.LINKUP: 1.0,
     ProviderName.YOU: 1.0,
-    ProviderName.VALYU: 0.0015,  # ~$1.50 per 1k fast searches
+    ProviderName.VALYU: VALYU_UNIT_PRICE_USD,
     ProviderName.SEARCHAPI: 1.0,
 }
 
 # Tier 0 providers are always queried — free and unlimited.
 _TIER_0_PROVIDERS = {p for p, t in PROVIDER_TIERS.items() if t == 0}
+
+
+def conservative_charge_estimate(
+    provider: ProviderName,
+    query: SearchQuery,
+) -> float:
+    """Return the finite worst-case charge for one adapter request.
+
+    Valyu prices each requested result, capped by the adapter at 20.
+    Every other paid adapter currently consumes one request-based credit, so
+    its configured single-request estimate is already independent of result
+    count.
+    """
+    unit_charge = _COST_ESTIMATES.get(provider)
+    if provider == ProviderName.VALYU:
+        if (
+            isinstance(query.max_results, bool)
+            or not isinstance(query.max_results, int)
+            or query.max_results <= 0
+        ):
+            raise ValueError("max_results must be a positive integer")
+        estimate = min(query.max_results, VALYU_RESULT_CAP) * VALYU_UNIT_PRICE_USD
+    else:
+        estimate = unit_charge
+    if (
+        estimate is None
+        or not math.isfinite(float(estimate))
+        or float(estimate) <= 0
+    ):
+        raise ValueError(f"no finite positive estimate for {provider.value}")
+    return float(estimate)
 
 
 @dataclass
@@ -62,6 +94,7 @@ class ProviderExecutor:
         reachability: ReachabilityMatrix | None = None,
         egress_nodes: dict[str, EgressNode] | None = None,
         caller_tier_caps: Mapping[str, int] | None = None,
+        spend_repository=None,
     ):
         self._providers = providers
         self._health = health_tracker
@@ -69,6 +102,7 @@ class ProviderExecutor:
         self._reachability = reachability or ReachabilityMatrix()
         self._egress_nodes = egress_nodes or {}
         self._caller_tier_caps = dict(caller_tier_caps or {})
+        self._spend = spend_repository
 
     def _should_query_paid(self, provider: ProviderName, tier: int) -> tuple[bool, str]:
         """Decide whether to query a paid provider based on budget pace.
@@ -94,6 +128,9 @@ class ProviderExecutor:
         provider_results: Dict[str, List[SearchResult]] = {}
         live_providers_used = 0
         pace_warnings: List[str] = []
+        attempt_scope = str(
+            query.metadata.get("attempt_scope") or uuid.uuid4().hex
+        )
 
         ordered = [p for p in provider_order if p != ProviderName.CACHE]
         total_results_so_far = 0
@@ -146,6 +183,15 @@ class ProviderExecutor:
                 ))
                 continue
             if best_egress != "local":
+                if tier > 0:
+                    traces.append(
+                        ProviderTrace(
+                            provider=pname,
+                            status="skipped",
+                            error="paid providers cannot execute on an egress worker",
+                        )
+                    )
+                    continue
                 node = self._egress_nodes.get(best_egress)
                 if node is None:
                     traces.append(ProviderTrace(
@@ -155,14 +201,48 @@ class ProviderExecutor:
                     continue
                 from argus.broker.remote_provider import RemoteProviderClient
                 remote = RemoteProviderClient(pname, node)
-                results, trace = await remote.search(query)
+                reservation = self._reserve_paid_attempt(
+                    query, pname, tier, attempt_scope, index
+                )
+                if reservation is False:
+                    traces.append(
+                        ProviderTrace(
+                            provider=pname,
+                            status="skipped",
+                            error="budget exhausted",
+                            budget_remaining=0.0,
+                        )
+                    )
+                    continue
+                try:
+                    results, trace = await remote.search(query)
+                    uncertain = not self._trace_charge_known(pname, trace)
+                except Exception as exc:
+                    # Network failures can occur after the provider accepted
+                    # work. The durable reservation remains uncertain.
+                    results = []
+                    trace = ProviderTrace(
+                        provider=pname,
+                        status="error",
+                        error=str(exc),
+                    )
+                    uncertain = True
+                if not uncertain or tier <= 0:
+                    self._record_known_outcome(
+                        query,
+                        pname,
+                        tier,
+                        attempt_scope,
+                        index,
+                        trace,
+                        reservation,
+                    )
                 traces.append(trace)
                 if trace.status == "success":
                     live_providers_used += 1
                     provider_results[pname.value] = results
                     total_results_so_far += len(results)
                     self._health.record_success(pname)
-                    self._budgets.record_usage(pname, _COST_ESTIMATES.get(pname, 0.0))
                 else:
                     self._health.record_failure(pname)
                 continue
@@ -202,7 +282,43 @@ class ProviderExecutor:
                     )
                     continue
 
-            results, trace = await self._execute_provider(query, provider, pname)
+            try:
+                reservation = self._reserve_paid_attempt(
+                    query, pname, tier, attempt_scope, index
+                )
+            except ValueError as exc:
+                traces.append(
+                    ProviderTrace(
+                        provider=pname,
+                        status="skipped",
+                        error=f"invalid conservative charge estimate: {exc}",
+                    )
+                )
+                continue
+            if reservation is False:
+                traces.append(
+                    ProviderTrace(
+                        provider=pname,
+                        status="skipped",
+                        error="budget exhausted",
+                        budget_remaining=0.0,
+                    )
+                )
+                continue
+
+            results, trace, uncertain = await self._execute_provider(
+                query, provider, pname
+            )
+            if not uncertain or tier <= 0:
+                self._record_known_outcome(
+                    query,
+                    pname,
+                    tier,
+                    attempt_scope,
+                    index,
+                    trace,
+                    reservation,
+                )
             traces.append(trace)
             if trace.status == "success":
                 live_providers_used += 1
@@ -221,7 +337,7 @@ class ProviderExecutor:
         query: SearchQuery,
         provider: BaseProvider,
         provider_name: ProviderName,
-    ) -> tuple[List[SearchResult], ProviderTrace]:
+    ) -> tuple[List[SearchResult], ProviderTrace, bool]:
         try:
             results, trace = await provider.search(query)
             if trace.status == "success":
@@ -230,13 +346,21 @@ class ProviderExecutor:
                 # Use actual cost if provided by trace, otherwise estimate
                 cost = 0.0
                 if trace.credit_info and "cost_usd" in trace.credit_info:
-                    cost = trace.credit_info["cost_usd"]
-                else:
+                    cost = float(trace.credit_info["cost_usd"])
+                elif provider_name != ProviderName.VALYU:
                     cost = _COST_ESTIMATES.get(provider_name, 0.0)
 
-                self._budgets.record_usage(provider_name, cost)
+                if math.isfinite(cost) and cost >= 0:
+                    self._budgets.record_usage(provider_name, cost)
                 trace.budget_remaining = self._budgets.get_remaining_budget(provider_name)
                 trace.results_count = len(results)
+                if trace.credit_info and "cost_usd" in trace.credit_info:
+                    reported_cost = float(trace.credit_info["cost_usd"])
+                    if not math.isfinite(reported_cost) or reported_cost < 0:
+                        trace.error = (
+                            "provider returned an invalid charge; "
+                            "reservation left uncertain"
+                        )
 
                 # Inject provenance metadata if not already set by the provider
                 from argus.config import get_config
@@ -249,8 +373,100 @@ class ProviderExecutor:
 
             elif trace.status == "error":
                 self._health.record_failure(provider_name)
-            return results, trace
+            return results, trace, not self._trace_charge_known(
+                provider_name, trace
+            )
         except Exception as exc:
             logger.warning("Provider %s raised unhandled: %s", provider_name, exc)
             self._health.record_failure(provider_name)
-            return [], ProviderTrace(provider=provider_name, status="error", error=str(exc))
+            return (
+                [],
+                ProviderTrace(provider=provider_name, status="error", error=str(exc)),
+                True,
+            )
+
+    def _reserve_paid_attempt(
+        self,
+        query: SearchQuery,
+        provider: ProviderName,
+        tier: int,
+        scope: str,
+        index: int,
+    ):
+        if tier <= 0 or self._spend is None:
+            return None
+        from argus.persistence.provider_spend import BudgetExhaustedError
+
+        try:
+            return self._spend.reserve(
+                provider=provider,
+                conservative_charge=conservative_charge_estimate(provider, query),
+                budget_limit=self._budgets.get_budget_limit(provider),
+                caller_identity=query.caller or "unknown",
+                caller_label=str(query.metadata.get("caller_label", "")),
+                idempotency_key=f"{scope}:{provider.value}:{index}",
+            )
+        except BudgetExhaustedError:
+            return False
+
+    def _record_known_outcome(
+        self,
+        query: SearchQuery,
+        provider: ProviderName,
+        tier: int,
+        scope: str,
+        index: int,
+        trace: ProviderTrace,
+        reservation,
+    ) -> None:
+        if self._spend is None:
+            return
+        if tier <= 0:
+            self._spend.record_free_attempt(
+                provider=provider,
+                outcome=trace.status,
+                usage=1.0,
+                caller_identity=query.caller or "unknown",
+                caller_label=str(query.metadata.get("caller_label", "")),
+                idempotency_key=f"{scope}:{provider.value}:{index}",
+            )
+            return
+        if reservation is None:
+            return
+        actual = 0.0
+        if trace.credit_info and "cost_usd" in trace.credit_info:
+            actual = float(trace.credit_info["cost_usd"])
+        elif trace.status == "success":
+            actual = reservation.reserved_charge
+        if not math.isfinite(actual) or actual < 0:
+            trace.error = "provider returned an invalid charge; reservation left uncertain"
+            return
+        self._spend.settle(
+            reservation.attempt_id,
+            actual_charge=actual,
+            outcome=trace.status,
+        )
+        trace.budget_remaining = self._spend.provider_summary(
+            provider,
+            budget_limit=self._budgets.get_budget_limit(provider),
+        )["remaining"]
+
+    @staticmethod
+    def _trace_charge_known(
+        provider: ProviderName, trace: ProviderTrace
+    ) -> bool:
+        if trace.status == "success":
+            if provider != ProviderName.VALYU:
+                return True
+            return bool(
+                trace.credit_info
+                and "cost_usd" in trace.credit_info
+                and math.isfinite(float(trace.credit_info["cost_usd"]))
+                and float(trace.credit_info["cost_usd"]) >= 0
+            )
+        if not trace.credit_info:
+            return False
+        return (
+            "cost_usd" in trace.credit_info
+            or trace.credit_info.get("charge_known") is True
+        )

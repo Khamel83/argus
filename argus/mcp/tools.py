@@ -68,6 +68,7 @@ async def search_web(
     include_attribution: bool = False,
     free_only: bool = False,
     caller: str = "mcp",
+    caller_label: str = "",
 ) -> str:
     """Search the web using the Argus broker.
 
@@ -81,7 +82,14 @@ async def search_web(
         caller: Caller identifier for attribution (default "mcp")
     """
     search_mode = SearchMode(mode)
-    q = SearchQuery(query=query, mode=search_mode, max_results=max_results, free_only=free_only, caller=caller)
+    q = SearchQuery(
+        query=query,
+        mode=search_mode,
+        max_results=max_results,
+        free_only=free_only,
+        caller=caller,
+        metadata={"caller_label": caller_label},
+    )
 
     if session_id:
         resp, sid = await broker.search_with_session(
@@ -101,6 +109,8 @@ async def recover_url(
     url: str,
     title: Optional[str] = None,
     domain: Optional[str] = None,
+    caller_identity: str = "local-mcp",
+    caller_label: str = "",
 ) -> str:
     """Recover a dead, moved, or unavailable URL.
 
@@ -118,7 +128,13 @@ async def recover_url(
     if domain:
         query_parts.append(domain)
 
-    q = SearchQuery(query=" ".join(query_parts), mode=SearchMode.RECOVERY, max_results=10)
+    q = SearchQuery(
+        query=" ".join(query_parts),
+        mode=SearchMode.RECOVERY,
+        max_results=10,
+        caller=caller_identity,
+        metadata={"caller_label": caller_label},
+    )
     resp = await broker.search(q)
 
     # If search found results, return those
@@ -184,6 +200,8 @@ async def expand_links(
     broker: SearchBroker,
     query: str,
     context: Optional[str] = None,
+    caller_identity: str = "local-mcp",
+    caller_label: str = "",
 ) -> str:
     """Expand a query with related links for discovery.
 
@@ -192,7 +210,13 @@ async def expand_links(
         context: Optional context for better results
     """
     query_text = f"{query} {context}" if context else query
-    q = SearchQuery(query=query_text, mode=SearchMode.DISCOVERY, max_results=15)
+    q = SearchQuery(
+        query=query_text,
+        mode=SearchMode.DISCOVERY,
+        max_results=15,
+        caller=caller_identity,
+        metadata={"caller_label": caller_label},
+    )
     resp = await broker.search(q)
     return _serialize_response(resp)
 
@@ -226,17 +250,24 @@ def search_budgets(broker: SearchBroker) -> str:
     from argus.models import ProviderName
 
     lines = ["## Search Provider Budgets", ""]
-    lines.append(f"{'Provider':<20} {'Remaining':<12} {'Used/Month':<12} {'Total Used':<12} {'Status'}")
-    lines.append("-" * 70)
 
     for pname in ProviderName:
-        remaining = broker.budget_tracker.get_remaining_budget(pname)
-        monthly = broker.budget_tracker.get_monthly_usage(pname)
-        total = broker.budget_tracker.get_usage_count(pname)
-        exhausted = broker.budget_tracker.is_budget_exhausted(pname)
-        status = "EXHAUSTED" if exhausted else ("unlimited" if remaining == 0 else "ok")
-        rem_str = "unlimited" if remaining == 0 else str(remaining)
-        lines.append(f"{pname.value:<20} {rem_str:<12} {monthly:<12} {total:<12} {status}")
+        summary = broker.spend_repository.provider_summary(
+            pname,
+            budget_limit=broker.budget_tracker.get_budget_limit(pname),
+        )
+        snapshot = summary.get("provider_snapshot")
+        snapshot_text = "none"
+        if snapshot:
+            snapshot_text = (
+                f"source=provider observed_at={snapshot['observed_at']} "
+                f"balance={snapshot['balance']}"
+            )
+        lines.append(
+            f"- **{pname.value}**: remaining={summary['remaining']} "
+            f"estimated={summary['argus_estimated_charge']} "
+            f"uncertain={summary['uncertain_charge']}; {snapshot_text}"
+        )
 
     return "\n".join(lines)
 
@@ -245,6 +276,8 @@ async def test_provider_mcp(
     broker: SearchBroker,
     provider: str,
     query: str = "argus",
+    caller_identity: str = "local-mcp",
+    caller_label: str = "",
 ) -> str:
     """Smoke-test a single provider.
 
@@ -259,23 +292,28 @@ async def test_provider_mcp(
     except ValueError:
         return f"**Error:** Unknown provider: {provider}"
 
-    prov = broker._providers.get(pname)
-    if prov is None:
-        return f"**Error:** Provider not registered: {provider}"
-
-    if not prov.is_available():
-        return f"**{provider}** — UNAVAILABLE (status: {prov.status().value})"
-
-    q = SearchQuery(query=query, mode=SearchMode.DISCOVERY, max_results=3)
-    results, trace = await prov.search(q)
+    q = SearchQuery(
+        query=query,
+        mode=SearchMode.DISCOVERY,
+        max_results=3,
+        providers=[pname],
+        caller=caller_identity,
+        metadata={"caller_label": caller_label},
+    )
+    response = await broker.search(q)
 
     lines = [
         f"## Provider Test: {provider}",
-        f"Status: {prov.status().value} | {trace.status} | {trace.results_count} results | {trace.latency_ms}ms",
+        f"Results: {response.total_results}",
     ]
-    if trace.error:
-        lines.append(f"Error: {trace.error}")
-    for i, r in enumerate(results[:3], 1):
+    for trace in response.traces:
+        lines.append(
+            f"Status: {trace.status} | {trace.results_count} results | "
+            f"{trace.latency_ms}ms"
+        )
+        if trace.error:
+            lines.append(f"Error: {trace.error}")
+    for i, r in enumerate(response.results[:3], 1):
         lines.append(f"\n{i}. **{r.title}**\n   {r.url}\n   {r.snippet[:100] if r.snippet else ''}")
     return "\n".join(lines)
 
@@ -456,10 +494,21 @@ async def recover_dead_article(
     title: Optional[str] = None,
     domain: Optional[str] = None,
     ctx: Any = None,
+    caller_identity: str = "local-mcp",
+    caller_label: str = "",
 ) -> str:
     """Recover a dead article into a local citation-backed report."""
-    result = await WorkflowService(broker, progress_callback=_make_progress_callback(ctx), caller="mcp").recover_article(
-        url=url, title=title, domain=domain,
+    service = WorkflowService(
+        broker,
+        progress_callback=_make_progress_callback(ctx),
+        caller=caller_identity,
+    )
+    result = await service.recover_article(
+        url=url,
+        title=title,
+        domain=domain,
+        caller_identity=caller_identity,
+        caller_label=caller_label,
     )
     return _serialize_workflow(result)
 
@@ -470,12 +519,21 @@ async def capture_site(
     soft_page_limit: int = 75,
     hard_page_limit: int = 200,
     ctx: Any = None,
+    caller_identity: str = "local-mcp",
+    caller_label: str = "",
 ) -> str:
     """Capture the important pages from a site and summarize them."""
-    result = await WorkflowService(broker, progress_callback=_make_progress_callback(ctx), caller="mcp").capture_site(
+    service = WorkflowService(
+        broker,
+        progress_callback=_make_progress_callback(ctx),
+        caller=caller_identity,
+    )
+    result = await service.capture_site(
         url=url,
         soft_page_limit=soft_page_limit,
         hard_page_limit=hard_page_limit,
+        caller_identity=caller_identity,
+        caller_label=caller_label,
     )
     return _serialize_workflow(result)
 
@@ -487,12 +545,21 @@ async def build_research_pack(
     max_research_pages: int = 40,
     response_format: str = "markdown",
     ctx: Any = None,
+    caller_identity: str = "local-mcp",
+    caller_label: str = "",
 ) -> str:
     """Build a combined official-docs and external-research pack."""
-    result = await WorkflowService(broker, progress_callback=_make_progress_callback(ctx), caller="mcp").build_research_pack(
+    service = WorkflowService(
+        broker,
+        progress_callback=_make_progress_callback(ctx),
+        caller=caller_identity,
+    )
+    result = await service.build_research_pack(
         topic=topic,
         official_url=official_url,
         max_research_pages=max_research_pages,
+        caller_identity=caller_identity,
+        caller_label=caller_label,
     )
     if response_format == "json":
         return _serialize_workflow_json(result)

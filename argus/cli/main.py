@@ -432,25 +432,20 @@ def budgets():
     broker = create_broker()
     click.echo("Provider budgets:")
     for pname in ProviderName:
-        remaining = broker.budget_tracker.get_remaining_budget(pname)
-        usage = broker.budget_tracker.get_monthly_usage(pname)
-        count = broker.budget_tracker.get_usage_count(pname)
-        exhausted = broker.budget_tracker.is_budget_exhausted(pname)
-
-        # Valyu uses USD units
-        unit = "USD" if pname == ProviderName.VALYU else "queries"
-
-        if unit == "USD":
-            budget_str = f"${remaining:,.2f}" if remaining is not None else "unlimited"
-            usage_str = f"${usage:,.2f}"
-        else:
-            budget_str = f"{remaining:.0f} queries" if remaining is not None else "unlimited"
-            usage_str = f"{usage:.0f} queries"
-
-        status = "EXHAUSTED" if exhausted else "ok"
+        summary = broker.spend_repository.provider_summary(
+            pname,
+            budget_limit=broker.budget_tracker.get_budget_limit(pname),
+        )
+        snapshot = summary.get("provider_snapshot")
+        snapshot_text = (
+            f" provider_observed_at={snapshot['observed_at']}"
+            if snapshot
+            else ""
+        )
         click.echo(
-            f"  {pname.value:12s} remaining={budget_str:14s} "
-            f"used={usage_str:12s} calls={count} [{status}]"
+            f"  {pname.value:12s} remaining={summary['remaining']} "
+            f"estimated={summary['argus_estimated_charge']} "
+            f"uncertain={summary['uncertain_charge']}{snapshot_text}"
         )
 
     # Token balances
@@ -542,25 +537,25 @@ def test_provider(provider, query):
         click.echo(f"Unknown provider: {provider}", err=True)
         sys.exit(1)
 
-    prov = broker._providers.get(pname)
-    if prov is None:
-        click.echo(f"Provider not registered: {provider}", err=True)
-        sys.exit(1)
-
     click.echo(f"Testing {pname.value}...")
-    click.echo(f"  Available: {prov.is_available()}")
-    click.echo(f"  Status: {_STATUS_DISPLAY.get(prov.status().value, prov.status().value)}")
-    if not prov.is_available():
-        click.echo("  Skipped: provider is not available")
-        return
+    q = SearchQuery(
+        query=query,
+        mode=SearchMode.DISCOVERY,
+        max_results=3,
+        providers=[pname],
+        caller="local-cli",
+        metadata={"caller_label": "cli-smoke"},
+    )
+    response = _run(broker.search(q))
 
-    q = SearchQuery(query=query, mode=SearchMode.DISCOVERY, max_results=3)
-    results, trace = _run(prov.search(q))
-
-    click.echo(f"  Trace: {trace.status} ({trace.results_count} results, {trace.latency_ms}ms)")
-    if trace.error:
-        click.echo(f"  Error: {trace.error}")
-    for r in results[:3]:
+    for trace in response.traces:
+        click.echo(
+            f"  Trace: {trace.status} "
+            f"({trace.results_count} results, {trace.latency_ms}ms)"
+        )
+        if trace.error:
+            click.echo(f"  Error: {trace.error}")
+    for r in response.results[:3]:
         click.echo(f"    - {r.title}: {r.url}")
 
 
