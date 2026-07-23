@@ -7,6 +7,16 @@ import pytest
 from argus.api.schemas import SearchRequest, RecoverUrlRequest, ExpandRequest, ProviderTestRequest
 
 
+@pytest.fixture(autouse=True)
+def isolated_api_ledger(tmp_path, monkeypatch):
+    from argus.config import reset_config
+
+    monkeypatch.setenv("ARGUS_DB_URL", f"sqlite:///{tmp_path / 'api-ledger.db'}")
+    reset_config()
+    yield
+    reset_config()
+
+
 # --- Schemas ---
 
 class TestSchemas:
@@ -45,6 +55,37 @@ class TestSchemas:
 # --- API Integration ---
 
 class TestSearchEndpoint:
+    @pytest.mark.asyncio
+    async def test_search_does_not_acknowledge_when_ledger_commit_fails(self):
+        from argus.api.main import create_app
+        from argus.models import SearchMode, SearchResponse
+
+        class FailingRepository:
+            def accept(self, query, response):
+                raise RuntimeError("commit failed")
+
+        mock_broker = MagicMock()
+        mock_broker.search = AsyncMock(return_value=SearchResponse(
+            query="test",
+            mode=SearchMode.DISCOVERY,
+            results=[],
+            total_results=0,
+            search_run_id="failed-ledger",
+        ))
+        mock_broker.cache = MagicMock()
+        mock_broker.health_tracker = MagicMock()
+        mock_broker.budget_tracker = MagicMock()
+
+        from fastapi.testclient import TestClient
+        client = TestClient(
+            create_app(broker=mock_broker, search_repository=FailingRepository())
+        )
+
+        resp = client.post("/api/search", json={"query": "test", "mode": "discovery"})
+
+        assert resp.status_code == 503
+        assert resp.json()["detail"] == "Search could not be durably accepted"
+
     @pytest.mark.asyncio
     async def test_search_returns_results(self):
         from argus.api.main import create_app
@@ -101,6 +142,7 @@ class TestSearchEndpoint:
                 )
             ],
             total_results=1,
+            search_run_id="attribution-1",
         ))
         mock_broker.cache = MagicMock()
         mock_broker.health_tracker = MagicMock()

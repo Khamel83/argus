@@ -17,6 +17,7 @@ def pytest_configure(config):
     """Set all configuration before test modules can import Argus."""
     global _RUNTIME_ROOT
     _RUNTIME_ROOT = Path(tempfile.mkdtemp(prefix="argus-pytest-"))
+    test_postgres_url = os.environ.get("ARGUS_TEST_POSTGRES_URL")
     for key in tuple(os.environ):
         if key.startswith("ARGUS_"):
             os.environ.pop(key)
@@ -37,6 +38,8 @@ def pytest_configure(config):
     })
     for provider in HERMETIC_PROVIDER_ENV_PREFIXES:
         _SAFE_ENV[f"ARGUS_{provider}_ENABLED"] = "false"
+    if test_postgres_url:
+        _SAFE_ENV["ARGUS_TEST_POSTGRES_URL"] = test_postgres_url
     os.environ.update(_SAFE_ENV)
 
 
@@ -61,3 +64,11 @@ def reset_argus_config_cache():
     yield
     _restore_safe_environment()
     reset_config()
+
+
+@pytest.fixture
+def postgres_ledger_url():
+    url = os.environ.get("ARGUS_TEST_POSTGRES_URL")
+    if not url:
+        pytest.skip("ARGUS_TEST_POSTGRES_URL is not configured")
+    return url

@@ -27,6 +27,10 @@ from argus.api.routes_search import router as search_router
 from argus.api.routes_workflows import router as workflows_router
 from argus.broker.router import SearchBroker, create_broker
 from argus.logging import get_logger
+from argus.persistence.search_ledger import (
+    SearchLedgerRepository,
+    create_search_ledger_repository,
+)
 from argus.workflows import WorkflowService
 
 logger = get_logger("api")
@@ -76,6 +80,7 @@ def create_app(
     broker: Optional[SearchBroker] = None,
     broker_factory: Optional[Callable[[], SearchBroker]] = None,
     rate_limiter: Optional[RateLimiter] = None,
+    search_repository: Optional[SearchLedgerRepository] = None,
 ) -> FastAPI:
     auth_config = AuthConfig.from_env()
 
@@ -133,6 +138,15 @@ def create_app(
 
     # Broker singleton
     app.state.get_broker = _build_broker_provider(broker, broker_factory)
+    ledger_repository = search_repository
+
+    def get_search_repository() -> SearchLedgerRepository:
+        nonlocal ledger_repository
+        if ledger_repository is None:
+            ledger_repository = create_search_ledger_repository()
+        return ledger_repository
+
+    app.state.get_search_repository = get_search_repository
     app.state.get_workflows = _build_workflow_provider(app.state.get_broker)
     app.state.rate_limiter = rate_limiter or _build_rate_limiter()
     app.state.auth_config = auth_config

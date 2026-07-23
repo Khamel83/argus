@@ -49,9 +49,12 @@ def init_db(db_url: Optional[str] = None):
 
     _engine = create_engine(db_url, pool_pre_ping=True)
     _session_factory = sessionmaker(bind=_engine)
-    Base.metadata.create_all(_engine)
-    _ensure_schema_compat(_engine)
-    logger.info("Database initialized and tables created")
+    if db_url.startswith("sqlite:"):
+        Base.metadata.create_all(_engine)
+        _ensure_schema_compat(_engine)
+        logger.info("SQLite database initialized and tables created")
+    else:
+        logger.info("Database engine initialized; schema is managed by Alembic")
 
 
 def get_engine():

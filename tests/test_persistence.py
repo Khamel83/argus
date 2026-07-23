@@ -1,6 +1,30 @@
 import sqlite3
 
 
+def test_init_db_does_not_create_schema_for_postgresql(monkeypatch):
+    from argus.persistence import db
+
+    sentinel_engine = object()
+    create_calls = []
+    compat_calls = []
+    monkeypatch.setattr(db, "create_engine", lambda *args, **kwargs: sentinel_engine)
+    monkeypatch.setattr(
+        db.Base.metadata,
+        "create_all",
+        lambda engine: create_calls.append(engine),
+    )
+    monkeypatch.setattr(
+        db,
+        "_ensure_schema_compat",
+        lambda engine: compat_calls.append(engine),
+    )
+
+    db.init_db("postgresql://disposable.invalid/argus_test")
+
+    assert create_calls == []
+    assert compat_calls == []
+
+
 def test_init_db_adds_missing_provenance_columns_to_existing_tables(tmp_path):
     from sqlalchemy import inspect
 
