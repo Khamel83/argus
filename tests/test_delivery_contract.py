@@ -99,6 +99,7 @@ def test_production_dockerfile_uses_the_frozen_lock_and_bakes_runtime_manifest()
     assert "image-admission" in dockerfile
     assert "ARG VCS_REF\n" in dockerfile
     assert "COPY pyproject.toml uv.lock README.md ./" in dockerfile
+    assert "RUN /app/.venv/bin/python scripts/build_runtime_manifest.py" in dockerfile
     assert f"FROM {UV_IMAGE} AS uv" in dockerfile
     assert dockerfile.count(f"FROM {PYTHON_IMAGE}") == 2
     assert "apt-get" not in dockerfile

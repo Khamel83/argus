@@ -16,7 +16,7 @@ RUN uv sync --frozen --no-dev --extra mcp
 
 COPY scripts/build_runtime_manifest.py ./scripts/build_runtime_manifest.py
 ARG VCS_REF
-RUN python scripts/build_runtime_manifest.py \
+RUN /app/.venv/bin/python scripts/build_runtime_manifest.py \
     --output /app/runtime-manifest.json \
     --source-revision "${VCS_REF}" \
     --lock-file uv.lock
