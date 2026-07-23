@@ -276,7 +276,7 @@ def extract(url, domain, mode, as_json):
     """Extract clean text content from a URL."""
     from argus.extraction import extract_url
 
-    result = _run(extract_url(url, domain=domain, mode=mode))
+    result = _run(extract_url(url, domain=domain, mode=mode, caller="cli"))
 
     if result.error:
         click.echo(f"Error: {result.error}", err=True)
@@ -1040,6 +1040,56 @@ def reconcile_legacy(source, target, apply, as_json):
         _emit_json(report)
         return
     click.echo("Legacy search reconciliation:")
+    for key in ("source", "imported", "skipped", "conflicting"):
+        click.echo(f"  {key}: {report[key]}")
+    if not apply:
+        click.echo("Dry run only; pass --apply to mutate the target.")
+
+
+@ledger.command(name="reconcile-sessions")
+@click.option("--source", required=True, help="Legacy session SQLite database URL")
+@click.option(
+    "--target",
+    default=None,
+    help="Ledger SQLAlchemy database URL (defaults to ARGUS_DB_URL)",
+)
+@click.option(
+    "--apply",
+    is_flag=True,
+    help="Apply imports; without this flag the command only reports changes",
+)
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def reconcile_sessions(source, target, apply, as_json):
+    """Report or import legacy session history. Dry-run is the default."""
+    from pathlib import Path
+
+    from argus.config import get_config
+    from argus.persistence.reconcile import reconcile_legacy_sessions
+    from argus.persistence.search_ledger import (
+        create_read_only_search_ledger_repository,
+        create_search_ledger_repository,
+    )
+
+    target_url = target or get_config().db_url
+    if not apply and target_url.startswith("sqlite:///"):
+        target_path = Path(target_url.removeprefix("sqlite:///")).expanduser()
+        if target_path.exists():
+            repository = create_read_only_search_ledger_repository(target_url)
+        else:
+            repository = create_search_ledger_repository(
+                "sqlite:///:memory:",
+                create_schema=True,
+            )
+    else:
+        repository = create_search_ledger_repository(
+            target_url,
+            create_schema=False if not apply else None,
+        )
+    report = reconcile_legacy_sessions(source, repository, apply=apply)
+    if as_json:
+        _emit_json(report)
+        return
+    click.echo("Legacy session reconciliation:")
     for key in ("source", "imported", "skipped", "conflicting"):
         click.echo(f"  {key}: {report[key]}")
     if not apply:

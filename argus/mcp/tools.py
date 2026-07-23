@@ -326,7 +326,7 @@ async def extract_content(url: str, domain: str = None) -> str:
     """
     from argus.extraction import extract_url
 
-    result = await extract_url(url, domain=domain)
+    result = await extract_url(url, domain=domain, caller="mcp")
 
     if result.error:
         return f"**Extraction failed:** {result.error}\nURL: {result.url}"

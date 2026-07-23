@@ -71,7 +71,7 @@ def test_dashboard_renders_when_authenticated():
     resp = client.get("/dashboard", cookies={"argus_dash": "the-real-key"})
     assert resp.status_code == 200
     assert "Provider budgets" in resp.text
-    assert "Queries per day" in resp.text
+    assert "Retrieval operations per day" in resp.text
     assert "Usage by machine" in resp.text
     assert "brave" in resp.text  # one of the budgets we set
 
@@ -149,37 +149,30 @@ def test_chart_data_stacks_machines():
     assert labels["beta"] == [3, 0]
 
 
-def test_provider_activity_excludes_skipped_rows():
+def test_provider_activity_excludes_skipped_rows(tmp_path):
     """get_provider_activity must not count rows where status='skipped'."""
     import os
-    import sqlite3
-    import tempfile
 
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = f.name
+    from argus.models import ProviderName, ProviderTrace, SearchQuery
+    from argus.persistence.search_ledger import create_search_ledger_repository
+    from tests.test_search_ledger import _response
 
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        """CREATE TABLE provider_usage (
-            id INTEGER PRIMARY KEY,
-            provider TEXT,
-            status TEXT,
-            latency_ms INTEGER,
-            created_at TEXT
-        )"""
+    db_path = tmp_path / "usage.db"
+    repository = create_search_ledger_repository(
+        f"sqlite:///{db_path}", create_schema=True
     )
-    conn.executemany(
-        "INSERT INTO provider_usage (provider, status, latency_ms, created_at) VALUES (?, ?, ?, datetime('now'))",
-        [
-            ("yahoo", "skipped", 0),
-            ("yahoo", "skipped", 0),
-            ("brave", "success", 150),
-            ("brave", "success", 200),
-            ("brave", "skipped", 0),
-        ],
+    response = _response("provider-usage")
+    response.traces = [
+        ProviderTrace(provider=ProviderName.YAHOO, status="skipped"),
+        ProviderTrace(provider=ProviderName.YAHOO, status="skipped"),
+        ProviderTrace(provider=ProviderName.BRAVE, status="success", latency_ms=150),
+        ProviderTrace(provider=ProviderName.BRAVE, status="success", latency_ms=200),
+        ProviderTrace(provider=ProviderName.BRAVE, status="skipped"),
+    ]
+    repository.accept(
+        SearchQuery(query="provider usage", caller="dashboard"),
+        response,
     )
-    conn.commit()
-    conn.close()
 
     os.environ["ARGUS_DB_URL"] = f"sqlite:///{db_path}"
     from argus.config import reset_config
@@ -194,9 +187,6 @@ def test_provider_activity_excludes_skipped_rows():
     brave_rows = [r for r in rows if r["provider"] == "brave"]
     assert len(brave_rows) == 1
     assert brave_rows[0]["calls"] == 2
-
-    os.unlink(db_path)
-
 
 def test_dashboard_renders_attempted_column_header(monkeypatch):
     """Provider activity table must show 'Attempted' not 'Calls'."""
@@ -251,45 +241,33 @@ def test_provider_usage_row_has_caller_and_egress():
     assert "egress" in column_names
 
 
-import sqlite3, os, tempfile
+def test_get_caller_activity_groups_by_caller(tmp_path):
+    import os
 
-
-def _make_db_with_callers(path: str):
-    conn = sqlite3.connect(path)
-    conn.execute("""
-        CREATE TABLE provider_usage (
-            id INTEGER PRIMARY KEY,
-            run_id INTEGER DEFAULT 1,
-            provider TEXT, status TEXT, results_count INTEGER DEFAULT 0,
-            latency_ms INTEGER DEFAULT 0, error TEXT,
-            budget_remaining REAL, caller TEXT DEFAULT '', egress TEXT DEFAULT 'local',
-            created_at TEXT DEFAULT (datetime('now'))
-        )
-    """)
-    rows = [
-        ("searxng", "success", "media_rename", "local"),
-        ("searxng", "success", "media_rename", "local"),
-        ("yahoo",   "success", "atlas",        "oci-dev"),
-        ("yahoo",   "error",   "atlas",        "oci-dev"),
-        ("yahoo",   "success", "cli",          "local"),
-    ]
-    conn.executemany(
-        "INSERT INTO provider_usage (provider, status, caller, egress) VALUES (?,?,?,?)",
-        rows
-    )
-    conn.commit()
-    conn.close()
-
-
-def test_get_caller_activity_groups_by_caller():
     from argus.api.usage import get_caller_activity
     from argus.config import reset_config
-    with tempfile.TemporaryDirectory() as d:
-        db = os.path.join(d, "test.db")
-        _make_db_with_callers(db)
-        os.environ["ARGUS_DB_URL"] = f"sqlite:///{db}"
-        reset_config()
-        rows = get_caller_activity(days=7)
+    from argus.models import SearchQuery
+    from argus.persistence.search_ledger import create_search_ledger_repository
+    from tests.test_search_ledger import _response
+
+    db = tmp_path / "callers.db"
+    repository = create_search_ledger_repository(
+        f"sqlite:///{db}", create_schema=True
+    )
+    for run_id, caller in [
+        ("caller-1", "media_rename"),
+        ("caller-2", "media_rename"),
+        ("caller-3", "atlas"),
+        ("caller-4", "atlas"),
+        ("caller-5", "cli"),
+    ]:
+        repository.accept(
+            SearchQuery(query=run_id, caller=caller),
+            _response(run_id),
+        )
+    os.environ["ARGUS_DB_URL"] = f"sqlite:///{db}"
+    reset_config()
+    rows = get_caller_activity(days=7)
     del os.environ["ARGUS_DB_URL"]
     reset_config()
 
@@ -298,7 +276,7 @@ def test_get_caller_activity_groups_by_caller():
     assert "atlas" in callers
     atlas = next(r for r in rows if r["caller"] == "atlas")
     assert atlas["attempted"] == 2
-    assert atlas["successes"] == 1
+    assert atlas["successes"] == 2
 
 
 def test_dashboard_renders_caller_table(monkeypatch):

@@ -2,11 +2,7 @@
 Content extraction endpoint.
 """
 
-from argus.logging import get_logger
-
-logger = get_logger("api.extract")
-
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from argus.api.schemas import (
     AssessContentRequest,
@@ -16,18 +12,40 @@ from argus.api.schemas import (
 )
 from argus.extraction import extract_url
 from argus.extraction.completeness import assess_completeness
+from argus.logging import get_logger
 
+logger = get_logger("api.extract")
 router = APIRouter()
 
 
+def get_persistence_repository(request: Request):
+    return request.app.state.get_search_repository()
+
+
 @router.post("/extract", response_model=ExtractResponse)
-async def extract(req: ExtractRequest):
+async def extract(
+    req: ExtractRequest,
+    repository=Depends(get_persistence_repository),
+):
     """Extract clean text content from a URL."""
     if req.caller:
         logger.info("extract caller=%s url=%s", req.caller, req.url)
-    result = await extract_url(req.url, domain=req.domain, mode=req.mode)
+    try:
+        result = await extract_url(
+            req.url,
+            domain=req.domain,
+            mode=req.mode,
+            caller=req.caller,
+            repository=repository,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Extraction could not be durably recorded",
+        ) from exc
     cr = result.completeness_result
     return ExtractResponse(
+        extraction_run_id=result.extraction_run_id,
         url=result.url,
         title=result.title,
         text=result.text,

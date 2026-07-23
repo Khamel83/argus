@@ -28,10 +28,21 @@ class ExtractorName(str, Enum):
     YOUTUBE = "youtube"
 
 
+@dataclass(frozen=True)
+class ExtractionAttempt:
+    """One bounded, persistence-safe extractor attempt."""
+
+    extractor: str
+    status: str
+    latency_ms: int
+    failure_summary: Optional[str] = None
+
+
 @dataclass
 class ExtractedContent:
     """Result of extracting content from a URL."""
     url: str
+    extraction_run_id: Optional[str] = None
     title: str = ""
     text: str = ""
     author: str = ""
@@ -43,7 +54,10 @@ class ExtractedContent:
     quality_passed: bool = True
     quality_reason: Optional[str] = None
     extractors_tried: list = field(default_factory=list)
+    attempts: list[ExtractionAttempt] = field(default_factory=list)
     completeness_result: Optional["CompletenessResult"] = None
+    cache_hit: bool = False
+    cache_source_extractor: Optional[str] = None
 
     # Provenance metadata
     source_type: Optional[str] = None  # live|authenticated|residential|wayback|archive|paid_api|search_recovery

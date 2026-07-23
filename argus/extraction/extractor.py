@@ -21,14 +21,16 @@ Obscura (https://github.com/h4ckf0r0day/obscura): optional Rust headless browser
 """
 
 import asyncio
+import copy
 import os
+import time
 
 import httpx
 
 from argus.config import get_config
 from argus.extraction.cache import ExtractionCache
 from argus.extraction.completeness import assess_completeness
-from argus.extraction.models import ExtractedContent, ExtractorName
+from argus.extraction.models import ExtractedContent, ExtractionAttempt, ExtractorName
 from argus.extraction.quality_gate import QualityGate
 from argus.extraction.soft_404 import is_soft_404
 from argus.extraction.rate_limit import DomainRateLimiter
@@ -201,7 +203,9 @@ def get_extraction_cache() -> ExtractionCache:
     return _cache
 
 
-async def extract_url(url: str, domain: str = None, mode: str = "default") -> ExtractedContent:
+async def _extract_url_unpersisted(
+    url: str, domain: str = None, mode: str = "default"
+) -> ExtractedContent:
     """Extract clean content from a URL using the integrated fallback chain.
 
     Modes:
@@ -227,7 +231,20 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
     cached = _cache.get(url)
     if cached is not None:
         logger.debug("Extraction cache hit for %s", url[:60])
-        return cached
+        result = copy.deepcopy(cached)
+        result.cache_hit = True
+        result.cache_source_extractor = (
+            result.extractor.value if result.extractor else None
+        )
+        result.extractors_tried = ["cache"]
+        result.attempts = [
+            ExtractionAttempt(
+                extractor="cache",
+                status="success",
+                latency_ms=0,
+            )
+        ]
+        return result
 
     # YouTube watch pages are application shells rather than article pages.
     # Route them through the free metadata/caption adapter and do not spend
@@ -241,6 +258,15 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
         _populate_provenance(result)
         if not result.extractors_tried:
             result.extractors_tried = ["youtube"]
+        if not result.attempts:
+            result.attempts = [
+                ExtractionAttempt(
+                    extractor="youtube",
+                    status="failed" if result.error else "success",
+                    latency_ms=0,
+                    failure_summary=result.error,
+                )
+            ]
         if not result.error:
             _cache.put(url, result)
         return result
@@ -254,6 +280,7 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
         )
 
     extractors_tried = []
+    attempts: list[ExtractionAttempt] = []
     best_result = None  # Keep the best (longest) result even if quality fails
     best_quality_result = None
 
@@ -277,6 +304,51 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
         ):
             best_quality_result = result
 
+    async def run_attempt(name: str, extractor, *args, **kwargs):
+        """Execute and normalize one attempt for durable observability."""
+        started = time.perf_counter()
+        try:
+            result = await extractor(*args, **kwargs)
+        except Exception as exc:
+            attempts.append(
+                ExtractionAttempt(
+                    extractor=name,
+                    status="failed",
+                    latency_ms=round((time.perf_counter() - started) * 1000),
+                    failure_summary=type(exc).__name__,
+                )
+            )
+            raise
+        track_attempt(name, result)
+        failure = result.error if result is not None else "no_result"
+        if result is not None and not failure and not result.text:
+            failure = "no_content"
+        attempts.append(
+            ExtractionAttempt(
+                extractor=name,
+                status="failed" if failure else "success",
+                latency_ms=round((time.perf_counter() - started) * 1000),
+                failure_summary=failure,
+            )
+        )
+        if result is not None:
+            result.attempts = list(attempts)
+        return result
+
+    def record_quality_outcome(
+        result: ExtractedContent, passed: bool, reason: str
+    ) -> None:
+        if not attempts or passed:
+            return
+        previous = attempts[-1]
+        attempts[-1] = ExtractionAttempt(
+            extractor=previous.extractor,
+            status="quality_failed",
+            latency_ms=previous.latency_ms,
+            failure_summary=reason or "quality_gate_failed",
+        )
+        result.attempts = list(attempts)
+
     # Phase 4: Residential Egress Policy
     res_policy = config.residential.policy
     use_residential_early = False
@@ -296,12 +368,14 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
         try:
             from argus.extraction.residential_extractor import extract_residential, _is_configured
             if _is_configured():
-                res_result = await extract_residential(url, domain=domain or "")
-                track_attempt("residential", res_result)
+                res_result = await run_attempt(
+                    "residential", extract_residential, url, domain=domain or ""
+                )
                 if res_result.text and not res_result.error:
                     passed, r_reason = _run_quality_gate(res_result.text, url, "residential")
                     res_result.quality_passed = passed
                     res_result.quality_reason = r_reason if not passed else None
+                    record_quality_outcome(res_result, passed, r_reason)
                     res_result.extractors_tried = list(extractors_tried)
                     if passed:
                         track_quality_pass(res_result)
@@ -322,12 +396,14 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
         try:
             from argus.extraction.auth_extractor import extract_authenticated
 
-            result = await extract_authenticated(url, domain)
-            track_attempt("auth", result)
+            result = await run_attempt(
+                "auth", extract_authenticated, url, domain
+            )
             if result and result.text and not result.error:
                 passed, reason = _run_quality_gate(result.text, url, "auth")
                 result.quality_passed = passed
                 result.quality_reason = reason if not passed else None
+                record_quality_outcome(result, passed, reason)
                 result.extractors_tried = list(extractors_tried)
                 if passed:
                     track_quality_pass(result)
@@ -364,12 +440,12 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
             elif step_name == "playwright":
                 from argus.extraction.playwright_extractor import extract_playwright as current_extractor
 
-            result = await current_extractor(url)
-            track_attempt(step_name, result)
+            result = await run_attempt(step_name, current_extractor, url)
             if result.text and not result.error:
                 passed, reason = _run_quality_gate(result.text, url, step_name)
                 result.quality_passed = passed
                 result.quality_reason = reason if not passed else None
+                record_quality_outcome(result, passed, reason)
                 result.extractors_tried = list(extractors_tried)
                 if passed:
                     track_quality_pass(result)
@@ -413,12 +489,12 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
                     continue
                 from argus.extraction.you_extractor import extract_you_contents as current_extractor
 
-            result = await current_extractor(url)
-            track_attempt(step_name, result)
+            result = await run_attempt(step_name, current_extractor, url)
             if result.text and not result.error:
                 passed, reason = _run_quality_gate(result.text, url, step_name)
                 result.quality_passed = passed
                 result.quality_reason = reason if not passed else None
+                record_quality_outcome(result, passed, reason)
                 result.extractors_tried = list(extractors_tried)
                 if passed:
                     track_quality_pass(result)
@@ -443,12 +519,12 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
             elif step_name == "archive_is":
                 from argus.extraction.archive_extractor import extract_archive_is as extractor_func
 
-            result = await extractor_func(url)
-            track_attempt(step_name, result)
+            result = await run_attempt(step_name, extractor_func, url)
             if result.text and not result.error:
                 passed, reason = _run_quality_gate(result.text, url, step_name)
                 result.quality_passed = passed
                 result.quality_reason = reason if not passed else None
+                record_quality_outcome(result, passed, reason)
                 result.extractors_tried = list(extractors_tried)
                 if passed:
                     track_quality_pass(result)
@@ -475,12 +551,12 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
                         continue
                     from argus.extraction.you_extractor import extract_you_contents as current_extractor
 
-                result = await current_extractor(url)
-                track_attempt(step_name, result)
+                result = await run_attempt(step_name, current_extractor, url)
                 if result.text and not result.error:
                     passed, reason = _run_quality_gate(result.text, url, step_name)
                     result.quality_passed = passed
                     result.quality_reason = reason if not passed else None
+                    record_quality_outcome(result, passed, reason)
                     result.extractors_tried = list(extractors_tried)
                     if passed:
                         track_quality_pass(result)
@@ -501,6 +577,7 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
         best_quality_result.quality_passed = True
         best_quality_result.quality_reason = None
         best_quality_result.extractors_tried = extractors_tried
+        best_quality_result.attempts = list(attempts)
         _cache.put(url, best_quality_result)
         logger.warning(
             "Completeness fallbacks exhausted for %s, returning valid incomplete "
@@ -516,6 +593,7 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
         best_result.quality_passed = False
         best_result.quality_reason = "all_extractors_quality_failed"
         best_result.extractors_tried = extractors_tried
+        best_result.attempts = list(attempts)
         if best_result.text and best_result.completeness_result is None:
             best_result.completeness_result = assess_completeness(best_result.text, url)
         _cache.put(url, best_result)
@@ -532,8 +610,38 @@ async def extract_url(url: str, domain: str = None, mode: str = "default") -> Ex
         quality_passed=False,
         quality_reason="all_extractors_failed",
         extractors_tried=extractors_tried,
+        attempts=list(attempts),
     )
     _populate_provenance(result)
+    return result
+
+
+async def extract_url(
+    url: str,
+    domain: str = None,
+    mode: str = "default",
+    *,
+    caller: str = "",
+    repository=None,
+) -> ExtractedContent:
+    """Extract and durably record one logical operation before returning."""
+    started = time.perf_counter()
+    result = await _extract_url_unpersisted(url, domain=domain, mode=mode)
+    if repository is None:
+        from argus.persistence.search_ledger import (
+            create_search_ledger_repository,
+        )
+
+        repository = create_search_ledger_repository()
+    receipt = repository.record_extraction(
+        url=url,
+        domain=domain,
+        mode=mode,
+        caller=caller,
+        result=result,
+        latency_ms=round((time.perf_counter() - started) * 1000),
+    )
+    result.extraction_run_id = receipt.extraction_run_id
     return result
 
 

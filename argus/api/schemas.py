@@ -127,6 +127,7 @@ class ExtractRequest(BaseModel):
 
 
 class ExtractResponse(BaseModel):
+    extraction_run_id: Optional[str] = None
     url: str
     title: str = ""
     text: str = ""
@@ -275,4 +276,3 @@ class SearchAndSummarizeWorkflowRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=1000, description="Search query to research and summarize")
     max_search_results: int = Field(5, ge=1, le=20, description="Number of search results to extract")
     caller: str = Field("", description="Caller identifier for attribution (e.g. 'clio-workflows')")
-
