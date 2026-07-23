@@ -116,9 +116,16 @@ State and integration:
   passed and 37 skipped locally, 220 isolated PostgreSQL tests, direct Maya
   contract tests, and all seven CI jobs. The `[skip ci]` merge triggered no
   deployment.
-- [ ] [Make HTTP the sole Argus execution authority and MCP stateless](https://github.com/Khamel83/argus/issues/37)
-  — both blockers are closed; isolated implementation has started from
-  `cf2bca7`.
+- [x] [Make HTTP the sole Argus execution authority and MCP stateless](https://github.com/Khamel83/argus/issues/37)
+  — merged PR
+  [feat: make HTTP the sole production authority](https://github.com/Khamel83/argus/pull/55)
+  as `0a0e809`. Production MCP is now a stateless authenticated HTTP adapter;
+  direct broker, extraction, and worker execution is rejected, authenticated
+  caller identity owns durable records, and recovery/expansion behavior remains
+  restart-safe. Independent authority review approved the exact head after the
+  spoofed-caller regression was closed. Final evidence included 767 passed and
+  37 skipped locally plus all seven CI jobs. The `[skip ci]` merge triggered no
+  workflow or deployment.
 
 Capability, recovery, and operations:
 
@@ -132,7 +139,8 @@ Capability, recovery, and operations:
   regression peaked at 80.08 MiB. Both had zero OOMs and zero orphan runtime
   processes. The `[skip ci]` merge triggered no deployment.
 - [ ] [Expose truthful readiness, runtime identity, and bounded operational evidence](https://github.com/Khamel83/argus/issues/39)
-  — blocked by the sole HTTP authority and declared browser capability.
+  — both blockers are closed; this is the immediate native implementation
+  frontier.
 - [ ] [Run Argus on shared homelab PostgreSQL with verified recovery](https://github.com/Khamel83/argus/issues/40)
   — the safe pre-production toolkit merged in
   [feat: add safe shared PostgreSQL recovery toolkit](https://github.com/Khamel83/argus/pull/52)
