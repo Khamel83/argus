@@ -376,6 +376,10 @@ def test_safe_extraction_content_preserves_900k_with_bounded_runtime(tmp_path):
         '{"outer":"{\\"auth\\":\\"deepEncodedPayloadLeak987\\"}"}',
         '{"outer":"safe article auth=deepEncodedPayloadLeak987"}',
         "{'outer':[{'auth':'deepEncodedPayloadLeak987'}]}",
+        '{"outer":{"api key":"deepEncodedPayloadLeak987"}}',
+        '{"outer":[{"AUTH-token":"deepEncodedPayloadLeak987"}]}',
+        '{"outer":"{\\"session id\\":\\"deepEncodedPayloadLeak987\\"}"}',
+        "{'outer':[{'Credentials Password':'deepEncodedPayloadLeak987'}]}",
     ],
 )
 def test_outbox_redacts_nested_encoded_and_long_key_credentials(
@@ -418,6 +422,10 @@ def test_outbox_redacts_nested_encoded_and_long_key_credentials(
         '{"outer":"{\\"auth\\":\\"deepEncodedSummaryLeak987\\"}"}',
         '{"outer":"safe article auth=deepEncodedSummaryLeak987"}',
         "{'outer':[{'auth':'deepEncodedSummaryLeak987'}]}",
+        '{"outer":{"api key":"deepEncodedSummaryLeak987"}}',
+        '{"outer":[{"AUTH-token":"deepEncodedSummaryLeak987"}]}',
+        '{"outer":"{\\"session id\\":\\"deepEncodedSummaryLeak987\\"}"}',
+        "{'outer':[{'Credentials Password':'deepEncodedSummaryLeak987'}]}",
     ],
 )
 def test_dead_letter_redacts_nested_encoded_and_long_key_credentials(
@@ -456,8 +464,7 @@ def test_outbox_redacts_triple_encoded_query_key(tmp_path):
     repository = _repository(tmp_path)
     response = _response()
     response.results[0].url = (
-        "https://example.com/article?"
-        "%252561uth=tripleEncodedUrlLeak987&safe=visible"
+        "https://example.com/article?%252561uth=tripleEncodedUrlLeak987&safe=visible"
     )
 
     repository.accept(SearchQuery(query="triple encoded URL"), response)
@@ -526,6 +533,96 @@ def test_safe_json_extraction_preserves_899965_bytes_with_bounded_runtime(tmp_pa
     payload = json.loads(_outbox_row(repository).payload_json)
     assert payload["pages"][0]["content"] == content
     assert elapsed < 3.0
+
+
+def test_unicode_heavy_extraction_is_fitted_to_maya_request_byte_budget(tmp_path):
+    from argus.persistence.maya_outbox import MAYA_RETRIEVAL_PAYLOAD_MAX_BYTES
+
+    repository = _repository(tmp_path)
+    original = "😀" * 1_048_576
+    result = ExtractedContent(
+        url="https://example.com/emoji-article",
+        text=original,
+        word_count=1,
+        extractor=ExtractorName.TRAFILATURA,
+        attempts=[ExtractionAttempt("trafilatura", "success", 1)],
+    )
+
+    repository.record_extraction(
+        url=result.url,
+        domain=None,
+        mode="default",
+        caller="maya",
+        result=result,
+        latency_ms=1,
+        extraction_run_id="unicode-byte-budget",
+    )
+
+    row = _outbox_row(repository)
+    payload = json.loads(row.payload_json)
+    content = payload["pages"][0]["content"]
+    assert len(row.payload_json.encode("utf-8")) <= MAYA_RETRIEVAL_PAYLOAD_MAX_BYTES
+    assert 0 < len(content) < len(original)
+    assert content == "😀" * len(content)
+    assert (
+        payload["pages"][0]["content_sha256"]
+        == hashlib.sha256(content.encode("utf-8")).hexdigest()
+    )
+    assert row.content_sha256 == payload["pages"][0]["content_sha256"]
+
+
+def test_multi_page_capture_budget_includes_metadata_and_is_deterministic():
+    from argus.persistence.maya_outbox import (
+        MAYA_RETRIEVAL_PAYLOAD_MAX_BYTES,
+        _fit_maya_payload_to_budget,
+        _maya_payload_json,
+    )
+
+    content = "x" * 1_048_576
+    content_hash = hashlib.sha256(content.encode()).hexdigest()
+    provenance = {
+        "egress": "residential",
+        "machine": "m" * 128,
+        "provider": "p" * 64,
+        "providers": ["p" * 64] * 16,
+        "source_type": "s" * 64,
+    }
+    pages = [
+        {
+            "position": index,
+            "source_url": f"https://example.com/{index}/" + ("u" * 1900),
+            "title": "t" * 1024,
+            "content": content,
+            "content_sha256": content_hash,
+            "provenance": provenance,
+            "extracted_at": "2026-07-23T12:00:00Z",
+        }
+        for index in range(16)
+    ]
+    payload = {
+        "idempotency_key": "multi-page-budget",
+        "query": "q" * 4096,
+        "mode": "research",
+        "result_summary": "r" * 16_384,
+        "provenance": provenance,
+        "started_at": "2026-07-23T12:00:00Z",
+        "completed_at": "2026-07-23T12:01:00Z",
+        "pages": pages,
+    }
+
+    first = _fit_maya_payload_to_budget(payload)
+    second = _fit_maya_payload_to_budget(payload)
+    encoded = _maya_payload_json(first).encode("utf-8")
+
+    assert len(encoded) <= MAYA_RETRIEVAL_PAYLOAD_MAX_BYTES
+    assert first == second
+    assert all(page["content"] for page in first["pages"])
+    assert all(
+        page["content_sha256"]
+        == hashlib.sha256(page["content"].encode("utf-8")).hexdigest()
+        for page in first["pages"]
+    )
+    assert all(len(page["content"]) < len(content) for page in first["pages"])
 
 
 def test_extraction_content_preserves_newlines_and_hashes_verbatim(tmp_path):
@@ -613,6 +710,173 @@ def test_nonduplicate_receipt_cannot_acknowledge_zero_inserted_children(tmp_path
     assert row.status == "retry"
     assert row.delivered_at is None
     assert row.response_json is None
+    assert row.last_error_code == "invalid_maya_receipt"
+
+
+def test_partial_child_receipt_can_return_two_durable_ids_for_one_page_subset(
+    tmp_path,
+):
+    from argus.persistence.maya_outbox import MayaOutboxDispatcher
+
+    repository = _repository(tmp_path)
+    result = ExtractedContent(
+        url="https://example.com/second-page",
+        text="second child content",
+        word_count=3,
+        extractor=ExtractorName.TRAFILATURA,
+        attempts=[ExtractionAttempt("trafilatura", "success", 1)],
+    )
+    repository.record_extraction(
+        url=result.url,
+        domain=None,
+        mode="default",
+        caller="maya",
+        result=result,
+        latency_ms=1,
+        extraction_run_id="one-page-additive-retry",
+    )
+    receipt = _maya_receipt(pages=2)
+    receipt["children_added"] = 1
+    dispatcher = MayaOutboxDispatcher(
+        repository,
+        endpoint="http://maya/captures",
+        token="test-token",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(201, json=receipt)
+        ),
+        clock=lambda: datetime(2026, 7, 23, 12, 0),
+    )
+
+    assert dispatcher.run_once() == {"acknowledged": 1}
+    row = _outbox_row(repository)
+    assert row.status == "acknowledged"
+    assert json.loads(row.response_json)["page_ids"] == receipt["page_ids"]
+
+
+def test_two_page_retry_can_acknowledge_one_new_child(tmp_path):
+    from argus.persistence.maya_outbox import MayaOutboxDispatcher
+
+    repository = _repository(tmp_path)
+    result = ExtractedContent(
+        url="https://example.com/two-page-retry",
+        text="first child content",
+        word_count=3,
+        extractor=ExtractorName.TRAFILATURA,
+        attempts=[ExtractionAttempt("trafilatura", "success", 1)],
+    )
+    repository.record_extraction(
+        url=result.url,
+        domain=None,
+        mode="default",
+        caller="maya",
+        result=result,
+        latency_ms=1,
+        extraction_run_id="two-page-additive-retry",
+    )
+    with repository.session_factory.begin() as session:
+        row = session.scalar(select(DeliveryIntentRow))
+        payload = json.loads(row.payload_json)
+        second = {
+            **payload["pages"][0],
+            "position": 1,
+            "source_url": "https://example.com/two-page-retry/second",
+            "title": "Second page",
+            "content": "second child content",
+        }
+        second["content_sha256"] = hashlib.sha256(
+            second["content"].encode()
+        ).hexdigest()
+        payload["pages"].append(second)
+        row.payload_json = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        row.payload_sha256 = hashlib.sha256(row.payload_json.encode()).hexdigest()
+    receipt = _maya_receipt(pages=2)
+    receipt["children_added"] = 1
+    dispatcher = MayaOutboxDispatcher(
+        repository,
+        endpoint="http://maya/captures",
+        token="test-token",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(201, json=receipt)
+        ),
+        clock=lambda: datetime(2026, 7, 23, 12, 0),
+    )
+
+    assert dispatcher.run_once() == {"acknowledged": 1}
+    assert _outbox_row(repository).status == "acknowledged"
+
+
+@pytest.mark.parametrize(
+    ("pages", "status_code", "duplicate", "children_added", "page_id_count"),
+    [
+        (2, 201, False, 0, 2),
+        (2, 201, False, 1, 1),
+        (1, 201, False, 2, 2),
+        (1, 200, True, 1, 2),
+    ],
+)
+def test_additive_receipt_rejects_inconsistent_counts(
+    tmp_path,
+    pages,
+    status_code,
+    duplicate,
+    children_added,
+    page_id_count,
+):
+    from argus.persistence.maya_outbox import MayaOutboxDispatcher
+
+    repository = _repository(tmp_path)
+    result = ExtractedContent(
+        url="https://example.com/malformed-additive",
+        text="child content",
+        word_count=2,
+        extractor=ExtractorName.TRAFILATURA,
+        attempts=[ExtractionAttempt("trafilatura", "success", 1)],
+    )
+    repository.record_extraction(
+        url=result.url,
+        domain=None,
+        mode="default",
+        caller="maya",
+        result=result,
+        latency_ms=1,
+        extraction_run_id=f"malformed-additive-{pages}-{children_added}",
+    )
+    if pages == 2:
+        with repository.session_factory.begin() as session:
+            row = session.scalar(select(DeliveryIntentRow))
+            payload = json.loads(row.payload_json)
+            payload["pages"].append(
+                {
+                    **payload["pages"][0],
+                    "position": 1,
+                    "source_url": "https://example.com/malformed-additive/second",
+                }
+            )
+            row.payload_json = json.dumps(
+                payload,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            row.payload_sha256 = hashlib.sha256(row.payload_json.encode()).hexdigest()
+    receipt = _maya_receipt(pages=page_id_count, duplicate=duplicate)
+    receipt["children_added"] = children_added
+    dispatcher = MayaOutboxDispatcher(
+        repository,
+        endpoint="http://maya/captures",
+        token="test-token",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(status_code, json=receipt)
+        ),
+        clock=lambda: datetime(2026, 7, 23, 12, 0),
+    )
+
+    assert dispatcher.run_once() == {"retried": 1}
+    row = _outbox_row(repository)
+    assert row.status == "retry"
     assert row.last_error_code == "invalid_maya_receipt"
 
 

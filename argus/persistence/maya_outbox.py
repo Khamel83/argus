@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import copy
 import hashlib
 import json
 import re
@@ -32,9 +33,11 @@ _KEY_VALUE_RE = re.compile(
     r"""(?ix)
     (?P<prefix>
     (?<![A-Za-z0-9_.%+\\\-\[\]])
-    (?P<key_quote>["']?)
-    (?P<key>[A-Za-z_%\\][A-Za-z0-9_.%+\\\-\[\]]*)
-    (?P=key_quote)
+    (?:
+        "(?P<double_key>(?:\\.|[^"\\\r\n])+)"|
+        '(?P<single_key>(?:\\.|[^'\\\r\n])+)'|
+        (?P<bare_key>[A-Za-z_%\\][A-Za-z0-9_.%+\\\-\[\]]*)
+    )
     \s*[:=]\s*
     )
     (?P<value>
@@ -54,6 +57,11 @@ _MAX_EMBEDDED_SCALAR_CHARS = 65_536
 _MAX_URL_INPUT_BYTES = 8192
 _MAX_URL_QUERY_FIELDS = 64
 _MAX_URL_OUTPUT_BYTES = 2048
+_MAYA_MAX_RETRIEVAL_BODY_BYTES = 10 * 1024 * 1024
+_MAYA_TRANSPORT_HEADROOM_BYTES = 1024 * 1024
+MAYA_RETRIEVAL_PAYLOAD_MAX_BYTES = (
+    _MAYA_MAX_RETRIEVAL_BODY_BYTES - _MAYA_TRANSPORT_HEADROOM_BYTES
+)
 _SENSITIVE_KEY_SUBSTRINGS = (
     "auth",
     "session",
@@ -120,9 +128,8 @@ def _is_sensitive_key(value: object) -> bool:
     ).strip("_")
     tokens = tuple(token for token in normalized.split("_") if token)
     compact = "".join(tokens)
-    return (
-        "id" in tokens
-        or any(marker in compact for marker in _SENSITIVE_KEY_SUBSTRINGS)
+    return "id" in tokens or any(
+        marker in compact for marker in _SENSITIVE_KEY_SUBSTRINGS
     )
 
 
@@ -144,7 +151,12 @@ def _decoded_quoted_scalar(value: str) -> str | None:
 
 
 def _redact_key_value(match: re.Match, *, depth: int) -> str:
-    if _is_sensitive_key(match.group("key")):
+    key = (
+        match.group("double_key")
+        or match.group("single_key")
+        or match.group("bare_key")
+    )
+    if _is_sensitive_key(key):
         return "[redacted]"
     if depth >= _MAX_REDACTION_DEPTH:
         return f"{match.group('prefix')}[redacted]"
@@ -186,9 +198,7 @@ def _sanitize_structure(value: object, *, depth: int = 0) -> object:
             )
         return sanitized
     if isinstance(value, (list, tuple)):
-        return [
-            _sanitize_structure(item, depth=depth + 1) for item in value[:128]
-        ]
+        return [_sanitize_structure(item, depth=depth + 1) for item in value[:128]]
     if isinstance(value, str):
         return value[:4096]
     if value is None or isinstance(value, (bool, int, float)):
@@ -241,6 +251,74 @@ def _bounded_utf8(value: object, limit: int) -> str:
         "utf-8",
         errors="ignore",
     )
+
+
+def _maya_payload_json(payload: object) -> str:
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+
+
+def _fit_maya_payload_to_budget(payload: dict) -> dict:
+    fitted = copy.deepcopy(payload)
+    if len(_maya_payload_json(fitted).encode("utf-8")) <= (
+        MAYA_RETRIEVAL_PAYLOAD_MAX_BYTES
+    ):
+        return fitted
+
+    pages = fitted.get("pages")
+    if not isinstance(pages, list):
+        raise ValueError("Maya capture metadata exceeds request budget")
+    content_pages = [
+        page
+        for page in pages
+        if isinstance(page, dict)
+        and isinstance(page.get("content"), str)
+        and page["content"]
+    ]
+    if not content_pages:
+        raise ValueError("Maya capture metadata exceeds request budget")
+    originals = [page["content"] for page in content_pages]
+
+    def apply_ratio(ratio: int) -> None:
+        for page, original in zip(content_pages, originals, strict=True):
+            length = max(1, len(original) * ratio // 1_000_000)
+            page["content"] = original[:length]
+
+    apply_ratio(0)
+    if len(_maya_payload_json(fitted).encode("utf-8")) > (
+        MAYA_RETRIEVAL_PAYLOAD_MAX_BYTES
+    ):
+        raise ValueError("Maya capture metadata exceeds request budget")
+
+    low = 0
+    high = 1_000_000
+    while low < high:
+        candidate = (low + high + 1) // 2
+        apply_ratio(candidate)
+        if len(_maya_payload_json(fitted).encode("utf-8")) <= (
+            MAYA_RETRIEVAL_PAYLOAD_MAX_BYTES
+        ):
+            low = candidate
+        else:
+            high = candidate - 1
+    apply_ratio(low)
+    for page in content_pages:
+        page["content_sha256"] = hashlib.sha256(
+            page["content"].encode("utf-8")
+        ).hexdigest()
+    if len(_maya_payload_json(fitted).encode("utf-8")) > (
+        MAYA_RETRIEVAL_PAYLOAD_MAX_BYTES
+    ):
+        raise ValueError("Maya capture payload exceeds request budget")
+    return fitted
+
+
+def maya_payload_json(payload: dict) -> str:
+    return _maya_payload_json(_fit_maya_payload_to_budget(payload))
 
 
 def _safe_url(value: str) -> str:
@@ -348,21 +426,23 @@ def search_capture_payload(
         for result in response.results
         if result.metadata and result.metadata.get("machine")
     }
-    return {
-        "idempotency_key": response.search_run_id,
-        "query": _safe_text(query.query, 4096) or "[redacted]",
-        "mode": query.mode.value,
-        "result_summary": summary,
-        "provenance": _provenance(
-            providers=providers,
-            egress=next(iter(egresses)) if len(egresses) == 1 else "unknown",
-            machine=next(iter(machines)) if len(machines) == 1 else "unknown",
-            source_type="search",
-        ),
-        "started_at": _timestamp(response.created_at),
-        "completed_at": _timestamp(completed_at),
-        "pages": [],
-    }
+    return _fit_maya_payload_to_budget(
+        {
+            "idempotency_key": response.search_run_id,
+            "query": _safe_text(query.query, 4096) or "[redacted]",
+            "mode": query.mode.value,
+            "result_summary": summary,
+            "provenance": _provenance(
+                providers=providers,
+                egress=next(iter(egresses)) if len(egresses) == 1 else "unknown",
+                machine=next(iter(machines)) if len(machines) == 1 else "unknown",
+                source_type="search",
+            ),
+            "started_at": _timestamp(response.created_at),
+            "completed_at": _timestamp(completed_at),
+            "pages": [],
+        }
+    )
 
 
 def extraction_capture_payload(
@@ -408,7 +488,7 @@ def extraction_capture_payload(
         ),
         16_384,
     )
-    return (
+    payload = _fit_maya_payload_to_budget(
         {
             "idempotency_key": public_id,
             "query": _safe_url(result.url) or "[redacted]",
@@ -418,9 +498,12 @@ def extraction_capture_payload(
             "started_at": _timestamp(result.extracted_at),
             "completed_at": _timestamp(completed_at),
             "pages": pages,
-        },
-        content_sha256,
+        }
     )
+    fitted_content_hash = (
+        payload["pages"][0]["content_sha256"] if payload["pages"] else None
+    )
+    return payload, fitted_content_hash
 
 
 def excludes_capture(caller: str, *, user_visible: bool = True) -> bool:
@@ -602,7 +685,7 @@ class MayaOutboxDispatcher:
             or _MAYA_ID_RE.fullmatch(capture_id) is None
             or caller != "argus"
             or not isinstance(page_ids, list)
-            or len(page_ids) != len(expected_pages)
+            or not len(expected_pages) <= len(page_ids) <= 1000
             or not all(
                 isinstance(page_id, str) and _MAYA_ID_RE.fullmatch(page_id) is not None
                 for page_id in page_ids
@@ -617,7 +700,14 @@ class MayaOutboxDispatcher:
             or (status_code == 200 and (not duplicate or children_added != 0))
             or (
                 status_code == 201
-                and (duplicate or children_added != len(expected_pages))
+                and (
+                    duplicate
+                    or (
+                        expected_pages
+                        and not 1 <= children_added <= len(expected_pages)
+                    )
+                    or (not expected_pages and (children_added != 0 or page_ids))
+                )
             )
         ):
             return None

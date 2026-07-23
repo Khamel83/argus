@@ -35,6 +35,7 @@ from argus.models import SearchQuery, SearchResponse
 from argus.persistence.maya_outbox import (
     excludes_capture,
     extraction_capture_payload,
+    maya_payload_json,
     safe_failure_summary,
     search_capture_payload,
 )
@@ -638,7 +639,7 @@ class SqlAlchemySearchLedgerRepository:
             if delivery_state is not None:
                 delivery_id = uuid.uuid4().hex
                 payload_json = (
-                    _canonical_json(delivery_state["payload"])
+                    maya_payload_json(delivery_state["payload"])
                     if delivery_state["payload"] is not None
                     else None
                 )
@@ -1006,7 +1007,7 @@ class SqlAlchemySearchLedgerRepository:
                     result=result,
                     completed_at=now,
                 )
-                payload_json = _canonical_json(payload)
+                payload_json = maya_payload_json(payload)
                 delivery_status = "pending"
             delivery_id = uuid.uuid4().hex
             session.add(
