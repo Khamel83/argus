@@ -12,11 +12,10 @@ ROOT = Path(__file__).parents[1]
 def test_production_image_uses_matched_digest_pinned_playwright_base():
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
-    assert (
+    assert dockerfile.count(
         "mcr.microsoft.com/playwright/python:v1.58.0-noble"
         "@sha256:678457c4c323b981d8b4befc57b95366bb1bb6aa30057b1269f6b171e8d9975a"
-        in dockerfile
-    )
+    ) == 2
     assert "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright" in dockerfile
     assert "USER argus" in dockerfile
 
