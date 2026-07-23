@@ -384,6 +384,10 @@ class SqlAlchemySearchLedgerRepository:
                     committed_at=now,
                 )
             )
+            # Core upserts below trigger ORM autoflush. Flush the ledger
+            # parents deliberately before any child rows enter the unit of
+            # work so every dialect observes the same foreign-key order.
+            session.flush()
 
             for attempt in state["attempts"]:
                 session.add(

@@ -137,6 +137,27 @@ def test_sqlite_repository_commits_complete_accepted_retrieval(tmp_path):
     }
 
 
+def test_repository_flushes_ledger_parents_before_core_identity_upsert(tmp_path):
+    from sqlalchemy import event
+
+    repository = _sqlite_repository(tmp_path)
+    engine = repository.session_factory.kw["bind"]
+
+    @event.listens_for(engine, "connect")
+    def enforce_foreign_keys(dbapi_connection, connection_record):
+        dbapi_connection.execute("PRAGMA foreign_keys=ON")
+
+    engine.dispose()
+
+    receipt = repository.accept(
+        SearchQuery(query="atomic search"),
+        _response(run_id="parent-before-child"),
+    )
+
+    assert receipt.run_id == "parent-before-child"
+    assert _table_counts(repository)["retrieval_runs"] == 1
+
+
 def test_sqlite_repository_rolls_back_every_row_when_result_is_invalid(tmp_path):
     repository = _sqlite_repository(tmp_path)
     invalid = _response(url=None)
