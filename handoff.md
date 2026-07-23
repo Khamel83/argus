@@ -46,12 +46,13 @@ Immediate frontier:
 - [ ] [Fix failed Playwright launch leaks and the container OOM](https://github.com/Khamel83/argus/issues/22)
   — no blockers; prove lifecycle cleanup and the 512 MiB missing-browser
   regression.
-  - Draft implementation PR:
+  - Merged implementation PR:
     [fix(extraction): make Playwright lifecycle safe](https://github.com/Khamel83/argus/pull/45).
     Controller verification passed 356 tests plus focused lifecycle,
-    compilation, diff, privacy, and secret checks. The Docker daemon was
-    unavailable on the Mac, so the sanitized 512 MiB container canary remains
-    required before closing the issue.
+    compilation, diff, privacy, and secret checks. It was manually squash
+    merged as `efb7399` with push workflows skipped so the legacy automatic
+    deploy did not run. The sanitized 512 MiB homelab/CI container canary
+    remains required before closing the issue.
 - [ ] [Make Argus configuration and image CI hermetic](https://github.com/Khamel83/argus/issues/32)
   — no blockers; isolate tests from developer state and produce a reproducible,
   capability-verifiable image.
