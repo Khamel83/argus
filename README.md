@@ -208,7 +208,7 @@ The repo includes `.python-version` with `3.12` so `uv`, `pyenv`, and similar to
 
 ² WolframAlpha returns **computed answers** (math, unit conversions, factual lookups), not web search results. It only activates in `grounding` and `research` modes. Queries it can't compute (general web searches) return empty — no error, no health penalty.
 
-**12,000+ free queries/month** from recurring free-tier providers alone (WolframAlpha 2k + Brave 2k + Tavily 1k + Exa 1k + Linkup 1k + Parallel up to 5k). DuckDuckGo, Yahoo, and GitHub have no monthly cap. SearXNG is disabled by default (enable in `.env`). Routing priority: **Tier 0** (free: SearXNG*, DuckDuckGo, Yahoo, GitHub, WolframAlpha) → **Tier 1** (monthly recurring: Brave, Tavily, Exa, Linkup, Parallel) → **Tier 3** (one-time: Serper, You.com, Valyu, SearchAPI). Budget-exhausted providers are skipped automatically.
+**7,000+ free queries/month** from recurring free-tier providers with API keys (WolframAlpha 2k + Brave 2k + Tavily 1k + Exa 1k + Linkup 1k), or **up to 12,000+** when Parallel's monthly credit is available to an eligible account with a card on file. DuckDuckGo, Yahoo, and GitHub have no monthly cap. SearXNG is disabled by default (enable in `.env`). Routing priority: **Tier 0** (free: SearXNG*, DuckDuckGo, Yahoo, GitHub, WolframAlpha) → **Tier 1** (monthly recurring: Brave, Tavily, Exa, Linkup, Parallel) → **Tier 3** (one-time: Serper, You.com, Valyu, SearchAPI). Budget-exhausted providers are skipped automatically.
 
 ## HTTP API
 
