@@ -102,7 +102,11 @@ class SessionStore:
         return session
 
     def add_extracted_url(self, session_id: str, query_index: int, url: str) -> None:
-        session = self._sessions.get(session_id)
+        session = (
+            self._load_session(session_id)
+            if self._persist and self._db
+            else self._sessions.get(session_id)
+        )
         if session is None:
             return
         if not 0 <= query_index < len(session.queries):
@@ -116,6 +120,5 @@ class SessionStore:
     def list_sessions(self) -> list[Session]:
         if self._persist and self._db:
             for session_id in self._db.list_session_ids():
-                if session_id not in self._sessions:
-                    self._load_session(session_id)
+                self._load_session(session_id)
         return list(self._sessions.values())

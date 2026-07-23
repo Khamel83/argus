@@ -291,6 +291,44 @@ def test_persistent_create_session_returns_authoritative_existing_history(tmp_pa
     assert [record.query for record in existing.queries] == ["new durable turn"]
 
 
+def test_cross_worker_extracted_url_refreshes_before_query_validation(tmp_path):
+    from argus.sessions.store import SessionStore
+
+    database_url = f"sqlite:///{tmp_path / 'cross-worker-url.db'}"
+    first = SessionStore(repository=_repository_for_url(database_url))
+    second = SessionStore(repository=_repository_for_url(database_url))
+    first.create_session("shared")
+    second.create_session("shared")
+    second.add_query("shared", query="durable remote turn")
+
+    first.add_extracted_url(
+        "shared",
+        0,
+        "https://example.com/remote-turn",
+    )
+
+    loaded = second.get_session("shared")
+    assert loaded.queries[0].extracted_urls == [
+        "https://example.com/remote-turn"
+    ]
+
+
+def test_list_sessions_refreshes_existing_persistent_sessions(tmp_path):
+    from argus.sessions.store import SessionStore
+
+    database_url = f"sqlite:///{tmp_path / 'list-shared-sessions.db'}"
+    first = SessionStore(repository=_repository_for_url(database_url))
+    second = SessionStore(repository=_repository_for_url(database_url))
+    first.create_session("shared")
+    second.create_session("shared")
+    second.add_query("shared", query="new durable turn")
+
+    listed = {session.id: session for session in first.list_sessions()}
+    assert [record.query for record in listed["shared"].queries] == [
+        "new durable turn"
+    ]
+
+
 def test_concurrent_session_creation_and_query_allocation_are_atomic(tmp_path):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
@@ -347,6 +385,42 @@ def test_session_url_deduplication_uses_sanitized_identity(tmp_path):
         "https://example.com/article?token=%5Bredacted%5D"
     ]
     assert count == 1
+
+
+def test_concurrent_sanitized_session_url_inserts_are_idempotent(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from argus.persistence.search_ledger import SessionExtractedUrlRow
+
+    database_url = f"sqlite:///{tmp_path / 'concurrent-session-urls.db'}"
+    repository = _repository_for_url(database_url)
+    repository.create_session("concurrent-urls")
+    repository.append_session_query(
+        "concurrent-urls",
+        query="one",
+        mode="discovery",
+        timestamp=QueryRecord(query="one").timestamp,
+        results_count=1,
+    )
+    worker_count = 8
+    barrier = Barrier(worker_count)
+
+    def append(worker: int) -> None:
+        worker_repository = _repository_for_url(database_url)
+        barrier.wait()
+        worker_repository.append_session_extracted_url(
+            "concurrent-urls",
+            0,
+            f"https://example.com/article?token=worker-{worker}",
+        )
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        list(executor.map(append, range(worker_count)))
+
+    with repository.session_factory() as session:
+        urls = list(session.scalars(select(SessionExtractedUrlRow.url)))
+    assert urls == ["https://example.com/article?token=%5Bredacted%5D"]
 
 
 def test_session_cache_does_not_advance_when_durable_append_fails():
@@ -758,3 +832,39 @@ def test_postgresql_concurrent_session_creation_and_query_allocation(
     assert {record.query for record in loaded.queries} == {
         f"query-{worker}" for worker in range(worker_count)
     }
+
+
+def test_postgresql_concurrent_sanitized_session_url_inserts_are_idempotent(
+    migrated_postgres_ledger,
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from argus.persistence.search_ledger import SessionExtractedUrlRow
+
+    repository = migrated_postgres_ledger
+    repository.create_session("postgres-concurrent-urls")
+    repository.append_session_query(
+        "postgres-concurrent-urls",
+        query="one",
+        mode="discovery",
+        timestamp=QueryRecord(query="one").timestamp,
+        results_count=1,
+    )
+    worker_count = 8
+    barrier = Barrier(worker_count)
+
+    def append(worker: int) -> None:
+        barrier.wait()
+        repository.append_session_extracted_url(
+            "postgres-concurrent-urls",
+            0,
+            f"https://example.com/article?token=worker-{worker}",
+        )
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        list(executor.map(append, range(worker_count)))
+
+    with repository.session_factory() as session:
+        urls = list(session.scalars(select(SessionExtractedUrlRow.url)))
+    assert urls == ["https://example.com/article?token=%5Bredacted%5D"]

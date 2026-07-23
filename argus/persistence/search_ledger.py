@@ -996,20 +996,37 @@ class SqlAlchemySearchLedgerRepository:
             )
             if query_row is None:
                 raise IndexError("session query index is out of range")
-            exists = session.scalar(
+            values = {
+                "id": uuid.uuid4().hex,
+                "query_id": query_row.id,
+                "url": sanitized_url,
+            }
+            dialect = session.get_bind().dialect.name
+            if dialect == "postgresql":
+                from sqlalchemy.dialects.postgresql import insert
+
+                statement = insert(SessionExtractedUrlRow).values(**values)
+                session.execute(
+                    statement.on_conflict_do_nothing(
+                        index_elements=["query_id", "url"]
+                    )
+                )
+            elif dialect == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert
+
+                statement = insert(SessionExtractedUrlRow).values(**values)
+                session.execute(
+                    statement.on_conflict_do_nothing(
+                        index_elements=["query_id", "url"]
+                    )
+                )
+            elif session.scalar(
                 select(SessionExtractedUrlRow.id).where(
                     SessionExtractedUrlRow.query_id == query_row.id,
                     SessionExtractedUrlRow.url == sanitized_url,
                 )
-            )
-            if exists is None:
-                session.add(
-                    SessionExtractedUrlRow(
-                        id=uuid.uuid4().hex,
-                        query_id=query_row.id,
-                        url=sanitized_url,
-                    )
-                )
+            ) is None:
+                session.add(SessionExtractedUrlRow(**values))
 
     def load_session(self, session_id: str):
         from argus.sessions.models import QueryRecord, Session
