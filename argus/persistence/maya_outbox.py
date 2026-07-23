@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import ast
-import json
 import hashlib
+import json
 import re
 from collections import Counter
 from datetime import datetime, timezone
@@ -14,7 +13,6 @@ from urllib.parse import (
     quote,
     urlencode,
     unquote,
-    unquote_plus,
     urlsplit,
     urlunsplit,
 )
@@ -31,9 +29,9 @@ _AUTH_SCHEME_RE = re.compile(r"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9+/._~=-]{4,}")
 _COOKIE_HEADER_RE = re.compile(r"(?i)\b(?:set-cookie|cookie)\s*:\s*[^\r\n]+")
 _KEY_VALUE_RE = re.compile(
     r"""(?ix)
-    (?<![A-Za-z0-9_])
+    (?<![A-Za-z0-9_.%+\\\-\[\]])
     (?P<key_quote>["']?)
-    (?P<key>[A-Za-z%][A-Za-z0-9_.%+\-\[\] ]{0,127})
+    (?P<key>[A-Za-z_%\\][A-Za-z0-9_.%+\\\-\[\]]*)
     (?P=key_quote)
     \s*[:=]\s*
     (?:
@@ -43,6 +41,9 @@ _KEY_VALUE_RE = re.compile(
     )
     """
 )
+_JSON_UNICODE_ESCAPE_RE = re.compile(r"\\u([0-9a-fA-F]{4})")
+_MAX_DECODE_ROUNDS = 4
+_MAX_DECODE_CHARS = 1_048_576
 _SENSITIVE_KEY_SUBSTRINGS = (
     "auth",
     "session",
@@ -85,8 +86,22 @@ _MAYA_RECEIPT_KEYS = {
 }
 
 
+def _decode_identifier(value: object) -> str:
+    decoded = str(value).strip()[:_MAX_DECODE_CHARS]
+    for _ in range(_MAX_DECODE_ROUNDS):
+        candidate = unquote(decoded)
+        candidate = _JSON_UNICODE_ESCAPE_RE.sub(
+            lambda match: chr(int(match.group(1), 16)),
+            candidate,
+        )[:_MAX_DECODE_CHARS]
+        if candidate == decoded:
+            break
+        decoded = candidate
+    return decoded
+
+
 def _is_sensitive_key(value: object) -> bool:
-    decoded = unquote_plus(str(value).strip())
+    decoded = _decode_identifier(value)
     with_camel_boundaries = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", decoded)
     normalized = re.sub(
         r"[^a-z0-9]+",
@@ -139,24 +154,7 @@ def _bounded_text(value: object, scan_limit: int) -> str:
             ensure_ascii=False,
             separators=(",", ":"),
         )[:scan_limit]
-    text = str(value or "")[:scan_limit]
-    stripped = text.strip()
-    if stripped.startswith(("{", "[")):
-        parsed = None
-        try:
-            parsed = json.loads(stripped)
-        except (TypeError, ValueError, json.JSONDecodeError):
-            try:
-                parsed = ast.literal_eval(stripped)
-            except (TypeError, ValueError, SyntaxError, MemoryError, RecursionError):
-                pass
-        if isinstance(parsed, (dict, list, tuple)):
-            return json.dumps(
-                _sanitize_structure(parsed),
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )[:scan_limit]
-    return text
+    return str(value or "")[:scan_limit]
 
 
 def _redact_text(value: object, limit: int) -> str:
@@ -193,7 +191,18 @@ def _safe_url(value: str) -> str:
         for key, item in parse_qsl(parts.query, keep_blank_values=True)
         if not _is_sensitive_key(key)
     ]
-    path = quote(_safe_text(unquote(parts.path), 2048), safe="/:@-._~")
+    path_segments = []
+    redact_next = False
+    for segment in _decode_identifier(parts.path).split("/"):
+        if redact_next:
+            path_segments.append("[redacted]")
+            redact_next = False
+        elif _is_sensitive_key(segment):
+            path_segments.append("[redacted]")
+            redact_next = True
+        else:
+            path_segments.append(_safe_text(segment, 2048))
+    path = quote("/".join(path_segments), safe="/:@-._~[]")
     return urlunsplit((parts.scheme, host, path, urlencode(query), ""))[:2048]
 
 
@@ -301,7 +310,11 @@ def extraction_capture_payload(
             {
                 "position": 0,
                 "source_url": _safe_url(result.url),
-                "title": _safe_text(result.title or result.url, 1024)
+                "title": (
+                    _safe_text(result.title, 1024)
+                    if result.title
+                    else _safe_url(result.url)
+                )
                 or "Extracted page",
                 "content": content,
                 "content_sha256": content_sha256,

@@ -1,5 +1,5 @@
-import json
 import hashlib
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -355,6 +355,158 @@ def test_safe_extraction_content_preserves_900k_with_bounded_runtime(tmp_path):
         result=result,
         latency_ms=1,
         extraction_run_id="large-safe-content",
+    )
+    elapsed = time.perf_counter() - started
+
+    payload = json.loads(_outbox_row(repository).payload_json)
+    assert payload["pages"][0]["content"] == content
+    assert elapsed < 3.0
+
+
+@pytest.mark.parametrize(
+    "credential",
+    [
+        "%2561uth=deepEncodedPayloadLeak987",
+        'prefix {"\\u0061uth":"deepEncodedPayloadLeak987"} suffix',
+        f"{'_' * 192}token=deepEncodedPayloadLeak987",
+    ],
+)
+def test_outbox_redacts_nested_encoded_and_long_key_credentials(
+    tmp_path,
+    credential,
+):
+    repository = _repository(tmp_path)
+    result = ExtractedContent(
+        url="https://example.com/article",
+        text=credential,
+        word_count=1,
+        extractor=ExtractorName.TRAFILATURA,
+        attempts=[ExtractionAttempt("trafilatura", "success", 1)],
+    )
+
+    repository.record_extraction(
+        url=result.url,
+        domain=None,
+        mode="default",
+        caller="maya",
+        result=result,
+        latency_ms=1,
+        extraction_run_id="nested-credential-redaction",
+    )
+
+    row = _outbox_row(repository)
+    assert "deepEncodedPayloadLeak987" not in row.payload_json
+    assert "[redacted]" in row.payload_json
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "%2561uth=deepEncodedSummaryLeak987",
+        'prefix {"\\u0061uth":"deepEncodedSummaryLeak987"} suffix',
+        f"{'_' * 192}token=deepEncodedSummaryLeak987",
+    ],
+)
+def test_dead_letter_redacts_nested_encoded_and_long_key_credentials(
+    tmp_path,
+    message,
+):
+    from argus.persistence.maya_outbox import MayaOutboxDispatcher
+
+    repository = _repository(tmp_path)
+    repository.accept(SearchQuery(query="nested unsafe summary"), _response())
+    dispatcher = MayaOutboxDispatcher(
+        repository,
+        endpoint="http://maya/captures",
+        token="test-token",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                422,
+                json={
+                    "detail": {
+                        "code": "invalid_capture_request",
+                        "message": message,
+                    }
+                },
+            )
+        ),
+        clock=lambda: datetime(2026, 7, 23, 12, 0),
+    )
+
+    assert dispatcher.run_once() == {"dead_lettered": 1}
+    row = _outbox_row(repository)
+    assert "deepEncodedSummaryLeak987" not in row.last_error_summary
+    assert "[redacted]" in row.last_error_summary
+
+
+def test_outbox_redacts_triple_encoded_query_key(tmp_path):
+    repository = _repository(tmp_path)
+    response = _response()
+    response.results[0].url = (
+        "https://example.com/article?"
+        "%252561uth=tripleEncodedUrlLeak987&safe=visible"
+    )
+
+    repository.accept(SearchQuery(query="triple encoded URL"), response)
+
+    row = _outbox_row(repository)
+    assert "tripleEncodedUrlLeak987" not in row.payload_json
+    assert "visible" in row.payload_json
+
+
+def test_extraction_url_redacts_credential_bearing_path_everywhere(tmp_path):
+    repository = _repository(tmp_path)
+    sentinel = "credentialPathLeak987"
+    result = ExtractedContent(
+        url=f"https://example.com/auth/{sentinel}/reset?safe=visible",
+        text="safe extracted content",
+        word_count=3,
+        extractor=ExtractorName.TRAFILATURA,
+        attempts=[ExtractionAttempt("trafilatura", "success", 1)],
+    )
+
+    repository.record_extraction(
+        url=result.url,
+        domain=None,
+        mode="default",
+        caller="maya",
+        result=result,
+        latency_ms=1,
+        extraction_run_id="credential-path-redaction",
+    )
+
+    payload = json.loads(_outbox_row(repository).payload_json)
+    assert sentinel not in json.dumps(payload)
+    assert "[redacted]" in payload["query"]
+    assert "[redacted]" in payload["result_summary"]
+    assert "[redacted]" in payload["pages"][0]["source_url"]
+    assert "visible" in payload["query"]
+
+
+def test_safe_json_extraction_preserves_899965_bytes_with_bounded_runtime(tmp_path):
+    repository = _repository(tmp_path)
+    target_size = 899_965
+    prefix = '{"article":"'
+    suffix = '"}'
+    content = prefix + ("x" * (target_size - len(prefix) - len(suffix))) + suffix
+    assert len(content.encode("utf-8")) == target_size
+    result = ExtractedContent(
+        url="https://example.com/large-json-article",
+        text=content,
+        word_count=1,
+        extractor=ExtractorName.TRAFILATURA,
+        attempts=[ExtractionAttempt("trafilatura", "success", 1)],
+    )
+
+    started = time.perf_counter()
+    repository.record_extraction(
+        url=result.url,
+        domain=None,
+        mode="default",
+        caller="maya",
+        result=result,
+        latency_ms=1,
+        extraction_run_id="large-safe-json-content",
     )
     elapsed = time.perf_counter() - started
 
