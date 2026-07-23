@@ -18,10 +18,13 @@ class ProviderHealth:
     last_success: Optional[float] = None  # timestamp
     last_failure: Optional[float] = None  # timestamp
     disabled_until: Optional[float] = None  # cooldown deadline
+    half_open_claimed: bool = False
 
     def record_success(self) -> None:
         self.consecutive_failures = 0
         self.last_success = time.time()
+        self.disabled_until = None
+        self.half_open_claimed = False
 
     def record_failure(self) -> None:
         self.consecutive_failures += 1
@@ -34,6 +37,7 @@ class ProviderHealth:
 
     def apply_cooldown(self, minutes: int) -> None:
         self.disabled_until = time.time() + (minutes * 60)
+        self.half_open_claimed = False
 
 
 class HealthTracker:
@@ -57,12 +61,31 @@ class HealthTracker:
             health.apply_cooldown(self._cooldown_minutes)
 
     def get_status(self, provider: ProviderName) -> Optional[ProviderStatus]:
+        return self._status(provider, claim_half_open=True)
+
+    def peek_status(self, provider: ProviderName) -> Optional[ProviderStatus]:
+        """Read status without consuming a post-cooldown half-open attempt."""
+        return self._status(provider, claim_half_open=False)
+
+    def _status(
+        self,
+        provider: ProviderName,
+        *,
+        claim_half_open: bool,
+    ) -> Optional[ProviderStatus]:
         health = self._health.get(provider)
         if health is None:
             return None
         if health.is_in_cooldown():
             return ProviderStatus.TEMPORARILY_DISABLED
         if health.consecutive_failures >= self._failure_threshold:
+            if (
+                claim_half_open
+                and health.disabled_until is not None
+                and not health.half_open_claimed
+            ):
+                health.half_open_claimed = True
+                return None
             return ProviderStatus.DEGRADED
         return None
 
@@ -76,7 +99,7 @@ class HealthTracker:
     def get_all_status(self) -> dict[ProviderName, dict]:
         result = {}
         for provider, health in self._health.items():
-            status = self.get_status(provider)
+            status = self.peek_status(provider)
             result[provider] = {
                 "consecutive_failures": health.consecutive_failures,
                 "last_success": health.last_success,

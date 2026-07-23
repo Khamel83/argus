@@ -323,8 +323,11 @@ def browser_capability_status() -> dict[str, object]:
     status["memory_bytes"] = memory_bytes
     status["process_restarts"] = max(0, _browser_start_count - 1)
     status["remote_connections"] = _remote_connection_count
-    status["runtime_state"] = _browser_runtime_state
-    status["runtime_reason"] = _browser_runtime_reason
+    disconnected = not loaded and _browser_runtime_state == "healthy"
+    status["runtime_state"] = "degraded" if disconnected else _browser_runtime_state
+    status["runtime_reason"] = (
+        "browser_disconnected" if disconnected else _browser_runtime_reason
+    )
     status["metrics_source"] = "process_memory_since_start"
     status["matches_declared"] = (
         status.get("declared") is status.get("available")

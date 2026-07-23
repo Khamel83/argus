@@ -182,7 +182,7 @@ class SearchBroker:
         base_status = provider_obj.status() if provider_obj else "unknown"
 
         health = self._health.peek_health(provider)
-        health_status = self._health.get_status(provider)
+        health_status = self._health.peek_status(provider)
         budget_status = self._budgets.check_status(provider)
 
         effective = base_status

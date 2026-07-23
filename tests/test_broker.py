@@ -118,6 +118,71 @@ async def test_background_probe_refresh_establishes_health_evidence():
     assert broker._health.peek_health(ProviderName.DUCKDUCKGO).last_success is not None
 
 
+@pytest.mark.asyncio
+async def test_paid_provider_recovers_after_bounded_reachability_half_open(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.broker.reachability import ReachabilityMatrix
+
+    now = [100.0]
+    monkeypatch.setattr("argus.broker.health.time.time", lambda: now[0])
+    matrix = ReachabilityMatrix(clock=lambda: now[0], failure_ttl_seconds=30)
+    provider = StubProvider(
+        name=ProviderName.BRAVE,
+        trace=ProviderTrace(
+            provider=ProviderName.BRAVE,
+            status="error",
+            latency_ms=450,
+        ),
+    )
+    budgets = BudgetTracker()
+    budgets.set_budget(ProviderName.BRAVE, 100.0)
+    spend = MagicMock()
+    spend.reserve.return_value = MagicMock(
+        attempt_id="attempt-1",
+        reserved_charge=0.01,
+    )
+    executor = ProviderExecutor(
+        providers={ProviderName.BRAVE: provider},
+        health_tracker=HealthTracker(
+            failure_threshold=1,
+            cooldown_minutes=0.5,
+        ),
+        budget_tracker=budgets,
+        reachability=matrix,
+        spend_repository=spend,
+    )
+    query = SearchQuery(
+        query="paid recovery",
+        providers=[ProviderName.BRAVE],
+        caller="test",
+    )
+
+    first = await executor.execute(query, [ProviderName.BRAVE])
+    immediate = await executor.execute(query, [ProviderName.BRAVE])
+
+    assert first.traces[0].status == "error"
+    assert immediate.traces[0].error == ("health: temporarily_disabled_after_failures")
+    assert provider.calls == 1
+    assert spend.reserve.call_count == 1
+
+    now[0] += 31
+    provider.trace = ProviderTrace(
+        provider=ProviderName.BRAVE,
+        status="success",
+        latency_ms=25,
+    )
+
+    recovered = await executor.execute(query, [ProviderName.BRAVE])
+
+    assert recovered.traces[0].status == "success"
+    assert provider.calls == 2
+    assert matrix.get_all()[ProviderName.BRAVE]["probes"]["local"]["reachable"] is True
+
+
 # --- Policies ---
 
 
@@ -472,7 +537,7 @@ class TestHealth:
         # At threshold, cooldown is applied -> temporarily_disabled
         assert h.get_status(ProviderName.BRAVE) == ProviderStatus.TEMPORARILY_DISABLED
 
-    def test_degraded_when_cooldown_expires(self):
+    def test_cooldown_expiry_allows_one_half_open_attempt(self):
         from argus.broker.health import HealthTracker
         from argus.models import ProviderName
 
@@ -482,7 +547,8 @@ class TestHealth:
         # Manually expire the cooldown
         health = h.get_health(ProviderName.BRAVE)
         health.disabled_until = 0  # expired
-        # Failures still >= threshold, cooldown expired -> degraded
+        assert h.peek_status(ProviderName.BRAVE) == ProviderStatus.DEGRADED
+        assert h.get_status(ProviderName.BRAVE) is None
         assert h.get_status(ProviderName.BRAVE) == ProviderStatus.DEGRADED
 
     def test_cooldown_applied_after_threshold(self):

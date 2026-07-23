@@ -62,6 +62,18 @@ def _iso(value: datetime) -> str:
     return _aware(value).isoformat().replace("+00:00", "Z")
 
 
+def _bounded_iso8601(value: object) -> str | None:
+    if not isinstance(value, str) or not (1 <= len(value) <= 64):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return _iso(parsed)
+
+
 def _sanitize_reason(value: object) -> str | None:
     if value is None:
         return None
@@ -215,11 +227,14 @@ def _bounded_details(details: Mapping[str, Any]) -> dict[str, Any]:
             }
         elif value is None or isinstance(value, (bool, int, float)):
             result[key] = value
+        elif key == "evidence_at":
+            timestamp = _bounded_iso8601(value)
+            if timestamp is not None:
+                result[key] = timestamp
         elif key in {
             "cooldown_until",
             "schema_head",
             "runtime_state",
-            "evidence_at",
         }:
             result[key] = _safe_identity(value)
     return result
@@ -443,6 +458,7 @@ class OperationalStatusService:
         self._startup = ObservationStore(clock=clock)
         self._dependencies = ObservationStore(clock=clock)
         self._providers: dict[str, ObservationStore] = {}
+        self._initialized_once = False
         self.metrics = BoundedMetrics()
         for dependency in _DEPENDENCIES:
             self._dependencies.observe(
@@ -480,6 +496,7 @@ class OperationalStatusService:
         source: str,
         reason: object | None = None,
     ) -> None:
+        self._initialized_once = True
         self._startup.observe(
             "initialization",
             state="healthy",
@@ -489,6 +506,8 @@ class OperationalStatusService:
         )
 
     def mark_initialization_failed(self, *, source: str, reason: object) -> None:
+        if self._initialized_once:
+            return
         self._startup.observe(
             "initialization",
             state="unready",
@@ -855,6 +874,9 @@ def _observe_provider_status(
             probe_values = [
                 probe for probe in probes.values() if isinstance(probe, Mapping)
             ]
+            current_probe_values = [
+                probe for probe in probe_values if probe.get("stale") is not True
+            ]
             observed_timestamps = [
                 probe.get("last_checked")
                 for probe in probe_values
@@ -865,24 +887,37 @@ def _observe_provider_status(
                 if observed_timestamps
                 else now
             )
-            reachable = any(probe.get("reachable") is True for probe in probe_values)
-            reachability_source = (
-                "provider_execution"
-                if any(
-                    probe.get("source") == "provider_execution"
-                    for probe in probe_values
+            if probe_values and not current_probe_values:
+                service.observe_provider(
+                    name,
+                    "reachability",
+                    state="unknown",
+                    source="reachability_probe",
+                    observed_at=now,
+                    ttl=timedelta(minutes=5),
+                    reason="reachability_evidence_expired",
                 )
-                else "reachability_probe"
-            )
-            service.observe_provider(
-                name,
-                "reachability",
-                state="healthy" if reachable else "unready",
-                source=reachability_source,
-                observed_at=observed,
-                ttl=timedelta(minutes=35),
-                reason=None if reachable else "all_egress_probes_failed",
-            )
+            else:
+                reachable = any(
+                    probe.get("reachable") is True for probe in current_probe_values
+                )
+                reachability_source = (
+                    "provider_execution"
+                    if any(
+                        probe.get("source") == "provider_execution"
+                        for probe in current_probe_values
+                    )
+                    else "reachability_probe"
+                )
+                service.observe_provider(
+                    name,
+                    "reachability",
+                    state="healthy" if reachable else "unready",
+                    source=reachability_source,
+                    observed_at=observed,
+                    ttl=timedelta(minutes=35),
+                    reason=None if reachable else "all_egress_probes_failed",
+                )
         else:
             service.observe_provider(
                 name,
@@ -1172,9 +1207,10 @@ def refresh_operational_status(
         available = browser_status.get("available") is True
         loaded = browser_status.get("loaded") is True
         runtime_state = str(browser_status.get("runtime_state") or "unknown")
+        disconnected = not loaded and runtime_state == "healthy"
         browser_state = (
             "degraded"
-            if not available or runtime_state == "degraded"
+            if not available or runtime_state == "degraded" or disconnected
             else "healthy"
             if runtime_state == "healthy"
             else "unknown"
@@ -1188,6 +1224,8 @@ def refresh_operational_status(
             reason=(
                 browser_status.get("degraded_reason")
                 if not available
+                else "browser_disconnected"
+                if disconnected
                 else browser_status.get("runtime_reason")
                 if browser_state != "healthy"
                 else None
@@ -1260,6 +1298,17 @@ def refresh_operational_status(
                     reason=f"{name}_evidence_unavailable",
                 )
                 continue
+            evidence_at = _bounded_iso8601(section.get(timestamp_key))
+            if evidence_at is None:
+                service.observe_dependency(
+                    name,
+                    state="unknown",
+                    source="recovery_evidence",
+                    observed_at=observed,
+                    ttl=timedelta(minutes=5),
+                    reason=f"{name}_evidence_timestamp_unavailable",
+                )
+                continue
             fresh = section.get("fresh") is True
             scope_complete = (
                 section.get("scope_complete") is True
@@ -1267,17 +1316,6 @@ def refresh_operational_status(
                 else section.get("verified") is True
             )
             state = "healthy" if fresh and scope_complete else "degraded"
-            evidence_at = None
-            try:
-                evidence_at = _iso(
-                    _aware(
-                        datetime.fromisoformat(
-                            str(section[timestamp_key]).replace("Z", "+00:00")
-                        )
-                    )
-                )
-            except (KeyError, TypeError, ValueError):
-                pass
             service.observe_dependency(
                 name,
                 state=state,

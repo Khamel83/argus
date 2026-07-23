@@ -38,6 +38,39 @@ def test_best_egress_default_local_when_never_probed():
     assert m.best_egress(ProviderName.SEARXNG) == "local"
 
 
+def test_failed_probe_expires_into_one_half_open_local_retry():
+    now = [100.0]
+    matrix = ReachabilityMatrix(clock=lambda: now[0], failure_ttl_seconds=30)
+    matrix.update_probe(
+        "local",
+        ProviderName.BRAVE,
+        reachable=False,
+        latency_ms=450,
+        source="provider_execution",
+    )
+
+    assert matrix.best_egress(ProviderName.BRAVE) is None
+
+    now[0] += 31
+
+    assert matrix.best_egress(ProviderName.BRAVE) == "local"
+    assert matrix.best_egress(ProviderName.BRAVE) is None
+
+
+def test_stale_local_probe_does_not_hide_current_worker_snapshot():
+    now = [100.0]
+    matrix = ReachabilityMatrix(
+        clock=lambda: now[0],
+        failure_ttl_seconds=30,
+        success_ttl_seconds=300,
+    )
+    matrix.update_probe("local", ProviderName.YAHOO, reachable=False, latency_ms=450)
+    matrix.update_probe("homelab", ProviderName.YAHOO, reachable=True, latency_ms=25)
+    now[0] += 31
+
+    assert matrix.get_all()[ProviderName.YAHOO]["best"] == "homelab"
+
+
 def test_best_egress_picks_lower_latency_among_workers():
     m = ReachabilityMatrix()
     m.update_probe("local", ProviderName.YAHOO, reachable=False, latency_ms=0)
@@ -60,11 +93,21 @@ async def test_probe_all_marks_reachable_on_success():
     matrix = ReachabilityMatrix()
     mock_provider = AsyncMock()
     mock_provider.is_available = MagicMock(return_value=True)
-    mock_provider.search = AsyncMock(return_value=(
-        [SearchResult(url="u", title="t", snippet="s", provider=ProviderName.YAHOO)],
-        ProviderTrace(provider=ProviderName.YAHOO, status="success",
-                      results_count=1, latency_ms=50),
-    ))
+    mock_provider.search = AsyncMock(
+        return_value=(
+            [
+                SearchResult(
+                    url="u", title="t", snippet="s", provider=ProviderName.YAHOO
+                )
+            ],
+            ProviderTrace(
+                provider=ProviderName.YAHOO,
+                status="success",
+                results_count=1,
+                latency_ms=50,
+            ),
+        )
+    )
 
     await matrix.probe_all(
         local_providers={ProviderName.YAHOO: mock_provider},
@@ -82,11 +125,17 @@ async def test_probe_all_marks_blocked_on_error():
     matrix = ReachabilityMatrix()
     mock_provider = AsyncMock()
     mock_provider.is_available = MagicMock(return_value=True)
-    mock_provider.search = AsyncMock(return_value=(
-        [],
-        ProviderTrace(provider=ProviderName.YAHOO, status="error",
-                      error="500 INKApi Error", latency_ms=170),
-    ))
+    mock_provider.search = AsyncMock(
+        return_value=(
+            [],
+            ProviderTrace(
+                provider=ProviderName.YAHOO,
+                status="error",
+                error="500 INKApi Error",
+                latency_ms=170,
+            ),
+        )
+    )
 
     await matrix.probe_all(
         local_providers={ProviderName.YAHOO: mock_provider},
@@ -106,21 +155,34 @@ async def test_probe_all_probes_remote_nodes():
     # Local Yahoo blocked
     local_yahoo = AsyncMock()
     local_yahoo.is_available = MagicMock(return_value=True)
-    local_yahoo.search = AsyncMock(return_value=(
-        [],
-        ProviderTrace(provider=ProviderName.YAHOO, status="error", latency_ms=100),
-    ))
+    local_yahoo.search = AsyncMock(
+        return_value=(
+            [],
+            ProviderTrace(provider=ProviderName.YAHOO, status="error", latency_ms=100),
+        )
+    )
 
     # Remote Yahoo succeeds
     from argus.broker import remote_provider as rp_module
 
     class FakeRemote:
-        def __init__(self, provider, n): pass
+        def __init__(self, provider, n):
+            pass
+
         async def search(self, q):
             return (
-                [SearchResult(url="u", title="t", snippet="s", provider=ProviderName.YAHOO)],
-                ProviderTrace(provider=ProviderName.YAHOO, status="success",
-                              results_count=1, latency_ms=80, egress="oci-dev"),
+                [
+                    SearchResult(
+                        url="u", title="t", snippet="s", provider=ProviderName.YAHOO
+                    )
+                ],
+                ProviderTrace(
+                    provider=ProviderName.YAHOO,
+                    status="success",
+                    results_count=1,
+                    latency_ms=80,
+                    egress="oci-dev",
+                ),
             )
 
     original = rp_module.RemoteProviderClient
@@ -144,14 +206,16 @@ async def test_probe_all_records_every_free_local_and_remote_attempt_once():
     matrix = ReachabilityMatrix(spend_repository=spend)
     local = MagicMock()
     local.is_available.return_value = True
-    local.search = AsyncMock(return_value=(
-        [],
-        ProviderTrace(
-            provider=ProviderName.WOLFRAM,
-            status="error",
-            latency_ms=10,
-        ),
-    ))
+    local.search = AsyncMock(
+        return_value=(
+            [],
+            ProviderTrace(
+                provider=ProviderName.WOLFRAM,
+                status="error",
+                latency_ms=10,
+            ),
+        )
+    )
     node = EgressNode(name="homelab", url="http://worker:8273", shared_secret="s")
 
     with patch("argus.broker.remote_provider.RemoteProviderClient") as remote_type:

@@ -405,6 +405,13 @@ def test_public_status_is_minimal_and_admin_status_is_authenticated(monkeypatch)
         ttl=timedelta(minutes=5),
         reason="browser_artifact_unavailable",
     )
+    service.observe_dependency(
+        "backup",
+        state="healthy",
+        source="recovery_evidence",
+        ttl=timedelta(minutes=5),
+        details={"evidence_at": "2026-07-23T05:00:00-07:00", "fresh": True},
+    )
     client = TestClient(
         create_app(
             broker_factory=MagicMock(side_effect=AssertionError("no broker call")),
@@ -428,9 +435,13 @@ def test_public_status_is_minimal_and_admin_status_is_authenticated(monkeypatch)
     assert ready.status_code == 200
     assert ready.json()["status"] == "degraded"
     assert "dependencies" not in ready.json()
+    assert "evidence_at" not in str(ready.json())
     assert denied.status_code == 401
     assert detailed.status_code == 200
     assert detailed.json()["dependencies"]["browser"]["state"] == "degraded"
+    assert detailed.json()["dependencies"]["backup"]["details"]["evidence_at"] == (
+        "2026-07-23T12:00:00Z"
+    )
     assert "source_revision" in detailed.json()["build"]
 
 
@@ -601,6 +612,32 @@ def test_dependency_refresh_maps_repository_provider_browser_and_recovery_truth(
     }
 
 
+def test_disconnected_browser_snapshot_cannot_render_runtime_healthy():
+    from argus.operations.status import refresh_operational_status
+
+    service = _service()
+    refresh_operational_status(
+        service,
+        broker=_runtime_broker(),
+        repository=_runtime_repository(),
+        browser_status={
+            "declared": True,
+            "available": True,
+            "loaded": False,
+            "runtime_state": "healthy",
+            "runtime_reason": None,
+            "processes": 0,
+            "memory_bytes": 0,
+            "process_restarts": 0,
+        },
+        now=NOW,
+    )
+
+    browser = service.full_status()["dependencies"]["browser"]
+    assert browser["state"] == "degraded"
+    assert browser["reason"] == "browser_disconnected"
+
+
 def test_accounting_failure_cannot_render_healthy_zero_uncertainty():
     from argus.operations.status import refresh_operational_status
 
@@ -718,6 +755,74 @@ def test_backup_and_restore_are_separate_typed_admin_observations():
     assert dependencies["restore"]["reason"] == "restore_stale"
 
 
+@pytest.mark.parametrize(
+    ("timestamp", "expected"),
+    [
+        ("2026-07-23T12:00:00Z", "2026-07-23T12:00:00Z"),
+        ("2026-07-23T05:00:00-07:00", "2026-07-23T12:00:00Z"),
+    ],
+)
+def test_recovery_evidence_preserves_valid_iso_timestamp(timestamp, expected):
+    from argus.operations.status import refresh_operational_status
+
+    service = _service()
+    refresh_operational_status(
+        service,
+        broker=_runtime_broker(),
+        repository=_runtime_repository(),
+        recovery_status={
+            "state": "ready",
+            "schema_promotion_allowed": True,
+            "reasons": [],
+            "backup": {
+                "completed_at": timestamp,
+                "fresh": True,
+                "scope_complete": True,
+            },
+            "restore": {
+                "verified_at": timestamp,
+                "fresh": True,
+                "verified": True,
+            },
+        },
+        now=NOW,
+    )
+
+    dependencies = service.full_status()["dependencies"]
+    assert dependencies["backup"]["details"]["evidence_at"] == expected
+    assert dependencies["restore"]["details"]["evidence_at"] == expected
+
+
+@pytest.mark.parametrize("timestamp", [None, "not-a-time", "2026-07-23T12:00:00"])
+def test_missing_or_invalid_recovery_timestamp_is_unknown(timestamp):
+    from argus.operations.status import refresh_operational_status
+
+    service = _service()
+    backup = {"fresh": False, "scope_complete": True}
+    restore = {"fresh": False, "verified": True}
+    if timestamp is not None:
+        backup["completed_at"] = timestamp
+        restore["verified_at"] = timestamp
+    refresh_operational_status(
+        service,
+        broker=_runtime_broker(),
+        repository=_runtime_repository(),
+        recovery_status={
+            "state": "degraded",
+            "schema_promotion_allowed": False,
+            "reasons": ["backup_stale"],
+            "backup": backup,
+            "restore": restore,
+        },
+        now=NOW,
+    )
+
+    dependencies = service.full_status()["dependencies"]
+    assert dependencies["backup"]["state"] == "unknown"
+    assert dependencies["restore"]["state"] == "unknown"
+    assert "evidence_at" not in dependencies["backup"].get("details", {})
+
+
 def test_repository_refresh_updates_actual_backend_identity():
     from argus.operations.status import (
         create_operational_status,
@@ -793,6 +898,36 @@ def test_fresh_provider_without_health_evidence_is_unknown_and_unready():
     )
     assert status["status"] == "unready"
     assert status["reason_codes"] == ["retrieval_path"]
+
+
+def test_expired_reachability_probe_renders_unknown_not_failed():
+    from argus.operations.status import refresh_operational_status
+
+    service = _service()
+    broker = _runtime_broker()
+    evidence = broker.operational_provider_evidence()
+    evidence["duckduckgo"]["reachability"]["probes"]["local"].update(
+        {
+            "reachable": False,
+            "expires_at": NOW.timestamp() - 1,
+            "stale": True,
+        }
+    )
+    broker.operational_provider_evidence.side_effect = None
+    broker.operational_provider_evidence.return_value = evidence
+
+    refresh_operational_status(
+        service,
+        broker=broker,
+        repository=_runtime_repository(),
+        now=NOW,
+    )
+
+    reachability = service.full_status()["providers"]["duckduckgo"]["observations"][
+        "reachability"
+    ]
+    assert reachability["state"] == "unknown"
+    assert reachability["reason"] == "reachability_evidence_expired"
 
 
 def test_repository_authority_loss_is_cached_unready_and_restoration_recovers():
@@ -1117,6 +1252,87 @@ def test_liveness_bypasses_application_metrics_and_logging(path, monkeypatch):
     assert response.status_code == 200
     service.metrics.request_started.assert_not_called()
     logged.assert_not_called()
+
+
+def test_blocking_background_probe_cannot_delay_liveness(monkeypatch):
+    import threading
+    import time
+
+    from fastapi.testclient import TestClient
+
+    import argus.api.main as api_main
+
+    entered = threading.Event()
+    broker = _runtime_broker()
+
+    async def blocking_probe():
+        entered.set()
+        time.sleep(0.5)
+
+    broker.refresh_provider_evidence.side_effect = blocking_probe
+    service = _service()
+    service.metrics.request_started = MagicMock(
+        side_effect=AssertionError("liveness telemetry must remain untouched")
+    )
+    logged = MagicMock(side_effect=AssertionError("liveness log must remain untouched"))
+    monkeypatch.setattr(api_main.logger, "info", logged)
+
+    with TestClient(
+        api_main.create_app(
+            broker=broker,
+            search_repository=_runtime_repository(),
+            operational_status=service,
+        )
+    ) as client:
+        assert entered.wait(timeout=1)
+        started = time.monotonic()
+        response = client.get("/api/live")
+        elapsed = time.monotonic() - started
+
+    assert response.status_code == 200
+    assert elapsed < 0.2
+    service.metrics.request_started.assert_not_called()
+    logged.assert_not_called()
+
+
+def test_startup_remains_initialized_across_runtime_authority_loss_and_recovery():
+    from argus.operations.status import refresh_operational_status
+
+    service = _service()
+    repository = _runtime_repository()
+    broker = _runtime_broker()
+    refresh_operational_status(service, broker=broker, repository=repository, now=NOW)
+    assert service.startup_status()["status"] == "initialized"
+
+    repository.operational_status.side_effect = RuntimeError("database lost")
+    refresh_operational_status(
+        service,
+        broker=broker,
+        repository=repository,
+        now=NOW + timedelta(seconds=10),
+    )
+
+    assert service.startup_status()["status"] == "initialized"
+    readiness = service.readiness_status()
+    assert readiness["status"] == "unready"
+    assert readiness["reason_codes"] == ["postgresql", "schema", "outbox"]
+
+    repository.operational_status.side_effect = None
+    repository.operational_status.return_value = {
+        "backend": "postgresql",
+        "connected": True,
+        "schema_head": "0006_maya_outbox",
+        "outbox": {"counts": {}},
+    }
+    refresh_operational_status(
+        service,
+        broker=broker,
+        repository=repository,
+        now=NOW + timedelta(seconds=20),
+    )
+
+    assert service.startup_status()["status"] == "initialized"
+    assert service.readiness_status()["status"] != "unready"
 
 
 def test_missing_manifest_does_not_invent_optional_capabilities(tmp_path):

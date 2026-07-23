@@ -3,6 +3,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
+import threading
 import time
 import uuid
 
@@ -20,6 +21,7 @@ class EgressProbe:
     latency_ms: int
     source: str = "background_probe"
     last_checked: float = field(default_factory=time.time)
+    expires_at: float = field(default_factory=time.time)
 
 
 class ReachabilityMatrix:
@@ -30,10 +32,22 @@ class ReachabilityMatrix:
     reachable (optimistic default).
     """
 
-    def __init__(self, spend_repository=None) -> None:
+    def __init__(
+        self,
+        spend_repository=None,
+        *,
+        clock=time.time,
+        failure_ttl_seconds: float = 60.0,
+        success_ttl_seconds: float = 35 * 60.0,
+    ) -> None:
         # provider → {egress_name → EgressProbe}
         self._probes: dict[ProviderName, dict[str, EgressProbe]] = {}
         self._spend_repository = spend_repository
+        self._clock = clock
+        self._failure_ttl_seconds = max(1.0, float(failure_ttl_seconds))
+        self._success_ttl_seconds = max(1.0, float(success_ttl_seconds))
+        self._half_open_claimed: set[ProviderName] = set()
+        self._lock = threading.RLock()
 
     def set_spend_repository(self, spend_repository) -> None:
         """Attach the broker's single durable accounting authority."""
@@ -47,14 +61,24 @@ class ReachabilityMatrix:
         latency_ms: int,
         source: str = "background_probe",
     ) -> None:
-        if provider not in self._probes:
-            self._probes[provider] = {}
-        self._probes[provider][egress] = EgressProbe(
-            egress=egress,
-            reachable=reachable,
-            latency_ms=latency_ms,
-            source=source,
-        )
+        with self._lock:
+            if provider not in self._probes:
+                self._probes[provider] = {}
+            checked_at = self._clock()
+            self._probes[provider][egress] = EgressProbe(
+                egress=egress,
+                reachable=reachable,
+                latency_ms=latency_ms,
+                source=source,
+                last_checked=checked_at,
+                expires_at=checked_at
+                + (
+                    self._success_ttl_seconds
+                    if reachable
+                    else self._failure_ttl_seconds
+                ),
+            )
+            self._half_open_claimed.discard(provider)
 
     def best_egress(self, provider: ProviderName) -> Optional[str]:
         """Return the name of the best reachable egress, or None if all blocked.
@@ -62,40 +86,61 @@ class ReachabilityMatrix:
         'local' is always preferred when reachable. Among workers, lower
         latency wins. If no probe exists for this provider, returns 'local'.
         """
-        probes = self._probes.get(provider)
-        if not probes:
-            return "local"
+        return self._best_egress(provider, claim_half_open=True)
 
-        # Local first
-        local = probes.get("local")
-        if local is None or local.reachable:
-            return "local"
+    def _best_egress(
+        self, provider: ProviderName, *, claim_half_open: bool
+    ) -> Optional[str]:
+        with self._lock:
+            probes = self._probes.get(provider)
+            if not probes:
+                return "local"
+            now = self._clock()
 
-        # Workers sorted by latency ascending
-        workers = sorted(
-            (p for name, p in probes.items() if name != "local" and p.reachable),
-            key=lambda p: p.latency_ms,
-        )
-        return workers[0].egress if workers else None
+            # Local first
+            local = probes.get("local")
+            if local is None:
+                return "local"
+            if local.expires_at <= now:
+                if claim_half_open and provider not in self._half_open_claimed:
+                    self._half_open_claimed.add(provider)
+                    return "local"
+            elif local.reachable:
+                return "local"
+
+            # Workers sorted by latency ascending
+            workers = sorted(
+                (
+                    p
+                    for name, p in probes.items()
+                    if name != "local" and p.reachable and p.expires_at > now
+                ),
+                key=lambda p: p.latency_ms,
+            )
+            return workers[0].egress if workers else None
 
     def get_all(self) -> dict[ProviderName, dict]:
         """Return a summary dict for health/admin endpoints."""
-        result = {}
-        for provider, probes in self._probes.items():
-            best = self.best_egress(provider)
-            result[provider] = {
-                "best": best,
-                "probes": {
-                    name: {
-                        "reachable": p.reachable,
-                        "latency_ms": p.latency_ms,
-                        "last_checked": p.last_checked,
-                        "source": p.source,
-                    }
-                    for name, p in probes.items()
-                },
-            }
-        return result
+        with self._lock:
+            result = {}
+            for provider, probes in self._probes.items():
+                best = self._best_egress(provider, claim_half_open=False)
+                now = self._clock()
+                result[provider] = {
+                    "best": best,
+                    "probes": {
+                        name: {
+                            "reachable": p.reachable,
+                            "latency_ms": p.latency_ms,
+                            "last_checked": p.last_checked,
+                            "source": p.source,
+                            "expires_at": p.expires_at,
+                            "stale": p.expires_at <= now,
+                        }
+                        for name, p in probes.items()
+                    },
+                }
+            return result
 
     async def probe_all(
         self,

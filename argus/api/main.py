@@ -225,7 +225,9 @@ def create_app(
                     """Run network probes every 30 minutes."""
                     while True:
                         try:
-                            await b.refresh_provider_evidence()
+                            await asyncio.to_thread(
+                                lambda: asyncio.run(b.refresh_provider_evidence())
+                            )
                         except Exception as exc:
                             logger.warning(
                                 "Reachability probe failed: %s",

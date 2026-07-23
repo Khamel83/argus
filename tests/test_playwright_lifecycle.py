@@ -147,6 +147,47 @@ async def test_remote_cdp_connection_is_not_counted_as_owned_browser_restart(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("remote", [False, True])
+async def test_disconnect_degrades_until_successful_reconnect(monkeypatch, remote):
+    import argus.extraction.playwright_extractor as extractor
+    import playwright.async_api
+
+    first = MagicMock()
+    first.is_connected.return_value = True
+    first.close = AsyncMock()
+    second = MagicMock()
+    second.is_connected.return_value = True
+    second.close = AsyncMock()
+    runtime_one = MagicMock()
+    runtime_one.stop = AsyncMock()
+    runtime_two = MagicMock()
+    runtime_two.stop = AsyncMock()
+    if remote:
+        runtime_one.chromium.connect_over_cdp = AsyncMock(return_value=first)
+        runtime_two.chromium.connect_over_cdp = AsyncMock(return_value=second)
+        monkeypatch.setattr(extractor, "OBSCURA_CDP_URL", "ws://redacted.invalid")
+    else:
+        runtime_one.chromium.launch = AsyncMock(return_value=first)
+        runtime_two.chromium.launch = AsyncMock(return_value=second)
+    factory = MagicMock()
+    factory.return_value.start = AsyncMock(side_effect=[runtime_one, runtime_two])
+    monkeypatch.setattr(playwright.async_api, "async_playwright", factory)
+
+    assert await extractor._get_browser() is first
+    first.is_connected.return_value = False
+
+    disconnected = extractor.browser_capability_status()
+    assert disconnected["loaded"] is False
+    assert disconnected["runtime_state"] == "degraded"
+    assert disconnected["runtime_reason"] == "browser_disconnected"
+
+    assert await extractor._get_browser() is second
+    recovered = extractor.browser_capability_status()
+    assert recovered["runtime_state"] == "healthy"
+    assert recovered["process_restarts"] == (1 if not remote else 0)
+
+
+@pytest.mark.asyncio
 async def test_concurrent_initialization_creates_one_runtime_and_browser(monkeypatch):
     """Concurrent requests share one serialized browser initialization."""
     import argus.extraction.playwright_extractor as extractor
