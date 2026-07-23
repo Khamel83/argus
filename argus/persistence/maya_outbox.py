@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import re
+import unicodedata
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Callable
@@ -50,10 +51,11 @@ _KEY_VALUE_RE = re.compile(
     """
 )
 _JSON_UNICODE_ESCAPE_RE = re.compile(r"\\u([0-9a-fA-F]{4})")
-_MAX_DECODE_ROUNDS = 4
+_MAX_DECODE_ROUNDS = 8
 _MAX_DECODE_CHARS = 1_048_576
 _MAX_REDACTION_DEPTH = 8
 _MAX_EMBEDDED_SCALAR_CHARS = 65_536
+_MAX_INSPECTION_WORK = 2_097_152
 _MAX_URL_INPUT_BYTES = 8192
 _MAX_URL_QUERY_FIELDS = 64
 _MAX_URL_OUTPUT_BYTES = 2048
@@ -104,8 +106,10 @@ _MAYA_RECEIPT_KEYS = {
 }
 
 
-def _decode_identifier(value: object) -> str:
-    decoded = str(value).strip()[:_MAX_DECODE_CHARS]
+def _decode_identifier_state(value: object) -> tuple[str, bool]:
+    raw = str(value).strip()
+    decoded = raw[:_MAX_DECODE_CHARS]
+    unresolved = len(raw) > _MAX_DECODE_CHARS
     for _ in range(_MAX_DECODE_ROUNDS):
         candidate = unquote(decoded)
         candidate = _JSON_UNICODE_ESCAPE_RE.sub(
@@ -113,13 +117,20 @@ def _decode_identifier(value: object) -> str:
             candidate,
         )[:_MAX_DECODE_CHARS]
         if candidate == decoded:
-            break
+            return decoded, unresolved
         decoded = candidate
-    return decoded
+    return decoded, True
+
+
+def _decode_identifier(value: object) -> str:
+    return _decode_identifier_state(value)[0]
 
 
 def _is_sensitive_key(value: object) -> bool:
-    decoded = _decode_identifier(value)
+    decoded, unresolved = _decode_identifier_state(value)
+    if unresolved:
+        return True
+    decoded = unicodedata.normalize("NFKC", decoded)
     with_camel_boundaries = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", decoded)
     normalized = re.sub(
         r"[^a-z0-9]+",
@@ -133,51 +144,81 @@ def _is_sensitive_key(value: object) -> bool:
     )
 
 
-def _decoded_quoted_scalar(value: str) -> str | None:
-    if (
-        len(value) > _MAX_EMBEDDED_SCALAR_CHARS
-        or not value.startswith(("'", '"'))
-        or "\\" not in value
-    ):
-        return None
-    for parser in (json.loads, ast.literal_eval):
-        try:
-            decoded = parser(value)
-        except (TypeError, ValueError, SyntaxError, MemoryError, RecursionError):
-            continue
-        if isinstance(decoded, str):
-            return decoded
-    return None
-
-
-def _redact_key_value(match: re.Match, *, depth: int) -> str:
-    key = (
+def _match_key(match: re.Match) -> str:
+    return (
         match.group("double_key")
         or match.group("single_key")
         or match.group("bare_key")
     )
-    if _is_sensitive_key(key):
-        return "[redacted]"
-    if depth >= _MAX_REDACTION_DEPTH:
-        return f"{match.group('prefix')}[redacted]"
-    raw_value = match.group("value")
-    redacted_value = _redact_text(
-        raw_value,
-        len(raw_value),
-        _depth=depth + 1,
-    )
-    if redacted_value != raw_value:
-        return f"{match.group('prefix')}{redacted_value}"
-    decoded = _decoded_quoted_scalar(raw_value)
-    if decoded is not None:
-        redacted_decoded = _redact_text(
-            decoded,
-            len(decoded),
-            _depth=depth + 1,
+
+
+def _contains_sensitive_material(
+    value: object,
+    *,
+    depth: int = 0,
+    work: list[int] | None = None,
+) -> bool:
+    if work is None:
+        work = [_MAX_INSPECTION_WORK]
+    if work[0] <= 0:
+        return True
+    if isinstance(value, dict):
+        for index, (key, item) in enumerate(value.items()):
+            if index >= 128:
+                return True
+            if _is_sensitive_key(key) or _contains_sensitive_material(
+                item,
+                depth=depth + 1,
+                work=work,
+            ):
+                return True
+        return False
+    if isinstance(value, (list, tuple)):
+        if len(value) > 128:
+            return True
+        return any(
+            _contains_sensitive_material(item, depth=depth + 1, work=work)
+            for item in value
         )
-        if redacted_decoded != decoded:
-            return f"{match.group('prefix')}[redacted]"
-    return match.group(0)
+    if not isinstance(value, str):
+        return False
+
+    text = value[: min(len(value), work[0])]
+    work[0] -= len(text)
+    if any(
+        _is_sensitive_key(_match_key(match)) for match in _KEY_VALUE_RE.finditer(text)
+    ):
+        return True
+    if depth >= _MAX_REDACTION_DEPTH:
+        return bool(re.search(r"[\[{]|%[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}", text))
+    if len(text) > _MAX_EMBEDDED_SCALAR_CHARS:
+        return False
+
+    for parser in (json.loads, ast.literal_eval):
+        try:
+            parsed = parser(text)
+        except (TypeError, ValueError, SyntaxError, MemoryError, RecursionError):
+            continue
+        if parsed != text and _contains_sensitive_material(
+            parsed,
+            depth=depth + 1,
+            work=work,
+        ):
+            return True
+
+    decoded, unresolved = _decode_identifier_state(text)
+    if decoded != text and _contains_sensitive_material(
+        decoded,
+        depth=depth + 1,
+        work=work,
+    ):
+        return True
+    normalized_encoded = re.sub(r"[^a-z0-9]+", "", decoded.lower())
+    return (
+        unresolved
+        and bool(re.search(r"%[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}", decoded))
+        and any(marker in normalized_encoded for marker in _SENSITIVE_KEY_SUBSTRINGS)
+    )
 
 
 def _sanitize_structure(value: object, *, depth: int = 0) -> object:
@@ -200,7 +241,8 @@ def _sanitize_structure(value: object, *, depth: int = 0) -> object:
     if isinstance(value, (list, tuple)):
         return [_sanitize_structure(item, depth=depth + 1) for item in value[:128]]
     if isinstance(value, str):
-        return value[:4096]
+        bounded = value[:4096]
+        return "[redacted]" if _contains_sensitive_material(bounded) else bounded
     if value is None or isinstance(value, (bool, int, float)):
         return value
     return str(value)[:4096]
@@ -218,14 +260,15 @@ def _bounded_text(value: object, scan_limit: int) -> str:
 
 def _redact_text(value: object, limit: int, *, _depth: int = 0) -> str:
     scan_limit = limit if limit > 65_536 else max(limit * 4, 4096)
+    if isinstance(value, str) and _contains_sensitive_material(
+        value[:scan_limit],
+        depth=_depth,
+    ):
+        return "[redacted]"
     text = _bounded_text(value, scan_limit).replace("\x00", "")
     text = _AUTH_HEADER_RE.sub("[redacted]", text)
     text = _AUTH_SCHEME_RE.sub("[redacted]", text)
     text = _COOKIE_HEADER_RE.sub("[redacted]", text)
-    text = _KEY_VALUE_RE.sub(
-        lambda match: _redact_key_value(match, depth=_depth),
-        text,
-    )
     text = _MAYA_SECRET_TOKEN_RE.sub("[redacted]", text)
     return _PEM_RE.sub("[redacted]", text)[:limit]
 

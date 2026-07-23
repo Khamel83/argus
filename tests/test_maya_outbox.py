@@ -5,6 +5,7 @@ import tracemalloc
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from threading import Barrier
+from urllib.parse import quote
 
 import httpx
 import pytest
@@ -460,10 +461,158 @@ def test_dead_letter_redacts_nested_encoded_and_long_key_credentials(
     assert "[redacted]" in row.last_error_summary
 
 
+@pytest.mark.parametrize(
+    "credential",
+    [
+        '{"outer":{"AUTH-token":{"child":"structuredObjectLeak987"}}}',
+        '{"outer":{"api key":["safe","structuredArrayLeak987"]}}',
+        "{'outer': {'credentials password': {'child': 'pythonTreeLeak987'}}}",
+        (
+            '{"outer":"%257B%2522session%2520id%2522%253A'
+            '%255B%2522encodedTreeLeak987%2522%255D%257D"}'
+        ),
+    ],
+)
+def test_outbox_redacts_entire_free_text_field_for_sensitive_containers(
+    tmp_path,
+    credential,
+):
+    repository = _repository(tmp_path)
+    result = ExtractedContent(
+        url="https://example.com/article",
+        text=credential,
+        word_count=1,
+        extractor=ExtractorName.TRAFILATURA,
+        attempts=[ExtractionAttempt("trafilatura", "success", 1)],
+    )
+
+    repository.record_extraction(
+        url=result.url,
+        domain=None,
+        mode="default",
+        caller="maya",
+        result=result,
+        latency_ms=1,
+        extraction_run_id="container-credential-redaction",
+    )
+
+    payload = json.loads(_outbox_row(repository).payload_json)
+    assert payload["pages"][0]["content"] == "[redacted]"
+    assert "Leak987" not in json.dumps(payload)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        '{"outer":{"AUTH-token":{"child":"summaryObjectLeak987"}}}',
+        '{"outer":{"api key":["safe","summaryArrayLeak987"]}}',
+        "{'outer': {'credentials password': {'child': 'summaryPythonLeak987'}}}",
+        (
+            '{"outer":"%257B%2522session%2520id%2522%253A'
+            '%255B%2522summaryEncodedLeak987%2522%255D%257D"}'
+        ),
+    ],
+)
+def test_dead_letter_redacts_entire_summary_for_sensitive_containers(
+    tmp_path,
+    message,
+):
+    from argus.persistence.maya_outbox import MayaOutboxDispatcher
+
+    repository = _repository(tmp_path)
+    repository.accept(SearchQuery(query="unsafe container summary"), _response())
+    dispatcher = MayaOutboxDispatcher(
+        repository,
+        endpoint="http://maya/captures",
+        token="test-token",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                422,
+                json={
+                    "detail": {
+                        "code": "invalid_capture_request",
+                        "message": message,
+                    }
+                },
+            )
+        ),
+        clock=lambda: datetime(2026, 7, 23, 12, 0),
+    )
+
+    assert dispatcher.run_once() == {"dead_lettered": 1}
+    row = _outbox_row(repository)
+    assert row.last_error_summary == "[redacted]"
+    assert "Leak987" not in row.last_error_summary
+
+
+@pytest.mark.parametrize("layers", [5, 6, 20])
+def test_outbox_url_query_drops_deeply_encoded_sensitive_keys(tmp_path, layers):
+    repository = _repository(tmp_path)
+    response = _response()
+    key = "auth token"
+    for _ in range(layers):
+        key = quote(key, safe="")
+    response.results[
+        0
+    ].url = f"https://example.com/article?{key}=deepUrlLeak987&safe=visible"
+
+    repository.accept(SearchQuery(query="deep encoded URL"), response)
+
+    payload = json.loads(_outbox_row(repository).payload_json)
+    assert "deepUrlLeak987" not in payload["result_summary"]
+    assert "visible" in payload["result_summary"]
+
+
+def test_outbox_url_query_preserves_benign_deeply_encoded_values(tmp_path):
+    repository = _repository(tmp_path)
+    response = _response()
+    value = "ordinary value"
+    for _ in range(20):
+        value = quote(value, safe="")
+    response.results[0].url = f"https://example.com/article?safe={value}&other=visible"
+
+    repository.accept(SearchQuery(query="benign encoded value"), response)
+
+    payload = json.loads(_outbox_row(repository).payload_json)
+    assert "safe=" in payload["result_summary"]
+    assert "other=visible" in payload["result_summary"]
+    assert "[redacted]" not in payload["result_summary"]
+
+
+def test_outbox_redacts_twenty_layer_encoded_sensitive_container(tmp_path):
+    repository = _repository(tmp_path)
+    credential = '{"ａｕｔｈ token":{"child":"twentyLayerLeak987"}}'
+    for _ in range(20):
+        credential = quote(credential, safe="")
+    result = ExtractedContent(
+        url="https://example.com/article",
+        text=credential,
+        word_count=1,
+        extractor=ExtractorName.TRAFILATURA,
+        attempts=[ExtractionAttempt("trafilatura", "success", 1)],
+    )
+
+    repository.record_extraction(
+        url=result.url,
+        domain=None,
+        mode="default",
+        caller="maya",
+        result=result,
+        latency_ms=1,
+        extraction_run_id="twenty-layer-container-redaction",
+    )
+
+    payload = json.loads(_outbox_row(repository).payload_json)
+    assert payload["pages"][0]["content"] == "[redacted]"
+    assert "twentyLayerLeak987" not in json.dumps(payload)
+
+
 def test_outbox_redacts_triple_encoded_query_key(tmp_path):
     repository = _repository(tmp_path)
     response = _response()
-    response.results[0].url = (
+    response.results[
+        0
+    ].url = (
         "https://example.com/article?%252561uth=tripleEncodedUrlLeak987&safe=visible"
     )
 
