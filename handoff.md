@@ -10,9 +10,10 @@ operational evidence, all open GitHub work, and recommended execution order.
 
 The audit is now in execution. Code fixes are developed natively on the Mac,
 reviewed on isolated issue branches, and built in GitHub Actions. No production
-deployment, homelab mutation, or Mac-side Docker/Compose execution has been
-performed. This branch remains the local-only planning record and must never be
-pushed.
+deployment or Mac-side Docker/Compose execution has been performed. One
+separately authorized, disposable, network-isolated homelab canary validated
+issue #22 and was fully removed afterward without touching production. This
+branch remains the local-only planning record and must never be pushed.
 
 The canonical planning artifact is the
 [Wayfinder: make Argus a reliable homelab retrieval platform for Maya](https://github.com/Khamel83/argus/issues/23)
@@ -45,16 +46,20 @@ Approved implementation backlog:
 
 Immediate frontier:
 
-- [ ] [Fix failed Playwright launch leaks and the container OOM](https://github.com/Khamel83/argus/issues/22)
-  — no blockers; prove lifecycle cleanup and the 512 MiB missing-browser
-  regression.
+- [x] [Fix failed Playwright launch leaks and the container OOM](https://github.com/Khamel83/argus/issues/22)
+  — closed after lifecycle cleanup and the 512 MiB missing-browser regression
+  were proven.
   - Merged implementation PR:
     [fix(extraction): make Playwright lifecycle safe](https://github.com/Khamel83/argus/pull/45).
     Controller verification passed 356 tests plus focused lifecycle,
     compilation, diff, privacy, and secret checks. It was manually squash
     merged as `efb7399` with push workflows skipped so the legacy automatic
-    deploy did not run. The sanitized 512 MiB homelab/CI container canary
-    remains required before closing the issue.
+    deploy did not run. The sanitized disposable 512 MiB homelab canary then
+    completed 20 sequential attempts with one runtime start, 19 cached skips,
+    zero orphan processes, zero OOM events/restarts, 49/49 passing health
+    samples, and a 146.97 MiB peak. All canary resources were removed and the
+    issue closed. Evidence:
+    https://github.com/Khamel83/argus/issues/22#issuecomment-5055229365
 - [x] [Make Argus configuration and image CI hermetic](https://github.com/Khamel83/argus/issues/32)
   — merged implementation PR
   [ci: make configuration and image builds hermetic](https://github.com/Khamel83/argus/pull/46)
@@ -62,8 +67,12 @@ Immediate frontier:
   freshness, and actual GitHub-hosted production image build all passed. The
   main commit used `[skip ci]`, so the legacy automatic deployment workflow did
   not run.
-- [ ] [Record accepted search retrievals transactionally in PostgreSQL](https://github.com/Khamel83/argus/issues/33)
-  — no blockers; establish the authoritative repository and migration seam.
+- [x] [Record accepted search retrievals transactionally in PostgreSQL](https://github.com/Khamel83/argus/issues/33)
+  — merged PR
+  [feat: record accepted searches transactionally](https://github.com/Khamel83/argus/pull/47)
+  as `b8c3e1f`. The Python matrix, real PostgreSQL concurrency/rollback suite,
+  production configuration, freshness, and production image build passed.
+  The merge used `[skip ci]`; no deployment workflow ran.
 - [x] [Accept idempotent parent-and-child Argus retrieval captures](https://github.com/Khamel83/maya/issues/82)
   — merged Maya PR
   [feat: add durable Argus retrieval captures](https://github.com/Khamel83/maya/pull/83)
@@ -75,9 +84,9 @@ Immediate frontier:
 State and integration:
 
 - [ ] [Persist extraction and session operations in the authoritative ledger](https://github.com/Khamel83/argus/issues/34)
-  — blocked by the PostgreSQL search ledger.
+  — unblocked and in implementation on an isolated issue branch.
 - [ ] [Reserve and reconcile paid-provider spending durably](https://github.com/Khamel83/argus/issues/35)
-  — blocked by the PostgreSQL search ledger.
+  — unblocked and in implementation on an isolated issue branch.
 - [ ] [Deliver user-visible retrievals to Maya through a transactional outbox](https://github.com/Khamel83/argus/issues/36)
   — blocked by the extraction/session ledger and Maya capture interface.
 - [ ] [Make HTTP the sole Argus execution authority and MCP stateless](https://github.com/Khamel83/argus/issues/37)
@@ -86,7 +95,9 @@ State and integration:
 Capability, recovery, and operations:
 
 - [ ] [Ship the declared Chromium capability and pass bounded browser canaries](https://github.com/Khamel83/argus/issues/38)
-  — blocked by the Playwright lifecycle fix and hermetic image CI.
+  — draft PR
+  [feat: ship sandboxed Chromium capability](https://github.com/Khamel83/argus/pull/49)
+  is in image/canary verification; no deployment is included.
 - [ ] [Expose truthful readiness, runtime identity, and bounded operational evidence](https://github.com/Khamel83/argus/issues/39)
   — blocked by the sole HTTP authority and declared browser capability.
 - [ ] [Run Argus on shared homelab PostgreSQL with verified recovery](https://github.com/Khamel83/argus/issues/40)
@@ -105,9 +116,13 @@ Independent follow-ons:
 
 - [ ] [Correct Parallel's recurring-credit tier](https://github.com/Khamel83/argus/issues/21)
   — blocked by durable paid-provider accounting.
-- [ ] [Normalize Trafilatura output and audit extraction quality](https://github.com/Khamel83/argus/issues/43)
-  — blocked by the Playwright lifecycle fix so quality and lifecycle failures
-  remain separate.
+- [x] [Normalize Trafilatura output and audit extraction quality](https://github.com/Khamel83/argus/issues/43)
+  — merged PR
+  [fix: normalize Trafilatura results and preserve quality decisions](https://github.com/Khamel83/argus/pull/48)
+  as `afa43f8`. All Trafilatura callers now share an allowlisted normalizer;
+  the sanitized quality observation was reproduced and corrected without
+  weakening low-quality rejection or safety/spend controls. All seven PR CI
+  jobs passed, and the `[skip ci]` merge triggered no deployment.
 
 GitHub's native `blocked by` relationships are the authoritative dependency
 graph. Work any issue whose native blockers are all closed; do not infer
