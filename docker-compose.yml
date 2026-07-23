@@ -3,9 +3,10 @@ services:
     build:
       context: .
       args:
-        # Set ARGUS_IMAGE_VCS_REF to the deployed commit for traceable images.
-        # The default identifies an unversioned local build; it is not a release identity.
+        # Production builds must set ARGUS_IMAGE_VCS_REF to the deployed commit
+        # and ARGUS_IMAGE_ADMISSION_POLICY=production. Defaults are development-only.
         VCS_REF: "${ARGUS_IMAGE_VCS_REF:-local-compose-build}"
+        IMAGE_ADMISSION_POLICY: "${ARGUS_IMAGE_ADMISSION_POLICY:-development}"
     image: argus:latest
     # Without the proxy profile: bind to ARGUS_BIND_HOST so you can reach it directly.
     # With the proxy profile: Caddy handles external traffic; argus stays on loopback.
@@ -17,7 +18,7 @@ services:
       - ARGUS_HOST=0.0.0.0
       - ARGUS_PORT=8000
       - ARGUS_DATA_ROOT=/var/lib/argus
-      - ARGUS_DB_URL=sqlite:////var/lib/argus/argus.db
+      - ARGUS_DB_URL=${ARGUS_DB_URL:-sqlite:////var/lib/argus/argus.db}
       - ARGUS_BUDGET_DB_PATH=/var/lib/argus/argus_budgets.db
       - ARGUS_NODE_ROLE=${ARGUS_NODE_ROLE:-primary}
       - ARGUS_EGRESS_TYPE=${ARGUS_EGRESS_TYPE:-unknown}

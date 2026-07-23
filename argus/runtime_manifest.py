@@ -26,9 +26,23 @@ _CAPABILITY_MODULES = {
     "trafilatura": "trafilatura",
 }
 _LOCK_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_FULL_COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
-def admit_runtime_manifest(path: Path | str, *, package_version: str) -> dict[str, Any]:
+def is_production_source_revision(source_revision: object) -> bool:
+    """Return whether a revision is a canonical full Git commit identity."""
+    return (
+        isinstance(source_revision, str)
+        and _FULL_COMMIT_SHA.fullmatch(source_revision) is not None
+    )
+
+
+def admit_runtime_manifest(
+    path: Path | str,
+    *,
+    package_version: str,
+    allow_development_revision: bool = False,
+) -> dict[str, Any]:
     """Read and validate a baked manifest without contacting any external service."""
     manifest_path = Path(path)
     if not manifest_path.is_file():
@@ -41,8 +55,17 @@ def admit_runtime_manifest(path: Path | str, *, package_version: str) -> dict[st
 
     if not isinstance(manifest, dict):
         raise RuntimeManifestError("runtime manifest must contain a JSON object")
-    if not isinstance(manifest.get("source_revision"), str) or not manifest["source_revision"].strip():
+    source_revision = manifest.get("source_revision")
+    if not isinstance(source_revision, str) or not source_revision.strip():
         raise RuntimeManifestError("runtime manifest is missing source revision")
+    if (
+        not is_production_source_revision(source_revision)
+        and not allow_development_revision
+    ):
+        raise RuntimeManifestError(
+            "runtime manifest source revision must be a full commit SHA "
+            "for production admission"
+        )
     if manifest.get("package_version") != package_version:
         raise RuntimeManifestError(
             "runtime manifest package version does not match installed package version"

@@ -33,7 +33,12 @@ COPY --from=builder /app/runtime-manifest.json /app/runtime-manifest.json
 ENV PATH="/app/.venv/bin:${PATH}" \
     ARGUS_RUNTIME_MANIFEST=/app/runtime-manifest.json
 
-RUN argus image-admission --manifest /app/runtime-manifest.json
+ARG IMAGE_ADMISSION_POLICY=production
+RUN case "${IMAGE_ADMISSION_POLICY}" in \
+        production) argus image-admission --manifest /app/runtime-manifest.json ;; \
+        development) argus image-admission --manifest /app/runtime-manifest.json --allow-development-revision ;; \
+        *) echo "invalid IMAGE_ADMISSION_POLICY: ${IMAGE_ADMISSION_POLICY}" >&2; exit 1 ;; \
+    esac
 
 RUN useradd -m -s /bin/sh argus \
     && mkdir -p /var/lib/argus \

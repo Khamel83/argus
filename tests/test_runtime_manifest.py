@@ -40,6 +40,45 @@ def test_image_admission_accepts_a_complete_baked_manifest(tmp_path):
     assert admitted["capabilities"]["playwright_browser"] is False
 
 
+def test_production_image_admission_rejects_a_local_revision_marker(tmp_path):
+    from argus.runtime_manifest import RuntimeManifestError, admit_runtime_manifest
+
+    manifest_path = tmp_path / "runtime-manifest.json"
+    manifest = _manifest(tmp_path / "uv.lock")
+    manifest["source_revision"] = "local-compose-build"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    try:
+        admit_runtime_manifest(manifest_path, package_version="1.6.2")
+    except RuntimeManifestError as error:
+        assert "full commit" in str(error).lower()
+    else:
+        raise AssertionError("production admission must reject a development revision")
+
+
+def test_development_image_validation_is_explicit_and_not_production_admission(tmp_path):
+    from argus.cli.main import cli
+
+    manifest_path = tmp_path / "runtime-manifest.json"
+    manifest = _manifest(tmp_path / "uv.lock")
+    manifest["source_revision"] = "local-compose-build"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "image-admission",
+            "--manifest",
+            str(manifest_path),
+            "--allow-development-revision",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "development-validated" in result.output
+    assert "production-admitted" not in result.output
+
+
 def test_image_admission_rejects_missing_required_artifact(tmp_path):
     from argus.runtime_manifest import RuntimeManifestError, admit_runtime_manifest
 

@@ -129,17 +129,34 @@ def paths(as_json):
     type=click.Path(path_type=str),
     help="Baked runtime manifest to validate without network access.",
 )
-def image_admission(manifest_path):
+@click.option(
+    "--allow-development-revision",
+    is_flag=True,
+    help="Validate a local image without granting production admission.",
+)
+def image_admission(manifest_path, allow_development_revision):
     """Validate the image's baked identity and capabilities without network access."""
-    from argus.runtime_manifest import RuntimeManifestError, admit_runtime_manifest
+    from argus.runtime_manifest import (
+        RuntimeManifestError,
+        admit_runtime_manifest,
+    )
 
     try:
-        manifest = admit_runtime_manifest(manifest_path, package_version=__version__)
+        manifest = admit_runtime_manifest(
+            manifest_path,
+            package_version=__version__,
+            allow_development_revision=allow_development_revision,
+        )
     except RuntimeManifestError as error:
         raise click.ClickException(str(error)) from error
 
+    admission_status = (
+        "development-validated"
+        if allow_development_revision
+        else "production-admitted"
+    )
     click.echo(
-        "admitted "
+        f"{admission_status} "
         f"revision={manifest['source_revision']} "
         f"version={manifest['package_version']} "
         f"lock={manifest['lock_sha256']}"
