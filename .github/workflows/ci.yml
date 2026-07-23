@@ -79,6 +79,7 @@ jobs:
             tests/test_operation_ledger.py::test_postgresql_extraction_and_session_contract \
             tests/test_operation_ledger.py::test_postgresql_concurrent_session_creation_and_query_allocation \
             tests/test_operation_ledger.py::test_postgresql_concurrent_sanitized_session_url_inserts_are_idempotent \
+            tests/test_recovery_database.py::test_postgresql_restore_verifier_uses_disposable_database \
             -v --tb=short
 
   production-config:
