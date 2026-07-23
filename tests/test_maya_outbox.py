@@ -17,12 +17,16 @@ from argus.persistence.search_ledger import DeliveryIntentRow
 from tests.test_search_ledger import _response
 
 
+_REPOSITORY_NOW = datetime(2026, 7, 23, 11, 0)
+
+
 def _repository(tmp_path):
     from argus.persistence.search_ledger import create_search_ledger_repository
 
     return create_search_ledger_repository(
         f"sqlite:///{tmp_path / 'maya-outbox.db'}",
         create_schema=True,
+        clock=lambda: _REPOSITORY_NOW,
     )
 
 
@@ -40,6 +44,59 @@ def _maya_receipt(*, pages=0, duplicate=False):
         "children_added": 0 if duplicate else pages,
         "received_at": "2026-07-23T12:01:00Z",
     }
+
+
+def test_repository_clock_drives_acceptance_and_extraction_outbox_timestamps(
+    tmp_path,
+):
+    from argus.persistence.search_ledger import ExtractionRunRow, RetrievalRunRow
+
+    repository = _repository(tmp_path)
+    acceptance = repository.accept(
+        SearchQuery(query="clocked acceptance"),
+        _response(),
+    )
+    extraction = repository.record_extraction(
+        url="https://example.com/article",
+        domain="example.com",
+        mode="default",
+        caller="maya",
+        result=ExtractedContent(
+            url="https://example.com/article",
+            text="clocked extraction",
+            word_count=2,
+            extractor=ExtractorName.TRAFILATURA,
+            attempts=[ExtractionAttempt("trafilatura", "success", 1)],
+        ),
+        latency_ms=1,
+        extraction_run_id="clocked-extraction",
+    )
+
+    with repository.session_factory() as session:
+        retrieval = session.scalar(
+            select(RetrievalRunRow).where(
+                RetrievalRunRow.search_run_id == acceptance.run_id
+            )
+        )
+        extraction_run = session.scalar(
+            select(ExtractionRunRow).where(
+                ExtractionRunRow.extraction_run_id == extraction.extraction_run_id
+            )
+        )
+        delivery_rows = list(
+            session.scalars(
+                select(DeliveryIntentRow).order_by(DeliveryIntentRow.created_at)
+            )
+        )
+
+    assert retrieval.committed_at == _REPOSITORY_NOW
+    assert extraction_run.started_at == _REPOSITORY_NOW
+    assert extraction_run.committed_at == _REPOSITORY_NOW
+    assert len(delivery_rows) == 2
+    for delivery in delivery_rows:
+        assert delivery.created_at == _REPOSITORY_NOW
+        assert delivery.updated_at == _REPOSITORY_NOW
+        assert delivery.next_attempt_at == _REPOSITORY_NOW
 
 
 @pytest.mark.parametrize(

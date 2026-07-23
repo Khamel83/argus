@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from sqlalchemy import (
     Boolean,
@@ -49,6 +49,10 @@ class LedgerBase(DeclarativeBase):
 
 
 _DATABASE_OPERATION_TIMEOUT_SECONDS = 5
+
+
+def _system_now() -> datetime:
+    return datetime.now(tz=None)
 
 
 def _bounded_engine_options(url: str) -> dict:
@@ -551,8 +555,14 @@ class SqlAlchemySearchLedgerRepository:
     operational_status_capability = LifecycleCapability.COOPERATIVE_BOUNDED
     compaction_capability = LifecycleCapability.COOPERATIVE_BOUNDED
 
-    def __init__(self, session_factory: sessionmaker):
+    def __init__(
+        self,
+        session_factory: sessionmaker,
+        *,
+        clock: Callable[[], datetime] = _system_now,
+    ):
         self.session_factory = session_factory
+        self.clock = clock
 
     def accept(self, query: SearchQuery, response: SearchResponse) -> AcceptanceReceipt:
         serialized = serialize_acceptance(query, response)
@@ -597,7 +607,7 @@ class SqlAlchemySearchLedgerRepository:
                     serialized.fingerprint,
                 )
 
-            now = datetime.now(tz=None)
+            now = self.clock()
             request_id = uuid.uuid4().hex
             ledger_run_id = uuid.uuid4().hex
             session.add(
@@ -975,7 +985,7 @@ class SqlAlchemySearchLedgerRepository:
                     delivery_intent_id=delivery_id,
                 )
 
-            now = datetime.now(tz=None)
+            now = self.clock()
             ledger_id = uuid.uuid4().hex
             if content_hash:
                 self._ensure_content_identity(
@@ -1304,7 +1314,7 @@ class SqlAlchemySearchLedgerRepository:
         *,
         now: datetime | None = None,
     ) -> bool:
-        recovered_at = now or datetime.now(tz=None)
+        recovered_at = now or self.clock()
         with self.session_factory.begin() as session:
             row = session.get(DeliveryIntentRow, intent_id)
             if row is None or row.status != "dead_letter" or row.payload_json is None:
@@ -1350,7 +1360,7 @@ class SqlAlchemySearchLedgerRepository:
     ) -> int:
         if stop_event is not None and stop_event.is_set():
             return 0
-        compacted_at = now or datetime.now(tz=None)
+        compacted_at = now or self.clock()
         with self.session_factory.begin() as session:
             statement = (
                 select(DeliveryIntentRow)
@@ -1382,7 +1392,7 @@ class SqlAlchemySearchLedgerRepository:
         """Return bounded authority/schema/outbox truth for cached status refresh."""
         if stop_event is not None and stop_event.is_set():
             return {}
-        observed_at = now or datetime.now(tz=None)
+        observed_at = now or self.clock()
         if observed_at.tzinfo is not None:
             observed_at = observed_at.replace(tzinfo=None)
         with self.session_factory() as session:
@@ -1424,7 +1434,7 @@ class SqlAlchemySearchLedgerRepository:
     ) -> dict:
         if stop_event is not None and stop_event.is_set():
             return {}
-        observed_at = now or datetime.now(tz=None)
+        observed_at = now or self.clock()
         with self.session_factory() as session:
             counts = {
                 status: count
@@ -1480,7 +1490,7 @@ class SqlAlchemySearchLedgerRepository:
         with self.session_factory.begin() as session:
             values = {
                 "id": session_id,
-                "created_at": created_at or datetime.now(tz=None),
+                "created_at": created_at or self.clock(),
             }
             dialect = session.get_bind().dialect.name
             if dialect == "postgresql":
@@ -1694,6 +1704,7 @@ def create_search_ledger_repository(
     db_url: str | None = None,
     *,
     create_schema: bool | None = None,
+    clock: Callable[[], datetime] = _system_now,
 ) -> SqlAlchemySearchLedgerRepository:
     """Build the SQLAlchemy adapter.
 
@@ -1718,7 +1729,8 @@ def create_search_ledger_repository(
             raise ValueError("runtime schema creation is only supported for SQLite")
         LedgerBase.metadata.create_all(engine)
     return SqlAlchemySearchLedgerRepository(
-        sessionmaker(bind=engine, expire_on_commit=False)
+        sessionmaker(bind=engine, expire_on_commit=False),
+        clock=clock,
     )
 
 
