@@ -87,3 +87,27 @@ If PyPI is behind the repo:
 3. Run the preflight checks.
 4. Create a GitHub release or manually dispatch the publish workflow.
 5. Verify PyPI and MCP Registry after the workflow finishes.
+
+## Container image and homelab deploy
+
+The homelab runs the **container image**, not the PyPI package. Build, publish,
+and deploy are handled by `.github/workflows/docker-publish.yml`, which on push
+to `main` (or a `v*` tag, or manual dispatch):
+
+1. builds the image and pushes it to GHCR as `ghcr.io/khamel83/argus:latest`
+   (plus a commit-SHA tag), then
+2. deploys to the homelab (`docker compose pull argus argus-mcp &&
+   docker compose up -d`).
+
+Trigger a build + deploy manually:
+
+```bash
+gh workflow run docker-publish.yml --ref main
+```
+
+**Caution — `[skip ci]` skips deploys.** A commit whose message contains
+`[skip ci]` skips *all* workflows, including build/publish/deploy. Reserve it for
+non-deployable commits (e.g. docs-only). A stretch of deployable merges tagged
+`[skip ci]` silently leaves the homelab on a stale image (this happened for ~12
+commits before 2026-07-23). Issue #41 tracks the durable fix: immutable
+SHA-tagged releases with documented rollback (redeploy a previous SHA).
