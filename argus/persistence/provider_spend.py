@@ -199,8 +199,8 @@ class ProviderSpendRepository:
     ) -> SpendAttempt:
         if PROVIDER_TIERS.get(provider, 0) <= 0:
             raise ValueError("free providers do not create monetary reservations")
-        if conservative_charge < 0:
-            raise ValueError("conservative charge must be non-negative")
+        if not math.isfinite(conservative_charge) or conservative_charge <= 0:
+            raise ValueError("conservative charge must be finite and positive")
         payload = {
             "provider": provider.value,
             "conservative_charge": conservative_charge,
@@ -275,8 +275,8 @@ class ProviderSpendRepository:
         outcome: str,
         fault_hook: Callable[[str], None] | None = None,
     ) -> SpendAttempt:
-        if actual_charge < 0:
-            raise ValueError("actual charge must be non-negative")
+        if not math.isfinite(actual_charge) or actual_charge < 0:
+            raise ValueError("actual charge must be finite and non-negative")
         payload = {
             "attempt_id": attempt_id,
             "actual_charge": actual_charge,
@@ -327,8 +327,8 @@ class ProviderSpendRepository:
     ) -> SpendAttempt:
         if source not in {"operator", "provider"}:
             raise ValueError("resolution source must be operator or provider")
-        if actual_charge < 0:
-            raise ValueError("actual charge must be non-negative")
+        if not math.isfinite(actual_charge) or actual_charge < 0:
+            raise ValueError("actual charge must be finite and non-negative")
         payload = {
             "attempt_id": attempt_id,
             "actual_charge": actual_charge,

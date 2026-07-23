@@ -611,6 +611,280 @@ async def test_executor_leaves_timeout_outcome_uncertain(tmp_path):
     ] == 1.0
 
 
+@pytest.mark.asyncio
+async def test_valyu_reserves_capped_per_result_worst_case_before_call(tmp_path):
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.models import ProviderStatus
+
+    repository = _repository(tmp_path)
+
+    class Provider:
+        name = ProviderName.VALYU
+        calls = 0
+
+        def is_available(self):
+            return True
+
+        def status(self):
+            return ProviderStatus.ENABLED
+
+        async def search(self, query):
+            self.calls += 1
+            return [], ProviderTrace(
+                provider=self.name,
+                status="success",
+                credit_info={"cost_usd": 0.03},
+            )
+
+    provider = Provider()
+    budgets = BudgetTracker()
+    budgets.set_budget(ProviderName.VALYU, 0.01)
+    executor = ProviderExecutor(
+        providers={ProviderName.VALYU: provider},
+        health_tracker=HealthTracker(),
+        budget_tracker=budgets,
+        spend_repository=repository,
+    )
+
+    outcome = await executor.execute(
+        SearchQuery(
+            query="costly",
+            max_results=20,
+            providers=[ProviderName.VALYU],
+            caller="maya",
+        ),
+        [ProviderName.VALYU],
+    )
+
+    assert provider.calls == 0
+    assert outcome.traces[0].status == "skipped"
+    assert outcome.traces[0].error == "budget exhausted"
+    assert repository.list_attempts(provider=ProviderName.VALYU) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("max_results", "expected_reservation"),
+    [(1, 0.0015), (20, 0.03), (100, 0.03)],
+)
+async def test_valyu_reservation_estimate_respects_result_cap(
+    tmp_path,
+    max_results,
+    expected_reservation,
+):
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.models import ProviderStatus
+
+    repository = _repository(tmp_path)
+
+    class Provider:
+        name = ProviderName.VALYU
+
+        def is_available(self):
+            return True
+
+        def status(self):
+            return ProviderStatus.ENABLED
+
+        async def search(self, query):
+            return [], ProviderTrace(
+                provider=self.name,
+                status="success",
+                credit_info={"cost_usd": expected_reservation},
+            )
+
+    budgets = BudgetTracker()
+    budgets.set_budget(ProviderName.VALYU, 1.0)
+    executor = ProviderExecutor(
+        providers={ProviderName.VALYU: Provider()},
+        health_tracker=HealthTracker(),
+        budget_tracker=budgets,
+        spend_repository=repository,
+    )
+
+    await executor.execute(
+        SearchQuery(
+            query="bounded",
+            max_results=max_results,
+            providers=[ProviderName.VALYU],
+            caller="maya",
+            metadata={"attempt_scope": f"valyu-boundary-{max_results}"},
+        ),
+        [ProviderName.VALYU],
+    )
+
+    attempt = repository.list_attempts(provider=ProviderName.VALYU)[0]
+    assert attempt.reserved_charge == pytest.approx(expected_reservation)
+    assert attempt.actual_charge == pytest.approx(expected_reservation)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("max_results", [0, -1])
+async def test_invalid_valyu_result_count_fails_before_reservation_or_call(
+    tmp_path,
+    max_results,
+):
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+
+    repository = _repository(tmp_path)
+    from unittest.mock import MagicMock
+
+    provider = MagicMock()
+    provider.is_available.return_value = True
+    executor = ProviderExecutor(
+        providers={ProviderName.VALYU: provider},
+        health_tracker=HealthTracker(),
+        budget_tracker=BudgetTracker(),
+        spend_repository=repository,
+    )
+
+    outcome = await executor.execute(
+        SearchQuery(
+            query="invalid",
+            max_results=max_results,
+            providers=[ProviderName.VALYU],
+            caller="maya",
+        ),
+        [ProviderName.VALYU],
+    )
+
+    assert outcome.traces[0].status == "skipped"
+    assert "invalid conservative charge estimate" in outcome.traces[0].error
+    provider.search.assert_not_called()
+    assert repository.list_attempts(provider=ProviderName.VALYU) == []
+
+
+@pytest.mark.asyncio
+async def test_nonfinite_paid_estimate_fails_before_provider_call(
+    tmp_path,
+    monkeypatch,
+):
+    from unittest.mock import MagicMock
+
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+
+    repository = _repository(tmp_path)
+    provider = MagicMock()
+    provider.is_available.return_value = True
+    monkeypatch.setitem(
+        __import__("argus.broker.execution", fromlist=["_COST_ESTIMATES"])._COST_ESTIMATES,
+        ProviderName.BRAVE,
+        float("inf"),
+    )
+    executor = ProviderExecutor(
+        providers={ProviderName.BRAVE: provider},
+        health_tracker=HealthTracker(),
+        budget_tracker=BudgetTracker(),
+        spend_repository=repository,
+    )
+
+    outcome = await executor.execute(
+        SearchQuery(
+            query="invalid estimate",
+            providers=[ProviderName.BRAVE],
+            caller="maya",
+        ),
+        [ProviderName.BRAVE],
+    )
+
+    assert outcome.traces[0].status == "skipped"
+    assert "invalid conservative charge estimate" in outcome.traces[0].error
+    provider.search.assert_not_called()
+    assert repository.list_attempts(provider=ProviderName.BRAVE) == []
+
+
+def test_every_paid_provider_has_a_finite_conservative_estimator():
+    import math
+
+    from argus.broker.budgets import PROVIDER_TIERS
+    from argus.broker.execution import conservative_charge_estimate
+
+    estimates = {
+        provider: conservative_charge_estimate(
+            provider,
+            SearchQuery(query="audit", max_results=20),
+        )
+        for provider, tier in PROVIDER_TIERS.items()
+        if tier > 0
+    }
+
+    assert set(estimates) == {
+        ProviderName.BRAVE,
+        ProviderName.TAVILY,
+        ProviderName.LINKUP,
+        ProviderName.EXA,
+        ProviderName.SERPER,
+        ProviderName.PARALLEL,
+        ProviderName.YOU,
+        ProviderName.SEARCHAPI,
+        ProviderName.VALYU,
+    }
+    assert all(value > 0 and math.isfinite(value) for value in estimates.values())
+    assert estimates[ProviderName.VALYU] == pytest.approx(0.03)
+    assert all(
+        value == pytest.approx(1.0)
+        for provider, value in estimates.items()
+        if provider != ProviderName.VALYU
+    )
+
+
+@pytest.mark.asyncio
+async def test_nonfinite_actual_charge_keeps_reservation_uncertain_without_legacy_usage(
+    tmp_path,
+):
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+
+    repository = _repository(tmp_path)
+
+    class Provider:
+        name = ProviderName.VALYU
+
+        def is_available(self):
+            return True
+
+        async def search(self, query):
+            return [], ProviderTrace(
+                provider=self.name,
+                status="success",
+                credit_info={"cost_usd": float("nan")},
+            )
+
+    budgets = BudgetTracker()
+    budgets.set_budget(ProviderName.VALYU, 1.0)
+    executor = ProviderExecutor(
+        providers={ProviderName.VALYU: Provider()},
+        health_tracker=HealthTracker(),
+        budget_tracker=budgets,
+        spend_repository=repository,
+    )
+
+    outcome = await executor.execute(
+        SearchQuery(
+            query="invalid actual",
+            max_results=20,
+            providers=[ProviderName.VALYU],
+            caller="maya",
+        ),
+        [ProviderName.VALYU],
+    )
+
+    attempt = repository.list_attempts(provider=ProviderName.VALYU)[0]
+    assert attempt.status == "uncertain"
+    assert attempt.reserved_charge == pytest.approx(0.03)
+    assert budgets.get_monthly_usage(ProviderName.VALYU) == 0.0
+    assert "invalid charge" in outcome.traces[0].error
+
+
 def test_scoped_credential_identity_overrides_supplied_caller_label(
     tmp_path, monkeypatch
 ):

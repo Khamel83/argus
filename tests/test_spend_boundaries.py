@@ -361,3 +361,74 @@ def test_provider_reconciliation_api_requires_provider_scoped_credential(
     assert unauthorized.status_code == 401
     assert authorized.status_code == 200
     assert resolve_without_provider_key.status_code == 401
+
+
+def test_provider_snapshot_replay_returns_stable_conflict_response(
+    tmp_path,
+    monkeypatch,
+):
+    from fastapi.testclient import TestClient
+
+    from argus.api.main import create_app
+    from argus.persistence.provider_spend import create_provider_spend_repository
+
+    monkeypatch.setenv("ARGUS_ADMIN_API_KEY", "admin-secret")
+    monkeypatch.setenv(
+        "ARGUS_PROVIDER_RECONCILIATION_KEYS_JSON",
+        '{"brave":"brave-provider-secret"}',
+    )
+    repository = create_provider_spend_repository(
+        f"sqlite:///{tmp_path / 'reconciliation-replay-api.db'}",
+        create_schema=True,
+    )
+    reservations = [
+        repository.reserve(
+            provider=ProviderName.BRAVE,
+            conservative_charge=1.0,
+            budget_limit=10.0,
+            caller_identity="maya",
+            caller_label="",
+            idempotency_key=f"api-replay-attempt-{index}",
+        )
+        for index in range(2)
+    ]
+    broker = SimpleNamespace(
+        budget_tracker=SimpleNamespace(
+            close=lambda: None,
+            get_budget_limit=lambda provider: 10.0,
+        )
+    )
+    client = TestClient(create_app(broker=broker, spend_repository=repository))
+    headers = {
+        "X-Admin-API-Key": "admin-secret",
+        "X-Provider-Reconciliation-Key": "brave-provider-secret",
+    }
+
+    first = client.post(
+        "/api/admin/provider-spend/brave/snapshots",
+        headers=headers,
+        json={
+            "balance": 9.5,
+            "observed_at": datetime.now(tz=None).isoformat(),
+            "provider_reference": "brave-replayed-api-event",
+            "related_attempt_id": reservations[0].attempt_id,
+            "authoritative_charge": 0.5,
+            "idempotency_key": "api-replay-snapshot-0",
+        },
+    )
+    replay = client.post(
+        "/api/admin/provider-spend/brave/snapshots",
+        headers=headers,
+        json={
+            "balance": 9.0,
+            "observed_at": datetime.now(tz=None).isoformat(),
+            "provider_reference": "brave-replayed-api-event",
+            "related_attempt_id": reservations[1].attempt_id,
+            "authoritative_charge": 0.5,
+            "idempotency_key": "api-replay-snapshot-1",
+        },
+    )
+
+    assert first.status_code == 200
+    assert replay.status_code == 409
+    assert replay.json() == {"detail": "provider reference already used"}

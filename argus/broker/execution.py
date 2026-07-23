@@ -1,6 +1,7 @@
 """Provider execution services for the search broker."""
 
 import fnmatch
+import math
 import uuid
 from dataclasses import dataclass, field
 from typing import Dict, List, Mapping, Sequence
@@ -12,6 +13,7 @@ from argus.config import EgressNode
 from argus.logging import get_logger
 from argus.models import ProviderName, ProviderTrace, SearchQuery, SearchResult
 from argus.providers.base import BaseProvider
+from argus.providers.valyu import VALYU_RESULT_CAP, VALYU_UNIT_PRICE_USD
 
 
 def caller_tier_cap(caller: str, caps: Mapping[str, int]) -> int | None:
@@ -35,12 +37,43 @@ _COST_ESTIMATES = {
     ProviderName.PARALLEL: 1.0,
     ProviderName.LINKUP: 1.0,
     ProviderName.YOU: 1.0,
-    ProviderName.VALYU: 0.0015,  # ~$1.50 per 1k fast searches
+    ProviderName.VALYU: VALYU_UNIT_PRICE_USD,
     ProviderName.SEARCHAPI: 1.0,
 }
 
 # Tier 0 providers are always queried — free and unlimited.
 _TIER_0_PROVIDERS = {p for p, t in PROVIDER_TIERS.items() if t == 0}
+
+
+def conservative_charge_estimate(
+    provider: ProviderName,
+    query: SearchQuery,
+) -> float:
+    """Return the finite worst-case charge for one adapter request.
+
+    Valyu prices each requested result, capped by the adapter at 20.
+    Every other paid adapter currently consumes one request-based credit, so
+    its configured single-request estimate is already independent of result
+    count.
+    """
+    unit_charge = _COST_ESTIMATES.get(provider)
+    if provider == ProviderName.VALYU:
+        if (
+            isinstance(query.max_results, bool)
+            or not isinstance(query.max_results, int)
+            or query.max_results <= 0
+        ):
+            raise ValueError("max_results must be a positive integer")
+        estimate = min(query.max_results, VALYU_RESULT_CAP) * VALYU_UNIT_PRICE_USD
+    else:
+        estimate = unit_charge
+    if (
+        estimate is None
+        or not math.isfinite(float(estimate))
+        or float(estimate) <= 0
+    ):
+        raise ValueError(f"no finite positive estimate for {provider.value}")
+    return float(estimate)
 
 
 @dataclass
@@ -249,9 +282,19 @@ class ProviderExecutor:
                     )
                     continue
 
-            reservation = self._reserve_paid_attempt(
-                query, pname, tier, attempt_scope, index
-            )
+            try:
+                reservation = self._reserve_paid_attempt(
+                    query, pname, tier, attempt_scope, index
+                )
+            except ValueError as exc:
+                traces.append(
+                    ProviderTrace(
+                        provider=pname,
+                        status="skipped",
+                        error=f"invalid conservative charge estimate: {exc}",
+                    )
+                )
+                continue
             if reservation is False:
                 traces.append(
                     ProviderTrace(
@@ -303,11 +346,12 @@ class ProviderExecutor:
                 # Use actual cost if provided by trace, otherwise estimate
                 cost = 0.0
                 if trace.credit_info and "cost_usd" in trace.credit_info:
-                    cost = trace.credit_info["cost_usd"]
+                    cost = float(trace.credit_info["cost_usd"])
                 else:
                     cost = _COST_ESTIMATES.get(provider_name, 0.0)
 
-                self._budgets.record_usage(provider_name, cost)
+                if math.isfinite(cost) and cost >= 0:
+                    self._budgets.record_usage(provider_name, cost)
                 trace.budget_remaining = self._budgets.get_remaining_budget(provider_name)
                 trace.results_count = len(results)
 
@@ -347,7 +391,7 @@ class ProviderExecutor:
         try:
             return self._spend.reserve(
                 provider=provider,
-                conservative_charge=_COST_ESTIMATES.get(provider, 1.0),
+                conservative_charge=conservative_charge_estimate(provider, query),
                 budget_limit=self._budgets.get_budget_limit(provider),
                 caller_identity=query.caller or "unknown",
                 caller_label=str(query.metadata.get("caller_label", "")),
@@ -384,7 +428,10 @@ class ProviderExecutor:
         if trace.credit_info and "cost_usd" in trace.credit_info:
             actual = float(trace.credit_info["cost_usd"])
         elif trace.status == "success":
-            actual = _COST_ESTIMATES.get(provider, 0.0)
+            actual = reservation.reserved_charge
+        if not math.isfinite(actual) or actual < 0:
+            trace.error = "provider returned an invalid charge; reservation left uncertain"
+            return
         self._spend.settle(
             reservation.attempt_id,
             actual_charge=actual,

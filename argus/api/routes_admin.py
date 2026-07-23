@@ -202,8 +202,17 @@ async def record_provider_snapshot(
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Unknown provider attempt") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        from argus.persistence.provider_spend import SpendConflictError
+
+        if isinstance(exc, SpendConflictError):
+            raise HTTPException(
+                status_code=409,
+                detail="provider reference already used",
+            ) from exc
+        if isinstance(exc, ValueError):
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise
     return {
         "snapshot_id": snapshot.snapshot_id,
         "provider": snapshot.provider,

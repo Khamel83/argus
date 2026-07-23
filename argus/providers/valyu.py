@@ -25,6 +25,8 @@ from argus.providers.base import BaseProvider
 logger = get_logger("providers.valyu")
 
 VALYU_API_BASE = "https://api.valyu.ai/v1/search"
+VALYU_RESULT_CAP = 20
+VALYU_UNIT_PRICE_USD = 0.0015
 
 
 class ValyuProvider(BaseProvider):
@@ -57,7 +59,7 @@ class ValyuProvider(BaseProvider):
         }
         payload = {
             "query": query.query,
-            "max_num_results": min(query.max_results, 20),
+            "max_num_results": min(query.max_results, VALYU_RESULT_CAP),
             "search_type": "web",
             "fast_mode": True,
         }
