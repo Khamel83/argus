@@ -1,6 +1,6 @@
 # Argus
 
-> Argus is search infrastructure for AI agents. 14 providers with topology-aware routing, Reciprocal Rank Fusion ranking, WolframAlpha computed answers, 12-step content extraction with completeness assessment, universal provenance tracking (egress/machine/source), retrieval workflows, corpus storage, and budget enforcement. Works immediately with DuckDuckGo + Yahoo — no API keys needed. Add API keys for 7,000+ free monthly queries. Connect via HTTP, CLI, MCP server, or Python import.
+> Argus is search infrastructure for AI agents. 14 providers with topology-aware routing, Reciprocal Rank Fusion ranking, WolframAlpha computed answers, 12-step content extraction with completeness assessment, universal provenance tracking (egress/machine/source), retrieval workflows, corpus storage, and budget enforcement. Works immediately with DuckDuckGo + Yahoo — no API keys needed. API keys provide 7,000+ free monthly queries, or up to 12,000+ when Parallel's monthly credit is available to an eligible account with a card on file. Connect via HTTP, CLI, MCP server, or Python import.
 
 ## What It Does
 
@@ -17,8 +17,8 @@
 ## Providers
 
 > Tier 0 (free): SearXNG (self-hosted, disabled by default — enable if Docker is running), DuckDuckGo (no key), Yahoo (scraped), GitHub (free), WolframAlpha (2k/mo computed answers)
-> Tier 1 (monthly recurring): Brave (2k/mo), Tavily (1k/mo), Exa (1k/mo), Linkup (1k/mo)
-> Tier 3 (one-time credits): Serper (2.5k), Parallel AI (4k), You.com ($20), Valyu ($10), SearchAPI
+> Tier 1 (monthly recurring): Brave (2k/mo), Tavily (1k/mo), Exa (1k/mo), Linkup (1k/mo), Parallel AI (up to 5k/mo for eligible accounts with a card on file)
+> Tier 3 (one-time credits): Serper (2.5k), You.com ($20), Valyu ($10), SearchAPI
 > Routing: always queries free providers first, then monthly, then one-time. Exhausted providers skipped. Topology-aware routing optimizes for residential egress (e.g. homelab) automatically.
 
 ## Content Extraction

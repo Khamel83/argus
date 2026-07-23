@@ -37,13 +37,13 @@ Hard rules (from `maya/docs/CONTEXT-CONTRACT.md`): Clio never calls Maya; Maya m
 1. **Issue #19** — the `build_research_pack` MCP tool already exists (`argus/mcp/server.py:146`). The gap is output shape: it returns prose markdown and leaves files on disk. Fix: JSON manifest response format + new `read_pack_file` MCP tool so an agent (Hermes) can pipe pack files to Maya `POST /ingest/file` without a shell escape. Argus must NOT push to Maya itself.
 2. **Issue #20** — README gets a "Using Argus from MCP vs HTTP" section linking to `khamel83/maya` `docs/CONTEXT-CONTRACT.md`.
 3. **Contract fix** — Clio's existing Argus usage (URL extraction at intake, Lane B research, search-and-summarize workflow) is legitimate. `maya/docs/CONTEXT-CONTRACT.md` gets updated to permit it (with mandatory caller attribution); the "never" that remains is using Argus as memory/agent-context.
-4. **Guardrails** — server-side caller tier caps: `ARGUS_CALLER_TIER_CAPS="clio*:1,hermes*:1"` means callers matching those fnmatch patterns never route to tier-3 one-time-credit providers (Serper, Parallel, You.com, Valyu, SearchAPI). This is enforced in the broker regardless of what the caller passes.
+4. **Guardrails** — server-side caller tier caps: `ARGUS_CALLER_TIER_CAPS="clio*:1,hermes*:1"` means callers matching those fnmatch patterns may route to monthly tier-1 providers, including Parallel, but never route to tier-3 one-time-credit providers (Serper, You.com, Valyu, SearchAPI). This is enforced in the broker regardless of what the caller passes.
 5. **Canonical deployment** — mac mini, launchd, HTTP `:8300`, streamable-http MCP `:8301`, bound to `0.0.0.0` (Tailscale-only network exposure; the mini is not port-forwarded). Tailscale hostname: `omars-mac-mini` (100.113.216.27). The old inconsistent deployments (Clio's `:8005` default, homelab Docker) get converged/decommissioned.
 6. **Hermes** — MCP toolset registration in `config/config.yaml.template` + a SOUL.md section. Bearer token comes from the secrets vault via `load_secret_env ARGUS_API_KEY` in the bootstrap script (`${ARGUS_API_KEY}` interpolation in the template, same pattern as `${PENNY_WEBHOOK_SECRET}`).
 
 ### Provider tiers (for the caps work)
 
-Tier 0 = free (SearXNG, DuckDuckGo, Yahoo, GitHub, WolframAlpha). Tier 1 = monthly recurring (Brave, Tavily, Exa, Linkup). Tier 3 = one-time credits (Serper, Parallel, You.com, Valyu, SearchAPI). `BudgetTracker.get_provider_tier(provider)` returns the tier.
+Tier 0 = free (SearXNG, DuckDuckGo, Yahoo, GitHub, WolframAlpha). Tier 1 = monthly recurring (Brave, Tavily, Exa, Linkup, Parallel). Tier 3 = one-time credits (Serper, You.com, Valyu, SearchAPI). `BudgetTracker.get_provider_tier(provider)` returns the tier.
 
 ### Conventions (argus repo)
 

@@ -356,7 +356,7 @@ class EnvironmentConfigLoader:
             exa=self.provider_config("EXA", enabled_default=False, timeout_default=20, budget_default=1000.0),
             searchapi=self.provider_config("SEARCHAPI", enabled_default=False),
             you=self.provider_config("YOU", enabled_default=False, budget_default=20000.0),
-            parallel=self.provider_config("PARALLEL", enabled_default=False, budget_default=16000.0),
+            parallel=self.provider_config("PARALLEL", enabled_default=False, budget_default=5000.0),
             linkup=self.provider_config("LINKUP", enabled_default=False, budget_default=1000.0),
             valyu=self.provider_config("VALYU", enabled_default=False, budget_default=10.0),
             github=self.provider_config("GITHUB", enabled_default=True),
