@@ -29,6 +29,8 @@ _browser = None
 _playwright_instance = None
 _using_obscura_cdp = False
 _PLAYWRIGHT_AVAILABLE = None
+_browser_unavailable = False
+_browser_lock: asyncio.Lock | None = None
 
 
 def _check_playwright():
@@ -40,45 +42,80 @@ def _check_playwright():
     return _PLAYWRIGHT_AVAILABLE
 
 
+def _get_browser_lock() -> asyncio.Lock:
+    """Create the singleton initialization lock lazily for the active loop."""
+    global _browser_lock
+    if _browser_lock is None:
+        _browser_lock = asyncio.Lock()
+    return _browser_lock
+
+
+async def _close_browser_resources() -> None:
+    """Release singleton resources and clear their references before awaiting."""
+    global _browser, _playwright_instance, _using_obscura_cdp
+
+    browser, playwright_instance = _browser, _playwright_instance
+    _browser = None
+    _playwright_instance = None
+    _using_obscura_cdp = False
+
+    if browser:
+        try:
+            await browser.close()
+        except Exception as exc:
+            logger.debug("Failed to close Playwright browser: %s", exc)
+    if playwright_instance:
+        try:
+            await playwright_instance.stop()
+        except Exception as exc:
+            logger.debug("Failed to stop Playwright runtime: %s", exc)
+
+
 async def _get_browser():
     """Get or create a shared browser instance.
 
     Tries Obscura CDP first (if ARGUS_OBSCURA_CDP_URL is set), then falls
     back to launching headless Chrome.
     """
-    global _browser, _playwright_instance, _using_obscura_cdp
+    global _browser, _playwright_instance, _using_obscura_cdp, _browser_unavailable
 
-    if _browser and _browser.is_connected():
-        return _browser
+    async with _get_browser_lock():
+        if _browser and _browser.is_connected():
+            return _browser
 
-    if not _check_playwright():
-        return None
+        if _browser:
+            await _close_browser_resources()
 
-    try:
-        from playwright.async_api import async_playwright
-        _playwright_instance = await async_playwright().start()
+        if _browser_unavailable or not _check_playwright():
+            return None
 
-        if OBSCURA_CDP_URL:
-            try:
-                _browser = await _playwright_instance.chromium.connect_over_cdp(OBSCURA_CDP_URL)
-                _using_obscura_cdp = True
-                logger.info("Connected to Obscura CDP at %s", OBSCURA_CDP_URL)
-                return _browser
-            except Exception as e:
-                logger.warning(
-                    "Obscura CDP connection failed (%s), falling back to Chrome: %s",
-                    OBSCURA_CDP_URL, e,
-                )
-                _using_obscura_cdp = False
+        try:
+            from playwright.async_api import async_playwright
+            _playwright_instance = await async_playwright().start()
 
-        _browser = await _playwright_instance.chromium.launch(
-            headless=True,
-            args=['--no-sandbox', '--disable-setuid-sandbox'],
-        )
-        return _browser
-    except Exception as e:
-        logger.warning("Failed to launch Playwright browser: %s", e)
-        return None
+            if OBSCURA_CDP_URL:
+                try:
+                    _browser = await _playwright_instance.chromium.connect_over_cdp(OBSCURA_CDP_URL)
+                    _using_obscura_cdp = True
+                    logger.info("Connected to Obscura CDP at %s", OBSCURA_CDP_URL)
+                    return _browser
+                except Exception as e:
+                    logger.warning(
+                        "Obscura CDP connection failed (%s), falling back to Chrome: %s",
+                        OBSCURA_CDP_URL, e,
+                    )
+                    _using_obscura_cdp = False
+
+            _browser = await _playwright_instance.chromium.launch(
+                headless=True,
+                args=['--no-sandbox', '--disable-setuid-sandbox'],
+            )
+            return _browser
+        except Exception as e:
+            logger.warning("Failed to launch Playwright browser: %s", e)
+            await _close_browser_resources()
+            _browser_unavailable = True
+            return None
 
 
 async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedContent:
@@ -87,6 +124,7 @@ async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedCon
     if not browser:
         return ExtractedContent(url=url, error="playwright: not available")
 
+    context = None
     page = None
     try:
         context = await browser.new_context()
@@ -142,10 +180,11 @@ async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedCon
                 await page.close()
             except Exception as exc:
                 logger.debug("Failed to close Playwright page for %s: %s", url[:60], exc)
-        try:
-            await context.close()
-        except Exception as exc:
-            logger.debug("Failed to close Playwright context for %s: %s", url[:60], exc)
+        if context:
+            try:
+                await context.close()
+            except Exception as exc:
+                logger.debug("Failed to close Playwright context for %s: %s", url[:60], exc)
 
 
 async def extract_playwright(url: str) -> ExtractedContent:
@@ -159,17 +198,17 @@ async def close_browser():
     When using Obscura CDP, this disconnects from the Obscura server
     without stopping it — Obscura keeps running for future connections.
     """
-    global _browser, _playwright_instance, _using_obscura_cdp
-    if _browser:
-        try:
-            await _browser.close()
-        except Exception as exc:
-            logger.debug("Failed to close Playwright browser: %s", exc)
-        _browser = None
-        _using_obscura_cdp = False
-    if _playwright_instance:
-        try:
-            await _playwright_instance.stop()
-        except Exception as exc:
-            logger.debug("Failed to stop Playwright runtime: %s", exc)
-        _playwright_instance = None
+    async with _get_browser_lock():
+        await _close_browser_resources()
+
+
+async def reset_browser():
+    """Explicitly clear the unavailable capability and retry on a later request.
+
+    This is deliberately not automatic: a failed local Chromium launch remains
+    cached until an operator has changed the runtime environment.
+    """
+    global _browser_unavailable
+    async with _get_browser_lock():
+        await _close_browser_resources()
+        _browser_unavailable = False
