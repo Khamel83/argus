@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Mapping, Sequence
 
 from argus.broker.budgets import BudgetTracker, PROVIDER_TIERS
-from argus.broker.health import HealthTracker
-from argus.broker.reachability import ReachabilityMatrix
+from argus.broker.health import HealthExecutionClaim, HealthTracker
+from argus.broker.reachability import ReachabilityClaim, ReachabilityMatrix
 from argus.config import EgressNode
 from argus.logging import get_logger
 from argus.models import ProviderName, ProviderTrace, SearchQuery, SearchResult
@@ -43,6 +43,12 @@ _COST_ESTIMATES = {
 
 # Tier 0 providers are always queried — free and unlimited.
 _TIER_0_PROVIDERS = {p for p, t in PROVIDER_TIERS.items() if t == 0}
+
+
+@dataclass(frozen=True)
+class InvocationClaims:
+    health: HealthExecutionClaim
+    reachability: ReachabilityClaim
 
 
 def conservative_charge_estimate(
@@ -259,7 +265,7 @@ class ProviderExecutor:
                         )
                         uncertain = True
                 finally:
-                    self._release_invocation_claims(pname, claims)
+                    self._release_invocation_claims(claims)
                 if not uncertain or tier <= 0:
                     self._record_known_outcome(
                         query,
@@ -380,7 +386,7 @@ class ProviderExecutor:
                     query, provider, pname
                 )
             finally:
-                self._release_invocation_claims(pname, claims)
+                self._release_invocation_claims(claims)
             if not uncertain or tier <= 0:
                 self._record_known_outcome(
                     query,
@@ -404,20 +410,21 @@ class ProviderExecutor:
             budget_pace_warnings=pace_warnings,
         )
 
-    def _claim_invocation(self, provider: ProviderName, egress: str):
+    def _claim_invocation(
+        self, provider: ProviderName, egress: str
+    ) -> InvocationClaims | None:
         health_claim = self._health.claim_execution(provider)
         if health_claim is None:
             return None
         reachability_claim = self._reachability.claim_egress(provider, egress)
         if reachability_claim is None:
-            self._health.release_execution_claim(provider, health_claim)
+            self._health.release_execution_claim(health_claim)
             return None
-        return health_claim, reachability_claim
+        return InvocationClaims(health_claim, reachability_claim)
 
-    def _release_invocation_claims(self, provider: ProviderName, claims) -> None:
-        health_claim, reachability_claim = claims
-        self._reachability.release_claim(reachability_claim)
-        self._health.release_execution_claim(provider, health_claim)
+    def _release_invocation_claims(self, claims: InvocationClaims) -> None:
+        self._reachability.release_claim(claims.reachability)
+        self._health.release_execution_claim(claims.health)
 
     async def _execute_provider(
         self,

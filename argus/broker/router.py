@@ -181,8 +181,9 @@ class SearchBroker:
         provider_obj = self._providers.get(provider)
         base_status = provider_obj.status() if provider_obj else "unknown"
 
-        health = self._health.peek_health(provider)
-        health_status = self._health.peek_status(provider)
+        health_evidence = self._health.evidence_snapshot(provider)
+        health = health_evidence.health
+        health_status = health_evidence.status_override
         budget_status = self._budgets.check_status(provider)
 
         effective = base_status
@@ -194,7 +195,7 @@ class SearchBroker:
         return {
             "provider": provider.value,
             "config_status": base_status,
-            "health": health.__dict__ if health is not None else None,
+            "health": health.as_dict() if health is not None else None,
             "budget_remaining": self._budgets.get_remaining_budget(provider),
             "effective_status": effective,
         }
@@ -216,7 +217,7 @@ class SearchBroker:
             local_providers=self._providers,
             egress_nodes=list(self._egress_nodes.values()),
         )
-        for provider, outcomes in current_outcomes.items():
+        for provider, outcomes in current_outcomes.by_provider().items():
             if any(outcomes):
                 self._health.record_success(provider)
             elif outcomes:

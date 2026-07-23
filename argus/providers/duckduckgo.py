@@ -20,13 +20,13 @@ from argus.models import (
     SearchResult,
     SearchQuery,
 )
-from argus.providers.base import BaseProvider
+from argus.providers.base import BaseProvider, ProbeCapability
 
 logger = get_logger("providers.duckduckgo")
 
 
 class DuckDuckGoProvider(BaseProvider):
-    probe_is_blocking = True
+    probe_capability = ProbeCapability.BLOCKING_UNSUPPORTED
 
     def __init__(self, config: ProviderConfig | None = None):
         self._config = config or ProviderConfig(enabled=True)

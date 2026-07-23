@@ -186,6 +186,13 @@ def create_app(
                         "reasons": ["recovery_evidence_unavailable"],
                     }
 
+                def _provider_evidence_snapshot() -> dict:
+                    try:
+                        return b.operational_provider_evidence()
+                    except Exception:
+                        return {}
+
+                provider_evidence = _provider_evidence_snapshot()
                 await asyncio.to_thread(
                     refresh_operational_status,
                     app.state.operational_status,
@@ -193,6 +200,7 @@ def create_app(
                     repository=repository,
                     browser_status=browser_status,
                     recovery_status=recovery_status,
+                    provider_evidence=provider_evidence,
                 )
 
                 async def _refresh_status_background() -> None:
@@ -207,6 +215,7 @@ def create_app(
                                 if browser_status_reader is not None
                                 else _unavailable_browser_status()
                             )
+                            provider_evidence = _provider_evidence_snapshot()
                             await asyncio.to_thread(
                                 refresh_operational_status,
                                 app.state.operational_status,
@@ -214,6 +223,7 @@ def create_app(
                                 repository=repository,
                                 browser_status=current_browser,
                                 recovery_status=current_recovery,
+                                provider_evidence=provider_evidence,
                             )
                         except Exception as exc:
                             logger.warning(

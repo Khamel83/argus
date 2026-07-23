@@ -1,7 +1,8 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from argus.broker.reachability import ReachabilityMatrix
+from argus.broker.reachability import ProbeRunResult, ReachabilityMatrix
 from argus.models import ProviderName, ProviderTrace, SearchResult
+from argus.providers.base import ProbeCapability
 
 
 def test_best_egress_returns_local_when_reachable():
@@ -92,6 +93,7 @@ def test_get_all_returns_per_provider_summary():
 async def test_probe_all_marks_reachable_on_success():
     matrix = ReachabilityMatrix()
     mock_provider = AsyncMock()
+    mock_provider.probe_capability = ProbeCapability.ASYNC_NATIVE
     mock_provider.is_available = MagicMock(return_value=True)
     mock_provider.search = AsyncMock(
         return_value=(
@@ -109,11 +111,13 @@ async def test_probe_all_marks_reachable_on_success():
         )
     )
 
-    await matrix.probe_all(
+    result = await matrix.probe_all(
         local_providers={ProviderName.YAHOO: mock_provider},
         egress_nodes=[],
     )
 
+    assert isinstance(result, ProbeRunResult)
+    assert result.by_provider() == {ProviderName.YAHOO: (True,)}
     assert matrix.best_egress(ProviderName.YAHOO) == "local"
     summary = matrix.get_all()
     assert summary[ProviderName.YAHOO]["probes"]["local"]["reachable"] is True
@@ -124,6 +128,7 @@ async def test_probe_all_marks_reachable_on_success():
 async def test_probe_all_marks_blocked_on_error():
     matrix = ReachabilityMatrix()
     mock_provider = AsyncMock()
+    mock_provider.probe_capability = ProbeCapability.ASYNC_NATIVE
     mock_provider.is_available = MagicMock(return_value=True)
     mock_provider.search = AsyncMock(
         return_value=(
@@ -154,6 +159,7 @@ async def test_probe_all_probes_remote_nodes():
 
     # Local Yahoo blocked
     local_yahoo = AsyncMock()
+    local_yahoo.probe_capability = ProbeCapability.ASYNC_NATIVE
     local_yahoo.is_available = MagicMock(return_value=True)
     local_yahoo.search = AsyncMock(
         return_value=(
@@ -205,6 +211,7 @@ async def test_probe_all_records_every_free_local_and_remote_attempt_once():
     spend = MagicMock()
     matrix = ReachabilityMatrix(spend_repository=spend)
     local = MagicMock()
+    local.probe_capability = ProbeCapability.ASYNC_NATIVE
     local.is_available.return_value = True
     local.search = AsyncMock(
         return_value=(
@@ -256,6 +263,7 @@ async def test_probe_accounting_failure_is_not_reclassified_or_double_recorded()
     spend.record_free_attempt.side_effect = RuntimeError("ledger unavailable")
     matrix = ReachabilityMatrix(spend_repository=spend)
     local = MagicMock()
+    local.probe_capability = ProbeCapability.ASYNC_NATIVE
     local.is_available.return_value = True
     local.search = AsyncMock(
         return_value=(

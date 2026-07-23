@@ -1299,7 +1299,8 @@ def test_liveness_bypasses_application_metrics_and_logging(path, monkeypatch):
     logged.assert_not_called()
 
 
-def test_blocking_background_probe_cannot_delay_liveness(monkeypatch):
+def test_async_background_probe_cannot_delay_liveness(monkeypatch):
+    import asyncio
     import threading
     import time
 
@@ -1310,19 +1311,20 @@ def test_blocking_background_probe_cannot_delay_liveness(monkeypatch):
     from argus.broker.reachability import ReachabilityMatrix
     from argus.broker.router import SearchBroker
     from argus.models import ProviderName, ProviderTrace
+    from argus.providers.base import ProbeCapability
 
     entered = threading.Event()
     broker = _runtime_broker()
 
     class BlockingProvider:
-        probe_is_blocking = True
+        probe_capability = ProbeCapability.ASYNC_NATIVE
 
         def is_available(self):
             return True
 
         async def search(self, query):
             entered.set()
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
             return [], ProviderTrace(
                 provider=ProviderName.DUCKDUCKGO,
                 status="success",
@@ -1358,6 +1360,205 @@ def test_blocking_background_probe_cannot_delay_liveness(monkeypatch):
     assert elapsed < 0.2
     service.metrics.request_started.assert_not_called()
     logged.assert_not_called()
+
+
+def test_blocking_only_probe_never_outlives_lifespan_cleanup(monkeypatch):
+    import asyncio
+    import threading
+    import time
+
+    from fastapi.testclient import TestClient
+
+    import argus.extraction.playwright_extractor as extractor
+    from argus.api.main import create_app
+    from argus.broker.health import HealthTracker
+    from argus.broker.reachability import ReachabilityMatrix
+    from argus.broker.router import SearchBroker
+    from argus.models import ProviderName, ProviderTrace
+    from argus.providers.base import ProbeCapability
+
+    refresh_started = threading.Event()
+    external_active = threading.Event()
+    release_external = threading.Event()
+    cleanup: list[str] = []
+
+    class SignaledMatrix(ReachabilityMatrix):
+        async def probe_all(self, *args, **kwargs):
+            refresh_started.set()
+            return await super().probe_all(*args, **kwargs)
+
+    class BlockingOnlyProvider:
+        probe_capability = ProbeCapability.BLOCKING_UNSUPPORTED
+        calls = 0
+
+        def is_available(self):
+            return True
+
+        async def search(self, query):
+            self.calls += 1
+            external_active.set()
+            try:
+                await asyncio.to_thread(release_external.wait)
+            finally:
+                external_active.clear()
+            return [], ProviderTrace(
+                provider=ProviderName.DUCKDUCKGO,
+                status="success",
+            )
+
+    provider = BlockingOnlyProvider()
+    broker = _runtime_broker()
+    broker._providers = {ProviderName.DUCKDUCKGO: provider}
+    broker._egress_nodes = {}
+    broker._reachability = SignaledMatrix()
+    broker._health = HealthTracker()
+    broker.refresh_provider_evidence = SearchBroker.refresh_provider_evidence.__get__(
+        broker, SearchBroker
+    )
+    broker.budget_tracker.close.side_effect = lambda: cleanup.append("budget")
+
+    async def close_browser():
+        cleanup.append("browser")
+
+    monkeypatch.setattr(extractor, "close_browser", close_browser)
+    app = create_app(
+        broker=broker,
+        search_repository=_runtime_repository(),
+        operational_status=_service(),
+    )
+
+    started = time.monotonic()
+    try:
+        with TestClient(app):
+            assert refresh_started.wait(timeout=1)
+        elapsed = time.monotonic() - started
+
+        assert provider.calls == 0
+        assert external_active.is_set() is False
+        assert cleanup == ["browser", "budget"]
+        assert elapsed < 0.5
+    finally:
+        release_external.set()
+
+
+def test_async_native_probe_is_cancelled_before_cleanup(monkeypatch):
+    import asyncio
+    import threading
+
+    from fastapi.testclient import TestClient
+
+    import argus.extraction.playwright_extractor as extractor
+    from argus.api.main import create_app
+    from argus.broker.health import HealthTracker
+    from argus.broker.reachability import ReachabilityMatrix
+    from argus.broker.router import SearchBroker
+    from argus.models import ProviderName
+    from argus.providers.base import ProbeCapability
+
+    entered = threading.Event()
+    cleanup: list[str] = []
+
+    class AsyncNativeProvider:
+        probe_capability = ProbeCapability.ASYNC_NATIVE
+
+        def is_available(self):
+            return True
+
+        async def search(self, query):
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleanup.append("probe")
+
+    broker = _runtime_broker()
+    broker._providers = {ProviderName.DUCKDUCKGO: AsyncNativeProvider()}
+    broker._egress_nodes = {}
+    broker._reachability = ReachabilityMatrix()
+    broker._health = HealthTracker()
+    broker.refresh_provider_evidence = SearchBroker.refresh_provider_evidence.__get__(
+        broker, SearchBroker
+    )
+    broker.budget_tracker.close.side_effect = lambda: cleanup.append("budget")
+
+    async def close_browser():
+        cleanup.append("browser")
+
+    monkeypatch.setattr(extractor, "close_browser", close_browser)
+
+    with TestClient(
+        create_app(
+            broker=broker,
+            search_repository=_runtime_repository(),
+            operational_status=_service(),
+        )
+    ):
+        assert entered.wait(timeout=1)
+
+    assert cleanup == ["probe", "browser", "budget"]
+
+
+def test_provider_evidence_snapshot_and_probe_updates_share_owner_loop():
+    import threading
+
+    from fastapi.testclient import TestClient
+
+    from argus.api.main import create_app
+    from argus.broker.health import HealthTracker
+    from argus.broker.reachability import ReachabilityMatrix
+    from argus.broker.router import SearchBroker
+    from argus.models import ProviderName, ProviderTrace
+    from argus.providers.base import ProbeCapability
+
+    owner_threads: dict[str, int] = {}
+    probe_recorded = threading.Event()
+
+    class OwnerHealthTracker(HealthTracker):
+        def record_success(self, provider):
+            owner_threads["health"] = threading.get_ident()
+            super().record_success(provider)
+            probe_recorded.set()
+
+    class AsyncNativeProvider:
+        probe_capability = ProbeCapability.ASYNC_NATIVE
+
+        def is_available(self):
+            return True
+
+        async def search(self, query):
+            owner_threads["probe"] = threading.get_ident()
+            return [], ProviderTrace(
+                provider=ProviderName.DUCKDUCKGO,
+                status="success",
+            )
+
+    broker = _runtime_broker()
+    broker._providers = {ProviderName.DUCKDUCKGO: AsyncNativeProvider()}
+    broker._egress_nodes = {}
+    broker._reachability = ReachabilityMatrix()
+    broker._health = OwnerHealthTracker()
+    broker.refresh_provider_evidence = SearchBroker.refresh_provider_evidence.__get__(
+        broker, SearchBroker
+    )
+
+    def operational_provider_evidence():
+        owner_threads["snapshot"] = threading.get_ident()
+        return {}
+
+    broker.operational_provider_evidence.side_effect = operational_provider_evidence
+
+    with TestClient(
+        create_app(
+            broker=broker,
+            search_repository=_runtime_repository(),
+            operational_status=_service(),
+        )
+    ):
+        assert probe_recorded.wait(timeout=1)
+
+    assert owner_threads["snapshot"] == owner_threads["probe"]
+    assert owner_threads["probe"] == owner_threads["health"]
+    assert owner_threads["snapshot"] != threading.get_ident()
 
 
 def test_startup_remains_initialized_across_runtime_authority_loss_and_recovery():

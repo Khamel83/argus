@@ -6,12 +6,26 @@ Provider-specific response shapes must never leak outside adapters.
 """
 
 from abc import ABC, abstractmethod
+from enum import Enum
 from typing import List
-from argus.models import ProviderName, ProviderStatus, ProviderTrace, SearchResult, SearchQuery
+from argus.models import (
+    ProviderName,
+    ProviderStatus,
+    ProviderTrace,
+    SearchResult,
+    SearchQuery,
+)
+
+
+class ProbeCapability(str, Enum):
+    ASYNC_NATIVE = "async_native"
+    BLOCKING_UNSUPPORTED = "blocking_unsupported"
 
 
 class BaseProvider(ABC):
     """Abstract base for all search provider adapters."""
+
+    probe_capability = ProbeCapability.ASYNC_NATIVE
 
     @property
     @abstractmethod
@@ -30,6 +44,8 @@ class BaseProvider(ABC):
         ...
 
     @abstractmethod
-    async def search(self, query: SearchQuery) -> tuple[List[SearchResult], ProviderTrace]:
+    async def search(
+        self, query: SearchQuery
+    ) -> tuple[List[SearchResult], ProviderTrace]:
         """Execute a search and return normalized results with trace metadata."""
         ...

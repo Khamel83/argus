@@ -12,10 +12,13 @@ from argus.models import (
     SearchQuery,
     SearchResult,
 )
+from argus.providers.base import ProbeCapability
 
 
 @dataclass
 class StubProvider:
+    probe_capability = ProbeCapability.ASYNC_NATIVE
+
     name: ProviderName
     results: list[SearchResult] | None = None
     trace: ProviderTrace | None = None
@@ -139,6 +142,7 @@ async def test_background_probe_refresh_establishes_health_evidence():
     from unittest.mock import AsyncMock, MagicMock
 
     from argus.broker.health import HealthTracker
+    from argus.broker.reachability import ProbeOutcome, ProbeRunResult
     from argus.broker.router import SearchBroker
 
     broker = SearchBroker.__new__(SearchBroker)
@@ -147,7 +151,9 @@ async def test_background_probe_refresh_establishes_health_evidence():
     broker._health = HealthTracker()
     broker._reachability = MagicMock()
     broker._reachability.probe_all = AsyncMock()
-    broker._reachability.probe_all.return_value = {ProviderName.DUCKDUCKGO: [True]}
+    broker._reachability.probe_all.return_value = ProbeRunResult(
+        (ProbeOutcome(ProviderName.DUCKDUCKGO, True),)
+    )
 
     await broker.refresh_provider_evidence()
 
@@ -201,11 +207,34 @@ async def test_refresh_health_uses_only_outcomes_from_current_probe_run():
     assert duck.calls == 2
 
 
+def test_provider_health_snapshot_is_frozen_and_detached():
+    from dataclasses import FrozenInstanceError
+
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.health import HealthTracker
+    from argus.broker.router import SearchBroker
+
+    health = HealthTracker()
+    health.record_success(ProviderName.BRAVE)
+    broker = SearchBroker.__new__(SearchBroker)
+    broker._providers = {ProviderName.BRAVE: StubProvider(name=ProviderName.BRAVE)}
+    broker._health = health
+    broker._budgets = BudgetTracker()
+
+    frozen = health.snapshot(ProviderName.BRAVE)
+    captured = broker.get_provider_status(ProviderName.BRAVE)
+    health.record_failure(ProviderName.BRAVE)
+
+    assert captured["health"]["consecutive_failures"] == 0
+    assert captured["health"]["last_failure"] is None
+    with pytest.raises(FrozenInstanceError):
+        frozen.consecutive_failures = 99
+
+
 @pytest.mark.asyncio
 async def test_cancelled_probe_cannot_mutate_shared_evidence_after_shutdown():
     import asyncio
     import threading
-    import time
 
     from argus.broker.health import HealthTracker
     from argus.broker.reachability import ReachabilityMatrix
@@ -214,12 +243,11 @@ async def test_cancelled_probe_cannot_mutate_shared_evidence_after_shutdown():
     entered = threading.Event()
 
     class BlockingProvider(StubProvider):
-        probe_is_blocking = True
+        probe_capability = ProbeCapability.ASYNC_NATIVE
 
         async def search(self, query):
             entered.set()
-            time.sleep(0.35)
-            return await super().search(query)
+            await asyncio.Event().wait()
 
     matrix = ReachabilityMatrix()
     health = HealthTracker()
@@ -243,7 +271,7 @@ async def test_cancelled_probe_cannot_mutate_shared_evidence_after_shutdown():
     with pytest.raises(asyncio.CancelledError):
         await task
     canceller.join(timeout=1)
-    await asyncio.sleep(0.4)
+    await asyncio.sleep(0)
 
     assert ProviderName.DUCKDUCKGO not in matrix.get_all()
     assert health.peek_health(ProviderName.DUCKDUCKGO) is None

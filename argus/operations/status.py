@@ -823,12 +823,16 @@ def _observe_provider_status(
     service: OperationalStatusService,
     *,
     broker: Any,
+    provider_evidence: Mapping[str, Any] | None,
     now: datetime,
 ) -> None:
-    try:
-        broker_evidence = broker.operational_provider_evidence()
-    except Exception:
-        broker_evidence = {}
+    if provider_evidence is None:
+        try:
+            broker_evidence = broker.operational_provider_evidence()
+        except Exception:
+            broker_evidence = {}
+    else:
+        broker_evidence = provider_evidence
     uncertain_total = 0.0
     reconciliation_failures = 0
 
@@ -1091,6 +1095,7 @@ def refresh_operational_status(
     repository: Any,
     browser_status: Mapping[str, Any] | None = None,
     recovery_status: Mapping[str, Any] | None = None,
+    provider_evidence: Mapping[str, Any] | None = None,
     now: datetime | None = None,
 ) -> None:
     """Refresh cached evidence without making provider or external network probes."""
@@ -1211,7 +1216,12 @@ def refresh_operational_status(
                 reason="required_authority_unready",
             )
 
-    _observe_provider_status(service, broker=broker, now=observed)
+    _observe_provider_status(
+        service,
+        broker=broker,
+        provider_evidence=provider_evidence,
+        now=observed,
+    )
 
     if browser_status is not None:
         available = browser_status.get("available") is True

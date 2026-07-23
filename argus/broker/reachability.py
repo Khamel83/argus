@@ -1,7 +1,6 @@
 """Provider reachability matrix — tracks which egress can reach which provider."""
 
 from __future__ import annotations
-import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 import threading
@@ -30,6 +29,23 @@ class ReachabilityClaim:
     provider: ProviderName
     egress: str
     half_open: bool
+
+
+@dataclass(frozen=True)
+class ProbeOutcome:
+    provider: ProviderName
+    reachable: bool
+
+
+@dataclass(frozen=True)
+class ProbeRunResult:
+    outcomes: tuple[ProbeOutcome, ...]
+
+    def by_provider(self) -> dict[ProviderName, tuple[bool, ...]]:
+        grouped: dict[ProviderName, list[bool]] = {}
+        for outcome in self.outcomes:
+            grouped.setdefault(outcome.provider, []).append(outcome.reachable)
+        return {provider: tuple(values) for provider, values in grouped.items()}
 
 
 class ReachabilityMatrix:
@@ -205,11 +221,12 @@ class ReachabilityMatrix:
         self,
         local_providers: "dict[ProviderName, BaseProvider]",
         egress_nodes: "list[EgressNode]",
-    ) -> dict[ProviderName, list[bool]]:
+    ) -> ProbeRunResult:
         """Probe all tier-0 providers locally and through each egress node."""
         from argus.broker.budgets import PROVIDER_TIERS
         from argus.models import SearchMode, SearchQuery
         from argus.broker.remote_provider import RemoteProviderClient
+        from argus.providers.base import ProbeCapability
 
         tier_0 = [p for p, t in PROVIDER_TIERS.items() if t == 0]
         probe_scope = uuid.uuid4().hex
@@ -221,14 +238,18 @@ class ReachabilityMatrix:
             user_visible=False,
             metadata={"attempt_scope": probe_scope},
         )
-        current_outcomes: dict[ProviderName, list[bool]] = {}
+        current_outcomes: list[ProbeOutcome] = []
 
         for pname in tier_0:
             # Probe local
             provider = local_providers.get(pname)
-            if provider is not None and provider.is_available():
+            if (
+                provider is not None
+                and provider.is_available()
+                and provider.probe_capability is ProbeCapability.ASYNC_NATIVE
+            ):
                 try:
-                    _, trace = await self._probe_search(provider, probe_query)
+                    _, trace = await provider.search(probe_query)
                     reachable = trace.status == "success"
                     self.update_probe(
                         "local", pname, reachable=reachable, latency_ms=trace.latency_ms
@@ -238,7 +259,7 @@ class ReachabilityMatrix:
                     self.update_probe("local", pname, reachable=False, latency_ms=0)
                     outcome = "error"
                     reachable = False
-                current_outcomes.setdefault(pname, []).append(reachable)
+                current_outcomes.append(ProbeOutcome(pname, reachable))
                 self._record_attempt(
                     probe_scope,
                     pname,
@@ -250,7 +271,7 @@ class ReachabilityMatrix:
             for node in egress_nodes:
                 try:
                     remote = RemoteProviderClient(pname, node)
-                    _, trace = await self._probe_search(remote, probe_query)
+                    _, trace = await remote.search(probe_query)
                     reachable = trace.status == "success"
                     self.update_probe(
                         node.name,
@@ -263,20 +284,14 @@ class ReachabilityMatrix:
                     self.update_probe(node.name, pname, reachable=False, latency_ms=0)
                     outcome = "error"
                     reachable = False
-                current_outcomes.setdefault(pname, []).append(reachable)
+                current_outcomes.append(ProbeOutcome(pname, reachable))
                 self._record_attempt(
                     probe_scope,
                     pname,
                     node.name,
                     outcome,
                 )
-        return current_outcomes
-
-    @staticmethod
-    async def _probe_search(provider, query):
-        if getattr(provider, "probe_is_blocking", False):
-            return await asyncio.to_thread(lambda: asyncio.run(provider.search(query)))
-        return await provider.search(query)
+        return ProbeRunResult(tuple(current_outcomes))
 
     def _record_attempt(
         self,
