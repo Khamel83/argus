@@ -3,6 +3,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 import json
 from threading import Barrier
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine, func, select, text
@@ -16,6 +17,28 @@ from argus.models import (
     SearchResponse,
     SearchResult,
 )
+
+
+def test_postgresql_repository_configures_bounded_driver_io(monkeypatch):
+    import argus.persistence.search_ledger as search_ledger
+
+    engine = MagicMock()
+    create_engine_mock = MagicMock(return_value=engine)
+    monkeypatch.setattr(search_ledger, "create_engine", create_engine_mock)
+
+    search_ledger.create_search_ledger_repository(
+        "postgresql://argus@example.invalid/argus",
+        create_schema=False,
+    )
+
+    options = create_engine_mock.call_args.kwargs
+    connect = options["connect_args"]
+    assert options["pool_timeout"] == 5
+    assert connect["connect_timeout"] == 5
+    assert "statement_timeout=5000" in connect["options"]
+    assert "lock_timeout=5000" in connect["options"]
+    assert connect["keepalives_idle"] == 5
+    assert connect["tcp_user_timeout"] == 10_000
 
 
 def _response(run_id: str = "run-1", *, url: str = "https://example.com/article"):

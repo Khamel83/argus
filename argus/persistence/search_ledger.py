@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from sqlalchemy import (
     Boolean,
@@ -26,11 +27,13 @@ from sqlalchemy import (
     func,
     inspect,
     select,
+    text,
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from argus.config import get_config
+from argus.api.lifecycle import LifecycleCapability
 from argus.models import SearchQuery, SearchResponse
 from argus.persistence.maya_outbox import (
     excludes_capture,
@@ -43,6 +46,36 @@ from argus.persistence.maya_outbox import (
 
 class LedgerBase(DeclarativeBase):
     pass
+
+
+_DATABASE_OPERATION_TIMEOUT_SECONDS = 5
+
+
+def _system_now() -> datetime:
+    return datetime.now(tz=None)
+
+
+def _bounded_engine_options(url: str) -> dict:
+    """Driver deadlines backing the cooperative lifecycle declaration."""
+    if url.startswith("sqlite:"):
+        return {"connect_args": {"timeout": _DATABASE_OPERATION_TIMEOUT_SECONDS}}
+    if url.startswith(("postgresql:", "postgresql+")):
+        timeout_ms = _DATABASE_OPERATION_TIMEOUT_SECONDS * 1000
+        return {
+            "connect_args": {
+                "connect_timeout": _DATABASE_OPERATION_TIMEOUT_SECONDS,
+                "options": (
+                    f"-c statement_timeout={timeout_ms} -c lock_timeout={timeout_ms}"
+                ),
+                "keepalives": 1,
+                "keepalives_idle": _DATABASE_OPERATION_TIMEOUT_SECONDS,
+                "keepalives_interval": 2,
+                "keepalives_count": 2,
+                "tcp_user_timeout": timeout_ms * 2,
+            },
+            "pool_timeout": _DATABASE_OPERATION_TIMEOUT_SECONDS,
+        }
+    return {"pool_timeout": _DATABASE_OPERATION_TIMEOUT_SECONDS}
 
 
 class RetrievalRequestRow(LedgerBase):
@@ -499,16 +532,37 @@ def _safe_persisted_url(value: str) -> str:
 
 
 class SearchLedgerRepository(Protocol):
+    lifecycle_capability: object
+
     def accept(
         self, query: SearchQuery, response: SearchResponse
     ) -> AcceptanceReceipt: ...
+
+    def operational_status(
+        self,
+        *,
+        now: datetime | None = None,
+        stop_event: threading.Event | None = None,
+    ) -> dict: ...
+
+    def close(self) -> None: ...
 
 
 class SqlAlchemySearchLedgerRepository:
     """Store one accepted retrieval in one database transaction."""
 
-    def __init__(self, session_factory: sessionmaker):
+    lifecycle_capability = LifecycleCapability.COOPERATIVE_BOUNDED
+    operational_status_capability = LifecycleCapability.COOPERATIVE_BOUNDED
+    compaction_capability = LifecycleCapability.COOPERATIVE_BOUNDED
+
+    def __init__(
+        self,
+        session_factory: sessionmaker,
+        *,
+        clock: Callable[[], datetime] = _system_now,
+    ):
         self.session_factory = session_factory
+        self.clock = clock
 
     def accept(self, query: SearchQuery, response: SearchResponse) -> AcceptanceReceipt:
         serialized = serialize_acceptance(query, response)
@@ -553,7 +607,7 @@ class SqlAlchemySearchLedgerRepository:
                     serialized.fingerprint,
                 )
 
-            now = datetime.now(tz=None)
+            now = self.clock()
             request_id = uuid.uuid4().hex
             ledger_run_id = uuid.uuid4().hex
             session.add(
@@ -931,7 +985,7 @@ class SqlAlchemySearchLedgerRepository:
                     delivery_intent_id=delivery_id,
                 )
 
-            now = datetime.now(tz=None)
+            now = self.clock()
             ledger_id = uuid.uuid4().hex
             if content_hash:
                 self._ensure_content_identity(
@@ -1098,8 +1152,6 @@ class SqlAlchemySearchLedgerRepository:
             for row in rows:
                 token = uuid.uuid4().hex
                 row.status = "delivering"
-                row.attempt_count += 1
-                row.last_attempt_at = now
                 row.lease_expires_at = now + timedelta(seconds=lease_seconds)
                 row.lease_token = token
                 row.updated_at = now
@@ -1110,9 +1162,63 @@ class SqlAlchemySearchLedgerRepository:
                         "attempt_count": row.attempt_count,
                         "max_attempts": row.max_attempts,
                         "lease_token": token,
+                        "previous_last_attempt_at": row.last_attempt_at,
                     }
                 )
             return claimed
+
+    def begin_maya_outbox_attempt(
+        self,
+        intent_id: str,
+        *,
+        lease_token: str,
+        now: datetime,
+    ) -> dict | None:
+        """Count an attempt only immediately before its external HTTP call."""
+        with self.session_factory.begin() as session:
+            row = self._active_maya_lease(
+                session,
+                intent_id=intent_id,
+                lease_token=lease_token,
+                now=now,
+            )
+            if row is None or row.attempt_count >= row.max_attempts:
+                return None
+            row.attempt_count += 1
+            row.last_attempt_at = now
+            row.updated_at = now
+            return {
+                "attempt_count": row.attempt_count,
+                "max_attempts": row.max_attempts,
+            }
+
+    def release_maya_outbox_claim(
+        self,
+        intent_id: str,
+        *,
+        lease_token: str,
+        now: datetime,
+        attempt_started: bool = False,
+        previous_last_attempt_at: datetime | None = None,
+    ) -> bool:
+        """CAS-release a lease when shutdown prevents external delivery."""
+        with self.session_factory.begin() as session:
+            row = self._active_maya_lease(
+                session,
+                intent_id=intent_id,
+                lease_token=lease_token,
+                now=now,
+            )
+            if row is None:
+                return False
+            if attempt_started:
+                row.attempt_count = max(0, row.attempt_count - 1)
+                row.last_attempt_at = previous_last_attempt_at
+            row.status = "pending" if row.attempt_count == 0 else "retry"
+            row.lease_expires_at = None
+            row.lease_token = None
+            row.updated_at = now
+            return True
 
     def acknowledge_maya_outbox(
         self,
@@ -1208,7 +1314,7 @@ class SqlAlchemySearchLedgerRepository:
         *,
         now: datetime | None = None,
     ) -> bool:
-        recovered_at = now or datetime.now(tz=None)
+        recovered_at = now or self.clock()
         with self.session_factory.begin() as session:
             row = session.get(DeliveryIntentRow, intent_id)
             if row is None or row.status != "dead_letter" or row.payload_json is None:
@@ -1250,8 +1356,11 @@ class SqlAlchemySearchLedgerRepository:
         acknowledged_before: datetime,
         limit: int = 100,
         now: datetime | None = None,
+        stop_event: threading.Event | None = None,
     ) -> int:
-        compacted_at = now or datetime.now(tz=None)
+        if stop_event is not None and stop_event.is_set():
+            return 0
+        compacted_at = now or self.clock()
         with self.session_factory.begin() as session:
             statement = (
                 select(DeliveryIntentRow)
@@ -1266,14 +1375,66 @@ class SqlAlchemySearchLedgerRepository:
             if session.get_bind().dialect.name == "postgresql":
                 statement = statement.with_for_update(skip_locked=True)
             rows = list(session.scalars(statement))
+            if stop_event is not None and stop_event.is_set():
+                return 0
             for row in rows:
                 row.payload_json = None
                 row.payload_compacted_at = compacted_at
                 row.updated_at = compacted_at
             return len(rows)
 
-    def maya_outbox_status(self, *, now: datetime | None = None) -> dict:
-        observed_at = now or datetime.now(tz=None)
+    def operational_status(
+        self,
+        *,
+        now: datetime | None = None,
+        stop_event: threading.Event | None = None,
+    ) -> dict:
+        """Return bounded authority/schema/outbox truth for cached status refresh."""
+        if stop_event is not None and stop_event.is_set():
+            return {}
+        observed_at = now or self.clock()
+        if observed_at.tzinfo is not None:
+            observed_at = observed_at.replace(tzinfo=None)
+        with self.session_factory() as session:
+            backend = session.get_bind().dialect.name
+            session.execute(text("SELECT 1"))
+            schema_head = "sqlite-managed"
+            if backend == "postgresql" and not (
+                stop_event is not None and stop_event.is_set()
+            ):
+                schema_head = session.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+        if stop_event is not None and stop_event.is_set():
+            return {}
+        outbox = self.maya_outbox_status(
+            now=observed_at,
+            stop_event=stop_event,
+        )
+        if stop_event is not None and stop_event.is_set():
+            return {}
+        return {
+            "backend": backend,
+            "connected": True,
+            "schema_head": schema_head,
+            "outbox": outbox,
+        }
+
+    def close(self) -> None:
+        """Dispose idle connections after lifecycle-owned work has joined."""
+        engine = self.session_factory.kw.get("bind")
+        if engine is not None:
+            engine.dispose()
+
+    def maya_outbox_status(
+        self,
+        *,
+        now: datetime | None = None,
+        stop_event: threading.Event | None = None,
+    ) -> dict:
+        if stop_event is not None and stop_event.is_set():
+            return {}
+        observed_at = now or self.clock()
         with self.session_factory() as session:
             counts = {
                 status: count
@@ -1284,16 +1445,22 @@ class SqlAlchemySearchLedgerRepository:
                     ).group_by(DeliveryIntentRow.status)
                 )
             }
+            if stop_event is not None and stop_event.is_set():
+                return {}
             oldest_pending = session.scalar(
                 select(func.min(DeliveryIntentRow.created_at)).where(
                     DeliveryIntentRow.status.in_(("pending", "retry", "delivering"))
                 )
             )
+            if stop_event is not None and stop_event.is_set():
+                return {}
             oldest_dead = session.scalar(
                 select(func.min(DeliveryIntentRow.created_at)).where(
                     DeliveryIntentRow.status == "dead_letter"
                 )
             )
+            if stop_event is not None and stop_event.is_set():
+                return {}
             dead_letter_payload_bytes = session.scalar(
                 select(
                     func.coalesce(
@@ -1323,7 +1490,7 @@ class SqlAlchemySearchLedgerRepository:
         with self.session_factory.begin() as session:
             values = {
                 "id": session_id,
-                "created_at": created_at or datetime.now(tz=None),
+                "created_at": created_at or self.clock(),
             }
             dialect = session.get_bind().dialect.name
             if dialect == "postgresql":
@@ -1537,6 +1704,7 @@ def create_search_ledger_repository(
     db_url: str | None = None,
     *,
     create_schema: bool | None = None,
+    clock: Callable[[], datetime] = _system_now,
 ) -> SqlAlchemySearchLedgerRepository:
     """Build the SQLAlchemy adapter.
 
@@ -1550,14 +1718,19 @@ def create_search_ledger_repository(
         if path and path != ":memory:":
             Path(path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
 
-    engine = create_engine(url, pool_pre_ping=True)
+    engine = create_engine(
+        url,
+        pool_pre_ping=True,
+        **_bounded_engine_options(url),
+    )
     should_create = is_sqlite if create_schema is None else create_schema
     if should_create:
         if not is_sqlite:
             raise ValueError("runtime schema creation is only supported for SQLite")
         LedgerBase.metadata.create_all(engine)
     return SqlAlchemySearchLedgerRepository(
-        sessionmaker(bind=engine, expire_on_commit=False)
+        sessionmaker(bind=engine, expire_on_commit=False),
+        clock=clock,
     )
 
 
@@ -1573,7 +1746,16 @@ def create_read_only_search_ledger_repository(
     raw_path = db_url.removeprefix("sqlite:///")
     path = Path(raw_path).expanduser().resolve()
     read_only_url = f"sqlite:///file:{quote(str(path), safe='/')}?mode=ro&uri=true"
-    engine = create_engine(read_only_url, pool_pre_ping=True)
+    engine = create_engine(
+        read_only_url,
+        pool_pre_ping=True,
+        **_bounded_engine_options(read_only_url),
+    )
     return SqlAlchemySearchLedgerRepository(
         sessionmaker(bind=engine, expire_on_commit=False)
     )
+
+
+create_search_ledger_repository.lifecycle_capability = (
+    LifecycleCapability.FINITE_BOUNDED
+)

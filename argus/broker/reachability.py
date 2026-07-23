@@ -3,6 +3,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
+import threading
 import time
 import uuid
 
@@ -15,10 +16,36 @@ if TYPE_CHECKING:
 
 @dataclass
 class EgressProbe:
-    egress: str        # "local" | "oci-dev" | "macmini"
+    egress: str  # "local" | "oci-dev" | "macmini"
     reachable: bool
     latency_ms: int
+    source: str = "background_probe"
     last_checked: float = field(default_factory=time.time)
+    expires_at: float = field(default_factory=time.time)
+
+
+@dataclass(frozen=True)
+class ReachabilityClaim:
+    provider: ProviderName
+    egress: str
+    half_open: bool
+
+
+@dataclass(frozen=True)
+class ProbeOutcome:
+    provider: ProviderName
+    reachable: bool
+
+
+@dataclass(frozen=True)
+class ProbeRunResult:
+    outcomes: tuple[ProbeOutcome, ...]
+
+    def by_provider(self) -> dict[ProviderName, tuple[bool, ...]]:
+        grouped: dict[ProviderName, list[bool]] = {}
+        for outcome in self.outcomes:
+            grouped.setdefault(outcome.provider, []).append(outcome.reachable)
+        return {provider: tuple(values) for provider, values in grouped.items()}
 
 
 class ReachabilityMatrix:
@@ -29,10 +56,22 @@ class ReachabilityMatrix:
     reachable (optimistic default).
     """
 
-    def __init__(self, spend_repository=None) -> None:
+    def __init__(
+        self,
+        spend_repository=None,
+        *,
+        clock=time.time,
+        failure_ttl_seconds: float = 60.0,
+        success_ttl_seconds: float = 35 * 60.0,
+    ) -> None:
         # provider → {egress_name → EgressProbe}
         self._probes: dict[ProviderName, dict[str, EgressProbe]] = {}
         self._spend_repository = spend_repository
+        self._clock = clock
+        self._failure_ttl_seconds = max(1.0, float(failure_ttl_seconds))
+        self._success_ttl_seconds = max(1.0, float(success_ttl_seconds))
+        self._half_open_claimed: set[ProviderName] = set()
+        self._lock = threading.RLock()
 
     def set_spend_repository(self, spend_repository) -> None:
         """Attach the broker's single durable accounting authority."""
@@ -44,14 +83,26 @@ class ReachabilityMatrix:
         provider: ProviderName,
         reachable: bool,
         latency_ms: int,
+        source: str = "background_probe",
     ) -> None:
-        if provider not in self._probes:
-            self._probes[provider] = {}
-        self._probes[provider][egress] = EgressProbe(
-            egress=egress,
-            reachable=reachable,
-            latency_ms=latency_ms,
-        )
+        with self._lock:
+            if provider not in self._probes:
+                self._probes[provider] = {}
+            checked_at = self._clock()
+            self._probes[provider][egress] = EgressProbe(
+                egress=egress,
+                reachable=reachable,
+                latency_ms=latency_ms,
+                source=source,
+                last_checked=checked_at,
+                expires_at=checked_at
+                + (
+                    self._success_ttl_seconds
+                    if reachable
+                    else self._failure_ttl_seconds
+                ),
+            )
+            self._half_open_claimed.discard(provider)
 
     def best_egress(self, provider: ProviderName) -> Optional[str]:
         """Return the name of the best reachable egress, or None if all blocked.
@@ -59,49 +110,123 @@ class ReachabilityMatrix:
         'local' is always preferred when reachable. Among workers, lower
         latency wins. If no probe exists for this provider, returns 'local'.
         """
-        probes = self._probes.get(provider)
-        if not probes:
-            return "local"
+        return self._best_egress(provider, claim_half_open=True)
 
-        # Local first
-        local = probes.get("local")
-        if local is None or local.reachable:
-            return "local"
+    def peek_best_egress(self, provider: ProviderName) -> Optional[str]:
+        """Plan routing without consuming an available half-open token."""
+        with self._lock:
+            probes = self._probes.get(provider)
+            if not probes:
+                return "local"
+            now = self._clock()
+            local = probes.get("local")
+            if local is None or (local.reachable and local.expires_at > now):
+                return "local"
+            if local.expires_at <= now and provider not in self._half_open_claimed:
+                return "local"
+            workers = sorted(
+                (
+                    p
+                    for name, p in probes.items()
+                    if name != "local" and p.reachable and p.expires_at > now
+                ),
+                key=lambda p: p.latency_ms,
+            )
+            return workers[0].egress if workers else None
 
-        # Workers sorted by latency ascending
-        workers = sorted(
-            (p for name, p in probes.items() if name != "local" and p.reachable),
-            key=lambda p: p.latency_ms,
-        )
-        return workers[0].egress if workers else None
+    def claim_egress(
+        self, provider: ProviderName, egress: str
+    ) -> ReachabilityClaim | None:
+        """Atomically claim the planned route immediately before invocation."""
+        with self._lock:
+            probes = self._probes.get(provider)
+            if not probes:
+                return ReachabilityClaim(provider, egress, False)
+            now = self._clock()
+            probe = probes.get(egress)
+            if probe is None:
+                return None
+            if probe.reachable and probe.expires_at > now:
+                return ReachabilityClaim(provider, egress, False)
+            if (
+                egress == "local"
+                and probe.expires_at <= now
+                and provider not in self._half_open_claimed
+            ):
+                self._half_open_claimed.add(provider)
+                return ReachabilityClaim(provider, egress, True)
+            return None
+
+    def release_claim(self, claim: ReachabilityClaim) -> None:
+        if not claim.half_open:
+            return
+        with self._lock:
+            self._half_open_claimed.discard(claim.provider)
+
+    def _best_egress(
+        self, provider: ProviderName, *, claim_half_open: bool
+    ) -> Optional[str]:
+        with self._lock:
+            probes = self._probes.get(provider)
+            if not probes:
+                return "local"
+            now = self._clock()
+
+            # Local first
+            local = probes.get("local")
+            if local is None:
+                return "local"
+            if local.expires_at <= now:
+                if claim_half_open and provider not in self._half_open_claimed:
+                    self._half_open_claimed.add(provider)
+                    return "local"
+            elif local.reachable:
+                return "local"
+
+            # Workers sorted by latency ascending
+            workers = sorted(
+                (
+                    p
+                    for name, p in probes.items()
+                    if name != "local" and p.reachable and p.expires_at > now
+                ),
+                key=lambda p: p.latency_ms,
+            )
+            return workers[0].egress if workers else None
 
     def get_all(self) -> dict[ProviderName, dict]:
         """Return a summary dict for health/admin endpoints."""
-        result = {}
-        for provider, probes in self._probes.items():
-            best = self.best_egress(provider)
-            result[provider] = {
-                "best": best,
-                "probes": {
-                    name: {
-                        "reachable": p.reachable,
-                        "latency_ms": p.latency_ms,
-                        "last_checked": p.last_checked,
-                    }
-                    for name, p in probes.items()
-                },
-            }
-        return result
+        with self._lock:
+            result = {}
+            for provider, probes in self._probes.items():
+                best = self._best_egress(provider, claim_half_open=False)
+                now = self._clock()
+                result[provider] = {
+                    "best": best,
+                    "probes": {
+                        name: {
+                            "reachable": p.reachable,
+                            "latency_ms": p.latency_ms,
+                            "last_checked": p.last_checked,
+                            "source": p.source,
+                            "expires_at": p.expires_at,
+                            "stale": p.expires_at <= now,
+                        }
+                        for name, p in probes.items()
+                    },
+                }
+            return result
 
     async def probe_all(
         self,
         local_providers: "dict[ProviderName, BaseProvider]",
         egress_nodes: "list[EgressNode]",
-    ) -> None:
+    ) -> ProbeRunResult:
         """Probe all tier-0 providers locally and through each egress node."""
         from argus.broker.budgets import PROVIDER_TIERS
         from argus.models import SearchMode, SearchQuery
         from argus.broker.remote_provider import RemoteProviderClient
+        from argus.providers.base import ProbeCapability
 
         tier_0 = [p for p, t in PROVIDER_TIERS.items() if t == 0]
         probe_scope = uuid.uuid4().hex
@@ -113,20 +238,28 @@ class ReachabilityMatrix:
             user_visible=False,
             metadata={"attempt_scope": probe_scope},
         )
+        current_outcomes: list[ProbeOutcome] = []
 
         for pname in tier_0:
             # Probe local
             provider = local_providers.get(pname)
-            if provider is not None and provider.is_available():
+            if (
+                provider is not None
+                and provider.is_available()
+                and provider.probe_capability is ProbeCapability.ASYNC_NATIVE
+            ):
                 try:
                     _, trace = await provider.search(probe_query)
                     reachable = trace.status == "success"
-                    self.update_probe("local", pname, reachable=reachable,
-                                      latency_ms=trace.latency_ms)
+                    self.update_probe(
+                        "local", pname, reachable=reachable, latency_ms=trace.latency_ms
+                    )
                     outcome = trace.status
                 except Exception:
                     self.update_probe("local", pname, reachable=False, latency_ms=0)
                     outcome = "error"
+                    reachable = False
+                current_outcomes.append(ProbeOutcome(pname, reachable))
                 self._record_attempt(
                     probe_scope,
                     pname,
@@ -140,18 +273,25 @@ class ReachabilityMatrix:
                     remote = RemoteProviderClient(pname, node)
                     _, trace = await remote.search(probe_query)
                     reachable = trace.status == "success"
-                    self.update_probe(node.name, pname, reachable=reachable,
-                                      latency_ms=trace.latency_ms)
+                    self.update_probe(
+                        node.name,
+                        pname,
+                        reachable=reachable,
+                        latency_ms=trace.latency_ms,
+                    )
                     outcome = trace.status
                 except Exception:
                     self.update_probe(node.name, pname, reachable=False, latency_ms=0)
                     outcome = "error"
+                    reachable = False
+                current_outcomes.append(ProbeOutcome(pname, reachable))
                 self._record_attempt(
                     probe_scope,
                     pname,
                     node.name,
                     outcome,
                 )
+        return ProbeRunResult(tuple(current_outcomes))
 
     def _record_attempt(
         self,

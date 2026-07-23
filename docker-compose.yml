@@ -39,7 +39,7 @@ services:
       - seccomp=./docker/playwright-seccomp.json
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/live')"]
       interval: 30s
       timeout: 5s
       retries: 3

@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Mapping, Sequence
 
 from argus.broker.budgets import BudgetTracker, PROVIDER_TIERS
-from argus.broker.health import HealthTracker
-from argus.broker.reachability import ReachabilityMatrix
+from argus.broker.health import HealthExecutionClaim, HealthTracker
+from argus.broker.reachability import ReachabilityClaim, ReachabilityMatrix
 from argus.config import EgressNode
 from argus.logging import get_logger
 from argus.models import ProviderName, ProviderTrace, SearchQuery, SearchResult
@@ -45,6 +45,12 @@ _COST_ESTIMATES = {
 _TIER_0_PROVIDERS = {p for p, t in PROVIDER_TIERS.items() if t == 0}
 
 
+@dataclass(frozen=True)
+class InvocationClaims:
+    health: HealthExecutionClaim
+    reachability: ReachabilityClaim
+
+
 def conservative_charge_estimate(
     provider: ProviderName,
     query: SearchQuery,
@@ -67,11 +73,7 @@ def conservative_charge_estimate(
         estimate = min(query.max_results, VALYU_RESULT_CAP) * VALYU_UNIT_PRICE_USD
     else:
         estimate = unit_charge
-    if (
-        estimate is None
-        or not math.isfinite(float(estimate))
-        or float(estimate) <= 0
-    ):
+    if estimate is None or not math.isfinite(float(estimate)) or float(estimate) <= 0:
         raise ValueError(f"no finite positive estimate for {provider.value}")
     return float(estimate)
 
@@ -128,9 +130,7 @@ class ProviderExecutor:
         provider_results: Dict[str, List[SearchResult]] = {}
         live_providers_used = 0
         pace_warnings: List[str] = []
-        attempt_scope = str(
-            query.metadata.get("attempt_scope") or uuid.uuid4().hex
-        )
+        attempt_scope = str(query.metadata.get("attempt_scope") or uuid.uuid4().hex)
 
         ordered = [p for p in provider_order if p != ProviderName.CACHE]
         total_results_so_far = 0
@@ -139,17 +139,21 @@ class ProviderExecutor:
             provider = self._providers.get(pname)
             if provider is None:
                 traces.append(
-                    ProviderTrace(provider=pname, status="skipped", error="not registered")
+                    ProviderTrace(
+                        provider=pname, status="skipped", error="not registered"
+                    )
                 )
                 continue
 
             if not provider.is_available():
                 traces.append(
-                    ProviderTrace(provider=pname, status="skipped", error="not available")
+                    ProviderTrace(
+                        provider=pname, status="skipped", error="not available"
+                    )
                 )
                 continue
 
-            health_status = self._health.get_status(pname)
+            health_status = self._health.peek_execution_status(pname)
             if health_status is not None:
                 traces.append(
                     ProviderTrace(
@@ -164,23 +168,31 @@ class ProviderExecutor:
 
             cap = caller_tier_cap(query.caller, self._caller_tier_caps)
             if cap is not None and tier > cap:
-                traces.append(ProviderTrace(
-                    provider=pname,
-                    status="skipped",
-                    error=f"caller tier cap: caller {query.caller!r} limited to tier <= {cap}",
-                ))
+                traces.append(
+                    ProviderTrace(
+                        provider=pname,
+                        status="skipped",
+                        error=f"caller tier cap: caller {query.caller!r} limited to tier <= {cap}",
+                    )
+                )
                 continue
 
             if query.free_only and tier > 0:
-                traces.append(ProviderTrace(provider=pname, status="skipped", error="free_only mode"))
+                traces.append(
+                    ProviderTrace(
+                        provider=pname, status="skipped", error="free_only mode"
+                    )
+                )
                 continue
 
             # Reachability check — route to worker if local is blocked
-            best_egress = self._reachability.best_egress(pname)
+            best_egress = self._reachability.peek_best_egress(pname)
             if best_egress is None:
-                traces.append(ProviderTrace(
-                    provider=pname, status="skipped", error="no reachable egress"
-                ))
+                traces.append(
+                    ProviderTrace(
+                        provider=pname, status="skipped", error="no reachable egress"
+                    )
+                )
                 continue
             if best_egress != "local":
                 if tier > 0:
@@ -194,12 +206,16 @@ class ProviderExecutor:
                     continue
                 node = self._egress_nodes.get(best_egress)
                 if node is None:
-                    traces.append(ProviderTrace(
-                        provider=pname, status="skipped",
-                        error=f"egress node {best_egress!r} not found in config"
-                    ))
+                    traces.append(
+                        ProviderTrace(
+                            provider=pname,
+                            status="skipped",
+                            error=f"egress node {best_egress!r} not found in config",
+                        )
+                    )
                     continue
                 from argus.broker.remote_provider import RemoteProviderClient
+
                 remote = RemoteProviderClient(pname, node)
                 reservation = self._reserve_paid_attempt(
                     query, pname, tier, attempt_scope, index
@@ -214,19 +230,42 @@ class ProviderExecutor:
                         )
                     )
                     continue
-                try:
-                    results, trace = await remote.search(query)
-                    uncertain = not self._trace_charge_known(pname, trace)
-                except Exception as exc:
-                    # Network failures can occur after the provider accepted
-                    # work. The durable reservation remains uncertain.
-                    results = []
+                claims = self._claim_invocation(pname, best_egress)
+                if claims is None:
                     trace = ProviderTrace(
                         provider=pname,
-                        status="error",
-                        error=str(exc),
+                        status="skipped",
+                        error="half-open claim unavailable",
                     )
-                    uncertain = True
+                    if tier > 0:
+                        self._record_known_outcome(
+                            query,
+                            pname,
+                            tier,
+                            attempt_scope,
+                            index,
+                            trace,
+                            reservation,
+                        )
+                    traces.append(trace)
+                    continue
+                try:
+                    try:
+                        results, trace = await remote.search(query)
+                        uncertain = not self._trace_charge_known(pname, trace)
+                    except Exception as exc:
+                        # Network failures can occur after the provider accepted
+                        # work. The durable reservation remains uncertain.
+                        results = []
+                        trace = ProviderTrace(
+                            provider=pname,
+                            status="error",
+                            error=str(exc),
+                            egress=best_egress,
+                        )
+                        uncertain = True
+                finally:
+                    self._release_invocation_claims(claims)
                 if not uncertain or tier <= 0:
                     self._record_known_outcome(
                         query,
@@ -239,16 +278,33 @@ class ProviderExecutor:
                     )
                 traces.append(trace)
                 if trace.status == "success":
+                    self._reachability.update_probe(
+                        trace.egress or best_egress,
+                        pname,
+                        reachable=True,
+                        latency_ms=trace.latency_ms,
+                        source="provider_execution",
+                    )
                     live_providers_used += 1
                     provider_results[pname.value] = results
                     total_results_so_far += len(results)
                     self._health.record_success(pname)
                 else:
+                    self._reachability.update_probe(
+                        trace.egress or best_egress,
+                        pname,
+                        reachable=False,
+                        latency_ms=trace.latency_ms,
+                        source="provider_execution",
+                    )
                     self._health.record_failure(pname)
                 continue
 
-
-            if query.providers is None and tier > 0 and total_results_so_far >= query.max_results:
+            if (
+                query.providers is None
+                and tier > 0
+                and total_results_so_far >= query.max_results
+            ):
                 traces.append(
                     ProviderTrace(
                         provider=pname,
@@ -305,10 +361,32 @@ class ProviderExecutor:
                     )
                 )
                 continue
+            claims = self._claim_invocation(pname, best_egress)
+            if claims is None:
+                trace = ProviderTrace(
+                    provider=pname,
+                    status="skipped",
+                    error="half-open claim unavailable",
+                )
+                if tier > 0:
+                    self._record_known_outcome(
+                        query,
+                        pname,
+                        tier,
+                        attempt_scope,
+                        index,
+                        trace,
+                        reservation,
+                    )
+                traces.append(trace)
+                continue
 
-            results, trace, uncertain = await self._execute_provider(
-                query, provider, pname
-            )
+            try:
+                results, trace, uncertain = await self._execute_provider(
+                    query, provider, pname
+                )
+            finally:
+                self._release_invocation_claims(claims)
             if not uncertain or tier <= 0:
                 self._record_known_outcome(
                     query,
@@ -332,6 +410,22 @@ class ProviderExecutor:
             budget_pace_warnings=pace_warnings,
         )
 
+    def _claim_invocation(
+        self, provider: ProviderName, egress: str
+    ) -> InvocationClaims | None:
+        health_claim = self._health.claim_execution(provider)
+        if health_claim is None:
+            return None
+        reachability_claim = self._reachability.claim_egress(provider, egress)
+        if reachability_claim is None:
+            self._health.release_execution_claim(health_claim)
+            return None
+        return InvocationClaims(health_claim, reachability_claim)
+
+    def _release_invocation_claims(self, claims: InvocationClaims) -> None:
+        self._reachability.release_claim(claims.reachability)
+        self._health.release_execution_claim(claims.health)
+
     async def _execute_provider(
         self,
         query: SearchQuery,
@@ -342,6 +436,13 @@ class ProviderExecutor:
             results, trace = await provider.search(query)
             if trace.status == "success":
                 self._health.record_success(provider_name)
+                self._reachability.update_probe(
+                    trace.egress or "local",
+                    provider_name,
+                    reachable=True,
+                    latency_ms=trace.latency_ms,
+                    source="provider_execution",
+                )
 
                 # Use actual cost if provided by trace, otherwise estimate
                 cost = 0.0
@@ -352,7 +453,9 @@ class ProviderExecutor:
 
                 if math.isfinite(cost) and cost >= 0:
                     self._budgets.record_usage(provider_name, cost)
-                trace.budget_remaining = self._budgets.get_remaining_budget(provider_name)
+                trace.budget_remaining = self._budgets.get_remaining_budget(
+                    provider_name
+                )
                 trace.results_count = len(results)
                 if trace.credit_info and "cost_usd" in trace.credit_info:
                     reported_cost = float(trace.credit_info["cost_usd"])
@@ -364,6 +467,7 @@ class ProviderExecutor:
 
                 # Inject provenance metadata if not already set by the provider
                 from argus.config import get_config
+
                 cfg = get_config()
                 for r in results:
                     if "egress" not in r.metadata:
@@ -373,12 +477,28 @@ class ProviderExecutor:
 
             elif trace.status == "error":
                 self._health.record_failure(provider_name)
-            return results, trace, not self._trace_charge_known(
-                provider_name, trace
-            )
+                self._reachability.update_probe(
+                    trace.egress or "local",
+                    provider_name,
+                    reachable=False,
+                    latency_ms=trace.latency_ms,
+                    source="provider_execution",
+                )
+            return results, trace, not self._trace_charge_known(provider_name, trace)
         except Exception as exc:
-            logger.warning("Provider %s raised unhandled: %s", provider_name, exc)
+            logger.warning(
+                "Provider %s raised unhandled: %s",
+                provider_name,
+                type(exc).__name__,
+            )
             self._health.record_failure(provider_name)
+            self._reachability.update_probe(
+                "local",
+                provider_name,
+                reachable=False,
+                latency_ms=0,
+                source="provider_execution",
+            )
             return (
                 [],
                 ProviderTrace(provider=provider_name, status="error", error=str(exc)),
@@ -439,7 +559,9 @@ class ProviderExecutor:
         elif trace.status == "success":
             actual = reservation.reserved_charge
         if not math.isfinite(actual) or actual < 0:
-            trace.error = "provider returned an invalid charge; reservation left uncertain"
+            trace.error = (
+                "provider returned an invalid charge; reservation left uncertain"
+            )
             return
         self._spend.settle(
             reservation.attempt_id,
@@ -452,9 +574,7 @@ class ProviderExecutor:
         )["remaining"]
 
     @staticmethod
-    def _trace_charge_known(
-        provider: ProviderName, trace: ProviderTrace
-    ) -> bool:
+    def _trace_charge_known(provider: ProviderName, trace: ProviderTrace) -> bool:
         if trace.status == "success":
             if provider != ProviderName.VALYU:
                 return True

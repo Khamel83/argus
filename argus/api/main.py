@@ -3,7 +3,7 @@
 import asyncio
 import math
 import os
-import uuid
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Callable, Optional
@@ -22,6 +22,12 @@ from argus.auth import (
     is_public_path,
 )
 from argus.api.rate_limit import RateLimiter
+from argus.api.lifecycle import (
+    LifecycleCapability,
+    LifecycleOperation,
+    LifecycleWorker,
+    UnsafeLifecycleOperation,
+)
 from argus.api.routes_admin import router as admin_router
 from argus.api.routes_dashboard import router as dashboard_router
 from argus.api.routes_extract import router as extract_router
@@ -30,6 +36,11 @@ from argus.api.routes_search import router as search_router
 from argus.api.routes_workflows import router as workflows_router
 from argus.broker.router import SearchBroker, create_broker
 from argus.logging import get_logger
+from argus.operations.status import (
+    OperationalStatusService,
+    create_operational_status,
+    safe_correlation_id,
+)
 from argus.persistence.search_ledger import (
     SearchLedgerRepository,
     create_search_ledger_repository,
@@ -38,6 +49,18 @@ from argus.workflows import WorkflowService
 
 logger = get_logger("api")
 _HTTP_API_AUTHORITY_CAPABILITY = object()
+_AUTHORITY_RETRY_SECONDS = 5.0
+_STATUS_REFRESH_SECONDS = 15.0
+_MAYA_SLOW_SECONDS = 15.0
+
+
+def _unavailable_browser_status() -> dict[str, object]:
+    return {
+        "declared": False,
+        "available": False,
+        "loaded": False,
+        "degraded_reason": "browser_status_unavailable",
+    }
 
 
 def _build_rate_limiter() -> RateLimiter:
@@ -54,18 +77,20 @@ def _build_broker_provider(
     broker_factory: Optional[Callable[[], SearchBroker]] = None,
 ) -> Callable[[], SearchBroker]:
     current = broker
+    initialization_lock = threading.Lock()
     if broker_factory is None:
+
         def factory():
-            return create_broker(
-                authority_capability=_HTTP_API_AUTHORITY_CAPABILITY
-            )
+            return create_broker(authority_capability=_HTTP_API_AUTHORITY_CAPABILITY)
     else:
         factory = broker_factory
 
     def get_broker() -> SearchBroker:
         nonlocal current
         if current is None:
-            current = factory()
+            with initialization_lock:
+                if current is None:
+                    current = factory()
         return current
 
     return get_broker
@@ -95,104 +120,468 @@ def create_app(
     rate_limiter: Optional[RateLimiter] = None,
     search_repository: Optional[SearchLedgerRepository] = None,
     spend_repository=None,
+    operational_status: OperationalStatusService | None = None,
 ) -> FastAPI:
     auth_config = AuthConfig.from_env()
     production_mode = (
-        os.environ.get("ARGUS_ENV", "development").strip().lower()
-        == "production"
+        os.environ.get("ARGUS_ENV", "development").strip().lower() == "production"
+    )
+    from argus.config import get_config
+
+    startup_config = get_config()
+    production_postgresql = production_mode and startup_config.db_url.startswith(
+        ("postgresql:", "postgresql+")
     )
 
     @asynccontextmanager
     async def lifespan_with_probes(app: FastAPI):
-        # Initialize broker in lifespan startup (not lazily on first request)
-        b = app.state.get_broker()
-
-        # Background probe task — runs immediately on startup, then every 30 min
-        probe_task: asyncio.Task | None = None
-
-        async def _run_probes_background() -> None:
-            """Run probes every 30 min, starting immediately."""
-            from argus.config import get_config
-
-            cfg = get_config()
-            while True:
+        preinitialized_broker: SearchBroker | None = None
+        preinitialized_repository: SearchLedgerRepository | None = None
+        if not production_mode:
+            # Development SQLite construction may touch the filesystem and is
+            # completed synchronously before background admission. Startup
+            # does not become live until this initialization finishes.
+            if broker is not None or broker_factory is None:
                 try:
-                    await b._reachability.probe_all(
-                        local_providers=b._providers,
-                        egress_nodes=list(cfg.egress_nodes),
-                    )
+                    preinitialized_broker = app.state.get_broker()
                 except Exception as exc:
-                    logger.warning("Reachability probe failed: %s", exc)
-                await asyncio.sleep(30 * 60)
+                    app.state.operational_status.mark_initialization_failed(
+                        source="startup",
+                        reason=f"broker_initialization_failed:{type(exc).__name__}",
+                    )
+            try:
+                preinitialized_repository = app.state.get_search_repository()
+            except Exception as exc:
+                app.state.operational_status.mark_initialization_failed(
+                    source="startup",
+                    reason=f"repository_initialization_failed:{type(exc).__name__}",
+                )
 
-        probe_task = asyncio.create_task(_run_probes_background())
-
-        maya_task: asyncio.Task | None = None
-
-        async def _run_maya_outbox_background() -> None:
-            from argus.config import get_config
-            from argus.persistence.maya_outbox import MayaOutboxDispatcher
-
-            cfg = get_config().maya_capture
-            repository = app.state.get_search_repository()
-            dispatcher = MayaOutboxDispatcher(
-                repository,
-                endpoint=cfg.endpoint,
-                token=cfg.token,
-                timeout_seconds=cfg.timeout_seconds,
-                batch_size=cfg.batch_size,
+        async def _run_authority_workers() -> None:
+            """Initialize dependencies off-loop and maintain cached observations."""
+            b = preinitialized_broker
+            repository = preinitialized_repository
+            child_tasks: list[asyncio.Task] = []
+            authority_worker = LifecycleWorker(name="argus-authority-lifecycle")
+            maya_worker = LifecycleWorker(name="argus-maya-lifecycle")
+            broker_factory_capability = (
+                LifecycleCapability.FINITE_BOUNDED
+                if broker is not None
+                else LifecycleCapability.FINITE_BOUNDED
+                if broker_factory is None and production_postgresql
+                else getattr(
+                    broker_factory,
+                    "lifecycle_capability",
+                    LifecycleCapability.BLOCKING_UNSAFE,
+                )
             )
-            while True:
+            repository_factory_capability = (
+                LifecycleCapability.FINITE_BOUNDED
+                if search_repository is not None
+                else getattr(
+                    create_search_ledger_repository,
+                    "lifecycle_capability",
+                    LifecycleCapability.BLOCKING_UNSAFE,
+                )
+                if production_postgresql
+                else LifecycleCapability.BLOCKING_UNSAFE
+            )
+            try:
+                while b is None:
+                    try:
+                        b = await authority_worker.run(
+                            LifecycleOperation(
+                                name="broker-initialization",
+                                capability=broker_factory_capability,
+                                call=lambda stop_event: app.state.get_broker(),
+                            )
+                        )
+                    except UnsafeLifecycleOperation as exc:
+                        app.state.operational_status.mark_initialization_failed(
+                            source="startup",
+                            reason="broker_initialization_unsafe",
+                        )
+                        logger.warning("%s", str(exc))
+                        await asyncio.sleep(_AUTHORITY_RETRY_SECONDS)
+                    except Exception as exc:
+                        app.state.operational_status.mark_initialization_failed(
+                            source="startup",
+                            reason=(
+                                f"broker_initialization_failed:{type(exc).__name__}"
+                            ),
+                        )
+                        logger.warning(
+                            "Execution authority initialization failed: %s",
+                            type(exc).__name__,
+                        )
+                        await asyncio.sleep(_AUTHORITY_RETRY_SECONDS)
+
+                while repository is None:
+                    try:
+                        repository = await authority_worker.run(
+                            LifecycleOperation(
+                                name="repository-initialization",
+                                capability=repository_factory_capability,
+                                call=lambda stop_event: (
+                                    app.state.get_search_repository()
+                                ),
+                            )
+                        )
+                    except Exception as exc:
+                        app.state.operational_status.mark_initialization_failed(
+                            source="startup",
+                            reason=(
+                                f"repository_initialization_failed:{type(exc).__name__}"
+                            ),
+                        )
+                        logger.warning(
+                            "Persistence authority initialization failed: %s",
+                            type(exc).__name__,
+                        )
+                        await asyncio.sleep(_AUTHORITY_RETRY_SECONDS)
+
+                from argus.config import get_config
+                from argus.operations.status import refresh_operational_status
+                from argus.recovery.evidence import (
+                    lifecycle_recovery_status_from_environment,
+                )
+
+                browser_status_reader = None
                 try:
-                    await asyncio.to_thread(dispatcher.run_once)
-                    now = datetime.now(tz=None)
-                    await asyncio.to_thread(
-                        repository.compact_maya_outbox,
-                        acknowledged_before=now
-                        - timedelta(days=cfg.acknowledged_retention_days),
-                        limit=100,
-                        now=now,
+                    from argus.extraction.playwright_extractor import (
+                        browser_capability_status,
                     )
+
+                    browser_status_reader = browser_capability_status
+                    browser_status = await authority_worker.run(
+                        LifecycleOperation(
+                            name="browser-capability-status",
+                            capability=LifecycleCapability.COOPERATIVE_BOUNDED,
+                            call=lambda stop_event: (
+                                _unavailable_browser_status()
+                                if stop_event.is_set()
+                                else browser_status_reader()
+                            ),
+                        )
+                    )
+                except Exception:
+                    browser_status = _unavailable_browser_status()
+                try:
+                    recovery_status = await authority_worker.run(
+                        LifecycleOperation(
+                            name="recovery-evidence-status",
+                            capability=LifecycleCapability.COOPERATIVE_BOUNDED,
+                            call=lambda stop_event: (
+                                lifecycle_recovery_status_from_environment(
+                                    stop_event=stop_event
+                                )
+                            ),
+                        )
+                    )
+                except Exception:
+                    recovery_status = {
+                        "state": "unavailable",
+                        "schema_promotion_allowed": False,
+                        "reasons": ["recovery_evidence_unavailable"],
+                    }
+
+                def _provider_evidence_snapshot() -> dict:
+                    try:
+                        return b.operational_provider_evidence()
+                    except Exception:
+                        return {}
+
+                provider_evidence = _provider_evidence_snapshot()
+                repository_capability = getattr(
+                    repository,
+                    "operational_status_capability",
+                    getattr(
+                        repository,
+                        "lifecycle_capability",
+                        LifecycleCapability.BLOCKING_UNSAFE,
+                    ),
+                )
+                compaction_capability = getattr(
+                    repository,
+                    "compaction_capability",
+                    getattr(
+                        repository,
+                        "lifecycle_capability",
+                        LifecycleCapability.BLOCKING_UNSAFE,
+                    ),
+                )
+                await authority_worker.run(
+                    LifecycleOperation(
+                        name="repository-operational-status",
+                        capability=repository_capability,
+                        call=lambda stop_event: refresh_operational_status(
+                            app.state.operational_status,
+                            broker=b,
+                            repository=repository,
+                            browser_status=browser_status,
+                            recovery_status=recovery_status,
+                            provider_evidence=provider_evidence,
+                            stop_event=stop_event,
+                        ),
+                    )
+                )
+
+                async def _refresh_status_background() -> None:
+                    while True:
+                        await asyncio.sleep(_STATUS_REFRESH_SECONDS)
+                        try:
+                            current_recovery = await authority_worker.run(
+                                LifecycleOperation(
+                                    name="recovery-evidence-status",
+                                    capability=(
+                                        LifecycleCapability.COOPERATIVE_BOUNDED
+                                    ),
+                                    call=lambda stop_event: (
+                                        lifecycle_recovery_status_from_environment(
+                                            stop_event=stop_event
+                                        )
+                                    ),
+                                )
+                            )
+                            current_browser = (
+                                await authority_worker.run(
+                                    LifecycleOperation(
+                                        name="browser-capability-status",
+                                        capability=(
+                                            LifecycleCapability.COOPERATIVE_BOUNDED
+                                        ),
+                                        call=lambda stop_event: (
+                                            _unavailable_browser_status()
+                                            if stop_event.is_set()
+                                            else browser_status_reader()
+                                        ),
+                                    )
+                                )
+                                if browser_status_reader is not None
+                                else _unavailable_browser_status()
+                            )
+                            provider_evidence = _provider_evidence_snapshot()
+                            await authority_worker.run(
+                                LifecycleOperation(
+                                    name="repository-operational-status",
+                                    capability=repository_capability,
+                                    call=lambda stop_event: refresh_operational_status(
+                                        app.state.operational_status,
+                                        broker=b,
+                                        repository=repository,
+                                        browser_status=current_browser,
+                                        recovery_status=current_recovery,
+                                        provider_evidence=provider_evidence,
+                                        stop_event=stop_event,
+                                    ),
+                                )
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "Operational status refresh failed: %s",
+                                type(exc).__name__,
+                            )
+
+                async def _run_probes_background() -> None:
+                    """Run network probes every 30 minutes."""
+                    while True:
+                        try:
+                            await b.refresh_provider_evidence()
+                        except Exception as exc:
+                            logger.warning(
+                                "Reachability probe failed: %s",
+                                type(exc).__name__,
+                            )
+                        await asyncio.sleep(30 * 60)
+
+                async def _run_maya_outbox_background() -> None:
+                    from argus.persistence.maya_outbox import (
+                        MayaOutboxDispatcher,
+                    )
+
+                    cfg = get_config().maya_capture
+                    dispatcher = MayaOutboxDispatcher(
+                        repository,
+                        endpoint=cfg.endpoint,
+                        token=cfg.token,
+                        timeout_seconds=cfg.timeout_seconds,
+                        batch_size=cfg.batch_size,
+                    )
+                    dispatcher_capability = getattr(
+                        dispatcher,
+                        "dispatch_capability",
+                        getattr(
+                            dispatcher,
+                            "lifecycle_capability",
+                            LifecycleCapability.BLOCKING_UNSAFE,
+                        ),
+                    )
+                    while True:
+                        delivery_task: asyncio.Task | None = None
+                        try:
+                            delivery_task = asyncio.create_task(
+                                maya_worker.run(
+                                    LifecycleOperation(
+                                        name="maya-outbox-dispatch",
+                                        capability=dispatcher_capability,
+                                        call=lambda stop_event: dispatcher.run_once(
+                                            stop_event=stop_event
+                                        ),
+                                    )
+                                )
+                            )
+                            done, _ = await asyncio.wait(
+                                {delivery_task},
+                                timeout=_MAYA_SLOW_SECONDS,
+                            )
+                            if not done:
+                                app.state.operational_status.observe_dependency(
+                                    "maya",
+                                    state="degraded",
+                                    source="maya_dispatcher",
+                                    ttl=timedelta(
+                                        seconds=max(15, cfg.poll_seconds * 3)
+                                    ),
+                                    reason="delivery_in_progress",
+                                )
+                            outcomes = await delivery_task
+                            app.state.operational_status.observe_maya_delivery(
+                                outcomes,
+                                ttl=timedelta(seconds=max(15, cfg.poll_seconds * 3)),
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "Maya outbox worker failed: %s",
+                                type(exc).__name__,
+                            )
+                            app.state.operational_status.observe_dependency(
+                                "maya",
+                                state="degraded",
+                                source="maya_dispatcher",
+                                ttl=timedelta(seconds=max(15, cfg.poll_seconds * 3)),
+                                reason=f"delivery_failed:{type(exc).__name__}",
+                            )
+                        else:
+                            try:
+                                now = datetime.now(tz=None)
+                                await maya_worker.run(
+                                    LifecycleOperation(
+                                        name="maya-outbox-compaction",
+                                        capability=compaction_capability,
+                                        call=lambda stop_event: (
+                                            repository.compact_maya_outbox(
+                                                acknowledged_before=now
+                                                - timedelta(
+                                                    days=(
+                                                        cfg.acknowledged_retention_days
+                                                    )
+                                                ),
+                                                limit=100,
+                                                now=now,
+                                                stop_event=stop_event,
+                                            )
+                                        ),
+                                    )
+                                )
+                            except Exception as exc:
+                                logger.warning(
+                                    "Maya outbox compaction failed: %s",
+                                    type(exc).__name__,
+                                )
+                        finally:
+                            if delivery_task is not None and not delivery_task.done():
+                                delivery_task.cancel()
+                                try:
+                                    await delivery_task
+                                except asyncio.CancelledError:
+                                    pass
+                        await asyncio.sleep(cfg.poll_seconds)
+
+                child_tasks.extend(
+                    [
+                        asyncio.create_task(_refresh_status_background()),
+                        asyncio.create_task(_run_probes_background()),
+                    ]
+                )
+                maya_cfg = get_config().maya_capture
+                if repository is not None and maya_cfg.endpoint and maya_cfg.token:
+                    app.state.operational_status.observe_maya_configuration(
+                        configured=True,
+                        ttl=timedelta(seconds=max(15, maya_cfg.poll_seconds * 3)),
+                    )
+                    child_tasks.append(
+                        asyncio.create_task(_run_maya_outbox_background())
+                    )
+                else:
+                    app.state.operational_status.observe_maya_configuration(
+                        configured=False,
+                        ttl=timedelta(days=1),
+                    )
+
+                await asyncio.gather(*child_tasks)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                app.state.operational_status.mark_initialization_failed(
+                    source="startup",
+                    reason=f"authority_worker_failed:{type(exc).__name__}",
+                )
+                logger.warning(
+                    "Execution authority worker failed: %s",
+                    type(exc).__name__,
+                )
+            finally:
+                authority_worker.request_stop()
+                maya_worker.request_stop()
+                for task in child_tasks:
+                    task.cancel()
+                for task in child_tasks:
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as exc:
+                        logger.warning(
+                            "Background worker stopped with error: %s",
+                            type(exc).__name__,
+                        )
+                await authority_worker.aclose()
+                await maya_worker.aclose()
+                try:
+                    from argus.extraction.playwright_extractor import close_browser
+
+                    await close_browser()
                 except Exception as exc:
-                    # Never include request payloads, credentials, or remote
-                    # response bodies in the service log.
-                    logger.warning("Maya outbox worker failed: %s", type(exc).__name__)
-                await asyncio.sleep(cfg.poll_seconds)
+                    logger.warning(
+                        "Failed to close Playwright resources: %s",
+                        type(exc).__name__,
+                    )
+                if b is not None:
+                    try:
+                        b.budget_tracker.close()
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to close broker budget tracker: %s",
+                            type(exc).__name__,
+                        )
+                if repository is not None:
+                    close_repository = getattr(repository, "close", None)
+                    if callable(close_repository):
+                        try:
+                            close_repository()
+                        except Exception as exc:
+                            logger.warning(
+                                "Failed to close search repository: %s",
+                                type(exc).__name__,
+                            )
 
-        from argus.config import get_config
-
-        maya_cfg = get_config().maya_capture
-        if maya_cfg.endpoint and maya_cfg.token:
-            maya_task = asyncio.create_task(_run_maya_outbox_background())
-
+        authority_task = asyncio.create_task(_run_authority_workers())
         yield
-
-        if maya_task:
-            maya_task.cancel()
-            try:
-                await maya_task
-            except asyncio.CancelledError:
-                pass
-
-        # Cancel the probe task on shutdown
-        if probe_task:
-            probe_task.cancel()
-            try:
-                await probe_task
-            except asyncio.CancelledError:
-                pass
-
+        authority_task.cancel()
         try:
-            from argus.extraction.playwright_extractor import close_browser
-
-            await close_browser()
-        except Exception as exc:
-            logger.warning("Failed to close Playwright resources: %s", exc)
-
-        try:
-            b.budget_tracker.close()
-        except Exception as exc:
-            logger.warning("Failed to close broker budget tracker: %s", exc)
+            await authority_task
+        except asyncio.CancelledError:
+            pass
 
     app = FastAPI(
         title="Argus",
@@ -200,6 +589,7 @@ def create_app(
         version="1.6.2",
         lifespan=lifespan_with_probes,
     )
+    app.state.operational_status = operational_status or create_operational_status()
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request: Request, exc: RequestValidationError):
@@ -222,11 +612,14 @@ def create_app(
     # Broker singleton
     app.state.get_broker = _build_broker_provider(broker, broker_factory)
     ledger_repository = search_repository
+    ledger_initialization_lock = threading.Lock()
 
     def get_search_repository() -> SearchLedgerRepository:
         nonlocal ledger_repository
         if ledger_repository is None:
-            ledger_repository = create_search_ledger_repository()
+            with ledger_initialization_lock:
+                if ledger_repository is None:
+                    ledger_repository = create_search_ledger_repository()
         return ledger_repository
 
     app.state.get_search_repository = get_search_repository
@@ -265,14 +658,6 @@ def create_app(
                 "X-Request-Id",
             ],
         )
-
-    @app.middleware("http")
-    async def add_request_id(request: Request, call_next):
-        request_id = request.headers.get("x-request-id", uuid.uuid4().hex[:16])
-        request.state.request_id = request_id
-        response = await call_next(request)
-        response.headers["x-request-id"] = request_id
-        return response
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
@@ -345,12 +730,63 @@ def create_app(
             response.headers[k] = v
         return response
 
+    @app.middleware("http")
+    async def operational_evidence_middleware(request: Request, call_next):
+        """Attach safe correlation and record only bounded route-template metrics."""
+        if request.url.path in {"/api/live", "/api/health"}:
+            request_id = safe_correlation_id(request.headers.get("x-request-id"))
+            request.state.request_id = request_id
+            response = await call_next(request)
+            response.headers["x-request-id"] = request_id
+            return response
+        request_id = safe_correlation_id(request.headers.get("x-request-id"))
+        request.state.request_id = request_id
+        started = request.app.state.operational_status.metrics.request_started()
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            response.headers["x-request-id"] = request_id
+            deployment_id = request.app.state.operational_status.deployment.get(
+                "deployment_id"
+            )
+            if deployment_id and deployment_id != "unknown":
+                response.headers["x-argus-deployment-id"] = deployment_id
+            return response
+        finally:
+            route = request.scope.get("route")
+            route_template = getattr(route, "path", "unmatched")
+            request.app.state.operational_status.metrics.request_finished(
+                started=started,
+                route=route_template,
+                method=request.method,
+                status_code=status_code,
+            )
+            logger.info(
+                "http_request request_id=%s deployment_id=%s "
+                "route=%s method=%s status_class=%s",
+                request_id,
+                request.app.state.operational_status.deployment.get(
+                    "deployment_id", "unknown"
+                ),
+                route_template,
+                request.method,
+                f"{max(1, min(status_code // 100, 5))}xx",
+            )
+
     app.include_router(search_router, prefix="/api")
     app.include_router(health_router, prefix="/api")
     app.include_router(admin_router, prefix="/api")
     app.include_router(extract_router, prefix="/api")
     app.include_router(workflows_router, prefix="/api")
     app.include_router(dashboard_router)
+    app.state.operational_status.metrics.register_route_templates(
+        [
+            route.path
+            for route in app.routes
+            if isinstance(getattr(route, "path", None), str)
+        ]
+    )
     return app
 
 

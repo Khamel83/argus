@@ -17,7 +17,7 @@ def _query(method: str, *, days: int) -> list[dict[str, Any]]:
         usage = SqlAlchemyUsageRepository(repository.session_factory)
         return getattr(usage, method)(days=days)
     except Exception as exc:
-        logger.warning("usage: %s failed: %s", method, exc)
+        logger.warning("usage: %s failed: %s", method, type(exc).__name__)
         return []
 
 

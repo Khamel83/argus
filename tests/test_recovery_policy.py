@@ -38,7 +38,9 @@ def _valid_evidence() -> dict:
     }
 
 
-def test_valid_recovery_evidence_allows_schema_promotion_without_leaking_paths(tmp_path):
+def test_valid_recovery_evidence_allows_schema_promotion_without_leaking_paths(
+    tmp_path,
+):
     from argus.recovery.evidence import evaluate_recovery_evidence
 
     path = tmp_path / "recovery.json"
@@ -88,9 +90,7 @@ def test_missing_or_malformed_evidence_fails_closed_for_schema_change(tmp_path):
     )
     malformed_path = tmp_path / "malformed.json"
     malformed_path.write_text('{"backup":', encoding="utf-8")
-    malformed = evaluate_promotion_gate(
-        malformed_path, schema_change=True, now=NOW
-    )
+    malformed = evaluate_promotion_gate(malformed_path, schema_change=True, now=NOW)
 
     assert missing["allowed"] is False
     assert missing["reasons"] == ["recovery_evidence_unavailable"]
@@ -156,6 +156,102 @@ def test_restore_evidence_must_be_bound_to_current_backup_manifest(tmp_path):
 
     assert status["schema_promotion_allowed"] is False
     assert status["reasons"] == ["restore_verification_failed"]
+
+
+def test_lifecycle_recovery_reader_preserves_normal_evidence(tmp_path, monkeypatch):
+    import threading
+
+    from argus.recovery.evidence import lifecycle_recovery_status_from_environment
+
+    path = tmp_path / "recovery.json"
+    path.write_text(json.dumps(_valid_evidence()), encoding="utf-8")
+    monkeypatch.setenv("ARGUS_RECOVERY_EVIDENCE_PATH", str(path))
+
+    status = lifecycle_recovery_status_from_environment(
+        stop_event=threading.Event(),
+    )
+
+    assert status["schema_promotion_allowed"] is True
+    assert "unsafe_internal_path" not in json.dumps(status)
+
+
+def test_lifecycle_recovery_reader_does_not_launch_after_stop(
+    tmp_path,
+    monkeypatch,
+):
+    import threading
+
+    import argus.recovery.evidence as evidence
+
+    path = tmp_path / "recovery.json"
+    path.write_text(json.dumps(_valid_evidence()), encoding="utf-8")
+    monkeypatch.setenv("ARGUS_RECOVERY_EVIDENCE_PATH", str(path))
+    popen = MagicMock(side_effect=AssertionError("process must not launch"))
+    monkeypatch.setattr(evidence.subprocess, "Popen", popen)
+    stop_event = threading.Event()
+    stop_event.set()
+
+    status = evidence.lifecycle_recovery_status_from_environment(
+        stop_event=stop_event,
+    )
+
+    assert status["state"] == "unavailable"
+    popen.assert_not_called()
+
+
+def test_lifecycle_recovery_reader_never_uses_unbounded_reap(
+    tmp_path,
+    monkeypatch,
+):
+    import argus.recovery.evidence as evidence
+
+    path = tmp_path / "recovery.json"
+    path.write_text(json.dumps(_valid_evidence()), encoding="utf-8")
+    monkeypatch.setenv("ARGUS_RECOVERY_EVIDENCE_PATH", str(path))
+
+    class UnreapableProcess:
+        returncode = None
+
+        def __init__(self):
+            self.terminated = False
+            self.killed = False
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            if timeout is None:
+                raise AssertionError("unbounded wait is forbidden")
+            raise evidence.subprocess.TimeoutExpired("recovery", timeout)
+
+    process = UnreapableProcess()
+    monkeypatch.setattr(evidence.subprocess, "Popen", lambda *args, **kwargs: process)
+
+    class StopSequence:
+        def __init__(self):
+            self.calls = 0
+
+        def is_set(self):
+            self.calls += 1
+            return self.calls > 1
+
+        def wait(self, timeout):
+            return None
+
+    status = evidence.lifecycle_recovery_status_from_environment(
+        stop_event=StopSequence(),
+    )
+
+    assert status["state"] == "unavailable"
+    assert status["reasons"] == ["recovery_helper_unreaped"]
+    assert process.terminated is True
+    assert process.killed is True
 
 
 @pytest.mark.asyncio

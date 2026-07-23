@@ -6,6 +6,11 @@ import json
 from typing import Any
 
 from argus.authority import HttpAuthorityClient
+from argus.operations.presentation import (
+    budget_remaining,
+    nested_status_failures,
+    provider_display_state,
+)
 
 
 def _search_markdown(payload: dict[str, Any]) -> str:
@@ -199,8 +204,14 @@ class HttpMcpAdapter:
         lines = ["## Search Provider Health", ""]
         for provider, status in (response.get("providers") or {}).items():
             lines.append(
-                f"- **{provider}**: {status.get('effective_status', 'unknown')}"
+                f"- **{provider}**: {provider_display_state(status)}"
             )
+            if not status.get("state") and status.get("effective_status"):
+                lines.append(
+                    "  - legacy_effective_status="
+                    f"{status['effective_status']}"
+                )
+            lines.extend(f"  - {failure}" for failure in nested_status_failures(status))
         return "\n".join(lines)
 
     async def search_budgets(self, *, token: str | None = None) -> str:
@@ -212,7 +223,7 @@ class HttpMcpAdapter:
         lines = ["## Search Provider Budgets", ""]
         for provider, summary in (response.get("providers") or {}).items():
             lines.append(
-                f"- **{provider}**: remaining={summary.get('remaining')} "
+                f"- **{provider}**: remaining={budget_remaining(summary.get('remaining'))} "
                 f"estimated={summary.get('argus_estimated_charge')} "
                 f"uncertain={summary.get('uncertain_charge')}"
             )

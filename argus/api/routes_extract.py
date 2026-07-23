@@ -30,7 +30,11 @@ async def extract(
 ):
     """Extract clean text content from a URL."""
     authenticated_caller = getattr(request.state, "caller_identity", "") or "unknown"
-    logger.info("extract caller=%s url=%s", authenticated_caller, req.url)
+    logger.info(
+        "extract request_id=%s caller=%s",
+        getattr(request.state, "request_id", "unknown"),
+        authenticated_caller,
+    )
     try:
         from argus.api.main import _HTTP_API_AUTHORITY_CAPABILITY
 

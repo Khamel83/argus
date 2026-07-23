@@ -245,12 +245,16 @@ curl -X POST http://localhost:8000/api/recover-url \
   -H "Content-Type: application/json" \
   -d '{"url": "https://example.com/old-page", "title": "Example Article"}'
 
-# Public health
-curl http://localhost:8000/api/health
+# Network-free process liveness (container health target)
+curl http://localhost:8000/api/live
 
-# Admin health & budgets
+# Public minimal startup and cached readiness
+curl http://localhost:8000/api/startup
+curl http://localhost:8000/api/ready
+
+# Authenticated operator status, health compatibility, and budgets
 curl -H "Authorization: Bearer $ARGUS_ADMIN_API_KEY" \
-  http://localhost:8000/api/admin/health/detail
+  http://localhost:8000/api/admin/status
 curl -H "Authorization: Bearer $ARGUS_ADMIN_API_KEY" \
   http://localhost:8000/api/admin/budgets
 curl -H "Authorization: Bearer $ARGUS_ADMIN_API_KEY" \
@@ -261,6 +265,12 @@ curl -H "Authorization: Bearer $ARGUS_ADMIN_API_KEY" \
 curl -X POST -H "Authorization: Bearer $ARGUS_ADMIN_API_KEY" \
   http://localhost:8000/api/admin/maya-outbox/DELIVERY_ID/recover
 ```
+
+`/api/health` remains a 200 liveness compatibility route. It intentionally
+does not check PostgreSQL, providers, Maya, or the browser, so a dependency
+outage cannot cause container restart storms. See
+[Operational status](docs/operations-status.md) for endpoint semantics,
+readiness classification, observation expiry, and safe telemetry.
 
 #### Search modes
 
@@ -610,6 +620,7 @@ Caller (CLI/HTTP/MCP/Python) → SearchBroker → tier-sorted providers → RRF 
 | `argus/cli/` | HTTP caller in production; direct execution in development |
 | `argus/mcp/` | Stateless MCP-to-HTTP adapter |
 | `argus/persistence/` | Shared PostgreSQL authority state; SQLite standalone development |
+| `argus/operations/` | Cached readiness, typed dependency observations, process identity, bounded metrics |
 
 Add new providers or extractors with a single adapter file. See [CONTRIBUTING.md](CONTRIBUTING.md) for the interface.
 

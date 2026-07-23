@@ -39,13 +39,17 @@ class SearchBroker:
         from argus.authority import broker_construction_allowed
 
         broker_construction_allowed(authority_capability=authority_capability)
+        self._config = get_config()
         self._providers = providers
         self._cache = cache or SearchCache()
         self._health = health_tracker or HealthTracker()
         self._budgets = budget_tracker or BudgetTracker(
-            persist_path=os.environ.get("ARGUS_BUDGET_DB_PATH", None)
+            persist_path=(
+                None
+                if self._config.env.strip().lower() == "production"
+                else os.environ.get("ARGUS_BUDGET_DB_PATH", None)
+            )
         )
-        self._config = get_config()
         self._session_store = session_store
         self._reachability = reachability or ReachabilityMatrix()
         self._egress_nodes = egress_nodes or {}
@@ -70,7 +74,9 @@ class SearchBroker:
             cache=self._cache,
             persistence=SearchPersistenceGateway(),
         )
-        self._session_service = session_service or SessionSearchService(session_store=session_store)
+        self._session_service = session_service or SessionSearchService(
+            session_store=session_store
+        )
 
         budget_map = {
             ProviderName.BRAVE: self._config.brave.monthly_budget_usd,
@@ -118,7 +124,7 @@ class SearchBroker:
             compute_attribution=compute_attribution,
         )
         if cached is not None:
-            logger.debug("Cache hit for query: %s (mode=%s)", query.query, query.mode)
+            logger.debug("Cache hit (mode=%s)", query.mode)
             return cached
 
         # Phase 4/5: Residential Search Policy
@@ -126,7 +132,10 @@ class SearchBroker:
         if res_policy != "off":
             if res_policy == "always":
                 query.metadata["prefer_residential"] = True
-            elif res_policy == "prefer_on_datacenter" and self._config.node.egress_type != "residential":
+            elif (
+                res_policy == "prefer_on_datacenter"
+                and self._config.node.egress_type != "residential"
+            ):
                 query.metadata["prefer_residential"] = True
 
         provider_order = resolve_routing(query.mode, query.providers)
@@ -141,8 +150,7 @@ class SearchBroker:
         )
 
         logger.info(
-            "Search complete: query=%r mode=%s providers=%d results=%d run=%s",
-            query.query,
+            "Search complete: mode=%s providers=%d results=%d run=%s",
             query.mode.value,
             outcome.live_providers_used,
             len(response.results),
@@ -177,7 +185,9 @@ class SearchBroker:
         provider_obj = self._providers.get(provider)
         base_status = provider_obj.status() if provider_obj else "unknown"
 
-        health_status = self._health.get_status(provider)
+        health_evidence = self._health.evidence_snapshot(provider)
+        health = health_evidence.health
+        health_status = health_evidence.status_override
         budget_status = self._budgets.check_status(provider)
 
         effective = base_status
@@ -189,10 +199,33 @@ class SearchBroker:
         return {
             "provider": provider.value,
             "config_status": base_status,
-            "health": self._health.get_health(provider).__dict__ if provider in self._health._health else None,
+            "health": health.as_dict() if health is not None else None,
             "budget_remaining": self._budgets.get_remaining_budget(provider),
             "effective_status": effective,
         }
+
+    def operational_provider_evidence(self) -> dict[str, dict]:
+        """Return the broker-owned, public provider evidence snapshot."""
+        reachability = self._reachability.get_all()
+        return {
+            provider.value: {
+                "status": self.get_provider_status(provider),
+                "reachability": reachability.get(provider),
+            }
+            for provider in ProviderName
+        }
+
+    async def refresh_provider_evidence(self) -> None:
+        """Probe free providers and translate results into health evidence."""
+        current_outcomes = await self._reachability.probe_all(
+            local_providers=self._providers,
+            egress_nodes=list(self._egress_nodes.values()),
+        )
+        for provider, outcomes in current_outcomes.by_provider().items():
+            if any(outcomes):
+                self._health.record_success(provider)
+            elif outcomes:
+                self._health.record_failure(provider)
 
 
 def create_broker(*, authority_capability: object | None = None) -> SearchBroker:

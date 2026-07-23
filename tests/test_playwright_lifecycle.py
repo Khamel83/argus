@@ -20,19 +20,31 @@ async def reset_playwright_state(monkeypatch):
     monkeypatch.setattr(extractor, "_using_obscura_cdp", False)
     monkeypatch.setattr(extractor, "_PLAYWRIGHT_AVAILABLE", True)
     monkeypatch.setattr(extractor, "_browser_unavailable", False, raising=False)
+    monkeypatch.setattr(extractor, "_browser_start_count", 0, raising=False)
+    monkeypatch.setattr(extractor, "_remote_connection_count", 0, raising=False)
+    monkeypatch.setattr(extractor, "_browser_runtime_state", "unknown", raising=False)
+    monkeypatch.setattr(
+        extractor,
+        "_browser_runtime_reason",
+        "not_observed_since_restart",
+        raising=False,
+    )
     yield
     await extractor.close_browser()
 
 
 @pytest.mark.asyncio
-async def test_failed_launch_stops_started_runtime_and_clears_singletons(monkeypatch):
+async def test_failed_launch_stops_started_runtime_and_clears_singletons(
+    monkeypatch, caplog
+):
     """A missing Chromium binary must not leave Playwright's driver running."""
     import argus.extraction.playwright_extractor as extractor
     import playwright.async_api
 
     runtime = MagicMock()
     runtime.stop = AsyncMock()
-    runtime.chromium.launch = AsyncMock(side_effect=RuntimeError("Chromium executable missing"))
+    secret = "wss://browser.example/devtools?token=super-secret"
+    runtime.chromium.launch = AsyncMock(side_effect=RuntimeError(secret))
     playwright_factory = MagicMock()
     playwright_factory.return_value.start = AsyncMock(return_value=runtime)
     monkeypatch.setattr(playwright.async_api, "async_playwright", playwright_factory)
@@ -42,6 +54,9 @@ async def test_failed_launch_stops_started_runtime_and_clears_singletons(monkeyp
     runtime.stop.assert_awaited_once()
     assert extractor._browser is None
     assert extractor._playwright_instance is None
+    assert extractor.browser_capability_status()["runtime_state"] == "degraded"
+    assert secret not in caplog.text
+    assert "super-secret" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -52,14 +67,18 @@ async def test_unavailable_browser_is_not_restarted_until_explicit_reset(monkeyp
 
     failed_runtime = MagicMock()
     failed_runtime.stop = AsyncMock()
-    failed_runtime.chromium.launch = AsyncMock(side_effect=RuntimeError("Chromium executable missing"))
+    failed_runtime.chromium.launch = AsyncMock(
+        side_effect=RuntimeError("Chromium executable missing")
+    )
     recovered_browser = MagicMock()
     recovered_browser.is_connected.return_value = True
     recovered_runtime = MagicMock()
     recovered_runtime.stop = AsyncMock()
     recovered_runtime.chromium.launch = AsyncMock(return_value=recovered_browser)
     playwright_factory = MagicMock()
-    playwright_factory.return_value.start = AsyncMock(side_effect=[failed_runtime, recovered_runtime])
+    playwright_factory.return_value.start = AsyncMock(
+        side_effect=[failed_runtime, recovered_runtime]
+    )
     monkeypatch.setattr(playwright.async_api, "async_playwright", playwright_factory)
 
     assert await extractor._get_browser() is None
@@ -67,9 +86,105 @@ async def test_unavailable_browser_is_not_restarted_until_explicit_reset(monkeyp
     assert playwright_factory.return_value.start.await_count == 1
 
     await extractor.reset_browser()
+    assert extractor.browser_capability_status()["runtime_state"] == "unknown"
 
     assert await extractor._get_browser() is recovered_browser
     assert playwright_factory.return_value.start.await_count == 2
+    assert extractor.browser_capability_status()["runtime_state"] == "healthy"
+
+
+@pytest.mark.asyncio
+async def test_browser_restart_metric_counts_successful_relaunches(monkeypatch):
+    import argus.extraction.playwright_extractor as extractor
+    import playwright.async_api
+
+    first_browser = MagicMock()
+    first_browser.is_connected.return_value = False
+    first_browser.close = AsyncMock()
+    second_browser = MagicMock()
+    second_browser.is_connected.return_value = True
+    second_browser.close = AsyncMock()
+    first_runtime = MagicMock()
+    first_runtime.stop = AsyncMock()
+    first_runtime.chromium.launch = AsyncMock(return_value=first_browser)
+    second_runtime = MagicMock()
+    second_runtime.stop = AsyncMock()
+    second_runtime.chromium.launch = AsyncMock(return_value=second_browser)
+    playwright_factory = MagicMock()
+    playwright_factory.return_value.start = AsyncMock(
+        side_effect=[first_runtime, second_runtime]
+    )
+    monkeypatch.setattr(playwright.async_api, "async_playwright", playwright_factory)
+
+    assert await extractor._get_browser() is first_browser
+    assert await extractor._get_browser() is second_browser
+
+    assert extractor.browser_capability_status()["process_restarts"] == 1
+
+
+@pytest.mark.asyncio
+async def test_remote_cdp_connection_is_not_counted_as_owned_browser_restart(
+    monkeypatch,
+):
+    import argus.extraction.playwright_extractor as extractor
+    import playwright.async_api
+
+    browser = MagicMock()
+    browser.is_connected.return_value = True
+    runtime = MagicMock()
+    runtime.stop = AsyncMock()
+    runtime.chromium.connect_over_cdp = AsyncMock(return_value=browser)
+    playwright_factory = MagicMock()
+    playwright_factory.return_value.start = AsyncMock(return_value=runtime)
+    monkeypatch.setattr(playwright.async_api, "async_playwright", playwright_factory)
+    monkeypatch.setattr(extractor, "OBSCURA_CDP_URL", "ws://redacted.invalid")
+
+    assert await extractor._get_browser() is browser
+
+    status = extractor.browser_capability_status()
+    assert status["process_restarts"] == 0
+    assert status["remote_connections"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("remote", [False, True])
+async def test_disconnect_degrades_until_successful_reconnect(monkeypatch, remote):
+    import argus.extraction.playwright_extractor as extractor
+    import playwright.async_api
+
+    first = MagicMock()
+    first.is_connected.return_value = True
+    first.close = AsyncMock()
+    second = MagicMock()
+    second.is_connected.return_value = True
+    second.close = AsyncMock()
+    runtime_one = MagicMock()
+    runtime_one.stop = AsyncMock()
+    runtime_two = MagicMock()
+    runtime_two.stop = AsyncMock()
+    if remote:
+        runtime_one.chromium.connect_over_cdp = AsyncMock(return_value=first)
+        runtime_two.chromium.connect_over_cdp = AsyncMock(return_value=second)
+        monkeypatch.setattr(extractor, "OBSCURA_CDP_URL", "ws://redacted.invalid")
+    else:
+        runtime_one.chromium.launch = AsyncMock(return_value=first)
+        runtime_two.chromium.launch = AsyncMock(return_value=second)
+    factory = MagicMock()
+    factory.return_value.start = AsyncMock(side_effect=[runtime_one, runtime_two])
+    monkeypatch.setattr(playwright.async_api, "async_playwright", factory)
+
+    assert await extractor._get_browser() is first
+    first.is_connected.return_value = False
+
+    disconnected = extractor.browser_capability_status()
+    assert disconnected["loaded"] is False
+    assert disconnected["runtime_state"] == "degraded"
+    assert disconnected["runtime_reason"] == "browser_disconnected"
+
+    assert await extractor._get_browser() is second
+    recovered = extractor.browser_capability_status()
+    assert recovered["runtime_state"] == "healthy"
+    assert recovered["process_restarts"] == (1 if not remote else 0)
 
 
 @pytest.mark.asyncio
@@ -106,7 +221,9 @@ async def test_concurrent_initialization_creates_one_runtime_and_browser(monkeyp
     playwright_factory.return_value.start.assert_awaited_once()
     runtime.chromium.launch.assert_awaited_once()
     assert runtime.chromium.launch.await_args.kwargs["chromium_sandbox"] is True
-    assert "--no-sandbox" not in runtime.chromium.launch.await_args.kwargs.get("args", [])
+    assert "--no-sandbox" not in runtime.chromium.launch.await_args.kwargs.get(
+        "args", []
+    )
 
 
 @pytest.mark.asyncio
@@ -184,7 +301,9 @@ def _playwright_driver_children() -> set[int]:
 
 
 @pytest.mark.asyncio
-async def test_missing_browser_smoke_leaves_no_playwright_driver_child(monkeypatch, tmp_path):
+async def test_missing_browser_smoke_leaves_no_playwright_driver_child(
+    monkeypatch, tmp_path
+):
     """A real missing-browser launch has no surviving Playwright driver child."""
     import argus.extraction.playwright_extractor as extractor
 
@@ -227,6 +346,40 @@ def test_browser_status_reports_manifest_capability_and_loaded_state(monkeypatch
     assert status["loaded_source"] == "local_chromium"
     assert status["sandboxed"] is True
     assert status["matches_declared"] is True
+
+
+def test_local_browser_status_measures_only_argus_chromium_descendants(monkeypatch):
+    import argus.extraction.playwright_extractor as extractor
+
+    browser = MagicMock()
+    browser.is_connected.return_value = True
+    monkeypatch.setattr(extractor, "_browser", browser)
+    monkeypatch.setattr(extractor.os, "getpid", lambda: 100)
+    monkeypatch.setattr(
+        extractor.subprocess,
+        "run",
+        MagicMock(
+            return_value=MagicMock(
+                returncode=0,
+                stdout=(
+                    "101 100 100 chromium\n"
+                    "102 101 50 chrome-helper\n"
+                    "103 100 999 node\n"
+                    "201 200 500 chromium\n"
+                ),
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        extractor,
+        "inspect_playwright_browser_capability",
+        MagicMock(return_value={"declared": True, "available": True}),
+    )
+
+    status = extractor.browser_capability_status()
+
+    assert status["processes"] == 2
+    assert status["memory_bytes"] == 150 * 1024
 
 
 def test_browser_status_does_not_misreport_obscura_as_local_sandbox(monkeypatch):
@@ -301,3 +454,7 @@ def test_declared_but_missing_unloaded_browser_is_a_mismatch(monkeypatch):
 
     assert status["loaded"] is False
     assert status["matches_declared"] is False
+    assert status["processes"] == 0
+    assert status["memory_bytes"] == 0
+    assert status["process_restarts"] == 0
+    assert status["metrics_source"] == "process_memory_since_start"

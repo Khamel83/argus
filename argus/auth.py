@@ -157,7 +157,12 @@ def is_admin_path(path: str) -> bool:
 
 
 def is_public_path(path: str) -> bool:
-    if path == "/api/health":
+    if path in {
+        "/api/live",
+        "/api/startup",
+        "/api/ready",
+        "/api/health",
+    }:
         return True
     if path.startswith("/dashboard"):
         return True
