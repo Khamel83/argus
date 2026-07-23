@@ -4,8 +4,16 @@ import os
 import stat
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 
 NOW = datetime(2026, 7, 23, 8, tzinfo=timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def _retention_requires_noatime(request):
+    if "retention" in request.node.name and not hasattr(os, "O_NOATIME"):
+        pytest.skip("strict read-only retention planning requires O_NOATIME")
 
 
 def _owned_root(tmp_path):
@@ -34,18 +42,26 @@ def _filesystem_state(root):
     for path in (root, *sorted(root.rglob("*"))):
         metadata = path.lstat()
         relative = "." if path == root else str(path.relative_to(root))
+        content = None
+        target = None
+        if stat.S_ISREG(metadata.st_mode):
+            content = path.read_bytes()
+        elif stat.S_ISLNK(metadata.st_mode):
+            target = os.readlink(path)
+        metadata = path.lstat()
         entry = {
             "mode": metadata.st_mode,
             "uid": metadata.st_uid,
             "gid": metadata.st_gid,
             "size": metadata.st_size,
+            "atime_ns": metadata.st_atime_ns,
             "mtime_ns": metadata.st_mtime_ns,
             "ctime_ns": metadata.st_ctime_ns,
         }
-        if stat.S_ISREG(metadata.st_mode):
-            entry["content"] = path.read_bytes()
-        elif stat.S_ISLNK(metadata.st_mode):
-            entry["target"] = os.readlink(path)
+        if content is not None:
+            entry["content"] = content
+        elif target is not None:
+            entry["target"] = target
         state[relative] = entry
     return state
 
@@ -460,6 +476,13 @@ def test_retention_plan_is_deterministic_and_byte_for_byte_read_only(
     assert first["schema_version"] == 1
     assert first["policy"] == {"daily": 7, "weekly": 5, "monthly": 12}
     assert first["expire_candidates"]
+    assert set(first["candidate_signatures"]) == set(
+        first["expire_candidates"]
+    )
+    assert all(
+        len(signature) == 64
+        for signature in first["candidate_signatures"].values()
+    )
     assert first["mutation_performed"] is False
     assert first["production_reclamation_required"] is True
     assert set(first) == {
@@ -469,6 +492,7 @@ def test_retention_plan_is_deterministic_and_byte_for_byte_read_only(
         "owned_snapshot_count",
         "kept",
         "expire_candidates",
+        "candidate_signatures",
         "mutation_performed",
         "production_reclamation_required",
     }
@@ -486,6 +510,20 @@ def test_retention_api_rejects_apply_without_touching_filesystem(tmp_path):
 
     with pytest.raises(ValueError, match="read-only"):
         prune_snapshots(root, live_data=live, apply=True, now=NOW)
+
+    assert _filesystem_state(root) == before
+
+
+def test_planner_fails_closed_without_noatime_support(tmp_path, monkeypatch):
+    import argus.recovery.records as records
+
+    root, live, root_id = _owned_root(tmp_path)
+    _owned_snapshot(root, "20260723T000000Z", root_id)
+    before = _filesystem_state(root)
+    monkeypatch.delattr(records.os, "O_NOATIME", raising=False)
+
+    with pytest.raises(ValueError, match="requires O_NOATIME"):
+        records.plan_snapshot_retention(root, live_data=live, now=NOW)
 
     assert _filesystem_state(root) == before
 
@@ -776,6 +814,90 @@ def test_retention_plan_fails_closed_on_concurrent_payload_addition(
         records,
         "_validate_snapshot_tree",
         add_after_validation,
+    )
+
+    with pytest.raises(ValueError, match="changed during retention planning"):
+        records.plan_snapshot_retention(root, live_data=live, now=NOW)
+
+    assert changed_state is not None
+    assert _filesystem_state(root) == changed_state
+
+
+def test_retention_plan_rejects_same_length_payload_overwrite_after_first_pass(
+    tmp_path,
+    monkeypatch,
+):
+    import argus.recovery.records as records
+
+    root, live, root_id = _owned_root(tmp_path)
+    target = _owned_snapshot(root, "20260701T000000Z", root_id)
+    payload = target / "payload.dump"
+    payload.write_bytes(b"before")
+    for age in range(20):
+        timestamp = NOW - timedelta(days=age)
+        _owned_snapshot(root, timestamp.strftime("%Y%m%dT%H%M%SZ"), root_id)
+    original = records._validate_snapshot_tree
+    target_inode = target.stat().st_ino
+    changed_state = None
+    target_passes = 0
+
+    def overwrite_after_first_pass(directory_fd, expected_device, **kwargs):
+        nonlocal changed_state, target_passes
+        result = original(directory_fd, expected_device, **kwargs)
+        if records.os.fstat(directory_fd).st_ino == target_inode:
+            target_passes += 1
+            if target_passes == 1:
+                payload.write_bytes(b"after!")
+                changed_state = _filesystem_state(root)
+        return result
+
+    monkeypatch.setattr(
+        records,
+        "_validate_snapshot_tree",
+        overwrite_after_first_pass,
+    )
+
+    with pytest.raises(ValueError, match="changed during retention planning"):
+        records.plan_snapshot_retention(root, live_data=live, now=NOW)
+
+    assert changed_state is not None
+    assert _filesystem_state(root) == changed_state
+
+
+def test_retention_plan_rejects_marker_mutation_after_first_pass(
+    tmp_path,
+    monkeypatch,
+):
+    import argus.recovery.records as records
+
+    root, live, root_id = _owned_root(tmp_path)
+    target = _owned_snapshot(root, "20260701T000000Z", root_id)
+    marker = target / ".argus-backup-set.json"
+    for age in range(20):
+        timestamp = NOW - timedelta(days=age)
+        _owned_snapshot(root, timestamp.strftime("%Y%m%dT%H%M%SZ"), root_id)
+    original = records._validate_snapshot_tree
+    target_inode = target.stat().st_ino
+    changed_state = None
+    target_passes = 0
+
+    def mutate_marker_after_first_pass(directory_fd, expected_device, **kwargs):
+        nonlocal changed_state, target_passes
+        result = original(directory_fd, expected_device, **kwargs)
+        if records.os.fstat(directory_fd).st_ino == target_inode:
+            target_passes += 1
+            if target_passes == 1:
+                marker.write_text(
+                    json.dumps({"schema_version": 1, "root_id": "f" * 32}),
+                    encoding="utf-8",
+                )
+                changed_state = _filesystem_state(root)
+        return result
+
+    monkeypatch.setattr(
+        records,
+        "_validate_snapshot_tree",
+        mutate_marker_after_first_pass,
     )
 
     with pytest.raises(ValueError, match="changed during retention planning"):

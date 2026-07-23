@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -341,6 +342,12 @@ def plan_snapshot_retention(
         raise ValueError("backup root and live data directory must be absolute")
     root_fd = _open_directory_no_follow(root_path, label="backup root")
     live_fd = -1
+    root_marker_fd = -1
+    root_marker_signature = ""
+    held_snapshots: dict[
+        str,
+        tuple[int, os.stat_result, str, str],
+    ] = {}
     try:
         root_metadata = os.fstat(root_fd)
         _assert_path_matches_descriptor(root_path, root_metadata, label="backup root")
@@ -365,7 +372,17 @@ def plan_snapshot_retention(
             or resolved_live in resolved.parents
         ):
             raise ValueError("backup root must be canonically outside live data")
-        root_payload = _read_json_at(root_fd, BACKUP_ROOT_MARKER)
+        root_marker_fd = _open_regular_noatime_at(
+            root_fd,
+            BACKUP_ROOT_MARKER,
+            label="backup root ownership marker",
+        )
+        fcntl.flock(root_marker_fd, fcntl.LOCK_SH)
+        root_payload = _read_json_descriptor(root_marker_fd)
+        root_marker_signature = _regular_descriptor_signature(
+            root_marker_fd,
+            expected_device=root_metadata.st_dev,
+        )
         if (
             root_payload.get("schema_version") != 1
             or not isinstance(root_payload.get("root_id"), str)
@@ -383,6 +400,16 @@ def plan_snapshot_retention(
             live_metadata,
             label="live data directory",
         )
+        if (
+            _regular_descriptor_signature(
+                root_marker_fd,
+                expected_device=root_metadata.st_dev,
+            )
+            != root_marker_signature
+        ):
+            raise ValueError(
+                "backup root ownership marker changed during retention planning"
+            )
         root_names = sorted(os.listdir(root_fd))
         if len(root_names) > _MAX_RETENTION_ENTRIES:
             raise ValueError("backup root exceeds retention planning entry limit")
@@ -398,10 +425,7 @@ def plan_snapshot_retention(
                 raise ValueError("timestamp-named entry must be a real directory")
             snapshot_fd = os.open(
                 name,
-                os.O_RDONLY
-                | os.O_DIRECTORY
-                | getattr(os, "O_NOFOLLOW", 0)
-                | getattr(os, "O_CLOEXEC", 0),
+                _directory_read_flags(),
                 dir_fd=root_fd,
             )
             try:
@@ -409,18 +433,39 @@ def plan_snapshot_retention(
                 if _identity(opened) != _identity(metadata):
                     raise ValueError("snapshot changed during retention planning")
                 owner = _read_snapshot_owner_fd(snapshot_fd)
-                _validate_snapshot_tree(
+                signature = _validate_snapshot_tree(
                     snapshot_fd,
                     root_metadata.st_dev,
                     entry_count=entry_count,
                 )
                 if owner == root_id:
                     names.append(name)
+                    held_snapshots[name] = (
+                        snapshot_fd,
+                        metadata,
+                        owner,
+                        signature,
+                    )
+                    snapshot_fd = -1
             finally:
-                os.close(snapshot_fd)
+                if snapshot_fd >= 0:
+                    os.close(snapshot_fd)
             _assert_entry_matches_descriptor(root_fd, name, metadata)
         kept = retained_snapshot_names(names, now=now)
         candidates = sorted(set(names) - kept)
+        signatures: dict[str, str] = {}
+        for name in sorted(held_snapshots):
+            snapshot_fd, metadata, owner, signature = held_snapshots[name]
+            current_owner = _read_snapshot_owner_fd(snapshot_fd)
+            current_signature = _validate_snapshot_tree(
+                snapshot_fd,
+                root_metadata.st_dev,
+                entry_count=[0],
+            )
+            if current_owner != owner or current_signature != signature:
+                raise ValueError("snapshot changed during retention planning")
+            _assert_entry_matches_descriptor(root_fd, name, metadata)
+            signatures[name] = signature
         if sorted(os.listdir(root_fd)) != root_names:
             raise ValueError("backup root changed during retention planning")
         _assert_path_matches_descriptor(root_path, root_metadata, label="backup root")
@@ -430,6 +475,11 @@ def plan_snapshot_retention(
             label="live data directory",
         )
     finally:
+        for snapshot_fd, _, _, _ in held_snapshots.values():
+            os.close(snapshot_fd)
+        if root_marker_fd >= 0:
+            fcntl.flock(root_marker_fd, fcntl.LOCK_UN)
+            os.close(root_marker_fd)
         if live_fd >= 0:
             os.close(live_fd)
         os.close(root_fd)
@@ -441,6 +491,9 @@ def plan_snapshot_retention(
         "owned_snapshot_count": len(names),
         "kept": sorted(kept),
         "expire_candidates": candidates,
+        "candidate_signatures": {
+            name: signatures[name] for name in candidates
+        },
         "mutation_performed": False,
         "production_reclamation_required": True,
     }
@@ -461,15 +514,52 @@ def prune_snapshots(
 
 def _open_directory_no_follow(path: Path, *, label: str) -> int:
     try:
-        return os.open(
-            path,
-            os.O_RDONLY
-            | os.O_DIRECTORY
-            | getattr(os, "O_NOFOLLOW", 0)
-            | getattr(os, "O_CLOEXEC", 0),
-        )
+        return os.open(path, _directory_read_flags())
     except OSError as error:
         raise ValueError(f"{label} must be an existing real directory") from error
+
+
+def _noatime_flag() -> int:
+    flag = getattr(os, "O_NOATIME", None)
+    if flag is None:
+        raise ValueError(
+            "strict read-only retention planning requires O_NOATIME support"
+        )
+    return flag
+
+
+def _directory_read_flags() -> int:
+    return (
+        os.O_RDONLY
+        | os.O_DIRECTORY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | _noatime_flag()
+    )
+
+
+def _open_regular_noatime_at(
+    directory_fd: int,
+    name: str,
+    *,
+    label: str,
+) -> int:
+    try:
+        descriptor = os.open(
+            name,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | _noatime_flag(),
+            dir_fd=directory_fd,
+        )
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            os.close(descriptor)
+            raise ValueError(f"{label} is invalid")
+        return descriptor
+    except OSError as error:
+        raise ValueError(f"{label} is missing or invalid") from error
 
 
 def _assert_path_matches_descriptor(
@@ -489,32 +579,16 @@ def _assert_path_matches_descriptor(
         raise ValueError(f"{label} changed after it was opened")
 
 
-def _read_json_at(directory_fd: int, name: str) -> dict[str, Any]:
-    try:
-        descriptor = os.open(
-            name,
-            os.O_RDONLY
-            | getattr(os, "O_NOFOLLOW", 0)
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NOATIME", 0),
-            dir_fd=directory_fd,
-        )
-        try:
-            metadata = os.fstat(descriptor)
-            if not stat.S_ISREG(metadata.st_mode):
-                raise ValueError("backup root ownership marker is invalid")
-            data = b""
-            while len(data) <= 1024 * 1024:
-                chunk = os.read(descriptor, 65536)
-                if not chunk:
-                    break
-                data += chunk
-            if len(data) > 1024 * 1024:
-                raise ValueError("backup root ownership marker is invalid")
-        finally:
-            os.close(descriptor)
-    except OSError as error:
-        raise ValueError("backup root ownership marker is missing or invalid") from error
+def _read_json_descriptor(descriptor: int) -> dict[str, Any]:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    data = b""
+    while len(data) <= 1024 * 1024:
+        chunk = os.read(descriptor, 65536)
+        if not chunk:
+            break
+        data += chunk
+    if len(data) > 1024 * 1024:
+        raise ValueError("backup root ownership marker is invalid")
     try:
         payload = json.loads(data)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -526,19 +600,14 @@ def _read_json_at(directory_fd: int, name: str) -> dict[str, Any]:
 
 def _read_snapshot_owner_fd(directory_fd: int) -> str | None:
     try:
-        marker_fd = os.open(
+        marker_fd = _open_regular_noatime_at(
+            directory_fd,
             _SNAPSHOT_MARKER,
-            os.O_RDONLY
-            | getattr(os, "O_NOFOLLOW", 0)
-            | getattr(os, "O_NOATIME", 0),
-            dir_fd=directory_fd,
+            label="snapshot ownership marker",
         )
-    except OSError:
+    except ValueError:
         return None
     try:
-        metadata = os.fstat(marker_fd)
-        if not stat.S_ISREG(metadata.st_mode):
-            return None
         data = b""
         while True:
             chunk = os.read(marker_fd, 65536)
@@ -566,11 +635,43 @@ def _identity(metadata: os.stat_result) -> tuple[int, int, int]:
 def _stable_signature(metadata: os.stat_result) -> tuple[int, ...]:
     return (
         *_identity(metadata),
+        metadata.st_mode,
+        metadata.st_uid,
+        metadata.st_gid,
         metadata.st_nlink,
         metadata.st_size,
+        metadata.st_atime_ns,
         metadata.st_mtime_ns,
         metadata.st_ctime_ns,
     )
+
+
+def _regular_descriptor_signature(
+    descriptor: int,
+    *,
+    expected_device: int,
+) -> str:
+    metadata = os.fstat(descriptor)
+    if (
+        metadata.st_dev != expected_device
+        or metadata.st_nlink != 1
+        or not stat.S_ISREG(metadata.st_mode)
+    ):
+        raise ValueError("regular file changed during retention planning")
+    signature = _stable_signature(metadata)
+    content_digest = hashlib.sha256()
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    while True:
+        chunk = os.read(descriptor, 1024 * 1024)
+        if not chunk:
+            break
+        content_digest.update(chunk)
+    if _stable_signature(os.fstat(descriptor)) != signature:
+        raise ValueError("regular file changed during retention planning")
+    digest = hashlib.sha256()
+    digest.update(json.dumps(signature).encode("ascii"))
+    digest.update(content_digest.digest())
+    return digest.hexdigest()
 
 
 def _validate_snapshot_tree(
@@ -578,13 +679,15 @@ def _validate_snapshot_tree(
     expected_device: int,
     *,
     entry_count: list[int],
-) -> None:
+) -> str:
     """Validate one observed tree using read-only, no-follow operations."""
     before = os.fstat(directory_fd)
     if before.st_dev != expected_device or not stat.S_ISDIR(before.st_mode):
         raise ValueError("refusing snapshot containing a device boundary")
     names = sorted(os.listdir(directory_fd))
     observed: dict[str, tuple[int, ...]] = {}
+    digest = hashlib.sha256()
+    digest.update(json.dumps(_stable_signature(before)).encode("ascii"))
     for child in names:
         entry_count[0] += 1
         if entry_count[0] > _MAX_RETENTION_ENTRIES:
@@ -600,14 +703,15 @@ def _validate_snapshot_tree(
         if metadata.st_dev != expected_device:
             raise ValueError("refusing snapshot containing a device boundary")
         observed[child] = _stable_signature(metadata)
+        encoded_name = child.encode("utf-8")
+        digest.update(len(encoded_name).to_bytes(4, "big"))
+        digest.update(encoded_name)
+        digest.update(json.dumps(observed[child]).encode("ascii"))
         if stat.S_ISDIR(metadata.st_mode):
             try:
                 child_fd = os.open(
                     child,
-                    os.O_RDONLY
-                    | os.O_DIRECTORY
-                    | getattr(os, "O_NOFOLLOW", 0)
-                    | getattr(os, "O_CLOEXEC", 0),
+                    _directory_read_flags(),
                     dir_fd=directory_fd,
                 )
             except OSError as error:
@@ -617,11 +721,13 @@ def _validate_snapshot_tree(
             try:
                 if _identity(os.fstat(child_fd)) != _identity(metadata):
                     raise ValueError("snapshot changed during retention planning")
-                _validate_snapshot_tree(
+                child_signature = _validate_snapshot_tree(
                     child_fd,
                     expected_device,
                     entry_count=entry_count,
                 )
+                digest.update(b"D")
+                digest.update(bytes.fromhex(child_signature))
             finally:
                 os.close(child_fd)
         elif stat.S_ISREG(metadata.st_mode):
@@ -633,7 +739,7 @@ def _validate_snapshot_tree(
                     os.O_RDONLY
                     | getattr(os, "O_NOFOLLOW", 0)
                     | getattr(os, "O_CLOEXEC", 0)
-                    | getattr(os, "O_NOATIME", 0),
+                    | _noatime_flag(),
                     dir_fd=directory_fd,
                 )
             except OSError as error:
@@ -643,6 +749,15 @@ def _validate_snapshot_tree(
             try:
                 if _stable_signature(os.fstat(child_fd)) != observed[child]:
                     raise ValueError("snapshot changed during retention planning")
+                digest.update(b"F")
+                digest.update(
+                    bytes.fromhex(
+                        _regular_descriptor_signature(
+                            child_fd,
+                            expected_device=expected_device,
+                        )
+                    )
+                )
             finally:
                 os.close(child_fd)
         else:
@@ -664,6 +779,7 @@ def _validate_snapshot_tree(
             raise ValueError("snapshot changed during retention planning")
     if _stable_signature(os.fstat(directory_fd)) != _stable_signature(before):
         raise ValueError("snapshot changed during retention planning")
+    return digest.hexdigest()
 
 
 def _assert_entry_matches_descriptor(

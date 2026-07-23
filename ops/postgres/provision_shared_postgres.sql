@@ -156,14 +156,14 @@ FROM pg_namespace
 WHERE nspname !~ '^pg_' AND nspname <> 'information_schema'
 \gexec
 SELECT format(
-    'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA %I FROM atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup, argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup',
+    'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA %I FROM PUBLIC, atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup, argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup',
     nspname
 )
 FROM pg_namespace
 WHERE nspname !~ '^pg_' AND nspname <> 'information_schema'
 \gexec
 SELECT format(
-    'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA %I FROM atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup, argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup',
+    'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA %I FROM PUBLIC, atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup, argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup',
     nspname
 )
 FROM pg_namespace
@@ -196,10 +196,10 @@ REVOKE ALL PRIVILEGES ON SCHEMA public FROM
     atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
     argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
 REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM
-    atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+    PUBLIC, atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
     argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
 REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM
-    atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+    PUBLIC, atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
     argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
 REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
 REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM
@@ -230,9 +230,13 @@ WHERE n.nspname = 'public'
   AND (t.typrelid = 0 OR c.relkind = 'c')
 \gexec
 ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON TABLES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
     REVOKE ALL PRIVILEGES ON TABLES FROM
         atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
         argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
+ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON SEQUENCES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
     REVOKE ALL PRIVILEGES ON SEQUENCES FROM
         atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
@@ -311,14 +315,14 @@ FROM pg_namespace
 WHERE nspname !~ '^pg_' AND nspname <> 'information_schema'
 \gexec
 SELECT format(
-    'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA %I FROM atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup, argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup',
+    'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA %I FROM PUBLIC, atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup, argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup',
     nspname
 )
 FROM pg_namespace
 WHERE nspname !~ '^pg_' AND nspname <> 'information_schema'
 \gexec
 SELECT format(
-    'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA %I FROM atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup, argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup',
+    'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA %I FROM PUBLIC, atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup, argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup',
     nspname
 )
 FROM pg_namespace
@@ -351,10 +355,10 @@ REVOKE ALL PRIVILEGES ON SCHEMA public FROM
     atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
     argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
 REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM
-    atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+    PUBLIC, atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
     argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
 REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM
-    atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+    PUBLIC, atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
     argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
 REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
 REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM
@@ -385,9 +389,13 @@ WHERE n.nspname = 'public'
   AND (t.typrelid = 0 OR c.relkind = 'c')
 \gexec
 ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON TABLES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
     REVOKE ALL PRIVILEGES ON TABLES FROM
         atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
         argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
+ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON SEQUENCES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
     REVOKE ALL PRIVILEGES ON SEQUENCES FROM
         atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,

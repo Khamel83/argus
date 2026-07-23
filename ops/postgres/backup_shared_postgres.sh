@@ -13,6 +13,13 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 python3 "$script_dir/postgres_recovery.py" validate-backup-root \
     --root "$ARGUS_BACKUP_ROOT" \
     --live-data "$POSTGRES_LIVE_DATA_DIR" >/dev/null
+command -v flock >/dev/null 2>&1 || {
+    echo "flock is required for cooperative backup/retention locking" >&2
+    exit 2
+}
+lock_file="$ARGUS_BACKUP_ROOT/.argus-shared-postgres-backup-root.json"
+exec 9< "$lock_file"
+flock -x 9
 snapshot=$(date -u +%Y%m%dT%H%M%SZ)
 stage=$(mktemp -d "$ARGUS_BACKUP_ROOT/.staging.XXXXXX")
 trap 'rm -rf -- "$stage"' EXIT HUP INT TERM
@@ -41,6 +48,8 @@ python3 "$script_dir/postgres_recovery.py" record-backup \
     --backup-set "$final" \
     --root "$ARGUS_BACKUP_ROOT" \
     --live-data "$POSTGRES_LIVE_DATA_DIR"
+flock -u 9
+exec 9<&-
 python3 "$script_dir/postgres_recovery.py" retention-plan \
     --root "$ARGUS_BACKUP_ROOT" \
     --live-data "$POSTGRES_LIVE_DATA_DIR"

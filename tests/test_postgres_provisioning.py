@@ -167,6 +167,9 @@ def test_provisioning_scrubs_poisoned_acl_and_rejects_object_ownership():
                 TO argus_runtime, atlas_readonly;
             GRANT ALL PRIVILEGES ON SEQUENCE public.acl_probe_id_seq
                 TO argus_runtime, atlas_readonly;
+            GRANT INSERT, UPDATE, DELETE ON TABLE public.acl_probe TO PUBLIC;
+            GRANT USAGE, SELECT, UPDATE ON SEQUENCE public.acl_probe_id_seq
+                TO PUBLIC;
             GRANT ALL PRIVILEGES ON FUNCTION public.acl_probe_fn()
                 TO argus_runtime, atlas_readonly;
             GRANT ALL PRIVILEGES ON TYPE public.acl_probe_enum
@@ -248,5 +251,69 @@ def test_provisioning_scrubs_poisoned_acl_and_rejects_object_ownership():
         assert result.stdout.strip() == (
             "f|f|f|f|f|t|f|f|t|t|f|f|f|f|f|f|t|t"
         )
+
+        public_acl_result = _psql(
+            """
+            SELECT
+                has_table_privilege(
+                    'atlas_backup', 'public.acl_probe', 'INSERT'
+                ),
+                has_sequence_privilege(
+                    'atlas_readonly',
+                    'public.acl_probe_id_seq',
+                    'UPDATE'
+                ),
+                has_sequence_privilege(
+                    'atlas_backup',
+                    'public.acl_probe_id_seq',
+                    'UPDATE'
+                );
+            """,
+            database="atlas",
+        )
+        assert public_acl_result.stdout.strip() == "f|f|f"
+
+        _psql(
+            """
+            SET ROLE argus_migration;
+            CREATE TABLE public.public_acl_probe (
+                id bigserial PRIMARY KEY
+            );
+            RESET ROLE;
+            GRANT INSERT, UPDATE, DELETE
+                ON TABLE public.public_acl_probe TO PUBLIC;
+            GRANT USAGE, SELECT, UPDATE
+                ON SEQUENCE public.public_acl_probe_id_seq TO PUBLIC;
+            """,
+            database="argus",
+        )
+        _psql(file=script)
+        argus_public_acl_result = _psql(
+            """
+            SELECT
+                has_table_privilege(
+                    'argus_readonly',
+                    'public.public_acl_probe',
+                    'INSERT'
+                ),
+                has_table_privilege(
+                    'argus_backup',
+                    'public.public_acl_probe',
+                    'INSERT'
+                ),
+                has_sequence_privilege(
+                    'argus_readonly',
+                    'public.public_acl_probe_id_seq',
+                    'UPDATE'
+                ),
+                has_sequence_privilege(
+                    'argus_backup',
+                    'public.public_acl_probe_id_seq',
+                    'UPDATE'
+                );
+            """,
+            database="argus",
+        )
+        assert argus_public_acl_result.stdout.strip() == "f|f|f|f"
     finally:
         _cleanup()

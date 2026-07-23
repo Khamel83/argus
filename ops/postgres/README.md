@@ -41,10 +41,18 @@ validate the temporary `atlas-postgres` compatibility alias before migration.
    considers only owned sets and is the union of 7 daily, 5 weekly, and
    12 monthly sets. `retention-plan` validates owned snapshot trees and prints
    bounded, sanitized JSON containing only the observed policy, keep set, and
-   expiration candidates. It is strictly read-only: it does not rename,
-   truncate, unlink, remove, chmod, or rewrite any filesystem entry. Symlinks,
-   special files, mount/device crossings, unsafe hard links, and concurrent
-   tree changes fail the plan. Actual deletion, reclamation, and scheduling
+   expiration candidates with content-and-metadata signatures. It takes a
+   shared lock on the root marker while cooperative backup writers take an
+   exclusive lock, hashes every regular file, and revalidates every owned
+   snapshot in a second pass before returning. Strict no-atime opens are
+   required; unsupported platforms fail closed. It does not rename, truncate,
+   unlink, remove, chmod, or rewrite any filesystem entry. Symlinks, special
+   files, mount/device crossings, unsafe hard links, and observed concurrent
+   tree/content changes fail the plan.
+   This is point-in-time advisory evidence, not an atomic deletion authority:
+   changes after return remain possible. Any future production executor must
+   revalidate the candidate signature as a compare-and-swap precondition.
+   Apply remains unsupported. Actual deletion, reclamation, and scheduling
    remain an explicit production operator procedure outside this toolkit.
 6. Run `verify_restore.sh` with operator-named `argus_restore_*` and
    `atlas_restore_*` targets. It verifies the backup manifest, refuses
