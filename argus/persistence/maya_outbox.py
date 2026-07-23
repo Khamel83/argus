@@ -54,8 +54,7 @@ _JSON_UNICODE_ESCAPE_RE = re.compile(r"\\u([0-9a-fA-F]{4})")
 _MAX_DECODE_ROUNDS = 8
 _MAX_DECODE_CHARS = 1_048_576
 _MAX_REDACTION_DEPTH = 8
-_MAX_EMBEDDED_SCALAR_CHARS = 65_536
-_MAX_INSPECTION_WORK = 2_097_152
+_MAX_INSPECTION_WORK = 6_291_456
 _MAX_URL_INPUT_BYTES = 8192
 _MAX_URL_QUERY_FIELDS = 64
 _MAX_URL_OUTPUT_BYTES = 2048
@@ -183,36 +182,44 @@ def _contains_sensitive_material(
     if not isinstance(value, str):
         return False
 
-    text = value[: min(len(value), work[0])]
+    text = value[: min(len(value), work[0], _MAX_DECODE_CHARS)]
+    truncated = len(text) < len(value)
     work[0] -= len(text)
     if any(
         _is_sensitive_key(_match_key(match)) for match in _KEY_VALUE_RE.finditer(text)
     ):
         return True
+    if truncated:
+        return True
     if depth >= _MAX_REDACTION_DEPTH:
         return bool(re.search(r"[\[{]|%[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}", text))
-    if len(text) > _MAX_EMBEDDED_SCALAR_CHARS:
+    stripped = text.lstrip()
+    structured_candidate = stripped.startswith(("{", "[", "(", "'", '"'))
+    encoded_candidate = bool(re.search(r"%[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}", text))
+    if not structured_candidate and not encoded_candidate:
         return False
 
-    for parser in (json.loads, ast.literal_eval):
-        try:
-            parsed = parser(text)
-        except (TypeError, ValueError, SyntaxError, MemoryError, RecursionError):
-            continue
-        if parsed != text and _contains_sensitive_material(
-            parsed,
-            depth=depth + 1,
-            work=work,
-        ):
-            return True
+    if structured_candidate:
+        for parser in (json.loads, ast.literal_eval):
+            try:
+                parsed = parser(text)
+            except (TypeError, ValueError, SyntaxError, MemoryError, RecursionError):
+                continue
+            if parsed == text:
+                break
+            return _contains_sensitive_material(
+                parsed,
+                depth=depth + 1,
+                work=work,
+            )
 
     decoded, unresolved = _decode_identifier_state(text)
-    if decoded != text and _contains_sensitive_material(
-        decoded,
-        depth=depth + 1,
-        work=work,
-    ):
-        return True
+    if decoded != text:
+        return _contains_sensitive_material(
+            decoded,
+            depth=depth + 1,
+            work=work,
+        )
     normalized_encoded = re.sub(r"[^a-z0-9]+", "", decoded.lower())
     return (
         unresolved

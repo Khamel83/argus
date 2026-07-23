@@ -607,6 +607,82 @@ def test_outbox_redacts_twenty_layer_encoded_sensitive_container(tmp_path):
     assert "twentyLayerLeak987" not in json.dumps(payload)
 
 
+@pytest.mark.parametrize("safe_prefix_size", [100, 70_000])
+def test_outbox_redacts_double_encoded_nested_secret_across_64k_boundary(
+    tmp_path,
+    safe_prefix_size,
+):
+    repository = _repository(tmp_path)
+    nested = quote(
+        quote(
+            '{"auth token":{"child":"boundaryNestedLeak987"}}',
+            safe="",
+        ),
+        safe="",
+    )
+    content = json.dumps({"article": ("x" * safe_prefix_size) + nested})
+    result = ExtractedContent(
+        url="https://example.com/article",
+        text=content,
+        word_count=1,
+        extractor=ExtractorName.TRAFILATURA,
+        attempts=[ExtractionAttempt("trafilatura", "success", 1)],
+    )
+
+    repository.record_extraction(
+        url=result.url,
+        domain=None,
+        mode="default",
+        caller="maya",
+        result=result,
+        latency_ms=1,
+        extraction_run_id=f"boundary-secret-{safe_prefix_size}",
+    )
+
+    payload = json.loads(_outbox_row(repository).payload_json)
+    assert payload["pages"][0]["content"] == "[redacted]"
+    assert "boundaryNestedLeak987" not in json.dumps(payload)
+
+
+def test_outbox_redacts_double_encoded_nested_secret_at_end_of_1mib_field(
+    tmp_path,
+):
+    repository = _repository(tmp_path)
+    nested = quote(
+        quote(
+            '{"auth token":{"child":"endOfFieldLeak987"}}',
+            safe="",
+        ),
+        safe="",
+    )
+    wrapper_bytes = len(json.dumps({"article": ""}))
+    content = json.dumps(
+        {"article": ("x" * (1_048_576 - wrapper_bytes - len(nested))) + nested}
+    )
+    assert len(content) == 1_048_576
+    result = ExtractedContent(
+        url="https://example.com/article",
+        text=content,
+        word_count=1,
+        extractor=ExtractorName.TRAFILATURA,
+        attempts=[ExtractionAttempt("trafilatura", "success", 1)],
+    )
+
+    repository.record_extraction(
+        url=result.url,
+        domain=None,
+        mode="default",
+        caller="maya",
+        result=result,
+        latency_ms=1,
+        extraction_run_id="end-of-field-secret",
+    )
+
+    payload = json.loads(_outbox_row(repository).payload_json)
+    assert payload["pages"][0]["content"] == "[redacted]"
+    assert "endOfFieldLeak987" not in json.dumps(payload)
+
+
 def test_outbox_redacts_triple_encoded_query_key(tmp_path):
     repository = _repository(tmp_path)
     response = _response()
@@ -652,9 +728,9 @@ def test_extraction_url_redacts_credential_bearing_path_everywhere(tmp_path):
     assert "visible" in payload["query"]
 
 
-def test_safe_json_extraction_preserves_899965_bytes_with_bounded_runtime(tmp_path):
+def test_safe_json_extraction_preserves_1mib_with_bounded_runtime(tmp_path):
     repository = _repository(tmp_path)
-    target_size = 899_965
+    target_size = 1_048_576
     prefix = '{"article":"'
     suffix = '"}'
     content = prefix + ("x" * (target_size - len(prefix) - len(suffix))) + suffix
