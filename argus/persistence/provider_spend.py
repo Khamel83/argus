@@ -41,7 +41,9 @@ class ProviderSpendAttemptRow(SpendBase):
     __tablename__ = "provider_spend_attempts"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(
+        String(255), unique=True, nullable=False
+    )
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     provider: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     tier: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -88,7 +90,9 @@ class ProviderBalanceSnapshotRow(SpendBase):
     provider_reference: Mapped[str] = mapped_column(String(255), nullable=False)
     related_attempt_id: Mapped[str] = mapped_column(String(32), nullable=False)
     authoritative_charge: Mapped[float] = mapped_column(Float, nullable=False)
-    idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(
+        String(255), unique=True, nullable=False
+    )
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
@@ -456,9 +460,7 @@ class ProviderSpendRepository:
         if not math.isfinite(balance) or balance < 0:
             raise ValueError("provider balance must be finite and non-negative")
         if not math.isfinite(authoritative_charge) or authoritative_charge < 0:
-            raise ValueError(
-                "authoritative charge must be finite and non-negative"
-            )
+            raise ValueError("authoritative charge must be finite and non-negative")
         payload = {
             "provider": provider.value,
             "balance": balance,
@@ -671,9 +673,7 @@ class ProviderSpendRepository:
         with self.session_factory() as session:
             return [_attempt(row) for row in session.scalars(statement)]
 
-    def provider_summary(
-        self, provider: ProviderName, *, budget_limit: float
-    ) -> dict:
+    def provider_summary(self, provider: ProviderName, *, budget_limit: float) -> dict:
         with self.session_factory() as session:
             estimated = self._settled_charge(session, provider)
             uncertain = self._uncertain_charge(session, provider)
@@ -686,8 +686,10 @@ class ProviderSpendRepository:
                 )
                 .limit(1)
             )
-        remaining = None if budget_limit <= 0 else max(
-            0.0, budget_limit - estimated - uncertain
+        remaining = (
+            None
+            if budget_limit <= 0
+            else max(0.0, budget_limit - estimated - uncertain)
         )
         return {
             "provider": provider.value,
@@ -742,8 +744,9 @@ class ProviderSpendRepository:
 
     def _settled_charge(self, session, provider: ProviderName) -> float:
         value = session.scalar(
-            select(func.coalesce(func.sum(ProviderSpendAttemptRow.actual_charge), 0.0))
-            .where(
+            select(
+                func.coalesce(func.sum(ProviderSpendAttemptRow.actual_charge), 0.0)
+            ).where(
                 ProviderSpendAttemptRow.provider == provider.value,
                 ProviderSpendAttemptRow.is_paid.is_(True),
                 ProviderSpendAttemptRow.status.in_(("settled", "resolved")),
@@ -762,8 +765,7 @@ class ProviderSpendRepository:
                     ),
                     0.0,
                 )
-            )
-            .where(
+            ).where(
                 ProviderSpendAttemptRow.provider == provider.value,
                 ProviderSpendAttemptRow.is_paid.is_(True),
                 ProviderSpendAttemptRow.status == "uncertain",
@@ -911,7 +913,13 @@ def create_provider_spend_repository(
         path = url.removeprefix("sqlite:///")
         if path and path != ":memory:":
             Path(path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
-    engine = create_engine(url, pool_pre_ping=True)
+    from argus.persistence.search_ledger import _bounded_engine_options
+
+    engine = create_engine(
+        url,
+        pool_pre_ping=True,
+        **_bounded_engine_options(url),
+    )
     should_create = is_sqlite if create_schema is None else create_schema
     if should_create:
         if not is_sqlite:

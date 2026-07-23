@@ -208,13 +208,12 @@ def lifecycle_recovery_status_from_environment(
     deadline = time.monotonic() + max(0.1, timeout_seconds)
     while process.poll() is None:
         if stop_event.is_set() or time.monotonic() >= deadline:
-            process.terminate()
-            try:
-                process.wait(timeout=0.5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-            return _unavailable("recovery_evidence_unavailable")
+            reaped = _terminate_and_reap_bounded(process)
+            return _unavailable(
+                "recovery_evidence_unavailable"
+                if reaped
+                else "recovery_helper_unreaped"
+            )
         stop_event.wait(0.02)
     stdout, _ = process.communicate()
     if process.returncode != 0:
@@ -228,6 +227,27 @@ def lifecycle_recovery_status_from_environment(
         if isinstance(status, dict)
         else _unavailable("recovery_evidence_invalid")
     )
+
+
+def _terminate_and_reap_bounded(
+    process: subprocess.Popen,
+    *,
+    grace_seconds: float = 0.5,
+) -> bool:
+    """Best-effort reap without ever making shutdown wait unboundedly."""
+    process.terminate()
+    deadline = time.monotonic() + max(0.01, grace_seconds)
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            return True
+        time.sleep(0.01)
+    process.kill()
+    deadline = time.monotonic() + max(0.01, grace_seconds)
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            return True
+        time.sleep(0.01)
+    return process.poll() is not None
 
 
 def _lifecycle_status_main() -> int:

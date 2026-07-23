@@ -199,6 +199,61 @@ def test_lifecycle_recovery_reader_does_not_launch_after_stop(
     popen.assert_not_called()
 
 
+def test_lifecycle_recovery_reader_never_uses_unbounded_reap(
+    tmp_path,
+    monkeypatch,
+):
+    import argus.recovery.evidence as evidence
+
+    path = tmp_path / "recovery.json"
+    path.write_text(json.dumps(_valid_evidence()), encoding="utf-8")
+    monkeypatch.setenv("ARGUS_RECOVERY_EVIDENCE_PATH", str(path))
+
+    class UnreapableProcess:
+        returncode = None
+
+        def __init__(self):
+            self.terminated = False
+            self.killed = False
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            if timeout is None:
+                raise AssertionError("unbounded wait is forbidden")
+            raise evidence.subprocess.TimeoutExpired("recovery", timeout)
+
+    process = UnreapableProcess()
+    monkeypatch.setattr(evidence.subprocess, "Popen", lambda *args, **kwargs: process)
+
+    class StopSequence:
+        def __init__(self):
+            self.calls = 0
+
+        def is_set(self):
+            self.calls += 1
+            return self.calls > 1
+
+        def wait(self, timeout):
+            return None
+
+    status = evidence.lifecycle_recovery_status_from_environment(
+        stop_event=StopSequence(),
+    )
+
+    assert status["state"] == "unavailable"
+    assert status["reasons"] == ["recovery_helper_unreaped"]
+    assert process.terminated is True
+    assert process.killed is True
+
+
 @pytest.mark.asyncio
 async def test_authenticated_health_detail_includes_sanitized_recovery_evidence(
     tmp_path,

@@ -82,21 +82,36 @@ background. Liveness remains available during those failures, startup and
 readiness remain unready, and successful reconstruction transitions the same
 service instance back to current cached evidence.
 
-Synchronous authority work runs on one lifespan-owned, joinable worker.
-Adapters must explicitly declare cooperative bounded lifecycle support:
-database connections and statements have five-second driver deadlines, Maya
-HTTP calls enforce the configured wall-clock deadline (maximum 120 seconds)
-with at most a one-second active read, and batch operations check the lifespan
-stop signal between items. Thus production worker stop latency is bounded by
-the active unit: five seconds for DB-only work or 126 seconds for a Maya
-delivery plus its final DB statement. Shutdown stops scheduling, signals the
-worker, joins it, then closes browser, budget, and repository resources.
-Undeclared or blocking-unsafe operations are not launched and degrade cached
-status instead. Recovery-file reads use a separately terminable helper process
-with a two-second deadline; browser process inspection has a one-second
-subprocess deadline. If shutdown interrupts a claimed Maya batch, unprocessed
-durable payloads remain leased rather than deleted and become eligible for
-retry when their existing lease expires.
+Synchronous authority/status work and Maya delivery work run on separate
+lifespan-owned, joinable workers, so a slow Maya batch cannot stale
+database/schema/outbox observations. Adapters must explicitly declare bounded
+lifecycle support: database connections and statements have five-second driver
+deadlines, Maya HTTP calls enforce the configured wall-clock deadline (maximum
+120 seconds) with at most a one-second active read, and batch operations check
+the lifespan stop signal between items. Thus production worker stop latency is
+bounded by the active unit: five seconds for DB-only work or 126 seconds for a
+Maya delivery plus its final DB statement. Shutdown stops scheduling, signals
+both workers, joins both, then closes browser, budget, and repository
+resources. Undeclared or blocking-unsafe operations are not launched and
+degrade cached status instead.
+
+Production background construction is admitted only with PostgreSQL and its
+finite connect, statement, lock, pool, and network deadlines. Production
+ignores the legacy filesystem-backed budget counter because the provider-spend
+ledger is the durable accounting authority. Development SQLite construction
+completes synchronously before lifespan admission; undeclared custom
+constructors and production SQLite constructors are never launched in a
+background worker.
+
+Recovery-file reads use a separately terminable helper process with a
+two-second deadline; browser process inspection has a one-second subprocess
+deadline. Helper termination uses bounded polling after both terminate and
+kill; an unreapable helper is reported explicitly without extending shutdown
+indefinitely. If shutdown interrupts a claimed Maya batch, unprocessed durable
+payloads are CAS-released without consuming delivery attempts. Attempts
+increment only immediately before an actual HTTP call; a post-increment,
+pre-HTTP stop is compensated under the owned lease. Real HTTP failures retain
+the bounded retry/dead-letter policy.
 
 ## Identity and correlation
 

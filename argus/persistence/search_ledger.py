@@ -1142,8 +1142,6 @@ class SqlAlchemySearchLedgerRepository:
             for row in rows:
                 token = uuid.uuid4().hex
                 row.status = "delivering"
-                row.attempt_count += 1
-                row.last_attempt_at = now
                 row.lease_expires_at = now + timedelta(seconds=lease_seconds)
                 row.lease_token = token
                 row.updated_at = now
@@ -1154,9 +1152,63 @@ class SqlAlchemySearchLedgerRepository:
                         "attempt_count": row.attempt_count,
                         "max_attempts": row.max_attempts,
                         "lease_token": token,
+                        "previous_last_attempt_at": row.last_attempt_at,
                     }
                 )
             return claimed
+
+    def begin_maya_outbox_attempt(
+        self,
+        intent_id: str,
+        *,
+        lease_token: str,
+        now: datetime,
+    ) -> dict | None:
+        """Count an attempt only immediately before its external HTTP call."""
+        with self.session_factory.begin() as session:
+            row = self._active_maya_lease(
+                session,
+                intent_id=intent_id,
+                lease_token=lease_token,
+                now=now,
+            )
+            if row is None or row.attempt_count >= row.max_attempts:
+                return None
+            row.attempt_count += 1
+            row.last_attempt_at = now
+            row.updated_at = now
+            return {
+                "attempt_count": row.attempt_count,
+                "max_attempts": row.max_attempts,
+            }
+
+    def release_maya_outbox_claim(
+        self,
+        intent_id: str,
+        *,
+        lease_token: str,
+        now: datetime,
+        attempt_started: bool = False,
+        previous_last_attempt_at: datetime | None = None,
+    ) -> bool:
+        """CAS-release a lease when shutdown prevents external delivery."""
+        with self.session_factory.begin() as session:
+            row = self._active_maya_lease(
+                session,
+                intent_id=intent_id,
+                lease_token=lease_token,
+                now=now,
+            )
+            if row is None:
+                return False
+            if attempt_started:
+                row.attempt_count = max(0, row.attempt_count - 1)
+                row.last_attempt_at = previous_last_attempt_at
+            row.status = "pending" if row.attempt_count == 0 else "retry"
+            row.lease_expires_at = None
+            row.lease_token = None
+            row.updated_at = now
+            return True
 
     def acknowledge_maya_outbox(
         self,
@@ -1690,3 +1742,8 @@ def create_read_only_search_ledger_repository(
     return SqlAlchemySearchLedgerRepository(
         sessionmaker(bind=engine, expire_on_commit=False)
     )
+
+
+create_search_ledger_repository.lifecycle_capability = (
+    LifecycleCapability.FINITE_BOUNDED
+)

@@ -1355,7 +1355,88 @@ def test_expired_delivery_lease_is_reclaimed_after_process_restart(tmp_path):
     )
 
     assert restarted.run_once() == {"acknowledged": 1}
-    assert _outbox_row(repository).attempt_count == 2
+    assert _outbox_row(repository).attempt_count == 1
+
+
+def test_repeated_stop_after_claim_never_consumes_delivery_attempt(
+    tmp_path,
+    monkeypatch,
+):
+    import threading
+
+    from argus.persistence.maya_outbox import MayaOutboxDispatcher
+
+    repository = _repository(tmp_path)
+    repository.accept(SearchQuery(query="graceful stop race"), _response())
+    started = datetime(2026, 7, 23, 12, 0)
+    http_calls = 0
+    stop_event = threading.Event()
+    claim = repository.claim_maya_outbox
+
+    def stop_after_claim(**kwargs):
+        claimed = claim(**kwargs)
+        stop_event.set()
+        return claimed
+
+    monkeypatch.setattr(repository, "claim_maya_outbox", stop_after_claim)
+
+    def unexpected_http(request):
+        nonlocal http_calls
+        http_calls += 1
+        return httpx.Response(503)
+
+    for index in range(12):
+        stop_event.clear()
+        dispatcher = MayaOutboxDispatcher(
+            repository,
+            endpoint="http://maya/captures",
+            token="test-token",
+            transport=httpx.MockTransport(unexpected_http),
+            clock=lambda index=index: started + timedelta(minutes=index),
+            lease_seconds=10,
+        )
+        assert dispatcher.run_once(stop_event=stop_event) == {}
+
+    row = _outbox_row(repository)
+    assert http_calls == 0
+    assert row.status == "pending"
+    assert row.attempt_count == 0
+    assert row.payload_json is not None
+
+
+def test_actual_http_failures_increment_and_deadletter_exactly(tmp_path):
+    from argus.persistence.maya_outbox import MayaOutboxDispatcher
+
+    repository = _repository(tmp_path)
+    repository.accept(SearchQuery(query="bounded failures"), _response())
+    row = _outbox_row(repository)
+    with repository.session_factory.begin() as session:
+        session.get(DeliveryIntentRow, row.id).max_attempts = 2
+    now = [datetime(2026, 7, 23, 12, 0)]
+    http_calls = 0
+
+    def unavailable(request):
+        nonlocal http_calls
+        http_calls += 1
+        return httpx.Response(503, json={"detail": "unavailable"})
+
+    dispatcher = MayaOutboxDispatcher(
+        repository,
+        endpoint="http://maya/captures",
+        token="test-token",
+        transport=httpx.MockTransport(unavailable),
+        clock=lambda: now[0],
+    )
+
+    assert dispatcher.run_once() == {"retried": 1}
+    assert _outbox_row(repository).attempt_count == 1
+    now[0] += timedelta(seconds=6)
+    assert dispatcher.run_once() == {"dead_lettered": 1}
+
+    row = _outbox_row(repository)
+    assert http_calls == 2
+    assert row.attempt_count == 2
+    assert row.status == "dead_letter"
 
 
 def test_sqlite_stale_worker_cannot_overwrite_reclaimed_lease(tmp_path):
@@ -1490,10 +1571,15 @@ def test_crash_during_final_attempt_expires_to_recoverable_dead_letter(tmp_path)
         session.get(DeliveryIntentRow, row.id).max_attempts = 1
     now = datetime(2026, 7, 23, 12, 0)
 
-    assert repository.claim_maya_outbox(
+    claimed = repository.claim_maya_outbox(
         now=now,
         limit=1,
         lease_seconds=10,
+    )[0]
+    assert repository.begin_maya_outbox_attempt(
+        claimed["id"],
+        lease_token=claimed["lease_token"],
+        now=now,
     )
     assert (
         repository.claim_maya_outbox(

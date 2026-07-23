@@ -635,12 +635,41 @@ class MayaOutboxDispatcher:
                 read=min(1.0, self.timeout_seconds),
             ),
         ) as client:
-            for item in claimed:
+            for index, item in enumerate(claimed):
                 if stop_event is not None and stop_event.is_set():
+                    self._release_untouched_claims(claimed[index:])
+                    break
+                attempt = self.repository.begin_maya_outbox_attempt(
+                    item["id"],
+                    lease_token=item["lease_token"],
+                    now=self.clock(),
+                )
+                if attempt is None:
+                    outcomes["lease_lost"] += 1
+                    continue
+                item.update(attempt)
+                if stop_event is not None and stop_event.is_set():
+                    self.repository.release_maya_outbox_claim(
+                        item["id"],
+                        lease_token=item["lease_token"],
+                        now=self.clock(),
+                        attempt_started=True,
+                        previous_last_attempt_at=item["previous_last_attempt_at"],
+                    )
+                    self._release_untouched_claims(claimed[index + 1 :])
                     break
                 outcome = self._deliver_one(client, headers, item)
                 outcomes[outcome] += 1
         return dict(outcomes)
+
+    def _release_untouched_claims(self, claimed: list[dict]) -> None:
+        now = self.clock()
+        for item in claimed:
+            self.repository.release_maya_outbox_claim(
+                item["id"],
+                lease_token=item["lease_token"],
+                now=now,
+            )
 
     def _deliver_one(self, client, headers, item) -> str:
         now = self.clock()

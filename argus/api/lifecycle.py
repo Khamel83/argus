@@ -17,6 +17,7 @@ class LifecycleCapability(str, Enum):
     """Whether synchronous work is safe to own during application shutdown."""
 
     COOPERATIVE_BOUNDED = "cooperative_bounded"
+    FINITE_BOUNDED = "finite_bounded"
     BLOCKING_UNSAFE = "blocking_unsafe"
 
 
@@ -60,7 +61,10 @@ class LifecycleWorker:
         self._thread.start()
 
     async def run(self, operation: LifecycleOperation[ResultT]) -> ResultT:
-        if operation.capability is not LifecycleCapability.COOPERATIVE_BOUNDED:
+        if operation.capability not in {
+            LifecycleCapability.COOPERATIVE_BOUNDED,
+            LifecycleCapability.FINITE_BOUNDED,
+        }:
             raise UnsafeLifecycleOperation(
                 f"{operation.name} lacks a bounded lifecycle contract"
             )

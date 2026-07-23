@@ -50,6 +50,8 @@ from argus.workflows import WorkflowService
 logger = get_logger("api")
 _HTTP_API_AUTHORITY_CAPABILITY = object()
 _AUTHORITY_RETRY_SECONDS = 5.0
+_STATUS_REFRESH_SECONDS = 15.0
+_MAYA_SLOW_SECONDS = 15.0
 
 
 def _unavailable_browser_status() -> dict[str, object]:
@@ -124,29 +126,70 @@ def create_app(
     production_mode = (
         os.environ.get("ARGUS_ENV", "development").strip().lower() == "production"
     )
+    from argus.config import get_config
+
+    startup_config = get_config()
+    production_postgresql = production_mode and startup_config.db_url.startswith(
+        ("postgresql:", "postgresql+")
+    )
 
     @asynccontextmanager
     async def lifespan_with_probes(app: FastAPI):
+        preinitialized_broker: SearchBroker | None = None
+        preinitialized_repository: SearchLedgerRepository | None = None
+        if not production_mode:
+            # Development SQLite construction may touch the filesystem and is
+            # completed synchronously before background admission. Startup
+            # does not become live until this initialization finishes.
+            if broker is not None or broker_factory is None:
+                try:
+                    preinitialized_broker = app.state.get_broker()
+                except Exception as exc:
+                    app.state.operational_status.mark_initialization_failed(
+                        source="startup",
+                        reason=f"broker_initialization_failed:{type(exc).__name__}",
+                    )
+            try:
+                preinitialized_repository = app.state.get_search_repository()
+            except Exception as exc:
+                app.state.operational_status.mark_initialization_failed(
+                    source="startup",
+                    reason=f"repository_initialization_failed:{type(exc).__name__}",
+                )
+
         async def _run_authority_workers() -> None:
             """Initialize dependencies off-loop and maintain cached observations."""
-            b: SearchBroker | None = None
-            repository: SearchLedgerRepository | None = None
+            b = preinitialized_broker
+            repository = preinitialized_repository
             child_tasks: list[asyncio.Task] = []
-            worker = LifecycleWorker()
+            authority_worker = LifecycleWorker(name="argus-authority-lifecycle")
+            maya_worker = LifecycleWorker(name="argus-maya-lifecycle")
             broker_factory_capability = (
-                LifecycleCapability.COOPERATIVE_BOUNDED
-                if broker is not None or broker_factory is None
+                LifecycleCapability.FINITE_BOUNDED
+                if broker is not None
+                else LifecycleCapability.FINITE_BOUNDED
+                if broker_factory is None and production_postgresql
                 else getattr(
                     broker_factory,
                     "lifecycle_capability",
                     LifecycleCapability.BLOCKING_UNSAFE,
                 )
             )
-            repository_factory_capability = LifecycleCapability.COOPERATIVE_BOUNDED
+            repository_factory_capability = (
+                LifecycleCapability.FINITE_BOUNDED
+                if search_repository is not None
+                else getattr(
+                    create_search_ledger_repository,
+                    "lifecycle_capability",
+                    LifecycleCapability.BLOCKING_UNSAFE,
+                )
+                if production_postgresql
+                else LifecycleCapability.BLOCKING_UNSAFE
+            )
             try:
                 while b is None:
                     try:
-                        b = await worker.run(
+                        b = await authority_worker.run(
                             LifecycleOperation(
                                 name="broker-initialization",
                                 capability=broker_factory_capability,
@@ -175,7 +218,7 @@ def create_app(
 
                 while repository is None:
                     try:
-                        repository = await worker.run(
+                        repository = await authority_worker.run(
                             LifecycleOperation(
                                 name="repository-initialization",
                                 capability=repository_factory_capability,
@@ -210,7 +253,7 @@ def create_app(
                     )
 
                     browser_status_reader = browser_capability_status
-                    browser_status = await worker.run(
+                    browser_status = await authority_worker.run(
                         LifecycleOperation(
                             name="browser-capability-status",
                             capability=LifecycleCapability.COOPERATIVE_BOUNDED,
@@ -224,7 +267,7 @@ def create_app(
                 except Exception:
                     browser_status = _unavailable_browser_status()
                 try:
-                    recovery_status = await worker.run(
+                    recovery_status = await authority_worker.run(
                         LifecycleOperation(
                             name="recovery-evidence-status",
                             capability=LifecycleCapability.COOPERATIVE_BOUNDED,
@@ -267,7 +310,7 @@ def create_app(
                         LifecycleCapability.BLOCKING_UNSAFE,
                     ),
                 )
-                await worker.run(
+                await authority_worker.run(
                     LifecycleOperation(
                         name="repository-operational-status",
                         capability=repository_capability,
@@ -285,9 +328,9 @@ def create_app(
 
                 async def _refresh_status_background() -> None:
                     while True:
-                        await asyncio.sleep(15)
+                        await asyncio.sleep(_STATUS_REFRESH_SECONDS)
                         try:
-                            current_recovery = await worker.run(
+                            current_recovery = await authority_worker.run(
                                 LifecycleOperation(
                                     name="recovery-evidence-status",
                                     capability=(
@@ -301,7 +344,7 @@ def create_app(
                                 )
                             )
                             current_browser = (
-                                await worker.run(
+                                await authority_worker.run(
                                     LifecycleOperation(
                                         name="browser-capability-status",
                                         capability=(
@@ -318,7 +361,7 @@ def create_app(
                                 else _unavailable_browser_status()
                             )
                             provider_evidence = _provider_evidence_snapshot()
-                            await worker.run(
+                            await authority_worker.run(
                                 LifecycleOperation(
                                     name="repository-operational-status",
                                     capability=repository_capability,
@@ -374,16 +417,34 @@ def create_app(
                         ),
                     )
                     while True:
+                        delivery_task: asyncio.Task | None = None
                         try:
-                            outcomes = await worker.run(
-                                LifecycleOperation(
-                                    name="maya-outbox-dispatch",
-                                    capability=dispatcher_capability,
-                                    call=lambda stop_event: dispatcher.run_once(
-                                        stop_event=stop_event
-                                    ),
+                            delivery_task = asyncio.create_task(
+                                maya_worker.run(
+                                    LifecycleOperation(
+                                        name="maya-outbox-dispatch",
+                                        capability=dispatcher_capability,
+                                        call=lambda stop_event: dispatcher.run_once(
+                                            stop_event=stop_event
+                                        ),
+                                    )
                                 )
                             )
+                            done, _ = await asyncio.wait(
+                                {delivery_task},
+                                timeout=_MAYA_SLOW_SECONDS,
+                            )
+                            if not done:
+                                app.state.operational_status.observe_dependency(
+                                    "maya",
+                                    state="degraded",
+                                    source="maya_dispatcher",
+                                    ttl=timedelta(
+                                        seconds=max(15, cfg.poll_seconds * 3)
+                                    ),
+                                    reason="delivery_in_progress",
+                                )
+                            outcomes = await delivery_task
                             app.state.operational_status.observe_maya_delivery(
                                 outcomes,
                                 ttl=timedelta(seconds=max(15, cfg.poll_seconds * 3)),
@@ -403,7 +464,7 @@ def create_app(
                         else:
                             try:
                                 now = datetime.now(tz=None)
-                                await worker.run(
+                                await maya_worker.run(
                                     LifecycleOperation(
                                         name="maya-outbox-compaction",
                                         capability=compaction_capability,
@@ -427,6 +488,13 @@ def create_app(
                                     "Maya outbox compaction failed: %s",
                                     type(exc).__name__,
                                 )
+                        finally:
+                            if delivery_task is not None and not delivery_task.done():
+                                delivery_task.cancel()
+                                try:
+                                    await delivery_task
+                                except asyncio.CancelledError:
+                                    pass
                         await asyncio.sleep(cfg.poll_seconds)
 
                 child_tasks.extend(
@@ -463,7 +531,8 @@ def create_app(
                     type(exc).__name__,
                 )
             finally:
-                worker.request_stop()
+                authority_worker.request_stop()
+                maya_worker.request_stop()
                 for task in child_tasks:
                     task.cancel()
                 for task in child_tasks:
@@ -476,7 +545,8 @@ def create_app(
                             "Background worker stopped with error: %s",
                             type(exc).__name__,
                         )
-                await worker.aclose()
+                await authority_worker.aclose()
+                await maya_worker.aclose()
                 try:
                     from argus.extraction.playwright_extractor import close_browser
 

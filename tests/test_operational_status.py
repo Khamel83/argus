@@ -1613,7 +1613,7 @@ def test_blocked_repository_status_stops_before_lifespan_cleanup(monkeypatch):
 
         assert elapsed < 0.5
         assert not any(
-            thread.name == "argus-lifecycle" for thread in threading.enumerate()
+            thread.name.endswith("-lifecycle") for thread in threading.enumerate()
         )
         assert service.full_status() == status_before_shutdown
         assert cleanup == [
@@ -1697,7 +1697,7 @@ def test_blocked_maya_dispatch_stops_before_lifespan_cleanup(
 
         assert elapsed < 0.5
         assert not any(
-            thread.name == "argus-lifecycle" for thread in threading.enumerate()
+            thread.name.endswith("-lifecycle") for thread in threading.enumerate()
         )
         assert service.full_status() == status_before_shutdown
         assert cleanup == [
@@ -1708,6 +1708,86 @@ def test_blocked_maya_dispatch_stops_before_lifespan_cleanup(
         ]
     finally:
         release_external.set()
+
+
+def test_slow_maya_lane_does_not_stale_authority_status(
+    monkeypatch,
+):
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
+    import argus.api.main as api_main
+    import argus.config as config_module
+    import argus.persistence.maya_outbox as maya_outbox
+    from argus.api.lifecycle import LifecycleCapability
+
+    monkeypatch.setattr(api_main, "_STATUS_REFRESH_SECONDS", 0.02)
+    monkeypatch.setattr(api_main, "_MAYA_SLOW_SECONDS", 0.03)
+    capture = SimpleNamespace(
+        endpoint="http://maya/captures",
+        token="dedicated-token",
+        timeout_seconds=1,
+        batch_size=100,
+        poll_seconds=1,
+        acknowledged_retention_days=1,
+    )
+    monkeypatch.setattr(
+        config_module,
+        "get_config",
+        lambda: SimpleNamespace(egress_nodes=[], maya_capture=capture),
+    )
+    entered = threading.Event()
+
+    class SlowDispatcher:
+        dispatch_capability = LifecycleCapability.COOPERATIVE_BOUNDED
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run_once(self, *, stop_event):
+            entered.set()
+            stop_event.wait()
+            return {}
+
+    monkeypatch.setattr(maya_outbox, "MayaOutboxDispatcher", SlowDispatcher)
+    repository = _runtime_repository()
+    refreshes = 0
+
+    def operational_status(**kwargs):
+        nonlocal refreshes
+        refreshes += 1
+        return {
+            "backend": "postgresql",
+            "connected": True,
+            "schema_head": "0006_maya_outbox",
+            "outbox": {"counts": {}},
+        }
+
+    repository.operational_status.side_effect = operational_status
+    service = _service(production=True)
+
+    with TestClient(
+        api_main.create_app(
+            broker=_runtime_broker(),
+            search_repository=repository,
+            operational_status=service,
+        )
+    ):
+        assert entered.wait(timeout=1)
+        deadline = time.monotonic() + 1
+        while refreshes < 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        status = service.full_status()
+
+        assert refreshes >= 3
+        assert status["dependencies"]["postgresql"]["state"] == "healthy"
+        assert status["dependencies"]["outbox"]["state"] == "healthy"
+        assert status["dependencies"]["maya"]["state"] == "degraded"
+        assert status["dependencies"]["maya"]["reason"] == "delivery_in_progress"
+        assert status["status"] == "degraded"
 
 
 def test_blocked_maya_compaction_stops_before_lifespan_cleanup(
@@ -1786,7 +1866,7 @@ def test_blocked_maya_compaction_stops_before_lifespan_cleanup(
 
         assert elapsed < 0.5
         assert not any(
-            thread.name == "argus-lifecycle" for thread in threading.enumerate()
+            thread.name.endswith("-lifecycle") for thread in threading.enumerate()
         )
         assert service.full_status() == status_before_shutdown
         assert cleanup == [
@@ -2002,8 +2082,10 @@ def test_slow_dependency_initialization_does_not_block_liveness():
     from argus.api.main import create_app
 
     gate = threading.Event()
+    called = threading.Event()
 
     def slow_factory():
+        called.set()
         gate.wait(timeout=2)
         raise RuntimeError("dependency unavailable")
 
@@ -2022,6 +2104,116 @@ def test_slow_dependency_initialization_does_not_block_liveness():
 
     assert entered_after < 0.5
     assert live.status_code == 200
+    assert called.is_set() is False
+
+
+def test_unbounded_repository_constructor_is_not_admitted_to_lifespan(
+    monkeypatch,
+):
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
+    import argus.api.main as api_main
+    import argus.config as config_module
+
+    called = threading.Event()
+    release = threading.Event()
+    capture = SimpleNamespace(endpoint="", token="", poll_seconds=5)
+    config = SimpleNamespace(
+        db_url="postgresql://argus@example.invalid/argus",
+        egress_nodes=[],
+        maya_capture=capture,
+    )
+    monkeypatch.setenv("ARGUS_ENV", "production")
+    monkeypatch.setattr(config_module, "get_config", lambda: config)
+
+    def blocked_constructor():
+        called.set()
+        release.wait()
+        return _runtime_repository()
+
+    monkeypatch.setattr(
+        api_main,
+        "create_search_ledger_repository",
+        blocked_constructor,
+    )
+    started = time.monotonic()
+    try:
+        with TestClient(
+            api_main.create_app(
+                broker=_runtime_broker(),
+                operational_status=_service(production=True),
+            ),
+            raise_server_exceptions=False,
+        ) as client:
+            assert client.get("/api/live").status_code == 200
+        assert time.monotonic() - started < 0.5
+        assert called.is_set() is False
+    finally:
+        release.set()
+
+
+def test_bounded_production_repository_constructor_recovers(
+    monkeypatch,
+):
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
+    import argus.api.main as api_main
+    import argus.config as config_module
+    from argus.api.lifecycle import LifecycleCapability
+
+    capture = SimpleNamespace(endpoint="", token="", poll_seconds=5)
+    config = SimpleNamespace(
+        db_url="postgresql://argus@example.invalid/argus",
+        egress_nodes=[],
+        maya_capture=capture,
+    )
+    monkeypatch.setenv("ARGUS_ENV", "production")
+    monkeypatch.setattr(config_module, "get_config", lambda: config)
+    monkeypatch.setattr(api_main, "_AUTHORITY_RETRY_SECONDS", 0.01)
+    recovered = threading.Event()
+    attempts = 0
+    repository = _runtime_repository()
+
+    def repository_constructor():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("temporary database failure")
+        recovered.set()
+        return repository
+
+    repository_constructor.lifecycle_capability = LifecycleCapability.FINITE_BOUNDED
+    monkeypatch.setattr(
+        api_main,
+        "create_search_ledger_repository",
+        repository_constructor,
+    )
+
+    with TestClient(
+        api_main.create_app(
+            broker=_runtime_broker(),
+            operational_status=_service(production=True),
+        ),
+        raise_server_exceptions=False,
+    ):
+        assert recovered.wait(timeout=1)
+        deadline = time.monotonic() + 1
+        while (
+            repository.operational_status.call_count == 0
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.01)
+
+    assert attempts == 2
+    assert repository.operational_status.call_count > 0
 
 
 def test_operational_background_workers_shutdown_cleanly():
@@ -2112,12 +2304,23 @@ def test_repository_construction_failure_recovers_without_process_restart(
 ):
     import threading
     import time
+    from types import SimpleNamespace
 
     from fastapi.testclient import TestClient
 
     import argus.api.main as api_main
+    import argus.config as config_module
+    from argus.api.lifecycle import LifecycleCapability
     from argus.api.rate_limit import RateLimiter
 
+    capture = SimpleNamespace(endpoint="", token="", poll_seconds=5)
+    config = SimpleNamespace(
+        db_url="postgresql://argus@example.invalid/argus",
+        egress_nodes=[],
+        maya_capture=capture,
+    )
+    monkeypatch.setenv("ARGUS_ENV", "production")
+    monkeypatch.setattr(config_module, "get_config", lambda: config)
     monkeypatch.setattr(api_main, "_AUTHORITY_RETRY_SECONDS", 0.01, raising=False)
     failed = threading.Event()
     allow_recovery = threading.Event()
@@ -2133,12 +2336,13 @@ def test_repository_construction_failure_recovers_without_process_restart(
         allow_recovery.wait(timeout=2)
         return repository
 
+    repository_factory.lifecycle_capability = LifecycleCapability.FINITE_BOUNDED
     monkeypatch.setattr(
         api_main,
         "create_search_ledger_repository",
         repository_factory,
     )
-    service = _service()
+    service = _service(production=True)
     app = api_main.create_app(
         broker=_runtime_broker(),
         rate_limiter=RateLimiter(max_requests=10_000),

@@ -61,6 +61,35 @@ class StubProvider:
         )
 
 
+def test_production_broker_never_opens_legacy_sqlite_budget_store(
+    monkeypatch,
+    tmp_path,
+):
+    from unittest.mock import MagicMock
+
+    import argus.broker.budget_persistence as budget_persistence
+    import argus.authority as authority
+    from argus.broker.router import SearchBroker
+    from argus.config import reset_config
+
+    monkeypatch.setenv("ARGUS_ENV", "production")
+    monkeypatch.setenv("ARGUS_DB_URL", "postgresql://argus@example.invalid/argus")
+    monkeypatch.setenv("ARGUS_BUDGET_DB_PATH", str(tmp_path / "legacy.db"))
+    monkeypatch.setattr(
+        budget_persistence,
+        "BudgetStore",
+        MagicMock(side_effect=AssertionError("legacy SQLite must not open")),
+    )
+    monkeypatch.setattr(authority, "broker_construction_allowed", lambda **kwargs: None)
+    reset_config()
+    try:
+        broker = SearchBroker(providers={}, spend_repository=MagicMock())
+    finally:
+        reset_config()
+
+    assert broker.budget_tracker._store is None
+
+
 def _half_open_paid_executor(monkeypatch, provider, *, caller_caps=None):
     from unittest.mock import MagicMock
 

@@ -39,13 +39,17 @@ class SearchBroker:
         from argus.authority import broker_construction_allowed
 
         broker_construction_allowed(authority_capability=authority_capability)
+        self._config = get_config()
         self._providers = providers
         self._cache = cache or SearchCache()
         self._health = health_tracker or HealthTracker()
         self._budgets = budget_tracker or BudgetTracker(
-            persist_path=os.environ.get("ARGUS_BUDGET_DB_PATH", None)
+            persist_path=(
+                None
+                if self._config.env.strip().lower() == "production"
+                else os.environ.get("ARGUS_BUDGET_DB_PATH", None)
+            )
         )
-        self._config = get_config()
         self._session_store = session_store
         self._reachability = reachability or ReachabilityMatrix()
         self._egress_nodes = egress_nodes or {}
