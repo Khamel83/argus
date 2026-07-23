@@ -164,8 +164,8 @@ def test_provisioning_sql_declares_isolated_roles_without_credentials():
     assert "ALTER DEFAULT PRIVILEGES" in sql
     assert sql.count("ON ALL TABLES IN SCHEMA public") >= 4
     assert sql.count("ON ALL SEQUENCES IN SCHEMA public") >= 4
-    assert "REVOKE ALL ON DATABASE" in sql
-    assert "REVOKE CREATE ON SCHEMA public FROM PUBLIC" in sql
+    assert "REVOKE ALL PRIVILEGES ON DATABASE" in sql
+    assert "REVOKE ALL PRIVILEGES ON SCHEMA public FROM PUBLIC" in sql
     assert "PASSWORD" not in sql.upper()
 
 
@@ -183,6 +183,28 @@ def test_provisioning_sql_normalizes_poisoned_role_attributes_and_memberships():
     assert "parent.rolname" in sql
     assert "member.rolname" in sql
     assert sql.count("REVOKE %I FROM %I") >= 2
+
+
+def test_provisioning_sql_scrubs_managed_role_acl_before_allowlist():
+    sql = (ROOT / "ops/postgres/provision_shared_postgres.sql").read_text()
+
+    assert sql.count("REVOKE ALL PRIVILEGES ON DATABASE") >= 2
+    assert sql.count("REVOKE ALL PRIVILEGES ON SCHEMA public") >= 2
+    assert sql.count(
+        "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public"
+    ) >= 2
+    assert sql.count(
+        "REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public"
+    ) >= 2
+    assert sql.count(
+        "REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public"
+    ) >= 2
+    assert sql.count("unexpected managed-role object owner") >= 2
+    assert sql.count("FROM pg_namespace") >= 4
+    assert sql.count("\\gexec") >= 10
+    assert sql.index(
+        "REVOKE ALL PRIVILEGES ON SCHEMA public"
+    ) < sql.index("GRANT USAGE, CREATE ON SCHEMA public")
 
 
 def test_backup_and_restore_scripts_never_accept_embedded_credentials():

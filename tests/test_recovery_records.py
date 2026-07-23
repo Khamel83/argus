@@ -252,6 +252,150 @@ def test_restore_record_refuses_source_mismatch_before_migration(tmp_path):
     assert migrated is False
 
 
+def test_restore_record_refuses_manifest_rebinding_during_verification(tmp_path):
+    import pytest
+
+    from argus.recovery.records import (
+        record_verified_backup,
+        record_verified_restore,
+    )
+
+    root, live, snapshot, _ = _backup_set(tmp_path)
+    evidence = tmp_path / "evidence.json"
+    record_verified_backup(
+        evidence,
+        backup_set=snapshot,
+        root=root,
+        live_data=live,
+    )
+
+    def replace_backup_evidence(database, tenant, expected):
+        payload = json.loads(evidence.read_text(encoding="utf-8"))
+        payload["backup"]["manifest_sha256"] = "d" * 64
+        evidence.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="changed during restore verification"):
+        record_verified_restore(
+            evidence,
+            backup_set=snapshot,
+            root=root,
+            live_data=live,
+            argus_database="argus_restore_issue40_race",
+            atlas_database="atlas_restore_issue40_race",
+            verify_source=replace_backup_evidence,
+            migrate_argus=lambda database: None,
+            verify_argus=lambda database, expected: {
+                "schema_head": "0005_provider_spend",
+                "checks": {name: True for name in (
+                    "schema",
+                    "row_counts",
+                    "integrity",
+                    "argus_read_path",
+                    "migration_compatible",
+                )},
+            },
+            verify_atlas=lambda database, expected: {
+                "checks": {
+                    "schema": True,
+                    "row_counts": True,
+                    "integrity": True,
+                },
+            },
+        )
+
+    payload = json.loads(evidence.read_text(encoding="utf-8"))
+    assert "restore" not in payload
+
+
+def test_backup_evidence_update_waits_for_restore_verification_lock(tmp_path):
+    import shutil
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+
+    import pytest
+
+    from argus.recovery.records import (
+        record_verified_backup,
+        record_verified_restore,
+    )
+
+    root, live, snapshot, _ = _backup_set(tmp_path)
+    newer = root / "20260724T060000Z"
+    shutil.copytree(snapshot, newer)
+    newer_manifest_path = newer / ".argus-backup-set.json"
+    newer_manifest = json.loads(newer_manifest_path.read_text(encoding="utf-8"))
+    newer_manifest["completed_at"] = "2026-07-24T06:00:00+00:00"
+    newer_manifest_path.write_text(
+        json.dumps(newer_manifest, sort_keys=True),
+        encoding="utf-8",
+    )
+    evidence = tmp_path / "evidence.json"
+    record_verified_backup(
+        evidence,
+        backup_set=snapshot,
+        root=root,
+        live_data=live,
+    )
+    original_manifest = json.loads(evidence.read_text())["backup"][
+        "manifest_sha256"
+    ]
+    verifier_entered = threading.Event()
+    release_verifier = threading.Event()
+
+    def pause_verifier(database, tenant, expected):
+        if tenant == "argus":
+            verifier_entered.set()
+            assert release_verifier.wait(timeout=5)
+
+    checks = {
+        "schema": True,
+        "row_counts": True,
+        "integrity": True,
+        "argus_read_path": True,
+        "migration_compatible": True,
+    }
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        restore_future = pool.submit(
+            record_verified_restore,
+            evidence,
+            backup_set=snapshot,
+            root=root,
+            live_data=live,
+            argus_database="argus_restore_issue40_lock",
+            atlas_database="atlas_restore_issue40_lock",
+            verify_source=pause_verifier,
+            migrate_argus=lambda database: None,
+            verify_argus=lambda database, expected: {
+                "schema_head": "0005_provider_spend",
+                "checks": checks,
+            },
+            verify_atlas=lambda database, expected: {
+                "checks": {
+                    "schema": True,
+                    "row_counts": True,
+                    "integrity": True,
+                },
+            },
+        )
+        assert verifier_entered.wait(timeout=5)
+        backup_future = pool.submit(
+            record_verified_backup,
+            evidence,
+            backup_set=newer,
+            root=root,
+            live_data=live,
+        )
+        with pytest.raises(TimeoutError):
+            backup_future.result(timeout=0.1)
+        release_verifier.set()
+        restore_future.result(timeout=5)
+        backup_future.result(timeout=5)
+
+    payload = json.loads(evidence.read_text(encoding="utf-8"))
+    assert payload["restore"]["backup_manifest_sha256"] == original_manifest
+    assert payload["backup"]["manifest_sha256"] != original_manifest
+
+
 def test_pruning_removes_only_unretained_timestamped_snapshot_directories(tmp_path):
     from argus.recovery.records import prune_snapshots
 
@@ -437,14 +581,17 @@ def test_pruning_revalidates_ownership_after_atomic_quarantine(tmp_path, monkeyp
     import argus.recovery.records as records
 
     root, live, root_id = _owned_root(tmp_path)
-    target = _owned_snapshot(root, "20240101T000000Z", root_id)
+    target = _owned_snapshot(root, "20260701T000000Z", root_id)
+    for age in range(20):
+        timestamp = NOW - timedelta(days=age)
+        _owned_snapshot(root, timestamp.strftime("%Y%m%dT%H%M%SZ"), root_id)
     original = records._read_snapshot_owner_at
-    calls = 0
+    quarantined_calls = 0
 
     def changed_owner(directory_fd, name):
-        nonlocal calls
-        calls += 1
-        if calls == 2:
+        nonlocal quarantined_calls
+        if name.startswith(f".pruning.{target.name}."):
+            quarantined_calls += 1
             return "different-root"
         return original(directory_fd, name)
 
@@ -452,5 +599,69 @@ def test_pruning_revalidates_ownership_after_atomic_quarantine(tmp_path, monkeyp
 
     report = records.prune_snapshots(root, live_data=live, apply=True, now=NOW)
 
-    assert report["removed"] == []
+    assert target.name not in report["removed"]
     assert target.is_dir()
+    assert quarantined_calls == 1
+
+
+def test_pruning_refuses_backup_root_path_swap_after_open(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    import pytest
+
+    import argus.recovery.records as records
+
+    root, live, root_id = _owned_root(tmp_path)
+    target = _owned_snapshot(root, "20240101T000000Z", root_id)
+    moved = tmp_path / "moved-backups"
+    original_open = records.os.open
+    swapped = False
+
+    def swap_after_open(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        descriptor = original_open(path, flags, mode, dir_fd=dir_fd)
+        if dir_fd is None and Path(path) == root and not swapped:
+            swapped = True
+            root.rename(moved)
+            root.mkdir()
+        return descriptor
+
+    monkeypatch.setattr(records.os, "open", swap_after_open)
+
+    with pytest.raises(ValueError, match="changed after it was opened"):
+        records.prune_snapshots(root, live_data=live, apply=True, now=NOW)
+
+    assert (moved / target.name).is_dir()
+
+
+def test_pruning_refuses_nested_device_boundary(tmp_path, monkeypatch):
+    import os
+
+    import pytest
+
+    import argus.recovery.records as records
+
+    root, live, root_id = _owned_root(tmp_path)
+    target = _owned_snapshot(root, "20260701T000000Z", root_id)
+    boundary = target / "mounted-data"
+    boundary.mkdir()
+    for age in range(20):
+        timestamp = NOW - timedelta(days=age)
+        _owned_snapshot(root, timestamp.strftime("%Y%m%dT%H%M%SZ"), root_id)
+    original_stat = records.os.stat
+
+    def report_other_device(path, *args, **kwargs):
+        metadata = original_stat(path, *args, **kwargs)
+        if path == "mounted-data" and kwargs.get("dir_fd") is not None:
+            values = list(metadata)
+            values[2] = metadata.st_dev + 1
+            return os.stat_result(values)
+        return metadata
+
+    monkeypatch.setattr(records.os, "stat", report_other_device)
+
+    with pytest.raises(ValueError, match="device boundary"):
+        records.prune_snapshots(root, live_data=live, apply=True, now=NOW)
+
+    assert target.is_dir()
+    assert boundary.is_dir()

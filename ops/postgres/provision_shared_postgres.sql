@@ -59,10 +59,41 @@ SELECT 'CREATE DATABASE argus OWNER argus_owner'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'argus')
 \gexec
 
-REVOKE ALL ON DATABASE atlas FROM PUBLIC;
-REVOKE ALL ON DATABASE argus FROM PUBLIC;
+DO $database_ownership$
+DECLARE
+    poisoned text;
+BEGIN
+    SELECT format('database %I owned by %I', database_name, owner.rolname)
+    INTO poisoned
+    FROM (
+        VALUES ('atlas', 'atlas_owner'), ('argus', 'argus_owner')
+    ) AS expected(database_name, owner_name)
+    JOIN pg_database database ON database.datname = expected.database_name
+    JOIN pg_roles owner ON owner.oid = database.datdba
+    WHERE owner.rolname IN (
+        'atlas_owner', 'atlas_migration', 'atlas_runtime', 'atlas_readonly', 'atlas_backup',
+        'argus_owner', 'argus_migration', 'argus_runtime', 'argus_readonly', 'argus_backup'
+    )
+      AND owner.rolname <> expected.owner_name
+    LIMIT 1;
+    IF poisoned IS NOT NULL THEN
+        RAISE EXCEPTION 'unexpected managed-role database owner: %', poisoned;
+    END IF;
+END
+$database_ownership$;
+
+REVOKE ALL PRIVILEGES ON DATABASE atlas FROM PUBLIC;
+REVOKE ALL PRIVILEGES ON DATABASE argus FROM PUBLIC;
+REVOKE ALL PRIVILEGES ON DATABASE atlas FROM
+    atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+    argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
+REVOKE ALL PRIVILEGES ON DATABASE argus FROM
+    atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+    argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
 ALTER DATABASE atlas OWNER TO atlas_owner;
 ALTER DATABASE argus OWNER TO argus_owner;
+GRANT ALL PRIVILEGES ON DATABASE atlas TO atlas_owner;
+GRANT ALL PRIVILEGES ON DATABASE argus TO argus_owner;
 GRANT CONNECT ON DATABASE atlas
     TO atlas_migration, atlas_runtime, atlas_readonly, atlas_backup;
 GRANT CONNECT ON DATABASE argus
@@ -73,7 +104,84 @@ REVOKE CONNECT ON DATABASE argus
     FROM atlas_migration, atlas_runtime, atlas_readonly, atlas_backup;
 
 \connect atlas
-REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+DO $ownership$
+DECLARE
+    poisoned text;
+BEGIN
+    SELECT format('%s %I.%I owned by %I', object_kind, schema_name, object_name, owner_name)
+    INTO poisoned
+    FROM (
+        SELECT 'schema' AS object_kind, n.nspname AS schema_name,
+               n.nspname AS object_name, owner.rolname AS owner_name
+        FROM pg_namespace n
+        JOIN pg_roles owner ON owner.oid = n.nspowner
+        UNION ALL
+        SELECT 'relation', n.nspname, c.relname, owner.rolname
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_roles owner ON owner.oid = c.relowner
+        WHERE c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
+        UNION ALL
+        SELECT 'routine', n.nspname, p.proname, owner.rolname
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        JOIN pg_roles owner ON owner.oid = p.proowner
+    ) AS objects
+    WHERE owner_name IN (
+        'atlas_owner', 'atlas_migration', 'atlas_runtime', 'atlas_readonly', 'atlas_backup',
+        'argus_owner', 'argus_migration', 'argus_runtime', 'argus_readonly', 'argus_backup'
+    )
+      AND owner_name NOT IN ('atlas_owner', 'atlas_migration')
+    LIMIT 1;
+    IF poisoned IS NOT NULL THEN
+        RAISE EXCEPTION 'unexpected managed-role object owner in atlas: %', poisoned;
+    END IF;
+END
+$ownership$;
+
+SELECT format(
+    'REVOKE ALL PRIVILEGES ON SCHEMA %I FROM atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup, argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup',
+    nspname
+)
+FROM pg_namespace
+WHERE nspname !~ '^pg_' AND nspname <> 'information_schema'
+\gexec
+SELECT format(
+    'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA %I FROM atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup, argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup',
+    nspname
+)
+FROM pg_namespace
+WHERE nspname !~ '^pg_' AND nspname <> 'information_schema'
+\gexec
+SELECT format(
+    'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA %I FROM atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup, argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup',
+    nspname
+)
+FROM pg_namespace
+WHERE nspname !~ '^pg_' AND nspname <> 'information_schema'
+\gexec
+SELECT format(
+    'REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA %I FROM PUBLIC, atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup, argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup',
+    nspname
+)
+FROM pg_namespace
+WHERE nspname !~ '^pg_' AND nspname <> 'information_schema'
+\gexec
+
+REVOKE ALL PRIVILEGES ON SCHEMA public FROM PUBLIC;
+REVOKE ALL PRIVILEGES ON SCHEMA public FROM
+    atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+    argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM
+    atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+    argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM
+    atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+    argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
+REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
+REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM
+    atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+    argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
 GRANT USAGE, CREATE ON SCHEMA public TO atlas_migration;
 GRANT USAGE ON SCHEMA public TO atlas_runtime, atlas_readonly, atlas_backup;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public
@@ -84,15 +192,109 @@ GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public
     TO atlas_runtime;
 GRANT SELECT ON ALL SEQUENCES IN SCHEMA public
     TO atlas_readonly, atlas_backup;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO atlas_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON TABLES FROM
+        atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+        argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
+ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON SEQUENCES FROM
+        atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+        argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
+ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON FUNCTIONS FROM
+        atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+        argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
 ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO atlas_runtime;
 ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
     GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO atlas_runtime;
 ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
     GRANT SELECT ON TABLES TO atlas_readonly, atlas_backup;
+ALTER DEFAULT PRIVILEGES FOR ROLE atlas_migration IN SCHEMA public
+    GRANT EXECUTE ON FUNCTIONS TO atlas_runtime;
 
 \connect argus
-REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+DO $ownership$
+DECLARE
+    poisoned text;
+BEGIN
+    SELECT format('%s %I.%I owned by %I', object_kind, schema_name, object_name, owner_name)
+    INTO poisoned
+    FROM (
+        SELECT 'schema' AS object_kind, n.nspname AS schema_name,
+               n.nspname AS object_name, owner.rolname AS owner_name
+        FROM pg_namespace n
+        JOIN pg_roles owner ON owner.oid = n.nspowner
+        UNION ALL
+        SELECT 'relation', n.nspname, c.relname, owner.rolname
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_roles owner ON owner.oid = c.relowner
+        WHERE c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
+        UNION ALL
+        SELECT 'routine', n.nspname, p.proname, owner.rolname
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        JOIN pg_roles owner ON owner.oid = p.proowner
+    ) AS objects
+    WHERE owner_name IN (
+        'atlas_owner', 'atlas_migration', 'atlas_runtime', 'atlas_readonly', 'atlas_backup',
+        'argus_owner', 'argus_migration', 'argus_runtime', 'argus_readonly', 'argus_backup'
+    )
+      AND owner_name NOT IN ('argus_owner', 'argus_migration')
+    LIMIT 1;
+    IF poisoned IS NOT NULL THEN
+        RAISE EXCEPTION 'unexpected managed-role object owner in argus: %', poisoned;
+    END IF;
+END
+$ownership$;
+
+SELECT format(
+    'REVOKE ALL PRIVILEGES ON SCHEMA %I FROM atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup, argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup',
+    nspname
+)
+FROM pg_namespace
+WHERE nspname !~ '^pg_' AND nspname <> 'information_schema'
+\gexec
+SELECT format(
+    'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA %I FROM atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup, argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup',
+    nspname
+)
+FROM pg_namespace
+WHERE nspname !~ '^pg_' AND nspname <> 'information_schema'
+\gexec
+SELECT format(
+    'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA %I FROM atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup, argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup',
+    nspname
+)
+FROM pg_namespace
+WHERE nspname !~ '^pg_' AND nspname <> 'information_schema'
+\gexec
+SELECT format(
+    'REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA %I FROM PUBLIC, atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup, argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup',
+    nspname
+)
+FROM pg_namespace
+WHERE nspname !~ '^pg_' AND nspname <> 'information_schema'
+\gexec
+
+REVOKE ALL PRIVILEGES ON SCHEMA public FROM PUBLIC;
+REVOKE ALL PRIVILEGES ON SCHEMA public FROM
+    atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+    argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM
+    atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+    argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM
+    atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+    argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
+REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
+REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public FROM
+    atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+    argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
 GRANT USAGE, CREATE ON SCHEMA public TO argus_migration;
 GRANT USAGE ON SCHEMA public TO argus_runtime, argus_readonly, argus_backup;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public
@@ -103,9 +305,26 @@ GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public
     TO argus_runtime;
 GRANT SELECT ON ALL SEQUENCES IN SCHEMA public
     TO argus_readonly, argus_backup;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO argus_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON TABLES FROM
+        atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+        argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
+ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON SEQUENCES FROM
+        atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+        argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
+ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
+    REVOKE ALL PRIVILEGES ON FUNCTIONS FROM
+        atlas_owner, atlas_migration, atlas_runtime, atlas_readonly, atlas_backup,
+        argus_owner, argus_migration, argus_runtime, argus_readonly, argus_backup;
 ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO argus_runtime;
 ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
     GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO argus_runtime;
 ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
     GRANT SELECT ON TABLES TO argus_readonly, argus_backup;
+ALTER DEFAULT PRIVILEGES FOR ROLE argus_migration IN SCHEMA public
+    GRANT EXECUTE ON FUNCTIONS TO argus_runtime;
