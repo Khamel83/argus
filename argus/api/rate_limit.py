@@ -19,7 +19,11 @@ class RateLimiter:
     ):
         self._max_requests = max_requests
         self._window = window_seconds
-        self._exempt_paths = set(exempt_paths or ["/api/health"])
+        self._exempt_paths = {
+            "/api/live",
+            "/api/health",
+            *(exempt_paths or []),
+        }
         self._exempt_tokens = {token for token in (exempt_tokens or []) if token}
         # client_ip -> path -> [timestamps]
         self._requests: Dict[str, Dict[str, List[float]]] = defaultdict(

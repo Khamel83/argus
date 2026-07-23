@@ -13,6 +13,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from argus.models import ProviderName
+
 
 _STATES = {"healthy", "degraded", "unready", "unknown", "disabled"}
 _SAFE_CORRELATION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -24,63 +26,13 @@ _SENSITIVE_REASON = re.compile(
 )
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]+")
 _PROVIDERS = frozenset(
-    {
-        "searxng",
-        "duckduckgo",
-        "yahoo",
-        "github",
-        "wolfram",
-        "brave",
-        "tavily",
-        "exa",
-        "linkup",
-        "serper",
-        "parallel",
-        "you",
-        "valyu",
-        "searchapi",
-    }
+    provider.value for provider in ProviderName if provider != ProviderName.CACHE
 )
 _PROVIDER_DIMENSIONS = frozenset(
     {"reachability", "health", "cooldown", "balance", "capability"}
 )
 _DEPENDENCIES = frozenset(
     {"postgresql", "schema", "outbox", "maya", "browser", "recovery"}
-)
-_PUBLIC_ROUTES = frozenset(
-    {
-        "/api/live",
-        "/api/startup",
-        "/api/ready",
-        "/api/health",
-        "/api/search",
-        "/api/recover-url",
-        "/api/expand",
-        "/api/extract",
-        "/api/assess-content",
-        "/api/capabilities",
-        "/api/provider-health",
-        "/api/budgets",
-        "/api/admin/status",
-        "/api/admin/maya-outbox/status",
-        "/api/admin/maya-outbox/dead-letters",
-        "/api/admin/maya-outbox/{intent_id}/recover",
-        "/api/admin/test-provider",
-        "/api/admin/provider-spend",
-        "/api/admin/provider-spend/attempts",
-        "/api/admin/provider-spend/{attempt_id}/resolve",
-        "/api/admin/provider-spend/{attempt_id}/snapshot",
-        "/api/admin/health/detail",
-        "/api/admin/budgets",
-        "/api/admin/paths",
-        "/api/workflows/recover-article",
-        "/api/workflows/capture-site",
-        "/api/workflows/build-research-pack",
-        "/api/workflows/{run_id}",
-        "/dashboard",
-        "/dashboard/login",
-        "unmatched",
-    }
 )
 _METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"})
 _STATUS_CLASSES = frozenset({"1xx", "2xx", "3xx", "4xx", "5xx"})
@@ -184,7 +136,9 @@ class ObservationStore:
             previous = self._observations.get(name)
             last_transition = (
                 previous.last_transition
-                if previous is not None and previous.state == state
+                if previous is not None
+                and previous.state == state
+                and previous.expires_at > when
                 else when
             )
             observation = StatusObservation(
@@ -227,6 +181,7 @@ def _bounded_details(details: Mapping[str, Any]) -> dict[str, Any]:
         "loaded",
         "processes",
         "memory_bytes",
+        "process_restarts",
     }
     result: dict[str, Any] = {}
     for key, value in details.items():
@@ -263,6 +218,19 @@ class BoundedMetrics:
         ] = {}
         self._in_flight = 0
         self._gauges: dict[str, dict[str, Any]] = {}
+        self._route_templates = {"unmatched"}
+
+    def register_route_templates(self, routes: list[str]) -> None:
+        """Admit bounded templates registered by the HTTP application."""
+        safe = {
+            route
+            for route in routes[: self.max_series]
+            if isinstance(route, str)
+            and route.startswith("/")
+            and len(route) <= 160
+        }
+        with self._lock:
+            self._route_templates.update(safe)
 
     def increment(
         self,
@@ -301,7 +269,7 @@ class BoundedMetrics:
         if "provider" in result and result["provider"] not in _PROVIDERS:
             result["provider"] = "unknown"
         if metric == "requests":
-            if result["route"] not in _PUBLIC_ROUTES:
+            if result["route"] not in self._route_templates:
                 result["route"] = "unmatched"
             if result["method"] not in _METHODS:
                 result["method"] = "OTHER"
@@ -453,6 +421,14 @@ class OperationalStatusService:
         self._dependencies = ObservationStore(clock=clock)
         self._providers: dict[str, ObservationStore] = {}
         self.metrics = BoundedMetrics()
+        for dependency in _DEPENDENCIES:
+            self._dependencies.observe(
+                dependency,
+                state="unknown",
+                source="process_memory",
+                ttl=timedelta(days=3650),
+                reason="not_observed_since_restart",
+            )
         for gauge in (
             "outbox_pending",
             "outbox_dead_letters",
@@ -583,8 +559,9 @@ class OperationalStatusService:
             if state in {"degraded", "unready", "unknown"}
         ]
         for name in ("maya", "browser", "recovery"):
-            state = dependencies.get(name, {}).get("state")
-            if state and state not in {"healthy", "disabled"}:
+            state = dependencies.get(name, {}).get("state", "unknown")
+            allowed = {"healthy", "disabled"} if name == "maya" else {"healthy"}
+            if state not in allowed:
                 degraded.append(name)
         return ("degraded", degraded) if degraded else ("ready", [])
 
@@ -681,7 +658,7 @@ def create_operational_status(
         "postgresql"
         if db_url.startswith(("postgresql:", "postgres:"))
         else "sqlite"
-        if db_url.startswith("sqlite:")
+        if not db_url or db_url.startswith("sqlite:")
         else "unknown"
     )
     environment = values.get("ARGUS_ENV", "development").strip().lower()
@@ -743,8 +720,6 @@ def _observe_provider_status(
     broker: Any,
     now: datetime,
 ) -> None:
-    from argus.models import ProviderName
-
     try:
         reachability = broker._reachability.get_all()
     except Exception:
@@ -987,6 +962,7 @@ def refresh_operational_status(
         )
     else:
         backend = str(authority.get("backend") or "unknown")
+        service.authority["backend"] = _safe_identity(backend)
         connected = authority.get("connected") is True
         postgres_healthy = connected and (
             backend == "postgresql" or not service.production
@@ -1077,18 +1053,27 @@ def refresh_operational_status(
                 "loaded": loaded,
                 "processes": browser_status.get("processes"),
                 "memory_bytes": browser_status.get("memory_bytes"),
+                "process_restarts": browser_status.get("process_restarts"),
             },
+        )
+        metrics_source = str(
+            browser_status.get("metrics_source") or "process_memory"
         )
         for name, key in (
             ("browser_processes", "processes"),
             ("browser_memory_bytes", "memory_bytes"),
+            ("process_restarts", "process_restarts"),
         ):
             value = browser_status.get(key)
+            numeric = (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+            )
             service.metrics.set_gauge(
                 name,
-                value if isinstance(value, (int, float)) else None,
-                state="healthy" if isinstance(value, (int, float)) else "unknown",
-                source="process_memory",
+                value if numeric else None,
+                state="healthy" if numeric else "unknown",
+                source=metrics_source,
             )
 
     if recovery_status is not None:

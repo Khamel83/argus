@@ -16,6 +16,7 @@ Gracefully degrades if playwright is not installed.
 import asyncio
 import importlib.util
 import os
+import subprocess
 
 from argus.extraction.models import ExtractedContent, ExtractorName
 from argus.extraction.ssrf import is_safe_url
@@ -32,6 +33,7 @@ _using_obscura_cdp = False
 _PLAYWRIGHT_AVAILABLE = None
 _browser_unavailable = False
 _browser_lock: asyncio.Lock | None = None
+_browser_start_count = 0
 
 
 def _check_playwright():
@@ -78,7 +80,8 @@ async def _get_browser():
     Tries Obscura CDP first (if ARGUS_OBSCURA_CDP_URL is set), then falls
     back to launching headless Chrome.
     """
-    global _browser, _playwright_instance, _using_obscura_cdp, _browser_unavailable
+    global _browser, _playwright_instance, _using_obscura_cdp
+    global _browser_unavailable, _browser_start_count
 
     async with _get_browser_lock():
         if _browser and _browser.is_connected():
@@ -98,6 +101,7 @@ async def _get_browser():
                 try:
                     _browser = await _playwright_instance.chromium.connect_over_cdp(OBSCURA_CDP_URL)
                     _using_obscura_cdp = True
+                    _browser_start_count += 1
                     logger.info("Connected to Obscura CDP at %s", OBSCURA_CDP_URL)
                     return _browser
                 except Exception as e:
@@ -111,6 +115,7 @@ async def _get_browser():
                 headless=True,
                 chromium_sandbox=True,
             )
+            _browser_start_count += 1
             return _browser
         except Exception as e:
             logger.warning("Failed to launch Playwright browser: %s", e)
@@ -215,6 +220,55 @@ async def reset_browser():
         _browser_unavailable = False
 
 
+def _local_browser_process_metrics() -> tuple[int | None, int | None]:
+    """Measure Argus child Chromium processes without an external dependency."""
+    try:
+        result = subprocess.run(
+            ["ps", "-axo", "pid=,ppid=,rss=,comm="],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None, None
+    if result.returncode != 0:
+        return None, None
+
+    rows: dict[int, tuple[int, int, str]] = {}
+    for line in result.stdout.splitlines():
+        parts = line.split(maxsplit=3)
+        if len(parts) != 4:
+            continue
+        try:
+            pid, parent, rss_kib = map(int, parts[:3])
+        except ValueError:
+            continue
+        rows[pid] = (parent, max(0, rss_kib), parts[3].lower())
+
+    descendants = {os.getpid()}
+    changed = True
+    while changed:
+        changed = False
+        for pid, (parent, _, _) in rows.items():
+            if parent in descendants and pid not in descendants:
+                descendants.add(pid)
+                changed = True
+
+    browser_rows = [
+        row
+        for pid, row in rows.items()
+        if pid in descendants
+        and any(
+            marker in row[2]
+            for marker in ("chromium", "chrome", "headless_shell")
+        )
+    ]
+    if not browser_rows:
+        return None, None
+    return len(browser_rows), sum(row[1] for row in browser_rows) * 1024
+
+
 def browser_capability_status() -> dict[str, object]:
     """Return sanitized declared, installed, and loaded browser state."""
     status = inspect_playwright_browser_capability()
@@ -229,6 +283,16 @@ def browser_capability_status() -> dict[str, object]:
     status["loaded"] = loaded
     status["loaded_source"] = loaded_source
     status["sandboxed"] = loaded and loaded_source == "local_chromium"
+    if not loaded:
+        processes, memory_bytes = 0, 0
+    elif loaded_source == "local_chromium":
+        processes, memory_bytes = _local_browser_process_metrics()
+    else:
+        processes, memory_bytes = None, None
+    status["processes"] = processes
+    status["memory_bytes"] = memory_bytes
+    status["process_restarts"] = max(0, _browser_start_count - 1)
+    status["metrics_source"] = "process_memory_since_start"
     status["matches_declared"] = (
         status.get("declared") is status.get("available")
         if not loaded

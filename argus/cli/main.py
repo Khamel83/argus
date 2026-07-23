@@ -11,6 +11,11 @@ import click
 
 from argus import __version__
 from argus.logging import get_logger
+from argus.operations.presentation import (
+    budget_remaining,
+    nested_status_failures,
+    provider_display_state,
+)
 
 logger = get_logger("cli")
 
@@ -41,22 +46,6 @@ def _run(coro):
 
 def _emit_json(payload):
     click.echo(json.dumps(payload, indent=2))
-
-
-def _budget_remaining(value):
-    return "unlimited" if value is None else value
-
-
-def _nested_status_failures(status):
-    failures = []
-    observations = status.get("observations") or {}
-    for name, observation in sorted(observations.items()):
-        state = observation.get("state", "unknown")
-        if state in {"healthy", "disabled"}:
-            continue
-        reason = observation.get("reason")
-        failures.append(f"{name}={state}" + (f" ({reason})" if reason else ""))
-    return failures
 
 
 def _http_authority_client():
@@ -670,9 +659,9 @@ def health():
     if authority is not None:
         response = _run(authority.request("GET", "/api/provider-health"))
         for provider, status in (response.get("providers") or {}).items():
-            raw = status.get("effective_status", "unknown")
+            raw = provider_display_state(status)
             click.echo(f"  {provider:12s} {_STATUS_DISPLAY.get(raw, raw)}")
-            for failure in _nested_status_failures(status):
+            for failure in nested_status_failures(status):
                 click.echo(f"    - {failure}")
         return
 
@@ -704,7 +693,7 @@ def budgets():
         click.echo("Provider budgets:")
         for provider, summary in (response.get("providers") or {}).items():
             click.echo(
-                f"  {provider:12s} remaining={_budget_remaining(summary.get('remaining'))} "
+                f"  {provider:12s} remaining={budget_remaining(summary.get('remaining'))} "
                 f"estimated={summary.get('argus_estimated_charge')} "
                 f"uncertain={summary.get('uncertain_charge')}"
             )
@@ -725,7 +714,7 @@ def budgets():
             f" provider_observed_at={snapshot['observed_at']}" if snapshot else ""
         )
         click.echo(
-            f"  {pname.value:12s} remaining={_budget_remaining(summary['remaining'])} "
+            f"  {pname.value:12s} remaining={budget_remaining(summary['remaining'])} "
             f"estimated={summary['argus_estimated_charge']} "
             f"uncertain={summary['uncertain_charge']}{snapshot_text}"
         )
@@ -852,6 +841,36 @@ def test_provider(provider, query):
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def doctor(as_json):
     """Diagnose your Argus setup: config, providers, connectivity, and MCP readiness."""
+    authority = _http_authority_client()
+    if authority is not None:
+        status = _run(authority.request("GET", "/api/admin/status"))
+        if as_json:
+            _emit_json(status)
+            return
+        build = status.get("build") or {}
+        click.echo(
+            f"Argus authority: {status.get('status', 'unknown')} "
+            f"version={build.get('version', 'unknown')} "
+            f"revision={build.get('source_revision', 'unknown')}"
+        )
+        for name, observation in sorted(
+            (status.get("dependencies") or {}).items()
+        ):
+            reason = observation.get("reason")
+            click.echo(
+                f"  {name:15s} {observation.get('state', 'unknown')}"
+                + (f" ({reason})" if reason else "")
+            )
+        for provider, provider_status in sorted(
+            (status.get("providers") or {}).items()
+        ):
+            click.echo(
+                f"  {provider:15s} {provider_status.get('state', 'unknown')}"
+            )
+            for failure in nested_status_failures(provider_status):
+                click.echo(f"    - {failure}")
+        return
+
     from argus.broker.router import create_broker
     from argus.models import ProviderName
 

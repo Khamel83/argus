@@ -8,7 +8,7 @@ turning them into container restart storms.
 
 | Route | Authentication | HTTP status | Semantics |
 |---|---|---|---|
-| `GET /api/live` | Public | Always `200` while the event loop can serve | Constant process liveness. It performs no broker, database, provider, Maya, browser, or network I/O. Docker health uses this route. |
+| `GET /api/live` | Public | Always `200` while the event loop can serve | Constant process liveness. It performs no broker, database, provider, Maya, browser, or network I/O, and is exempt from request rate limits. Docker health uses this route. |
 | `GET /api/startup` | Public | `200` | Minimal cached initialization state and loaded package version. |
 | `GET /api/ready` | Public | `200` when ready or degraded; `503` when unready | Minimal cached readiness. It never probes a dependency in the request. |
 | `GET /api/admin/status` | Admin token | `200` | Full operator view: build/deployment/instance identity, authority and schema identity, capabilities, typed observations, promotion state, and bounded metrics. |
@@ -32,9 +32,10 @@ Every dependency and provider observation contains:
 - `stale`.
 
 An expired observation renders as `unknown` with
-`reason=observation_expired`. In-memory provider health, cooldown, and browser
-state use `source=process_memory`; a new service instance does not invent the
-previous process's state.
+`reason=observation_expired`. A later observation starts a new transition even
+when its raw state matches the pre-expiry state. In-memory provider health,
+cooldown, browser, and browser-restart state identify their process-memory
+source; a new service instance does not invent the previous process's state.
 
 Provider detail has separate `capability`, `reachability`, `health`,
 `cooldown`, and `balance` observations. A `null` remaining balance means
@@ -81,5 +82,7 @@ and payload values are never metric labels.
 
 The bounded in-process snapshot covers request count/outcome/latency,
 in-flight work, outbox pending/dead-letter counts, browser memory/process
-observations, process restart knowledge, and accounting reconciliation.
-Unavailable process-local measurements remain explicitly `unknown`.
+observations, successful browser relaunches since this service process started,
+and accounting reconciliation. Local Chromium memory and process counts are
+refreshed with the cached status; remote or platform-unavailable process-local
+measurements remain explicitly `unknown`.

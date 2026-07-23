@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 
 from argus.broker.router import SearchBroker
 from argus.models import ProviderName
+from argus.operations.presentation import provider_display_state
 from argus.operations.status import OperationalStatusService
 
 router = APIRouter()
@@ -90,12 +91,17 @@ async def provider_health(
                 "state": evidence.get("state", "unknown"),
                 "observations": evidence.get("observations") or {},
             }
-    healthy = any(
-        status["effective_status"] in ("enabled", "healthy")
+    active_states = [
+        provider_display_state(status)
         for status in providers.values()
+        if provider_display_state(status) != "disabled"
+    ]
+    healthy = any(state in {"healthy", "degraded"} for state in active_states)
+    fully_healthy = healthy and all(
+        state == "healthy" for state in active_states
     )
     return {
-        "status": "ok" if healthy else "degraded",
+        "status": "ok" if fully_healthy else "degraded",
         "providers": providers,
     }
 

@@ -93,6 +93,29 @@ def test_observation_expiry_is_unknown_and_state_changes_move_last_transition():
     assert "database.internal" not in str(changed.as_dict(now=NOW))
 
 
+def test_observation_refresh_after_expiry_starts_a_new_transition():
+    from argus.operations.status import ObservationStore
+
+    store = ObservationStore(clock=lambda: NOW)
+    store.observe(
+        "browser",
+        state="healthy",
+        source="process_memory",
+        observed_at=NOW,
+        ttl=timedelta(seconds=10),
+    )
+
+    refreshed = store.observe(
+        "browser",
+        state="healthy",
+        source="process_memory",
+        observed_at=NOW + timedelta(seconds=20),
+        ttl=timedelta(seconds=10),
+    )
+
+    assert refreshed.last_transition == NOW + timedelta(seconds=20)
+
+
 @pytest.mark.parametrize(
     ("dependency", "state", "expected"),
     [
@@ -119,6 +142,18 @@ def test_required_and_optional_dependency_classification(
     )
 
     assert service.full_status()["status"] == expected
+
+
+def test_missing_optional_evidence_is_explicitly_degraded():
+    service = _service()
+    _healthy_required(service)
+
+    status = service.full_status()
+
+    assert status["status"] == "degraded"
+    assert {"maya", "browser", "recovery"} <= set(status["reason_codes"])
+    for dependency in ("maya", "browser", "recovery"):
+        assert status["dependencies"][dependency]["state"] == "unknown"
 
 
 def test_provider_partial_loss_degrades_but_total_loss_is_unready_and_recovers():
@@ -177,6 +212,7 @@ def test_metrics_reject_high_cardinality_labels_and_remain_bounded():
     from argus.operations.status import BoundedMetrics
 
     metrics = BoundedMetrics()
+    metrics.register_route_templates(["/api/search"])
     metrics.record_request(
         route="/api/search",
         method="POST",
@@ -362,6 +398,10 @@ def test_dependency_refresh_maps_repository_provider_browser_and_recovery_truth(
             "available": False,
             "loaded": False,
             "degraded_reason": "browser_artifact_unavailable",
+            "processes": 0,
+            "memory_bytes": 0,
+            "process_restarts": 2,
+            "metrics_source": "process_memory_since_start",
         },
         recovery_status={
             "state": "degraded",
@@ -391,6 +431,49 @@ def test_dependency_refresh_maps_repository_provider_browser_and_recovery_truth(
     gauges = status["metrics"]["gauges"]
     assert gauges["outbox_pending"]["value"] == 2
     assert gauges["outbox_dead_letters"]["value"] == 1
+    assert gauges["browser_processes"] == {
+        "value": 0,
+        "state": "healthy",
+        "source": "process_memory_since_start",
+    }
+    assert gauges["browser_memory_bytes"] == {
+        "value": 0,
+        "state": "healthy",
+        "source": "process_memory_since_start",
+    }
+    assert gauges["process_restarts"] == {
+        "value": 2,
+        "state": "healthy",
+        "source": "process_memory_since_start",
+    }
+
+
+def test_repository_refresh_updates_actual_backend_identity():
+    from argus.operations.status import (
+        create_operational_status,
+        refresh_operational_status,
+    )
+
+    service = create_operational_status({})
+    assert service.authority["backend"] == "sqlite"
+
+    repository = MagicMock()
+    repository.operational_status.return_value = {
+        "backend": "postgresql",
+        "connected": True,
+        "schema_head": "0006_maya_outbox",
+        "outbox": {"counts": {}},
+    }
+    broker = MagicMock()
+
+    refresh_operational_status(
+        service,
+        broker=broker,
+        repository=repository,
+        now=NOW,
+    )
+
+    assert service.full_status()["authority"]["backend"] == "postgresql"
 
 
 def test_repository_authority_loss_is_cached_unready_and_restoration_recovers():
@@ -606,7 +689,11 @@ def test_provider_health_compatibility_surface_includes_cached_nested_evidence()
     broker = MagicMock()
     broker.get_provider_status.side_effect = lambda provider: {
         "provider": provider.value,
-        "effective_status": "enabled",
+        "effective_status": (
+            "enabled"
+            if provider.value in {"duckduckgo", "brave"}
+            else "disabled_by_config"
+        ),
     }
     client = TestClient(
         create_app(broker=broker, operational_status=service)
@@ -615,6 +702,121 @@ def test_provider_health_compatibility_surface_includes_cached_nested_evidence()
     response = client.get("/api/provider-health")
 
     assert response.status_code == 200
+    assert response.json()["status"] == "degraded"
     brave = response.json()["providers"]["brave"]
     assert brave["state"] == "unready"
     assert brave["observations"]["reachability"]["reason"] == "probe_failed"
+
+
+def test_liveness_is_exempt_from_request_rate_limits():
+    from fastapi.testclient import TestClient
+
+    from argus.api.main import create_app
+    from argus.api.rate_limit import RateLimiter
+
+    client = TestClient(
+        create_app(
+            rate_limiter=RateLimiter(
+                max_requests=1,
+                window_seconds=60,
+                exempt_paths=["/api/custom-probe"],
+            ),
+            operational_status=_service(),
+        )
+    )
+
+    assert client.get("/api/live").status_code == 200
+    assert client.get("/api/live").status_code == 200
+
+
+def test_background_and_request_share_one_broker_initialization():
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from argus.api.main import _build_broker_provider
+
+    entered = threading.Event()
+    release = threading.Event()
+    second_entry = threading.Event()
+    calls = 0
+    calls_lock = threading.Lock()
+    broker = object()
+
+    def factory():
+        nonlocal calls
+        with calls_lock:
+            calls += 1
+            if calls > 1:
+                second_entry.set()
+        entered.set()
+        release.wait(timeout=1)
+        return broker
+
+    provider = _build_broker_provider(None, factory)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(provider)
+        assert entered.wait(timeout=1)
+        second = pool.submit(provider)
+        raced = second_entry.wait(timeout=0.1)
+        release.set()
+
+    assert raced is False
+    assert first.result() is broker
+    assert second.result() is broker
+    assert calls == 1
+
+
+def test_slow_dependency_initialization_does_not_block_liveness():
+    import threading
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from argus.api.main import create_app
+
+    gate = threading.Event()
+
+    def slow_factory():
+        gate.wait(timeout=2)
+        raise RuntimeError("dependency unavailable")
+
+    service = _service()
+    started = time.monotonic()
+    with TestClient(
+        create_app(
+            broker_factory=slow_factory,
+            operational_status=service,
+        ),
+        raise_server_exceptions=False,
+    ) as client:
+        entered_after = time.monotonic() - started
+        live = client.get("/api/live")
+        gate.set()
+
+    assert entered_after < 0.5
+    assert live.status_code == 200
+
+
+def test_operational_background_workers_shutdown_cleanly():
+    from fastapi.testclient import TestClient
+
+    from argus.api.main import create_app
+
+    broker = MagicMock()
+    repository = MagicMock()
+    repository.operational_status.return_value = {
+        "backend": "postgresql",
+        "connected": True,
+        "schema_head": "0006_maya_outbox",
+        "outbox": {"counts": {}},
+    }
+    service = _service()
+
+    with TestClient(
+        create_app(
+            broker=broker,
+            search_repository=repository,
+            operational_status=service,
+        )
+    ) as client:
+        assert client.get("/api/live").status_code == 200

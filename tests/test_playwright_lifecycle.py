@@ -20,6 +20,7 @@ async def reset_playwright_state(monkeypatch):
     monkeypatch.setattr(extractor, "_using_obscura_cdp", False)
     monkeypatch.setattr(extractor, "_PLAYWRIGHT_AVAILABLE", True)
     monkeypatch.setattr(extractor, "_browser_unavailable", False, raising=False)
+    monkeypatch.setattr(extractor, "_browser_start_count", 0, raising=False)
     yield
     await extractor.close_browser()
 
@@ -70,6 +71,35 @@ async def test_unavailable_browser_is_not_restarted_until_explicit_reset(monkeyp
 
     assert await extractor._get_browser() is recovered_browser
     assert playwright_factory.return_value.start.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_browser_restart_metric_counts_successful_relaunches(monkeypatch):
+    import argus.extraction.playwright_extractor as extractor
+    import playwright.async_api
+
+    first_browser = MagicMock()
+    first_browser.is_connected.return_value = False
+    first_browser.close = AsyncMock()
+    second_browser = MagicMock()
+    second_browser.is_connected.return_value = True
+    second_browser.close = AsyncMock()
+    first_runtime = MagicMock()
+    first_runtime.stop = AsyncMock()
+    first_runtime.chromium.launch = AsyncMock(return_value=first_browser)
+    second_runtime = MagicMock()
+    second_runtime.stop = AsyncMock()
+    second_runtime.chromium.launch = AsyncMock(return_value=second_browser)
+    playwright_factory = MagicMock()
+    playwright_factory.return_value.start = AsyncMock(
+        side_effect=[first_runtime, second_runtime]
+    )
+    monkeypatch.setattr(playwright.async_api, "async_playwright", playwright_factory)
+
+    assert await extractor._get_browser() is first_browser
+    assert await extractor._get_browser() is second_browser
+
+    assert extractor.browser_capability_status()["process_restarts"] == 1
 
 
 @pytest.mark.asyncio
@@ -229,6 +259,40 @@ def test_browser_status_reports_manifest_capability_and_loaded_state(monkeypatch
     assert status["matches_declared"] is True
 
 
+def test_local_browser_status_measures_only_argus_chromium_descendants(monkeypatch):
+    import argus.extraction.playwright_extractor as extractor
+
+    browser = MagicMock()
+    browser.is_connected.return_value = True
+    monkeypatch.setattr(extractor, "_browser", browser)
+    monkeypatch.setattr(extractor.os, "getpid", lambda: 100)
+    monkeypatch.setattr(
+        extractor.subprocess,
+        "run",
+        MagicMock(
+            return_value=MagicMock(
+                returncode=0,
+                stdout=(
+                    "101 100 100 chromium\n"
+                    "102 101 50 chrome-helper\n"
+                    "103 100 999 node\n"
+                    "201 200 500 chromium\n"
+                ),
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        extractor,
+        "inspect_playwright_browser_capability",
+        MagicMock(return_value={"declared": True, "available": True}),
+    )
+
+    status = extractor.browser_capability_status()
+
+    assert status["processes"] == 2
+    assert status["memory_bytes"] == 150 * 1024
+
+
 def test_browser_status_does_not_misreport_obscura_as_local_sandbox(monkeypatch):
     import argus.extraction.playwright_extractor as extractor
 
@@ -301,3 +365,7 @@ def test_declared_but_missing_unloaded_browser_is_a_mismatch(monkeypatch):
 
     assert status["loaded"] is False
     assert status["matches_declared"] is False
+    assert status["processes"] == 0
+    assert status["memory_bytes"] == 0
+    assert status["process_restarts"] == 0
+    assert status["metrics_source"] == "process_memory_since_start"

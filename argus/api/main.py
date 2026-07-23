@@ -3,6 +3,7 @@
 import asyncio
 import math
 import os
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Callable, Optional
@@ -58,6 +59,7 @@ def _build_broker_provider(
     broker_factory: Optional[Callable[[], SearchBroker]] = None,
 ) -> Callable[[], SearchBroker]:
     current = broker
+    initialization_lock = threading.Lock()
     if broker_factory is None:
         def factory():
             return create_broker(
@@ -69,7 +71,9 @@ def _build_broker_provider(
     def get_broker() -> SearchBroker:
         nonlocal current
         if current is None:
-            current = factory()
+            with initialization_lock:
+                if current is None:
+                    current = factory()
         return current
 
     return get_broker
@@ -109,219 +113,260 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan_with_probes(app: FastAPI):
-        b: SearchBroker | None = None
-        status_task: asyncio.Task | None = None
-        probe_task: asyncio.Task | None = None
-        maya_task: asyncio.Task | None = None
-        try:
-            b = app.state.get_broker()
-        except Exception as exc:
-            app.state.operational_status.mark_initialization_failed(
-                source="startup",
-                reason=f"broker_initialization_failed:{type(exc).__name__}",
-            )
-            logger.warning(
-                "Execution authority initialization failed: %s",
-                type(exc).__name__,
-            )
-
-        repository = None
-        if b is not None:
+        async def _run_authority_workers() -> None:
+            """Initialize dependencies off-loop and maintain cached observations."""
+            b: SearchBroker | None = None
+            child_tasks: list[asyncio.Task] = []
             try:
-                repository = app.state.get_search_repository()
+                b = await asyncio.to_thread(app.state.get_broker)
             except Exception as exc:
                 app.state.operational_status.mark_initialization_failed(
                     source="startup",
-                    reason=f"repository_initialization_failed:{type(exc).__name__}",
+                    reason=f"broker_initialization_failed:{type(exc).__name__}",
                 )
                 logger.warning(
-                    "Persistence authority initialization failed: %s",
+                    "Execution authority initialization failed: %s",
                     type(exc).__name__,
                 )
+                return
 
-        if b is not None:
             try:
-                from argus.extraction.playwright_extractor import (
-                    browser_capability_status,
-                )
+                try:
+                    repository = await asyncio.to_thread(
+                        app.state.get_search_repository
+                    )
+                except Exception as exc:
+                    repository = None
+                    app.state.operational_status.mark_initialization_failed(
+                        source="startup",
+                        reason=(
+                            "repository_initialization_failed:"
+                            f"{type(exc).__name__}"
+                        ),
+                    )
+                    logger.warning(
+                        "Persistence authority initialization failed: %s",
+                        type(exc).__name__,
+                    )
 
-                browser_status = await asyncio.to_thread(browser_capability_status)
-            except Exception:
-                browser_status = {
-                    "declared": False,
-                    "available": False,
-                    "loaded": False,
-                    "degraded_reason": "browser_status_unavailable",
-                }
-            try:
+                from argus.config import get_config
+                from argus.operations.status import refresh_operational_status
                 from argus.recovery.evidence import recovery_status_from_environment
 
-                recovery_status = await asyncio.to_thread(
-                    recovery_status_from_environment
+                browser_status_reader = None
+                try:
+                    from argus.extraction.playwright_extractor import (
+                        browser_capability_status,
+                    )
+
+                    browser_status_reader = browser_capability_status
+                    browser_status = await asyncio.to_thread(
+                        browser_status_reader
+                    )
+                except Exception:
+                    browser_status = {
+                        "declared": False,
+                        "available": False,
+                        "loaded": False,
+                        "degraded_reason": "browser_status_unavailable",
+                    }
+                try:
+                    recovery_status = await asyncio.to_thread(
+                        recovery_status_from_environment
+                    )
+                except Exception:
+                    recovery_status = {
+                        "state": "unavailable",
+                        "schema_promotion_allowed": False,
+                        "reasons": ["recovery_evidence_unavailable"],
+                    }
+
+                await asyncio.to_thread(
+                    refresh_operational_status,
+                    app.state.operational_status,
+                    broker=b,
+                    repository=repository,
+                    browser_status=browser_status,
+                    recovery_status=recovery_status,
                 )
-            except Exception:
-                recovery_status = {
-                    "state": "unavailable",
-                    "schema_promotion_allowed": False,
-                    "reasons": ["recovery_evidence_unavailable"],
-                }
-            from argus.operations.status import refresh_operational_status
 
-            await asyncio.to_thread(
-                refresh_operational_status,
-                app.state.operational_status,
-                broker=b,
-                repository=repository,
-                browser_status=browser_status,
-                recovery_status=recovery_status,
-            )
+                async def _refresh_status_background() -> None:
+                    while True:
+                        await asyncio.sleep(15)
+                        try:
+                            current_recovery = await asyncio.to_thread(
+                                recovery_status_from_environment
+                            )
+                            current_browser = (
+                                await asyncio.to_thread(browser_status_reader)
+                                if browser_status_reader is not None
+                                else {
+                                    "declared": False,
+                                    "available": False,
+                                    "loaded": False,
+                                    "degraded_reason": (
+                                        "browser_status_unavailable"
+                                    ),
+                                }
+                            )
+                            await asyncio.to_thread(
+                                refresh_operational_status,
+                                app.state.operational_status,
+                                broker=b,
+                                repository=repository,
+                                browser_status=current_browser,
+                                recovery_status=current_recovery,
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "Operational status refresh failed: %s",
+                                type(exc).__name__,
+                            )
 
-            async def _refresh_status_background() -> None:
-                while True:
-                    await asyncio.sleep(15)
+                async def _run_probes_background() -> None:
+                    """Run network probes every 30 minutes."""
+                    cfg = get_config()
+                    while True:
+                        try:
+                            await b._reachability.probe_all(
+                                local_providers=b._providers,
+                                egress_nodes=list(cfg.egress_nodes),
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "Reachability probe failed: %s",
+                                type(exc).__name__,
+                            )
+                        await asyncio.sleep(30 * 60)
+
+                async def _run_maya_outbox_background() -> None:
+                    from argus.persistence.maya_outbox import (
+                        MayaOutboxDispatcher,
+                    )
+
+                    cfg = get_config().maya_capture
+                    dispatcher = MayaOutboxDispatcher(
+                        repository,
+                        endpoint=cfg.endpoint,
+                        token=cfg.token,
+                        timeout_seconds=cfg.timeout_seconds,
+                        batch_size=cfg.batch_size,
+                    )
+                    while True:
+                        try:
+                            await asyncio.to_thread(dispatcher.run_once)
+                            app.state.operational_status.observe_dependency(
+                                "maya",
+                                state="healthy",
+                                source="maya_dispatcher",
+                                ttl=timedelta(
+                                    seconds=max(15, cfg.poll_seconds * 3)
+                                ),
+                            )
+                            now = datetime.now(tz=None)
+                            await asyncio.to_thread(
+                                repository.compact_maya_outbox,
+                                acknowledged_before=now
+                                - timedelta(
+                                    days=cfg.acknowledged_retention_days
+                                ),
+                                limit=100,
+                                now=now,
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "Maya outbox worker failed: %s",
+                                type(exc).__name__,
+                            )
+                            app.state.operational_status.observe_dependency(
+                                "maya",
+                                state="degraded",
+                                source="maya_dispatcher",
+                                ttl=timedelta(
+                                    seconds=max(15, cfg.poll_seconds * 3)
+                                ),
+                                reason=f"delivery_failed:{type(exc).__name__}",
+                            )
+                        await asyncio.sleep(cfg.poll_seconds)
+
+                child_tasks.extend(
+                    [
+                        asyncio.create_task(_refresh_status_background()),
+                        asyncio.create_task(_run_probes_background()),
+                    ]
+                )
+                maya_cfg = get_config().maya_capture
+                if (
+                    repository is not None
+                    and maya_cfg.endpoint
+                    and maya_cfg.token
+                ):
+                    app.state.operational_status.observe_dependency(
+                        "maya",
+                        state="unknown",
+                        source="maya_dispatcher",
+                        ttl=timedelta(
+                            seconds=max(15, maya_cfg.poll_seconds * 3)
+                        ),
+                        reason="delivery_not_observed_since_restart",
+                    )
+                    child_tasks.append(
+                        asyncio.create_task(_run_maya_outbox_background())
+                    )
+                else:
+                    app.state.operational_status.observe_dependency(
+                        "maya",
+                        state="disabled",
+                        source="runtime_config",
+                        ttl=timedelta(days=1),
+                        reason="maya_delivery_not_configured",
+                    )
+
+                await asyncio.gather(*child_tasks)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                app.state.operational_status.mark_initialization_failed(
+                    source="startup",
+                    reason=f"authority_worker_failed:{type(exc).__name__}",
+                )
+                logger.warning(
+                    "Execution authority worker failed: %s",
+                    type(exc).__name__,
+                )
+            finally:
+                for task in child_tasks:
+                    task.cancel()
+                for task in child_tasks:
                     try:
-                        current_recovery = await asyncio.to_thread(
-                            recovery_status_from_environment
-                        )
-                        await asyncio.to_thread(
-                            refresh_operational_status,
-                            app.state.operational_status,
-                            broker=b,
-                            repository=repository,
-                            recovery_status=current_recovery,
-                        )
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                try:
+                    from argus.extraction.playwright_extractor import close_browser
+
+                    await close_browser()
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to close Playwright resources: %s",
+                        type(exc).__name__,
+                    )
+                if b is not None:
+                    try:
+                        await asyncio.to_thread(b.budget_tracker.close)
                     except Exception as exc:
                         logger.warning(
-                            "Operational status refresh failed: %s",
+                            "Failed to close broker budget tracker: %s",
                             type(exc).__name__,
                         )
 
-            status_task = asyncio.create_task(_refresh_status_background())
-
-        async def _run_probes_background() -> None:
-            """Run probes every 30 min, starting immediately."""
-            from argus.config import get_config
-
-            cfg = get_config()
-            while True:
-                try:
-                    await b._reachability.probe_all(
-                        local_providers=b._providers,
-                        egress_nodes=list(cfg.egress_nodes),
-                    )
-                except Exception as exc:
-                    logger.warning("Reachability probe failed: %s", type(exc).__name__)
-                await asyncio.sleep(30 * 60)
-
-        if b is not None:
-            probe_task = asyncio.create_task(_run_probes_background())
-
-        async def _run_maya_outbox_background() -> None:
-            from argus.config import get_config
-            from argus.persistence.maya_outbox import MayaOutboxDispatcher
-
-            cfg = get_config().maya_capture
-            repository = app.state.get_search_repository()
-            dispatcher = MayaOutboxDispatcher(
-                repository,
-                endpoint=cfg.endpoint,
-                token=cfg.token,
-                timeout_seconds=cfg.timeout_seconds,
-                batch_size=cfg.batch_size,
-            )
-            while True:
-                try:
-                    await asyncio.to_thread(dispatcher.run_once)
-                    app.state.operational_status.observe_dependency(
-                        "maya",
-                        state="healthy",
-                        source="maya_dispatcher",
-                        ttl=timedelta(seconds=max(15, cfg.poll_seconds * 3)),
-                    )
-                    now = datetime.now(tz=None)
-                    await asyncio.to_thread(
-                        repository.compact_maya_outbox,
-                        acknowledged_before=now
-                        - timedelta(days=cfg.acknowledged_retention_days),
-                        limit=100,
-                        now=now,
-                    )
-                except Exception as exc:
-                    # Never include request payloads, credentials, or remote
-                    # response bodies in the service log.
-                    logger.warning("Maya outbox worker failed: %s", type(exc).__name__)
-                    app.state.operational_status.observe_dependency(
-                        "maya",
-                        state="degraded",
-                        source="maya_dispatcher",
-                        ttl=timedelta(seconds=max(15, cfg.poll_seconds * 3)),
-                        reason=f"delivery_failed:{type(exc).__name__}",
-                    )
-                await asyncio.sleep(cfg.poll_seconds)
-
-        from argus.config import get_config
-
-        maya_cfg = get_config().maya_capture
-        if b is not None and maya_cfg.endpoint and maya_cfg.token:
-            app.state.operational_status.observe_dependency(
-                "maya",
-                state="unknown",
-                source="maya_dispatcher",
-                ttl=timedelta(seconds=max(15, maya_cfg.poll_seconds * 3)),
-                reason="delivery_not_observed_since_restart",
-            )
-            maya_task = asyncio.create_task(_run_maya_outbox_background())
-        else:
-            app.state.operational_status.observe_dependency(
-                "maya",
-                state="disabled",
-                source="runtime_config",
-                ttl=timedelta(days=1),
-                reason="maya_delivery_not_configured",
-            )
-
+        authority_task = asyncio.create_task(_run_authority_workers())
         yield
-
-        if maya_task:
-            maya_task.cancel()
-            try:
-                await maya_task
-            except asyncio.CancelledError:
-                pass
-
-        # Cancel the probe task on shutdown
-        if probe_task:
-            probe_task.cancel()
-            try:
-                await probe_task
-            except asyncio.CancelledError:
-                pass
-
-        if status_task:
-            status_task.cancel()
-            try:
-                await status_task
-            except asyncio.CancelledError:
-                pass
-
+        authority_task.cancel()
         try:
-            from argus.extraction.playwright_extractor import close_browser
-
-            await close_browser()
-        except Exception as exc:
-            logger.warning(
-                "Failed to close Playwright resources: %s",
-                type(exc).__name__,
-            )
-
-        if b is not None:
-            try:
-                b.budget_tracker.close()
-            except Exception as exc:
-                logger.warning(
-                    "Failed to close broker budget tracker: %s",
-                    type(exc).__name__,
-                )
+            await authority_task
+        except asyncio.CancelledError:
+            pass
 
     app = FastAPI(
         title="Argus",
@@ -352,11 +397,14 @@ def create_app(
     # Broker singleton
     app.state.get_broker = _build_broker_provider(broker, broker_factory)
     ledger_repository = search_repository
+    ledger_initialization_lock = threading.Lock()
 
     def get_search_repository() -> SearchLedgerRepository:
         nonlocal ledger_repository
         if ledger_repository is None:
-            ledger_repository = create_search_ledger_repository()
+            with ledger_initialization_lock:
+                if ledger_repository is None:
+                    ledger_repository = create_search_ledger_repository()
         return ledger_repository
 
     app.state.get_search_repository = get_search_repository
@@ -511,6 +559,13 @@ def create_app(
     app.include_router(extract_router, prefix="/api")
     app.include_router(workflows_router, prefix="/api")
     app.include_router(dashboard_router)
+    app.state.operational_status.metrics.register_route_templates(
+        [
+            route.path
+            for route in app.routes
+            if isinstance(getattr(route, "path", None), str)
+        ]
+    )
     return app
 
 
