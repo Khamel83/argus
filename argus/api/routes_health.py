@@ -1,15 +1,50 @@
-"""Health and budget endpoints."""
+"""Liveness, cached readiness, status, health, and budget endpoints."""
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from argus.broker.router import SearchBroker
 from argus.models import ProviderName
+from argus.operations.status import OperationalStatusService
 
 router = APIRouter()
 
 
 def get_broker(request: Request) -> SearchBroker:
     return request.app.state.get_broker()
+
+
+def get_operational_status(request: Request) -> OperationalStatusService:
+    return request.app.state.operational_status
+
+
+@router.get("/live")
+async def live():
+    """Network-free process/event-loop liveness; never checks dependencies."""
+    return {"status": "alive"}
+
+
+@router.get("/startup")
+async def startup(status: OperationalStatusService = Depends(get_operational_status)):
+    """Public minimal cached initialization state."""
+    return status.startup_status()
+
+
+@router.get("/ready")
+async def ready(status: OperationalStatusService = Depends(get_operational_status)):
+    """Public minimal cached readiness; no live probes run in this request."""
+    payload = status.readiness_status()
+    if not payload["ready"]:
+        return JSONResponse(status_code=503, content=payload)
+    return payload
+
+
+@router.get("/admin/status")
+async def operator_status(
+    status: OperationalStatusService = Depends(get_operational_status),
+):
+    """Authenticated detailed status from the HTTP execution authority."""
+    return status.full_status()
 
 
 @router.get("/capabilities")
@@ -32,7 +67,10 @@ async def capabilities():
 
 
 @router.get("/provider-health")
-async def provider_health(broker: SearchBroker = Depends(get_broker)):
+async def provider_health(
+    broker: SearchBroker = Depends(get_broker),
+    operational: OperationalStatusService = Depends(get_operational_status),
+):
     try:
         providers = {
             pname.value: broker.get_provider_status(pname)
@@ -44,6 +82,14 @@ async def provider_health(broker: SearchBroker = Depends(get_broker)):
             status_code=503,
             detail="Execution authority state unavailable",
         ) from exc
+    cached = operational.full_status().get("providers") or {}
+    for provider, evidence in cached.items():
+        if provider in providers:
+            providers[provider] = {
+                **providers[provider],
+                "state": evidence.get("state", "unknown"),
+                "observations": evidence.get("observations") or {},
+            }
     healthy = any(
         status["effective_status"] in ("enabled", "healthy")
         for status in providers.values()
@@ -74,21 +120,19 @@ async def caller_budgets(broker: SearchBroker = Depends(get_broker)):
 
 
 @router.get("/health")
-async def health(broker: SearchBroker = Depends(get_broker)):
+async def health():
+    """Compatibility liveness surface.
+
+    Dependency health is intentionally excluded so legacy container checks
+    cannot turn an external outage into a restart storm. New integrations
+    should use ``/live``, ``/startup``, ``/ready``, and ``/admin/status``.
+    """
     from argus import __version__
 
-    all_providers = {}
-    for pname in ProviderName:
-        status = broker.get_provider_status(pname)
-        all_providers[pname.value] = status
-
-    healthy = any(
-        s["effective_status"] in ("enabled", "healthy") for s in all_providers.values()
-    )
-
     return {
-        "status": "ok" if healthy else "degraded",
+        "status": "ok",
         "version": __version__,
+        "semantics": "liveness_compatibility",
     }
 
 

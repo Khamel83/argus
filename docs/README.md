@@ -16,6 +16,7 @@ Top-level entry points live at the repo root:
 - [providers.md](providers.md) — full reference for search providers and the 12-step content extraction chain
 - [releasing.md](releasing.md) — release process: version sync, preflight, publish, verify
 - [troubleshooting.md](troubleshooting.md) — common installation, MCP, search, and extraction issues
+- [operations-status.md](operations-status.md) — liveness, startup, readiness, authenticated status, and bounded telemetry semantics
 - [dashboard-design.md](dashboard-design.md) — dashboard UI design system reference
 - [PUBLICITY-CHECKLIST.md](PUBLICITY-CHECKLIST.md) — project-internal launch / publicity checklist
 - [roadmaps/](roadmaps/) — long-range roadmap documents

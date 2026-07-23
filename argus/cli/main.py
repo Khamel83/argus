@@ -43,6 +43,22 @@ def _emit_json(payload):
     click.echo(json.dumps(payload, indent=2))
 
 
+def _budget_remaining(value):
+    return "unlimited" if value is None else value
+
+
+def _nested_status_failures(status):
+    failures = []
+    observations = status.get("observations") or {}
+    for name, observation in sorted(observations.items()):
+        state = observation.get("state", "unknown")
+        if state in {"healthy", "disabled"}:
+            continue
+        reason = observation.get("reason")
+        failures.append(f"{name}={state}" + (f" ({reason})" if reason else ""))
+    return failures
+
+
 def _http_authority_client():
     """Return the configured HTTP authority client for remote/production CLI."""
     from argus.authority import (
@@ -656,6 +672,8 @@ def health():
         for provider, status in (response.get("providers") or {}).items():
             raw = status.get("effective_status", "unknown")
             click.echo(f"  {provider:12s} {_STATUS_DISPLAY.get(raw, raw)}")
+            for failure in _nested_status_failures(status):
+                click.echo(f"    - {failure}")
         return
 
     from argus.broker.router import create_broker
@@ -686,7 +704,7 @@ def budgets():
         click.echo("Provider budgets:")
         for provider, summary in (response.get("providers") or {}).items():
             click.echo(
-                f"  {provider:12s} remaining={summary.get('remaining')} "
+                f"  {provider:12s} remaining={_budget_remaining(summary.get('remaining'))} "
                 f"estimated={summary.get('argus_estimated_charge')} "
                 f"uncertain={summary.get('uncertain_charge')}"
             )
@@ -707,7 +725,7 @@ def budgets():
             f" provider_observed_at={snapshot['observed_at']}" if snapshot else ""
         )
         click.echo(
-            f"  {pname.value:12s} remaining={summary['remaining']} "
+            f"  {pname.value:12s} remaining={_budget_remaining(summary['remaining'])} "
             f"estimated={summary['argus_estimated_charge']} "
             f"uncertain={summary['uncertain_charge']}{snapshot_text}"
         )

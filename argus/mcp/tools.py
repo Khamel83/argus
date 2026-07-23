@@ -232,7 +232,7 @@ def search_budgets(broker: SearchBroker) -> str:
                 f"balance={snapshot['balance']}"
             )
         lines.append(
-            f"- **{pname.value}**: remaining={summary['remaining']} "
+            f"- **{pname.value}**: remaining={'unlimited' if summary['remaining'] is None else summary['remaining']} "
             f"estimated={summary['argus_estimated_charge']} "
             f"uncertain={summary['uncertain_charge']}; {snapshot_text}"
         )

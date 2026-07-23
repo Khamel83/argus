@@ -3,7 +3,6 @@
 import asyncio
 import math
 import os
-import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Callable, Optional
@@ -30,6 +29,11 @@ from argus.api.routes_search import router as search_router
 from argus.api.routes_workflows import router as workflows_router
 from argus.broker.router import SearchBroker, create_broker
 from argus.logging import get_logger
+from argus.operations.status import (
+    OperationalStatusService,
+    create_operational_status,
+    safe_correlation_id,
+)
 from argus.persistence.search_ledger import (
     SearchLedgerRepository,
     create_search_ledger_repository,
@@ -95,6 +99,7 @@ def create_app(
     rate_limiter: Optional[RateLimiter] = None,
     search_repository: Optional[SearchLedgerRepository] = None,
     spend_repository=None,
+    operational_status: OperationalStatusService | None = None,
 ) -> FastAPI:
     auth_config = AuthConfig.from_env()
     production_mode = (
@@ -104,11 +109,94 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan_with_probes(app: FastAPI):
-        # Initialize broker in lifespan startup (not lazily on first request)
-        b = app.state.get_broker()
-
-        # Background probe task — runs immediately on startup, then every 30 min
+        b: SearchBroker | None = None
+        status_task: asyncio.Task | None = None
         probe_task: asyncio.Task | None = None
+        maya_task: asyncio.Task | None = None
+        try:
+            b = app.state.get_broker()
+        except Exception as exc:
+            app.state.operational_status.mark_initialization_failed(
+                source="startup",
+                reason=f"broker_initialization_failed:{type(exc).__name__}",
+            )
+            logger.warning(
+                "Execution authority initialization failed: %s",
+                type(exc).__name__,
+            )
+
+        repository = None
+        if b is not None:
+            try:
+                repository = app.state.get_search_repository()
+            except Exception as exc:
+                app.state.operational_status.mark_initialization_failed(
+                    source="startup",
+                    reason=f"repository_initialization_failed:{type(exc).__name__}",
+                )
+                logger.warning(
+                    "Persistence authority initialization failed: %s",
+                    type(exc).__name__,
+                )
+
+        if b is not None:
+            try:
+                from argus.extraction.playwright_extractor import (
+                    browser_capability_status,
+                )
+
+                browser_status = await asyncio.to_thread(browser_capability_status)
+            except Exception:
+                browser_status = {
+                    "declared": False,
+                    "available": False,
+                    "loaded": False,
+                    "degraded_reason": "browser_status_unavailable",
+                }
+            try:
+                from argus.recovery.evidence import recovery_status_from_environment
+
+                recovery_status = await asyncio.to_thread(
+                    recovery_status_from_environment
+                )
+            except Exception:
+                recovery_status = {
+                    "state": "unavailable",
+                    "schema_promotion_allowed": False,
+                    "reasons": ["recovery_evidence_unavailable"],
+                }
+            from argus.operations.status import refresh_operational_status
+
+            await asyncio.to_thread(
+                refresh_operational_status,
+                app.state.operational_status,
+                broker=b,
+                repository=repository,
+                browser_status=browser_status,
+                recovery_status=recovery_status,
+            )
+
+            async def _refresh_status_background() -> None:
+                while True:
+                    await asyncio.sleep(15)
+                    try:
+                        current_recovery = await asyncio.to_thread(
+                            recovery_status_from_environment
+                        )
+                        await asyncio.to_thread(
+                            refresh_operational_status,
+                            app.state.operational_status,
+                            broker=b,
+                            repository=repository,
+                            recovery_status=current_recovery,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Operational status refresh failed: %s",
+                            type(exc).__name__,
+                        )
+
+            status_task = asyncio.create_task(_refresh_status_background())
 
         async def _run_probes_background() -> None:
             """Run probes every 30 min, starting immediately."""
@@ -122,12 +210,11 @@ def create_app(
                         egress_nodes=list(cfg.egress_nodes),
                     )
                 except Exception as exc:
-                    logger.warning("Reachability probe failed: %s", exc)
+                    logger.warning("Reachability probe failed: %s", type(exc).__name__)
                 await asyncio.sleep(30 * 60)
 
-        probe_task = asyncio.create_task(_run_probes_background())
-
-        maya_task: asyncio.Task | None = None
+        if b is not None:
+            probe_task = asyncio.create_task(_run_probes_background())
 
         async def _run_maya_outbox_background() -> None:
             from argus.config import get_config
@@ -145,6 +232,12 @@ def create_app(
             while True:
                 try:
                     await asyncio.to_thread(dispatcher.run_once)
+                    app.state.operational_status.observe_dependency(
+                        "maya",
+                        state="healthy",
+                        source="maya_dispatcher",
+                        ttl=timedelta(seconds=max(15, cfg.poll_seconds * 3)),
+                    )
                     now = datetime.now(tz=None)
                     await asyncio.to_thread(
                         repository.compact_maya_outbox,
@@ -157,13 +250,35 @@ def create_app(
                     # Never include request payloads, credentials, or remote
                     # response bodies in the service log.
                     logger.warning("Maya outbox worker failed: %s", type(exc).__name__)
+                    app.state.operational_status.observe_dependency(
+                        "maya",
+                        state="degraded",
+                        source="maya_dispatcher",
+                        ttl=timedelta(seconds=max(15, cfg.poll_seconds * 3)),
+                        reason=f"delivery_failed:{type(exc).__name__}",
+                    )
                 await asyncio.sleep(cfg.poll_seconds)
 
         from argus.config import get_config
 
         maya_cfg = get_config().maya_capture
-        if maya_cfg.endpoint and maya_cfg.token:
+        if b is not None and maya_cfg.endpoint and maya_cfg.token:
+            app.state.operational_status.observe_dependency(
+                "maya",
+                state="unknown",
+                source="maya_dispatcher",
+                ttl=timedelta(seconds=max(15, maya_cfg.poll_seconds * 3)),
+                reason="delivery_not_observed_since_restart",
+            )
             maya_task = asyncio.create_task(_run_maya_outbox_background())
+        else:
+            app.state.operational_status.observe_dependency(
+                "maya",
+                state="disabled",
+                source="runtime_config",
+                ttl=timedelta(days=1),
+                reason="maya_delivery_not_configured",
+            )
 
         yield
 
@@ -182,17 +297,31 @@ def create_app(
             except asyncio.CancelledError:
                 pass
 
+        if status_task:
+            status_task.cancel()
+            try:
+                await status_task
+            except asyncio.CancelledError:
+                pass
+
         try:
             from argus.extraction.playwright_extractor import close_browser
 
             await close_browser()
         except Exception as exc:
-            logger.warning("Failed to close Playwright resources: %s", exc)
+            logger.warning(
+                "Failed to close Playwright resources: %s",
+                type(exc).__name__,
+            )
 
-        try:
-            b.budget_tracker.close()
-        except Exception as exc:
-            logger.warning("Failed to close broker budget tracker: %s", exc)
+        if b is not None:
+            try:
+                b.budget_tracker.close()
+            except Exception as exc:
+                logger.warning(
+                    "Failed to close broker budget tracker: %s",
+                    type(exc).__name__,
+                )
 
     app = FastAPI(
         title="Argus",
@@ -200,6 +329,7 @@ def create_app(
         version="1.6.2",
         lifespan=lifespan_with_probes,
     )
+    app.state.operational_status = operational_status or create_operational_status()
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request: Request, exc: RequestValidationError):
@@ -265,14 +395,6 @@ def create_app(
                 "X-Request-Id",
             ],
         )
-
-    @app.middleware("http")
-    async def add_request_id(request: Request, call_next):
-        request_id = request.headers.get("x-request-id", uuid.uuid4().hex[:16])
-        request.state.request_id = request_id
-        response = await call_next(request)
-        response.headers["x-request-id"] = request_id
-        return response
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
@@ -344,6 +466,44 @@ def create_app(
         for k, v in headers.items():
             response.headers[k] = v
         return response
+
+    @app.middleware("http")
+    async def operational_evidence_middleware(request: Request, call_next):
+        """Attach safe correlation and record only bounded route-template metrics."""
+        request_id = safe_correlation_id(request.headers.get("x-request-id"))
+        request.state.request_id = request_id
+        started = request.app.state.operational_status.metrics.request_started()
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            response.headers["x-request-id"] = request_id
+            deployment_id = request.app.state.operational_status.deployment.get(
+                "deployment_id"
+            )
+            if deployment_id and deployment_id != "unknown":
+                response.headers["x-argus-deployment-id"] = deployment_id
+            return response
+        finally:
+            route = request.scope.get("route")
+            route_template = getattr(route, "path", "unmatched")
+            request.app.state.operational_status.metrics.request_finished(
+                started=started,
+                route=route_template,
+                method=request.method,
+                status_code=status_code,
+            )
+            logger.info(
+                "http_request request_id=%s deployment_id=%s "
+                "route=%s method=%s status_class=%s",
+                request_id,
+                request.app.state.operational_status.deployment.get(
+                    "deployment_id", "unknown"
+                ),
+                route_template,
+                request.method,
+                f"{max(1, min(status_code // 100, 5))}xx",
+            )
 
     app.include_router(search_router, prefix="/api")
     app.include_router(health_router, prefix="/api")

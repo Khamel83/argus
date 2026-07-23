@@ -118,7 +118,7 @@ class SearchBroker:
             compute_attribution=compute_attribution,
         )
         if cached is not None:
-            logger.debug("Cache hit for query: %s (mode=%s)", query.query, query.mode)
+            logger.debug("Cache hit (mode=%s)", query.mode)
             return cached
 
         # Phase 4/5: Residential Search Policy
@@ -141,8 +141,7 @@ class SearchBroker:
         )
 
         logger.info(
-            "Search complete: query=%r mode=%s providers=%d results=%d run=%s",
-            query.query,
+            "Search complete: mode=%s providers=%d results=%d run=%s",
             query.mode.value,
             outcome.live_providers_used,
             len(response.results),

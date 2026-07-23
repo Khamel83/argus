@@ -377,7 +377,11 @@ class ProviderExecutor:
                 provider_name, trace
             )
         except Exception as exc:
-            logger.warning("Provider %s raised unhandled: %s", provider_name, exc)
+            logger.warning(
+                "Provider %s raised unhandled: %s",
+                provider_name,
+                type(exc).__name__,
+            )
             self._health.record_failure(provider_name)
             return (
                 [],

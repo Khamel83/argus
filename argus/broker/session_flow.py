@@ -34,7 +34,7 @@ class SessionSearchService:
         refined_text = refine_query(query.query, session)
         effective_query = query
         if refined_text != query.query:
-            logger.debug("Query refined: %r -> %r", query.query, refined_text)
+            logger.debug("Query refined for session context")
             effective_query = replace(query, query=refined_text)
 
         response = await search_fn(effective_query)

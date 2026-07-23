@@ -26,6 +26,7 @@ from sqlalchemy import (
     func,
     inspect,
     select,
+    text,
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
@@ -502,6 +503,8 @@ class SearchLedgerRepository(Protocol):
     def accept(
         self, query: SearchQuery, response: SearchResponse
     ) -> AcceptanceReceipt: ...
+
+    def operational_status(self, *, now: datetime | None = None) -> dict: ...
 
 
 class SqlAlchemySearchLedgerRepository:
@@ -1271,6 +1274,26 @@ class SqlAlchemySearchLedgerRepository:
                 row.payload_compacted_at = compacted_at
                 row.updated_at = compacted_at
             return len(rows)
+
+    def operational_status(self, *, now: datetime | None = None) -> dict:
+        """Return bounded authority/schema/outbox truth for cached status refresh."""
+        observed_at = now or datetime.now(tz=None)
+        if observed_at.tzinfo is not None:
+            observed_at = observed_at.replace(tzinfo=None)
+        with self.session_factory() as session:
+            backend = session.get_bind().dialect.name
+            session.execute(text("SELECT 1"))
+            schema_head = "sqlite-managed"
+            if backend == "postgresql":
+                schema_head = session.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+        return {
+            "backend": backend,
+            "connected": True,
+            "schema_head": schema_head,
+            "outbox": self.maya_outbox_status(now=observed_at),
+        }
 
     def maya_outbox_status(self, *, now: datetime | None = None) -> dict:
         observed_at = now or datetime.now(tz=None)

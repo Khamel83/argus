@@ -8,6 +8,21 @@ from typing import Any
 from argus.authority import HttpAuthorityClient
 
 
+def _budget_remaining(value: object) -> object:
+    return "unlimited" if value is None else value
+
+
+def _nested_status_failures(status: dict[str, Any]) -> list[str]:
+    failures = []
+    for name, observation in sorted((status.get("observations") or {}).items()):
+        state = observation.get("state", "unknown")
+        if state in {"healthy", "disabled"}:
+            continue
+        reason = observation.get("reason")
+        failures.append(f"{name}={state}" + (f" ({reason})" if reason else ""))
+    return failures
+
+
 def _search_markdown(payload: dict[str, Any]) -> str:
     traces = payload.get("traces") or []
     providers = [
@@ -201,6 +216,7 @@ class HttpMcpAdapter:
             lines.append(
                 f"- **{provider}**: {status.get('effective_status', 'unknown')}"
             )
+            lines.extend(f"  - {failure}" for failure in _nested_status_failures(status))
         return "\n".join(lines)
 
     async def search_budgets(self, *, token: str | None = None) -> str:
@@ -212,7 +228,7 @@ class HttpMcpAdapter:
         lines = ["## Search Provider Budgets", ""]
         for provider, summary in (response.get("providers") or {}).items():
             lines.append(
-                f"- **{provider}**: remaining={summary.get('remaining')} "
+                f"- **{provider}**: remaining={_budget_remaining(summary.get('remaining'))} "
                 f"estimated={summary.get('argus_estimated_charge')} "
                 f"uncertain={summary.get('uncertain_charge')}"
             )
