@@ -2,8 +2,6 @@
 Content extraction endpoint.
 """
 
-import os
-
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from argus.api.schemas import (
@@ -31,15 +29,8 @@ async def extract(
     repository=Depends(get_persistence_repository),
 ):
     """Extract clean text content from a URL."""
-    if req.caller:
-        logger.info("extract caller=%s url=%s", req.caller, req.url)
-    production_mode = (
-        os.environ.get("ARGUS_ENV", "development").strip().lower()
-        == "production"
-    )
-    authenticated_caller = (
-        getattr(request.state, "caller_identity", "") or "unknown"
-    )
+    authenticated_caller = getattr(request.state, "caller_identity", "") or "unknown"
+    logger.info("extract caller=%s url=%s", authenticated_caller, req.url)
     try:
         from argus.api.main import _HTTP_API_AUTHORITY_CAPABILITY
 
@@ -47,11 +38,7 @@ async def extract(
             req.url,
             domain=req.domain,
             mode=req.mode,
-            caller=(
-                authenticated_caller
-                if production_mode
-                else req.caller or authenticated_caller
-            ),
+            caller=authenticated_caller,
             repository=repository,
             authority_capability=_HTTP_API_AUTHORITY_CAPABILITY,
         )
@@ -113,4 +100,5 @@ async def assess_content(req: AssessContentRequest):
 async def cookie_health():
     """Get health status of all configured cookie domains."""
     from argus.extraction.cookies import get_health_summary
+
     return get_health_summary()

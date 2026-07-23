@@ -1294,15 +1294,15 @@ async def test_mcp_restart_keeps_sessions_cooldowns_spend_and_outbox_acceptance(
     )
     assert "remaining=75" in await after_restart.search_budgets()
     assert [
-        call.kwargs["session_id"]
-        for call in broker.search_with_session.await_args_list
+        call.kwargs["session_id"] for call in broker.search_with_session.await_args_list
     ] == ["durable-session", "durable-session"]
     # SearchLedgerRepository.accept is the transaction that also owns
     # user-visible Maya outbox intent creation.
     assert repository.accept.call_count == 2
 
 
-def test_http_extraction_derives_caller_from_authentication(monkeypatch):
+@pytest.mark.parametrize("environment", ["development", "production"])
+def test_http_extraction_derives_caller_from_authentication(monkeypatch, environment):
     import json
 
     from fastapi.testclient import TestClient
@@ -1310,15 +1310,16 @@ def test_http_extraction_derives_caller_from_authentication(monkeypatch):
     from argus.api.main import create_app
     from argus.config import reset_config
     from argus.extraction.models import ExtractedContent, ExtractorName
+    from argus.persistence.search_ledger import ExtractionReceipt
 
-    monkeypatch.setenv("ARGUS_ENV", "production")
+    monkeypatch.setenv("ARGUS_ENV", environment)
     monkeypatch.setenv("ARGUS_NODE_ROLE", "primary")
     monkeypatch.setenv(
         "ARGUS_CALLER_CREDENTIALS_JSON",
         json.dumps({"mcp": {"token": "mcp-token"}}),
     )
     reset_config()
-    extract = AsyncMock(
+    extract_unpersisted = AsyncMock(
         return_value=ExtractedContent(
             url="https://example.com/article",
             text="content",
@@ -1326,11 +1327,18 @@ def test_http_extraction_derives_caller_from_authentication(monkeypatch):
             extractor=ExtractorName.TRAFILATURA,
         )
     )
-    monkeypatch.setattr("argus.api.routes_extract.extract_url", extract)
+    monkeypatch.setattr(
+        "argus.extraction.extractor._extract_url_unpersisted",
+        extract_unpersisted,
+    )
+    repository = MagicMock()
+    repository.record_extraction.return_value = ExtractionReceipt(
+        extraction_run_id="extract-authenticated",
+    )
     client = TestClient(
         create_app(
             broker=MagicMock(),
-            search_repository=MagicMock(),
+            search_repository=repository,
         )
     )
 
@@ -1344,4 +1352,6 @@ def test_http_extraction_derives_caller_from_authentication(monkeypatch):
     )
 
     assert response.status_code == 200
-    assert extract.await_args.kwargs["caller"] == "mcp"
+    assert response.json()["extraction_run_id"] == "extract-authenticated"
+    assert repository.record_extraction.call_args.kwargs["caller"] == "mcp"
+    assert extract_unpersisted.await_count == 1

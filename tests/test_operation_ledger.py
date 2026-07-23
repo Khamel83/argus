@@ -673,7 +673,7 @@ def test_extract_endpoint_durably_records_before_acknowledging(tmp_path, monkeyp
     with repository.session_factory() as session:
         run = session.scalar(select(ExtractionRunRow))
     assert run is not None
-    assert run.caller == "maya"
+    assert run.caller == "local"
 
 
 def test_extract_endpoint_returns_503_when_durable_commit_fails(monkeypatch):
