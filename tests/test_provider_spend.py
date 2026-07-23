@@ -283,7 +283,7 @@ def test_authoritative_charge_overrun_increases_obligation_and_is_audited(tmp_pa
     assert second == first
     attempt = repository.get_attempt(reservation.attempt_id)
     assert attempt.status == "uncertain"
-    assert attempt.reserved_charge == 2.0
+    assert attempt.reserved_charge == 1.0
     assert attempt.estimator_violation is True
     assert attempt.reservation_overrun == 1.0
     assert repository.provider_summary(
@@ -311,6 +311,74 @@ def test_authoritative_charge_overrun_increases_obligation_and_is_audited(tmp_pa
     assert repository.provider_summary(
         ProviderName.BRAVE, budget_limit=10.0
     )["remaining"] == 8.0
+
+
+def test_direct_settlement_preserves_reservation_and_audits_exact_overrun(tmp_path):
+    from argus.persistence.provider_spend import SpendAuditRow
+
+    repository = _repository(tmp_path)
+    reservation = repository.reserve(
+        provider=ProviderName.VALYU,
+        conservative_charge=0.03,
+        budget_limit=1.0,
+        caller_identity="maya",
+        caller_label="",
+        idempotency_key="direct-overrun-attempt",
+    )
+
+    settled = repository.settle(
+        reservation.attempt_id,
+        actual_charge=0.04,
+        outcome="success",
+    )
+
+    assert settled.status == "settled"
+    assert settled.reserved_charge == 0.03
+    assert settled.actual_charge == 0.04
+    assert settled.estimator_violation is True
+    assert settled.reservation_overrun == 0.01
+    assert repository.provider_summary(
+        ProviderName.VALYU, budget_limit=1.0
+    )["remaining"] == 0.96
+    with repository.session_factory() as session:
+        audit = session.scalar(
+            select(SpendAuditRow).where(SpendAuditRow.action == "settle")
+        )
+    state = json.loads(audit.after_json)
+    assert state["reserved_charge"] == 0.03
+    assert state["actual_charge"] == 0.04
+    assert state["estimator_violation"] is True
+    assert state["reservation_overrun"] == 0.01
+
+
+def test_concurrent_overrun_settlement_is_idempotent_and_exact(tmp_path):
+    repository = _repository(tmp_path)
+    reservation = repository.reserve(
+        provider=ProviderName.VALYU,
+        conservative_charge=0.03,
+        budget_limit=1.0,
+        caller_identity="maya",
+        caller_label="",
+        idempotency_key="concurrent-direct-overrun",
+    )
+    barrier = Barrier(2)
+
+    def settle():
+        barrier.wait()
+        return repository.settle(
+            reservation.attempt_id,
+            actual_charge=0.04,
+            outcome="success",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(lambda _: settle(), range(2)))
+
+    assert outcomes[0] == outcomes[1]
+    assert outcomes[0].reserved_charge == 0.03
+    assert outcomes[0].actual_charge == 0.04
+    assert outcomes[0].estimator_violation is True
+    assert outcomes[0].reservation_overrun == 0.01
 
 
 @pytest.mark.parametrize(
@@ -618,7 +686,7 @@ def test_concurrent_authoritative_snapshots_cannot_double_reconcile_attempt(tmp_
     assert sum(isinstance(value, SpendConflictError) for value in outcomes) == 1
     winner = next(value for value in outcomes if hasattr(value, "snapshot_id"))
     attempt = repository.get_attempt(reservation.attempt_id)
-    assert attempt.reserved_charge == winner.authoritative_charge
+    assert attempt.reserved_charge == 1.0
     assert attempt.reservation_overrun == winner.authoritative_charge - 1.0
 
 
@@ -976,6 +1044,55 @@ async def test_valyu_only_settles_when_charge_is_authoritatively_reported(
     assert attempt.status == expected_status
     assert attempt.actual_charge == expected_actual
     assert budgets.get_monthly_usage(ProviderName.VALYU) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_valyu_authoritative_overrun_preserves_estimate_and_records_delta(
+    tmp_path,
+):
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+
+    repository = _repository(tmp_path)
+
+    class Provider:
+        name = ProviderName.VALYU
+
+        def is_available(self):
+            return True
+
+        async def search(self, query):
+            return [], ProviderTrace(
+                provider=self.name,
+                status="success",
+                credit_info={"cost_usd": 0.04},
+            )
+
+    budgets = BudgetTracker()
+    budgets.set_budget(ProviderName.VALYU, 1.0)
+    executor = ProviderExecutor(
+        providers={ProviderName.VALYU: Provider()},
+        health_tracker=HealthTracker(),
+        budget_tracker=budgets,
+        spend_repository=repository,
+    )
+    await executor.execute(
+        SearchQuery(
+            query="overrun",
+            max_results=20,
+            providers=[ProviderName.VALYU],
+            caller="maya",
+            metadata={"attempt_scope": "valyu-direct-overrun"},
+        ),
+        [ProviderName.VALYU],
+    )
+
+    attempt = repository.list_attempts(provider=ProviderName.VALYU)[0]
+    assert attempt.reserved_charge == 0.03
+    assert attempt.actual_charge == 0.04
+    assert attempt.estimator_violation is True
+    assert attempt.reservation_overrun == 0.01
 
 
 @pytest.mark.asyncio
@@ -1571,9 +1688,53 @@ def test_postgresql_authoritative_overrun_is_race_safe(postgres_ledger_url):
     assert sum(isinstance(value, SpendConflictError) for value in outcomes) == 1
     winner = next(value for value in outcomes if hasattr(value, "snapshot_id"))
     attempt = repository.get_attempt(reservation.attempt_id)
-    assert attempt.reserved_charge == winner.authoritative_charge
+    assert attempt.reserved_charge == 1.0
     assert attempt.estimator_violation is True
     assert attempt.reservation_overrun == winner.authoritative_charge - 1.0
     assert repository.provider_summary(
         ProviderName.BRAVE, budget_limit=10.0
     )["remaining"] == 10.0 - winner.authoritative_charge
+
+
+def test_postgresql_direct_overrun_settlement_is_idempotent(
+    postgres_ledger_url,
+):
+    from alembic import command
+    from alembic.config import Config
+
+    from argus.persistence.provider_spend import create_provider_spend_repository
+
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", postgres_ledger_url.replace("%", "%%"))
+    command.downgrade(config, "base")
+    command.upgrade(config, "head")
+    repository = create_provider_spend_repository(
+        postgres_ledger_url,
+        create_schema=False,
+    )
+    reservation = repository.reserve(
+        provider=ProviderName.VALYU,
+        conservative_charge=0.03,
+        budget_limit=1.0,
+        caller_identity="maya",
+        caller_label="",
+        idempotency_key="pg-direct-overrun-attempt",
+    )
+    barrier = Barrier(2)
+
+    def settle():
+        barrier.wait()
+        return repository.settle(
+            reservation.attempt_id,
+            actual_charge=0.04,
+            outcome="success",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(lambda _: settle(), range(2)))
+
+    assert outcomes[0] == outcomes[1]
+    assert outcomes[0].reserved_charge == 0.03
+    assert outcomes[0].actual_charge == 0.04
+    assert outcomes[0].estimator_violation is True
+    assert outcomes[0].reservation_overrun == 0.01

@@ -9,6 +9,7 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Callable
 
@@ -195,6 +196,18 @@ def _attempt_state(row: ProviderSpendAttemptRow) -> dict:
     }
 
 
+def _record_estimator_overrun(
+    row: ProviderSpendAttemptRow,
+    authoritative_charge: float,
+) -> None:
+    if authoritative_charge <= row.reserved_charge:
+        return
+    row.estimator_violation = True
+    row.reservation_overrun = float(
+        Decimal(str(authoritative_charge)) - Decimal(str(row.reserved_charge))
+    )
+
+
 class ProviderSpendRepository:
     """SQLAlchemy repository; every public mutation is its own transaction."""
 
@@ -310,6 +323,7 @@ class ProviderSpendRepository:
             if row.status != "uncertain":
                 raise SpendConflictError(f"attempt {attempt_id!r} is already resolved")
             before = _attempt_state(row)
+            _record_estimator_overrun(row, actual_charge)
             row.status = "settled"
             row.outcome = outcome
             row.actual_charge = actual_charge
@@ -399,6 +413,7 @@ class ProviderSpendRepository:
                         "provider reconciliation requires fresh provider evidence"
                     )
             before = _attempt_state(row)
+            _record_estimator_overrun(row, actual_charge)
             row.status = "resolved"
             row.outcome = outcome
             row.actual_charge = actual_charge
@@ -486,13 +501,8 @@ class ProviderSpendRepository:
                         "provider snapshot attempt must still be uncertain"
                     )
                 before_attempt = _attempt_state(attempt)
-                if authoritative_charge > attempt.reserved_charge:
-                    original_reservation = attempt.reserved_charge
-                    attempt.reserved_charge = authoritative_charge
-                    attempt.estimator_violation = True
-                    attempt.reservation_overrun += (
-                        authoritative_charge - original_reservation
-                    )
+                _record_estimator_overrun(attempt, authoritative_charge)
+                if attempt.estimator_violation:
                     attempt.updated_at = now
                 row = ProviderBalanceSnapshotRow(
                     id=uuid.uuid4().hex,
@@ -744,7 +754,15 @@ class ProviderSpendRepository:
 
     def _uncertain_charge(self, session, provider: ProviderName) -> float:
         value = session.scalar(
-            select(func.coalesce(func.sum(ProviderSpendAttemptRow.reserved_charge), 0.0))
+            select(
+                func.coalesce(
+                    func.sum(
+                        ProviderSpendAttemptRow.reserved_charge
+                        + ProviderSpendAttemptRow.reservation_overrun
+                    ),
+                    0.0,
+                )
+            )
             .where(
                 ProviderSpendAttemptRow.provider == provider.value,
                 ProviderSpendAttemptRow.is_paid.is_(True),
@@ -851,7 +869,9 @@ class ProviderSpendRepository:
                         "authoritative_charge": row.authoritative_charge,
                         "estimator_violation": attempt.estimator_violation,
                         "reservation_overrun": attempt.reservation_overrun,
-                        "accounted_obligation": attempt.reserved_charge,
+                        "accounted_obligation": (
+                            attempt.reserved_charge + attempt.reservation_overrun
+                        ),
                     }
                 ),
                 created_at=datetime.now(tz=None),
