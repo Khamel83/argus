@@ -176,6 +176,7 @@ class SearchBroker:
         provider_obj = self._providers.get(provider)
         base_status = provider_obj.status() if provider_obj else "unknown"
 
+        health = self._health.peek_health(provider)
         health_status = self._health.get_status(provider)
         budget_status = self._budgets.check_status(provider)
 
@@ -188,7 +189,7 @@ class SearchBroker:
         return {
             "provider": provider.value,
             "config_status": base_status,
-            "health": self._health.get_health(provider).__dict__ if provider in self._health._health else None,
+            "health": health.__dict__ if health is not None else None,
             "budget_remaining": self._budgets.get_remaining_budget(provider),
             "effective_status": effective,
         }

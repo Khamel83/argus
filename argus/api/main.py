@@ -43,6 +43,7 @@ from argus.workflows import WorkflowService
 
 logger = get_logger("api")
 _HTTP_API_AUTHORITY_CAPABILITY = object()
+_AUTHORITY_RETRY_SECONDS = 5.0
 
 
 def _build_rate_limiter() -> RateLimiter:
@@ -116,38 +117,44 @@ def create_app(
         async def _run_authority_workers() -> None:
             """Initialize dependencies off-loop and maintain cached observations."""
             b: SearchBroker | None = None
+            repository: SearchLedgerRepository | None = None
             child_tasks: list[asyncio.Task] = []
             try:
-                b = await asyncio.to_thread(app.state.get_broker)
-            except Exception as exc:
-                app.state.operational_status.mark_initialization_failed(
-                    source="startup",
-                    reason=f"broker_initialization_failed:{type(exc).__name__}",
-                )
-                logger.warning(
-                    "Execution authority initialization failed: %s",
-                    type(exc).__name__,
-                )
-                return
+                while b is None:
+                    try:
+                        b = await asyncio.to_thread(app.state.get_broker)
+                    except Exception as exc:
+                        app.state.operational_status.mark_initialization_failed(
+                            source="startup",
+                            reason=(
+                                "broker_initialization_failed:"
+                                f"{type(exc).__name__}"
+                            ),
+                        )
+                        logger.warning(
+                            "Execution authority initialization failed: %s",
+                            type(exc).__name__,
+                        )
+                        await asyncio.sleep(_AUTHORITY_RETRY_SECONDS)
 
-            try:
-                try:
-                    repository = await asyncio.to_thread(
-                        app.state.get_search_repository
-                    )
-                except Exception as exc:
-                    repository = None
-                    app.state.operational_status.mark_initialization_failed(
-                        source="startup",
-                        reason=(
-                            "repository_initialization_failed:"
-                            f"{type(exc).__name__}"
-                        ),
-                    )
-                    logger.warning(
-                        "Persistence authority initialization failed: %s",
-                        type(exc).__name__,
-                    )
+                while repository is None:
+                    try:
+                        repository = await asyncio.to_thread(
+                            app.state.get_search_repository
+                        )
+                    except Exception as exc:
+                        app.state.operational_status.mark_initialization_failed(
+                            source="startup",
+                            reason=(
+                                "repository_initialization_failed:"
+                                f"{type(exc).__name__}"
+                            ),
+                        )
+                        logger.warning(
+                            "Persistence authority initialization failed: %s",
+                            type(exc).__name__,
+                        )
+                        await asyncio.sleep(_AUTHORITY_RETRY_SECONDS)
 
                 from argus.config import get_config
                 from argus.operations.status import refresh_operational_status
@@ -254,11 +261,11 @@ def create_app(
                     )
                     while True:
                         try:
-                            await asyncio.to_thread(dispatcher.run_once)
-                            app.state.operational_status.observe_dependency(
-                                "maya",
-                                state="healthy",
-                                source="maya_dispatcher",
+                            outcomes = await asyncio.to_thread(
+                                dispatcher.run_once
+                            )
+                            app.state.operational_status.observe_maya_delivery(
+                                outcomes,
                                 ttl=timedelta(
                                     seconds=max(15, cfg.poll_seconds * 3)
                                 ),
@@ -301,25 +308,19 @@ def create_app(
                     and maya_cfg.endpoint
                     and maya_cfg.token
                 ):
-                    app.state.operational_status.observe_dependency(
-                        "maya",
-                        state="unknown",
-                        source="maya_dispatcher",
+                    app.state.operational_status.observe_maya_configuration(
+                        configured=True,
                         ttl=timedelta(
                             seconds=max(15, maya_cfg.poll_seconds * 3)
                         ),
-                        reason="delivery_not_observed_since_restart",
                     )
                     child_tasks.append(
                         asyncio.create_task(_run_maya_outbox_background())
                     )
                 else:
-                    app.state.operational_status.observe_dependency(
-                        "maya",
-                        state="disabled",
-                        source="runtime_config",
+                    app.state.operational_status.observe_maya_configuration(
+                        configured=False,
                         ttl=timedelta(days=1),
-                        reason="maya_delivery_not_configured",
                     )
 
                 await asyncio.gather(*child_tasks)

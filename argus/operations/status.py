@@ -479,6 +479,72 @@ class OperationalStatusService:
             raise ValueError(f"unknown dependency: {name}")
         return self._dependencies.observe(name, **observation)
 
+    def observe_maya_configuration(
+        self,
+        *,
+        configured: bool,
+        ttl: timedelta,
+    ) -> StatusObservation:
+        """Record whether this environment can attempt Maya delivery."""
+        if configured:
+            return self.observe_dependency(
+                "maya",
+                state="unknown",
+                source="maya_dispatcher",
+                ttl=ttl,
+                reason="delivery_not_observed_since_restart",
+            )
+        return self.observe_dependency(
+            "maya",
+            state="degraded" if self.production else "disabled",
+            source="runtime_config",
+            ttl=ttl,
+            reason="maya_delivery_not_configured",
+        )
+
+    def observe_maya_delivery(
+        self,
+        outcomes: Mapping[str, Any],
+        *,
+        ttl: timedelta,
+        observed_at: datetime | None = None,
+    ) -> StatusObservation | None:
+        """Map one real dispatcher outcome without inventing remote contact."""
+        counts = {
+            name: int(value)
+            for name, value in outcomes.items()
+            if name
+            in {"acknowledged", "retried", "dead_lettered", "lease_lost"}
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and value > 0
+        }
+        for outcome, reason in (
+            ("retried", "delivery_retried"),
+            ("dead_lettered", "delivery_dead_lettered"),
+            ("lease_lost", "delivery_lease_lost"),
+        ):
+            if counts.get(outcome, 0):
+                return self.observe_dependency(
+                    "maya",
+                    state="degraded",
+                    source="maya_dispatcher",
+                    observed_at=observed_at,
+                    ttl=ttl,
+                    reason=reason,
+                    details={"counts": counts},
+                )
+        if counts.get("acknowledged", 0):
+            return self.observe_dependency(
+                "maya",
+                state="healthy",
+                source="maya_dispatcher",
+                observed_at=observed_at,
+                ttl=ttl,
+                details={"counts": counts},
+            )
+        return None
+
     def observe_provider(
         self,
         provider: str,
@@ -513,9 +579,8 @@ class OperationalStatusService:
         if capability != "healthy":
             return "unknown" if capability == "unknown" else "unready"
         states = [
-            observation.get("state", "unknown")
-            for dimension, observation in observations.items()
-            if dimension != "capability"
+            observations.get(dimension, {}).get("state", "unknown")
+            for dimension in ("reachability", "health", "cooldown", "balance")
         ]
         if any(state == "unready" for state in states):
             return "unready"
@@ -548,7 +613,7 @@ class OperationalStatusService:
         usable = [
             provider
             for provider, state in active_provider_states.items()
-            if state in {"healthy", "degraded"}
+            if state == "healthy"
         ]
         if not usable:
             return "unready", ["retrieval_path"]
@@ -798,7 +863,19 @@ def _observe_provider_status(
 
         health = status.get("health")
         health_observed = _provider_observed_at(status, now)
-        if isinstance(health, Mapping):
+        has_health_evidence = isinstance(health, Mapping) and (
+            any(
+                isinstance(health.get(name), (int, float))
+                and not isinstance(health.get(name), bool)
+                for name in ("last_success", "last_failure", "disabled_until")
+            )
+            or (
+                isinstance(health.get("consecutive_failures"), int)
+                and not isinstance(health.get("consecutive_failures"), bool)
+                and health.get("consecutive_failures", 0) > 0
+            )
+        )
+        if has_health_evidence:
             failures = int(health.get("consecutive_failures") or 0)
             health_state = (
                 "unready"

@@ -1,7 +1,7 @@
 """Truthful, cached operational status behavior."""
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -53,6 +53,74 @@ def _healthy_required(service):
         source="probe",
         ttl=timedelta(minutes=5),
     )
+    for dimension in ("health", "cooldown", "balance"):
+        service.observe_provider(
+            "duckduckgo",
+            dimension,
+            state="healthy",
+            source="test_evidence",
+            ttl=timedelta(minutes=5),
+        )
+
+
+def _runtime_broker():
+    broker = MagicMock()
+    broker.get_provider_status.side_effect = lambda provider: {
+        "provider": provider.value,
+        "config_status": (
+            "enabled"
+            if provider.value == "duckduckgo"
+            else "disabled_by_config"
+        ),
+        "effective_status": (
+            "enabled"
+            if provider.value == "duckduckgo"
+            else "disabled_by_config"
+        ),
+        "health": (
+            {
+                "consecutive_failures": 0,
+                "last_success": NOW.timestamp(),
+                "last_failure": None,
+                "disabled_until": None,
+            }
+            if provider.value == "duckduckgo"
+            else None
+        ),
+        "budget_remaining": None,
+    }
+    broker._reachability.get_all.return_value = {
+        "duckduckgo": {
+            "probes": {
+                "local": {
+                    "reachable": True,
+                    "last_checked": NOW.timestamp(),
+                }
+            }
+        }
+    }
+    broker._reachability.probe_all = AsyncMock()
+    broker._providers = {}
+    broker.budget_tracker.get_budget_limit.return_value = 0
+    broker.budget_tracker.close = MagicMock()
+    broker.spend_repository.provider_summary.return_value = {
+        "remaining": None,
+        "argus_estimated_charge": 0,
+        "uncertain_charge": 0,
+        "provider_snapshot": None,
+    }
+    return broker
+
+
+def _runtime_repository():
+    repository = MagicMock()
+    repository.operational_status.return_value = {
+        "backend": "postgresql",
+        "connected": True,
+        "schema_head": "0006_maya_outbox",
+        "outbox": {"counts": {}},
+    }
+    return repository
 
 
 def test_observation_expiry_is_unknown_and_state_changes_move_last_transition():
@@ -194,6 +262,45 @@ def test_provider_partial_loss_degrades_but_total_loss_is_unready_and_recovers()
         ttl=timedelta(minutes=5),
     )
     assert service.full_status()["status"] == "degraded"
+
+
+@pytest.mark.parametrize("health_state", ["unknown", "degraded"])
+def test_unproven_provider_health_does_not_count_as_a_usable_path(health_state):
+    service = _service()
+    _healthy_required(service)
+    service.observe_provider(
+        "duckduckgo",
+        "health",
+        state=health_state,
+        source="process_memory",
+        ttl=timedelta(minutes=5),
+        reason="not_observed_since_restart",
+    )
+
+    status = service.full_status()
+
+    assert status["status"] == "unready"
+    assert status["reason_codes"] == ["retrieval_path"]
+
+
+def test_fresh_health_tracker_does_not_invent_zeroed_provider_evidence():
+    from argus.broker.health import HealthTracker
+    from argus.broker.router import SearchBroker
+    from argus.models import ProviderName, ProviderStatus
+
+    provider = MagicMock()
+    provider.status.return_value = ProviderStatus.ENABLED
+    broker = SearchBroker.__new__(SearchBroker)
+    broker._providers = {ProviderName.DUCKDUCKGO: provider}
+    broker._health = HealthTracker()
+    broker._budgets = MagicMock()
+    broker._budgets.check_status.return_value = None
+    broker._budgets.get_remaining_budget.return_value = None
+
+    status = broker.get_provider_status(ProviderName.DUCKDUCKGO)
+
+    assert status["health"] is None
+    assert broker._health.get_all_status() == {}
 
 
 def test_service_instance_identity_is_unique_per_process_service():
@@ -372,11 +479,27 @@ def test_dependency_refresh_maps_repository_provider_browser_and_recovery_truth(
                 "disabled_until": NOW.timestamp() + 120,
             }
             if provider.value == "brave"
+            else {
+                "consecutive_failures": 0,
+                "last_success": NOW.timestamp() - 10,
+                "last_failure": None,
+                "disabled_until": None,
+            }
+            if provider.value == "duckduckgo"
             else None
         ),
         "budget_remaining": None if provider.value == "duckduckgo" else 0,
     }
-    broker._reachability.get_all.return_value = {}
+    broker._reachability.get_all.return_value = {
+        "duckduckgo": {
+            "probes": {
+                "local": {
+                    "reachable": True,
+                    "last_checked": NOW.timestamp() - 10,
+                }
+            }
+        }
+    }
     broker.budget_tracker.get_budget_limit.side_effect = (
         lambda provider: 0 if provider.value == "duckduckgo" else 100
     )
@@ -476,6 +599,57 @@ def test_repository_refresh_updates_actual_backend_identity():
     assert service.full_status()["authority"]["backend"] == "postgresql"
 
 
+def test_fresh_provider_without_health_evidence_is_unknown_and_unready():
+    from argus.operations.status import refresh_operational_status
+
+    service = _service()
+    broker = _runtime_broker()
+    broker.get_provider_status.side_effect = lambda provider: {
+        "provider": provider.value,
+        "config_status": (
+            "enabled"
+            if provider.value == "duckduckgo"
+            else "disabled_by_config"
+        ),
+        "effective_status": (
+            "enabled"
+            if provider.value == "duckduckgo"
+            else "disabled_by_config"
+        ),
+        "health": None,
+        "budget_remaining": None,
+    }
+
+    refresh_operational_status(
+        service,
+        broker=broker,
+        repository=_runtime_repository(),
+        browser_status={"available": True, "loaded": False},
+        recovery_status={
+            "state": "ready",
+            "schema_promotion_allowed": True,
+        },
+        now=NOW,
+    )
+    service.observe_dependency(
+        "maya",
+        state="disabled",
+        source="runtime_config",
+        ttl=timedelta(minutes=5),
+    )
+
+    status = service.full_status()
+
+    assert status["providers"]["duckduckgo"]["observations"]["health"][
+        "state"
+    ] == "unknown"
+    assert status["providers"]["duckduckgo"]["observations"]["cooldown"][
+        "state"
+    ] == "unknown"
+    assert status["status"] == "unready"
+    assert status["reason_codes"] == ["retrieval_path"]
+
+
 def test_repository_authority_loss_is_cached_unready_and_restoration_recovers():
     from argus.operations.status import refresh_operational_status
 
@@ -515,10 +689,28 @@ def test_repository_authority_loss_is_cached_unready_and_restoration_recovers():
         "effective_status": (
             "enabled" if provider.value == "duckduckgo" else "disabled_by_config"
         ),
-        "health": None,
+        "health": (
+            {
+                "consecutive_failures": 0,
+                "last_success": NOW.timestamp() + 5,
+                "last_failure": None,
+                "disabled_until": None,
+            }
+            if provider.value == "duckduckgo"
+            else None
+        ),
         "budget_remaining": None,
     }
-    broker._reachability.get_all.return_value = {}
+    broker._reachability.get_all.return_value = {
+        "duckduckgo": {
+            "probes": {
+                "local": {
+                    "reachable": True,
+                    "last_checked": NOW.timestamp() + 5,
+                }
+            }
+        }
+    }
     broker.budget_tracker.get_budget_limit.return_value = 0
     broker.spend_repository.provider_summary.return_value = {
         "remaining": None,
@@ -820,3 +1012,250 @@ def test_operational_background_workers_shutdown_cleanly():
         )
     ) as client:
         assert client.get("/api/live").status_code == 200
+
+
+def test_broker_construction_failure_recovers_without_process_restart(
+    monkeypatch,
+):
+    import threading
+    import time
+
+    from fastapi.testclient import TestClient
+
+    import argus.api.main as api_main
+    from argus.api.rate_limit import RateLimiter
+
+    monkeypatch.setattr(api_main, "_AUTHORITY_RETRY_SECONDS", 0.01, raising=False)
+    failed = threading.Event()
+    allow_recovery = threading.Event()
+    attempts = 0
+    broker = _runtime_broker()
+
+    def broker_factory():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            failed.set()
+            raise RuntimeError("initial broker construction failed")
+        allow_recovery.wait(timeout=2)
+        return broker
+
+    service = _service()
+    app = api_main.create_app(
+        broker_factory=broker_factory,
+        rate_limiter=RateLimiter(max_requests=10_000),
+        search_repository=_runtime_repository(),
+        operational_status=service,
+    )
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        assert failed.wait(timeout=1)
+        deadline = time.monotonic() + 1
+        while (
+            service.startup_status()["status"] != "failed"
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.01)
+        assert client.get("/api/ready").status_code == 503
+
+        allow_recovery.set()
+        deadline = time.monotonic() + 2
+        response = client.get("/api/ready")
+        while response.status_code != 200 and time.monotonic() < deadline:
+            time.sleep(0.01)
+            response = client.get("/api/ready")
+
+        assert response.status_code == 200
+        assert service.full_status()["dependencies"]["postgresql"][
+            "state"
+        ] == "healthy"
+        assert attempts >= 2
+
+
+def test_repository_construction_failure_recovers_without_process_restart(
+    monkeypatch,
+):
+    import threading
+    import time
+
+    from fastapi.testclient import TestClient
+
+    import argus.api.main as api_main
+    from argus.api.rate_limit import RateLimiter
+
+    monkeypatch.setattr(api_main, "_AUTHORITY_RETRY_SECONDS", 0.01, raising=False)
+    failed = threading.Event()
+    allow_recovery = threading.Event()
+    attempts = 0
+    repository = _runtime_repository()
+
+    def repository_factory():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            failed.set()
+            raise RuntimeError("initial repository construction failed")
+        allow_recovery.wait(timeout=2)
+        return repository
+
+    monkeypatch.setattr(
+        api_main,
+        "create_search_ledger_repository",
+        repository_factory,
+    )
+    service = _service()
+    app = api_main.create_app(
+        broker=_runtime_broker(),
+        rate_limiter=RateLimiter(max_requests=10_000),
+        operational_status=service,
+    )
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        assert failed.wait(timeout=1)
+        deadline = time.monotonic() + 1
+        while (
+            service.startup_status()["status"] != "failed"
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.01)
+        assert client.get("/api/ready").status_code == 503
+
+        allow_recovery.set()
+        deadline = time.monotonic() + 2
+        response = client.get("/api/ready")
+        while response.status_code != 200 and time.monotonic() < deadline:
+            time.sleep(0.01)
+            response = client.get("/api/ready")
+
+        assert response.status_code == 200
+        assert service.full_status()["authority"]["backend"] == "postgresql"
+        assert attempts >= 2
+
+
+def test_maya_empty_poll_preserves_unknown_or_last_delivery_evidence():
+    service = _service()
+
+    service.observe_maya_delivery(
+        {},
+        ttl=timedelta(seconds=30),
+        observed_at=NOW,
+    )
+    unknown = service.full_status()["dependencies"]["maya"]
+    assert unknown["state"] == "unknown"
+
+    service.observe_maya_delivery(
+        {"acknowledged": 1},
+        ttl=timedelta(seconds=30),
+        observed_at=NOW,
+    )
+    acknowledged = service.full_status()["dependencies"]["maya"]
+    service.observe_maya_delivery(
+        {},
+        ttl=timedelta(seconds=30),
+        observed_at=NOW + timedelta(seconds=5),
+    )
+    after_empty = service.full_status()["dependencies"]["maya"]
+
+    assert acknowledged["state"] == "healthy"
+    assert after_empty == acknowledged
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "reason"),
+    [
+        ({"retried": 1}, "delivery_retried"),
+        ({"dead_lettered": 1}, "delivery_dead_lettered"),
+        ({"lease_lost": 1}, "delivery_lease_lost"),
+        (
+            {"acknowledged": 1, "retried": 1},
+            "delivery_retried",
+        ),
+    ],
+)
+def test_maya_failure_outcomes_degrade_delivery(outcomes, reason):
+    service = _service()
+
+    service.observe_maya_delivery(
+        outcomes,
+        ttl=timedelta(seconds=30),
+        observed_at=NOW,
+    )
+
+    maya = service.full_status()["dependencies"]["maya"]
+    assert maya["state"] == "degraded"
+    assert maya["reason"] == reason
+
+
+def test_missing_production_maya_configuration_is_degraded():
+    service = _service(production=True)
+
+    service.observe_maya_configuration(
+        configured=False,
+        ttl=timedelta(minutes=5),
+    )
+
+    maya = service.full_status()["dependencies"]["maya"]
+    assert maya["state"] == "degraded"
+    assert maya["reason"] == "maya_delivery_not_configured"
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "expected_state"),
+    [
+        ({}, "unknown"),
+        ({"acknowledged": 1}, "healthy"),
+        ({"retried": 1}, "degraded"),
+    ],
+)
+def test_maya_worker_uses_real_dispatcher_outcomes(
+    monkeypatch,
+    outcomes,
+    expected_state,
+):
+    import time
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
+    import argus.api.main as api_main
+    import argus.config as config_module
+    import argus.persistence.maya_outbox as maya_outbox
+
+    capture = SimpleNamespace(
+        endpoint="http://maya/captures",
+        token="dedicated-token",
+        timeout_seconds=1,
+        batch_size=1,
+        poll_seconds=0.01,
+        acknowledged_retention_days=1,
+    )
+    config = SimpleNamespace(egress_nodes=[], maya_capture=capture)
+    monkeypatch.setattr(config_module, "get_config", lambda: config)
+    calls = 0
+
+    class Dispatcher:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run_once(self):
+            nonlocal calls
+            calls += 1
+            return outcomes
+
+    monkeypatch.setattr(maya_outbox, "MayaOutboxDispatcher", Dispatcher)
+    service = _service(production=True)
+
+    with TestClient(
+        api_main.create_app(
+            broker=_runtime_broker(),
+            search_repository=_runtime_repository(),
+            operational_status=service,
+        )
+    ):
+        deadline = time.monotonic() + 1
+        while calls == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert calls > 0
+        assert service.full_status()["dependencies"]["maya"][
+            "state"
+        ] == expected_state

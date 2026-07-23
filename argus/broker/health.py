@@ -57,12 +57,18 @@ class HealthTracker:
             health.apply_cooldown(self._cooldown_minutes)
 
     def get_status(self, provider: ProviderName) -> Optional[ProviderStatus]:
-        health = self._get(provider)
+        health = self._health.get(provider)
+        if health is None:
+            return None
         if health.is_in_cooldown():
             return ProviderStatus.TEMPORARILY_DISABLED
         if health.consecutive_failures >= self._failure_threshold:
             return ProviderStatus.DEGRADED
         return None
+
+    def peek_health(self, provider: ProviderName) -> ProviderHealth | None:
+        """Return observed process-local evidence without creating a record."""
+        return self._health.get(provider)
 
     def get_health(self, provider: ProviderName) -> ProviderHealth:
         return self._get(provider)

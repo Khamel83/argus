@@ -46,18 +46,29 @@ unlimited and is distinct from numeric zero.
 - In production, PostgreSQL connectivity, the expected Alembic schema head,
   and the durable outbox authority are required. Loss of any is `unready`.
 - Maya delivery loss is `degraded` while the durable outbox remains
-  available. Outbox authority loss is `unready`.
+  available. In production, missing Maya delivery configuration is degraded,
+  not disabled. An empty outbox poll proves no remote contact, so it preserves
+  the last valid delivery observation (or remains unknown). Only an
+  acknowledged delivery records Maya as healthy; retry, dead-letter, and
+  lease-loss outcomes degrade it. Outbox authority loss is `unready`.
 - Missing or unadmitted browser capability is `degraded`.
 - Missing, stale, or failed recovery evidence is `degraded` and
   `promotion_allowed=false`; it does not claim that production recovery is
   complete.
 - A partial provider failure is `degraded`. If no admitted retrieval path
-  remains usable, status is `unready`.
+  with complete healthy reachability, health, cooldown, and balance evidence
+  remains, status is `unready`. Fresh-process zeroed health records are not
+  evidence: missing or degraded provider health cannot prove a usable path.
 - Stale or unknown evidence is never reported as healthy.
 
 The authority refreshes this cached evidence in the background every
 15 seconds. Dependency restoration therefore becomes visible without a
 process restart and without request-time probes.
+
+Broker and repository construction failures are also retried in the
+background. Liveness remains available during those failures, startup and
+readiness remain unready, and successful reconstruction transitions the same
+service instance back to current cached evidence.
 
 ## Identity and correlation
 
