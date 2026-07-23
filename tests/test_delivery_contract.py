@@ -46,7 +46,7 @@ def test_every_ci_uv_install_is_version_pinned():
         ci,
     )
 
-    assert len(install_commands) == 3
+    assert len(install_commands) == ci.count("- name: Install uv")
     assert all(command in {
         f"python -m pip install uv=={UV_VERSION}",
         f"python3 -m pip install uv=={UV_VERSION}",
