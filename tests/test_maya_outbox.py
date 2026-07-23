@@ -1,5 +1,6 @@
 import json
 import hashlib
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from threading import Barrier
@@ -225,6 +226,141 @@ def test_outbox_url_query_redacts_all_sensitive_key_aliases(tmp_path):
     payload = _outbox_row(repository).payload_json
     assert "urlLeakValue987" not in payload
     assert "session_cookie" not in payload
+
+
+@pytest.mark.parametrize(
+    "credential",
+    [
+        "auth=aliasLeakValue987",
+        "AUTH-TOKEN=aliasLeakValue987",
+        '"authentication":"aliasLeakValue987"',
+        "session=aliasLeakValue987",
+        "Session-ID=aliasLeakValue987",
+        "credential: aliasLeakValue987",
+        "credentials[password]=aliasLeakValue987",
+        "auth[token]=aliasLeakValue987",
+        "user_credentials=aliasLeakValue987",
+        "authToken=aliasLeakValue987",
+    ],
+)
+def test_outbox_redacts_normalized_sensitive_alias_variants(
+    tmp_path,
+    credential,
+):
+    repository = _repository(tmp_path)
+    result = ExtractedContent(
+        url="https://example.com/article",
+        text=f"safe prefix {credential} safe suffix",
+        word_count=5,
+        extractor=ExtractorName.TRAFILATURA,
+        attempts=[ExtractionAttempt("trafilatura", "success", 1)],
+    )
+
+    repository.record_extraction(
+        url=result.url,
+        domain=None,
+        mode="default",
+        caller="maya",
+        result=result,
+        latency_ms=1,
+        extraction_run_id="credential-alias-redaction",
+    )
+
+    payload = _outbox_row(repository).payload_json
+    assert "aliasLeakValue987" not in payload
+    assert "[redacted]" in payload
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "auth=summaryAliasLeak987",
+        "AUTH-TOKEN=summaryAliasLeak987",
+        '"authentication":"summaryAliasLeak987"',
+        "session=summaryAliasLeak987",
+        "Session-ID=summaryAliasLeak987",
+        "credential: summaryAliasLeak987",
+        "credentials[password]=summaryAliasLeak987",
+        "auth[token]=summaryAliasLeak987",
+        "user_credentials=summaryAliasLeak987",
+        "authToken=summaryAliasLeak987",
+    ],
+)
+def test_dead_letter_redacts_normalized_sensitive_alias_variants(
+    tmp_path,
+    message,
+):
+    from argus.persistence.maya_outbox import MayaOutboxDispatcher
+
+    repository = _repository(tmp_path)
+    repository.accept(SearchQuery(query="unsafe alias summary"), _response())
+    dispatcher = MayaOutboxDispatcher(
+        repository,
+        endpoint="http://maya/captures",
+        token="test-token",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                422,
+                json={
+                    "detail": {
+                        "code": "invalid_capture_request",
+                        "message": message,
+                    }
+                },
+            )
+        ),
+        clock=lambda: datetime(2026, 7, 23, 12, 0),
+    )
+
+    assert dispatcher.run_once() == {"dead_lettered": 1}
+    row = _outbox_row(repository)
+    assert "summaryAliasLeak987" not in row.last_error_summary
+    assert "[redacted]" in row.last_error_summary
+
+
+def test_outbox_url_query_uses_normalized_conservative_sensitive_aliases(tmp_path):
+    repository = _repository(tmp_path)
+    response = _response()
+    response.results[0].url = (
+        "https://example.com/article?"
+        "%61uth%5Ftoken=urlAliasLeak987&"
+        "credentials%5Bpassword%5D=urlAliasLeak987&"
+        "my-session-id=urlAliasLeak987"
+    )
+
+    repository.accept(SearchQuery(query="encoded sensitive url"), response)
+
+    payload = _outbox_row(repository).payload_json
+    assert "urlAliasLeak987" not in payload
+    assert "%61uth" not in payload
+
+
+def test_safe_extraction_content_preserves_900k_with_bounded_runtime(tmp_path):
+    repository = _repository(tmp_path)
+    content = ("safe visible extraction content " * 30_000)[:900_000]
+    result = ExtractedContent(
+        url="https://example.com/large-article",
+        text=content,
+        word_count=120_000,
+        extractor=ExtractorName.TRAFILATURA,
+        attempts=[ExtractionAttempt("trafilatura", "success", 1)],
+    )
+
+    started = time.perf_counter()
+    repository.record_extraction(
+        url=result.url,
+        domain=None,
+        mode="default",
+        caller="maya",
+        result=result,
+        latency_ms=1,
+        extraction_run_id="large-safe-content",
+    )
+    elapsed = time.perf_counter() - started
+
+    payload = json.loads(_outbox_row(repository).payload_json)
+    assert payload["pages"][0]["content"] == content
+    assert elapsed < 3.0
 
 
 def test_remote_error_code_is_allowlisted_and_never_persists_assignment(tmp_path):

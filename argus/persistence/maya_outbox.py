@@ -9,7 +9,15 @@ import re
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Callable
-from urllib.parse import parse_qsl, quote, urlencode, unquote, urlsplit, urlunsplit
+from urllib.parse import (
+    parse_qsl,
+    quote,
+    urlencode,
+    unquote,
+    unquote_plus,
+    urlsplit,
+    urlunsplit,
+)
 
 import httpx
 
@@ -21,29 +29,33 @@ _AUTH_HEADER_RE = re.compile(
 )
 _AUTH_SCHEME_RE = re.compile(r"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9+/._~=-]{4,}")
 _COOKIE_HEADER_RE = re.compile(r"(?i)\b(?:set-cookie|cookie)\s*:\s*[^\r\n]+")
-_SENSITIVE_KEY_PATTERN = r"""
-    (?:
-        authorization|proxy[_ -]?authorization|
-        cookie|set[_ -]?cookie|session[_ -]?cookie|
-        access[_ -]?token|refresh[_ -]?token|id[_ -]?token|
-        api[_ -]?key|access[_ -]?key|client[_ -]?secret|
-        refresh|id|token|secret|password|passwd|signature
-    )
-"""
-_SENSITIVE_KEY_RE = re.compile(rf"(?ix)^{_SENSITIVE_KEY_PATTERN}$")
-_SENSITIVE_KEY_VALUE_RE = re.compile(
-    rf"""(?ix)
+_KEY_VALUE_RE = re.compile(
+    r"""(?ix)
     (?<![A-Za-z0-9_])
-    ["']?
-    {_SENSITIVE_KEY_PATTERN}
-    ["']?
+    (?P<key_quote>["']?)
+    (?P<key>[A-Za-z%][A-Za-z0-9_.%+\-\[\] ]{0,127})
+    (?P=key_quote)
     \s*[:=]\s*
     (?:
         "(?:\\.|[^"\\\r\n])*"|
         '(?:\\.|[^'\\\r\n])*'|
-        [^\s,;}}\]\r\n]+
+        [^\s,;}\]\r\n]+
     )
     """
+)
+_SENSITIVE_KEY_SUBSTRINGS = (
+    "auth",
+    "session",
+    "credential",
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "cookie",
+    "signature",
+    "apikey",
+    "accesskey",
+    "refresh",
 )
 _MAYA_SECRET_TOKEN_RE = re.compile(
     r"(?i)\b(?:token|secret|key)[_-][A-Za-z0-9][A-Za-z0-9._-]{7,}\b|"
@@ -74,7 +86,23 @@ _MAYA_RECEIPT_KEYS = {
 
 
 def _is_sensitive_key(value: object) -> bool:
-    return _SENSITIVE_KEY_RE.fullmatch(str(value).strip()) is not None
+    decoded = unquote_plus(str(value).strip())
+    with_camel_boundaries = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", decoded)
+    normalized = re.sub(
+        r"[^a-z0-9]+",
+        "_",
+        with_camel_boundaries.lower(),
+    ).strip("_")
+    tokens = tuple(token for token in normalized.split("_") if token)
+    compact = "".join(tokens)
+    return (
+        "id" in tokens
+        or any(marker in compact for marker in _SENSITIVE_KEY_SUBSTRINGS)
+    )
+
+
+def _redact_key_value(match: re.Match) -> str:
+    return "[redacted]" if _is_sensitive_key(match.group("key")) else match.group(0)
 
 
 def _sanitize_structure(value: object, *, depth: int = 0) -> object:
@@ -132,12 +160,12 @@ def _bounded_text(value: object, scan_limit: int) -> str:
 
 
 def _redact_text(value: object, limit: int) -> str:
-    scan_limit = min(max(limit * 4, 4096), 65_536)
+    scan_limit = limit if limit > 65_536 else max(limit * 4, 4096)
     text = _bounded_text(value, scan_limit).replace("\x00", "")
     text = _AUTH_HEADER_RE.sub("[redacted]", text)
     text = _AUTH_SCHEME_RE.sub("[redacted]", text)
     text = _COOKIE_HEADER_RE.sub("[redacted]", text)
-    text = _SENSITIVE_KEY_VALUE_RE.sub("[redacted]", text)
+    text = _KEY_VALUE_RE.sub(_redact_key_value, text)
     text = _MAYA_SECRET_TOKEN_RE.sub("[redacted]", text)
     return _PEM_RE.sub("[redacted]", text)[:limit]
 
