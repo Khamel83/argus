@@ -73,6 +73,9 @@ def _check_auth(request: Request) -> None:
 
 
 def create_worker_app() -> FastAPI:
+    from argus.authority import worker_execution_allowed
+
+    worker_execution_allowed()
     app = FastAPI(title="Argus Worker", docs_url=None, redoc_url=None)
 
     @app.get("/health")

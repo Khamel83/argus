@@ -12,7 +12,8 @@ import pytest
 from argus.models import ProviderName, SearchResponse
 
 
-def _empty_response(query):
+def _empty_response(query, **kwargs):
+    del kwargs
     return SearchResponse(
         query=query.query,
         mode=query.mode,
@@ -43,7 +44,10 @@ def test_remote_search_variants_use_scoped_credential_identity(
     broker.search = AsyncMock(side_effect=_empty_response)
     broker.budget_tracker = MagicMock()
     client = TestClient(
-        create_app(broker=broker),
+        create_app(
+            broker=broker,
+            search_repository=MagicMock(),
+        ),
         client=("203.0.113.10", 50000),
     )
 

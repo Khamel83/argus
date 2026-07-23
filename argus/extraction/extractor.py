@@ -623,8 +623,12 @@ async def extract_url(
     *,
     caller: str = "",
     repository=None,
+    authority_capability: object | None = None,
 ) -> ExtractedContent:
     """Extract and durably record one logical operation before returning."""
+    from argus.authority import extraction_execution_allowed
+
+    extraction_execution_allowed(authority_capability=authority_capability)
     started = time.perf_counter()
     result = await _extract_url_unpersisted(url, domain=domain, mode=mode)
     if repository is None:

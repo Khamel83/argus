@@ -149,6 +149,7 @@ class WorkflowService:
         corpus_paths: CorpusPaths | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
         caller: str = "workflows",
+        authority_capability: object | None = None,
     ):
         self._broker = broker
         self._paths = corpus_paths or get_corpus_paths()
@@ -156,6 +157,7 @@ class WorkflowService:
         self._persistence = WorkflowPersistenceGateway()
         self._progress = progress_callback
         self._caller = caller or "workflows"
+        self._authority_capability = authority_capability
 
     def _report(self, current: int, total: int, message: str) -> None:
         if self._progress:
@@ -163,6 +165,14 @@ class WorkflowService:
                 self._progress(current, total, message)
             except Exception:
                 pass
+
+    async def _extract(self, url: str):
+        if self._authority_capability is not None:
+            return await extract_url(
+                url,
+                authority_capability=self._authority_capability,
+            )
+        return await extract_url(url)
 
     def get_paths(self) -> dict[str, Any]:
         return describe_corpus_paths()
@@ -329,7 +339,7 @@ class WorkflowService:
         citations: list[CitationRef] = []
         for result in search_result.results[:max_search_results]:
             try:
-                extracted = await extract_url(result.url)
+                extracted = await self._extract(result.url)
             except Exception:
                 continue
             doc_id = str(uuid.uuid4())
@@ -788,7 +798,7 @@ class WorkflowService:
                 break
             if i > 0 and i % 5 == 0:
                 self._report(i, len(urls), f"Extracting page {i}/{len(urls)}: {candidate_url[:60]}")
-            result = await extract_url(candidate_url)
+            result = await self._extract(candidate_url)
             if result.error or not result.text:
                 continue
             if result.word_count < 60:

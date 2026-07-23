@@ -25,18 +25,22 @@ def get_persistence_repository(request: Request):
 @router.post("/extract", response_model=ExtractResponse)
 async def extract(
     req: ExtractRequest,
+    request: Request,
     repository=Depends(get_persistence_repository),
 ):
     """Extract clean text content from a URL."""
-    if req.caller:
-        logger.info("extract caller=%s url=%s", req.caller, req.url)
+    authenticated_caller = getattr(request.state, "caller_identity", "") or "unknown"
+    logger.info("extract caller=%s url=%s", authenticated_caller, req.url)
     try:
+        from argus.api.main import _HTTP_API_AUTHORITY_CAPABILITY
+
         result = await extract_url(
             req.url,
             domain=req.domain,
             mode=req.mode,
-            caller=req.caller,
+            caller=authenticated_caller,
             repository=repository,
+            authority_capability=_HTTP_API_AUTHORITY_CAPABILITY,
         )
     except Exception as exc:
         raise HTTPException(
@@ -96,4 +100,5 @@ async def assess_content(req: AssessContentRequest):
 async def cookie_health():
     """Get health status of all configured cookie domains."""
     from argus.extraction.cookies import get_health_summary
+
     return get_health_summary()

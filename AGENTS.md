@@ -9,7 +9,7 @@
 
 ## Overview
 
-Search infrastructure for AI agents: 14 providers, topology-aware routing, WolframAlpha computed answers, and a 12-step content extraction chain. Provider adapters: SearXNG (self-hosted, aggregates 70+ engines, disabled by default), DuckDuckGo, Yahoo (scraped), GitHub, WolframAlpha (free API, computed answers), Brave, Tavily, Exa, Linkup, Parallel AI (monthly credit for eligible accounts with a card on file), Serper, You.com, Valyu, SearchAPI. Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. Multi-turn sessions (SQLite). Connect via HTTP, CLI, MCP, or Python import.
+Search infrastructure for AI agents: 14 providers, topology-aware routing, WolframAlpha computed answers, and a 12-step content extraction chain. Provider adapters: SearXNG (self-hosted, aggregates 70+ engines, disabled by default), DuckDuckGo, Yahoo (scraped), GitHub, WolframAlpha (free API, computed answers), Brave, Tavily, Exa, Linkup, Parallel AI (monthly credit for eligible accounts with a card on file), Serper, You.com, Valyu, SearchAPI. Tier-based routing: free providers first, monthly recurring next, one-time credits last. Budget enforcement skips exhausted providers automatically. Multi-turn sessions use the configured SQL repository.
 
 ## Features
 - **Topology-aware acquisition** — Argus knows if it's on a residential IP or datacenter, routing search and extraction automatically to avoid blocks and minimize network hops.
@@ -44,8 +44,8 @@ pip install "argus-search[mcp,crawl4ai]" # with Crawl4AI extractor
 
 # Run
 argus serve                   # HTTP API on :8000
-argus mcp serve               # MCP server (stdio)
-argus mcp serve --transport streamable-http --port 8001  # modern remote
+ARGUS_AUTHORITY_URL=http://argus-api:8000 \
+ARGUS_AUTHORITY_TOKEN=... argus mcp serve  # stateless MCP-to-HTTP adapter
 
 # Search
 argus search -q "query" --mode discovery
@@ -71,7 +71,9 @@ Caller (CLI/HTTP/MCP/Python)
     → result pipeline (cache → dedupe → RRF ranking → response)
   → SessionStore (optional, per-request)
   → Extractor (12-step chain with topology awareness)
-    → Adaptive Domain Memory (SQLite)
+    → Adaptive Domain Memory (shared production PostgreSQL)
+
+MCP/CLI callers → authenticated HTTP API above (no local broker/browser/DB)
 ```
 
 | Module | Responsibility |
@@ -82,7 +84,7 @@ Caller (CLI/HTTP/MCP/Python)
 | `argus/api/` | FastAPI HTTP endpoints with provenance metadata |
 | `argus/cli/` | Click CLI commands (supports `--json` provenance) |
 | `argus/mcp/` | MCP server for LLM integration with rich provenance tools |
-| `argus/persistence/` | SQLite (default) or PostgreSQL query/result storage |
+| `argus/persistence/` | SQLite for standalone development; PostgreSQL for the production authority |
 
 ## Provider Tiers
 
@@ -112,18 +114,21 @@ Valyu Contents → Firecrawl → You.com Contents → Wayback Machine → archiv
 
 ## Multi-Turn Sessions
 
-Pass `session_id` to search to enable conversational refinement. The broker remembers prior queries and uses them to context-enrich follow-up searches. Sessions persist to SQLite across restarts.
+Pass `session_id` to search to enable conversational refinement. The broker remembers prior queries and uses them to context-enrich follow-up searches. Sessions persist in the authority's configured SQL repository across restarts.
 
 ## Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ARGUS_NODE_ROLE` | `primary` | `primary`, `worker`, `caller`, or `dev` |
+| `ARGUS_NODE_ROLE` | `primary` | Production authority is `primary`; adapters are `caller`; direct/worker execution is development-only |
+| `ARGUS_AUTHORITY_URL` | (empty) | HTTP API base URL required by production MCP and CLI adapters |
+| `ARGUS_AUTHORITY_TOKEN` | (empty) | Scoped caller token required by production MCP and CLI adapters |
+| `ARGUS_MCP_STANDALONE` | `false` | Explicit development-only local MCP broker opt-in |
 | `ARGUS_EGRESS_TYPE` | `unknown` | `residential`, `datacenter`, or `unknown` |
 | `ARGUS_RESIDENTIAL_POLICY` | `fallback` | `off`, `fallback`, `prefer_on_datacenter`, `prefer_for_domains`, or `always` |
 | `ARGUS_DB_URL` | `sqlite:///.../argus.db` | Main database URL |
 | `ARGUS_AUTOLOAD_DOTENV` | `true` | Auto-load `.env` / `.env.local` from cwd and repo root (does not override exported env vars) |
-| `ARGUS_CALLER_TIER_CAPS` | (empty) | Per-caller max provider tier, fnmatch patterns (e.g. `clio*:1,hermes*:1`) |
+| `ARGUS_CALLER_TIER_CAPS` | (empty) | Per-caller max provider tier, fnmatch patterns (e.g. `maya*:1,hermes*:1`) |
 
 ## Conventions
 
@@ -131,7 +136,9 @@ Pass `session_id` to search to enable conversational refinement. The broker reme
 - All search results are `SearchResult`: url, title, snippet, domain, provider, score, egress, machine
 - Extracted content is `ExtractedContent`: url, title, text, author, date, word_count, egress, machine, source_type
 - Routes prefixed with `/api`
-- Token balances persist in SQLite alongside budget tracking
+- Production token balances, budgets, sessions, health, and outbox state are owned by the HTTP authority and shared PostgreSQL repository
+- MCP is a stateless authenticated HTTP adapter. It must never receive provider credentials, database configuration, browser paths, or writable Argus volumes.
+- Direct Python broker/extraction and legacy workers are supported only for explicit standalone development; production callers use HTTP.
 - Version bumps must update `pyproject.toml` AND `server.json`
 - `README.md` must retain `<!-- mcp-name: io.github.Khamel83/argus -->`
 
@@ -176,4 +183,4 @@ Modes:
 
 ### Canonical transport policy
 
-See [maya/docs/CONTEXT-CONTRACT.md](https://github.com/Khamel83/maya/blob/main/docs/CONTEXT-CONTRACT.md) for the cross-service transport and role contract.
+See [Maya's architecture documentation](https://github.com/Khamel83/maya/blob/main/docs/ARCHITECTURE.md) for the cross-service transport and role contract.

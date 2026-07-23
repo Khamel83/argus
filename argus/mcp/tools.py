@@ -6,7 +6,6 @@ from typing import Any, Callable, Optional
 
 from argus.broker.router import SearchBroker
 from argus.corpus import describe_corpus_paths
-from argus.extraction.trafilatura_result import normalize_trafilatura_result
 from argus.models import SearchMode, SearchQuery
 from argus.workflows import WorkflowService
 
@@ -157,43 +156,12 @@ async def recover_url(
 
 async def _try_archive_ph(url: str) -> Optional[dict]:
     """Try to fetch content from archive.ph."""
-    import httpx
+    from argus.recovery.archive_ph import try_archive_ph
 
-    from urllib.parse import quote_plus
-
-    archive_url = f"https://archive.ph/newest/{quote_plus(url)}"
-
-    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-        resp = await client.get(archive_url, headers={
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-        })
-
-        if resp.status_code != 200:
-            return None
-
-        html = resp.text
-
-        # Check if archive.ph actually has this page
-        if "does not have an archive" in html or "was not archived" in html:
-            return None
-
-        # Extract text from archived page
-        import trafilatura
-        loop = __import__("asyncio").get_event_loop()
-        extracted = await loop.run_in_executor(None, trafilatura.bare_extraction, html)
-        normalized = normalize_trafilatura_result(extracted)
-
-        if normalized is not None and len(normalized.text) > 200:
-            return {
-                "url": str(resp.url),
-                "title": normalized.title,
-                "snippet": normalized.text[:200],
-                "domain": "archive.ph",
-                "provider": "archive_ph",
-                "score": 0.8,
-            }
-
-    return None
+    result = await try_archive_ph(url)
+    if result:
+        result["provider"] = "archive_ph"
+    return result
 
 
 async def expand_links(

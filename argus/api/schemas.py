@@ -80,6 +80,7 @@ class SearchResponse(BaseModel):
     traces: List[ProviderTraceSchema] = Field(default_factory=list)
     total_results: int = 0
     cached: bool = False
+    budget_warnings: List[str] = Field(default_factory=list)
     search_run_id: Optional[str] = None
     session_id: Optional[str] = None
 

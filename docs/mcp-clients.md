@@ -1,8 +1,22 @@
 # MCP Client Setup
 
-Argus supports local stdio MCP and remote streamable HTTP MCP.
+Argus supports local stdio MCP and remote streamable HTTP MCP. Both are
+stateless adapters over the authenticated Argus HTTP API. They do not own a
+broker, provider credentials, browser, database, budgets, sessions, health
+state, or the Maya outbox.
 
-Use local stdio when Argus is installed on the same machine as the AI client. This is the default for Claude Code, Codex CLI, OpenCode, Cursor, and similar desktop/terminal clients. It requires no `ARGUS_API_KEY`.
+Use local stdio when Argus is installed on the same machine as the AI client.
+This is the default for Claude Code, Codex CLI, OpenCode, Cursor, and similar
+desktop/terminal clients. It requires no MCP listener key, but the process must
+inherit a scoped HTTP authority credential:
+
+```bash
+export ARGUS_AUTHORITY_URL=http://argus-api:8000
+export ARGUS_AUTHORITY_TOKEN=replace-with-a-scoped-caller-token
+```
+
+An in-process broker is available only for explicit standalone development
+with `ARGUS_MCP_STANDALONE=true`; production rejects that mode.
 
 Use remote streamable HTTP when one Argus server should serve other machines over Tailscale, a private LAN, or another trusted network. Remote mode should use `ARGUS_API_KEY`.
 
@@ -55,8 +69,14 @@ Run Argus on the server:
 
 ```bash
 export ARGUS_API_KEY=replace-with-a-long-random-secret
+export ARGUS_AUTHORITY_URL=http://argus-api:8000
+export ARGUS_AUTHORITY_TOKEN="$ARGUS_API_KEY"
 argus mcp serve --transport streamable-http --host 100.x.x.x --port 8001
 ```
+
+The remote MCP listener credential must also be a valid scoped credential at
+the HTTP authority. The adapter forwards each authenticated bearer token
+unchanged so identity and provider-tier policy remain end to end.
 
 Configure clients:
 
@@ -90,9 +110,10 @@ If a client reports an initialize or handshake failure:
 
 1. Run the client-specific list command above.
 2. Confirm the configured `command` exists and is executable.
-3. Run `argus --version`; if it reports an old version, reinstall with `pipx upgrade argus-search` or reinstall from the current checkout.
-4. Confirm no log lines are printed to stdout before MCP JSON-RPC messages. Argus logs should appear on stderr.
-5. For Codex, inspect `~/.codex/config.toml` and ensure the Argus section contains only valid TOML:
+3. Confirm `ARGUS_AUTHORITY_URL` and `ARGUS_AUTHORITY_TOKEN` are present in the environment that launches the adapter.
+4. Run `argus --version`; if it reports an old version, reinstall with `pipx upgrade argus-search` or reinstall from the current checkout.
+5. Confirm no log lines are printed to stdout before MCP JSON-RPC messages. Argus logs should appear on stderr.
+6. For Codex, inspect `~/.codex/config.toml` and ensure the Argus section contains only valid TOML:
 
 ```toml
 [mcp_servers.argus]

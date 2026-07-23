@@ -74,13 +74,14 @@ Works on any machine with Python 3.11+ — laptop, Mac Mini, Raspberry Pi, cloud
 
 ```bash
 pipx install argus-search[mcp]
+export ARGUS_MCP_STANDALONE=true  # explicit development-only local broker
 argus mcp init --global --client all
 ```
 
 That writes native config for Claude Code, Codex CLI, OpenCode, and Cursor. Restart the client after configuration. For manual stdio setup:
 
 ```json
-{"mcpServers": {"argus": {"command": "argus", "args": ["mcp", "serve"]}}}
+{"mcpServers": {"argus": {"command": "argus", "args": ["mcp", "serve"], "env": {"ARGUS_MCP_STANDALONE": "true"}}}}
 ```
 
 Or install from the [MCP Registry](https://registry.modelcontextprotocol.io/servers/io.github.Khamel83/argus):
@@ -91,13 +92,15 @@ Or install from the [MCP Registry](https://registry.modelcontextprotocol.io/serv
     "argus": {
       "registryType": "pypi",
       "identifier": "argus-search",
-      "runtimeHint": "uvx"
+      "runtimeHint": "uvx",
+      "env": {"ARGUS_MCP_STANDALONE": "true"}
     }
   }
 }
 ```
 
-One command to install, one command to connect. No server to run, no keys to configure.
+Standalone development needs no server or keys, but it must be explicitly
+enabled. Production MCP always delegates to an authenticated HTTP authority.
 
 See [MCP Client Setup](docs/mcp-clients.md) for exact config files, verification commands, remote HTTP setup, and troubleshooting.
 
@@ -403,9 +406,18 @@ different session with the same ID is reported as conflicting.
 
 ### MCP
 
-**Option A — Local (stdio)**
+MCP is a stateless protocol adapter over the authenticated HTTP API. It does
+not construct providers or a broker and does not own browser, database,
+budget, session, health, or outbox state. Configure the adapter process with:
 
-Install and run on the same machine as your MCP client:
+```bash
+export ARGUS_AUTHORITY_URL=http://argus-api:8000
+export ARGUS_AUTHORITY_TOKEN=replace-with-a-scoped-caller-token
+```
+
+**Option A — Local adapter (stdio)**
+
+Install the adapter on the same machine as your MCP client:
 
 ```json
 {
@@ -419,28 +431,46 @@ Install and run on the same machine as your MCP client:
 ```
 
 Use the full path if `argus` isn't on PATH: `"/home/you/.local/bin/argus"`.
+The adapter inherits `ARGUS_AUTHORITY_URL` and `ARGUS_AUTHORITY_TOKEN` from
+the client process. To run a local broker instead, development environments
+must explicitly set `ARGUS_MCP_STANDALONE=true`; production rejects it.
 
 Works with **Claude Code**, **Codex CLI**, **OpenCode**, **Cursor**, and any stdio-based MCP client. Use `argus mcp init --global --client all` to write native client configs for the current machine.
 
 Detailed client setup and verification commands live in [docs/mcp-clients.md](docs/mcp-clients.md).
 
-**Option B — Self-hosted server (remote clients over Tailscale)**
+**Option B — Remote MCP adapter (clients over Tailscale)**
 
 Run Argus on one machine, connect every client over the network. No local install on clients.
 
-On the server:
+On the adapter host:
 ```bash
 export ARGUS_API_KEY=replace-with-a-long-random-secret
+export ARGUS_AUTHORITY_URL=http://argus-api:8000
+export ARGUS_AUTHORITY_TOKEN="$ARGUS_API_KEY"
 argus mcp serve --transport streamable-http --host YOUR_TAILSCALE_IP --port 8001
 ```
 
+Remote MCP credentials must also be valid scoped credentials at the HTTP
+authority because the adapter forwards each authenticated bearer token
+unchanged. For stdio, `ARGUS_AUTHORITY_TOKEN` is the caller credential.
+
 To keep the HTTP API and remote MCP service running after reboot on a systemd host:
 ```bash
-scripts/install-systemd.sh
+cat >mcp.env <<'EOF'
+ARGUS_AUTHORITY_URL=http://argus-api:8000
+ARGUS_AUTHORITY_TOKEN=replace-with-scoped-caller-token
+ARGUS_API_KEY=replace-with-the-same-scoped-caller-token
+EOF
+chmod 600 mcp.env
+ARGUS_MCP_ENV_FILE="$PWD/mcp.env" scripts/install-systemd.sh
 systemctl status argus argus-mcp --no-pager
 ```
 
-The installer copies `argus.service` and `scripts/argus-mcp.service`, enables both services, and starts them immediately. The start scripts load `.env` first, then optional local secrets vaults if the `secrets` CLI is installed.
+The installer validates the minimal adapter environment, installs it as
+root-only `/etc/argus/mcp.env`, then installs and starts both units. The MCP
+unit never loads the authority's `.env`, provider vaults, database settings,
+browser paths, or writable data volumes.
 
 On each client:
 
@@ -465,11 +495,14 @@ curl -s https://raw.githubusercontent.com/Khamel83/argus/main/scripts/provision-
 curl -s https://raw.githubusercontent.com/Khamel83/argus/main/scripts/provision-mcp-client.sh | bash -s user@100.x.x.x    # remote machine
 ```
 
-The script writes Claude/Cursor, Codex, and OpenCode configs on the target. In local mode it prefers stdio and does not require `ARGUS_API_KEY`; remote HTTP mode still requires `ARGUS_REMOTE_URL` and `ARGUS_API_KEY`. Requires Python 3 (standard on macOS/Linux).
+The script writes Claude/Cursor, Codex, and OpenCode configs on the target.
+Local stdio does not require an MCP listener key, but the adapter still
+requires its scoped `ARGUS_AUTHORITY_TOKEN`. Remote MCP mode requires
+`ARGUS_REMOTE_URL` and `ARGUS_API_KEY`. Requires Python 3.
 
 `argus mcp init` also generates configs automatically:
 ```bash
-argus mcp init --global              # local stdio for Claude Code + OpenCode + Cursor
+argus mcp init --global              # local stdio adapter for Claude Code + OpenCode + Cursor
 argus mcp init --client codex        # local stdio for Codex (writes ~/.codex/config.toml)
 argus mcp init --client opencode     # local stdio for OpenCode
 ARGUS_REMOTE_URL=http://argus.local:8271 ARGUS_API_KEY=... argus mcp init --global --client all
@@ -481,11 +514,18 @@ argus mcp init --global --client all # everything above
 
 Pushing `main` does not publish PyPI. Package and MCP Registry publication happens through the GitHub publish workflow on release creation or manual dispatch. See [docs/releasing.md](docs/releasing.md) for version sync, preflight checks, and publish verification.
 
-**Transports**: `stdio` (default, for local), `sse` (legacy remote), `streamable-http` (modern remote, `"type":"http"` in config). Remote HTTP transports require `ARGUS_API_KEY`.
+**Transports**: `stdio` (default local adapter), `sse` (legacy remote), and
+`streamable-http` (modern remote, `"type":"http"` in config). Remote MCP
+transports require `ARGUS_API_KEY`; every transport delegates execution to
+`ARGUS_AUTHORITY_URL`.
 
 Available tools:
-- Local `stdio`: `search_web`, `extract_content`, `recover_url`, `expand_links`, `search_health`, `search_budgets`, `test_provider`, `cookie_health`, `valyu_answer`
-- Remote HTTP MCP: `search_web`, `extract_content`, `recover_url`, `expand_links`, `valyu_answer`; authenticated remote servers also expose `search_health`, `search_budgets`, `test_provider`, and `cookie_health`
+- HTTP-backed stdio and remote MCP: `search_web`, `extract_content`,
+  `recover_url`, `expand_links`, `search_health`, `search_budgets`,
+  `recover_dead_article`, `capture_site`, and `build_research_pack`
+- Explicit standalone development additionally exposes local-only
+  `test_provider`, `cookie_health`, `valyu_answer`, path/file tools, and
+  resources. These are intentionally absent from production adapters.
 
 `search_web` accepts `free_only=true` to restrict results to free (tier-0) providers only, and `include_attribution=true` to include per-provider score attribution in the Markdown response.
 
@@ -494,20 +534,24 @@ Available tools:
 
 Two transports, one rule: **agents use MCP, everything else uses HTTP.**
 
-- **MCP** (`argus mcp serve`, or remote streamable-http on the canonical
-  deployment) — for AI harnesses that speak MCP natively: Claude Code,
-  Cursor, Codex, Hermes. Core tools: `search_web`, `extract_content`,
-  `recover_url`, `expand_links`, `build_research_pack` (+
-  `read_pack_file` for piping pack artifacts onward).
+- **MCP** (`argus mcp serve`) — a stateless authenticated adapter for AI
+  harnesses that speak MCP natively. Core tools delegate to the HTTP authority:
+  `search_web`, `extract_content`, `recover_url`, `expand_links`, and workflow
+  starts. MCP restarts cannot fork accounting, sessions, health, or outbox state.
 - **HTTP** (`POST /api/search`, `POST /api/extract`,
   `POST /api/workflows/...`) — for scripts, cron jobs, and service
-  integrations (e.g. Clio). Send `Authorization: Bearer $ARGUS_API_KEY`
-  and always set `"caller"` in the request body for attribution.
+  integrations (including Maya). Send a scoped caller credential in
+  `Authorization`; body `"caller"` values are diagnostic labels and cannot
+  override the authenticated identity.
 
 The cross-service transport and role contract for the wider fleet
-(Clio / Maya / Hermes / Argus) is canonical in
-[khamel83/maya docs/CONTEXT-CONTRACT.md](https://github.com/Khamel83/maya/blob/main/docs/CONTEXT-CONTRACT.md).
+(Maya / Hermes / Argus) is canonical in
+[Maya's architecture documentation](https://github.com/Khamel83/maya/blob/main/docs/ARCHITECTURE.md).
 ### Python
+
+Direct broker and extraction imports are a standalone development convenience.
+Production Python callers use the authenticated HTTP API so all execution and
+durable accounting remain in one authority.
 
 ```python
 from argus.broker.router import create_broker
@@ -562,10 +606,10 @@ Caller (CLI/HTTP/MCP/Python) → SearchBroker → tier-sorted providers → RRF 
 | `argus/providers/` | Provider adapters (one per search API) |
 | `argus/extraction/` | 12-step URL extraction fallback chain with quality gates |
 | `argus/sessions/` | Multi-turn session store and query refinement |
-| `argus/api/` | FastAPI HTTP endpoints |
-| `argus/cli/` | Click CLI commands |
-| `argus/mcp/` | MCP server for LLM integration |
-| `argus/persistence/` | SQLite (default) or PostgreSQL query/result storage |
+| `argus/api/` | Authenticated production execution authority |
+| `argus/cli/` | HTTP caller in production; direct execution in development |
+| `argus/mcp/` | Stateless MCP-to-HTTP adapter |
+| `argus/persistence/` | Shared PostgreSQL authority state; SQLite standalone development |
 
 Add new providers or extractors with a single adapter file. See [CONTRIBUTING.md](CONTRIBUTING.md) for the interface.
 
@@ -592,7 +636,11 @@ query arrives → cache? → build provider queue → execute sequentially → R
 
 5. **Dedup and truncate.** URLs are normalized (stripped `www.`, tracking params like `utm_*`, trailing slashes) and deduplicated. The merged list is truncated to `max_results` (default 10).
 
-6. **Cache and persist.** The final response is written to the in-memory cache and persisted to the local SQLite database (default) or PostgreSQL. Search results and extractions include rich provenance metadata (`egress`, `machine`, `source_type`) for downstream audit. Existing databases are upgraded additively for these provenance columns at startup.
+6. **Cache and persist.** The authority writes the final response to its
+   in-memory cache and configured SQL repository (PostgreSQL in production,
+   SQLite for standalone development). Search results and extractions include
+   provenance metadata (`egress`, `machine`, `source_type`) for downstream
+   audit. Existing databases are upgraded additively at startup.
 
 ## Configuration
 
@@ -602,7 +650,10 @@ When running from the repo, Argus now auto-loads `.env` and `.env.local` (withou
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ARGUS_NODE_ROLE` | `primary` | `primary`, `worker`, `caller`, or `dev` |
+| `ARGUS_NODE_ROLE` | `primary` | Production authority is `primary`; adapters are `caller`; direct/worker execution is development-only |
+| `ARGUS_AUTHORITY_URL` | — | HTTP API base URL required by production CLI and MCP adapters |
+| `ARGUS_AUTHORITY_TOKEN` | — | Scoped caller token for production CLI and MCP adapters |
+| `ARGUS_MCP_STANDALONE` | `false` | Explicit development-only local MCP execution |
 | `ARGUS_EGRESS_TYPE` | `unknown` | `residential`, `datacenter`, or `unknown` |
 | `ARGUS_RESIDENTIAL_POLICY` | `fallback` | `off`, `fallback`, `prefer_on_datacenter`, `prefer_for_domains`, or `always` |
 | `ARGUS_SEARXNG_ENABLED` | `false` | Set `true` when you have a SearXNG Docker container |
