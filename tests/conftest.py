@@ -7,14 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from argus.provider_controls import HERMETIC_PROVIDER_ENV_PREFIXES
 
 _RUNTIME_ROOT: Path | None = None
 _SAFE_ENV: dict[str, str] = {}
-_PROVIDERS = (
-    "SEARXNG", "BRAVE", "SERPER", "TAVILY", "EXA", "SEARCHAPI", "YOU",
-    "PARALLEL", "LINKUP", "VALYU", "GITHUB", "YAHOO", "WOLFRAM", "JINA",
-    "FIRECRAWL",
-)
 
 
 def pytest_configure(config):
@@ -39,7 +35,7 @@ def pytest_configure(config):
         "ARGUS_CRAWL4AI_ENABLED": "false",
         "ARGUS_YOU_CONTENTS_ENABLED": "false",
     })
-    for provider in _PROVIDERS:
+    for provider in HERMETIC_PROVIDER_ENV_PREFIXES:
         _SAFE_ENV[f"ARGUS_{provider}_ENABLED"] = "false"
     os.environ.update(_SAFE_ENV)
 

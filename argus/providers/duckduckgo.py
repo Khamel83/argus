@@ -11,6 +11,7 @@ import time
 import importlib.util
 from typing import List, Tuple
 
+from argus.config import ProviderConfig
 from argus.logging import get_logger
 from argus.models import (
     ProviderName,
@@ -25,8 +26,9 @@ logger = get_logger("providers.duckduckgo")
 
 
 class DuckDuckGoProvider(BaseProvider):
-    def __init__(self):
-        self._available = self._check_available()
+    def __init__(self, config: ProviderConfig | None = None):
+        self._config = config or ProviderConfig(enabled=True)
+        self._available = self._config.enabled and self._check_available()
 
     def _check_available(self) -> bool:
         return importlib.util.find_spec("ddgs") is not None
@@ -39,6 +41,8 @@ class DuckDuckGoProvider(BaseProvider):
         return self._available
 
     def status(self) -> ProviderStatus:
+        if not self._config.enabled:
+            return ProviderStatus.DISABLED_BY_CONFIG
         if not self._available:
             return ProviderStatus.UNAVAILABLE_MISSING_KEY
         return ProviderStatus.ENABLED
@@ -50,7 +54,11 @@ class DuckDuckGoProvider(BaseProvider):
             return [], ProviderTrace(
                 provider=self.name,
                 status="skipped",
-                error="ddgs package not installed (pip install ddgs)",
+                error=(
+                    "disabled by config"
+                    if not self._config.enabled
+                    else "ddgs package not installed (pip install ddgs)"
+                ),
             )
 
         try:

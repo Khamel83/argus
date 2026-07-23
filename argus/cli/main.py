@@ -595,7 +595,7 @@ def doctor(as_json):
     # 4. DuckDuckGo probe
     try:
         from argus.providers.duckduckgo import DuckDuckGoProvider
-        ddg = DuckDuckGoProvider()
+        ddg = DuckDuckGoProvider(cfg.duckduckgo)
         checks.append(("DuckDuckGo", ddg.is_available(), "available" if ddg.is_available() else "not available"))
     except Exception as e:
         checks.append(("DuckDuckGo", False, str(e)))

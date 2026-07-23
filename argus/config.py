@@ -116,6 +116,9 @@ class ArgusConfig:
     provider_cooldown_minutes: int = 60
     default_max_results: int = 10
     searxng: SearXNGConfig = field(default_factory=SearXNGConfig)
+    duckduckgo: ProviderConfig = field(
+        default_factory=lambda: ProviderConfig(enabled=True)
+    )
     brave: ProviderConfig = field(default_factory=ProviderConfig)
     serper: ProviderConfig = field(default_factory=ProviderConfig)
     tavily: ProviderConfig = field(default_factory=ProviderConfig)
@@ -342,6 +345,10 @@ class EnvironmentConfigLoader:
                 ),
                 residential_base_url=self.get_str("ARGUS_SEARXNG_RESIDENTIAL_BASE_URL"),
                 timeout_seconds=self.get_int("ARGUS_SEARXNG_TIMEOUT_SECONDS", 12),
+            ),
+            duckduckgo=self.provider_config(
+                "DUCKDUCKGO",
+                enabled_default=True,
             ),
             brave=self.provider_config("BRAVE", enabled_default=False, budget_default=2000.0),
             serper=self.provider_config("SERPER", enabled_default=False, budget_default=2500.0),

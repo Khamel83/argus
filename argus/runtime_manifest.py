@@ -1,5 +1,7 @@
 """Offline validation for the runtime identity baked into production images."""
 
+import hashlib
+import importlib.util
 import json
 import re
 from pathlib import Path
@@ -10,13 +12,18 @@ class RuntimeManifestError(ValueError):
     """Raised when a runtime image cannot prove its required identity."""
 
 
-_REQUIRED_CAPABILITIES = {
-    "http_api",
-    "mcp",
-    "trafilatura",
-    "playwright_browser",
-    "crawl4ai",
-    "obscura",
+EXPECTED_RUNTIME_CAPABILITIES = {
+    "http_api": True,
+    "mcp": True,
+    "trafilatura": True,
+    "playwright_browser": False,
+    "crawl4ai": False,
+    "obscura": False,
+}
+_CAPABILITY_MODULES = {
+    "http_api": "fastapi",
+    "mcp": "mcp",
+    "trafilatura": "trafilatura",
 }
 _LOCK_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -40,8 +47,21 @@ def admit_runtime_manifest(path: Path | str, *, package_version: str) -> dict[st
         raise RuntimeManifestError(
             "runtime manifest package version does not match installed package version"
         )
-    if not _LOCK_SHA256.fullmatch(str(manifest.get("lock_sha256", ""))):
+    lock_digest = str(manifest.get("lock_sha256", ""))
+    if not _LOCK_SHA256.fullmatch(lock_digest):
         raise RuntimeManifestError("runtime manifest has an invalid lock identity")
+    lock_file = manifest.get("lock_file")
+    if not isinstance(lock_file, str) or not lock_file:
+        raise RuntimeManifestError("runtime manifest is missing baked lock artifact")
+    relative_lock = Path(lock_file)
+    if relative_lock.is_absolute() or ".." in relative_lock.parts:
+        raise RuntimeManifestError("runtime manifest has an unsafe baked lock path")
+    lock_path = manifest_path.parent / relative_lock
+    if not lock_path.is_file():
+        raise RuntimeManifestError(f"baked lock artifact is missing: {lock_path}")
+    actual_lock_digest = hashlib.sha256(lock_path.read_bytes()).hexdigest()
+    if actual_lock_digest != lock_digest:
+        raise RuntimeManifestError("baked lock artifact does not match lock identity")
 
     schema = manifest.get("schema")
     if not isinstance(schema, dict) or not all(
@@ -54,12 +74,17 @@ def admit_runtime_manifest(path: Path | str, *, package_version: str) -> dict[st
     capabilities = manifest.get("capabilities")
     if not isinstance(capabilities, dict):
         raise RuntimeManifestError("runtime manifest is missing runtime capabilities")
-    missing = sorted(_REQUIRED_CAPABILITIES.difference(capabilities))
-    if missing:
+    if capabilities != EXPECTED_RUNTIME_CAPABILITIES:
+        raise RuntimeManifestError("runtime manifest capabilities do not match image contract")
+    missing_modules = sorted(
+        capability
+        for capability, module in _CAPABILITY_MODULES.items()
+        if capabilities[capability] and importlib.util.find_spec(module) is None
+    )
+    if missing_modules:
         raise RuntimeManifestError(
-            f"runtime manifest is missing required capabilities: {', '.join(missing)}"
+            "runtime capability dependencies are missing: "
+            + ", ".join(missing_modules)
         )
-    if any(not isinstance(capabilities[name], bool) for name in _REQUIRED_CAPABILITIES):
-        raise RuntimeManifestError("runtime manifest capabilities must be booleans")
 
     return manifest

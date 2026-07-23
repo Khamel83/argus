@@ -1,5 +1,7 @@
 """Production-like configuration must not enable external services implicitly."""
 
+from argus.provider_controls import HERMETIC_PROVIDER_ENV_PREFIXES
+
 
 def test_production_configuration_is_explicit_and_has_no_provider_credentials(tmp_path):
     from argus.config import load_config
@@ -15,11 +17,7 @@ def test_production_configuration_is_explicit_and_has_no_provider_credentials(tm
         "ARGUS_EGRESS_NODES": "",
         "ARGUS_RESIDENTIAL_SHARED_SECRET": "",
     }
-    for provider in (
-        "SEARXNG", "BRAVE", "SERPER", "TAVILY", "EXA", "SEARCHAPI", "YOU",
-        "PARALLEL", "LINKUP", "VALYU", "GITHUB", "YAHOO", "WOLFRAM", "JINA",
-        "FIRECRAWL",
-    ):
+    for provider in HERMETIC_PROVIDER_ENV_PREFIXES:
         environment[f"ARGUS_{provider}_ENABLED"] = "false"
 
     config = load_config(environ=environment)
@@ -31,7 +29,8 @@ def test_production_configuration_is_explicit_and_has_no_provider_credentials(tm
     assert all(
         not provider.enabled
         for provider in (
-            config.searxng, config.brave, config.serper, config.tavily, config.exa,
+            config.searxng, config.duckduckgo, config.brave, config.serper,
+            config.tavily, config.exa,
             config.searchapi, config.you, config.parallel, config.linkup, config.valyu,
             config.github, config.yahoo, config.wolfram, config.jina, config.firecrawl,
         )

@@ -60,6 +60,21 @@ jobs:
       - name: Verify production-like configuration
         run: uv run pytest tests/test_production_config.py -v --tb=short
 
+  image-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build production image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          build-args: |
+            VCS_REF=${{ github.sha }}
+
   freshness:
     runs-on: ubuntu-latest
     steps:

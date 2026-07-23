@@ -1,6 +1,6 @@
 FROM ghcr.io/astral-sh/uv:0.11.26 AS uv
 
-FROM python:3.12-slim AS builder
+FROM python:3.12.13-slim-bookworm AS builder
 
 WORKDIR /app
 COPY --from=uv /uv /uvx /bin/
@@ -8,7 +8,7 @@ COPY --from=uv /uv /uvx /bin/
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
 
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --extra mcp --no-install-project
 
 COPY argus/ ./argus/
@@ -21,7 +21,7 @@ RUN python scripts/build_runtime_manifest.py \
     --source-revision "${VCS_REF}" \
     --lock-file uv.lock
 
-FROM python:3.12-slim
+FROM python:3.12.13-slim-bookworm
 
 WORKDIR /app
 
@@ -31,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/argus /app/argus
+COPY --from=builder /app/uv.lock /app/uv.lock
 COPY --from=builder /app/runtime-manifest.json /app/runtime-manifest.json
 
 ENV PATH="/app/.venv/bin:${PATH}" \

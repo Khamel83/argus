@@ -39,7 +39,7 @@ def _get_provider(provider_name: str) -> BaseProvider:
         return YahooProvider(cfg.yahoo)
     if name == ProviderName.DUCKDUCKGO:
         from argus.providers.duckduckgo import DuckDuckGoProvider
-        return DuckDuckGoProvider()
+        return DuckDuckGoProvider(cfg.duckduckgo)
     if name == ProviderName.SEARXNG:
         from argus.providers.searxng import SearXNGProvider
         return SearXNGProvider(cfg.searxng)

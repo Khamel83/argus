@@ -29,6 +29,15 @@ def test_ci_runs_the_suite_with_hermetic_runtime_configuration():
     assert "tests/test_production_config.py" in ci
 
 
+def test_pull_request_ci_builds_the_production_image_without_pushing():
+    ci = (REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "image-build:" in ci
+    assert "docker/build-push-action@v5" in ci
+    assert "push: false" in ci
+    assert "VCS_REF=${{ github.sha }}" in ci
+
+
 def test_production_dockerfile_uses_the_frozen_lock_and_bakes_runtime_manifest():
     dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
 
@@ -37,3 +46,5 @@ def test_production_dockerfile_uses_the_frozen_lock_and_bakes_runtime_manifest()
     assert "runtime-manifest.json" in dockerfile
     assert "image-admission" in dockerfile
     assert "ARG VCS_REF\n" in dockerfile
+    assert "COPY pyproject.toml uv.lock README.md ./" in dockerfile
+    assert dockerfile.count("FROM python:3.12.13-slim-bookworm") == 2

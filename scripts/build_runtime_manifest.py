@@ -7,6 +7,8 @@ import json
 import tomllib
 from pathlib import Path
 
+from argus.runtime_manifest import EXPECTED_RUNTIME_CAPABILITIES
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -21,15 +23,9 @@ def main() -> int:
         "source_revision": args.source_revision,
         "package_version": package["version"],
         "schema": {"minimum": 1, "maximum": 1},
+        "lock_file": args.lock_file.name,
         "lock_sha256": hashlib.sha256(args.lock_file.read_bytes()).hexdigest(),
-        "capabilities": {
-            "http_api": True,
-            "mcp": True,
-            "trafilatura": True,
-            "playwright_browser": False,
-            "crawl4ai": False,
-            "obscura": False,
-        },
+        "capabilities": EXPECTED_RUNTIME_CAPABILITIES,
     }
     args.output.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return 0

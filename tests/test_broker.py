@@ -593,6 +593,17 @@ class TestRouter:
         assert ProviderName.BRAVE in broker._providers
         assert len(broker._providers) == 14  # added yahoo + wolfram
 
+    def test_create_broker_honors_disabled_duckduckgo(self, monkeypatch):
+        from argus.broker.router import create_broker
+        from argus.config import reset_config
+
+        monkeypatch.setenv("ARGUS_DUCKDUCKGO_ENABLED", "false")
+        reset_config()
+
+        broker = create_broker()
+
+        assert broker._providers[ProviderName.DUCKDUCKGO].is_available() is False
+
     @pytest.mark.asyncio
     async def test_free_providers_always_queried(self, monkeypatch):
         """Tier 0 providers are always queried; paid fallback runs if free results are insufficient."""
