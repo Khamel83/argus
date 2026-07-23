@@ -25,6 +25,7 @@ def _valid_evidence() -> dict:
             "databases": ["atlas", "argus"],
             "globals_validated": True,
             "schema_head": "0004_operation_ledger",
+            "backup_manifest_sha256": "a" * 64,
             "checks": {
                 "schema": True,
                 "row_counts": True,
@@ -135,6 +136,20 @@ def test_restore_schema_head_must_match_current_migration_head(tmp_path):
     evidence = _valid_evidence()
     evidence["restore"]["schema_head"] = "0003_request_routing_fields"
     path = tmp_path / "old-schema.json"
+    path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    status = evaluate_recovery_evidence(path, now=NOW)
+
+    assert status["schema_promotion_allowed"] is False
+    assert status["reasons"] == ["restore_verification_failed"]
+
+
+def test_restore_evidence_must_be_bound_to_current_backup_manifest(tmp_path):
+    from argus.recovery.evidence import evaluate_recovery_evidence
+
+    evidence = _valid_evidence()
+    evidence["restore"]["backup_manifest_sha256"] = "b" * 64
+    path = tmp_path / "replayed-restore.json"
     path.write_text(json.dumps(evidence), encoding="utf-8")
 
     status = evaluate_recovery_evidence(path, now=NOW)

@@ -19,6 +19,4 @@ esac
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 python3 "$script_dir/postgres_recovery.py" import \
-    --search-source "$LEGACY_SEARCH_DB_URL" \
-    --session-source "$LEGACY_SESSION_DB_URL" \
     $apply

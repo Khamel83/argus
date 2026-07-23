@@ -114,6 +114,8 @@ def evaluate_recovery_evidence(
     restore_verified = (
         restore_scope_complete
         and restore.get("schema_head") == EXPECTED_SCHEMA_HEAD
+        and restore.get("backup_manifest_sha256")
+        == backup.get("manifest_sha256")
         and all(checks.get(name) is True for name in REQUIRED_RESTORE_CHECKS)
     )
 

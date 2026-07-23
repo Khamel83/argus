@@ -6,16 +6,24 @@ import json
 import os
 import re
 import shutil
+import stat
 import tempfile
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from argus.recovery.operator import retained_snapshot_names
+from argus.recovery.artifacts import load_verified_backup_set
+from argus.recovery.operator import (
+    BACKUP_ROOT_MARKER,
+    retained_snapshot_names,
+    validate_backup_root,
+)
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SNAPSHOT = re.compile(r"^\d{8}T\d{6}Z$")
+_SNAPSHOT_MARKER = ".argus-backup-set.json"
 _RESTORE_CHECKS = (
     "schema",
     "row_counts",
@@ -50,6 +58,7 @@ def _restore_record(value: object) -> dict[str, Any] | None:
         "databases": ["atlas", "argus"],
         "globals_validated": value.get("globals_validated") is True,
         "schema_head": value.get("schema_head"),
+        "backup_manifest_sha256": value.get("backup_manifest_sha256"),
         "checks": {name: checks.get(name) is True for name in _RESTORE_CHECKS},
     }
 
@@ -94,7 +103,7 @@ def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
             pass
 
 
-def record_backup(
+def _record_backup(
     path: Path | str,
     *,
     completed_at: str,
@@ -121,7 +130,7 @@ def record_backup(
     _atomic_write(evidence_path, payload)
 
 
-def record_restore(
+def _record_restore(
     path: Path | str,
     *,
     schema_head: str,
@@ -138,40 +147,257 @@ def record_restore(
         "databases": ["atlas", "argus"],
         "globals_validated": True,
         "schema_head": schema_head.strip(),
+        "backup_manifest_sha256": payload["backup"]["manifest_sha256"],
         "checks": {name: True for name in _RESTORE_CHECKS},
     }
     _atomic_write(evidence_path, payload)
 
 
+def record_verified_backup(
+    path: Path | str,
+    *,
+    backup_set: Path | str,
+    root: Path | str,
+    live_data: Path | str,
+) -> None:
+    """Record evidence derived from a checksum-verified owned backup set."""
+    verified = load_verified_backup_set(
+        backup_set,
+        root=root,
+        live_data=live_data,
+    )
+    evidence_path = Path(path)
+    existing = _existing(evidence_path)
+    prior = existing.get("backup")
+    if isinstance(prior, dict) and prior.get("completed_at"):
+        prior_at = datetime.fromisoformat(str(prior["completed_at"]))
+        if verified["completed_at"] < prior_at:
+            raise ValueError("refusing older backup evidence replay")
+        if (
+            verified["completed_at"] == prior_at
+            and prior.get("manifest_sha256") != verified["manifest_sha256"]
+        ):
+            raise ValueError("refusing changed backup manifest for same timestamp")
+    _record_backup(
+        evidence_path,
+        completed_at=verified["completed_at"].strftime("%Y%m%dT%H%M%SZ"),
+        manifest_sha256=verified["manifest_sha256"],
+    )
+
+
+def record_verified_restore(
+    path: Path | str,
+    *,
+    backup_set: Path | str,
+    root: Path | str,
+    live_data: Path | str,
+    argus_database: str,
+    atlas_database: str,
+    verified_at: datetime | None = None,
+    verify_source=None,
+    migrate_argus=None,
+    verify_argus=None,
+    verify_atlas=None,
+) -> None:
+    """Verify restored databases against their source manifest before evidence."""
+    from argus.recovery.database import (
+        verify_argus_database,
+        verify_atlas_database,
+        verify_restored_source_inventory,
+    )
+    from argus.recovery.operator import validate_scratch_database
+
+    verified = load_verified_backup_set(
+        backup_set,
+        root=root,
+        live_data=live_data,
+    )
+    evidence_path = Path(path)
+    existing = _existing(evidence_path)
+    backup = existing.get("backup")
+    if (
+        not isinstance(backup, dict)
+        or backup.get("manifest_sha256") != verified["manifest_sha256"]
+    ):
+        raise ValueError("restore proof is not bound to current backup evidence")
+    argus_name = validate_scratch_database(argus_database)
+    atlas_name = validate_scratch_database(atlas_database, tenant="atlas")
+    source_verifier = verify_source or (
+        lambda database, tenant, expected: verify_restored_source_inventory(
+            database,
+            tenant=tenant,
+            expected_inventory=expected,
+        )
+    )
+    source_verifier(
+        argus_name,
+        "argus",
+        verified["databases"]["argus"],
+    )
+    source_verifier(
+        atlas_name,
+        "atlas",
+        verified["databases"]["atlas"],
+    )
+    if migrate_argus is None:
+        from alembic import command
+        from alembic.config import Config
+
+        def migrate_argus(database):
+            repository_root = Path(__file__).parents[2]
+            config = Config(str(repository_root / "alembic.ini"))
+            config.set_main_option(
+                "script_location",
+                str(repository_root / "migrations"),
+            )
+            config.set_main_option(
+                "sqlalchemy.url",
+                f"postgresql+psycopg2:///{database}",
+            )
+            command.upgrade(config, "head")
+    migrate_argus(argus_name)
+    argus_verifier = verify_argus or (
+        lambda database, expected: verify_argus_database(database)
+    )
+    atlas_verifier = verify_atlas or (
+        lambda database, expected: verify_atlas_database(
+            database,
+            expected_inventory=expected,
+        )
+    )
+    argus_report = argus_verifier(
+        argus_name,
+        None,
+    )
+    atlas_report = atlas_verifier(
+        atlas_name,
+        verified["databases"]["atlas"],
+    )
+    required_argus = set(_RESTORE_CHECKS)
+    if (
+        not all(argus_report.get("checks", {}).get(name) is True for name in required_argus)
+        or not all(
+            atlas_report.get("checks", {}).get(name) is True
+            for name in ("schema", "row_counts", "integrity")
+        )
+    ):
+        raise ValueError("restore verification did not pass every required check")
+    _record_restore(
+        evidence_path,
+        schema_head=str(argus_report["schema_head"]),
+        verified_at=verified_at,
+    )
+
+
 def prune_snapshots(
     root: Path | str,
     *,
+    live_data: Path | str,
     apply: bool = False,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Prune only timestamp-named child directories under an explicit backup root."""
-    root_path = Path(root)
-    if not root_path.is_absolute():
-        raise ValueError("backup root must be absolute")
-    resolved = root_path.resolve()
-    if resolved == Path("/") or len(resolved.parts) < 3 or not resolved.is_dir():
-        raise ValueError("backup root is unsafe or unavailable")
-
-    names = sorted(
-        child.name
-        for child in resolved.iterdir()
-        if child.is_dir() and _SNAPSHOT.fullmatch(child.name)
+    """Prune only owned snapshot directories under a validated backup root."""
+    resolved = validate_backup_root(root, live_data=live_data)
+    if apply and not shutil.rmtree.avoids_symlink_attacks:
+        raise RuntimeError("platform lacks symlink-safe recursive deletion")
+    root_payload = json.loads(
+        (resolved / BACKUP_ROOT_MARKER).read_text(encoding="utf-8")
     )
-    kept = retained_snapshot_names(names, now=now)
-    removed = sorted(set(names) - kept)
-    if apply:
-        for name in removed:
-            target = resolved / name
-            if target.parent != resolved or _SNAPSHOT.fullmatch(target.name) is None:
-                raise ValueError("refusing unsafe retention target")
-            shutil.rmtree(target)
+    root_id = root_payload["root_id"]
+    root_fd = os.open(
+        resolved,
+        os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+    )
+    removed: list[str] = []
+    try:
+        names = []
+        for name in sorted(os.listdir(root_fd)):
+            if _SNAPSHOT.fullmatch(name) is None:
+                continue
+            metadata = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+            if stat.S_ISLNK(metadata.st_mode):
+                raise ValueError("refusing timestamp-named symlink")
+            if not stat.S_ISDIR(metadata.st_mode):
+                continue
+            if _read_snapshot_owner_at(root_fd, name) == root_id:
+                names.append(name)
+        kept = retained_snapshot_names(names, now=now)
+        candidates = sorted(set(names) - kept)
+        if apply:
+            for name in candidates:
+                if _remove_owned_snapshot(root_fd, name, root_id):
+                    removed.append(name)
+        else:
+            removed = candidates
+    finally:
+        os.close(root_fd)
     return {
         "applied": apply,
         "kept": sorted(kept),
         "removed": removed,
     }
+
+
+def _read_snapshot_owner_at(directory_fd: int, name: str) -> str | None:
+    """Read an owned snapshot marker without following either directory symlink."""
+    try:
+        child_fd = os.open(
+            name,
+            os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=directory_fd,
+        )
+    except OSError:
+        return None
+    try:
+        marker_fd = os.open(
+            _SNAPSHOT_MARKER,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=child_fd,
+        )
+        try:
+            metadata = os.fstat(marker_fd)
+            if not stat.S_ISREG(metadata.st_mode):
+                return None
+            data = b""
+            while True:
+                chunk = os.read(marker_fd, 65536)
+                if not chunk:
+                    break
+                data += chunk
+                if len(data) > 1024 * 1024:
+                    return None
+        finally:
+            os.close(marker_fd)
+    except OSError:
+        return None
+    finally:
+        os.close(child_fd)
+    try:
+        payload = json.loads(data)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        return None
+    root_id = payload.get("root_id")
+    return root_id if isinstance(root_id, str) else None
+
+
+def _remove_owned_snapshot(directory_fd: int, name: str, root_id: str) -> bool:
+    """Atomically quarantine, revalidate, then remove one owned snapshot."""
+    if _SNAPSHOT.fullmatch(name) is None:
+        raise ValueError("refusing unsafe retention target")
+    quarantine = f".pruning.{name}.{uuid.uuid4().hex}"
+    os.rename(name, quarantine, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+    if _read_snapshot_owner_at(directory_fd, quarantine) != root_id:
+        try:
+            os.rename(
+                quarantine,
+                name,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+            )
+        except OSError:
+            pass
+        return False
+    shutil.rmtree(quarantine, dir_fd=directory_fd)
+    return True

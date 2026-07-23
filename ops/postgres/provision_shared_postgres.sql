@@ -16,6 +16,42 @@ FROM (
 WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name)
 \gexec
 
+-- Existing same-named roles are untrusted input. Normalize every capability
+-- before any database or schema grant, while leaving authentication material
+-- to the operator's external secret-management step.
+ALTER ROLE atlas_owner NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE argus_owner NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE atlas_migration LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE atlas_runtime LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE atlas_readonly LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE atlas_backup LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE argus_migration LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE argus_runtime LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE argus_readonly LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+ALTER ROLE argus_backup LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+
+-- Strip both directions of inherited membership. This prevents a poisoned
+-- pre-existing role from retaining another role's privileges or granting a
+-- tenant role to an unexpected principal.
+SELECT format('REVOKE %I FROM %I', parent.rolname, member.rolname)
+FROM pg_auth_members membership
+JOIN pg_roles parent ON parent.oid = membership.roleid
+JOIN pg_roles member ON member.oid = membership.member
+WHERE member.rolname IN (
+    'atlas_owner', 'atlas_migration', 'atlas_runtime', 'atlas_readonly', 'atlas_backup',
+    'argus_owner', 'argus_migration', 'argus_runtime', 'argus_readonly', 'argus_backup'
+)
+\gexec
+SELECT format('REVOKE %I FROM %I', parent.rolname, member.rolname)
+FROM pg_auth_members membership
+JOIN pg_roles parent ON parent.oid = membership.roleid
+JOIN pg_roles member ON member.oid = membership.member
+WHERE parent.rolname IN (
+    'atlas_owner', 'atlas_migration', 'atlas_runtime', 'atlas_readonly', 'atlas_backup',
+    'argus_owner', 'argus_migration', 'argus_runtime', 'argus_readonly', 'argus_backup'
+)
+\gexec
+
 SELECT 'CREATE DATABASE atlas OWNER atlas_owner'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'atlas')
 \gexec

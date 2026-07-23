@@ -1,13 +1,122 @@
 import json
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 
 NOW = datetime(2026, 7, 23, 8, tzinfo=timezone.utc)
 
 
-def test_backup_record_is_atomic_sanitized_and_preserves_restore(tmp_path):
-    from argus.recovery.records import record_backup
+def _owned_root(tmp_path):
+    from argus.recovery.operator import initialize_backup_root
 
+    live = tmp_path / "live"
+    live.mkdir()
+    root = tmp_path / "backups"
+    root.mkdir()
+    marker = initialize_backup_root(root, live_data=live)
+    return root, live, marker["root_id"]
+
+
+def _owned_snapshot(root, name, root_id):
+    snapshot = root / name
+    snapshot.mkdir()
+    (snapshot / ".argus-backup-set.json").write_text(
+        json.dumps({"schema_version": 1, "root_id": root_id}),
+        encoding="utf-8",
+    )
+    return snapshot
+
+
+def _backup_set(tmp_path, name="20260723T060000Z"):
+    from argus.recovery.database import COUNTED_TABLES
+
+    root, live, root_id = _owned_root(tmp_path)
+    snapshot = root / name
+    snapshot.mkdir()
+    files = {}
+    for filename, content in (
+        ("atlas.dump", b"atlas archive"),
+        ("argus.dump", b"argus archive"),
+        ("globals.sql", b"CREATE ROLE example;"),
+        ("SHA256SUMS", b"checksums already validated\n"),
+    ):
+        (snapshot / filename).write_bytes(content)
+        files[filename] = hashlib.sha256(content).hexdigest()
+    inventory = {
+        "schema_sha256": "c" * 64,
+        "tables": {"example": 1},
+        "constraints_validated": True,
+    }
+    manifest = {
+        "schema_version": 1,
+        "root_id": root_id,
+        "completed_at": "2026-07-23T06:00:00+00:00",
+        "databases": {
+            "atlas": inventory,
+            "argus": {
+                **inventory,
+                "tables": {table: 0 for table in COUNTED_TABLES},
+            },
+        },
+        "files": files,
+        "globals_without_passwords": True,
+        "archive_format": "custom",
+    }
+    (snapshot / ".argus-backup-set.json").write_text(
+        json.dumps(manifest, sort_keys=True),
+        encoding="utf-8",
+    )
+    return root, live, snapshot, manifest
+
+
+def test_backup_manifest_binds_archives_and_source_inventories(tmp_path):
+    from argus.recovery.artifacts import create_backup_manifest
+    from argus.recovery.database import COUNTED_TABLES
+
+    root, live, _ = _owned_root(tmp_path)
+    stage = root / ".staging.test"
+    stage.mkdir()
+    for filename, content in (
+        ("atlas.dump", b"atlas archive"),
+        ("argus.dump", b"argus archive"),
+        ("globals.sql", b"CREATE ROLE example;"),
+        ("SHA256SUMS", b"validated checksums\n"),
+    ):
+        (stage / filename).write_bytes(content)
+    inventories = {
+        "atlas": {
+            "schema_sha256": "a" * 64,
+            "tables": {"atlas_items": 3},
+            "constraints_validated": True,
+        },
+        "argus": {
+            "schema_sha256": "b" * 64,
+            "tables": {table: 0 for table in COUNTED_TABLES},
+            "constraints_validated": True,
+        },
+    }
+
+    manifest = create_backup_manifest(
+        stage,
+        root=root,
+        live_data=live,
+        completed_at="20260723T060000Z",
+        inventory_collector=lambda database: inventories[database],
+    )
+
+    assert manifest["databases"] == inventories
+    assert manifest["files"]["atlas.dump"] == hashlib.sha256(
+        b"atlas archive"
+    ).hexdigest()
+    assert json.loads(
+        (stage / ".argus-backup-set.json").read_text(encoding="utf-8")
+    ) == manifest
+
+
+def test_backup_record_is_atomic_sanitized_and_preserves_restore(tmp_path):
+    from argus.recovery.records import record_verified_backup
+
+    root, live, snapshot, _ = _backup_set(tmp_path)
     evidence = tmp_path / "recovery.json"
     evidence.write_text(
         json.dumps(
@@ -32,10 +141,11 @@ def test_backup_record_is_atomic_sanitized_and_preserves_restore(tmp_path):
         encoding="utf-8",
     )
 
-    record_backup(
+    record_verified_backup(
         evidence,
-        completed_at="20260723T060000Z",
-        manifest_sha256="b" * 64,
+        backup_set=snapshot,
+        root=root,
+        live_data=live,
     )
 
     payload = json.loads(evidence.read_text())
@@ -49,61 +159,125 @@ def test_backup_record_is_atomic_sanitized_and_preserves_restore(tmp_path):
 
 
 def test_restore_record_only_claims_checks_after_successful_verifier(tmp_path):
-    from argus.recovery.records import record_restore
-
-    evidence = tmp_path / "recovery.json"
-    evidence.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "backup": {
-                    "completed_at": NOW.isoformat(),
-                    "databases": ["atlas", "argus"],
-                    "globals": True,
-                    "manifest_sha256": "a" * 64,
-                    "archive_format": "custom",
-                    "outside_live_data": True,
-                },
-            }
-        ),
-        encoding="utf-8",
+    from argus.recovery.records import (
+        record_verified_backup,
+        record_verified_restore,
     )
 
-    record_restore(evidence, schema_head="0004_operation_ledger", verified_at=NOW)
+    root, live, snapshot, manifest = _backup_set(tmp_path)
+    evidence = tmp_path / "recovery.json"
+    record_verified_backup(
+        evidence,
+        backup_set=snapshot,
+        root=root,
+        live_data=live,
+    )
+    checks = {
+        "schema": True,
+        "row_counts": True,
+        "integrity": True,
+        "argus_read_path": True,
+        "migration_compatible": True,
+    }
+    events = []
+
+    record_verified_restore(
+        evidence,
+        backup_set=snapshot,
+        root=root,
+        live_data=live,
+        argus_database="argus_restore_issue40_record",
+        atlas_database="atlas_restore_issue40_record",
+        verified_at=NOW,
+        verify_source=lambda database, tenant, expected: events.append(
+            f"source:{tenant}"
+        ),
+        migrate_argus=lambda database: events.append("migrate:argus"),
+        verify_argus=lambda database, expected: {
+            "schema_head": "0004_operation_ledger",
+            "inventory": expected,
+            "checks": checks,
+        },
+        verify_atlas=lambda database, expected: {
+            "inventory": expected,
+            "checks": {"schema": True, "row_counts": True, "integrity": True},
+        },
+    )
 
     restore = json.loads(evidence.read_text())["restore"]
     assert restore["databases"] == ["atlas", "argus"]
     assert restore["globals_validated"] is True
     assert all(restore["checks"].values())
     assert "scratch_database" not in restore
+    assert restore["backup_manifest_sha256"]
+    assert events == ["source:argus", "source:atlas", "migrate:argus"]
+
+
+def test_restore_record_refuses_source_mismatch_before_migration(tmp_path):
+    import pytest
+
+    from argus.recovery.records import (
+        record_verified_backup,
+        record_verified_restore,
+    )
+
+    root, live, snapshot, _ = _backup_set(tmp_path)
+    evidence = tmp_path / "evidence.json"
+    record_verified_backup(
+        evidence,
+        backup_set=snapshot,
+        root=root,
+        live_data=live,
+    )
+    migrated = False
+
+    def reject_source(database, tenant, expected):
+        raise RuntimeError("restored source inventory mismatch")
+
+    def migrate(database):
+        nonlocal migrated
+        migrated = True
+
+    with pytest.raises(RuntimeError, match="source inventory"):
+        record_verified_restore(
+            evidence,
+            backup_set=snapshot,
+            root=root,
+            live_data=live,
+            argus_database="argus_restore_issue40_mismatch",
+            atlas_database="atlas_restore_issue40_mismatch",
+            verify_source=reject_source,
+            migrate_argus=migrate,
+        )
+    assert migrated is False
 
 
 def test_pruning_removes_only_unretained_timestamped_snapshot_directories(tmp_path):
     from argus.recovery.records import prune_snapshots
 
+    root, live, root_id = _owned_root(tmp_path)
     for age in range(20):
         timestamp = NOW - timedelta(days=age)
-        (tmp_path / timestamp.strftime("%Y%m%dT%H%M%SZ")).mkdir()
-    unrelated = tmp_path / "operator-notes"
+        _owned_snapshot(root, timestamp.strftime("%Y%m%dT%H%M%SZ"), root_id)
+    unrelated = root / "operator-notes"
     unrelated.mkdir()
 
-    report = prune_snapshots(tmp_path, apply=True, now=NOW)
+    report = prune_snapshots(root, live_data=live, apply=True, now=NOW)
 
     assert report["removed"]
     assert unrelated.is_dir()
-    assert all((tmp_path / name).is_dir() for name in report["kept"])
-    assert all(not (tmp_path / name).exists() for name in report["removed"])
+    assert all((root / name).is_dir() for name in report["kept"])
+    assert all(not (root / name).exists() for name in report["removed"])
 
 
 def test_pruning_dry_run_does_not_mutate(tmp_path):
     from argus.recovery.records import prune_snapshots
 
-    old = tmp_path / "20250101T000000Z"
-    recent = tmp_path / "20260723T000000Z"
-    old.mkdir()
-    recent.mkdir()
+    root, live, root_id = _owned_root(tmp_path)
+    old = _owned_snapshot(root, "20250101T000000Z", root_id)
+    recent = _owned_snapshot(root, "20260723T000000Z", root_id)
 
-    report = prune_snapshots(tmp_path, apply=False, now=NOW)
+    report = prune_snapshots(root, live_data=live, apply=False, now=NOW)
 
     assert report["applied"] is False
     assert old.is_dir()
@@ -111,17 +285,19 @@ def test_pruning_dry_run_does_not_mutate(tmp_path):
 
 
 def test_record_refuses_to_overwrite_corrupt_existing_evidence(tmp_path):
-    from argus.recovery.records import record_backup
+    from argus.recovery.records import record_verified_backup
 
+    root, live, snapshot, _ = _backup_set(tmp_path)
     evidence = tmp_path / "recovery.json"
     evidence.write_text('{"restore":', encoding="utf-8")
     before = evidence.read_bytes()
 
     try:
-        record_backup(
+        record_verified_backup(
             evidence,
-            completed_at="20260723T080000Z",
-            manifest_sha256="a" * 64,
+            backup_set=snapshot,
+            root=root,
+            live_data=live,
         )
     except ValueError as error:
         assert "existing recovery evidence" in str(error)
@@ -130,16 +306,151 @@ def test_record_refuses_to_overwrite_corrupt_existing_evidence(tmp_path):
     assert evidence.read_bytes() == before
 
 
+def test_backup_record_rejects_tampered_archive(tmp_path):
+    import pytest
+
+    from argus.recovery.records import record_verified_backup
+
+    root, live, snapshot, _ = _backup_set(tmp_path)
+    (snapshot / "argus.dump").write_bytes(b"tampered")
+
+    with pytest.raises(ValueError, match="checksum"):
+        record_verified_backup(
+            tmp_path / "evidence.json",
+            backup_set=snapshot,
+            root=root,
+            live_data=live,
+        )
+
+
+def test_backup_record_rejects_replay_older_than_current_evidence(tmp_path):
+    import pytest
+
+    from argus.recovery.records import record_verified_backup
+
+    root, live, snapshot, _ = _backup_set(tmp_path)
+    evidence = tmp_path / "evidence.json"
+    evidence.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "backup": {
+                    "completed_at": "2026-07-24T06:00:00+00:00",
+                    "databases": ["atlas", "argus"],
+                    "globals": True,
+                    "manifest_sha256": "d" * 64,
+                    "archive_format": "custom",
+                    "outside_live_data": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="older backup"):
+        record_verified_backup(
+            evidence,
+            backup_set=snapshot,
+            root=root,
+            live_data=live,
+        )
+
+
+def test_backup_record_rejects_changed_manifest_for_same_timestamp(tmp_path):
+    import pytest
+
+    from argus.recovery.records import record_verified_backup
+
+    root, live, snapshot, _ = _backup_set(tmp_path)
+    evidence = tmp_path / "evidence.json"
+    evidence.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "backup": {
+                    "completed_at": "2026-07-23T06:00:00+00:00",
+                    "databases": ["atlas", "argus"],
+                    "globals": True,
+                    "manifest_sha256": "d" * 64,
+                    "archive_format": "custom",
+                    "outside_live_data": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="changed backup manifest"):
+        record_verified_backup(
+            evidence,
+            backup_set=snapshot,
+            root=root,
+            live_data=live,
+        )
+
+
 def test_pruning_never_deletes_future_dated_snapshot(tmp_path):
     from argus.recovery.records import prune_snapshots
 
-    future = tmp_path / "20270101T000000Z"
-    future.mkdir()
+    root, live, root_id = _owned_root(tmp_path)
+    future = _owned_snapshot(root, "20270101T000000Z", root_id)
     for age in range(20):
         timestamp = NOW - timedelta(days=age)
-        (tmp_path / timestamp.strftime("%Y%m%dT%H%M%SZ")).mkdir()
+        _owned_snapshot(root, timestamp.strftime("%Y%m%dT%H%M%SZ"), root_id)
 
-    report = prune_snapshots(tmp_path, apply=True, now=NOW)
+    report = prune_snapshots(root, live_data=live, apply=True, now=NOW)
 
     assert future.is_dir()
     assert future.name in report["kept"]
+
+
+def test_pruning_never_deletes_unowned_timestamp_directory(tmp_path):
+    from argus.recovery.records import prune_snapshots
+
+    root, live, root_id = _owned_root(tmp_path)
+    unowned = root / "20240101T000000Z"
+    unowned.mkdir()
+    _owned_snapshot(root, "20260723T000000Z", root_id)
+
+    report = prune_snapshots(root, live_data=live, apply=True, now=NOW)
+
+    assert unowned.is_dir()
+    assert unowned.name not in report["removed"]
+
+
+def test_pruning_rejects_timestamp_symlink(tmp_path):
+    import pytest
+
+    from argus.recovery.records import prune_snapshots
+
+    root, live, _ = _owned_root(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "20240101T000000Z").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink"):
+        prune_snapshots(root, live_data=live, apply=True, now=NOW)
+    assert outside.is_dir()
+
+
+def test_pruning_revalidates_ownership_after_atomic_quarantine(tmp_path, monkeypatch):
+    import argus.recovery.records as records
+
+    root, live, root_id = _owned_root(tmp_path)
+    target = _owned_snapshot(root, "20240101T000000Z", root_id)
+    original = records._read_snapshot_owner_at
+    calls = 0
+
+    def changed_owner(directory_fd, name):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            return "different-root"
+        return original(directory_fd, name)
+
+    monkeypatch.setattr(records, "_read_snapshot_owner_at", changed_owner)
+
+    report = records.prune_snapshots(root, live_data=live, apply=True, now=NOW)
+
+    assert report["removed"] == []
+    assert target.is_dir()

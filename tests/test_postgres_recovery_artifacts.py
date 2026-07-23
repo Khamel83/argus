@@ -34,21 +34,79 @@ def test_scratch_database_requires_explicit_disposable_name():
             validate_scratch_database(unsafe)
 
 
+def test_database_inputs_reject_uris_userinfo_passwords_and_query_secrets():
+    from argus.recovery.operator import (
+        validate_credential_free_database_url,
+        validate_database_name,
+    )
+
+    assert validate_database_name("argus", allowed={"argus"}) == "argus"
+    assert (
+        validate_credential_free_database_url(
+            "postgresql+psycopg2:///argus",
+            allowed_database="argus",
+        )
+        == "postgresql+psycopg2:///argus"
+    )
+    for unsafe in (
+        "postgresql://user:secret@host/argus",
+        "postgresql://host/argus?password=secret",
+        "postgresql://host/argus?sslkey=/secret/key",
+    ):
+        with pytest.raises(ValueError, match="credential-free"):
+            validate_credential_free_database_url(
+                unsafe,
+                allowed_database="argus",
+            )
+    for unsafe_name in ("postgresql://host/argus", "argus?password=x", "user@argus"):
+        with pytest.raises(ValueError, match="plain database name"):
+            validate_database_name(unsafe_name)
+
+
 def test_backup_root_must_be_canonically_outside_live_data(tmp_path):
-    from argus.recovery.operator import validate_backup_root
+    from argus.recovery.operator import (
+        initialize_backup_root,
+        validate_backup_root,
+    )
 
     live = tmp_path / "postgres-data"
     live.mkdir()
     outside = tmp_path / "backups"
     outside.mkdir()
 
+    initialize_backup_root(outside, live_data=live)
     assert validate_backup_root(outside, live_data=live) == outside.resolve()
     with pytest.raises(ValueError, match="outside"):
         validate_backup_root(live, live_data=live)
     nested = live / "logical-backups"
     nested.mkdir()
     with pytest.raises(ValueError, match="outside"):
-        validate_backup_root(nested, live_data=live)
+        initialize_backup_root(nested, live_data=live)
+    ancestor = tmp_path
+    with pytest.raises(ValueError, match="outside"):
+        initialize_backup_root(ancestor, live_data=live)
+    missing = tmp_path / "missing-live"
+    fresh = tmp_path / "fresh-backups"
+    fresh.mkdir()
+    with pytest.raises(ValueError, match="live data"):
+        initialize_backup_root(fresh, live_data=missing)
+
+
+def test_backup_root_requires_owned_marker_and_rejects_symlink(tmp_path):
+    from argus.recovery.operator import initialize_backup_root, validate_backup_root
+
+    live = tmp_path / "live"
+    live.mkdir()
+    root = tmp_path / "backups"
+    root.mkdir()
+    with pytest.raises(ValueError, match="marker"):
+        validate_backup_root(root, live_data=live)
+
+    initialize_backup_root(root, live_data=live)
+    alias = tmp_path / "backup-alias"
+    alias.symlink_to(root, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlink"):
+        validate_backup_root(alias, live_data=live)
 
 
 def test_alias_validation_requires_same_resolved_endpoint():
@@ -111,6 +169,22 @@ def test_provisioning_sql_declares_isolated_roles_without_credentials():
     assert "PASSWORD" not in sql.upper()
 
 
+def test_provisioning_sql_normalizes_poisoned_role_attributes_and_memberships():
+    sql = (ROOT / "ops/postgres/provision_shared_postgres.sql").read_text()
+    normalized = (
+        "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+    )
+
+    assert sql.count(normalized) >= 10
+    assert sql.count("NOINHERIT") >= 10
+    assert sql.count("NOLOGIN") >= 2
+    assert sql.count("LOGIN NOINHERIT") >= 8
+    assert "pg_auth_members" in sql
+    assert "parent.rolname" in sql
+    assert "member.rolname" in sql
+    assert sql.count("REVOKE %I FROM %I") >= 2
+
+
 def test_backup_and_restore_scripts_never_accept_embedded_credentials():
     backup = (ROOT / "ops/postgres/backup_shared_postgres.sh").read_text()
     restore = (ROOT / "ops/postgres/verify_restore.sh").read_text()
@@ -147,6 +221,8 @@ def test_import_wrapper_requires_postgres_and_explicit_verified_backup_gate():
     assert "LEGACY_SEARCH_DB_URL" in script
     assert "LEGACY_SESSION_DB_URL" in script
     assert "postgres_recovery.py\" import" in script
+    assert "--search-source" not in script
+    assert "--session-source" not in script
     assert "PGPASSWORD" not in script
 
 

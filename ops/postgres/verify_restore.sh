@@ -2,6 +2,8 @@
 set -eu
 
 : "${ARGUS_BACKUP_SET:?set the immutable backup-set directory}"
+: "${ARGUS_BACKUP_ROOT:?set the initialized backup root}"
+: "${POSTGRES_LIVE_DATA_DIR:?set the absolute live PostgreSQL data directory}"
 : "${ARGUS_RECOVERY_EVIDENCE:?set the recovery evidence JSON path}"
 : "${SCRATCH_DATABASE:?set an explicit disposable database name}"
 : "${ATLAS_SCRATCH_DATABASE:?set an explicit disposable Atlas database name}"
@@ -53,14 +55,10 @@ pg_restore --exit-on-error --single-transaction --no-owner --no-privileges \
     --dbname="$SCRATCH_DATABASE" "$ARGUS_BACKUP_SET/argus.dump"
 pg_restore --exit-on-error --single-transaction --no-owner --no-privileges \
     --dbname="$ATLAS_SCRATCH_DATABASE" "$ARGUS_BACKUP_SET/atlas.dump"
-atlas_tables=$(psql --dbname="$ATLAS_SCRATCH_DATABASE" --tuples-only --no-align \
-    --command="SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'")
-test "$atlas_tables" -gt 0
-ARGUS_DB_URL="postgresql+psycopg2:///$SCRATCH_DATABASE" alembic upgrade head
-python3 "$script_dir/postgres_recovery.py" verify-argus-db \
-    --database "$SCRATCH_DATABASE"
-schema_head=$(psql --dbname="$SCRATCH_DATABASE" --tuples-only --no-align \
-    --command='SELECT version_num FROM alembic_version')
 python3 "$script_dir/postgres_recovery.py" record-restore \
     --evidence "$ARGUS_RECOVERY_EVIDENCE" \
-    --schema-head "$schema_head"
+    --backup-set "$ARGUS_BACKUP_SET" \
+    --root "$ARGUS_BACKUP_ROOT" \
+    --live-data "$POSTGRES_LIVE_DATA_DIR" \
+    --argus-database "$SCRATCH_DATABASE" \
+    --atlas-database "$ATLAS_SCRATCH_DATABASE"
