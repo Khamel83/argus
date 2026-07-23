@@ -18,6 +18,8 @@ def pytest_configure(config):
     global _RUNTIME_ROOT
     _RUNTIME_ROOT = Path(tempfile.mkdtemp(prefix="argus-pytest-"))
     test_postgres_url = os.environ.get("ARGUS_TEST_POSTGRES_URL")
+    provisioning_opt_in = os.environ.get("ARGUS_TEST_ALLOW_PROVISIONING")
+    provisioning_psql = os.environ.get("ARGUS_TEST_PSQL")
     for key in tuple(os.environ):
         if key.startswith("ARGUS_"):
             os.environ.pop(key)
@@ -40,6 +42,10 @@ def pytest_configure(config):
         _SAFE_ENV[f"ARGUS_{provider}_ENABLED"] = "false"
     if test_postgres_url:
         _SAFE_ENV["ARGUS_TEST_POSTGRES_URL"] = test_postgres_url
+    if provisioning_opt_in == "disposable-only":
+        _SAFE_ENV["ARGUS_TEST_ALLOW_PROVISIONING"] = provisioning_opt_in
+        if provisioning_psql:
+            _SAFE_ENV["ARGUS_TEST_PSQL"] = provisioning_psql
     os.environ.update(_SAFE_ENV)
 
 

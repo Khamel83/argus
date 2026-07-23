@@ -35,6 +35,7 @@ async def health(broker: SearchBroker = Depends(get_broker)):
 @router.get("/admin/health/detail")
 async def health_detail(broker: SearchBroker = Depends(get_broker)):
     from argus.extraction.playwright_extractor import browser_capability_status
+    from argus.recovery.evidence import recovery_status_from_environment
 
     providers = {}
     for pname in ProviderName:
@@ -62,6 +63,7 @@ async def health_detail(broker: SearchBroker = Depends(get_broker)):
         "health_tracking": health_all,
         "runtime": {
             "browser": browser_capability_status(),
+            "recovery": recovery_status_from_environment(),
         },
     }
 

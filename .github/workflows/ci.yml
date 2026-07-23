@@ -56,6 +56,8 @@ jobs:
       ARGUS_EGRESS_TYPE: "unknown"
       ARGUS_RESIDENTIAL_POLICY: "off"
       ARGUS_TEST_POSTGRES_URL: postgresql+psycopg2://postgres:postgres@127.0.0.1:5432/argus_test
+      ARGUS_TEST_ALLOW_PROVISIONING: disposable-only
+      ARGUS_TEST_PSQL: /usr/bin/psql
     steps:
       - uses: actions/checkout@v4
 
@@ -70,6 +72,13 @@ jobs:
       - name: Sync dependencies
         run: uv sync --frozen --python 3.12 --extra dev --extra mcp
 
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          test -x "$ARGUS_TEST_PSQL"
+          "$ARGUS_TEST_PSQL" --version
+
       - name: Run PostgreSQL ledger contract
         run: |
           uv run --python 3.12 pytest \
@@ -79,6 +88,9 @@ jobs:
             tests/test_operation_ledger.py::test_postgresql_extraction_and_session_contract \
             tests/test_operation_ledger.py::test_postgresql_concurrent_session_creation_and_query_allocation \
             tests/test_operation_ledger.py::test_postgresql_concurrent_sanitized_session_url_inserts_are_idempotent \
+            tests/test_recovery_database.py::test_postgresql_restore_verifier_uses_disposable_database \
+            tests/test_recovery_database.py::test_postgresql_atlas_restore_inventory_detects_count_drift \
+            tests/test_postgres_provisioning.py \
             -v --tb=short
 
   production-config:
