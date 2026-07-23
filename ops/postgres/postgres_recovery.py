@@ -47,7 +47,10 @@ def _parser() -> argparse.ArgumentParser:
     alias.add_argument("--primary", default="homelab-postgres")
     alias.add_argument("--compatibility", default="atlas-postgres")
 
-    prune = commands.add_parser("prune")
+    prune = commands.add_parser(
+        "prune",
+        help="securely tombstone expired sets without deleting pathnames",
+    )
     prune.add_argument("--root", type=Path, required=True)
     prune.add_argument("--live-data", type=Path, required=True)
     prune.add_argument("--apply", action="store_true")

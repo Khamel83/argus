@@ -39,7 +39,18 @@ validate the temporary `atlas-postgres` compatibility alias before migration.
    covered by separate storage protection. Each set binds dump checksums to
    source schema fingerprints and per-table counts for both tenants. Retention
    considers only owned sets and is the union of 7 daily, 5 weekly, and
-   12 monthly sets.
+   12 monthly sets. Automatic retention uses secure tombstoning: it atomically
+   moves an expired owned set to a `.pruning.*` name, validates the complete
+   tree through no-follow file descriptors, and truncates only validated,
+   single-link regular files through those held descriptors. It never unlinks
+   files or removes directories.
+   Tombstones are excluded from active retention counts, but their directory
+   and file names remain. Dump payload bytes are reclaimed; inode, directory,
+   and small sanitized marker metadata remain and must be included in capacity
+   planning. Removing tombstone metadata is a separate, explicit operator
+   procedure outside this automatic workflow. Any validation anomaly leaves
+   the unmodified set quarantined and excluded from future automatic retention
+   until an operator inspects it.
 6. Run `verify_restore.sh` with operator-named `argus_restore_*` and
    `atlas_restore_*` targets. It verifies the backup manifest, refuses
    production database names, compares every restored table count and schema
@@ -56,7 +67,9 @@ validate the temporary `atlas-postgres` compatibility alias before migration.
 - [x] Atlas and Argus runtime roles are denied cross-tenant database access
 - [x] Backup and restore artifacts contain no role password verifiers
 - [x] Backup roots and snapshot sets carry validated ownership markers
-- [x] Destructive retention rejects symlink, unowned, and changed targets
+- [x] Secure tombstoning rejects links, special files, mount/device crossings,
+      unowned sets, unsafe link counts, and changed targets before reclamation
+- [x] Automatic retention never unlinks names or removes directories
 - [x] Retention selects 7 daily, 5 weekly, and 12 monthly restore sets
 - [x] Restore targets require explicit validated Atlas/Argus scratch names
 - [x] Import is dry-run-first, idempotent, and reports before/after counts

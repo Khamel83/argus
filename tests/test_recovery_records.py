@@ -27,6 +27,12 @@ def _owned_snapshot(root, name, root_id):
     return snapshot
 
 
+def _quarantined_snapshot(root, name):
+    matches = list(root.glob(f".pruning.{name}.*"))
+    assert len(matches) == 1
+    return matches[0]
+
+
 def _backup_set(tmp_path, name="20260723T060000Z"):
     from argus.recovery.database import COUNTED_TABLES
 
@@ -396,36 +402,88 @@ def test_backup_evidence_update_waits_for_restore_verification_lock(tmp_path):
     assert payload["backup"]["manifest_sha256"] != original_manifest
 
 
-def test_pruning_removes_only_unretained_timestamped_snapshot_directories(tmp_path):
+def test_pruning_securely_tombstones_only_unretained_owned_snapshots(
+    tmp_path,
+    monkeypatch,
+):
     from argus.recovery.records import prune_snapshots
 
     root, live, root_id = _owned_root(tmp_path)
     for age in range(20):
         timestamp = NOW - timedelta(days=age)
-        _owned_snapshot(root, timestamp.strftime("%Y%m%dT%H%M%SZ"), root_id)
+        snapshot = _owned_snapshot(
+            root,
+            timestamp.strftime("%Y%m%dT%H%M%SZ"),
+            root_id,
+        )
+        (snapshot / "archive.dump").write_bytes(b"database payload")
     unrelated = root / "operator-notes"
     unrelated.mkdir()
+    monkeypatch.setattr(
+        "argus.recovery.records.os.unlink",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("automatic retention must never unlink names")
+        ),
+    )
+    monkeypatch.setattr(
+        "argus.recovery.records.os.rmdir",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("automatic retention must never remove directories")
+        ),
+    )
 
     report = prune_snapshots(root, live_data=live, apply=True, now=NOW)
 
-    assert report["removed"]
+    assert report["tombstoned"]
+    assert report["removed"] == []
+    assert report["payload_bytes_reclaimed"] > 0
     assert unrelated.is_dir()
     assert all((root / name).is_dir() for name in report["kept"])
-    assert all(not (root / name).exists() for name in report["removed"])
+    tombstone_paths = []
+    for name in report["tombstoned"]:
+        assert not (root / name).exists()
+        tombstones = list(root.glob(f".pruning.{name}.*"))
+        assert len(tombstones) == 1
+        tombstone_paths.extend(tombstones)
+        assert (tombstones[0] / "archive.dump").read_bytes() == b""
+        marker = json.loads(
+            (tombstones[0] / ".argus-backup-set.json").read_text(encoding="utf-8")
+        )
+        assert marker["root_id"] == root_id
+        assert marker["schema_version"] == 1
+        assert marker["source_snapshot"] == name
+        assert marker["state"] == "secure-tombstone"
+        assert marker["payload_bytes_reclaimed"] == len(b"database payload")
+        datetime.fromisoformat(marker["tombstoned_at"])
+
+    second_report = prune_snapshots(root, live_data=live, apply=True, now=NOW)
+
+    assert second_report["tombstoned"] == []
+    assert all(path.is_dir() for path in tombstone_paths)
 
 
 def test_pruning_dry_run_does_not_mutate(tmp_path):
     from argus.recovery.records import prune_snapshots
 
     root, live, root_id = _owned_root(tmp_path)
-    old = _owned_snapshot(root, "20250101T000000Z", root_id)
-    recent = _owned_snapshot(root, "20260723T000000Z", root_id)
+    snapshots = []
+    for age in range(20):
+        timestamp = NOW - timedelta(days=age)
+        snapshots.append(
+            _owned_snapshot(
+                root,
+                timestamp.strftime("%Y%m%dT%H%M%SZ"),
+                root_id,
+            )
+        )
 
     report = prune_snapshots(root, live_data=live, apply=False, now=NOW)
 
     assert report["applied"] is False
-    assert old.is_dir()
-    assert recent.is_dir()
+    assert report["planned_tombstones"]
+    assert report["tombstoned"] == []
+    assert report["removed"] == []
+    assert all(snapshot.is_dir() for snapshot in snapshots)
 
 
 def test_record_refuses_to_overwrite_corrupt_existing_evidence(tmp_path):
@@ -559,7 +617,7 @@ def test_pruning_never_deletes_unowned_timestamp_directory(tmp_path):
     report = prune_snapshots(root, live_data=live, apply=True, now=NOW)
 
     assert unowned.is_dir()
-    assert unowned.name not in report["removed"]
+    assert unowned.name not in report["tombstoned"]
 
 
 def test_pruning_rejects_timestamp_symlink(tmp_path):
@@ -601,7 +659,7 @@ def test_pruning_revalidates_ownership_after_atomic_quarantine(tmp_path, monkeyp
 
     report = records.prune_snapshots(root, live_data=live, apply=True, now=NOW)
 
-    assert target.name not in report["removed"]
+    assert target.name not in report["tombstoned"]
     assert target.is_dir()
     assert target_calls == 2
 
@@ -665,8 +723,8 @@ def test_pruning_refuses_nested_device_boundary(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="device boundary"):
         records.prune_snapshots(root, live_data=live, apply=True, now=NOW)
 
-    assert target.is_dir()
-    assert boundary.is_dir()
+    quarantined = _quarantined_snapshot(root, target.name)
+    assert (quarantined / "mounted-data").is_dir()
 
 
 def test_pruning_refuses_quarantine_name_swap_after_descriptor_validation(
@@ -692,10 +750,10 @@ def test_pruning_refuses_quarantine_name_swap_after_descriptor_validation(
 
     validated = threading.Event()
     swapped = threading.Event()
-    original = records._tree_stays_on_device_fd
+    original = records._hold_snapshot_tree
 
-    def pause_after_validation(directory_fd, expected_device):
-        result = original(directory_fd, expected_device)
+    def pause_after_validation(directory_fd, expected_device, **kwargs):
+        result = original(directory_fd, expected_device, **kwargs)
         validated.set()
         assert swapped.wait(timeout=5)
         return result
@@ -709,16 +767,176 @@ def test_pruning_refuses_quarantine_name_swap_after_descriptor_validation(
 
     monkeypatch.setattr(
         records,
-        "_tree_stays_on_device_fd",
+        "_hold_snapshot_tree",
         pause_after_validation,
     )
     adversary = threading.Thread(target=swap_target)
     adversary.start()
-    with pytest.raises(ValueError, match="changed during descriptor-bound deletion"):
+    with pytest.raises(ValueError, match="changed during secure tombstoning"):
         records.prune_snapshots(root, live_data=live, apply=True, now=NOW)
     adversary.join(timeout=5)
 
     surviving_sentinels = list(root.rglob("must-survive"))
     assert len(surviving_sentinels) == 1
     assert surviving_sentinels[0].read_text(encoding="utf-8") == "unrelated"
+    assert surviving_sentinels[0].parent.name.startswith(
+        f".pruning.{target.name}."
+    )
     assert (root / "validated-snapshot" / "validated-data").is_file()
+
+
+def test_pruning_refuses_regular_file_swap_without_truncating_either_inode(
+    tmp_path,
+    monkeypatch,
+):
+    import pytest
+
+    import argus.recovery.records as records
+
+    root, live, root_id = _owned_root(tmp_path)
+    target = _owned_snapshot(root, "20260701T000000Z", root_id)
+    payload = target / "payload.dump"
+    payload.write_bytes(b"owned payload")
+    unrelated = root / "unrelated.txt"
+    unrelated.write_bytes(b"unrelated payload")
+    for age in range(20):
+        timestamp = NOW - timedelta(days=age)
+        _owned_snapshot(root, timestamp.strftime("%Y%m%dT%H%M%SZ"), root_id)
+    original_open = records.os.open
+    swapped = False
+
+    def swap_between_stat_and_open(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        if path == "payload.dump" and dir_fd is not None and not swapped:
+            swapped = True
+            quarantine = next(root.glob(f".pruning.{target.name}.*"))
+            payload_in_quarantine = quarantine / "payload.dump"
+            payload_in_quarantine.rename(quarantine / "relocated-owned.dump")
+            unrelated.rename(payload_in_quarantine)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(records.os, "open", swap_between_stat_and_open)
+
+    with pytest.raises(ValueError, match="changed during secure tombstoning"):
+        records.prune_snapshots(root, live_data=live, apply=True, now=NOW)
+
+    quarantined = _quarantined_snapshot(root, target.name)
+    assert (quarantined / "payload.dump").read_bytes() == b"unrelated payload"
+    assert (quarantined / "relocated-owned.dump").read_bytes() == b"owned payload"
+
+
+def test_pruning_refuses_directory_swap_without_touching_either_tree(
+    tmp_path,
+    monkeypatch,
+):
+    import pytest
+
+    import argus.recovery.records as records
+
+    root, live, root_id = _owned_root(tmp_path)
+    target = _owned_snapshot(root, "20260701T000000Z", root_id)
+    owned_directory = target / "archives"
+    owned_directory.mkdir()
+    (owned_directory / "owned.dump").write_bytes(b"owned payload")
+    unrelated = root / "unrelated-directory"
+    unrelated.mkdir()
+    (unrelated / "sentinel").write_bytes(b"unrelated payload")
+    for age in range(20):
+        timestamp = NOW - timedelta(days=age)
+        _owned_snapshot(root, timestamp.strftime("%Y%m%dT%H%M%SZ"), root_id)
+    original_open = records.os.open
+    swapped = False
+
+    def swap_between_stat_and_open(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        if path == "archives" and dir_fd is not None and not swapped:
+            swapped = True
+            quarantine = next(root.glob(f".pruning.{target.name}.*"))
+            archives = quarantine / "archives"
+            archives.rename(quarantine / "relocated-archives")
+            unrelated.rename(archives)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(records.os, "open", swap_between_stat_and_open)
+
+    with pytest.raises(ValueError, match="changed during secure tombstoning"):
+        records.prune_snapshots(root, live_data=live, apply=True, now=NOW)
+
+    quarantined = _quarantined_snapshot(root, target.name)
+    assert (quarantined / "archives" / "sentinel").read_bytes() == b"unrelated payload"
+    assert (
+        quarantined / "relocated-archives" / "owned.dump"
+    ).read_bytes() == b"owned payload"
+
+
+def test_pruning_rejects_hard_links_before_reclaiming_bytes(
+    tmp_path,
+):
+    import os
+
+    import pytest
+
+    from argus.recovery.records import prune_snapshots
+
+    root, live, root_id = _owned_root(tmp_path)
+    target = _owned_snapshot(root, "20260701T000000Z", root_id)
+    payload = target / "payload.dump"
+    payload.write_bytes(b"must remain")
+    os.link(payload, target / "payload-hardlink.dump")
+    for age in range(20):
+        timestamp = NOW - timedelta(days=age)
+        _owned_snapshot(root, timestamp.strftime("%Y%m%dT%H%M%SZ"), root_id)
+
+    with pytest.raises(ValueError, match="link count"):
+        prune_snapshots(root, live_data=live, apply=True, now=NOW)
+
+    quarantined = _quarantined_snapshot(root, target.name)
+    assert (quarantined / "payload.dump").read_bytes() == b"must remain"
+    assert (quarantined / "payload-hardlink.dump").read_bytes() == b"must remain"
+
+
+def test_pruning_rejects_nested_symlink_before_reclaiming_bytes(tmp_path):
+    import pytest
+
+    from argus.recovery.records import prune_snapshots
+
+    root, live, root_id = _owned_root(tmp_path)
+    target = _owned_snapshot(root, "20260701T000000Z", root_id)
+    payload = target / "payload.dump"
+    payload.write_bytes(b"must remain")
+    outside = root / "unrelated.txt"
+    outside.write_bytes(b"unrelated payload")
+    (target / "outside-link").symlink_to(outside)
+    for age in range(20):
+        timestamp = NOW - timedelta(days=age)
+        _owned_snapshot(root, timestamp.strftime("%Y%m%dT%H%M%SZ"), root_id)
+
+    with pytest.raises(ValueError, match="links or special files"):
+        prune_snapshots(root, live_data=live, apply=True, now=NOW)
+
+    quarantined = _quarantined_snapshot(root, target.name)
+    assert (quarantined / "payload.dump").read_bytes() == b"must remain"
+    assert outside.read_bytes() == b"unrelated payload"
+
+
+def test_pruning_rejects_fifo_before_reclaiming_bytes(tmp_path):
+    import os
+
+    import pytest
+
+    from argus.recovery.records import prune_snapshots
+
+    root, live, root_id = _owned_root(tmp_path)
+    target = _owned_snapshot(root, "20260701T000000Z", root_id)
+    payload = target / "payload.dump"
+    payload.write_bytes(b"must remain")
+    os.mkfifo(target / "unexpected-pipe")
+    for age in range(20):
+        timestamp = NOW - timedelta(days=age)
+        _owned_snapshot(root, timestamp.strftime("%Y%m%dT%H%M%SZ"), root_id)
+
+    with pytest.raises(ValueError, match="links or special files"):
+        prune_snapshots(root, live_data=live, apply=True, now=NOW)
+
+    quarantined = _quarantined_snapshot(root, target.name)
+    assert (quarantined / "payload.dump").read_bytes() == b"must remain"

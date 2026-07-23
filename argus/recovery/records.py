@@ -10,6 +10,7 @@ import stat
 import tempfile
 import uuid
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from argus.recovery.operator import (
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SNAPSHOT = re.compile(r"^\d{8}T\d{6}Z$")
 _SNAPSHOT_MARKER = ".argus-backup-set.json"
+_MAX_TOMBSTONE_ENTRIES = 4096
 _RESTORE_CHECKS = (
     "schema",
     "row_counts",
@@ -335,14 +337,15 @@ def prune_snapshots(
     apply: bool = False,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Prune only owned snapshot directories under a validated backup root."""
+    """Securely tombstone expired owned snapshots without deleting pathnames."""
     root_path = Path(root)
     live_path = Path(live_data)
     if not root_path.is_absolute() or not live_path.is_absolute():
         raise ValueError("backup root and live data directory must be absolute")
     root_fd = _open_directory_no_follow(root_path, label="backup root")
     live_fd = -1
-    removed: list[str] = []
+    tombstoned: list[str] = []
+    reclaimed_bytes = 0
     try:
         root_metadata = os.fstat(root_fd)
         _assert_path_matches_descriptor(root_path, root_metadata, label="backup root")
@@ -410,17 +413,17 @@ def prune_snapshots(
                     live_metadata,
                     label="live data directory",
                 )
-                if _remove_owned_snapshot(
+                reclaimed = _tombstone_owned_snapshot(
                     root_fd,
                     name,
                     root_id,
                     root_device=root_metadata.st_dev,
                     root_path=root_path,
                     root_metadata=root_metadata,
-                ):
-                    removed.append(name)
-        else:
-            removed = candidates
+                )
+                if reclaimed is not None:
+                    tombstoned.append(name)
+                    reclaimed_bytes += reclaimed
     finally:
         if live_fd >= 0:
             os.close(live_fd)
@@ -428,7 +431,11 @@ def prune_snapshots(
     return {
         "applied": apply,
         "kept": sorted(kept),
-        "removed": removed,
+        "planned_tombstones": [] if apply else candidates,
+        "tombstoned": tombstoned,
+        "payload_bytes_reclaimed": reclaimed_bytes,
+        # Automatic retention intentionally never removes filesystem names.
+        "removed": [],
     }
 
 
@@ -545,7 +552,22 @@ def _read_snapshot_owner_fd(directory_fd: int) -> str | None:
     return root_id if isinstance(root_id, str) else None
 
 
-def _remove_owned_snapshot(
+@dataclass
+class _HeldSnapshot:
+    """No-follow descriptors held from validation through byte reclamation."""
+
+    files: list[tuple[int, int, bool]] = field(default_factory=list)
+    directories: list[int] = field(default_factory=list)
+    marker_fd: int | None = None
+
+    def close(self) -> None:
+        for descriptor, _, _ in reversed(self.files):
+            os.close(descriptor)
+        for descriptor in reversed(self.directories):
+            os.close(descriptor)
+
+
+def _tombstone_owned_snapshot(
     directory_fd: int,
     name: str,
     root_id: str,
@@ -553,8 +575,8 @@ def _remove_owned_snapshot(
     root_device: int,
     root_path: Path,
     root_metadata: os.stat_result,
-) -> bool:
-    """Atomically quarantine, revalidate, then remove one owned snapshot."""
+) -> int | None:
+    """Quarantine and reclaim owned regular-file bytes through held descriptors."""
     if _SNAPSHOT.fullmatch(name) is None:
         raise ValueError("refusing unsafe retention target")
     original_metadata = os.stat(
@@ -576,11 +598,12 @@ def _remove_owned_snapshot(
             dir_fd=directory_fd,
         )
     except OSError:
-        return False
+        return None
+    held: _HeldSnapshot | None = None
     try:
         quarantine_metadata = os.fstat(quarantine_fd)
         if _identity(quarantine_metadata) != _identity(original_metadata):
-            return False
+            return None
         if _read_snapshot_owner_fd(quarantine_fd) != root_id:
             _restore_quarantine(
                 directory_fd,
@@ -588,28 +611,36 @@ def _remove_owned_snapshot(
                 name,
                 quarantine_metadata,
             )
-            return False
-        if not _tree_stays_on_device_fd(quarantine_fd, root_device):
-            _restore_quarantine(
+            return None
+        try:
+            held = _hold_snapshot_tree(
+                quarantine_fd,
+                root_device,
+            )
+            _assert_path_matches_descriptor(
+                root_path,
+                root_metadata,
+                label="backup root",
+            )
+            _assert_entry_matches_descriptor(
                 directory_fd,
                 quarantine,
-                name,
-                quarantine_metadata,
+                quarantine_fd,
             )
-            raise ValueError("refusing snapshot containing a device boundary")
-        _assert_path_matches_descriptor(
-            root_path,
-            root_metadata,
-            label="backup root",
-        )
-        _delete_tree_fd(
-            directory_fd,
-            quarantine,
-            quarantine_fd,
-            expected_device=root_device,
-        )
-        return True
+            return _reclaim_snapshot_bytes(
+                held,
+                root_id=root_id,
+                source_snapshot=name,
+                root_directory_fd=quarantine_fd,
+                expected_device=root_device,
+            )
+        except Exception:
+            # Once ownership is revalidated, any structural anomaly leaves the
+            # set inert under its quarantine name for explicit operator review.
+            raise
     finally:
+        if held is not None:
+            held.close()
         os.close(quarantine_fd)
 
 
@@ -641,43 +672,101 @@ def _identity(metadata: os.stat_result) -> tuple[int, int, int]:
     return metadata.st_dev, metadata.st_ino, stat.S_IFMT(metadata.st_mode)
 
 
-def _tree_stays_on_device_fd(
+def _hold_snapshot_tree(
     directory_fd: int,
     expected_device: int,
-) -> bool:
-    if os.fstat(directory_fd).st_dev != expected_device:
-        return False
-    try:
-        for child in os.listdir(directory_fd):
-            child_metadata = os.stat(
-                child,
-                dir_fd=directory_fd,
-                follow_symlinks=False,
-            )
-            if child_metadata.st_dev != expected_device:
-                return False
-            if stat.S_ISDIR(child_metadata.st_mode):
+    *,
+    max_entries: int = _MAX_TOMBSTONE_ENTRIES,
+) -> _HeldSnapshot:
+    """Validate a tree and hold every directory and regular-file descriptor."""
+    held = _HeldSnapshot()
+    entry_count = 0
+
+    def visit(parent_fd: int, *, root: bool) -> None:
+        nonlocal entry_count
+        for child in sorted(os.listdir(parent_fd)):
+            entry_count += 1
+            if entry_count > max_entries:
+                raise ValueError("snapshot exceeds secure tombstone entry limit")
+            try:
+                metadata = os.stat(
+                    child,
+                    dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+            except OSError as error:
+                raise ValueError(
+                    "snapshot changed during secure tombstoning"
+                ) from error
+            if metadata.st_dev != expected_device:
+                raise ValueError("refusing snapshot containing a device boundary")
+            if stat.S_ISDIR(metadata.st_mode):
+                try:
+                    child_fd = os.open(
+                        child,
+                        os.O_RDONLY
+                        | os.O_DIRECTORY
+                        | getattr(os, "O_NOFOLLOW", 0)
+                        | getattr(os, "O_CLOEXEC", 0),
+                        dir_fd=parent_fd,
+                    )
+                except OSError as error:
+                    raise ValueError(
+                        "snapshot changed during secure tombstoning"
+                    ) from error
+                opened = os.fstat(child_fd)
+                if _identity(opened) != _identity(metadata):
+                    os.close(child_fd)
+                    raise ValueError("snapshot changed during secure tombstoning")
+                held.directories.append(child_fd)
+                visit(child_fd, root=False)
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ValueError(
+                    "refusing links or special files during secure tombstoning"
+                )
+            if metadata.st_nlink != 1:
+                raise ValueError("refusing regular file with unsafe link count")
+            try:
                 child_fd = os.open(
                     child,
-                    os.O_RDONLY
-                    | os.O_DIRECTORY
+                    os.O_RDWR
+                    | os.O_NONBLOCK
                     | getattr(os, "O_NOFOLLOW", 0)
                     | getattr(os, "O_CLOEXEC", 0),
-                    dir_fd=directory_fd,
+                    dir_fd=parent_fd,
                 )
-                try:
-                    if _identity(os.fstat(child_fd)) != _identity(child_metadata):
-                        return False
-                    if not _tree_stays_on_device_fd(
-                        child_fd,
-                        expected_device,
-                    ):
-                        return False
-                finally:
-                    os.close(child_fd)
-        return True
-    except OSError:
-        return False
+            except OSError as error:
+                raise ValueError(
+                    "snapshot changed during secure tombstoning"
+                ) from error
+            opened = os.fstat(child_fd)
+            if (
+                _identity(opened) != _identity(metadata)
+                or opened.st_dev != expected_device
+                or opened.st_nlink != 1
+                or not stat.S_ISREG(opened.st_mode)
+            ):
+                os.close(child_fd)
+                raise ValueError("snapshot changed during secure tombstoning")
+            is_marker = root and child == _SNAPSHOT_MARKER
+            held.files.append((child_fd, opened.st_size, is_marker))
+            if is_marker:
+                held.marker_fd = child_fd
+
+    try:
+        root_metadata = os.fstat(directory_fd)
+        if root_metadata.st_dev != expected_device or not stat.S_ISDIR(
+            root_metadata.st_mode
+        ):
+            raise ValueError("refusing snapshot containing a device boundary")
+        visit(directory_fd, root=True)
+        if held.marker_fd is None:
+            raise ValueError("owned snapshot marker changed during validation")
+        return held
+    except Exception:
+        held.close()
+        raise
 
 
 def _assert_entry_matches_descriptor(
@@ -688,102 +777,66 @@ def _assert_entry_matches_descriptor(
     try:
         current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
     except OSError as error:
-        raise ValueError(
-            "snapshot changed during descriptor-bound deletion"
-        ) from error
+        raise ValueError("snapshot changed during secure tombstoning") from error
     if _identity(current) != _identity(os.fstat(descriptor)):
-        raise ValueError("snapshot changed during descriptor-bound deletion")
+        raise ValueError("snapshot changed during secure tombstoning")
 
 
-def _delete_tree_fd(
-    parent_fd: int,
-    name: str,
-    directory_fd: int,
+def _reclaim_snapshot_bytes(
+    held: _HeldSnapshot,
     *,
+    root_id: str,
+    source_snapshot: str,
+    root_directory_fd: int,
     expected_device: int,
-) -> None:
-    """Delete through held descriptors and fd-relative, identity-checked names."""
-    _assert_entry_matches_descriptor(parent_fd, name, directory_fd)
-    for child in sorted(os.listdir(directory_fd)):
-        metadata = os.stat(
-            child,
-            dir_fd=directory_fd,
-            follow_symlinks=False,
-        )
-        if metadata.st_dev != expected_device:
-            raise ValueError("refusing snapshot containing a device boundary")
-        tombstone = f".deleting.{uuid.uuid4().hex}"
-        os.rename(
-            child,
-            tombstone,
-            src_dir_fd=directory_fd,
-            dst_dir_fd=directory_fd,
-        )
-        moved = os.stat(
-            tombstone,
-            dir_fd=directory_fd,
-            follow_symlinks=False,
-        )
-        if _identity(moved) != _identity(metadata):
-            raise ValueError("snapshot changed during descriptor-bound deletion")
-        if stat.S_ISDIR(moved.st_mode):
-            child_fd = os.open(
-                tombstone,
-                os.O_RDONLY
-                | os.O_DIRECTORY
-                | getattr(os, "O_NOFOLLOW", 0)
-                | getattr(os, "O_CLOEXEC", 0),
-                dir_fd=directory_fd,
-            )
-            try:
-                if _identity(os.fstat(child_fd)) != _identity(moved):
-                    raise ValueError(
-                        "snapshot changed during descriptor-bound deletion"
-                    )
-                _delete_tree_fd(
-                    directory_fd,
-                    tombstone,
-                    child_fd,
-                    expected_device=expected_device,
-                )
-            finally:
-                os.close(child_fd)
-        elif stat.S_ISREG(moved.st_mode):
-            child_fd = os.open(
-                tombstone,
-                os.O_RDONLY
-                | os.O_NONBLOCK
-                | getattr(os, "O_NOFOLLOW", 0)
-                | getattr(os, "O_CLOEXEC", 0),
-                dir_fd=directory_fd,
-            )
-            try:
-                if _identity(os.fstat(child_fd)) != _identity(moved):
-                    raise ValueError(
-                        "snapshot changed during descriptor-bound deletion"
-                    )
-                _assert_entry_matches_descriptor(
-                    directory_fd,
-                    tombstone,
-                    child_fd,
-                )
-                os.unlink(tombstone, dir_fd=directory_fd)
-            finally:
-                os.close(child_fd)
-        elif stat.S_ISLNK(moved.st_mode):
-            current = os.stat(
-                tombstone,
-                dir_fd=directory_fd,
-                follow_symlinks=False,
-            )
-            if _identity(current) != _identity(moved):
-                raise ValueError(
-                    "snapshot changed during descriptor-bound deletion"
-                )
-            os.unlink(tombstone, dir_fd=directory_fd)
-        else:
-            raise ValueError(
-                "refusing unsupported file type during snapshot deletion"
-            )
-    _assert_entry_matches_descriptor(parent_fd, name, directory_fd)
-    os.rmdir(name, dir_fd=parent_fd)
+) -> int:
+    """Reclaim payload bytes only from held, prevalidated regular-file inodes."""
+    if held.marker_fd is None:
+        raise ValueError("owned snapshot marker changed during validation")
+    for descriptor, _, _ in held.files:
+        metadata = os.fstat(descriptor)
+        if (
+            metadata.st_dev != expected_device
+            or metadata.st_nlink != 1
+            or not stat.S_ISREG(metadata.st_mode)
+        ):
+            raise ValueError("snapshot changed during secure tombstoning")
+
+    reclaimed = 0
+    for descriptor, original_size, is_marker in held.files:
+        metadata = os.fstat(descriptor)
+        if (
+            metadata.st_dev != expected_device
+            or metadata.st_nlink != 1
+            or not stat.S_ISREG(metadata.st_mode)
+        ):
+            raise ValueError("snapshot changed during secure tombstoning")
+        os.ftruncate(descriptor, 0)
+        if not is_marker:
+            reclaimed += original_size
+
+    marker = (
+        json.dumps(
+            {
+                "root_id": root_id,
+                "schema_version": 1,
+                "source_snapshot": source_snapshot,
+                "state": "secure-tombstone",
+                "payload_bytes_reclaimed": reclaimed,
+                "tombstoned_at": datetime.now(timezone.utc).isoformat(),
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+        + b"\n"
+    )
+    os.lseek(held.marker_fd, 0, os.SEEK_SET)
+    written = 0
+    while written < len(marker):
+        written += os.write(held.marker_fd, marker[written:])
+
+    for descriptor, _, _ in held.files:
+        os.fsync(descriptor)
+    for descriptor in reversed(held.directories):
+        os.fsync(descriptor)
+    os.fsync(root_directory_fd)
+    return reclaimed
