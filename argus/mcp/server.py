@@ -38,6 +38,14 @@ class StaticTokenVerifier:
         )
 
 
+def _mcp_caller_identity() -> str:
+    """Return the authenticated MCP principal, or the local transport identity."""
+    from mcp.server.auth.middleware.auth_context import get_access_token
+
+    access_token = get_access_token()
+    return access_token.client_id if access_token else "local-mcp"
+
+
 def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 8001):
     """Start the Argus MCP server.
 
@@ -88,10 +96,6 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
         caller: str = "mcp",
     ) -> str:
         """Search the web using the Argus broker."""
-        from mcp.server.auth.middleware.auth_context import get_access_token
-
-        access_token = get_access_token()
-        caller_identity = access_token.client_id if access_token else "local-mcp"
         return await mcp_tools.search_web(
             broker,
             query,
@@ -100,19 +104,41 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
             session_id,
             include_attribution,
             free_only,
-            caller_identity,
+            _mcp_caller_identity(),
             caller_label=caller,
         )
 
     @mcp.tool()
-    async def recover_url(url: str, title: str = None, domain: str = None) -> str:
+    async def recover_url(
+        url: str,
+        title: str = None,
+        domain: str = None,
+        caller: str = "mcp",
+    ) -> str:
         """Recover a dead, moved, or unavailable URL."""
-        return await mcp_tools.recover_url(broker, url, title, domain)
+        return await mcp_tools.recover_url(
+            broker,
+            url,
+            title,
+            domain,
+            caller_identity=_mcp_caller_identity(),
+            caller_label=caller,
+        )
 
     @mcp.tool()
-    async def expand_links(query: str, context: str = None) -> str:
+    async def expand_links(
+        query: str,
+        context: str = None,
+        caller: str = "mcp",
+    ) -> str:
         """Expand a query with related links for discovery."""
-        return await mcp_tools.expand_links(broker, query, context)
+        return await mcp_tools.expand_links(
+            broker,
+            query,
+            context,
+            caller_identity=_mcp_caller_identity(),
+            caller_label=caller,
+        )
 
     @mcp.tool()
     async def extract_content(url: str, domain: str = None) -> str:
@@ -132,12 +158,32 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
     from mcp.server.fastmcp import Context as McpContext
 
     @mcp.tool()
-    async def recover_dead_article(url: str, title: str = None, domain: str = None, ctx: McpContext = None) -> str:
+    async def recover_dead_article(
+        url: str,
+        title: str = None,
+        domain: str = None,
+        caller: str = "mcp",
+        ctx: McpContext = None,
+    ) -> str:
         """Recover a dead article into a local report with citations."""
-        return await mcp_tools.recover_dead_article(broker, url, title, domain, ctx=ctx)
+        return await mcp_tools.recover_dead_article(
+            broker,
+            url,
+            title,
+            domain,
+            ctx=ctx,
+            caller_identity=_mcp_caller_identity(),
+            caller_label=caller,
+        )
 
     @mcp.tool()
-    async def capture_site(url: str, soft_page_limit: int = 75, hard_page_limit: int = 200, ctx: McpContext = None) -> str:
+    async def capture_site(
+        url: str,
+        soft_page_limit: int = 75,
+        hard_page_limit: int = 200,
+        caller: str = "mcp",
+        ctx: McpContext = None,
+    ) -> str:
         """Capture the important parts of a site and summarize them."""
         return await mcp_tools.capture_site(
             broker,
@@ -145,6 +191,8 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
             soft_page_limit=soft_page_limit,
             hard_page_limit=hard_page_limit,
             ctx=ctx,
+            caller_identity=_mcp_caller_identity(),
+            caller_label=caller,
         )
 
     @mcp.tool()
@@ -153,6 +201,7 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
         official_url: str = None,
         max_research_pages: int = 40,
         response_format: str = "markdown",
+        caller: str = "mcp",
         ctx: McpContext = None,
     ) -> str:
         """Build a local pack with official docs plus external research.
@@ -169,6 +218,8 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
             max_research_pages=max_research_pages,
             response_format=response_format,
             ctx=ctx,
+            caller_identity=_mcp_caller_identity(),
+            caller_label=caller,
         )
 
     @mcp.tool()
@@ -196,7 +247,13 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
         @mcp.tool()
         async def test_provider(provider: str, query: str = "argus") -> str:
             """Smoke-test a single provider."""
-            return await mcp_tools.test_provider_mcp(broker, provider, query)
+            return await mcp_tools.test_provider_mcp(
+                broker,
+                provider,
+                query,
+                caller_identity=_mcp_caller_identity(),
+                caller_label="mcp-admin-smoke",
+            )
 
         @mcp.tool()
         def cookie_health() -> str:

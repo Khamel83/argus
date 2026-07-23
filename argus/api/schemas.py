@@ -111,6 +111,9 @@ class SpendResolutionRequest(BaseModel):
 class ProviderSnapshotRequest(BaseModel):
     balance: float = Field(..., ge=0)
     observed_at: datetime
+    provider_reference: str = Field(..., min_length=1, max_length=255)
+    related_attempt_id: str = Field(..., min_length=1, max_length=32)
+    authoritative_charge: float = Field(..., ge=0)
     idempotency_key: str = Field(..., min_length=1, max_length=255)
 
 

@@ -210,21 +210,35 @@ def test_authoritative_reconciliation_records_snapshot_freshness_and_is_idempote
     tmp_path,
 ):
     repository = _repository(tmp_path)
-    observed_at = datetime(2026, 7, 23, 1, 2, 3)
+    reservation = repository.reserve(
+        provider=ProviderName.BRAVE,
+        conservative_charge=1.0,
+        budget_limit=2000.0,
+        caller_identity="maya",
+        caller_label="",
+        idempotency_key="snapshot-attempt",
+    )
+    observed_at = datetime.now(tz=None)
 
     first = repository.record_provider_snapshot(
         provider=ProviderName.BRAVE,
         balance=1777.0,
         observed_at=observed_at,
-        actor_identity="admin",
+        actor_identity="provider:brave",
         idempotency_key="brave-snapshot-2026-07-23",
+        provider_reference="brave-event-1",
+        related_attempt_id=reservation.attempt_id,
+        authoritative_charge=1.0,
     )
     second = repository.record_provider_snapshot(
         provider=ProviderName.BRAVE,
         balance=1777.0,
         observed_at=observed_at,
-        actor_identity="admin",
+        actor_identity="provider:brave",
         idempotency_key="brave-snapshot-2026-07-23",
+        provider_reference="brave-event-1",
+        related_attempt_id=reservation.attempt_id,
+        authoritative_charge=1.0,
     )
 
     assert second == first
@@ -234,6 +248,9 @@ def test_authoritative_reconciliation_records_snapshot_freshness_and_is_idempote
         "balance": 1777.0,
         "source": "provider",
         "observed_at": observed_at.isoformat(),
+        "provider_reference": "brave-event-1",
+        "related_attempt_id": reservation.attempt_id,
+        "authoritative_charge": 1.0,
     }
 
 
@@ -253,8 +270,11 @@ def test_reconciliation_fault_rolls_back_attempt_and_audit(tmp_path):
         provider=ProviderName.BRAVE,
         balance=9.0,
         observed_at=datetime.now(tz=None),
-        actor_identity="admin",
+        actor_identity="provider:brave",
         idempotency_key="reconcile-fault-snapshot",
+        provider_reference="brave-reconcile-fault",
+        related_attempt_id=reservation.attempt_id,
+        authoritative_charge=0.0,
     )
 
     def fail(stage):
@@ -267,7 +287,7 @@ def test_reconciliation_fault_rolls_back_attempt_and_audit(tmp_path):
             actual_charge=0.0,
             outcome="not_charged",
             source="provider",
-            actor_identity="admin",
+            actor_identity="provider:brave",
             idempotency_key="reconcile-fault-resolution",
             provider_snapshot_id=snapshot.snapshot_id,
             fault_hook=fail,
@@ -288,12 +308,23 @@ def test_provider_resolution_requires_a_matching_authoritative_snapshot(tmp_path
         caller_label="",
         idempotency_key="provider-resolution",
     )
+    wrong_reservation = repository.reserve(
+        provider=ProviderName.SERPER,
+        conservative_charge=1.0,
+        budget_limit=10.0,
+        caller_identity="maya",
+        caller_label="",
+        idempotency_key="wrong-provider-resolution",
+    )
     wrong_snapshot = repository.record_provider_snapshot(
         provider=ProviderName.SERPER,
         balance=99.0,
         observed_at=datetime.now(tz=None),
-        actor_identity="admin",
+        actor_identity="provider:serper",
         idempotency_key="wrong-provider-snapshot",
+        provider_reference="serper-event-1",
+        related_attempt_id=wrong_reservation.attempt_id,
+        authoritative_charge=0.5,
     )
 
     with pytest.raises(Exception, match="matching provider snapshot"):
@@ -302,7 +333,7 @@ def test_provider_resolution_requires_a_matching_authoritative_snapshot(tmp_path
             actual_charge=0.5,
             outcome="charged",
             source="provider",
-            actor_identity="admin",
+            actor_identity="provider:brave",
             idempotency_key="provider-resolution-attempt-1",
         )
     with pytest.raises(Exception, match="matching provider snapshot"):
@@ -311,7 +342,7 @@ def test_provider_resolution_requires_a_matching_authoritative_snapshot(tmp_path
             actual_charge=0.5,
             outcome="charged",
             source="provider",
-            actor_identity="admin",
+            actor_identity="provider:brave",
             idempotency_key="provider-resolution-attempt-2",
             provider_snapshot_id=wrong_snapshot.snapshot_id,
         )
@@ -320,15 +351,18 @@ def test_provider_resolution_requires_a_matching_authoritative_snapshot(tmp_path
         provider=ProviderName.BRAVE,
         balance=9.5,
         observed_at=datetime.now(tz=None),
-        actor_identity="admin",
+        actor_identity="provider:brave",
         idempotency_key="matching-provider-snapshot",
+        provider_reference="brave-event-2",
+        related_attempt_id=reservation.attempt_id,
+        authoritative_charge=0.5,
     )
     resolved = repository.resolve(
         reservation.attempt_id,
         actual_charge=0.5,
         outcome="charged",
         source="provider",
-        actor_identity="admin",
+        actor_identity="provider:brave",
         idempotency_key="provider-resolution-attempt-3",
         provider_snapshot_id=snapshot.snapshot_id,
     )
@@ -592,6 +626,10 @@ def test_admin_spend_interfaces_are_authenticated_and_audited(tmp_path, monkeypa
     from argus.api.main import create_app
 
     monkeypatch.setenv("ARGUS_ADMIN_API_KEY", "admin-secret")
+    monkeypatch.setenv(
+        "ARGUS_PROVIDER_RECONCILIATION_KEYS_JSON",
+        '{"brave":"brave-reconciliation-secret"}',
+    )
     repository = _repository(tmp_path)
     reservation = repository.reserve(
         provider=ProviderName.BRAVE,
@@ -600,6 +638,14 @@ def test_admin_spend_interfaces_are_authenticated_and_audited(tmp_path, monkeypa
         caller_identity="maya",
         caller_label="",
         idempotency_key="admin-api-attempt",
+    )
+    snapshot_reservation = repository.reserve(
+        provider=ProviderName.BRAVE,
+        conservative_charge=1.0,
+        budget_limit=2000.0,
+        caller_identity="maya",
+        caller_label="",
+        idempotency_key="admin-api-snapshot-attempt",
     )
     broker = type(
         "Broker",
@@ -622,7 +668,10 @@ def test_admin_spend_interfaces_are_authenticated_and_audited(tmp_path, monkeypa
     unauthorized = client.get("/api/admin/provider-spend")
     uncertain = client.get(
         "/api/admin/provider-spend/attempts?status=uncertain",
-        headers={"X-Admin-API-Key": "admin-secret"},
+        headers={
+            "X-Admin-API-Key": "admin-secret",
+            "X-Provider-Reconciliation-Key": "brave-reconciliation-secret",
+        },
     )
     resolved = client.post(
         f"/api/admin/provider-spend/attempts/{reservation.attempt_id}/resolve",
@@ -636,10 +685,16 @@ def test_admin_spend_interfaces_are_authenticated_and_audited(tmp_path, monkeypa
     )
     snapshot = client.post(
         "/api/admin/provider-spend/brave/snapshots",
-        headers={"X-Admin-API-Key": "admin-secret"},
+        headers={
+            "X-Admin-API-Key": "admin-secret",
+            "X-Provider-Reconciliation-Key": "brave-reconciliation-secret",
+        },
         json={
             "balance": 1999.0,
-            "observed_at": "2026-07-23T01:02:03",
+            "observed_at": datetime.now(tz=None).isoformat(),
+            "provider_reference": "brave-admin-event",
+            "related_attempt_id": snapshot_reservation.attempt_id,
+            "authoritative_charge": 1.0,
             "idempotency_key": "admin-snapshot",
         },
     )
@@ -650,7 +705,9 @@ def test_admin_spend_interfaces_are_authenticated_and_audited(tmp_path, monkeypa
 
     assert unauthorized.status_code == 401
     assert uncertain.status_code == 200
-    assert uncertain.json()["attempts"][0]["attempt_id"] == reservation.attempt_id
+    assert reservation.attempt_id in {
+        attempt["attempt_id"] for attempt in uncertain.json()["attempts"]
+    }
     assert resolved.status_code == 200
     assert resolved.json()["status"] == "resolved"
     assert snapshot.status_code == 200

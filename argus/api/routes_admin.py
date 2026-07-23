@@ -28,32 +28,40 @@ def get_spend_repository(request: Request):
 
 
 @router.post("/test-provider")
-async def test_provider(req: ProviderTestRequest, broker: SearchBroker = Depends(get_broker)):
+async def test_provider(
+    req: ProviderTestRequest,
+    request: Request,
+    broker: SearchBroker = Depends(get_broker),
+):
     try:
         pname = ProviderName(req.provider)
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Unknown provider: {req.provider}")
 
-    provider = broker._providers.get(pname)
-    if provider is None:
-        raise HTTPException(status_code=404, detail=f"Provider not registered: {req.provider}")
-
-    query = SearchQuery(query=req.query, mode=SearchMode.DISCOVERY, max_results=3)
-    results, trace = await provider.search(query)
+    query = SearchQuery(
+        query=req.query,
+        mode=SearchMode.DISCOVERY,
+        max_results=3,
+        providers=[pname],
+        caller=getattr(request.state, "caller_identity", "admin"),
+        metadata={"caller_label": "http-admin-smoke"},
+    )
+    response = await broker.search(query)
+    trace = response.traces[0] if response.traces else None
 
     return {
         "provider": req.provider,
-        "available": provider.is_available(),
-        "status": provider.status().value,
+        "available": trace is not None,
+        "status": trace.status if trace else "no_trace",
         "trace": {
-            "status": trace.status,
-            "results_count": trace.results_count,
-            "latency_ms": trace.latency_ms,
-            "error": trace.error,
+            "status": trace.status if trace else "no_trace",
+            "results_count": trace.results_count if trace else 0,
+            "latency_ms": trace.latency_ms if trace else 0,
+            "error": trace.error if trace else None,
         },
         "sample_results": [
             {"url": r.url, "title": r.title, "snippet": r.snippet[:100]}
-            for r in results[:3]
+            for r in response.results[:3]
         ],
     }
 
@@ -118,12 +126,27 @@ async def resolve_provider_spend(
     repository=Depends(get_spend_repository),
 ):
     try:
+        existing = repository.get_attempt(attempt_id)
+        if payload.source == "provider":
+            token = request.headers.get("x-provider-reconciliation-key")
+            if not request.app.state.auth_config.matches_provider_reconciliation_token(
+                existing.provider,
+                token,
+            ):
+                raise HTTPException(
+                    status_code=401,
+                    detail="Valid provider reconciliation credential required",
+                )
         attempt = repository.resolve(
             attempt_id,
             actual_charge=payload.actual_charge,
             outcome=payload.outcome,
             source=payload.source,
-            actor_identity=getattr(request.state, "caller_identity", "admin"),
+            actor_identity=(
+                f"provider:{existing.provider}"
+                if payload.source == "provider"
+                else getattr(request.state, "caller_identity", "admin")
+            ),
             idempotency_key=payload.idempotency_key,
             provider_snapshot_id=payload.provider_snapshot_id,
         )
@@ -134,6 +157,8 @@ async def resolve_provider_spend(
 
         if isinstance(exc, SpendConflictError):
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if isinstance(exc, ValueError):
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         raise
     return {
         "attempt_id": attempt.attempt_id,
@@ -155,13 +180,30 @@ async def record_provider_snapshot(
         provider_name = ProviderName(provider)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Unknown provider") from exc
-    snapshot = repository.record_provider_snapshot(
-        provider=provider_name,
-        balance=payload.balance,
-        observed_at=payload.observed_at,
-        actor_identity=getattr(request.state, "caller_identity", "admin"),
-        idempotency_key=payload.idempotency_key,
-    )
+    token = request.headers.get("x-provider-reconciliation-key")
+    if not request.app.state.auth_config.matches_provider_reconciliation_token(
+        provider_name.value,
+        token,
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Valid provider reconciliation credential required",
+        )
+    try:
+        snapshot = repository.record_provider_snapshot(
+            provider=provider_name,
+            balance=payload.balance,
+            observed_at=payload.observed_at,
+            actor_identity=f"provider:{provider_name.value}",
+            idempotency_key=payload.idempotency_key,
+            provider_reference=payload.provider_reference,
+            related_attempt_id=payload.related_attempt_id,
+            authoritative_charge=payload.authoritative_charge,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Unknown provider attempt") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
         "snapshot_id": snapshot.snapshot_id,
         "provider": snapshot.provider,

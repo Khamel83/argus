@@ -95,6 +95,11 @@ class SearchBroker:
     def budget_tracker(self) -> BudgetTracker:
         return self._budgets
 
+    @property
+    def spend_repository(self):
+        """Return the durable provider-spend ledger."""
+        return self._spend_repository
+
     async def search(
         self,
         query: SearchQuery,

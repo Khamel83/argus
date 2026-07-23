@@ -54,6 +54,7 @@ class AuthConfig:
     admin_api_key: str
     cors_origins: tuple[str, ...]
     scoped_caller_credentials: tuple[tuple[str, str], ...] = ()
+    provider_reconciliation_credentials: tuple[tuple[str, str], ...] = ()
 
     @classmethod
     def from_env(cls) -> "AuthConfig":
@@ -63,11 +64,15 @@ class AuthConfig:
         scoped_caller_credentials = cls._parse_scoped_credentials(
             os.environ.get("ARGUS_CALLER_CREDENTIALS_JSON")
         )
+        provider_reconciliation_credentials = cls._parse_provider_credentials(
+            os.environ.get("ARGUS_PROVIDER_RECONCILIATION_KEYS_JSON")
+        )
         return cls(
             caller_api_key=caller_api_key,
             admin_api_key=admin_api_key,
             cors_origins=cors_origins,
             scoped_caller_credentials=scoped_caller_credentials,
+            provider_reconciliation_credentials=provider_reconciliation_credentials,
         )
 
     def has_caller_key(self) -> bool:
@@ -92,6 +97,18 @@ class AuthConfig:
             return "legacy-http"
         return None
 
+    def matches_provider_reconciliation_token(
+        self,
+        provider: str,
+        token: str | None,
+    ) -> bool:
+        if not token:
+            return False
+        for configured_provider, candidate in self.provider_reconciliation_credentials:
+            if configured_provider == provider and hmac.compare_digest(token, candidate):
+                return True
+        return False
+
     @staticmethod
     def _parse_scoped_credentials(
         raw_value: str | None,
@@ -111,6 +128,27 @@ class AuthConfig:
             token = config.get("token") if isinstance(config, dict) else None
             if isinstance(token, str) and token:
                 credentials.append((identity.strip(), token))
+        return tuple(credentials)
+
+    @staticmethod
+    def _parse_provider_credentials(
+        raw_value: str | None,
+    ) -> tuple[tuple[str, str], ...]:
+        if not raw_value:
+            return ()
+        try:
+            payload = json.loads(raw_value)
+        except (TypeError, ValueError):
+            return ()
+        if not isinstance(payload, dict):
+            return ()
+        credentials = []
+        for provider, config in payload.items():
+            if not isinstance(provider, str) or not provider.strip():
+                continue
+            token = config.get("token") if isinstance(config, dict) else config
+            if isinstance(token, str) and token:
+                credentials.append((provider.strip().lower(), token))
         return tuple(credentials)
 
 

@@ -174,7 +174,14 @@ def create_app(
             CORSMiddleware,
             allow_origins=list(auth_config.cors_origins),
             allow_methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Admin-API-Key", "X-Request-Id"],
+            allow_headers=[
+                "Authorization",
+                "Content-Type",
+                "X-API-Key",
+                "X-Admin-API-Key",
+                "X-Provider-Reconciliation-Key",
+                "X-Request-Id",
+            ],
         )
 
     @app.middleware("http")

@@ -50,55 +50,63 @@ def _to_response(run) -> WorkflowRunResponse:
 @router.post("/workflows/recover-article", response_model=WorkflowRunResponse)
 async def recover_article(
     req: RecoverArticleWorkflowRequest,
+    request: Request,
     workflows: WorkflowService = Depends(get_workflows),
 ):
-    run = await workflows.start_recover_article(url=req.url, title=req.title, domain=req.domain)
-    if req.caller:
-        run.metadata["caller"] = req.caller
+    run = await workflows.start_recover_article(
+        url=req.url,
+        title=req.title,
+        domain=req.domain,
+        caller_identity=getattr(request.state, "caller_identity", "") or "unknown",
+        caller_label=req.caller,
+    )
     return _to_response(run)
 
 
 @router.post("/workflows/capture-site", response_model=WorkflowRunResponse)
 async def capture_site(
     req: CaptureSiteWorkflowRequest,
+    request: Request,
     workflows: WorkflowService = Depends(get_workflows),
 ):
     run = await workflows.start_capture_site(
         url=req.url,
         soft_page_limit=req.soft_page_limit,
         hard_page_limit=req.hard_page_limit,
+        caller_identity=getattr(request.state, "caller_identity", "") or "unknown",
+        caller_label=req.caller,
     )
-    if req.caller:
-        run.metadata["caller"] = req.caller
     return _to_response(run)
 
 
 @router.post("/workflows/build-research-pack", response_model=WorkflowRunResponse)
 async def build_research_pack(
     req: BuildResearchPackWorkflowRequest,
+    request: Request,
     workflows: WorkflowService = Depends(get_workflows),
 ):
     run = await workflows.start_build_research_pack(
         topic=req.topic,
         official_url=req.official_url,
         max_research_pages=req.max_research_pages,
+        caller_identity=getattr(request.state, "caller_identity", "") or "unknown",
+        caller_label=req.caller,
     )
-    if req.caller:
-        run.metadata["caller"] = req.caller
     return _to_response(run)
 
 
 @router.post("/workflows/search-and-summarize", response_model=WorkflowRunResponse)
 async def search_and_summarize(
     req: SearchAndSummarizeWorkflowRequest,
+    request: Request,
     workflows: WorkflowService = Depends(get_workflows),
 ):
     run = await workflows.start_search_and_summarize(
         query=req.query,
         max_search_results=req.max_search_results,
+        caller_identity=getattr(request.state, "caller_identity", "") or "unknown",
+        caller_label=req.caller,
     )
-    if req.caller:
-        run.metadata["caller"] = req.caller
     return _to_response(run)
 
 

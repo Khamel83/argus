@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -66,6 +67,9 @@ class ProviderBalanceSnapshotRow(SpendBase):
     source: Mapped[str] = mapped_column(String(32), nullable=False)
     observed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     actor_identity: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider_reference: Mapped[str] = mapped_column(String(255), nullable=False)
+    related_attempt_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    authoritative_charge: Mapped[float] = mapped_column(Float, nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
@@ -111,6 +115,9 @@ class ProviderSnapshot:
     provider: str
     balance: float
     observed_at: datetime
+    provider_reference: str
+    related_attempt_id: str
+    authoritative_charge: float
 
 
 class BudgetExhaustedError(RuntimeError):
@@ -127,6 +134,13 @@ def _canonical(value: dict) -> str:
 
 def _fingerprint(value: dict) -> str:
     return hashlib.sha256(_canonical(value).encode()).hexdigest()
+
+
+def _naive_utc(value: datetime) -> datetime:
+    """Normalize API timestamps for storage and arithmetic."""
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _attempt(row: ProviderSpendAttemptRow) -> SpendAttempt:
@@ -342,6 +356,23 @@ class ProviderSpendRepository:
                     raise ValueError(
                         "provider reconciliation requires a matching provider snapshot"
                     )
+                if snapshot.related_attempt_id != row.id:
+                    raise ValueError(
+                        "provider reconciliation requires evidence linked to this attempt"
+                    )
+                if not math.isclose(
+                    snapshot.authoritative_charge,
+                    actual_charge,
+                    rel_tol=0.0,
+                    abs_tol=1e-9,
+                ):
+                    raise ValueError(
+                        "provider reconciliation charge must match authoritative evidence"
+                    )
+                if datetime.now(tz=None) - snapshot.observed_at > timedelta(minutes=15):
+                    raise ValueError(
+                        "provider reconciliation requires fresh provider evidence"
+                    )
             before = _attempt_state(row)
             row.status = "resolved"
             row.outcome = outcome
@@ -372,13 +403,27 @@ class ProviderSpendRepository:
         observed_at: datetime,
         actor_identity: str,
         idempotency_key: str,
+        provider_reference: str,
+        related_attempt_id: str,
+        authoritative_charge: float,
     ) -> ProviderSnapshot:
+        now = datetime.now(tz=None)
+        observed_at = _naive_utc(observed_at)
+        if actor_identity != f"provider:{provider.value}":
+            raise ValueError("provider snapshot requires provider-scoped identity")
+        if not provider_reference.strip():
+            raise ValueError("provider reference is required")
+        if authoritative_charge < 0:
+            raise ValueError("authoritative charge must be non-negative")
         payload = {
             "provider": provider.value,
             "balance": balance,
             "observed_at": observed_at,
             "actor_identity": actor_identity,
             "idempotency_key": idempotency_key,
+            "provider_reference": provider_reference,
+            "related_attempt_id": related_attempt_id,
+            "authoritative_charge": authoritative_charge,
         }
         request_hash = _fingerprint(payload)
         try:
@@ -395,8 +440,26 @@ class ProviderSpendRepository:
                         existing.provider,
                         existing.balance,
                         existing.observed_at,
+                        existing.provider_reference,
+                        existing.related_attempt_id,
+                        existing.authoritative_charge,
                     )
-                now = datetime.now(tz=None)
+                age = now - observed_at
+                if age > timedelta(minutes=15) or age < -timedelta(minutes=1):
+                    raise ValueError("provider snapshot requires fresh evidence")
+                attempt = self._locked_attempt(session, related_attempt_id)
+                if attempt.provider != provider.value:
+                    raise ValueError(
+                        "provider snapshot attempt must match the provider"
+                    )
+                if attempt.status != "uncertain":
+                    raise ValueError(
+                        "provider snapshot attempt must still be uncertain"
+                    )
+                if authoritative_charge > attempt.reserved_charge:
+                    raise ValueError(
+                        "authoritative charge exceeds the reserved charge"
+                    )
                 row = ProviderBalanceSnapshotRow(
                     id=uuid.uuid4().hex,
                     provider=provider.value,
@@ -404,6 +467,9 @@ class ProviderSpendRepository:
                     source="provider",
                     observed_at=observed_at,
                     actor_identity=actor_identity,
+                    provider_reference=provider_reference,
+                    related_attempt_id=related_attempt_id,
+                    authoritative_charge=authoritative_charge,
                     idempotency_key=idempotency_key,
                     request_hash=request_hash,
                     created_at=now,
@@ -417,7 +483,13 @@ class ProviderSpendRepository:
                     request_hash=request_hash,
                 )
                 result = ProviderSnapshot(
-                    row.id, row.provider, row.balance, row.observed_at
+                    row.id,
+                    row.provider,
+                    row.balance,
+                    row.observed_at,
+                    row.provider_reference,
+                    row.related_attempt_id,
+                    row.authoritative_charge,
                 )
             return result
         except IntegrityError:
@@ -435,6 +507,9 @@ class ProviderSpendRepository:
                     existing.provider,
                     existing.balance,
                     existing.observed_at,
+                    existing.provider_reference,
+                    existing.related_attempt_id,
+                    existing.authoritative_charge,
                 )
 
     def record_free_attempt(
@@ -557,6 +632,9 @@ class ProviderSpendRepository:
                     "balance": snapshot.balance,
                     "source": snapshot.source,
                     "observed_at": snapshot.observed_at.isoformat(),
+                    "provider_reference": snapshot.provider_reference,
+                    "related_attempt_id": snapshot.related_attempt_id,
+                    "authoritative_charge": snapshot.authoritative_charge,
                 }
                 if snapshot is not None
                 else None
@@ -695,7 +773,7 @@ class ProviderSpendRepository:
         session.add(
             SpendAuditRow(
                 id=uuid.uuid4().hex,
-                attempt_id=None,
+                attempt_id=row.related_attempt_id,
                 provider=row.provider,
                 action="provider_snapshot",
                 actor_identity=actor,
@@ -707,6 +785,9 @@ class ProviderSpendRepository:
                         "balance": row.balance,
                         "source": row.source,
                         "observed_at": row.observed_at,
+                        "provider_reference": row.provider_reference,
+                        "related_attempt_id": row.related_attempt_id,
+                        "authoritative_charge": row.authoritative_charge,
                     }
                 ),
                 created_at=datetime.now(tz=None),
