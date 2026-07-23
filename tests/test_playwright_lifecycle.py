@@ -253,3 +253,28 @@ def test_browser_status_does_not_misreport_obscura_as_local_sandbox(monkeypatch)
     assert status["loaded_source"] == "obscura_cdp"
     assert status["sandboxed"] is False
     assert status["matches_declared"] is False
+
+
+def test_loaded_browser_without_declared_manifest_is_reported_as_mismatch(monkeypatch):
+    import argus.extraction.playwright_extractor as extractor
+
+    browser = MagicMock()
+    browser.is_connected.return_value = True
+    monkeypatch.setattr(extractor, "_browser", browser)
+    monkeypatch.setattr(extractor, "_using_obscura_cdp", False)
+    monkeypatch.setattr(
+        extractor,
+        "inspect_playwright_browser_capability",
+        MagicMock(
+            return_value={
+                "declared": False,
+                "available": False,
+                "sandbox_required": True,
+            }
+        ),
+    )
+
+    status = extractor.browser_capability_status()
+
+    assert status["loaded_source"] == "local_chromium"
+    assert status["matches_declared"] is False
