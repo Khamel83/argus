@@ -105,6 +105,8 @@ async def test_concurrent_initialization_creates_one_runtime_and_browser(monkeyp
     assert await second is browser
     playwright_factory.return_value.start.assert_awaited_once()
     runtime.chromium.launch.assert_awaited_once()
+    assert runtime.chromium.launch.await_args.kwargs["chromium_sandbox"] is True
+    assert "--no-sandbox" not in runtime.chromium.launch.await_args.kwargs.get("args", [])
 
 
 @pytest.mark.asyncio
@@ -195,3 +197,31 @@ async def test_missing_browser_smoke_leaves_no_playwright_driver_child(monkeypat
     while time.monotonic() < deadline and _playwright_driver_children() - before:
         await asyncio.sleep(0.05)
     assert _playwright_driver_children() == before
+
+
+def test_browser_status_reports_manifest_capability_and_loaded_state(monkeypatch):
+    import argus.extraction.playwright_extractor as extractor
+
+    browser = MagicMock()
+    browser.is_connected.return_value = True
+    monkeypatch.setattr(extractor, "_browser", browser)
+    monkeypatch.setattr(
+        extractor,
+        "inspect_playwright_browser_capability",
+        MagicMock(
+            return_value={
+                "declared": True,
+                "available": True,
+                "sandboxed": True,
+                "playwright_version": "1.58.0",
+                "revision": "1208",
+            }
+        ),
+    )
+
+    status = extractor.browser_capability_status()
+
+    assert status["declared"] is True
+    assert status["available"] is True
+    assert status["loaded"] is True
+    assert status["sandboxed"] is True

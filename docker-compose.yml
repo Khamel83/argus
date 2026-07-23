@@ -26,6 +26,17 @@ services:
       - ARGUS_RESIDENTIAL_POLICY=${ARGUS_RESIDENTIAL_POLICY:-fallback}
     volumes:
       - argus-data:/var/lib/argus
+    init: true
+    mem_limit: 1g
+    memswap_limit: 1g
+    pids_limit: 256
+    shm_size: 256m
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./docker/playwright-seccomp.json
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]

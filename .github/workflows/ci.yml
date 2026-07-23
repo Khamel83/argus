@@ -113,8 +113,37 @@ jobs:
         with:
           context: .
           push: false
+          load: true
+          tags: argus-browser-canary:${{ github.sha }}
           build-args: |
             VCS_REF=${{ github.sha }}
+
+      - name: Run 1 GiB browser admission canary
+        run: |
+          docker run --rm --init \
+            --network none \
+            --memory 1g --memory-swap 1g --pids-limit 256 --shm-size 256m \
+            --read-only --tmpfs /tmp:rw,noexec,nosuid,size=256m \
+            --security-opt no-new-privileges:true \
+            --security-opt seccomp=./docker/playwright-seccomp.json \
+            --volume "$PWD/scripts/browser_canary.py:/canary/browser_canary.py:ro" \
+            "argus-browser-canary:${{ github.sha }}" \
+            python /canary/browser_canary.py --memory-limit-mib 1024
+
+      - name: Run 512 MiB missing-browser regression
+        run: |
+          docker run --rm --init \
+            --network none \
+            --memory 512m --memory-swap 512m --pids-limit 256 --shm-size 128m \
+            --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,size=128m \
+            --tmpfs /ms-playwright:rw,noexec,nosuid,size=1m \
+            --security-opt no-new-privileges:true \
+            --security-opt seccomp=./docker/playwright-seccomp.json \
+            --volume "$PWD/scripts/browser_canary.py:/canary/browser_canary.py:ro" \
+            "argus-browser-canary:${{ github.sha }}" \
+            python /canary/browser_canary.py \
+              --expect-missing --memory-limit-mib 512
 
   freshness:
     runs-on: ubuntu-latest

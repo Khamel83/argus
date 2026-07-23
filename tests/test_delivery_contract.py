@@ -16,6 +16,10 @@ PYTHON_IMAGE = (
     "python:3.12.13-slim-bookworm@"
     "sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b"
 )
+PLAYWRIGHT_IMAGE = (
+    "mcr.microsoft.com/playwright/python:v1.58.0-noble@"
+    "sha256:678457c4c323b981d8b4befc57b95366bb1bb6aa30057b1269f6b171e8d9975a"
+)
 
 
 def test_release_contract_validates_frozen_lock_and_metadata():
@@ -101,5 +105,6 @@ def test_production_dockerfile_uses_the_frozen_lock_and_bakes_runtime_manifest()
     assert "COPY pyproject.toml uv.lock README.md ./" in dockerfile
     assert "RUN /app/.venv/bin/python scripts/build_runtime_manifest.py" in dockerfile
     assert f"FROM {UV_IMAGE} AS uv" in dockerfile
-    assert dockerfile.count(f"FROM {PYTHON_IMAGE}") == 2
+    assert dockerfile.count(f"FROM {PYTHON_IMAGE}") == 1
+    assert dockerfile.count(f"FROM {PLAYWRIGHT_IMAGE}") == 1
     assert "apt-get" not in dockerfile
