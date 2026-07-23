@@ -68,6 +68,7 @@ async def search_web(
     include_attribution: bool = False,
     free_only: bool = False,
     caller: str = "mcp",
+    caller_label: str = "",
 ) -> str:
     """Search the web using the Argus broker.
 
@@ -81,7 +82,14 @@ async def search_web(
         caller: Caller identifier for attribution (default "mcp")
     """
     search_mode = SearchMode(mode)
-    q = SearchQuery(query=query, mode=search_mode, max_results=max_results, free_only=free_only, caller=caller)
+    q = SearchQuery(
+        query=query,
+        mode=search_mode,
+        max_results=max_results,
+        free_only=free_only,
+        caller=caller,
+        metadata={"caller_label": caller_label},
+    )
 
     if session_id:
         resp, sid = await broker.search_with_session(

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ipaddress
+import hmac
+import json
 import os
 from dataclasses import dataclass
 
@@ -51,29 +53,65 @@ class AuthConfig:
     caller_api_key: str
     admin_api_key: str
     cors_origins: tuple[str, ...]
+    scoped_caller_credentials: tuple[tuple[str, str], ...] = ()
 
     @classmethod
     def from_env(cls) -> "AuthConfig":
         caller_api_key = os.environ.get("ARGUS_API_KEY", "").strip()
         admin_api_key = os.environ.get("ARGUS_ADMIN_API_KEY", "").strip() or caller_api_key
         cors_origins = tuple(parse_cors_origins(os.environ.get("ARGUS_CORS_ORIGINS")))
+        scoped_caller_credentials = cls._parse_scoped_credentials(
+            os.environ.get("ARGUS_CALLER_CREDENTIALS_JSON")
+        )
         return cls(
             caller_api_key=caller_api_key,
             admin_api_key=admin_api_key,
             cors_origins=cors_origins,
+            scoped_caller_credentials=scoped_caller_credentials,
         )
 
     def has_caller_key(self) -> bool:
-        return bool(self.caller_api_key)
+        return bool(self.caller_api_key or self.scoped_caller_credentials)
 
     def has_admin_key(self) -> bool:
         return bool(self.admin_api_key)
 
     def matches_caller_token(self, token: str | None) -> bool:
-        return bool(token) and token == self.caller_api_key
+        return self.identity_for_token(token) is not None
 
     def matches_admin_token(self, token: str | None) -> bool:
-        return bool(token) and token == self.admin_api_key
+        return bool(token) and hmac.compare_digest(token, self.admin_api_key)
+
+    def identity_for_token(self, token: str | None) -> str | None:
+        if not token:
+            return None
+        for identity, candidate in self.scoped_caller_credentials:
+            if hmac.compare_digest(token, candidate):
+                return identity
+        if self.caller_api_key and hmac.compare_digest(token, self.caller_api_key):
+            return "legacy-http"
+        return None
+
+    @staticmethod
+    def _parse_scoped_credentials(
+        raw_value: str | None,
+    ) -> tuple[tuple[str, str], ...]:
+        if not raw_value:
+            return ()
+        try:
+            payload = json.loads(raw_value)
+        except (TypeError, ValueError):
+            return ()
+        if not isinstance(payload, dict):
+            return ()
+        credentials = []
+        for identity, config in payload.items():
+            if not isinstance(identity, str) or not identity.strip():
+                continue
+            token = config.get("token") if isinstance(config, dict) else None
+            if isinstance(token, str) and token:
+                credentials.append((identity.strip(), token))
+        return tuple(credentials)
 
 
 def is_admin_path(path: str) -> bool:

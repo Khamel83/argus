@@ -23,15 +23,16 @@ logger = get_logger("mcp.server")
 class StaticTokenVerifier:
     """Minimal bearer-token verifier for remote MCP transports."""
 
-    def __init__(self, api_key: str):
-        self._api_key = api_key
+    def __init__(self, auth_config: AuthConfig):
+        self._auth_config = auth_config
 
     async def verify_token(self, token: str) -> AccessToken | None:
-        if not self._api_key or token != self._api_key:
+        identity = self._auth_config.identity_for_token(token)
+        if identity is None:
             return None
         return AccessToken(
             token=token,
-            client_id="argus-mcp",
+            client_id=identity,
             scopes=["mcp"],
             expires_at=int(time.time()) + 3600,
         )
@@ -58,8 +59,7 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
 
     if use_remote_auth and not auth_config.has_caller_key():
         raise SystemExit(
-            "Remote MCP requires ARGUS_API_KEY. Set it in .env or:\n"
-            "  export ARGUS_API_KEY=your-key"
+            "Remote MCP requires ARGUS_CALLER_CREDENTIALS_JSON or ARGUS_API_KEY."
         )
 
     mcp_kwargs: dict[str, Any] = {"host": host, "port": port}
@@ -70,7 +70,7 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
             resource_server_url=resource_server_url,
             required_scopes=["mcp"],
         )
-        mcp_kwargs["token_verifier"] = StaticTokenVerifier(auth_config.caller_api_key)
+        mcp_kwargs["token_verifier"] = StaticTokenVerifier(auth_config)
 
     mcp = FastMCP("argus", **mcp_kwargs)
 
@@ -88,6 +88,10 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
         caller: str = "mcp",
     ) -> str:
         """Search the web using the Argus broker."""
+        from mcp.server.auth.middleware.auth_context import get_access_token
+
+        access_token = get_access_token()
+        caller_identity = access_token.client_id if access_token else "local-mcp"
         return await mcp_tools.search_web(
             broker,
             query,
@@ -96,7 +100,8 @@ def serve_mcp(transport: str = "stdio", host: str = "127.0.0.1", port: int = 800
             session_id,
             include_attribution,
             free_only,
-            caller,
+            caller_identity,
+            caller_label=caller,
         )
 
     @mcp.tool()

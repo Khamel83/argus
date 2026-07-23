@@ -77,6 +77,7 @@ def _to_response(resp, include_attribution: bool = False) -> SearchResponse:
 @router.post("/search", response_model=SearchResponse)
 async def search(
     req: SearchRequest,
+    request: Request,
     broker: SearchBroker = Depends(get_broker),
     repository: SearchLedgerRepository = Depends(get_search_repository),
 ):
@@ -86,7 +87,8 @@ async def search(
         max_results=req.max_results,
         providers=[ProviderName(provider) for provider in req.providers] if req.providers else None,
         free_only=req.free_only,
-        caller=req.caller,
+        caller=getattr(request.state, "caller_identity", "") or "unknown",
+        metadata={"caller_label": req.caller},
     )
 
     if req.session_id:

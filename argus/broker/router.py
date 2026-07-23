@@ -33,6 +33,7 @@ class SearchBroker:
         session_service: Optional[SessionSearchService] = None,
         reachability: ReachabilityMatrix | None = None,
         egress_nodes: dict[str, EgressNode] | None = None,
+        spend_repository=None,
     ):
         self._providers = providers
         self._cache = cache or SearchCache()
@@ -44,6 +45,13 @@ class SearchBroker:
         self._session_store = session_store
         self._reachability = reachability or ReachabilityMatrix()
         self._egress_nodes = egress_nodes or {}
+        if spend_repository is None:
+            from argus.persistence.provider_spend import (
+                create_provider_spend_repository,
+            )
+
+            spend_repository = create_provider_spend_repository()
+        self._spend_repository = spend_repository
         self._executor = executor or ProviderExecutor(
             providers=self._providers,
             health_tracker=self._health,
@@ -51,6 +59,7 @@ class SearchBroker:
             reachability=self._reachability,
             egress_nodes=self._egress_nodes,
             caller_tier_caps=self._config.caller_tier_caps,
+            spend_repository=self._spend_repository,
         )
         self._pipeline = result_pipeline or SearchResultPipeline(
             cache=self._cache,
