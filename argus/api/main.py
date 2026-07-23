@@ -114,6 +114,12 @@ def create_app(
                 pass
 
         try:
+            from argus.extraction.playwright_extractor import close_browser
+            await close_browser()
+        except Exception as exc:
+            logger.warning("Failed to close Playwright resources: %s", exc)
+
+        try:
             b.budget_tracker.close()
         except Exception as exc:
             logger.warning("Failed to close broker budget tracker: %s", exc)
