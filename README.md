@@ -377,7 +377,20 @@ All commands support `--json` for structured output.
 <details>
 <summary>How sessions work</summary>
 
-Pass `session_id` to any search call. Argus stores each query and extracted URL in a SQLite-backed session. Reusing the same `session_id` gives the broker context from prior queries — follow-up searches are automatically refined using earlier conversation context. Sessions persist across restarts. Omit `session_id` for stateless, one-shot searches.
+Pass `session_id` to any search call. Argus stores each query and extracted URL through the same SQLAlchemy repository used by the retrieval ledger (`ARGUS_DB_URL`, PostgreSQL in production and SQLite for direct local use). Reusing the same `session_id` gives the broker context from prior queries — follow-up searches are automatically refined using earlier conversation context. Sessions persist across restarts. Omit `session_id` for stateless, one-shot searches.
+
+Legacy sessions from the former budget SQLite database can be reconciled
+without mutating the target first:
+
+```bash
+argus ledger reconcile-sessions \
+  --source sqlite:///argus_budgets.db \
+  --target "$ARGUS_DB_URL"
+# Review source/imported/skipped/conflicting, then repeat with --apply.
+```
+
+The import is idempotent: an identical existing session is skipped and a
+different session with the same ID is reported as conflicting.
 
 </details>
 

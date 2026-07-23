@@ -313,6 +313,8 @@ class TestExtractUrl:
         result = await extract_url("https://example.com")
         assert result.extractor == ExtractorName.JINA
         assert result.quality_passed is True
+        assert result.attempts[0].status == "quality_failed"
+        assert result.attempts[0].failure_summary
 
     @pytest.mark.asyncio
     async def test_quality_passed_incomplete_content_is_not_relabelled_as_quality_failed(
@@ -376,6 +378,29 @@ class TestExtractUrl:
 
         result = await extract_url("https://example.com")
         assert "trafilatura" in result.extractors_tried
+
+    @pytest.mark.asyncio
+    async def test_attempt_outcomes_and_latency_are_recorded(self, mock_chain):
+        from argus.extraction.extractor import extract_url, _cache, _domain_limiter
+
+        _cache.clear()
+        _domain_limiter.clear()
+        good_result = ExtractedContent(
+            url="https://example.com",
+            title="Title",
+            text=_good_text(150),
+            word_count=150,
+            extractor=ExtractorName.JINA,
+        )
+        mock_chain["jina"].return_value = good_result
+
+        result = await extract_url("https://example.com")
+
+        assert result.attempts
+        assert result.attempts[-1].extractor == "jina"
+        assert result.attempts[-1].status == "success"
+        assert all(attempt.latency_ms >= 0 for attempt in result.attempts)
+        assert result.attempts[0].failure_summary
 
     @pytest.mark.asyncio
     async def test_enabled_extraction_chain_order(self, mock_chain, monkeypatch):

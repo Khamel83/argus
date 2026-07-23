@@ -387,6 +387,12 @@ def test_alembic_migration_creates_search_ledger(tmp_path):
         "result_provenance",
         "content_identities",
         "delivery_intents",
+        "extraction_runs",
+        "extractor_attempts",
+        "extraction_artifacts",
+        "retrieval_sessions",
+        "session_queries",
+        "session_extracted_urls",
     } <= tables
     request_columns = {
         column["name"] for column in inspector.get_columns("retrieval_requests")

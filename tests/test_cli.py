@@ -19,10 +19,11 @@ def test_extract_cli_passes_archive_ingest_mode(monkeypatch):
 
     seen = {}
 
-    async def fake_extract_url(url, domain=None, mode="default"):
+    async def fake_extract_url(url, domain=None, mode="default", *, caller=""):
         seen["url"] = url
         seen["domain"] = domain
         seen["mode"] = mode
+        seen["caller"] = caller
         return ExtractedContent(
             url=url,
             title="Example",
@@ -43,6 +44,7 @@ def test_extract_cli_passes_archive_ingest_mode(monkeypatch):
         "url": "https://example.com",
         "domain": None,
         "mode": "archive_ingest",
+        "caller": "cli",
     }
     assert '"mode": "archive_ingest"' in result.output
 

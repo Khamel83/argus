@@ -77,6 +77,90 @@ def reconcile_legacy_state(
     return report
 
 
+def reconcile_legacy_sessions(
+    source_url: str,
+    repository,
+    *,
+    apply: bool = False,
+) -> dict[str, int]:
+    """Report or import legacy SQLite session history idempotently."""
+    source_engine = create_engine(source_url)
+    required = {"sessions", "session_queries", "session_extracted_urls"}
+    if not required <= set(inspect(source_engine).get_table_names()):
+        raise ValueError("source does not contain the legacy session tables")
+
+    report = {"source": 0, "imported": 0, "skipped": 0, "conflicting": 0}
+    with source_engine.connect() as connection:
+        sessions = connection.execute(
+            text("SELECT id, created_at FROM sessions ORDER BY id")
+        ).mappings()
+        for legacy_session in sessions:
+            report["source"] += 1
+            session_id = legacy_session["id"]
+            queries = connection.execute(
+                text(
+                    "SELECT query, mode, timestamp, results_count "
+                    "FROM session_queries WHERE session_id = :session_id ORDER BY id"
+                ),
+                {"session_id": session_id},
+            ).mappings().all()
+            expected = []
+            for ordinal, query in enumerate(queries):
+                urls = connection.execute(
+                    text(
+                        "SELECT url FROM session_extracted_urls "
+                        "WHERE session_id = :session_id AND query_index = :ordinal "
+                        "ORDER BY id"
+                    ),
+                    {"session_id": session_id, "ordinal": ordinal},
+                ).scalars().all()
+                expected.append(
+                    {
+                        "query": query["query"],
+                        "mode": query["mode"],
+                        "timestamp": datetime.fromtimestamp(query["timestamp"]),
+                        "results_count": query["results_count"],
+                        "extracted_urls": list(urls),
+                    }
+                )
+
+            existing = repository.load_session(session_id)
+            if existing is not None:
+                actual = [
+                    {
+                        "query": query.query,
+                        "mode": query.mode,
+                        "timestamp": query.timestamp,
+                        "results_count": query.results_count,
+                        "extracted_urls": list(query.extracted_urls),
+                    }
+                    for query in existing.queries
+                ]
+                report["skipped" if actual == expected else "conflicting"] += 1
+                continue
+
+            report["imported"] += 1
+            if not apply:
+                continue
+            repository.create_session(
+                session_id,
+                datetime.fromtimestamp(legacy_session["created_at"]),
+            )
+            for query in expected:
+                ordinal = repository.append_session_query(
+                    session_id,
+                    query=query["query"],
+                    mode=query["mode"],
+                    timestamp=query["timestamp"],
+                    results_count=query["results_count"],
+                )
+                for url in query["extracted_urls"]:
+                    repository.append_session_extracted_url(
+                        session_id, ordinal, url
+                    )
+    return report
+
+
 def _legacy_retrieval(connection, run, *, has_attempts):
     results = connection.execute(
         text(

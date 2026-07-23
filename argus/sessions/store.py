@@ -1,4 +1,4 @@
-"""Session store with optional SQLite persistence."""
+"""Session store backed by the authoritative persistence repository."""
 
 import uuid
 from datetime import datetime
@@ -6,21 +6,31 @@ from typing import Dict, Optional
 
 from argus.logging import get_logger
 from argus.sessions.models import QueryRecord, Session
-from argus.sessions.persistence import SessionPersistence
 
 logger = get_logger("sessions")
 
 
 class SessionStore:
-    """Store for search sessions with optional SQLite persistence."""
+    """Process-local session cache with authoritative durable persistence."""
 
-    def __init__(self, persist: bool = True, db_path: Optional[str] = None):
+    def __init__(
+        self,
+        persist: bool = True,
+        db_path: Optional[str] = None,
+        repository=None,
+    ):
         self._sessions: Dict[str, Session] = {}
         self._persist = persist
-        self._db: Optional[SessionPersistence] = None
+        self._db = repository
         if persist:
             try:
-                self._db = SessionPersistence(db_path=db_path)
+                if self._db is None:
+                    from argus.persistence.search_ledger import (
+                        create_search_ledger_repository,
+                    )
+
+                    db_url = f"sqlite:///{db_path}" if db_path else None
+                    self._db = create_search_ledger_repository(db_url)
                 logger.info("Session persistence enabled")
             except Exception as exc:
                 logger.warning(
@@ -32,23 +42,9 @@ class SessionStore:
     def _load_session(self, session_id: str) -> Optional[Session]:
         if not self._db:
             return None
-        data = self._db.load_session(session_id)
-        if data is None:
+        session = self._db.load_session(session_id)
+        if session is None:
             return None
-        session = Session(
-            id=data["id"],
-            created_at=datetime.fromtimestamp(data["created_at"]),
-        )
-        for qd in data["queries"]:
-            session.queries.append(
-                QueryRecord(
-                    query=qd["query"],
-                    mode=qd["mode"],
-                    timestamp=datetime.fromtimestamp(qd["timestamp"]),
-                    results_count=qd["results_count"],
-                    extracted_urls=qd["extracted_urls"],
-                )
-            )
         self._sessions[session_id] = session
         return session
 
@@ -62,9 +58,9 @@ class SessionStore:
                 return loaded
 
         session = Session(id=sid)
-        self._sessions[sid] = session
         if self._persist and self._db:
-            self._db.save_session(sid, session.created_at.timestamp())
+            self._db.create_session(sid, session.created_at)
+        self._sessions[sid] = session
         logger.debug("Created session %s", sid)
         return session
 
@@ -90,6 +86,14 @@ class SessionStore:
             mode=mode,
             results_count=results_count,
         )
+        if self._persist and self._db:
+            self._db.append_session_query(
+                session_id,
+                query=query,
+                mode=mode,
+                timestamp=record.timestamp,
+                results_count=results_count,
+            )
         session.queries.append(record)
         logger.debug(
             "Session %s: added query #%d: %s",
@@ -97,25 +101,17 @@ class SessionStore:
             len(session.queries),
             query[:50],
         )
-
-        if self._persist and self._db:
-            self._db.save_query(
-                session_id,
-                query=query,
-                mode=mode,
-                timestamp=record.timestamp.timestamp(),
-                results_count=results_count,
-            )
         return session
 
     def add_extracted_url(self, session_id: str, query_index: int, url: str) -> None:
         session = self._sessions.get(session_id)
         if session is None:
             return
-        if 0 <= query_index < len(session.queries):
-            session.queries[query_index].extracted_urls.append(url)
+        if not 0 <= query_index < len(session.queries):
+            return
         if self._persist and self._db:
-            self._db.save_extracted_url(session_id, query_index, url)
+            self._db.append_session_extracted_url(session_id, query_index, url)
+        session.queries[query_index].extracted_urls.append(url)
 
     def list_sessions(self) -> list[Session]:
         if self._persist and self._db:
