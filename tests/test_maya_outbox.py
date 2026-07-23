@@ -1,6 +1,7 @@
 import hashlib
 import json
 import time
+import tracemalloc
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from threading import Barrier
@@ -369,6 +370,12 @@ def test_safe_extraction_content_preserves_900k_with_bounded_runtime(tmp_path):
         "%2561uth=deepEncodedPayloadLeak987",
         'prefix {"\\u0061uth":"deepEncodedPayloadLeak987"} suffix',
         f"{'_' * 192}token=deepEncodedPayloadLeak987",
+        '{"outer":{"auth":"deepEncodedPayloadLeak987"}}',
+        '{"outer":[{"\\u0061uth":"deepEncodedPayloadLeak987"}]}',
+        '{"outer":{"%2561uth":"deepEncodedPayloadLeak987"}}',
+        '{"outer":"{\\"auth\\":\\"deepEncodedPayloadLeak987\\"}"}',
+        '{"outer":"safe article auth=deepEncodedPayloadLeak987"}',
+        "{'outer':[{'auth':'deepEncodedPayloadLeak987'}]}",
     ],
 )
 def test_outbox_redacts_nested_encoded_and_long_key_credentials(
@@ -405,6 +412,12 @@ def test_outbox_redacts_nested_encoded_and_long_key_credentials(
         "%2561uth=deepEncodedSummaryLeak987",
         'prefix {"\\u0061uth":"deepEncodedSummaryLeak987"} suffix',
         f"{'_' * 192}token=deepEncodedSummaryLeak987",
+        '{"outer":{"auth":"deepEncodedSummaryLeak987"}}',
+        '{"outer":[{"\\u0061uth":"deepEncodedSummaryLeak987"}]}',
+        '{"outer":{"%2561uth":"deepEncodedSummaryLeak987"}}',
+        '{"outer":"{\\"auth\\":\\"deepEncodedSummaryLeak987\\"}"}',
+        '{"outer":"safe article auth=deepEncodedSummaryLeak987"}',
+        "{'outer':[{'auth':'deepEncodedSummaryLeak987'}]}",
     ],
 )
 def test_dead_letter_redacts_nested_encoded_and_long_key_credentials(
@@ -513,6 +526,94 @@ def test_safe_json_extraction_preserves_899965_bytes_with_bounded_runtime(tmp_pa
     payload = json.loads(_outbox_row(repository).payload_json)
     assert payload["pages"][0]["content"] == content
     assert elapsed < 3.0
+
+
+def test_extraction_content_preserves_newlines_and_hashes_verbatim(tmp_path):
+    repository = _repository(tmp_path)
+    content = "line one\nline two\r\nline three"
+    result = ExtractedContent(
+        url="https://example.com/multiline",
+        text=content,
+        word_count=6,
+        extractor=ExtractorName.TRAFILATURA,
+        attempts=[ExtractionAttempt("trafilatura", "success", 1)],
+    )
+
+    repository.record_extraction(
+        url=result.url,
+        domain=None,
+        mode="default",
+        caller="maya",
+        result=result,
+        latency_ms=1,
+        extraction_run_id="verbatim-multiline-content",
+    )
+
+    payload = json.loads(_outbox_row(repository).payload_json)
+    page = payload["pages"][0]
+    assert page["content"] == content
+    assert page["content_sha256"] == hashlib.sha256(content.encode()).hexdigest()
+    assert "\n" not in payload["result_summary"]
+    assert "\r" not in payload["result_summary"]
+
+
+def test_url_sanitization_bounds_input_and_query_work_deterministically():
+    from argus.persistence.maya_outbox import _safe_url
+
+    huge_query = "&".join(f"safe{index}=visible" for index in range(100_000))
+    url = f"https://example.com/article?{huge_query}&auth=urlWorkLeak987"
+
+    tracemalloc.start()
+    started = time.perf_counter()
+    sanitized = [_safe_url(url) for _ in range(50)]
+    elapsed = time.perf_counter() - started
+    _, peak_bytes = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    assert all(len(item.encode("utf-8")) <= 2048 for item in sanitized)
+    assert all("urlWorkLeak987" not in item for item in sanitized)
+    assert elapsed < 3.0
+    assert peak_bytes < 1_000_000
+
+
+def test_nonduplicate_receipt_cannot_acknowledge_zero_inserted_children(tmp_path):
+    from argus.persistence.maya_outbox import MayaOutboxDispatcher
+
+    repository = _repository(tmp_path)
+    result = ExtractedContent(
+        url="https://example.com/receipt-child",
+        text="child content",
+        word_count=2,
+        extractor=ExtractorName.TRAFILATURA,
+        attempts=[ExtractionAttempt("trafilatura", "success", 1)],
+    )
+    repository.record_extraction(
+        url=result.url,
+        domain=None,
+        mode="default",
+        caller="maya",
+        result=result,
+        latency_ms=1,
+        extraction_run_id="invalid-zero-child-receipt",
+    )
+    receipt = _maya_receipt(pages=1)
+    receipt["children_added"] = 0
+    dispatcher = MayaOutboxDispatcher(
+        repository,
+        endpoint="http://maya/captures",
+        token="test-token",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(201, json=receipt)
+        ),
+        clock=lambda: datetime(2026, 7, 23, 12, 0),
+    )
+
+    assert dispatcher.run_once() == {"retried": 1}
+    row = _outbox_row(repository)
+    assert row.status == "retry"
+    assert row.delivered_at is None
+    assert row.response_json is None
+    assert row.last_error_code == "invalid_maya_receipt"
 
 
 def test_remote_error_code_is_allowlisted_and_never_persists_assignment(tmp_path):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import re
@@ -29,21 +30,30 @@ _AUTH_SCHEME_RE = re.compile(r"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9+/._~=-]{4,}")
 _COOKIE_HEADER_RE = re.compile(r"(?i)\b(?:set-cookie|cookie)\s*:\s*[^\r\n]+")
 _KEY_VALUE_RE = re.compile(
     r"""(?ix)
+    (?P<prefix>
     (?<![A-Za-z0-9_.%+\\\-\[\]])
     (?P<key_quote>["']?)
     (?P<key>[A-Za-z_%\\][A-Za-z0-9_.%+\\\-\[\]]*)
     (?P=key_quote)
     \s*[:=]\s*
+    )
+    (?P<value>
     (?:
         "(?:\\.|[^"\\\r\n])*"|
         '(?:\\.|[^'\\\r\n])*'|
-        [^\s,;}\]\r\n]+
+        [^\s,;}\]"'\r\n]+
+    )
     )
     """
 )
 _JSON_UNICODE_ESCAPE_RE = re.compile(r"\\u([0-9a-fA-F]{4})")
 _MAX_DECODE_ROUNDS = 4
 _MAX_DECODE_CHARS = 1_048_576
+_MAX_REDACTION_DEPTH = 8
+_MAX_EMBEDDED_SCALAR_CHARS = 65_536
+_MAX_URL_INPUT_BYTES = 8192
+_MAX_URL_QUERY_FIELDS = 64
+_MAX_URL_OUTPUT_BYTES = 2048
 _SENSITIVE_KEY_SUBSTRINGS = (
     "auth",
     "session",
@@ -116,8 +126,46 @@ def _is_sensitive_key(value: object) -> bool:
     )
 
 
-def _redact_key_value(match: re.Match) -> str:
-    return "[redacted]" if _is_sensitive_key(match.group("key")) else match.group(0)
+def _decoded_quoted_scalar(value: str) -> str | None:
+    if (
+        len(value) > _MAX_EMBEDDED_SCALAR_CHARS
+        or not value.startswith(("'", '"'))
+        or "\\" not in value
+    ):
+        return None
+    for parser in (json.loads, ast.literal_eval):
+        try:
+            decoded = parser(value)
+        except (TypeError, ValueError, SyntaxError, MemoryError, RecursionError):
+            continue
+        if isinstance(decoded, str):
+            return decoded
+    return None
+
+
+def _redact_key_value(match: re.Match, *, depth: int) -> str:
+    if _is_sensitive_key(match.group("key")):
+        return "[redacted]"
+    if depth >= _MAX_REDACTION_DEPTH:
+        return f"{match.group('prefix')}[redacted]"
+    raw_value = match.group("value")
+    redacted_value = _redact_text(
+        raw_value,
+        len(raw_value),
+        _depth=depth + 1,
+    )
+    if redacted_value != raw_value:
+        return f"{match.group('prefix')}{redacted_value}"
+    decoded = _decoded_quoted_scalar(raw_value)
+    if decoded is not None:
+        redacted_decoded = _redact_text(
+            decoded,
+            len(decoded),
+            _depth=depth + 1,
+        )
+        if redacted_decoded != decoded:
+            return f"{match.group('prefix')}[redacted]"
+    return match.group(0)
 
 
 def _sanitize_structure(value: object, *, depth: int = 0) -> object:
@@ -129,10 +177,11 @@ def _sanitize_structure(value: object, *, depth: int = 0) -> object:
             if index >= 128:
                 sanitized["[truncated]"] = True
                 break
-            safe_key = str(key)[:256]
+            raw_key = str(key)
+            safe_key = raw_key[:256]
             sanitized[safe_key] = (
                 "[redacted]"
-                if _is_sensitive_key(safe_key)
+                if _is_sensitive_key(raw_key)
                 else _sanitize_structure(item, depth=depth + 1)
             )
         return sanitized
@@ -157,13 +206,16 @@ def _bounded_text(value: object, scan_limit: int) -> str:
     return str(value or "")[:scan_limit]
 
 
-def _redact_text(value: object, limit: int) -> str:
+def _redact_text(value: object, limit: int, *, _depth: int = 0) -> str:
     scan_limit = limit if limit > 65_536 else max(limit * 4, 4096)
     text = _bounded_text(value, scan_limit).replace("\x00", "")
     text = _AUTH_HEADER_RE.sub("[redacted]", text)
     text = _AUTH_SCHEME_RE.sub("[redacted]", text)
     text = _COOKIE_HEADER_RE.sub("[redacted]", text)
-    text = _KEY_VALUE_RE.sub(_redact_key_value, text)
+    text = _KEY_VALUE_RE.sub(
+        lambda match: _redact_key_value(match, depth=_depth),
+        text,
+    )
     text = _MAYA_SECRET_TOKEN_RE.sub("[redacted]", text)
     return _PEM_RE.sub("[redacted]", text)[:limit]
 
@@ -179,18 +231,41 @@ def _safe_text(value: object, limit: int) -> str:
     return _redact_text(value, limit).replace("\r", " ").replace("\n", " ")
 
 
+def _safe_content(value: object, limit: int) -> str:
+    return _redact_text(value, limit)
+
+
+def _bounded_utf8(value: object, limit: int) -> str:
+    text = str(value or "")[:limit]
+    return text.encode("utf-8", errors="ignore")[:limit].decode(
+        "utf-8",
+        errors="ignore",
+    )
+
+
 def _safe_url(value: str) -> str:
-    parts = urlsplit(value)
+    try:
+        parts = urlsplit(_bounded_utf8(value, _MAX_URL_INPUT_BYTES))
+        port = parts.port
+    except ValueError:
+        return "[redacted]"
     host = parts.hostname or ""
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
-    if parts.port:
-        host = f"{host}:{parts.port}"
-    query = [
-        (_safe_text(key, 256), _safe_text(item, 2048))
-        for key, item in parse_qsl(parts.query, keep_blank_values=True)
-        if not _is_sensitive_key(key)
-    ]
+    if port:
+        host = f"{host}:{port}"
+    try:
+        query_fields = parse_qsl(
+            parts.query,
+            keep_blank_values=True,
+            max_num_fields=_MAX_URL_QUERY_FIELDS,
+        )
+    except ValueError:
+        query_fields = []
+    query = []
+    for key, item in query_fields:
+        if not _is_sensitive_key(key):
+            query.append((_safe_text(key, 256), _safe_text(item, 2048)))
     path_segments = []
     redact_next = False
     for segment in _decode_identifier(parts.path).split("/"):
@@ -203,7 +278,10 @@ def _safe_url(value: str) -> str:
         else:
             path_segments.append(_safe_text(segment, 2048))
     path = quote("/".join(path_segments), safe="/:@-._~[]")
-    return urlunsplit((parts.scheme, host, path, urlencode(query), ""))[:2048]
+    return _bounded_utf8(
+        urlunsplit((parts.scheme, host, path, urlencode(query), "")),
+        _MAX_URL_OUTPUT_BYTES,
+    )
 
 
 def _timestamp(value: datetime) -> str:
@@ -294,7 +372,7 @@ def extraction_capture_payload(
     result,
     completed_at: datetime,
 ) -> tuple[dict, str | None]:
-    content = _safe_text(result.text, 1_048_576)
+    content = _safe_content(result.text, 1_048_576)
     content_sha256 = (
         hashlib.sha256(content.encode("utf-8")).hexdigest() if content else None
     )
@@ -537,7 +615,10 @@ class MayaOutboxDispatcher:
             or received_at.tzinfo is None
             or len(received_at_text) > 64
             or (status_code == 200 and (not duplicate or children_added != 0))
-            or (status_code == 201 and duplicate)
+            or (
+                status_code == 201
+                and (duplicate or children_added != len(expected_pages))
+            )
         ):
             return None
         return {
