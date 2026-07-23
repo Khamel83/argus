@@ -57,7 +57,7 @@ def test_record_restore_cli_cannot_mint_evidence_from_asserted_schema(tmp_path):
         "--evidence",
         str(evidence),
         "--schema-head",
-        "0004_operation_ledger",
+        "0005_provider_spend",
     )
 
     assert result.returncode != 0

@@ -126,7 +126,7 @@ def test_backup_record_is_atomic_sanitized_and_preserves_restore(tmp_path):
                     "verified_at": "2026-07-20T08:00:00+00:00",
                     "databases": ["atlas", "argus"],
                     "globals_validated": True,
-                    "schema_head": "0004_operation_ledger",
+                    "schema_head": "0005_provider_spend",
                     "checks": {
                         "schema": True,
                         "row_counts": True,
@@ -153,7 +153,7 @@ def test_backup_record_is_atomic_sanitized_and_preserves_restore(tmp_path):
     assert payload["backup"]["databases"] == ["atlas", "argus"]
     assert payload["backup"]["globals"] is True
     assert payload["backup"]["outside_live_data"] is True
-    assert payload["restore"]["schema_head"] == "0004_operation_ledger"
+    assert payload["restore"]["schema_head"] == "0005_provider_spend"
     assert "private" not in payload
     assert not list(tmp_path.glob(".recovery.json.*"))
 
@@ -194,7 +194,7 @@ def test_restore_record_only_claims_checks_after_successful_verifier(tmp_path):
         ),
         migrate_argus=lambda database: events.append("migrate:argus"),
         verify_argus=lambda database, expected: {
-            "schema_head": "0004_operation_ledger",
+            "schema_head": "0005_provider_spend",
             "inventory": expected,
             "checks": checks,
         },

@@ -24,7 +24,7 @@ def _valid_evidence() -> dict:
             "verified_at": (NOW - timedelta(days=3)).isoformat(),
             "databases": ["atlas", "argus"],
             "globals_validated": True,
-            "schema_head": "0004_operation_ledger",
+            "schema_head": "0005_provider_spend",
             "backup_manifest_sha256": "a" * 64,
             "checks": {
                 "schema": True,
@@ -49,7 +49,7 @@ def test_valid_recovery_evidence_allows_schema_promotion_without_leaking_paths(t
     assert status["state"] == "ready"
     assert status["schema_promotion_allowed"] is True
     assert status["backup"]["databases"] == ["argus", "atlas"]
-    assert status["restore"]["schema_head"] == "0004_operation_ledger"
+    assert status["restore"]["schema_head"] == "0005_provider_spend"
     assert status["restore"]["databases"] == ["argus", "atlas"]
     assert "unsafe_internal_path" not in json.dumps(status)
     assert "scratch_database" not in json.dumps(status)

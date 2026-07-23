@@ -15,6 +15,9 @@ REQUIRED_TABLES = {
     "retrieval_sessions",
     "session_queries",
     "session_extracted_urls",
+    "provider_spend_attempts",
+    "provider_balance_snapshots",
+    "provider_spend_audit",
     "alembic_version",
 }
 
@@ -38,7 +41,7 @@ class FakeCursor:
         if "current_database" in self.query:
             return (self.database,)
         if "alembic_version" in self.query:
-            return ("0004_operation_ledger",)
+            return ("0005_provider_spend",)
         if "search_run_id" in self.query:
             return None
         return (0,)
@@ -84,7 +87,7 @@ def test_restore_verifier_checks_schema_counts_integrity_and_read_path():
     )
 
     assert report["database"] == "argus_restore_issue40_test"
-    assert report["schema_head"] == "0004_operation_ledger"
+    assert report["schema_head"] == "0005_provider_spend"
     assert report["checks"] == {
         "schema": True,
         "row_counts": True,
@@ -285,7 +288,7 @@ def test_postgresql_restore_verifier_uses_disposable_database(
             ),
         )
 
-        assert report["schema_head"] == "0004_operation_ledger"
+        assert report["schema_head"] == "0005_provider_spend"
         assert report["checks"]["argus_read_path"] is True
         assert verify_restored_source_inventory(
             scratch,

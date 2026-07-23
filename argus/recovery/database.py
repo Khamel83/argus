@@ -13,7 +13,7 @@ from argus.recovery.operator import (
 )
 
 
-EXPECTED_SCHEMA_HEAD = "0004_operation_ledger"
+EXPECTED_SCHEMA_HEAD = "0005_provider_spend"
 REQUIRED_TABLES = {
     "retrieval_requests",
     "retrieval_runs",
@@ -28,6 +28,9 @@ REQUIRED_TABLES = {
     "retrieval_sessions",
     "session_queries",
     "session_extracted_urls",
+    "provider_spend_attempts",
+    "provider_balance_snapshots",
+    "provider_spend_audit",
     "alembic_version",
 }
 COUNTED_TABLES = sorted(REQUIRED_TABLES - {"alembic_version"})
