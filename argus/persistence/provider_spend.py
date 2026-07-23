@@ -60,6 +60,13 @@ class ProviderSpendAttemptRow(SpendBase):
 
 class ProviderBalanceSnapshotRow(SpendBase):
     __tablename__ = "provider_balance_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider",
+            "provider_reference",
+            name="uq_provider_snapshot_reference",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     provider: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
@@ -499,18 +506,29 @@ class ProviderSpendRepository:
                         ProviderBalanceSnapshotRow.idempotency_key == idempotency_key
                     )
                 )
-                if existing is None:
-                    raise RuntimeError("snapshot idempotency race was not visible")
-                self._verify_hash(existing.request_hash, request_hash)
-                return ProviderSnapshot(
-                    existing.id,
-                    existing.provider,
-                    existing.balance,
-                    existing.observed_at,
-                    existing.provider_reference,
-                    existing.related_attempt_id,
-                    existing.authoritative_charge,
+                if existing is not None:
+                    self._verify_hash(existing.request_hash, request_hash)
+                    return ProviderSnapshot(
+                        existing.id,
+                        existing.provider,
+                        existing.balance,
+                        existing.observed_at,
+                        existing.provider_reference,
+                        existing.related_attempt_id,
+                        existing.authoritative_charge,
+                    )
+                replayed = session.scalar(
+                    select(ProviderBalanceSnapshotRow).where(
+                        ProviderBalanceSnapshotRow.provider == provider.value,
+                        ProviderBalanceSnapshotRow.provider_reference
+                        == provider_reference,
+                    )
                 )
+                if replayed is not None:
+                    raise SpendConflictError(
+                        "provider reference already used for another obligation"
+                    )
+                raise RuntimeError("snapshot integrity conflict was not visible")
 
     def record_free_attempt(
         self,

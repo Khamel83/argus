@@ -1,5 +1,6 @@
 """Session-aware search flow for the broker."""
 
+from dataclasses import replace
 from typing import Optional
 
 from argus.logging import get_logger
@@ -34,12 +35,7 @@ class SessionSearchService:
         effective_query = query
         if refined_text != query.query:
             logger.debug("Query refined: %r -> %r", query.query, refined_text)
-            effective_query = SearchQuery(
-                query=refined_text,
-                mode=query.mode,
-                max_results=query.max_results,
-                providers=query.providers,
-            )
+            effective_query = replace(query, query=refined_text)
 
         response = await search_fn(effective_query)
         if self._session_store is not None and effective_session_id:

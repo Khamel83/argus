@@ -1,9 +1,7 @@
-import time
 import pytest
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
-from argus.broker.reachability import EgressProbe, ReachabilityMatrix
-from argus.models import ProviderName, SearchQuery, ProviderTrace, SearchResult, SearchMode
+from argus.broker.reachability import ReachabilityMatrix
+from argus.models import ProviderName, ProviderTrace, SearchResult
 
 
 def test_best_egress_returns_local_when_reachable():
@@ -135,3 +133,81 @@ async def test_probe_all_probes_remote_nodes():
         rp_module.RemoteProviderClient = original
 
     assert matrix.best_egress(ProviderName.YAHOO) == "oci-dev"
+
+
+@pytest.mark.asyncio
+async def test_probe_all_records_every_free_local_and_remote_attempt_once():
+    from argus.config import EgressNode
+
+    spend = MagicMock()
+    matrix = ReachabilityMatrix(spend_repository=spend)
+    local = MagicMock()
+    local.is_available.return_value = True
+    local.search = AsyncMock(return_value=(
+        [],
+        ProviderTrace(
+            provider=ProviderName.WOLFRAM,
+            status="error",
+            latency_ms=10,
+        ),
+    ))
+    node = EgressNode(name="homelab", url="http://worker:8273", shared_secret="s")
+
+    with patch("argus.broker.remote_provider.RemoteProviderClient") as remote_type:
+        remote = remote_type.return_value
+        remote.search = AsyncMock(
+            return_value=(
+                [],
+                ProviderTrace(
+                    provider=ProviderName.WOLFRAM,
+                    status="success",
+                    latency_ms=20,
+                ),
+            )
+        )
+        await matrix.probe_all(
+            local_providers={ProviderName.WOLFRAM: local},
+            egress_nodes=[node],
+        )
+
+    assert spend.record_free_attempt.call_count == 6
+    calls = spend.record_free_attempt.call_args_list
+    assert {call.kwargs["caller_label"] for call in calls} == {
+        "reachability:local",
+        "reachability:homelab",
+    }
+    assert {call.kwargs["outcome"] for call in calls} == {"error", "success"}
+    wolfram_calls = [
+        call for call in calls if call.kwargs["provider"] == ProviderName.WOLFRAM
+    ]
+    assert len(wolfram_calls) == 2
+    assert all(call.kwargs["usage"] == 1.0 for call in calls)
+    assert len({call.kwargs["idempotency_key"] for call in calls}) == 6
+
+
+@pytest.mark.asyncio
+async def test_probe_accounting_failure_is_not_reclassified_or_double_recorded():
+    spend = MagicMock()
+    spend.record_free_attempt.side_effect = RuntimeError("ledger unavailable")
+    matrix = ReachabilityMatrix(spend_repository=spend)
+    local = MagicMock()
+    local.is_available.return_value = True
+    local.search = AsyncMock(
+        return_value=(
+            [],
+            ProviderTrace(
+                provider=ProviderName.WOLFRAM,
+                status="success",
+                latency_ms=10,
+            ),
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="ledger unavailable"):
+        await matrix.probe_all(
+            local_providers={ProviderName.WOLFRAM: local},
+            egress_nodes=[],
+        )
+
+    spend.record_free_attempt.assert_called_once()
+    assert spend.record_free_attempt.call_args.kwargs["outcome"] == "success"

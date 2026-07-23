@@ -52,6 +52,7 @@ class SearchBroker:
 
             spend_repository = create_provider_spend_repository()
         self._spend_repository = spend_repository
+        self._reachability.set_spend_repository(self._spend_repository)
         self._executor = executor or ProviderExecutor(
             providers=self._providers,
             health_tracker=self._health,

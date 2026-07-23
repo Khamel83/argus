@@ -165,6 +165,78 @@ class TestRefinement:
         assert seen_queries[0] == "python web frameworks"
         assert seen_queries[1] == "python web frameworks fastapi"
 
+    @pytest.mark.asyncio
+    async def test_refined_follow_up_preserves_authorization_and_accounting_context(
+        self,
+    ):
+        from unittest.mock import AsyncMock
+
+        from argus.broker.budgets import BudgetTracker
+        from argus.broker.execution import ProviderExecutor
+        from argus.broker.health import HealthTracker
+        from argus.broker.session_flow import SessionSearchService
+        from argus.models import ProviderName
+
+        store = SessionStore(persist=False)
+        service = SessionSearchService(session_store=store)
+        from unittest.mock import MagicMock
+
+        paid_provider = MagicMock()
+        paid_provider.is_available.return_value = True
+        paid_provider.search = AsyncMock()
+        executor = ProviderExecutor(
+            providers={ProviderName.BRAVE: paid_provider},
+            health_tracker=HealthTracker(),
+            budget_tracker=BudgetTracker(),
+            caller_tier_caps={"maya": 0},
+        )
+        seen = []
+
+        async def search_fn(query):
+            seen.append(query)
+            outcome = await executor.execute(query, [ProviderName.BRAVE])
+            return SearchResponse(
+                query=query.query,
+                mode=query.mode,
+                results=[],
+                traces=outcome.traces,
+            )
+
+        first = SearchQuery(
+            query="python web frameworks",
+            caller="maya",
+            free_only=True,
+            metadata={"caller_label": "maya-search", "attempt_scope": "first"},
+        )
+        follow_up = SearchQuery(
+            query="fastapi",
+            providers=[ProviderName.BRAVE],
+            caller="maya",
+            free_only=True,
+            metadata={"caller_label": "maya-search", "attempt_scope": "follow-up"},
+        )
+
+        _, session_id = await service.search_with_session(
+            first,
+            search_fn,
+            session_id="authorization-flow",
+        )
+        response, _ = await service.search_with_session(
+            follow_up,
+            search_fn,
+            session_id=session_id,
+        )
+
+        refined = seen[1]
+        assert refined.query == "python web frameworks fastapi"
+        assert refined.caller == "maya"
+        assert refined.free_only is True
+        assert refined.providers == [ProviderName.BRAVE]
+        assert refined.metadata == follow_up.metadata
+        assert response.traces[0].status == "skipped"
+        assert "tier cap" in response.traces[0].error
+        paid_provider.search.assert_not_awaited()
+
 
 # --- Session Persistence ---
 

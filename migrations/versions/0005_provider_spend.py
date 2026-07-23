@@ -53,6 +53,11 @@ def upgrade() -> None:
         sa.Column("idempotency_key", sa.String(255), nullable=False, unique=True),
         sa.Column("request_hash", sa.String(64), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.UniqueConstraint(
+            "provider",
+            "provider_reference",
+            name="uq_provider_snapshot_reference",
+        ),
     )
     op.create_index(
         "ix_provider_balance_snapshots_provider",

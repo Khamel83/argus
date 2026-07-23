@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 import time
+import uuid
 
 from argus.models import ProviderName
 
@@ -28,9 +29,14 @@ class ReachabilityMatrix:
     reachable (optimistic default).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, spend_repository=None) -> None:
         # provider → {egress_name → EgressProbe}
         self._probes: dict[ProviderName, dict[str, EgressProbe]] = {}
+        self._spend_repository = spend_repository
+
+    def set_spend_repository(self, spend_repository) -> None:
+        """Attach the broker's single durable accounting authority."""
+        self._spend_repository = spend_repository
 
     def update_probe(
         self,
@@ -98,8 +104,13 @@ class ReachabilityMatrix:
         from argus.broker.remote_provider import RemoteProviderClient
 
         tier_0 = [p for p, t in PROVIDER_TIERS.items() if t == 0]
+        probe_scope = uuid.uuid4().hex
         probe_query = SearchQuery(
-            query="argus probe", mode=SearchMode.DISCOVERY, max_results=1
+            query="argus probe",
+            mode=SearchMode.DISCOVERY,
+            max_results=1,
+            caller="argus-reachability",
+            metadata={"attempt_scope": probe_scope},
         )
 
         for pname in tier_0:
@@ -111,8 +122,16 @@ class ReachabilityMatrix:
                     reachable = trace.status == "success"
                     self.update_probe("local", pname, reachable=reachable,
                                       latency_ms=trace.latency_ms)
+                    outcome = trace.status
                 except Exception:
                     self.update_probe("local", pname, reachable=False, latency_ms=0)
+                    outcome = "error"
+                self._record_attempt(
+                    probe_scope,
+                    pname,
+                    "local",
+                    outcome,
+                )
 
             # Probe each remote node
             for node in egress_nodes:
@@ -122,5 +141,31 @@ class ReachabilityMatrix:
                     reachable = trace.status == "success"
                     self.update_probe(node.name, pname, reachable=reachable,
                                       latency_ms=trace.latency_ms)
+                    outcome = trace.status
                 except Exception:
                     self.update_probe(node.name, pname, reachable=False, latency_ms=0)
+                    outcome = "error"
+                self._record_attempt(
+                    probe_scope,
+                    pname,
+                    node.name,
+                    outcome,
+                )
+
+    def _record_attempt(
+        self,
+        scope: str,
+        provider: ProviderName,
+        egress: str,
+        outcome: str,
+    ) -> None:
+        if self._spend_repository is None:
+            return
+        self._spend_repository.record_free_attempt(
+            provider=provider,
+            outcome=outcome,
+            usage=1.0,
+            caller_identity="argus-reachability",
+            caller_label=f"reachability:{egress}",
+            idempotency_key=f"reachability:{scope}:{provider.value}:{egress}",
+        )

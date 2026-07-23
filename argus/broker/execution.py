@@ -150,6 +150,15 @@ class ProviderExecutor:
                 ))
                 continue
             if best_egress != "local":
+                if tier > 0:
+                    traces.append(
+                        ProviderTrace(
+                            provider=pname,
+                            status="skipped",
+                            error="paid providers cannot execute on an egress worker",
+                        )
+                    )
+                    continue
                 node = self._egress_nodes.get(best_egress)
                 if node is None:
                     traces.append(ProviderTrace(

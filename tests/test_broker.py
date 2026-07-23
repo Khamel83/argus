@@ -985,7 +985,10 @@ class TestFreeOnly:
         )
 
         q = SearchQuery(query="test", free_only=True, max_results=10)
-        outcome = await executor.execute(q, [ProviderName.DUCKDUCKGO, ProviderName.BRAVE])
+        outcome = await executor.execute(
+            q,
+            [ProviderName.DUCKDUCKGO, ProviderName.BRAVE],
+        )
 
         assert free_provider.calls == 1
         assert paid_provider.calls == 0
@@ -1021,7 +1024,7 @@ class TestFreeOnly:
         )
 
         q = SearchQuery(query="test", free_only=False, max_results=10)
-        outcome = await executor.execute(q, [ProviderName.DUCKDUCKGO, ProviderName.BRAVE])
+        await executor.execute(q, [ProviderName.DUCKDUCKGO, ProviderName.BRAVE])
 
         assert free_provider.calls == 1
         assert paid_provider.calls == 1
@@ -1098,6 +1101,50 @@ async def test_executor_routes_to_remote_when_local_blocked():
 
 
 @pytest.mark.asyncio
+async def test_executor_does_not_delegate_paid_provider_to_egress_worker():
+    from unittest.mock import MagicMock, patch
+
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.broker.reachability import ReachabilityMatrix
+    from argus.config import EgressNode
+
+    matrix = ReachabilityMatrix()
+    matrix.update_probe("local", ProviderName.BRAVE, reachable=False, latency_ms=0)
+    matrix.update_probe("homelab", ProviderName.BRAVE, reachable=True, latency_ms=10)
+    budgets = BudgetTracker()
+    budgets.set_budget(ProviderName.BRAVE, 10.0)
+    spend = MagicMock()
+    provider = StubProvider(name=ProviderName.BRAVE, results=[])
+    executor = ProviderExecutor(
+        providers={ProviderName.BRAVE: provider},
+        health_tracker=HealthTracker(),
+        budget_tracker=budgets,
+        reachability=matrix,
+        egress_nodes={
+            "homelab": EgressNode(
+                name="homelab",
+                url="http://worker:8273",
+                shared_secret="s",
+            )
+        },
+        spend_repository=spend,
+    )
+
+    with patch("argus.broker.remote_provider.RemoteProviderClient") as remote:
+        outcome = await executor.execute(
+            SearchQuery(query="paid", caller="maya"),
+            [ProviderName.BRAVE],
+        )
+
+    assert outcome.traces[0].status == "skipped"
+    assert "paid providers" in outcome.traces[0].error
+    remote.assert_not_called()
+    spend.reserve.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_executor_skips_when_no_egress_available():
     from argus.broker.reachability import ReachabilityMatrix
 
@@ -1118,7 +1165,6 @@ async def test_executor_skips_when_no_egress_available():
 @pytest.mark.asyncio
 async def test_executor_uses_local_when_reachable():
     from argus.broker.reachability import ReachabilityMatrix
-    from unittest.mock import AsyncMock
 
     matrix = ReachabilityMatrix()
     matrix.update_probe("local", ProviderName.YAHOO, reachable=True, latency_ms=50)
@@ -1128,13 +1174,12 @@ async def test_executor_uses_local_when_reachable():
     fake_result = SearchResult(url="u", title="t", snippet="s", provider=ProviderName.YAHOO)
     fake_trace = ProviderTrace(provider=ProviderName.YAHOO, status="success", results_count=1)
 
-    original_search = local_provider.search
     async def patched_search(q):
         local_provider.calls += 1
         return [fake_result], fake_trace
     local_provider.search = patched_search
 
     query = SearchQuery(query="test", mode=SearchMode.DISCOVERY, max_results=5)
-    outcome = await executor.execute(query, [ProviderName.YAHOO])
+    await executor.execute(query, [ProviderName.YAHOO])
 
     assert local_provider.calls == 1

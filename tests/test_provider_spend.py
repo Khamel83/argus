@@ -370,6 +370,60 @@ def test_provider_resolution_requires_a_matching_authoritative_snapshot(tmp_path
     assert resolved.resolution_source == "provider"
 
 
+def test_provider_reference_cannot_reconcile_multiple_obligations(tmp_path):
+    from argus.persistence.provider_spend import SpendConflictError
+
+    repository = _repository(tmp_path)
+    reservations = [
+        repository.reserve(
+            provider=ProviderName.BRAVE,
+            conservative_charge=1.0,
+            budget_limit=10.0,
+            caller_identity="maya",
+            caller_label="",
+            idempotency_key=f"replay-attempt-{index}",
+        )
+        for index in range(2)
+    ]
+    barrier = Barrier(2)
+
+    def record(index):
+        barrier.wait()
+        try:
+            return repository.record_provider_snapshot(
+                provider=ProviderName.BRAVE,
+                balance=9.0,
+                observed_at=datetime.now(tz=None),
+                actor_identity="provider:brave",
+                idempotency_key=f"replay-snapshot-{index}",
+                provider_reference="brave-charge-event-replayed",
+                related_attempt_id=reservations[index].attempt_id,
+                authoritative_charge=0.5,
+            )
+        except Exception as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(record, range(2)))
+
+    assert sum(hasattr(value, "snapshot_id") for value in outcomes) == 1
+    assert sum(isinstance(value, SpendConflictError) for value in outcomes) == 1
+    winner = next(value for value in outcomes if hasattr(value, "snapshot_id"))
+    repository.resolve(
+        winner.related_attempt_id,
+        actual_charge=winner.authoritative_charge,
+        outcome="charged",
+        source="provider",
+        actor_identity="provider:brave",
+        idempotency_key="replay-resolution-winner",
+        provider_snapshot_id=winner.snapshot_id,
+    )
+    assert sorted(
+        repository.get_attempt(reservation.attempt_id).status
+        for reservation in reservations
+    ) == ["resolved", "uncertain"]
+
+
 def test_concurrent_reservations_cannot_overspend_budget(tmp_path):
     from argus.persistence.provider_spend import BudgetExhaustedError, SpendAttempt
 
@@ -805,3 +859,70 @@ def test_postgresql_concurrent_reservations_cannot_overspend(postgres_ledger_url
 
     assert sum(isinstance(value, SpendAttempt) for value in outcomes) == 1
     assert sum(isinstance(value, BudgetExhaustedError) for value in outcomes) == 1
+
+
+def test_postgresql_provider_reference_replay_is_race_safe(postgres_ledger_url):
+    from alembic import command
+    from alembic.config import Config
+
+    from argus.persistence.provider_spend import (
+        SpendConflictError,
+        create_provider_spend_repository,
+    )
+
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", postgres_ledger_url.replace("%", "%%"))
+    command.downgrade(config, "base")
+    command.upgrade(config, "head")
+    repository = create_provider_spend_repository(
+        postgres_ledger_url,
+        create_schema=False,
+    )
+    reservations = [
+        repository.reserve(
+            provider=ProviderName.BRAVE,
+            conservative_charge=1.0,
+            budget_limit=10.0,
+            caller_identity="maya",
+            caller_label="",
+            idempotency_key=f"pg-replay-attempt-{index}",
+        )
+        for index in range(2)
+    ]
+    barrier = Barrier(2)
+
+    def record(index):
+        barrier.wait()
+        try:
+            return repository.record_provider_snapshot(
+                provider=ProviderName.BRAVE,
+                balance=9.0,
+                observed_at=datetime.now(tz=None),
+                actor_identity="provider:brave",
+                idempotency_key=f"pg-replay-snapshot-{index}",
+                provider_reference="pg-brave-charge-event-replayed",
+                related_attempt_id=reservations[index].attempt_id,
+                authoritative_charge=0.5,
+            )
+        except Exception as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(record, range(2)))
+
+    assert sum(hasattr(value, "snapshot_id") for value in outcomes) == 1
+    assert sum(isinstance(value, SpendConflictError) for value in outcomes) == 1
+    winner = next(value for value in outcomes if hasattr(value, "snapshot_id"))
+    repository.resolve(
+        winner.related_attempt_id,
+        actual_charge=winner.authoritative_charge,
+        outcome="charged",
+        source="provider",
+        actor_identity="provider:brave",
+        idempotency_key="pg-replay-resolution-winner",
+        provider_snapshot_id=winner.snapshot_id,
+    )
+    assert sorted(
+        repository.get_attempt(reservation.attempt_id).status
+        for reservation in reservations
+    ) == ["resolved", "uncertain"]
