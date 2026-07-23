@@ -1,6 +1,6 @@
 """Admin endpoints for privileged operations."""
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from argus.api.schemas import (
     PathsResponse,
@@ -27,6 +27,37 @@ def get_spend_repository(request: Request):
     return request.app.state.get_spend_repository()
 
 
+def get_search_repository(request: Request):
+    return request.app.state.get_search_repository()
+
+
+@router.get("/maya-outbox/status")
+async def maya_outbox_status(repository=Depends(get_search_repository)):
+    """Return bounded delivery state without payloads or capture identifiers."""
+    return repository.maya_outbox_status()
+
+
+@router.get("/maya-outbox/dead-letters")
+async def list_maya_dead_letters(
+    limit: int = Query(default=50, ge=1, le=100),
+    repository=Depends(get_search_repository),
+):
+    return {"items": repository.list_maya_dead_letters(limit=limit)}
+
+
+@router.post("/maya-outbox/{intent_id}/recover")
+async def recover_maya_dead_letter(
+    intent_id: str,
+    repository=Depends(get_search_repository),
+):
+    if not repository.recover_maya_dead_letter(intent_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Maya delivery is not a recoverable dead letter",
+        )
+    return {"status": "pending"}
+
+
 @router.post("/test-provider")
 async def test_provider(
     req: ProviderTestRequest,
@@ -44,6 +75,7 @@ async def test_provider(
         max_results=3,
         providers=[pname],
         caller=getattr(request.state, "caller_identity", "admin"),
+        user_visible=False,
         metadata={"caller_label": "http-admin-smoke"},
     )
     response = await broker.search(query)

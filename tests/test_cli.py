@@ -126,7 +126,7 @@ def test_search_free_flag_sets_free_only_on_query(monkeypatch):
         class FakeBroker:
             async def search(self, q, compute_attribution=False):
                 seen["free_only"] = q.free_only
-                from argus.models import SearchResponse, SearchMode
+                from argus.models import SearchResponse
                 return SearchResponse(query=q.query, mode=q.mode, results=[])
         return FakeBroker()
 
@@ -150,7 +150,7 @@ def test_search_without_free_flag_leaves_free_only_false(monkeypatch):
         class FakeBroker:
             async def search(self, q, compute_attribution=False):
                 seen["free_only"] = q.free_only
-                from argus.models import SearchResponse, SearchMode
+                from argus.models import SearchResponse
                 return SearchResponse(query=q.query, mode=q.mode, results=[])
         return FakeBroker()
 
@@ -174,7 +174,7 @@ def test_search_caller_flag_sets_caller_on_query(monkeypatch):
         class FakeBroker:
             async def search(self, q, compute_attribution=False):
                 seen["caller"] = q.caller
-                from argus.models import SearchResponse, SearchMode
+                from argus.models import SearchResponse
                 return SearchResponse(query=q.query, mode=q.mode, results=[])
         return FakeBroker()
 
@@ -198,7 +198,7 @@ def test_search_caller_defaults_to_cli(monkeypatch):
         class FakeBroker:
             async def search(self, q, compute_attribution=False):
                 seen["caller"] = q.caller
-                from argus.models import SearchResponse, SearchMode
+                from argus.models import SearchResponse
                 return SearchResponse(query=q.query, mode=q.mode, results=[])
         return FakeBroker()
 
@@ -211,3 +211,32 @@ def test_search_caller_defaults_to_cli(monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert seen.get("caller") == "cli"
+
+
+def test_provider_smoke_cli_marks_query_operational_only(monkeypatch):
+    from argus.cli import main as cli_main
+    from argus.models import SearchResponse
+
+    seen = {}
+
+    def fake_create_broker():
+        class FakeBroker:
+            async def search(self, query):
+                seen["query"] = query
+                return SearchResponse(
+                    query=query.query,
+                    mode=query.mode,
+                    results=[],
+                )
+
+        return FakeBroker()
+
+    monkeypatch.setattr("argus.broker.router.create_broker", fake_create_broker)
+
+    result = CliRunner().invoke(
+        cli_main.cli,
+        ["test-provider", "--provider", "duckduckgo"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["query"].user_visible is False

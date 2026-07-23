@@ -78,6 +78,7 @@ include = ["argus*"]
     "migrations/versions/0003_request_routing_fields.py",
     "migrations/versions/0004_operation_ledger.py",
     "migrations/versions/0005_provider_spend.py",
+    "migrations/versions/0006_maya_outbox.py",
 ]
 
 [tool.pytest.ini_options]

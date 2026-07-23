@@ -250,6 +250,13 @@ curl -H "Authorization: Bearer $ARGUS_ADMIN_API_KEY" \
   http://localhost:8000/api/admin/health/detail
 curl -H "Authorization: Bearer $ARGUS_ADMIN_API_KEY" \
   http://localhost:8000/api/admin/budgets
+curl -H "Authorization: Bearer $ARGUS_ADMIN_API_KEY" \
+  http://localhost:8000/api/admin/maya-outbox/status
+curl -H "Authorization: Bearer $ARGUS_ADMIN_API_KEY" \
+  http://localhost:8000/api/admin/maya-outbox/dead-letters
+# After correcting the cause of a permanent rejection:
+curl -X POST -H "Authorization: Bearer $ARGUS_ADMIN_API_KEY" \
+  http://localhost:8000/api/admin/maya-outbox/DELIVERY_ID/recover
 ```
 
 #### Search modes
@@ -625,6 +632,10 @@ When running from the repo, Argus now auto-loads `.env` and `.env.local` (withou
 | `ARGUS_API_KEY` | — | Required for non-local HTTP API and remote MCP callers |
 | `ARGUS_ADMIN_API_KEY` | — | Enables dashboard login and admin API authentication |
 | `ARGUS_ROOT_PATH` | — | Public subpath prefix for dashboard links and redirects, e.g. `/argus` |
+| `ARGUS_MAYA_CAPTURE_URL` | — | Maya's dedicated Argus retrieval-capture endpoint; delivery stays disabled when unset |
+| `ARGUS_MAYA_CAPTURE_TOKEN` | — | Dedicated shared secret for Maya capture delivery; never reuse the generic Maya ingest token |
+| `ARGUS_MAYA_OUTBOX_BATCH_SIZE` | `20` | Maximum durable captures claimed by one delivery pass (bounded to 100) |
+| `ARGUS_MAYA_ACKNOWLEDGED_RETENTION_DAYS` | `7` | Days to retain acknowledged capture bodies before preserving audit metadata only |
 
 ## When Not To Use Argus
 

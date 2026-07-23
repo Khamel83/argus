@@ -171,6 +171,7 @@ async def test_paid_mcp_provider_test_routes_through_broker():
     query = broker.search.await_args.args[0]
     assert query.providers == [ProviderName.BRAVE]
     assert query.caller == "admin"
+    assert query.user_visible is False
 
 
 @pytest.mark.asyncio

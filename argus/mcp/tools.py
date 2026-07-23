@@ -298,6 +298,7 @@ async def test_provider_mcp(
         max_results=3,
         providers=[pname],
         caller=caller_identity,
+        user_visible=False,
         metadata={"caller_label": caller_label},
     )
     response = await broker.search(q)

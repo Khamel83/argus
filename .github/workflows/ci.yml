@@ -84,6 +84,7 @@ jobs:
           uv run --python 3.12 pytest \
             tests/test_search_ledger.py \
             tests/test_provider_spend.py \
+            tests/test_maya_outbox.py \
             tests/test_api.py::TestSearchEndpoint::test_postgresql_constraint_failure_returns_503_and_rolls_back_ledger \
             tests/test_operation_ledger.py::test_postgresql_extraction_and_session_contract \
             tests/test_operation_ledger.py::test_postgresql_concurrent_session_creation_and_query_allocation \

@@ -97,11 +97,29 @@ class NodeConfig:
 class ResidentialConfig:
     shared_secret: str = ""
     timeout_seconds: int = 30
-    allowed_cidrs: list[str] = field(default_factory=lambda: [
-        "127.0.0.1/32", "::1/128", "100.64.0.0/10", "10.0.0.0/8",
-        "172.16.0.0/12", "192.168.0.0/16"
-    ])
-    policy: str = "fallback"  # off|fallback|prefer_on_datacenter|prefer_for_domains|always
+    allowed_cidrs: list[str] = field(
+        default_factory=lambda: [
+            "127.0.0.1/32",
+            "::1/128",
+            "100.64.0.0/10",
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16",
+        ]
+    )
+    policy: str = (
+        "fallback"  # off|fallback|prefer_on_datacenter|prefer_for_domains|always
+    )
+
+
+@dataclass(frozen=True)
+class MayaCaptureConfig:
+    endpoint: str = ""
+    token: str = ""
+    timeout_seconds: int = 15
+    poll_seconds: int = 5
+    batch_size: int = 20
+    acknowledged_retention_days: int = 7
 
 
 @dataclass(frozen=True)
@@ -135,6 +153,7 @@ class ArgusConfig:
     firecrawl: ProviderConfig = field(default_factory=ProviderConfig)
     node: NodeConfig = field(default_factory=NodeConfig)
     residential: ResidentialConfig = field(default_factory=ResidentialConfig)
+    maya_capture: MayaCaptureConfig = field(default_factory=MayaCaptureConfig)
     egress_nodes: list[EgressNode] = field(default_factory=list)
     host: str = "127.0.0.1"
     port: int = 8000
@@ -164,8 +183,12 @@ class SubprocessSecretsResolver(SecretsResolver):
         self._cache: dict[str, str] = {}
         self._batch_done = False
         self._vault_names = vault_names or (
-            "argus", "argus_keys", "research_keys",
-            "argus.env.env", "services", "argus_auth",
+            "argus",
+            "argus_keys",
+            "research_keys",
+            "argus.env.env",
+            "services",
+            "argus_auth",
         )
 
     def _load_batch(self) -> None:
@@ -180,7 +203,12 @@ class SubprocessSecretsResolver(SecretsResolver):
                     text=True,
                     timeout=10,
                 )
-            except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired, OSError):
+            except (
+                FileNotFoundError,
+                PermissionError,
+                subprocess.TimeoutExpired,
+                OSError,
+            ):
                 _log.debug("secrets CLI not found — using environment variables only")
                 return
             except Exception:
@@ -283,9 +311,12 @@ class EnvironmentConfigLoader:
             "ARGUS_RESIDENTIAL_ALLOWED_CIDRS",
             "127.0.0.1/32,::1/128,100.64.0.0/10,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
         )
-        res_allowed_cidrs = [item.strip() for item in res_allowed_cidrs_raw.split(",") if item.strip()]
+        res_allowed_cidrs = [
+            item.strip() for item in res_allowed_cidrs_raw.split(",") if item.strip()
+        ]
 
         from argus.corpus.paths import resolve_data_root
+
         data_root = resolve_data_root()
         default_db = f"sqlite:///{data_root}/argus.db"
 
@@ -299,11 +330,13 @@ class EnvironmentConfigLoader:
                 continue
             parts = entry.split(":", 1)
             if len(parts) == 2:
-                _egress_nodes.append(EgressNode(
-                    name=parts[0].strip(),
-                    url=parts[1].strip(),
-                    shared_secret=_egress_secret,
-                ))
+                _egress_nodes.append(
+                    EgressNode(
+                        name=parts[0].strip(),
+                        url=parts[1].strip(),
+                        shared_secret=_egress_secret,
+                    )
+                )
 
         # Parse ARGUS_CALLER_TIER_CAPS=clio*:1,hermes*:1
         # fnmatch pattern -> max provider tier that caller may use.
@@ -350,10 +383,21 @@ class EnvironmentConfigLoader:
                 "DUCKDUCKGO",
                 enabled_default=True,
             ),
-            brave=self.provider_config("BRAVE", enabled_default=False, budget_default=2000.0),
-            serper=self.provider_config("SERPER", enabled_default=False, budget_default=2500.0),
-            tavily=self.provider_config("TAVILY", enabled_default=False, timeout_default=20, budget_default=1000.0),
-            exa=self.provider_config("EXA", enabled_default=False, timeout_default=20, budget_default=1000.0),
+            brave=self.provider_config(
+                "BRAVE", enabled_default=False, budget_default=2000.0
+            ),
+            serper=self.provider_config(
+                "SERPER", enabled_default=False, budget_default=2500.0
+            ),
+            tavily=self.provider_config(
+                "TAVILY",
+                enabled_default=False,
+                timeout_default=20,
+                budget_default=1000.0,
+            ),
+            exa=self.provider_config(
+                "EXA", enabled_default=False, timeout_default=20, budget_default=1000.0
+            ),
             searchapi=self.provider_config("SEARCHAPI", enabled_default=False),
             you=self.provider_config("YOU", enabled_default=False, budget_default=20000.0),
             parallel=self.provider_config("PARALLEL", enabled_default=False, budget_default=5000.0),
@@ -377,11 +421,15 @@ class EnvironmentConfigLoader:
             ),
             jina=ProviderConfig(
                 enabled=self.get_bool("ARGUS_JINA_ENABLED", True),
-                api_key=self.get_str("ARGUS_JINA_API_KEY", secret_keys=("JINA_API_KEY",)),
+                api_key=self.get_str(
+                    "ARGUS_JINA_API_KEY", secret_keys=("JINA_API_KEY",)
+                ),
             ),
             firecrawl=ProviderConfig(
                 enabled=self.get_bool("ARGUS_FIRECRAWL_ENABLED", True),
-                api_key=self.get_str("ARGUS_FIRECRAWL_API_KEY", secret_keys=("FIRECRAWL_API_KEY",)),
+                api_key=self.get_str(
+                    "ARGUS_FIRECRAWL_API_KEY", secret_keys=("FIRECRAWL_API_KEY",)
+                ),
             ),
             node=NodeConfig(
                 role=self.get_str("ARGUS_NODE_ROLE", "primary"),
@@ -394,6 +442,26 @@ class EnvironmentConfigLoader:
                 timeout_seconds=self.get_int("ARGUS_RESIDENTIAL_TIMEOUT_SECONDS", 30),
                 allowed_cidrs=res_allowed_cidrs,
                 policy=self.get_str("ARGUS_RESIDENTIAL_POLICY", "fallback"),
+            ),
+            maya_capture=MayaCaptureConfig(
+                endpoint=self.get_str("ARGUS_MAYA_CAPTURE_URL"),
+                token=self.get_str("ARGUS_MAYA_CAPTURE_TOKEN"),
+                timeout_seconds=max(
+                    1, min(self.get_int("ARGUS_MAYA_CAPTURE_TIMEOUT_SECONDS", 15), 120)
+                ),
+                poll_seconds=max(
+                    1, min(self.get_int("ARGUS_MAYA_OUTBOX_POLL_SECONDS", 5), 300)
+                ),
+                batch_size=max(
+                    1, min(self.get_int("ARGUS_MAYA_OUTBOX_BATCH_SIZE", 20), 100)
+                ),
+                acknowledged_retention_days=max(
+                    1,
+                    min(
+                        self.get_int("ARGUS_MAYA_ACKNOWLEDGED_RETENTION_DAYS", 7),
+                        365,
+                    ),
+                ),
             ),
             host=self.get_str("ARGUS_HOST", "127.0.0.1"),
             port=self.get_int("ARGUS_PORT", 8000),
