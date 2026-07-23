@@ -7,7 +7,6 @@ from threading import Barrier
 import pytest
 from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.exc import DataError
-from sqlalchemy.orm import sessionmaker
 
 from argus.models import (
     ProviderName,
@@ -99,11 +98,15 @@ def _migrate_postgresql_ledger(url):
 
 
 def test_sqlite_repository_commits_complete_accepted_retrieval(tmp_path):
+    from argus.persistence.search_ledger import RetrievalRequestRow
+
     repository = _sqlite_repository(tmp_path)
     query = SearchQuery(
         query="atomic search",
         mode=SearchMode.DISCOVERY,
         max_results=5,
+        providers=[ProviderName.BRAVE, ProviderName.DUCKDUCKGO],
+        free_only=True,
         caller="http",
     )
 
@@ -119,6 +122,18 @@ def test_sqlite_repository_commits_complete_accepted_retrieval(tmp_path):
         "result_provenance": 1,
         "content_identities": 1,
         "delivery_intents": 1,
+    }
+    with repository.session_factory() as session:
+        request = session.scalar(select(RetrievalRequestRow))
+        assert json.loads(request.providers_json) == ["brave", "duckduckgo"]
+        assert request.free_only is True
+    assert repository.load_acceptance_snapshot("run-1").state["request"] == {
+        "query_text": "atomic search",
+        "mode": "discovery",
+        "max_results": 5,
+        "providers": ["brave", "duckduckgo"],
+        "free_only": True,
+        "caller": "http",
     }
 
 
@@ -173,6 +188,30 @@ def test_same_run_rejects_a_different_payload(tmp_path):
 
     with pytest.raises(AcceptanceConflictError):
         repository.accept(query, changed)
+
+
+@pytest.mark.parametrize(
+    "changed_query",
+    [
+        SearchQuery(
+            query="atomic search",
+            providers=[ProviderName.DUCKDUCKGO],
+        ),
+        SearchQuery(
+            query="atomic search",
+            free_only=True,
+        ),
+    ],
+    ids=["providers", "free-only"],
+)
+def test_same_run_rejects_different_routing_fields(tmp_path, changed_query):
+    from argus.persistence.search_ledger import AcceptanceConflictError
+
+    repository = _sqlite_repository(tmp_path)
+    repository.accept(SearchQuery(query="atomic search"), _response())
+
+    with pytest.raises(AcceptanceConflictError):
+        repository.accept(changed_query, _response())
 
 
 def test_concurrent_same_run_accepts_one_payload_and_rejects_the_other(tmp_path):
@@ -317,7 +356,8 @@ def test_alembic_migration_creates_search_ledger(tmp_path):
 
     command.upgrade(config, "head")
 
-    tables = set(inspect(create_engine(f"sqlite:///{db_path}")).get_table_names())
+    inspector = inspect(create_engine(f"sqlite:///{db_path}"))
+    tables = set(inspector.get_table_names())
     assert {
         "retrieval_requests",
         "retrieval_runs",
@@ -327,6 +367,48 @@ def test_alembic_migration_creates_search_ledger(tmp_path):
         "content_identities",
         "delivery_intents",
     } <= tables
+    request_columns = {
+        column["name"] for column in inspector.get_columns("retrieval_requests")
+    }
+    assert {"providers_json", "free_only"} <= request_columns
+
+
+def test_routing_field_migration_preserves_existing_requests(tmp_path):
+    from alembic import command
+    from alembic.config import Config
+
+    db_path = tmp_path / "upgrade-existing-ledger.db"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
+    command.upgrade(config, "0002_acceptance_fingerprint")
+    engine = create_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO retrieval_requests "
+                "(id, query_text, mode, max_results, caller, created_at) "
+                "VALUES ('request-1', 'existing', 'discovery', 10, '', "
+                "'2026-01-01 00:00:00')"
+            )
+        )
+    engine.dispose()
+
+    command.upgrade(config, "head")
+
+    upgraded = create_engine(f"sqlite:///{db_path}")
+    with upgraded.connect() as connection:
+        row = connection.execute(
+            text(
+                "SELECT query_text, providers_json, free_only "
+                "FROM retrieval_requests WHERE id = 'request-1'"
+            )
+        ).mappings().one()
+    upgraded.dispose()
+    assert dict(row) == {
+        "query_text": "existing",
+        "providers_json": None,
+        "free_only": 0,
+    }
 
 
 def test_alembic_offline_mode_accepts_percent_encoded_credentials(monkeypatch):
@@ -428,6 +510,7 @@ def test_legacy_reconciliation_is_dry_run_by_default_and_idempotent(tmp_path):
     "mutation",
     [
         "UPDATE retrieval_requests SET max_results = 99",
+        "UPDATE retrieval_requests SET free_only = 1",
         "UPDATE retrieval_runs SET cached = 1",
         "DELETE FROM provider_attempts",
         "UPDATE normalized_results SET title = 'changed'",
@@ -437,6 +520,7 @@ def test_legacy_reconciliation_is_dry_run_by_default_and_idempotent(tmp_path):
     ],
     ids=[
         "request",
+        "request-routing",
         "run",
         "attempts",
         "normalized-result",
@@ -497,3 +581,47 @@ def test_legacy_reconciliation_cli_is_dry_run_by_default(tmp_path):
         "conflicting": 0,
     }
     assert not target.exists()
+
+
+def test_legacy_reconciliation_cli_dry_run_does_not_mutate_existing_target(
+    tmp_path,
+):
+    from click.testing import CliRunner
+    from sqlalchemy import inspect
+
+    from argus.cli.main import cli
+
+    source = tmp_path / "legacy-existing-target.db"
+    target = tmp_path / "existing-target.db"
+    _create_legacy_search_database(source)
+    engine = create_engine(f"sqlite:///{target}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE unrelated (id INTEGER PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO unrelated (id, value) VALUES (1, 'preserve me')"
+        )
+    before_schema = inspect(engine).get_table_names()
+    engine.dispose()
+    before_bytes = target.read_bytes()
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "ledger",
+            "reconcile-legacy",
+            "--source",
+            f"sqlite:///{source}",
+            "--target",
+            f"sqlite:///{target}",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["imported"] == 1
+    assert target.read_bytes() == before_bytes
+    after_engine = create_engine(f"sqlite:///{target}")
+    assert inspect(after_engine).get_table_names() == before_schema
+    after_engine.dispose()

@@ -94,13 +94,18 @@ async def search(
             query,
             session_id=req.session_id,
             compute_attribution=req.include_attribution,
+            persist_legacy=False,
         )
         response = _to_response(resp, include_attribution=req.include_attribution)
         response.session_id = session_id
         _accept_or_503(repository, query, resp)
         return response
 
-    resp = await broker.search(query, compute_attribution=req.include_attribution)
+    resp = await broker.search(
+        query,
+        compute_attribution=req.include_attribution,
+        persist_legacy=False,
+    )
     _accept_or_503(repository, query, resp)
     return _to_response(resp, include_attribution=req.include_attribution)
 

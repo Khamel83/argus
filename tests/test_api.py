@@ -55,6 +55,74 @@ class TestSchemas:
 # --- API Integration ---
 
 class TestSearchEndpoint:
+    def test_real_broker_ledger_failure_leaves_no_legacy_completed_run(
+        self,
+        tmp_path,
+    ):
+        from fastapi.testclient import TestClient
+        from sqlalchemy import func, select
+
+        from argus.api.main import create_app
+        from argus.broker.router import SearchBroker
+        from argus.models import (
+            ProviderName,
+            ProviderStatus,
+            ProviderTrace,
+            SearchResult,
+        )
+        from argus.persistence.db import get_session_factory, init_db
+        from argus.persistence.models import SearchRunRow
+
+        class StubProvider:
+            name = ProviderName.DUCKDUCKGO
+
+            def is_available(self):
+                return True
+
+            def status(self):
+                return ProviderStatus.ENABLED
+
+            async def search(self, query):
+                return (
+                    [
+                        SearchResult(
+                            url="https://example.com/not-accepted",
+                            title="Not accepted",
+                            snippet="Must not become a legacy completed run",
+                            provider=self.name,
+                        )
+                    ],
+                    ProviderTrace(
+                        provider=self.name,
+                        status="success",
+                        results_count=1,
+                    ),
+                )
+
+        class FailingRepository:
+            def accept(self, query, response):
+                raise RuntimeError("commit failed")
+
+        legacy_path = tmp_path / "legacy-completed.db"
+        init_db(f"sqlite:///{legacy_path}")
+        broker = SearchBroker(providers={ProviderName.DUCKDUCKGO: StubProvider()})
+        client = TestClient(
+            create_app(broker=broker, search_repository=FailingRepository())
+        )
+
+        response = client.post(
+            "/api/search",
+            json={
+                "query": "must be atomically accepted",
+                "mode": "discovery",
+                "providers": ["duckduckgo"],
+            },
+        )
+
+        assert response.status_code == 503
+        with get_session_factory()() as session:
+            assert session.scalar(select(func.count()).select_from(SearchRunRow)) == 0
+
     def test_postgresql_constraint_failure_returns_503_and_rolls_back_ledger(
         self,
         migrated_postgres_ledger,
@@ -247,6 +315,7 @@ class TestSearchEndpoint:
         assert data["results"][0]["score_attribution"] == {"duckduckgo": 0.5}
         mock_broker.search.assert_awaited_once()
         assert mock_broker.search.await_args.kwargs["compute_attribution"] is True
+        assert mock_broker.search.await_args.kwargs["persist_legacy"] is False
 
     @pytest.mark.asyncio
     async def test_search_invalid_mode_returns_400(self):

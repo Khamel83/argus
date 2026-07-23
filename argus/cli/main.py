@@ -1015,21 +1015,26 @@ def reconcile_legacy(source, target, apply, as_json):
 
     from argus.config import get_config
     from argus.persistence.reconcile import reconcile_legacy_state
-    from argus.persistence.search_ledger import create_search_ledger_repository
+    from argus.persistence.search_ledger import (
+        create_read_only_search_ledger_repository,
+        create_search_ledger_repository,
+    )
 
     target_url = target or get_config().db_url
-    repository_url = target_url
-    create_schema = None
     if not apply and target_url.startswith("sqlite:///"):
         target_path = Path(target_url.removeprefix("sqlite:///")).expanduser()
-        if not target_path.exists():
-            repository_url = "sqlite:///:memory:"
-            create_schema = True
-
-    repository = create_search_ledger_repository(
-        repository_url,
-        create_schema=create_schema,
-    )
+        if target_path.exists():
+            repository = create_read_only_search_ledger_repository(target_url)
+        else:
+            repository = create_search_ledger_repository(
+                "sqlite:///:memory:",
+                create_schema=True,
+            )
+    else:
+        repository = create_search_ledger_repository(
+            target_url,
+            create_schema=False if not apply else None,
+        )
     report = reconcile_legacy_state(source, repository, apply=apply)
     if as_json:
         _emit_json(report)

@@ -21,6 +21,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    inspect,
     select,
 )
 from sqlalchemy.exc import IntegrityError
@@ -41,6 +42,8 @@ class RetrievalRequestRow(LedgerBase):
     query_text: Mapped[str] = mapped_column(Text, nullable=False)
     mode: Mapped[str] = mapped_column(String(50), nullable=False)
     max_results: Mapped[int] = mapped_column(Integer, nullable=False)
+    providers_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    free_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     caller: Mapped[str] = mapped_column(String(100), nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
@@ -144,12 +147,19 @@ class DurableAcceptanceSnapshot:
     state: dict
 
 
+@dataclass(frozen=True)
+class SerializedAcceptance:
+    """Canonical state shared by fingerprinting and durable row writes."""
+
+    state: dict
+    fingerprint: str
+
+
 class AcceptanceConflictError(RuntimeError):
     """A public run ID was already committed with a different payload."""
 
 
-def acceptance_state(query: SearchQuery, response: SearchResponse) -> dict:
-    """Return the canonical immutable state written by ``accept``."""
+def _build_acceptance_state(query: SearchQuery, response: SearchResponse) -> dict:
     run_id = response.search_run_id
     if not run_id:
         raise ValueError("accepted retrieval requires a search_run_id")
@@ -206,6 +216,12 @@ def acceptance_state(query: SearchQuery, response: SearchResponse) -> dict:
             "query_text": query.query,
             "mode": query.mode.value,
             "max_results": query.max_results,
+            "providers": (
+                [provider.value for provider in query.providers]
+                if query.providers is not None
+                else None
+            ),
+            "free_only": query.free_only,
             "caller": query.caller,
         },
         "run": {
@@ -225,6 +241,22 @@ def acceptance_state(query: SearchQuery, response: SearchResponse) -> dict:
             },
         },
     }
+
+
+def serialize_acceptance(
+    query: SearchQuery,
+    response: SearchResponse,
+) -> SerializedAcceptance:
+    state = _build_acceptance_state(query, response)
+    return SerializedAcceptance(
+        state=state,
+        fingerprint=acceptance_fingerprint(state),
+    )
+
+
+def acceptance_state(query: SearchQuery, response: SearchResponse) -> dict:
+    """Return the canonical immutable state written by ``accept``."""
+    return serialize_acceptance(query, response).state
 
 
 def acceptance_fingerprint(state: dict) -> str:
@@ -251,6 +283,16 @@ def _parse_json_value(value: str | None):
         return {"__invalid_json__": value}
 
 
+def _parse_optional_json_list(value: str | None):
+    if value is None:
+        return None
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return {"__invalid_json__": value}
+    return parsed if isinstance(parsed, list) else {"__invalid_json__": value}
+
+
 class SearchLedgerRepository(Protocol):
     def accept(
         self, query: SearchQuery, response: SearchResponse
@@ -266,9 +308,12 @@ class SqlAlchemySearchLedgerRepository:
     def accept(
         self, query: SearchQuery, response: SearchResponse
     ) -> AcceptanceReceipt:
-        fingerprint = acceptance_fingerprint(acceptance_state(query, response))
+        serialized = serialize_acceptance(query, response)
         try:
-            return self._accept_once(query, response, fingerprint)
+            return self._accept_once(
+                serialized,
+                started_at=response.created_at,
+            )
         except IntegrityError:
             # A concurrent request with the same public run ID may win the
             # unique-key race after our initial lookup. Acknowledge only after
@@ -276,7 +321,7 @@ class SqlAlchemySearchLedgerRepository:
             for _ in range(100):
                 receipt = self._existing_receipt(
                     response.search_run_id,
-                    fingerprint,
+                    serialized.fingerprint,
                 )
                 if receipt is not None:
                     return receipt
@@ -285,13 +330,14 @@ class SqlAlchemySearchLedgerRepository:
 
     def _accept_once(
         self,
-        query: SearchQuery,
-        response: SearchResponse,
-        fingerprint: str,
+        serialized: SerializedAcceptance,
+        *,
+        started_at: datetime,
     ) -> AcceptanceReceipt:
-        run_id = response.search_run_id
-        if not run_id:
-            raise ValueError("accepted retrieval requires a search_run_id")
+        state = serialized.state
+        request_state = state["request"]
+        run_state = state["run"]
+        run_id = run_state["search_run_id"]
 
         with self.session_factory.begin() as session:
             existing = session.scalar(
@@ -303,7 +349,7 @@ class SqlAlchemySearchLedgerRepository:
                 return self._receipt_for_existing(
                     session,
                     existing,
-                    fingerprint,
+                    serialized.fingerprint,
                 )
 
             now = datetime.now(tz=None)
@@ -312,10 +358,16 @@ class SqlAlchemySearchLedgerRepository:
             session.add(
                 RetrievalRequestRow(
                     id=request_id,
-                    query_text=query.query,
-                    mode=query.mode.value,
-                    max_results=query.max_results,
-                    caller=query.caller,
+                    query_text=request_state["query_text"],
+                    mode=request_state["mode"],
+                    max_results=request_state["max_results"],
+                    providers_json=(
+                        _canonical_json(request_state["providers"])
+                        if request_state["providers"] is not None
+                        else None
+                    ),
+                    free_only=request_state["free_only"],
+                    caller=request_state["caller"],
                     created_at=now,
                 )
             )
@@ -324,79 +376,68 @@ class SqlAlchemySearchLedgerRepository:
                     id=ledger_run_id,
                     request_id=request_id,
                     search_run_id=run_id,
-                    acceptance_fingerprint=fingerprint,
-                    status="accepted",
-                    total_results=len(response.results),
-                    cached=response.cached,
-                    started_at=response.created_at,
+                    acceptance_fingerprint=serialized.fingerprint,
+                    status=run_state["status"],
+                    total_results=run_state["total_results"],
+                    cached=run_state["cached"],
+                    started_at=started_at,
                     committed_at=now,
                 )
             )
 
-            for trace in response.traces:
+            for attempt in state["attempts"]:
                 session.add(
                     ProviderAttemptRow(
                         id=uuid.uuid4().hex,
                         run_id=ledger_run_id,
-                        provider=trace.provider.value,
-                        status=trace.status,
-                        results_count=trace.results_count,
-                        latency_ms=trace.latency_ms,
-                        error=trace.error,
-                        budget_remaining=trace.budget_remaining,
-                        egress=trace.egress,
+                        provider=attempt["provider"],
+                        status=attempt["status"],
+                        results_count=attempt["results_count"],
+                        latency_ms=attempt["latency_ms"],
+                        error=attempt["error"],
+                        budget_remaining=attempt["budget_remaining"],
+                        egress=attempt["egress"],
                     )
                 )
 
-            for rank, result in enumerate(response.results):
-                if not result.url:
-                    raise ValueError("normalized search results require a URL")
-                content_hash = hashlib.sha256(
-                    result.url.strip().encode("utf-8")
-                ).hexdigest()
+            for result_state in state["results"]:
+                normalized = result_state["normalized"]
+                identity = result_state["content_identity"]
+                provenance = result_state["provenance"]
+                content_hash = identity["content_hash"]
                 self._ensure_content_identity(
-                    session, content_hash, result.url.strip(), now
+                    session, content_hash, identity["canonical_url"], now
                 )
                 result_id = uuid.uuid4().hex
-                provider = result.provider.value if result.provider else ""
                 session.add(
                     NormalizedResultRow(
                         id=result_id,
                         run_id=ledger_run_id,
                         content_hash=content_hash,
-                        url=result.url,
-                        title=result.title,
-                        snippet=result.snippet,
-                        domain=result.domain,
-                        provider=provider,
-                        score=result.score,
-                        final_rank=rank,
+                        **normalized,
                     )
                 )
-                metadata = dict(result.metadata)
                 session.add(
                     ResultProvenanceRow(
                         id=uuid.uuid4().hex,
                         result_id=result_id,
-                        provider=provider,
-                        egress=metadata.get("egress"),
-                        machine=metadata.get("machine"),
-                        source_type=metadata.get("source_type", "search"),
-                        metadata_json=json.dumps(metadata, sort_keys=True, default=str),
+                        provider=provenance["provider"],
+                        egress=provenance["egress"],
+                        machine=provenance["machine"],
+                        source_type=provenance["source_type"],
+                        metadata_json=_canonical_json(provenance["metadata"]),
                     )
                 )
 
+            delivery_state = state["delivery_intent"]
             delivery_id = uuid.uuid4().hex
             session.add(
                 DeliveryIntentRow(
                     id=delivery_id,
                     run_id=ledger_run_id,
-                    destination="maya",
-                    status="pending",
-                    payload_json=json.dumps(
-                        {"search_run_id": run_id, "result_count": len(response.results)},
-                        sort_keys=True,
-                    ),
+                    destination=delivery_state["destination"],
+                    status=delivery_state["status"],
+                    payload_json=_canonical_json(delivery_state["payload"]),
                     created_at=now,
                 )
             )
@@ -453,6 +494,10 @@ class SqlAlchemySearchLedgerRepository:
     ) -> DurableAcceptanceSnapshot | None:
         """Read the complete durable state for reconciliation."""
         with self.session_factory() as session:
+            if not inspect(session.get_bind()).has_table(
+                RetrievalRunRow.__tablename__
+            ):
+                return None
             pair = session.execute(
                 select(RetrievalRequestRow, RetrievalRunRow)
                 .join(
@@ -548,6 +593,10 @@ class SqlAlchemySearchLedgerRepository:
                     "query_text": request.query_text,
                     "mode": request.mode,
                     "max_results": request.max_results,
+                    "providers": _parse_optional_json_list(
+                        request.providers_json
+                    ),
+                    "free_only": request.free_only,
                     "caller": request.caller,
                 },
                 "run": {
@@ -619,3 +668,23 @@ def create_search_ledger_repository(
             raise ValueError("runtime schema creation is only supported for SQLite")
         LedgerBase.metadata.create_all(engine)
     return SqlAlchemySearchLedgerRepository(sessionmaker(bind=engine, expire_on_commit=False))
+
+
+def create_read_only_search_ledger_repository(
+    db_url: str,
+) -> SqlAlchemySearchLedgerRepository:
+    """Open an existing SQLite ledger without creating schema or writing files."""
+    if not db_url.startswith("sqlite:///"):
+        return create_search_ledger_repository(db_url, create_schema=False)
+
+    from urllib.parse import quote
+
+    raw_path = db_url.removeprefix("sqlite:///")
+    path = Path(raw_path).expanduser().resolve()
+    read_only_url = (
+        f"sqlite:///file:{quote(str(path), safe='/')}?mode=ro&uri=true"
+    )
+    engine = create_engine(read_only_url, pool_pre_ping=True)
+    return SqlAlchemySearchLedgerRepository(
+        sessionmaker(bind=engine, expire_on_commit=False)
+    )

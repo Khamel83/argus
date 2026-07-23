@@ -20,6 +20,9 @@ def test_wheel_configuration_includes_alembic_runtime_artifacts():
     assert "migrations/versions/0002_acceptance_fingerprint.py" in data_files[
         "migrations/versions"
     ]
+    assert "migrations/versions/0003_request_routing_fields.py" in data_files[
+        "migrations/versions"
+    ]
 
 
 def test_production_image_copies_alembic_runtime_artifacts():

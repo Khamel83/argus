@@ -39,7 +39,15 @@ class SearchResultPipeline:
         cached.cached = True
         return cached
 
-    def build_response(self, query: SearchQuery, provider_results: dict, traces: list, budget_warnings: list | None = None, compute_attribution: bool = False) -> SearchResponse:
+    def build_response(
+        self,
+        query: SearchQuery,
+        provider_results: dict,
+        traces: list,
+        budget_warnings: list | None = None,
+        compute_attribution: bool = False,
+        persist_legacy: bool = True,
+    ) -> SearchResponse:
         merged = reciprocal_rank_fusion(provider_results, compute_attribution=compute_attribution)
         final_results = dedupe_results(merged)[: query.max_results]
         response = SearchResponse(
@@ -59,5 +67,6 @@ class SearchResultPipeline:
                 response,
                 include_attribution=compute_attribution,
             )
-        self._persistence.record_completed_search(query, response)
+        if persist_legacy:
+            self._persistence.record_completed_search(query, response)
         return response
