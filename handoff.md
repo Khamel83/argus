@@ -8,9 +8,11 @@ This document is the durable handoff for the broad Argus audit requested before
 working the incoming production issue. It consolidates confirmed failures,
 operational evidence, all open GitHub work, and recommended execution order.
 
-No production fixes or deployments were performed during this audit.
-Repository changes are planning records: this handoff, canonical terms in
-`CONTEXT.md`, deployment ADRs, and cited research notes.
+The audit is now in execution. Code fixes are developed natively on the Mac,
+reviewed on isolated issue branches, and built in GitHub Actions. No production
+deployment, homelab mutation, or Mac-side Docker/Compose execution has been
+performed. This branch remains the local-only planning record and must never be
+pushed.
 
 The canonical planning artifact is the
 [Wayfinder: make Argus a reliable homelab retrieval platform for Maya](https://github.com/Khamel83/argus/issues/23)
@@ -53,13 +55,22 @@ Immediate frontier:
     merged as `efb7399` with push workflows skipped so the legacy automatic
     deploy did not run. The sanitized 512 MiB homelab/CI container canary
     remains required before closing the issue.
-- [ ] [Make Argus configuration and image CI hermetic](https://github.com/Khamel83/argus/issues/32)
-  — no blockers; isolate tests from developer state and produce a reproducible,
-  capability-verifiable image.
+- [x] [Make Argus configuration and image CI hermetic](https://github.com/Khamel83/argus/issues/32)
+  — merged implementation PR
+  [ci: make configuration and image builds hermetic](https://github.com/Khamel83/argus/pull/46)
+  as `3df20e6`. The Python 3.11–3.13 matrix, production configuration,
+  freshness, and actual GitHub-hosted production image build all passed. The
+  main commit used `[skip ci]`, so the legacy automatic deployment workflow did
+  not run.
 - [ ] [Record accepted search retrievals transactionally in PostgreSQL](https://github.com/Khamel83/argus/issues/33)
   — no blockers; establish the authoritative repository and migration seam.
-- [ ] [Accept idempotent parent-and-child Argus retrieval captures](https://github.com/Khamel83/maya/issues/82)
-  — no blockers; extend Maya's durable capture interface safely.
+- [x] [Accept idempotent parent-and-child Argus retrieval captures](https://github.com/Khamel83/maya/issues/82)
+  — merged Maya PR
+  [feat: add durable Argus retrieval captures](https://github.com/Khamel83/maya/pull/83)
+  as `adb9770`. Controller verification passed 1,328 tests plus focused API,
+  auth, migration, lint, type, compile, diff, and secret checks. No deployment
+  or secret change was performed; issue 36 owns Argus client delivery and
+  operator provisioning of the shared scoped credential.
 
 State and integration:
 
