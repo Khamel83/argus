@@ -138,9 +138,22 @@ Capability, recovery, and operations:
   browser extractions at 338.34 MiB peak; the 512 MiB missing-browser
   regression peaked at 80.08 MiB. Both had zero OOMs and zero orphan runtime
   processes. The `[skip ci]` merge triggered no deployment.
-- [ ] [Expose truthful readiness, runtime identity, and bounded operational evidence](https://github.com/Khamel83/argus/issues/39)
-  — both blockers are closed; this is the immediate native implementation
-  frontier.
+- [x] [Expose truthful readiness, runtime identity, and bounded operational evidence](https://github.com/Khamel83/argus/issues/39)
+  — merged PR
+  [feat: expose truthful operational status](https://github.com/Khamel83/argus/pull/56)
+  as `1956910`. Network-free liveness, cached startup/readiness, authenticated
+  admin status, typed expiring evidence, bounded metrics and correlation,
+  provider/Maya/browser/recovery/accounting evidence, provider half-open
+  recovery, bounded lifecycle workers, and attempt-neutral Maya outbox claims
+  are now exposed consistently across HTTP, CLI, and MCP. Production
+  persistence remains PostgreSQL-only while SQLite stays available for
+  isolated development. Multiple independent review rounds found no remaining
+  Important issues. Final evidence was 876 passed and 37 skipped locally plus
+  all seven exact-head CI jobs, including the real PostgreSQL ledger contract
+  and both production image canaries. The two Linux-only failures found by CI
+  were deterministic test-clock defects, fixed without changing production
+  clocks or claim eligibility. The `[skip ci]` squash merge triggered no
+  workflow or deployment.
 - [ ] [Run Argus on shared homelab PostgreSQL with verified recovery](https://github.com/Khamel83/argus/issues/40)
   — the safe pre-production toolkit merged in
   [feat: add safe shared PostgreSQL recovery toolkit](https://github.com/Khamel83/argus/pull/52)
@@ -186,6 +199,12 @@ Independent follow-ons:
 GitHub's native `blocked by` relationships are the authoritative dependency
 graph. Work any issue whose native blockers are all closed; do not infer
 permission to bypass a failed acceptance gate from this summary.
+
+The native implementation frontier is now exhausted. Issue #40 is the next
+dependency, but its remaining work changes production PostgreSQL and backup
+operations and therefore requires fresh user authorization. Do not provision,
+schedule, restore, reclaim, cut over, or deploy while that authorization is
+absent.
 
 Completed planning decisions:
 
