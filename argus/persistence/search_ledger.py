@@ -4,20 +4,21 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
     Integer,
+    Index,
     String,
     Text,
     UniqueConstraint,
@@ -31,6 +32,12 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from argus.config import get_config
 from argus.models import SearchQuery, SearchResponse
+from argus.persistence.maya_outbox import (
+    excludes_capture,
+    extraction_capture_payload,
+    safe_failure_summary,
+    search_capture_payload,
+)
 
 
 class LedgerBase(DeclarativeBase):
@@ -126,14 +133,46 @@ class ResultProvenanceRow(LedgerBase):
 
 class DeliveryIntentRow(LedgerBase):
     __tablename__ = "delivery_intents"
+    __table_args__ = (
+        CheckConstraint(
+            "(run_id IS NOT NULL AND extraction_run_id IS NULL) OR "
+            "(run_id IS NULL AND extraction_run_id IS NOT NULL)",
+            name="ck_delivery_intents_one_parent",
+        ),
+        Index(
+            "ix_delivery_intents_dispatch",
+            "destination",
+            "status",
+            "next_attempt_at",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    run_id: Mapped[str] = mapped_column(
-        ForeignKey("retrieval_runs.id"), nullable=False, unique=True
+    run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("retrieval_runs.id"), nullable=True, unique=True
+    )
+    extraction_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("extraction_runs.id"), nullable=True, unique=True
     )
     destination: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
-    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=8)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    lease_token: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_error_summary: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    response_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload_compacted_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
@@ -238,7 +277,7 @@ class SessionExtractedUrlRow(LedgerBase):
 @dataclass(frozen=True)
 class AcceptanceReceipt:
     run_id: str
-    delivery_intent_id: str
+    delivery_intent_id: str | None
 
 
 @dataclass(frozen=True)
@@ -258,6 +297,7 @@ class SerializedAcceptance:
 @dataclass(frozen=True)
 class ExtractionReceipt:
     extraction_run_id: str
+    delivery_intent_id: str | None = None
 
 
 class AcceptanceConflictError(RuntimeError):
@@ -339,11 +379,16 @@ def _build_acceptance_state(query: SearchQuery, response: SearchResponse) -> dic
         "results": results,
         "delivery_intent": {
             "destination": "maya",
-            "status": "pending",
-            "payload": {
-                "search_run_id": run_id,
-                "result_count": len(response.results),
-            },
+            "status": ("suppressed" if excludes_capture(query.caller) else "pending"),
+            "payload": (
+                None
+                if excludes_capture(query.caller)
+                else search_capture_payload(
+                    query,
+                    response,
+                    completed_at=response.created_at,
+                )
+            ),
         },
     }
 
@@ -365,7 +410,34 @@ def acceptance_state(query: SearchQuery, response: SearchResponse) -> dict:
 
 
 def acceptance_fingerprint(state: dict) -> str:
-    return hashlib.sha256(_canonical_json(state).encode("utf-8")).hexdigest()
+    fingerprint_state = _normalize_json_value(state)
+    delivery = fingerprint_state.get("delivery_intent")
+    if isinstance(delivery, dict):
+        # Issue 34's placeholder intent was part of the acceptance fingerprint.
+        # Preserve that exact historical shape while allowing issue 36's
+        # transport body and lifecycle status to change and compact.
+        status = delivery.get("status")
+        if status in {
+            "pending",
+            "delivering",
+            "retry",
+            "dead_letter",
+            "acknowledged",
+            "suppressed",
+            "superseded",
+        }:
+            run = fingerprint_state.get("run") or {}
+            fingerprint_state["delivery_intent"] = {
+                "destination": delivery.get("destination"),
+                "status": "pending",
+                "payload": {
+                    "search_run_id": run.get("search_run_id"),
+                    "result_count": run.get("total_results"),
+                },
+            }
+    return hashlib.sha256(
+        _canonical_json(fingerprint_state).encode("utf-8")
+    ).hexdigest()
 
 
 def _canonical_json(value) -> str:
@@ -398,28 +470,21 @@ def _parse_optional_json_list(value: str | None):
     return parsed if isinstance(parsed, list) else {"__invalid_json__": value}
 
 
-_SECRET_RE = re.compile(
-    r"(?i)(bearer\s+|api[_ -]?key[=: ]+|token[=: ]+|secret[=: ]+)\S+"
-)
-
-
-def _safe_failure_summary(value: str | None) -> str | None:
-    if not value:
-        return None
-    redacted = _SECRET_RE.sub(lambda match: f"{match.group(1)}[redacted]", str(value))
-    return redacted.replace("\n", " ").replace("\r", " ")[:256]
-
-
 def _safe_persisted_url(value: str) -> str:
     from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
     parts = urlsplit(value)
     query = []
     for key, item in parse_qsl(parts.query, keep_blank_values=True):
-        if any(marker in key.lower() for marker in ("token", "key", "secret", "auth", "signature")):
+        if any(
+            marker in key.lower()
+            for marker in ("token", "key", "secret", "auth", "signature")
+        ):
             item = "[redacted]"
         query.append((key, item))
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+    return urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
+    )
 
 
 class SearchLedgerRepository(Protocol):
@@ -434,9 +499,7 @@ class SqlAlchemySearchLedgerRepository:
     def __init__(self, session_factory: sessionmaker):
         self.session_factory = session_factory
 
-    def accept(
-        self, query: SearchQuery, response: SearchResponse
-    ) -> AcceptanceReceipt:
+    def accept(self, query: SearchQuery, response: SearchResponse) -> AcceptanceReceipt:
         serialized = serialize_acceptance(query, response)
         try:
             return self._accept_once(
@@ -470,9 +533,7 @@ class SqlAlchemySearchLedgerRepository:
 
         with self.session_factory.begin() as session:
             existing = session.scalar(
-                select(RetrievalRunRow).where(
-                    RetrievalRunRow.search_run_id == run_id
-                )
+                select(RetrievalRunRow).where(RetrievalRunRow.search_run_id == run_id)
             )
             if existing is not None:
                 return self._receipt_for_existing(
@@ -563,17 +624,33 @@ class SqlAlchemySearchLedgerRepository:
                 )
 
             delivery_state = state["delivery_intent"]
-            delivery_id = uuid.uuid4().hex
-            session.add(
-                DeliveryIntentRow(
-                    id=delivery_id,
-                    run_id=ledger_run_id,
-                    destination=delivery_state["destination"],
-                    status=delivery_state["status"],
-                    payload_json=_canonical_json(delivery_state["payload"]),
-                    created_at=now,
+            delivery_id = None
+            if delivery_state is not None:
+                delivery_id = uuid.uuid4().hex
+                payload_json = (
+                    _canonical_json(delivery_state["payload"])
+                    if delivery_state["payload"] is not None
+                    else None
                 )
-            )
+                session.add(
+                    DeliveryIntentRow(
+                        id=delivery_id,
+                        run_id=ledger_run_id,
+                        extraction_run_id=None,
+                        destination=delivery_state["destination"],
+                        status=delivery_state["status"],
+                        payload_json=payload_json,
+                        payload_sha256=hashlib.sha256(
+                            (payload_json or "").encode("utf-8")
+                        ).hexdigest(),
+                        content_sha256=None,
+                        attempt_count=0,
+                        max_attempts=8,
+                        next_attempt_at=now,
+                        updated_at=now,
+                        created_at=now,
+                    )
+                )
 
         return AcceptanceReceipt(run_id=run_id, delivery_intent_id=delivery_id)
 
@@ -586,8 +663,7 @@ class SqlAlchemySearchLedgerRepository:
             return None
         with self.session_factory() as session:
             row = session.scalar(
-                select(RetrievalRunRow)
-                .where(RetrievalRunRow.search_run_id == run_id)
+                select(RetrievalRunRow).where(RetrievalRunRow.search_run_id == run_id)
             )
             if row is None:
                 return None
@@ -608,9 +684,7 @@ class SqlAlchemySearchLedgerRepository:
                 f"retrieval {row.search_run_id!r} has a different durable payload"
             )
         delivery_id = session.scalar(
-            select(DeliveryIntentRow.id).where(
-                DeliveryIntentRow.run_id == row.id
-            )
+            select(DeliveryIntentRow.id).where(DeliveryIntentRow.run_id == row.id)
         )
         if delivery_id is None:
             raise AcceptanceConflictError(
@@ -627,9 +701,7 @@ class SqlAlchemySearchLedgerRepository:
     ) -> DurableAcceptanceSnapshot | None:
         """Read the complete durable state for reconciliation."""
         with self.session_factory() as session:
-            if not inspect(session.get_bind()).has_table(
-                RetrievalRunRow.__tablename__
-            ):
+            if not inspect(session.get_bind()).has_table(RetrievalRunRow.__tablename__):
                 return None
             pair = session.execute(
                 select(RetrievalRequestRow, RetrievalRunRow)
@@ -669,8 +741,7 @@ class SqlAlchemySearchLedgerRepository:
                 )
                 .outerjoin(
                     ContentIdentityRow,
-                    ContentIdentityRow.content_hash
-                    == NormalizedResultRow.content_hash,
+                    ContentIdentityRow.content_hash == NormalizedResultRow.content_hash,
                 )
                 .outerjoin(
                     ResultProvenanceRow,
@@ -706,9 +777,7 @@ class SqlAlchemySearchLedgerRepository:
                                 "egress": provenance.egress,
                                 "machine": provenance.machine,
                                 "source_type": provenance.source_type,
-                                "metadata": _parse_json_value(
-                                    provenance.metadata_json
-                                ),
+                                "metadata": _parse_json_value(provenance.metadata_json),
                             }
                             if provenance is not None
                             else None
@@ -717,18 +786,14 @@ class SqlAlchemySearchLedgerRepository:
                 )
 
             delivery = session.scalar(
-                select(DeliveryIntentRow).where(
-                    DeliveryIntentRow.run_id == run.id
-                )
+                select(DeliveryIntentRow).where(DeliveryIntentRow.run_id == run.id)
             )
             state = {
                 "request": {
                     "query_text": request.query_text,
                     "mode": request.mode,
                     "max_results": request.max_results,
-                    "providers": _parse_optional_json_list(
-                        request.providers_json
-                    ),
+                    "providers": _parse_optional_json_list(request.providers_json),
                     "free_only": request.free_only,
                     "caller": request.caller,
                 },
@@ -782,12 +847,12 @@ class SqlAlchemySearchLedgerRepository:
                 ExtractionAttempt(
                     extractor=name,
                     status=(
-                        "success"
-                        if name == selected and not result.error
-                        else "failed"
+                        "success" if name == selected and not result.error else "failed"
                     ),
                     latency_ms=0,
-                    failure_summary=result.error if name == result.extractors_tried[-1] else None,
+                    failure_summary=result.error
+                    if name == result.extractors_tried[-1]
+                    else None,
                 )
                 for name in result.extractors_tried
             ]
@@ -806,15 +871,13 @@ class SqlAlchemySearchLedgerRepository:
             "latency_ms": max(0, int(latency_ms)),
             "quality_passed": bool(result.quality_passed),
             "quality_reason": result.quality_reason,
-            "error_summary": _safe_failure_summary(result.error),
+            "error_summary": safe_failure_summary(result.error),
             "attempts": [
                 {
                     "extractor": attempt.extractor,
                     "status": attempt.status,
                     "latency_ms": max(0, int(attempt.latency_ms)),
-                    "failure_summary": _safe_failure_summary(
-                        attempt.failure_summary
-                    ),
+                    "failure_summary": safe_failure_summary(attempt.failure_summary),
                 }
                 for attempt in attempts
             ],
@@ -843,7 +906,19 @@ class SqlAlchemySearchLedgerRepository:
                     raise AcceptanceConflictError(
                         f"extraction {public_id!r} has a different durable payload"
                     )
-                return ExtractionReceipt(extraction_run_id=public_id)
+                delivery_id = session.scalar(
+                    select(DeliveryIntentRow.id).where(
+                        DeliveryIntentRow.extraction_run_id == existing.id
+                    )
+                )
+                if delivery_id is None:
+                    raise AcceptanceConflictError(
+                        f"extraction {public_id!r} is incomplete"
+                    )
+                return ExtractionReceipt(
+                    extraction_run_id=public_id,
+                    delivery_intent_id=delivery_id,
+                )
 
             now = datetime.now(tz=None)
             ledger_id = uuid.uuid4().hex
@@ -909,7 +984,290 @@ class SqlAlchemySearchLedgerRepository:
                     ),
                 )
             )
-        return ExtractionReceipt(extraction_run_id=public_id)
+            delivery_id = None
+            if excludes_capture(caller):
+                payload_json = None
+                maya_content_hash = None
+                delivery_status = "suppressed"
+            else:
+                payload, maya_content_hash = extraction_capture_payload(
+                    public_id=public_id,
+                    mode=mode,
+                    result=result,
+                    completed_at=now,
+                )
+                payload_json = _canonical_json(payload)
+                delivery_status = "pending"
+            delivery_id = uuid.uuid4().hex
+            session.add(
+                DeliveryIntentRow(
+                    id=delivery_id,
+                    run_id=None,
+                    extraction_run_id=ledger_id,
+                    destination="maya",
+                    status=delivery_status,
+                    payload_json=payload_json,
+                    payload_sha256=hashlib.sha256(
+                        (payload_json or "").encode("utf-8")
+                    ).hexdigest(),
+                    content_sha256=maya_content_hash,
+                    attempt_count=0,
+                    max_attempts=8,
+                    next_attempt_at=now,
+                    updated_at=now,
+                    created_at=now,
+                )
+            )
+        return ExtractionReceipt(
+            extraction_run_id=public_id,
+            delivery_intent_id=delivery_id,
+        )
+
+    def claim_maya_outbox(
+        self,
+        *,
+        now: datetime,
+        limit: int,
+        lease_seconds: int = 60,
+    ) -> list[dict]:
+        """Claim a bounded delivery batch, including leases left by a restart."""
+        bounded_limit = max(1, min(int(limit), 100))
+        with self.session_factory.begin() as session:
+            dialect = session.get_bind().dialect.name
+            if dialect == "sqlite":
+                from sqlalchemy import text
+
+                session.execute(text("BEGIN IMMEDIATE"))
+            exhausted_statement = (
+                select(DeliveryIntentRow)
+                .where(
+                    DeliveryIntentRow.status == "delivering",
+                    DeliveryIntentRow.lease_expires_at <= now,
+                    DeliveryIntentRow.attempt_count >= DeliveryIntentRow.max_attempts,
+                )
+                .order_by(DeliveryIntentRow.lease_expires_at, DeliveryIntentRow.id)
+                .limit(100)
+            )
+            if dialect == "postgresql":
+                exhausted_statement = exhausted_statement.with_for_update(
+                    skip_locked=True
+                )
+            for exhausted in session.scalars(exhausted_statement):
+                exhausted.status = "dead_letter"
+                exhausted.updated_at = now
+                exhausted.lease_expires_at = None
+                exhausted.lease_token = None
+                exhausted.last_error_code = "retry_exhausted"
+                exhausted.last_error_summary = (
+                    "Delivery lease expired after the final bounded attempt"
+                )
+            statement = (
+                select(DeliveryIntentRow)
+                .where(
+                    DeliveryIntentRow.payload_json.is_not(None),
+                    DeliveryIntentRow.attempt_count < DeliveryIntentRow.max_attempts,
+                    (
+                        (
+                            DeliveryIntentRow.status.in_(("pending", "retry"))
+                            & (DeliveryIntentRow.next_attempt_at <= now)
+                        )
+                        | (
+                            (DeliveryIntentRow.status == "delivering")
+                            & (DeliveryIntentRow.lease_expires_at <= now)
+                        )
+                    ),
+                )
+                .order_by(DeliveryIntentRow.created_at, DeliveryIntentRow.id)
+                .limit(bounded_limit)
+            )
+            if dialect == "postgresql":
+                statement = statement.with_for_update(skip_locked=True)
+            rows = list(session.scalars(statement))
+            claimed = []
+            for row in rows:
+                token = uuid.uuid4().hex
+                row.status = "delivering"
+                row.attempt_count += 1
+                row.last_attempt_at = now
+                row.lease_expires_at = now + timedelta(seconds=lease_seconds)
+                row.lease_token = token
+                row.updated_at = now
+                claimed.append(
+                    {
+                        "id": row.id,
+                        "payload_json": row.payload_json,
+                        "attempt_count": row.attempt_count,
+                        "max_attempts": row.max_attempts,
+                        "lease_token": token,
+                    }
+                )
+            return claimed
+
+    def acknowledge_maya_outbox(
+        self,
+        intent_id: str,
+        *,
+        lease_token: str,
+        response: dict,
+        now: datetime,
+    ) -> bool:
+        with self.session_factory.begin() as session:
+            row = session.get(DeliveryIntentRow, intent_id)
+            if row is None or row.lease_token != lease_token:
+                return False
+            row.status = "acknowledged"
+            row.delivered_at = now
+            row.updated_at = now
+            row.lease_expires_at = None
+            row.lease_token = None
+            row.last_error_code = None
+            row.last_error_summary = None
+            row.response_json = _canonical_json(response)
+            return True
+
+    def fail_maya_outbox(
+        self,
+        intent_id: str,
+        *,
+        lease_token: str,
+        transient: bool,
+        error_code: str,
+        error_summary: str,
+        now: datetime,
+    ) -> str | None:
+        with self.session_factory.begin() as session:
+            row = session.get(DeliveryIntentRow, intent_id)
+            if row is None or row.lease_token != lease_token:
+                return None
+            exhausted = row.attempt_count >= row.max_attempts
+            row.status = "retry" if transient and not exhausted else "dead_letter"
+            if row.status == "retry":
+                delay = min(3600, 5 * (2 ** max(0, row.attempt_count - 1)))
+                row.next_attempt_at = now + timedelta(seconds=delay)
+            row.updated_at = now
+            row.lease_expires_at = None
+            row.lease_token = None
+            row.last_error_code = (
+                "retry_exhausted" if transient and exhausted else error_code[:64]
+            )
+            row.last_error_summary = (
+                safe_failure_summary(error_summary) or "delivery failed"
+            )
+            return row.status
+
+    def recover_maya_dead_letter(
+        self,
+        intent_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        recovered_at = now or datetime.now(tz=None)
+        with self.session_factory.begin() as session:
+            row = session.get(DeliveryIntentRow, intent_id)
+            if row is None or row.status != "dead_letter" or row.payload_json is None:
+                return False
+            row.status = "pending"
+            row.attempt_count = 0
+            row.next_attempt_at = recovered_at
+            row.updated_at = recovered_at
+            row.last_error_code = None
+            row.last_error_summary = None
+            return True
+
+    def list_maya_dead_letters(self, *, limit: int = 50) -> list[dict]:
+        """List bounded, payload-free operator evidence for recovery."""
+        with self.session_factory() as session:
+            rows = list(
+                session.scalars(
+                    select(DeliveryIntentRow)
+                    .where(DeliveryIntentRow.status == "dead_letter")
+                    .order_by(DeliveryIntentRow.updated_at, DeliveryIntentRow.id)
+                    .limit(max(1, min(int(limit), 100)))
+                )
+            )
+            return [
+                {
+                    "id": row.id,
+                    "attempt_count": row.attempt_count,
+                    "last_error_code": row.last_error_code,
+                    "last_error_summary": row.last_error_summary,
+                    "created_at": row.created_at,
+                    "updated_at": row.updated_at,
+                }
+                for row in rows
+            ]
+
+    def compact_maya_outbox(
+        self,
+        *,
+        acknowledged_before: datetime,
+        limit: int = 100,
+        now: datetime | None = None,
+    ) -> int:
+        compacted_at = now or datetime.now(tz=None)
+        with self.session_factory.begin() as session:
+            statement = (
+                select(DeliveryIntentRow)
+                .where(
+                    DeliveryIntentRow.status == "acknowledged",
+                    DeliveryIntentRow.delivered_at < acknowledged_before,
+                    DeliveryIntentRow.payload_json.is_not(None),
+                )
+                .order_by(DeliveryIntentRow.delivered_at, DeliveryIntentRow.id)
+                .limit(max(1, min(int(limit), 1000)))
+            )
+            if session.get_bind().dialect.name == "postgresql":
+                statement = statement.with_for_update(skip_locked=True)
+            rows = list(session.scalars(statement))
+            for row in rows:
+                row.payload_json = None
+                row.payload_compacted_at = compacted_at
+                row.updated_at = compacted_at
+            return len(rows)
+
+    def maya_outbox_status(self, *, now: datetime | None = None) -> dict:
+        observed_at = now or datetime.now(tz=None)
+        with self.session_factory() as session:
+            counts = {
+                status: count
+                for status, count in session.execute(
+                    select(
+                        DeliveryIntentRow.status,
+                        func.count(DeliveryIntentRow.id),
+                    ).group_by(DeliveryIntentRow.status)
+                )
+            }
+            oldest_pending = session.scalar(
+                select(func.min(DeliveryIntentRow.created_at)).where(
+                    DeliveryIntentRow.status.in_(("pending", "retry", "delivering"))
+                )
+            )
+            oldest_dead = session.scalar(
+                select(func.min(DeliveryIntentRow.created_at)).where(
+                    DeliveryIntentRow.status == "dead_letter"
+                )
+            )
+            dead_letter_payload_bytes = session.scalar(
+                select(
+                    func.coalesce(
+                        func.sum(func.length(DeliveryIntentRow.payload_json)), 0
+                    )
+                ).where(DeliveryIntentRow.status == "dead_letter")
+            )
+
+        def age(value):
+            return (
+                max(0, int((observed_at - value).total_seconds()))
+                if value is not None
+                else None
+            )
+
+        return {
+            "counts": counts,
+            "oldest_pending_age_seconds": age(oldest_pending),
+            "dead_letter_oldest_age_seconds": age(oldest_dead),
+            "dead_letter_payload_bytes": int(dead_letter_payload_bytes or 0),
+        }
 
     def create_session(
         self, session_id: str, created_at: datetime | None = None
@@ -925,16 +1283,12 @@ class SqlAlchemySearchLedgerRepository:
                 from sqlalchemy.dialects.postgresql import insert
 
                 statement = insert(RetrievalSessionRow).values(**values)
-                session.execute(
-                    statement.on_conflict_do_nothing(index_elements=["id"])
-                )
+                session.execute(statement.on_conflict_do_nothing(index_elements=["id"]))
             elif dialect == "sqlite":
                 from sqlalchemy.dialects.sqlite import insert
 
                 statement = insert(RetrievalSessionRow).values(**values)
-                session.execute(
-                    statement.on_conflict_do_nothing(index_elements=["id"])
-                )
+                session.execute(statement.on_conflict_do_nothing(index_elements=["id"]))
             elif session.get(RetrievalSessionRow, session_id) is None:
                 session.add(RetrievalSessionRow(**values))
 
@@ -1007,25 +1361,24 @@ class SqlAlchemySearchLedgerRepository:
 
                 statement = insert(SessionExtractedUrlRow).values(**values)
                 session.execute(
-                    statement.on_conflict_do_nothing(
-                        index_elements=["query_id", "url"]
-                    )
+                    statement.on_conflict_do_nothing(index_elements=["query_id", "url"])
                 )
             elif dialect == "sqlite":
                 from sqlalchemy.dialects.sqlite import insert
 
                 statement = insert(SessionExtractedUrlRow).values(**values)
                 session.execute(
-                    statement.on_conflict_do_nothing(
-                        index_elements=["query_id", "url"]
+                    statement.on_conflict_do_nothing(index_elements=["query_id", "url"])
+                )
+            elif (
+                session.scalar(
+                    select(SessionExtractedUrlRow.id).where(
+                        SessionExtractedUrlRow.query_id == query_row.id,
+                        SessionExtractedUrlRow.url == sanitized_url,
                     )
                 )
-            elif session.scalar(
-                select(SessionExtractedUrlRow.id).where(
-                    SessionExtractedUrlRow.query_id == query_row.id,
-                    SessionExtractedUrlRow.url == sanitized_url,
-                )
-            ) is None:
+                is None
+            ):
                 session.add(SessionExtractedUrlRow(**values))
 
     def load_session(self, session_id: str):
@@ -1076,9 +1429,7 @@ class SqlAlchemySearchLedgerRepository:
         """Import one complete legacy session in a single transaction."""
         with self.session_factory.begin() as session:
             if session.get(RetrievalSessionRow, snapshot.id) is not None:
-                raise AcceptanceConflictError(
-                    f"session {snapshot.id!r} already exists"
-                )
+                raise AcceptanceConflictError(f"session {snapshot.id!r} already exists")
             session.add(
                 RetrievalSessionRow(
                     id=snapshot.id,
@@ -1121,12 +1472,16 @@ class SqlAlchemySearchLedgerRepository:
             from sqlalchemy.dialects.postgresql import insert
 
             statement = insert(ContentIdentityRow).values(**values)
-            session.execute(statement.on_conflict_do_nothing(index_elements=["content_hash"]))
+            session.execute(
+                statement.on_conflict_do_nothing(index_elements=["content_hash"])
+            )
         elif dialect == "sqlite":
             from sqlalchemy.dialects.sqlite import insert
 
             statement = insert(ContentIdentityRow).values(**values)
-            session.execute(statement.on_conflict_do_nothing(index_elements=["content_hash"]))
+            session.execute(
+                statement.on_conflict_do_nothing(index_elements=["content_hash"])
+            )
         elif session.get(ContentIdentityRow, content_hash) is None:
             session.add(ContentIdentityRow(**values))
 
@@ -1154,7 +1509,9 @@ def create_search_ledger_repository(
         if not is_sqlite:
             raise ValueError("runtime schema creation is only supported for SQLite")
         LedgerBase.metadata.create_all(engine)
-    return SqlAlchemySearchLedgerRepository(sessionmaker(bind=engine, expire_on_commit=False))
+    return SqlAlchemySearchLedgerRepository(
+        sessionmaker(bind=engine, expire_on_commit=False)
+    )
 
 
 def create_read_only_search_ledger_repository(
@@ -1168,9 +1525,7 @@ def create_read_only_search_ledger_repository(
 
     raw_path = db_url.removeprefix("sqlite:///")
     path = Path(raw_path).expanduser().resolve()
-    read_only_url = (
-        f"sqlite:///file:{quote(str(path), safe='/')}?mode=ro&uri=true"
-    )
+    read_only_url = f"sqlite:///file:{quote(str(path), safe='/')}?mode=ro&uri=true"
     engine = create_engine(read_only_url, pool_pre_ping=True)
     return SqlAlchemySearchLedgerRepository(
         sessionmaker(bind=engine, expire_on_commit=False)

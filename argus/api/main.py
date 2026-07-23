@@ -5,6 +5,7 @@ import math
 import os
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 from typing import Callable, Optional
 
 from fastapi import FastAPI, Request
@@ -98,6 +99,7 @@ def create_app(
         async def _run_probes_background() -> None:
             """Run probes every 30 min, starting immediately."""
             from argus.config import get_config
+
             cfg = get_config()
             while True:
                 try:
@@ -111,7 +113,52 @@ def create_app(
 
         probe_task = asyncio.create_task(_run_probes_background())
 
+        maya_task: asyncio.Task | None = None
+
+        async def _run_maya_outbox_background() -> None:
+            from argus.config import get_config
+            from argus.persistence.maya_outbox import MayaOutboxDispatcher
+
+            cfg = get_config().maya_capture
+            repository = app.state.get_search_repository()
+            dispatcher = MayaOutboxDispatcher(
+                repository,
+                endpoint=cfg.endpoint,
+                token=cfg.token,
+                timeout_seconds=cfg.timeout_seconds,
+                batch_size=cfg.batch_size,
+            )
+            while True:
+                try:
+                    await asyncio.to_thread(dispatcher.run_once)
+                    now = datetime.now(tz=None)
+                    await asyncio.to_thread(
+                        repository.compact_maya_outbox,
+                        acknowledged_before=now
+                        - timedelta(days=cfg.acknowledged_retention_days),
+                        limit=100,
+                        now=now,
+                    )
+                except Exception as exc:
+                    # Never include request payloads, credentials, or remote
+                    # response bodies in the service log.
+                    logger.warning("Maya outbox worker failed: %s", type(exc).__name__)
+                await asyncio.sleep(cfg.poll_seconds)
+
+        from argus.config import get_config
+
+        maya_cfg = get_config().maya_capture
+        if maya_cfg.endpoint and maya_cfg.token:
+            maya_task = asyncio.create_task(_run_maya_outbox_background())
+
         yield
+
+        if maya_task:
+            maya_task.cancel()
+            try:
+                await maya_task
+            except asyncio.CancelledError:
+                pass
 
         # Cancel the probe task on shutdown
         if probe_task:
@@ -123,6 +170,7 @@ def create_app(
 
         try:
             from argus.extraction.playwright_extractor import close_browser
+
             await close_browser()
         except Exception as exc:
             logger.warning("Failed to close Playwright resources: %s", exc)
@@ -140,9 +188,7 @@ def create_app(
     )
 
     @app.exception_handler(RequestValidationError)
-    async def validation_error_handler(
-        request: Request, exc: RequestValidationError
-    ):
+    async def validation_error_handler(request: Request, exc: RequestValidationError):
         def json_safe(value):
             if isinstance(value, float) and not math.isfinite(value):
                 return str(value)
@@ -225,8 +271,8 @@ def create_app(
             "x-admin-api-key",
         )
         auth = request.app.state.auth_config
-        request.state.caller_identity = (
-            auth.identity_for_token(token) or ("local" if is_local else "")
+        request.state.caller_identity = auth.identity_for_token(token) or (
+            "local" if is_local else ""
         )
 
         if is_public_path(path):

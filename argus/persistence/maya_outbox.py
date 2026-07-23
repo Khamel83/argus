@@ -1,0 +1,351 @@
+"""Bounded, restart-safe delivery of accepted retrieval captures to Maya."""
+
+from __future__ import annotations
+
+import json
+import hashlib
+import re
+from collections import Counter
+from datetime import datetime
+from typing import Callable
+from urllib.parse import parse_qsl, quote, urlencode, unquote, urlsplit, urlunsplit
+
+import httpx
+
+from argus.models import SearchQuery, SearchResponse
+
+
+_SECRET_RE = re.compile(
+    r"(?i)(authorization\s*:\s*bearer\s+|bearer\s+|api[_ -]?key[=: ]+|"
+    r"token[=: ]+|secret[=: ]+|password[=: ]+|cookie[=: ]+)\S+"
+)
+_MAYA_SECRET_TOKEN_RE = re.compile(
+    r"(?i)\b(?:token|secret|key)[_-][A-Za-z0-9][A-Za-z0-9._-]{7,}\b|"
+    r"\b(?:sk-[A-Za-z0-9][A-Za-z0-9_-]{8,}|"
+    r"gh[pousr]_[A-Za-z0-9_-]{8,}|xox[baprs]-[A-Za-z0-9-]{8,}|"
+    r"AKIA[0-9A-Z]{12,})\b"
+)
+_PEM_RE = re.compile(
+    r"-----BEGIN [^-]+-----.*?-----END [^-]+-----",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def safe_failure_summary(value: str | None) -> str | None:
+    if not value:
+        return None
+    redacted = _SECRET_RE.sub(lambda match: f"{match.group(1)}[redacted]", str(value))
+    redacted = _MAYA_SECRET_TOKEN_RE.sub("[redacted]", redacted)
+    redacted = _PEM_RE.sub("[redacted]", redacted)
+    return redacted.replace("\n", " ").replace("\r", " ")[:256]
+
+
+def _safe_text(value: object, limit: int) -> str:
+    text = str(value or "").replace("\x00", "").replace("\r", " ").replace("\n", " ")
+    text = _SECRET_RE.sub("[redacted]", text)
+    text = _MAYA_SECRET_TOKEN_RE.sub("[redacted]", text)
+    text = _PEM_RE.sub("[redacted]", text)
+    return text[:limit]
+
+
+def _safe_url(value: str) -> str:
+    parts = urlsplit(value)
+    host = parts.hostname or ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    query = [
+        (_safe_text(key, 256), _safe_text(item, 2048))
+        for key, item in parse_qsl(parts.query, keep_blank_values=True)
+        if not any(
+            marker in key.lower()
+            for marker in ("token", "key", "secret", "auth", "signature", "password")
+        )
+    ]
+    path = quote(_safe_text(unquote(parts.path), 2048), safe="/:@-._~")
+    return urlunsplit((parts.scheme, host, path, urlencode(query), ""))[:2048]
+
+
+def _timestamp(value: datetime) -> str:
+    return value.isoformat(timespec="microseconds") + (
+        "Z" if value.tzinfo is None else ""
+    )
+
+
+def _mode(value: str) -> str:
+    mode = re.sub(r"[^a-z0-9_-]+", "-", str(value or "").lower()).strip("-_")[:64]
+    return mode if mode and mode[0].isalpha() else "extraction"
+
+
+def _provenance(
+    *,
+    providers: list[str] | None = None,
+    provider: str | None = None,
+    egress: str | None = None,
+    machine: str | None = None,
+    source_type: str | None = None,
+) -> dict:
+    safe_egress = (
+        egress if egress in {"residential", "datacenter", "unknown"} else "unknown"
+    )
+    value = {
+        "egress": safe_egress,
+        "machine": _safe_text(machine or "unknown", 128) or "unknown",
+        "source_type": _safe_text(source_type or "search", 64) or "search",
+    }
+    if provider:
+        value["provider"] = _safe_text(provider, 64)
+    if providers:
+        value["providers"] = [_safe_text(item, 64) for item in providers[:16] if item]
+    return value
+
+
+def search_capture_payload(
+    query: SearchQuery,
+    response: SearchResponse,
+    *,
+    completed_at: datetime,
+) -> dict:
+    providers = sorted(
+        {
+            result.provider.value
+            for result in response.results
+            if result.provider is not None
+        }
+    )
+    summary_parts = []
+    for rank, result in enumerate(response.results[:50], start=1):
+        summary_parts.append(
+            f"{rank}. {_safe_text(result.title, 1024)} — "
+            f"{_safe_url(result.url)} — {_safe_text(result.snippet, 2048)}"
+        )
+    summary = _safe_text("\n".join(summary_parts), 16_384)
+    if not summary:
+        summary = f"No results returned for {_safe_text(query.query, 4096)}"
+    egresses = {
+        result.metadata.get("egress") for result in response.results if result.metadata
+    }
+    machines = {
+        result.metadata.get("machine")
+        for result in response.results
+        if result.metadata and result.metadata.get("machine")
+    }
+    return {
+        "idempotency_key": response.search_run_id,
+        "query": _safe_text(query.query, 4096) or "[redacted]",
+        "mode": query.mode.value,
+        "result_summary": summary,
+        "provenance": _provenance(
+            providers=providers,
+            egress=next(iter(egresses)) if len(egresses) == 1 else "unknown",
+            machine=next(iter(machines)) if len(machines) == 1 else "unknown",
+            source_type="search",
+        ),
+        "started_at": _timestamp(response.created_at),
+        "completed_at": _timestamp(completed_at),
+        "pages": [],
+    }
+
+
+def extraction_capture_payload(
+    *,
+    public_id: str,
+    mode: str,
+    result,
+    completed_at: datetime,
+) -> tuple[dict, str | None]:
+    content = _safe_text(result.text, 1_048_576)
+    content_sha256 = (
+        hashlib.sha256(content.encode("utf-8")).hexdigest() if content else None
+    )
+    provenance = _provenance(
+        provider=result.extractor.value if result.extractor else None,
+        egress=result.egress,
+        machine=result.machine,
+        source_type=result.source_type or "extraction",
+    )
+    pages = []
+    if content:
+        pages.append(
+            {
+                "position": 0,
+                "source_url": _safe_url(result.url),
+                "title": _safe_text(result.title or result.url, 1024)
+                or "Extracted page",
+                "content": content,
+                "content_sha256": content_sha256,
+                "provenance": provenance,
+                "extracted_at": _timestamp(result.extracted_at),
+            }
+        )
+    summary = _safe_text(
+        (
+            f"Extracted {result.word_count} words from {_safe_url(result.url)}"
+            if content
+            else f"Extraction failed for {_safe_url(result.url)}"
+        ),
+        16_384,
+    )
+    return (
+        {
+            "idempotency_key": public_id,
+            "query": _safe_url(result.url) or "[redacted]",
+            "mode": _mode(mode),
+            "result_summary": summary,
+            "provenance": provenance,
+            "started_at": _timestamp(result.extracted_at),
+            "completed_at": _timestamp(completed_at),
+            "pages": pages,
+        },
+        content_sha256,
+    )
+
+
+def excludes_capture(caller: str) -> bool:
+    return caller.strip().lower() in {
+        "probe",
+        "synthetic",
+        "deployment-probe",
+        "health-probe",
+        "deployment-canary",
+        "argus-reachability",
+        "legacy-import",
+    }
+
+
+class MayaOutboxDispatcher:
+    """Deliver a claimed outbox batch with at-least-once semantics."""
+
+    def __init__(
+        self,
+        repository,
+        *,
+        endpoint: str,
+        token: str,
+        transport: httpx.BaseTransport | None = None,
+        clock: Callable[[], datetime] | None = None,
+        timeout_seconds: float = 15.0,
+        batch_size: int = 20,
+        lease_seconds: int = 60,
+    ):
+        self.repository = repository
+        self.endpoint = endpoint
+        self.token = token
+        self.transport = transport
+        self.clock = clock or (lambda: datetime.now(tz=None))
+        self.timeout_seconds = timeout_seconds
+        self.batch_size = max(1, min(int(batch_size), 100))
+        self.lease_seconds = max(
+            10,
+            min(
+                max(
+                    int(lease_seconds),
+                    int(timeout_seconds * self.batch_size) + 15,
+                ),
+                14_400,
+            ),
+        )
+
+    def run_once(self) -> dict[str, int]:
+        now = self.clock()
+        claimed = self.repository.claim_maya_outbox(
+            now=now,
+            limit=self.batch_size,
+            lease_seconds=self.lease_seconds,
+        )
+        outcomes: Counter[str] = Counter()
+        if not claimed:
+            return {}
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+        }
+        with httpx.Client(
+            transport=self.transport,
+            timeout=self.timeout_seconds,
+        ) as client:
+            for item in claimed:
+                outcome = self._deliver_one(client, headers, item)
+                outcomes[outcome] += 1
+        return dict(outcomes)
+
+    def _deliver_one(self, client, headers, item) -> str:
+        now = self.clock()
+        try:
+            response = client.post(
+                self.endpoint,
+                headers=headers,
+                content=item["payload_json"],
+            )
+        except httpx.HTTPError as exc:
+            status = self.repository.fail_maya_outbox(
+                item["id"],
+                lease_token=item["lease_token"],
+                transient=True,
+                error_code="maya_unavailable",
+                error_summary=type(exc).__name__,
+                now=now,
+            )
+            return "retried" if status == "retry" else "dead_lettered"
+
+        if 200 <= response.status_code < 300:
+            try:
+                body = response.json()
+            except (TypeError, ValueError):
+                body = {}
+            if not isinstance(body, dict):
+                body = {}
+            # Keep acknowledgement evidence useful and bounded; the capture
+            # endpoint's identifiers and counters are sufficient for audit.
+            audit = {
+                key: body[key]
+                for key in (
+                    "capture_id",
+                    "caller",
+                    "page_ids",
+                    "duplicate",
+                    "children_added",
+                    "received_at",
+                )
+                if key in body
+            }
+            if isinstance(audit.get("page_ids"), list):
+                audit["page_ids"] = audit["page_ids"][:16]
+            self.repository.acknowledge_maya_outbox(
+                item["id"],
+                lease_token=item["lease_token"],
+                response=audit,
+                now=now,
+            )
+            return "acknowledged"
+
+        transient = (
+            response.status_code in {408, 425, 429} or response.status_code >= 500
+        )
+        code, summary = self._error_detail(response)
+        status = self.repository.fail_maya_outbox(
+            item["id"],
+            lease_token=item["lease_token"],
+            transient=transient,
+            error_code=code,
+            error_summary=summary,
+            now=now,
+        )
+        return "retried" if status == "retry" else "dead_lettered"
+
+    @staticmethod
+    def _error_detail(response: httpx.Response) -> tuple[str, str]:
+        code = f"http_{response.status_code}"
+        summary = f"Maya returned HTTP {response.status_code}"
+        try:
+            body = response.json()
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return code, summary
+        detail = body.get("detail") if isinstance(body, dict) else None
+        if isinstance(detail, dict):
+            code = str(detail.get("code") or code)[:64]
+            summary = str(detail.get("message") or summary)
+        elif isinstance(detail, str):
+            summary = detail
+        return code, safe_failure_summary(summary) or summary

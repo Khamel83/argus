@@ -258,9 +258,9 @@ def test_concurrent_same_run_accepts_one_payload_and_rejects_the_other(tmp_path)
         outcomes = list(pool.map(accept, (first, second)))
 
     assert sum(isinstance(outcome, AcceptanceReceipt) for outcome in outcomes) == 1
-    assert sum(
-        isinstance(outcome, AcceptanceConflictError) for outcome in outcomes
-    ) == 1
+    assert (
+        sum(isinstance(outcome, AcceptanceConflictError) for outcome in outcomes) == 1
+    )
     assert _table_counts(repository)["retrieval_runs"] == 1
 
 
@@ -297,7 +297,9 @@ def test_postgresql_concurrent_same_payload_same_run_is_idempotent(
     query = SearchQuery(query="atomic search")
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        receipts = list(pool.map(lambda _: repository.accept(query, _response()), range(2)))
+        receipts = list(
+            pool.map(lambda _: repository.accept(query, _response()), range(2))
+        )
 
     assert receipts[0] == receipts[1]
     assert _table_counts(repository)["retrieval_runs"] == 1
@@ -333,9 +335,9 @@ def test_postgresql_concurrent_different_payload_same_run_conflicts(
         )
 
     assert sum(isinstance(outcome, AcceptanceReceipt) for outcome in outcomes) == 1
-    assert sum(
-        isinstance(outcome, AcceptanceConflictError) for outcome in outcomes
-    ) == 1
+    assert (
+        sum(isinstance(outcome, AcceptanceConflictError) for outcome in outcomes) == 1
+    )
 
 
 def test_postgresql_repository_rolls_back_partial_acceptance(postgres_ledger_url):
@@ -424,12 +426,16 @@ def test_routing_field_migration_preserves_existing_requests(tmp_path):
 
     upgraded = create_engine(f"sqlite:///{db_path}")
     with upgraded.connect() as connection:
-        row = connection.execute(
-            text(
-                "SELECT query_text, providers_json, free_only "
-                "FROM retrieval_requests WHERE id = 'request-1'"
+        row = (
+            connection.execute(
+                text(
+                    "SELECT query_text, providers_json, free_only "
+                    "FROM retrieval_requests WHERE id = 'request-1'"
+                )
             )
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
     upgraded.dispose()
     assert dict(row) == {
         "query_text": "existing",
@@ -482,8 +488,7 @@ def _create_legacy_search_database(path):
             "budget_remaining FLOAT, egress VARCHAR(50))"
         )
         connection.exec_driver_sql(
-            "INSERT INTO search_queries VALUES "
-            "(1, 'legacy query', 'discovery', 10)"
+            "INSERT INTO search_queries VALUES (1, 'legacy query', 'discovery', 10)"
         )
         connection.exec_driver_sql(
             "INSERT INTO search_runs VALUES "
@@ -516,12 +521,8 @@ def test_legacy_reconciliation_is_dry_run_by_default_and_idempotent(tmp_path):
     }
     assert _table_counts(repository)["retrieval_runs"] == 0
 
-    applied = reconcile_legacy_state(
-        f"sqlite:///{source}", repository, apply=True
-    )
-    repeated = reconcile_legacy_state(
-        f"sqlite:///{source}", repository, apply=True
-    )
+    applied = reconcile_legacy_state(f"sqlite:///{source}", repository, apply=True)
+    repeated = reconcile_legacy_state(f"sqlite:///{source}", repository, apply=True)
 
     assert applied["imported"] == 1
     assert repeated == {
@@ -531,6 +532,7 @@ def test_legacy_reconciliation_is_dry_run_by_default_and_idempotent(tmp_path):
         "conflicting": 0,
     }
     assert _table_counts(repository)["retrieval_runs"] == 1
+    assert _table_counts(repository)["delivery_intents"] == 1
 
 
 @pytest.mark.parametrize(
