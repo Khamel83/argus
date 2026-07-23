@@ -35,7 +35,9 @@ ENV PATH="/app/.venv/bin:${PATH}" \
 
 RUN argus image-admission --manifest /app/runtime-manifest.json
 
-RUN useradd -m -s /bin/sh argus && chown -R argus:argus /app
+RUN useradd -m -s /bin/sh argus \
+    && mkdir -p /var/lib/argus \
+    && chown -R argus:argus /app /var/lib/argus
 USER argus
 
 EXPOSE 8000

@@ -63,6 +63,26 @@ def test_pull_request_ci_builds_the_production_image_without_pushing():
     assert "VCS_REF=${{ github.sha }}" in ci
 
 
+def test_compose_build_supplies_an_explicit_source_revision():
+    compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+    assert 'VCS_REF: "${ARGUS_IMAGE_VCS_REF:-local-compose-build}"' in compose
+    assert "# Set ARGUS_IMAGE_VCS_REF to the deployed commit" in compose
+
+
+def test_compose_persistence_does_not_mask_immutable_runtime_artifacts():
+    compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "ARGUS_DATA_ROOT=/var/lib/argus" in compose
+    assert "ARGUS_DB_URL=sqlite:////var/lib/argus/argus.db" in compose
+    assert "ARGUS_BUDGET_DB_PATH=/var/lib/argus/argus_budgets.db" in compose
+    assert "argus-data:/var/lib/argus" in compose
+    assert "argus-data:/app" not in compose
+    assert "mkdir -p /var/lib/argus" in dockerfile
+    assert "chown -R argus:argus /app /var/lib/argus" in dockerfile
+
+
 def test_production_dockerfile_uses_the_frozen_lock_and_bakes_runtime_manifest():
     dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
 
