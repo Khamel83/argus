@@ -1259,3 +1259,62 @@ def test_maya_worker_uses_real_dispatcher_outcomes(
         assert service.full_status()["dependencies"]["maya"][
             "state"
         ] == expected_state
+
+
+def test_outbox_compaction_failure_does_not_rewrite_maya_delivery_evidence(
+    monkeypatch,
+):
+    import time
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
+    import argus.api.main as api_main
+    import argus.config as config_module
+    import argus.persistence.maya_outbox as maya_outbox
+
+    capture = SimpleNamespace(
+        endpoint="http://maya/captures",
+        token="dedicated-token",
+        timeout_seconds=1,
+        batch_size=1,
+        poll_seconds=0.01,
+        acknowledged_retention_days=1,
+    )
+    monkeypatch.setattr(
+        config_module,
+        "get_config",
+        lambda: SimpleNamespace(egress_nodes=[], maya_capture=capture),
+    )
+    delivered = False
+
+    class Dispatcher:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run_once(self):
+            nonlocal delivered
+            delivered = True
+            return {"acknowledged": 1}
+
+    monkeypatch.setattr(maya_outbox, "MayaOutboxDispatcher", Dispatcher)
+    repository = _runtime_repository()
+    repository.compact_maya_outbox.side_effect = RuntimeError(
+        "local compaction failed"
+    )
+    service = _service(production=True)
+
+    with TestClient(
+        api_main.create_app(
+            broker=_runtime_broker(),
+            search_repository=repository,
+            operational_status=service,
+        )
+    ):
+        deadline = time.monotonic() + 1
+        while not delivered and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert delivered is True
+        assert service.full_status()["dependencies"]["maya"][
+            "state"
+        ] == "healthy"

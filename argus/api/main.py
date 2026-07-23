@@ -46,6 +46,15 @@ _HTTP_API_AUTHORITY_CAPABILITY = object()
 _AUTHORITY_RETRY_SECONDS = 5.0
 
 
+def _unavailable_browser_status() -> dict[str, object]:
+    return {
+        "declared": False,
+        "available": False,
+        "loaded": False,
+        "degraded_reason": "browser_status_unavailable",
+    }
+
+
 def _build_rate_limiter() -> RateLimiter:
     auth = AuthConfig.from_env()
     return RateLimiter(
@@ -171,12 +180,7 @@ def create_app(
                         browser_status_reader
                     )
                 except Exception:
-                    browser_status = {
-                        "declared": False,
-                        "available": False,
-                        "loaded": False,
-                        "degraded_reason": "browser_status_unavailable",
-                    }
+                    browser_status = _unavailable_browser_status()
                 try:
                     recovery_status = await asyncio.to_thread(
                         recovery_status_from_environment
@@ -207,14 +211,7 @@ def create_app(
                             current_browser = (
                                 await asyncio.to_thread(browser_status_reader)
                                 if browser_status_reader is not None
-                                else {
-                                    "declared": False,
-                                    "available": False,
-                                    "loaded": False,
-                                    "degraded_reason": (
-                                        "browser_status_unavailable"
-                                    ),
-                                }
+                                else _unavailable_browser_status()
                             )
                             await asyncio.to_thread(
                                 refresh_operational_status,
@@ -270,16 +267,6 @@ def create_app(
                                     seconds=max(15, cfg.poll_seconds * 3)
                                 ),
                             )
-                            now = datetime.now(tz=None)
-                            await asyncio.to_thread(
-                                repository.compact_maya_outbox,
-                                acknowledged_before=now
-                                - timedelta(
-                                    days=cfg.acknowledged_retention_days
-                                ),
-                                limit=100,
-                                now=now,
-                            )
                         except Exception as exc:
                             logger.warning(
                                 "Maya outbox worker failed: %s",
@@ -294,6 +281,23 @@ def create_app(
                                 ),
                                 reason=f"delivery_failed:{type(exc).__name__}",
                             )
+                        else:
+                            try:
+                                now = datetime.now(tz=None)
+                                await asyncio.to_thread(
+                                    repository.compact_maya_outbox,
+                                    acknowledged_before=now
+                                    - timedelta(
+                                        days=cfg.acknowledged_retention_days
+                                    ),
+                                    limit=100,
+                                    now=now,
+                                )
+                            except Exception as exc:
+                                logger.warning(
+                                    "Maya outbox compaction failed: %s",
+                                    type(exc).__name__,
+                                )
                         await asyncio.sleep(cfg.poll_seconds)
 
                 child_tasks.extend(
