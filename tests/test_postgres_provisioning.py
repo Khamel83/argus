@@ -89,10 +89,10 @@ def _psql(
 
 def _cleanup() -> None:
     roles = ", ".join(MANAGED_ROLES)
+    _psql("DROP DATABASE IF EXISTS atlas WITH (FORCE)")
+    _psql("DROP DATABASE IF EXISTS argus WITH (FORCE)")
     _psql(
         f"""
-        DROP DATABASE IF EXISTS atlas WITH (FORCE);
-        DROP DATABASE IF EXISTS argus WITH (FORCE);
         DROP ROLE IF EXISTS {roles};
         """
     )
