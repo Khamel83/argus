@@ -1975,7 +1975,10 @@ def test_postgresql_concurrent_workers_claim_each_intent_once(postgres_ledger_ur
     )
     command.downgrade(config, "base")
     command.upgrade(config, "head")
-    repository = create_search_ledger_repository(postgres_ledger_url)
+    repository = create_search_ledger_repository(
+        postgres_ledger_url,
+        clock=lambda: datetime(2026, 7, 23, 11, 0),
+    )
     repository.accept(
         SearchQuery(query="single claim", caller="maya"),
         _response(run_id="postgres-single-claim"),
@@ -2008,7 +2011,10 @@ def test_postgresql_reclaim_race_rejects_expired_worker(postgres_ledger_url):
     )
     command.downgrade(config, "base")
     command.upgrade(config, "head")
-    repository = create_search_ledger_repository(postgres_ledger_url)
+    repository = create_search_ledger_repository(
+        postgres_ledger_url,
+        clock=lambda: datetime(2026, 7, 23, 11, 0),
+    )
     repository.accept(
         SearchQuery(query="postgres stale worker", caller="maya"),
         _response(run_id="postgres-stale-worker"),
