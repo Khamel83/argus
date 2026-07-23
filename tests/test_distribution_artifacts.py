@@ -27,3 +27,13 @@ def test_production_image_copies_alembic_runtime_artifacts():
 
     assert dockerfile.count("COPY alembic.ini ./") == 2
     assert dockerfile.count("COPY migrations/ ./migrations/") == 2
+
+
+def test_postgresql_ci_runs_real_api_commit_failure_contract():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+
+    assert (
+        "tests/test_api.py::TestSearchEndpoint::"
+        "test_postgresql_constraint_failure_returns_503_and_rolls_back_ledger"
+        in workflow
+    )

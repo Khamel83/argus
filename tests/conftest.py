@@ -72,3 +72,20 @@ def postgres_ledger_url():
     if not url:
         pytest.skip("ARGUS_TEST_POSTGRES_URL is not configured")
     return url
+
+
+@pytest.fixture
+def migrated_postgres_ledger(postgres_ledger_url):
+    from alembic import command
+    from alembic.config import Config
+
+    from argus.persistence.search_ledger import create_search_ledger_repository
+
+    config = Config("alembic.ini")
+    config.set_main_option(
+        "sqlalchemy.url",
+        postgres_ledger_url.replace("%", "%%"),
+    )
+    command.downgrade(config, "base")
+    command.upgrade(config, "head")
+    return create_search_ledger_repository(postgres_ledger_url)

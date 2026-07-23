@@ -55,6 +55,88 @@ class TestSchemas:
 # --- API Integration ---
 
 class TestSearchEndpoint:
+    def test_postgresql_constraint_failure_returns_503_and_rolls_back_ledger(
+        self,
+        migrated_postgres_ledger,
+    ):
+        from fastapi.testclient import TestClient
+        from sqlalchemy import func, select
+
+        from argus.api.main import create_app
+        from argus.models import (
+            ProviderName,
+            ProviderTrace,
+            SearchMode,
+            SearchResponse,
+            SearchResult,
+        )
+        from argus.persistence.search_ledger import (
+            ContentIdentityRow,
+            DeliveryIntentRow,
+            NormalizedResultRow,
+            ProviderAttemptRow,
+            ResultProvenanceRow,
+            RetrievalRequestRow,
+            RetrievalRunRow,
+        )
+
+        broker = MagicMock()
+        broker.search = AsyncMock(
+            return_value=SearchResponse(
+                query="postgres commit failure",
+                mode=SearchMode.DISCOVERY,
+                results=[
+                    SearchResult(
+                        url="https://example.com/postgres-failure",
+                        title="PostgreSQL failure",
+                        snippet="Must not be acknowledged",
+                        provider=ProviderName.DUCKDUCKGO,
+                    )
+                ],
+                traces=[
+                    ProviderTrace(
+                        provider=ProviderName.DUCKDUCKGO,
+                        status="success",
+                        results_count=1,
+                        egress="x" * 51,
+                    )
+                ],
+                total_results=1,
+                search_run_id="postgres-api-db-error",
+            )
+        )
+        broker.cache = MagicMock()
+        broker.health_tracker = MagicMock()
+        broker.budget_tracker = MagicMock()
+        client = TestClient(
+            create_app(
+                broker=broker,
+                search_repository=migrated_postgres_ledger,
+            )
+        )
+
+        response = client.post(
+            "/api/search",
+            json={"query": "postgres commit failure", "mode": "discovery"},
+        )
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Search could not be durably accepted"
+        tables = (
+            RetrievalRequestRow,
+            RetrievalRunRow,
+            ProviderAttemptRow,
+            NormalizedResultRow,
+            ResultProvenanceRow,
+            ContentIdentityRow,
+            DeliveryIntentRow,
+        )
+        with migrated_postgres_ledger.session_factory() as session:
+            assert all(
+                session.scalar(select(func.count()).select_from(table)) == 0
+                for table in tables
+            )
+
     @pytest.mark.asyncio
     async def test_search_does_not_acknowledge_when_ledger_commit_fails(self):
         from argus.api.main import create_app

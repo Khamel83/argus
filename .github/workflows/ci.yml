@@ -71,7 +71,11 @@ jobs:
         run: uv sync --frozen --python 3.12 --extra dev --extra mcp
 
       - name: Run PostgreSQL ledger contract
-        run: uv run --python 3.12 pytest tests/test_search_ledger.py -v --tb=short
+        run: |
+          uv run --python 3.12 pytest \
+            tests/test_search_ledger.py \
+            tests/test_api.py::TestSearchEndpoint::test_postgresql_constraint_failure_returns_503_and_rolls_back_ledger \
+            -v --tb=short
 
   production-config:
     runs-on: ubuntu-latest
