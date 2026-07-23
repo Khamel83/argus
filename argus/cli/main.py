@@ -544,6 +544,7 @@ def test_provider(provider, query):
         max_results=3,
         providers=[pname],
         caller="local-cli",
+        user_visible=False,
         metadata={"caller_label": "cli-smoke"},
     )
     response = _run(broker.search(q))

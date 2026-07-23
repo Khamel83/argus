@@ -52,6 +52,31 @@ class TestSchemas:
         assert req.provider == "searxng"
 
 
+@pytest.mark.asyncio
+async def test_admin_provider_smoke_marks_query_operational_only():
+    from argus.api.routes_admin import test_provider
+    from argus.models import SearchMode, SearchResponse
+
+    broker = MagicMock()
+    broker.search = AsyncMock(
+        return_value=SearchResponse(
+            query="argus",
+            mode=SearchMode.DISCOVERY,
+            results=[],
+        )
+    )
+    request = MagicMock()
+    request.state.caller_identity = "admin"
+
+    await test_provider(
+        ProviderTestRequest(provider="duckduckgo", query="argus"),
+        request,
+        broker,
+    )
+
+    assert broker.search.await_args.args[0].user_visible is False
+
+
 # --- API Integration ---
 
 class TestSearchEndpoint:

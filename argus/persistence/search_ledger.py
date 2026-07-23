@@ -379,10 +379,20 @@ def _build_acceptance_state(query: SearchQuery, response: SearchResponse) -> dic
         "results": results,
         "delivery_intent": {
             "destination": "maya",
-            "status": ("suppressed" if excludes_capture(query.caller) else "pending"),
+            "status": (
+                "suppressed"
+                if excludes_capture(
+                    query.caller,
+                    user_visible=query.user_visible,
+                )
+                else "pending"
+            ),
             "payload": (
                 None
-                if excludes_capture(query.caller)
+                if excludes_capture(
+                    query.caller,
+                    user_visible=query.user_visible,
+                )
                 else search_capture_payload(
                     query,
                     response,
@@ -1112,8 +1122,16 @@ class SqlAlchemySearchLedgerRepository:
         now: datetime,
     ) -> bool:
         with self.session_factory.begin() as session:
-            row = session.get(DeliveryIntentRow, intent_id)
-            if row is None or row.lease_token != lease_token:
+            row = self._active_maya_lease(
+                session,
+                intent_id=intent_id,
+                lease_token=lease_token,
+                now=now,
+            )
+            if row is None:
+                return False
+            response_json = _canonical_json(response)
+            if len(response_json.encode("utf-8")) > 4096:
                 return False
             row.status = "acknowledged"
             row.delivered_at = now
@@ -1122,7 +1140,7 @@ class SqlAlchemySearchLedgerRepository:
             row.lease_token = None
             row.last_error_code = None
             row.last_error_summary = None
-            row.response_json = _canonical_json(response)
+            row.response_json = response_json
             return True
 
     def fail_maya_outbox(
@@ -1136,8 +1154,13 @@ class SqlAlchemySearchLedgerRepository:
         now: datetime,
     ) -> str | None:
         with self.session_factory.begin() as session:
-            row = session.get(DeliveryIntentRow, intent_id)
-            if row is None or row.lease_token != lease_token:
+            row = self._active_maya_lease(
+                session,
+                intent_id=intent_id,
+                lease_token=lease_token,
+                now=now,
+            )
+            if row is None:
                 return None
             exhausted = row.attempt_count >= row.max_attempts
             row.status = "retry" if transient and not exhausted else "dead_letter"
@@ -1154,6 +1177,29 @@ class SqlAlchemySearchLedgerRepository:
                 safe_failure_summary(error_summary) or "delivery failed"
             )
             return row.status
+
+    @staticmethod
+    def _active_maya_lease(
+        session,
+        *,
+        intent_id: str,
+        lease_token: str,
+        now: datetime,
+    ) -> DeliveryIntentRow | None:
+        dialect = session.get_bind().dialect.name
+        if dialect == "sqlite":
+            from sqlalchemy import text
+
+            session.execute(text("BEGIN IMMEDIATE"))
+        statement = select(DeliveryIntentRow).where(
+            DeliveryIntentRow.id == intent_id,
+            DeliveryIntentRow.status == "delivering",
+            DeliveryIntentRow.lease_token == lease_token,
+            DeliveryIntentRow.lease_expires_at > now,
+        )
+        if dialect == "postgresql":
+            statement = statement.with_for_update()
+        return session.scalar(statement)
 
     def recover_maya_dead_letter(
         self,

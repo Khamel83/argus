@@ -110,6 +110,7 @@ class ReachabilityMatrix:
             mode=SearchMode.DISCOVERY,
             max_results=1,
             caller="argus-reachability",
+            user_visible=False,
             metadata={"attempt_scope": probe_scope},
         )
 

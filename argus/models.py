@@ -55,6 +55,7 @@ class SearchQuery:
     providers: Optional[List[ProviderName]] = None  # override routing policy
     free_only: bool = False
     caller: str = ""  # e.g. "media_rename", "atlas", "mcp", "cli", ""
+    user_visible: bool = True
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 

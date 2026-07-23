@@ -28,6 +28,63 @@ def _outbox_row(repository):
         return session.scalar(select(DeliveryIntentRow))
 
 
+def _maya_receipt(*, pages=0, duplicate=False):
+    return {
+        "capture_id": "a" * 32,
+        "caller": "argus",
+        "page_ids": [f"{index + 1:032x}" for index in range(pages)],
+        "duplicate": duplicate,
+        "children_added": 0 if duplicate else pages,
+        "received_at": "2026-07-23T12:01:00Z",
+    }
+
+
+@pytest.mark.parametrize(
+    ("status_code", "response_body"),
+    [
+        (204, None),
+        (200, "not-json"),
+        (201, {"capture_id": "partial"}),
+        (200, {**_maya_receipt(), "caller": "not-argus"}),
+        (201, {**_maya_receipt(), "page_ids": ["b" * 32]}),
+        (201, {**_maya_receipt(), "received_at": 123}),
+        (201, {**_maya_receipt(pages=1), "page_ids": [{}]}),
+    ],
+)
+def test_malformed_success_response_never_acknowledges_delivery(
+    tmp_path,
+    status_code,
+    response_body,
+):
+    from argus.persistence.maya_outbox import MayaOutboxDispatcher
+
+    repository = _repository(tmp_path)
+    repository.accept(SearchQuery(query="receipt contract"), _response())
+    now = datetime(2026, 7, 23, 12, 0)
+
+    def malformed(request):
+        if response_body is None:
+            return httpx.Response(status_code)
+        if isinstance(response_body, str):
+            return httpx.Response(status_code, text=response_body)
+        return httpx.Response(status_code, json=response_body)
+
+    dispatcher = MayaOutboxDispatcher(
+        repository,
+        endpoint="http://maya/captures",
+        token="test-token",
+        transport=httpx.MockTransport(malformed),
+        clock=lambda: now,
+    )
+
+    assert dispatcher.run_once() == {"retried": 1}
+    row = _outbox_row(repository)
+    assert row.status == "retry"
+    assert row.delivered_at is None
+    assert row.response_json is None
+    assert row.last_error_code == "invalid_maya_receipt"
+
+
 def test_search_acceptance_atomically_enqueues_a_bounded_sanitized_maya_parent(
     tmp_path,
 ):
@@ -55,6 +112,75 @@ def test_search_acceptance_atomically_enqueues_a_bounded_sanitized_maya_parent(
     assert "do-not-store" not in row.payload_json
     assert "ghp_abcdefghijklmnopqrstuvwxyz" not in row.payload_json
     assert "[redacted]" in row.payload_json
+
+
+@pytest.mark.parametrize(
+    "credential",
+    [
+        "Authorization: Basic dXNlcjpwYXNzd29yZA==",
+        "Cookie: session=super-secret-cookie",
+        "Set-Cookie: auth=super-secret-cookie",
+        "api_key=super-secret-api-key",
+        "token: super-secret-token",
+        "client_secret=super-secret-client-secret",
+    ],
+)
+def test_extraction_outbox_redacts_comprehensive_credential_material(
+    tmp_path,
+    credential,
+):
+    repository = _repository(tmp_path)
+    result = ExtractedContent(
+        url="https://example.com/article",
+        text=f"safe prefix {credential} safe suffix",
+        word_count=5,
+        extractor=ExtractorName.TRAFILATURA,
+        attempts=[ExtractionAttempt("trafilatura", "success", 1)],
+    )
+
+    repository.record_extraction(
+        url=result.url,
+        domain=None,
+        mode="default",
+        caller="maya",
+        result=result,
+        latency_ms=1,
+        extraction_run_id="credential-redaction",
+    )
+
+    payload = _outbox_row(repository).payload_json
+    assert "super-secret" not in payload
+    assert "dXNlcjpwYXNzd29yZA" not in payload
+    assert "[redacted]" in payload
+
+
+def test_remote_error_code_is_allowlisted_and_never_persists_assignment(tmp_path):
+    from argus.persistence.maya_outbox import MayaOutboxDispatcher
+
+    repository = _repository(tmp_path)
+    repository.accept(SearchQuery(query="unsafe remote code"), _response())
+    dispatcher = MayaOutboxDispatcher(
+        repository,
+        endpoint="http://maya/captures",
+        token="test-token",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                422,
+                json={
+                    "detail": {
+                        "code": "token=synthetic-secret-code",
+                        "message": "request rejected",
+                    }
+                },
+            )
+        ),
+        clock=lambda: datetime(2026, 7, 23, 12, 0),
+    )
+
+    assert dispatcher.run_once() == {"dead_lettered": 1}
+    row = _outbox_row(repository)
+    assert row.last_error_code == "http_422"
+    assert "synthetic-secret" not in row.last_error_code
 
 
 def test_new_outbox_preserves_issue34_acceptance_fingerprint_shape():
@@ -186,14 +312,7 @@ def test_transient_failure_is_restart_safe_and_replays_the_same_idempotency_key(
         requests.append(json.loads(request.content))
         return httpx.Response(
             201,
-            json={
-                "capture_id": "capture-1",
-                "caller": "argus",
-                "page_ids": [],
-                "duplicate": False,
-                "children_added": 0,
-                "received_at": "2026-07-23T12:01:00Z",
-            },
+            json=_maya_receipt(),
         )
 
     restarted = MayaOutboxDispatcher(
@@ -247,14 +366,7 @@ def test_lost_ack_duplicate_and_partial_child_replay_are_acknowledged(tmp_path):
         assert len(json.loads(request.content)["pages"]) == 1
         return httpx.Response(
             200,
-            json={
-                "capture_id": "capture-existing",
-                "caller": "argus",
-                "page_ids": ["page-existing"],
-                "duplicate": True,
-                "children_added": 0,
-                "received_at": "2026-07-23T12:01:00Z",
-            },
+            json=_maya_receipt(pages=1, duplicate=True),
         )
 
     second = MayaOutboxDispatcher(
@@ -285,7 +397,7 @@ def test_expired_delivery_lease_is_reclaimed_after_process_restart(tmp_path):
         transport=httpx.MockTransport(
             lambda request: httpx.Response(
                 200,
-                json={"capture_id": "capture-1", "duplicate": True},
+                json=_maya_receipt(duplicate=True),
             )
         ),
         clock=lambda: now + timedelta(seconds=11),
@@ -293,6 +405,74 @@ def test_expired_delivery_lease_is_reclaimed_after_process_restart(tmp_path):
 
     assert restarted.run_once() == {"acknowledged": 1}
     assert _outbox_row(repository).attempt_count == 2
+
+
+def test_sqlite_stale_worker_cannot_overwrite_reclaimed_lease(tmp_path):
+    repository = _repository(tmp_path)
+    repository.accept(SearchQuery(query="stale sqlite worker"), _response())
+    started = datetime(2026, 7, 23, 12, 0)
+    first = repository.claim_maya_outbox(
+        now=started,
+        limit=1,
+        lease_seconds=10,
+    )[0]
+    second = repository.claim_maya_outbox(
+        now=started + timedelta(seconds=11),
+        limit=1,
+        lease_seconds=10,
+    )[0]
+
+    assert (
+        repository.acknowledge_maya_outbox(
+            first["id"],
+            lease_token=first["lease_token"],
+            response=_maya_receipt(),
+            now=started + timedelta(seconds=11),
+        )
+        is False
+    )
+    assert (
+        repository.fail_maya_outbox(
+            first["id"],
+            lease_token=first["lease_token"],
+            transient=False,
+            error_code="stale_worker",
+            error_summary="stale worker",
+            now=started + timedelta(seconds=11),
+        )
+        is None
+    )
+    assert repository.acknowledge_maya_outbox(
+        second["id"],
+        lease_token=second["lease_token"],
+        response=_maya_receipt(),
+        now=started + timedelta(seconds=12),
+    )
+    assert _outbox_row(repository).status == "acknowledged"
+
+
+def test_acknowledgement_rejects_oversized_audit_response(tmp_path):
+    repository = _repository(tmp_path)
+    repository.accept(SearchQuery(query="bounded acknowledgement"), _response())
+    started = datetime(2026, 7, 23, 12, 0)
+    claimed = repository.claim_maya_outbox(
+        now=started,
+        limit=1,
+        lease_seconds=10,
+    )[0]
+
+    assert (
+        repository.acknowledge_maya_outbox(
+            claimed["id"],
+            lease_token=claimed["lease_token"],
+            response={"unexpected": "x" * 4096},
+            now=started + timedelta(seconds=1),
+        )
+        is False
+    )
+    row = _outbox_row(repository)
+    assert row.status == "delivering"
+    assert row.response_json is None
 
 
 def test_crash_during_final_attempt_expires_to_recoverable_dead_letter(tmp_path):
@@ -357,6 +537,7 @@ def test_permanent_rejection_dead_letters_safely_and_can_be_recovered(tmp_path):
     row = _outbox_row(repository)
     assert row.status == "dead_letter"
     assert row.last_error_code == "invalid_capture_request"
+    assert len(row.last_error_summary) <= 256
     assert "must-not-persist" not in row.last_error_summary
     assert "ghp_abcdefghijklmnopqrstuvwxyz" not in row.last_error_summary
     assert repository.list_maya_dead_letters() == [
@@ -447,6 +628,23 @@ def test_reachability_probe_is_recorded_without_maya_artifact(tmp_path):
     repository.accept(
         SearchQuery(query="provider reachability", caller="argus-reachability"),
         _response(run_id="reachability-probe"),
+    )
+
+    row = _outbox_row(repository)
+    assert row.status == "suppressed"
+    assert row.payload_json is None
+
+
+def test_explicit_operational_query_is_audited_without_maya_artifact(tmp_path):
+    repository = _repository(tmp_path)
+
+    repository.accept(
+        SearchQuery(
+            query="provider smoke",
+            caller="authenticated-admin",
+            user_visible=False,
+        ),
+        _response(run_id="operational-provider-smoke"),
     )
 
     row = _outbox_row(repository)
@@ -645,6 +843,60 @@ def test_postgresql_concurrent_workers_claim_each_intent_once(postgres_ledger_ur
     claimed_ids = [row["id"] for batch in claims for row in batch]
     assert len(claimed_ids) == 1
     assert len(set(claimed_ids)) == 1
+
+
+def test_postgresql_reclaim_race_rejects_expired_worker(postgres_ledger_url):
+    from alembic import command
+    from alembic.config import Config
+
+    from argus.persistence.search_ledger import create_search_ledger_repository
+
+    config = Config("alembic.ini")
+    config.set_main_option(
+        "sqlalchemy.url",
+        postgres_ledger_url.replace("%", "%%"),
+    )
+    command.downgrade(config, "base")
+    command.upgrade(config, "head")
+    repository = create_search_ledger_repository(postgres_ledger_url)
+    repository.accept(
+        SearchQuery(query="postgres stale worker", caller="maya"),
+        _response(run_id="postgres-stale-worker"),
+    )
+    started = datetime(2026, 7, 23, 12, 0)
+    stale = repository.claim_maya_outbox(
+        now=started,
+        limit=1,
+        lease_seconds=10,
+    )[0]
+    barrier = Barrier(2)
+
+    def reclaim():
+        barrier.wait()
+        return repository.claim_maya_outbox(
+            now=started + timedelta(seconds=11),
+            limit=1,
+            lease_seconds=10,
+        )
+
+    def stale_ack():
+        barrier.wait()
+        return repository.acknowledge_maya_outbox(
+            stale["id"],
+            lease_token=stale["lease_token"],
+            response=_maya_receipt(),
+            now=started + timedelta(seconds=11),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        reclaimed_future = pool.submit(reclaim)
+        stale_future = pool.submit(stale_ack)
+        reclaimed = reclaimed_future.result()
+        stale_result = stale_future.result()
+
+    assert stale_result is False
+    assert len(reclaimed) == 1
+    assert reclaimed[0]["lease_token"] != stale["lease_token"]
 
 
 def test_postgresql_migration_suppresses_historical_placeholder_intents(

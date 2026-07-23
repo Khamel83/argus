@@ -6,7 +6,7 @@ import json
 import hashlib
 import re
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable
 from urllib.parse import parse_qsl, quote, urlencode, unquote, urlsplit, urlunsplit
 
@@ -15,9 +15,14 @@ import httpx
 from argus.models import SearchQuery, SearchResponse
 
 
-_SECRET_RE = re.compile(
-    r"(?i)(authorization\s*:\s*bearer\s+|bearer\s+|api[_ -]?key[=: ]+|"
-    r"token[=: ]+|secret[=: ]+|password[=: ]+|cookie[=: ]+)\S+"
+_AUTH_HEADER_RE = re.compile(
+    r"(?i)\b(?:authorization|proxy-authorization)\s*:\s*[^\r\n]+"
+)
+_AUTH_SCHEME_RE = re.compile(r"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9+/._~=-]{4,}")
+_COOKIE_HEADER_RE = re.compile(r"(?i)\b(?:set-cookie|cookie)\s*:\s*[^\r\n]+")
+_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b(?:api[_ -]?key|access[_ -]?key|client[_ -]?secret|token|secret|"
+    r"password|passwd)\b\s*[:=]\s*[\"']?[^\s,;\"']+"
 )
 _MAYA_SECRET_TOKEN_RE = re.compile(
     r"(?i)\b(?:token|secret|key)[_-][A-Za-z0-9][A-Za-z0-9._-]{7,}\b|"
@@ -29,22 +34,43 @@ _PEM_RE = re.compile(
     r"-----BEGIN [^-]+-----.*?-----END [^-]+-----",
     re.IGNORECASE | re.DOTALL,
 )
+_MAYA_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+_MAYA_ERROR_CODES = {
+    "capture_idempotency_conflict",
+    "capture_request_too_large",
+    "content_hash_mismatch",
+    "invalid_capture_request",
+    "unsafe_capture_payload",
+}
+_MAYA_RECEIPT_KEYS = {
+    "capture_id",
+    "caller",
+    "page_ids",
+    "duplicate",
+    "children_added",
+    "received_at",
+}
+
+
+def _redact_text(value: object) -> str:
+    text = str(value or "").replace("\x00", "")
+    text = _AUTH_HEADER_RE.sub("[redacted]", text)
+    text = _AUTH_SCHEME_RE.sub("[redacted]", text)
+    text = _COOKIE_HEADER_RE.sub("[redacted]", text)
+    text = _SECRET_ASSIGNMENT_RE.sub("[redacted]", text)
+    text = _MAYA_SECRET_TOKEN_RE.sub("[redacted]", text)
+    return _PEM_RE.sub("[redacted]", text)
 
 
 def safe_failure_summary(value: str | None) -> str | None:
     if not value:
         return None
-    redacted = _SECRET_RE.sub(lambda match: f"{match.group(1)}[redacted]", str(value))
-    redacted = _MAYA_SECRET_TOKEN_RE.sub("[redacted]", redacted)
-    redacted = _PEM_RE.sub("[redacted]", redacted)
+    redacted = _redact_text(value)
     return redacted.replace("\n", " ").replace("\r", " ")[:256]
 
 
 def _safe_text(value: object, limit: int) -> str:
-    text = str(value or "").replace("\x00", "").replace("\r", " ").replace("\n", " ")
-    text = _SECRET_RE.sub("[redacted]", text)
-    text = _MAYA_SECRET_TOKEN_RE.sub("[redacted]", text)
-    text = _PEM_RE.sub("[redacted]", text)
+    text = _redact_text(value).replace("\r", " ").replace("\n", " ")
     return text[:limit]
 
 
@@ -202,8 +228,8 @@ def extraction_capture_payload(
     )
 
 
-def excludes_capture(caller: str) -> bool:
-    return caller.strip().lower() in {
+def excludes_capture(caller: str, *, user_visible: bool = True) -> bool:
+    return not user_visible or caller.strip().lower() in {
         "probe",
         "synthetic",
         "deployment-probe",
@@ -289,36 +315,44 @@ class MayaOutboxDispatcher:
             )
             return "retried" if status == "retry" else "dead_lettered"
 
-        if 200 <= response.status_code < 300:
+        if response.status_code in {200, 201}:
             try:
                 body = response.json()
             except (TypeError, ValueError):
-                body = {}
-            if not isinstance(body, dict):
-                body = {}
-            # Keep acknowledgement evidence useful and bounded; the capture
-            # endpoint's identifiers and counters are sufficient for audit.
-            audit = {
-                key: body[key]
-                for key in (
-                    "capture_id",
-                    "caller",
-                    "page_ids",
-                    "duplicate",
-                    "children_added",
-                    "received_at",
+                body = None
+            audit = self._validated_receipt(
+                response.status_code,
+                body,
+                item["payload_json"],
+            )
+            if audit is None:
+                status = self.repository.fail_maya_outbox(
+                    item["id"],
+                    lease_token=item["lease_token"],
+                    transient=True,
+                    error_code="invalid_maya_receipt",
+                    error_summary="Maya returned an invalid success receipt",
+                    now=now,
                 )
-                if key in body
-            }
-            if isinstance(audit.get("page_ids"), list):
-                audit["page_ids"] = audit["page_ids"][:16]
-            self.repository.acknowledge_maya_outbox(
+                return "retried" if status == "retry" else "dead_lettered"
+            acknowledged = self.repository.acknowledge_maya_outbox(
                 item["id"],
                 lease_token=item["lease_token"],
                 response=audit,
                 now=now,
             )
-            return "acknowledged"
+            return "acknowledged" if acknowledged else "lease_lost"
+
+        if 200 <= response.status_code < 300:
+            status = self.repository.fail_maya_outbox(
+                item["id"],
+                lease_token=item["lease_token"],
+                transient=True,
+                error_code="invalid_maya_receipt",
+                error_summary="Maya returned an unsupported success status",
+                now=now,
+            )
+            return "retried" if status == "retry" else "dead_lettered"
 
         transient = (
             response.status_code in {408, 425, 429} or response.status_code >= 500
@@ -335,6 +369,62 @@ class MayaOutboxDispatcher:
         return "retried" if status == "retry" else "dead_lettered"
 
     @staticmethod
+    def _validated_receipt(
+        status_code: int,
+        body: object,
+        payload_json: str,
+    ) -> dict | None:
+        if not isinstance(body, dict) or set(body) != _MAYA_RECEIPT_KEYS:
+            return None
+        try:
+            payload = json.loads(payload_json)
+            expected_pages = payload["pages"]
+            received_at_text = body["received_at"]
+            if not isinstance(received_at_text, str):
+                return None
+            received_at = datetime.fromisoformat(
+                received_at_text.replace("Z", "+00:00")
+            )
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return None
+        capture_id = body["capture_id"]
+        caller = body["caller"]
+        page_ids = body["page_ids"]
+        duplicate = body["duplicate"]
+        children_added = body["children_added"]
+        if (
+            not isinstance(expected_pages, list)
+            or len(expected_pages) > 16
+            or not isinstance(capture_id, str)
+            or _MAYA_ID_RE.fullmatch(capture_id) is None
+            or caller != "argus"
+            or not isinstance(page_ids, list)
+            or len(page_ids) != len(expected_pages)
+            or not all(
+                isinstance(page_id, str) and _MAYA_ID_RE.fullmatch(page_id) is not None
+                for page_id in page_ids
+            )
+            or len(set(page_ids)) != len(page_ids)
+            or not isinstance(duplicate, bool)
+            or isinstance(children_added, bool)
+            or not isinstance(children_added, int)
+            or not 0 <= children_added <= len(expected_pages)
+            or received_at.tzinfo is None
+            or len(received_at_text) > 64
+            or (status_code == 200 and (not duplicate or children_added != 0))
+            or (status_code == 201 and duplicate)
+        ):
+            return None
+        return {
+            "capture_id": capture_id,
+            "caller": "argus",
+            "page_ids": page_ids,
+            "duplicate": duplicate,
+            "children_added": children_added,
+            "received_at": received_at.astimezone(timezone.utc).isoformat(),
+        }
+
+    @staticmethod
     def _error_detail(response: httpx.Response) -> tuple[str, str]:
         code = f"http_{response.status_code}"
         summary = f"Maya returned HTTP {response.status_code}"
@@ -344,7 +434,9 @@ class MayaOutboxDispatcher:
             return code, summary
         detail = body.get("detail") if isinstance(body, dict) else None
         if isinstance(detail, dict):
-            code = str(detail.get("code") or code)[:64]
+            remote_code = detail.get("code")
+            if isinstance(remote_code, str) and remote_code in _MAYA_ERROR_CODES:
+                code = remote_code
             summary = str(detail.get("message") or summary)
         elif isinstance(detail, str):
             summary = detail

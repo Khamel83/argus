@@ -74,6 +74,7 @@ async def test_probe_all_marks_reachable_on_success():
     assert matrix.best_egress(ProviderName.YAHOO) == "local"
     summary = matrix.get_all()
     assert summary[ProviderName.YAHOO]["probes"]["local"]["reachable"] is True
+    assert mock_provider.search.await_args.args[0].user_visible is False
 
 
 @pytest.mark.asyncio

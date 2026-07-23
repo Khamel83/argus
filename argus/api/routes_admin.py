@@ -75,6 +75,7 @@ async def test_provider(
         max_results=3,
         providers=[pname],
         caller=getattr(request.state, "caller_identity", "admin"),
+        user_visible=False,
         metadata={"caller_label": "http-admin-smoke"},
     )
     response = await broker.search(query)
