@@ -877,16 +877,6 @@ def _observe_provider_status(
             current_probe_values = [
                 probe for probe in probe_values if probe.get("stale") is not True
             ]
-            observed_timestamps = [
-                probe.get("last_checked")
-                for probe in probe_values
-                if isinstance(probe.get("last_checked"), (int, float))
-            ]
-            observed = (
-                datetime.fromtimestamp(max(observed_timestamps), tz=timezone.utc)
-                if observed_timestamps
-                else now
-            )
             if probe_values and not current_probe_values:
                 service.observe_provider(
                     name,
@@ -898,15 +888,35 @@ def _observe_provider_status(
                     reason="reachability_evidence_expired",
                 )
             else:
-                reachable = any(
-                    probe.get("reachable") is True for probe in current_probe_values
+                reachable_probes = [
+                    probe
+                    for probe in current_probe_values
+                    if probe.get("reachable") is True
+                ]
+                reachable = bool(reachable_probes)
+                state_probes = reachable_probes if reachable else current_probe_values
+                latest_probe = max(
+                    state_probes,
+                    key=lambda probe: (
+                        float(probe.get("last_checked"))
+                        if isinstance(probe.get("last_checked"), (int, float))
+                        else float("-inf")
+                    ),
+                    default=None,
+                )
+                observed = (
+                    datetime.fromtimestamp(
+                        float(latest_probe["last_checked"]),
+                        tz=timezone.utc,
+                    )
+                    if latest_probe is not None
+                    and isinstance(latest_probe.get("last_checked"), (int, float))
+                    else now
                 )
                 reachability_source = (
                     "provider_execution"
-                    if any(
-                        probe.get("source") == "provider_execution"
-                        for probe in current_probe_values
-                    )
+                    if latest_probe is not None
+                    and latest_probe.get("source") == "provider_execution"
                     else "reachability_probe"
                 )
                 service.observe_provider(
@@ -1208,6 +1218,11 @@ def refresh_operational_status(
         loaded = browser_status.get("loaded") is True
         runtime_state = str(browser_status.get("runtime_state") or "unknown")
         disconnected = not loaded and runtime_state == "healthy"
+        browser_source = (
+            "browser_runtime"
+            if runtime_state != "unknown" or loaded
+            else "runtime_manifest"
+        )
         browser_state = (
             "degraded"
             if not available or runtime_state == "degraded" or disconnected
@@ -1218,7 +1233,7 @@ def refresh_operational_status(
         service.observe_dependency(
             "browser",
             state=browser_state,
-            source="runtime_manifest",
+            source=browser_source,
             observed_at=observed,
             ttl=timedelta(hours=24),
             reason=(

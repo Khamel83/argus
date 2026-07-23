@@ -26,6 +26,8 @@ logger = get_logger("providers.duckduckgo")
 
 
 class DuckDuckGoProvider(BaseProvider):
+    probe_is_blocking = True
+
     def __init__(self, config: ProviderConfig | None = None):
         self._config = config or ProviderConfig(enabled=True)
         self._available = self._config.enabled and self._check_available()
@@ -47,7 +49,9 @@ class DuckDuckGoProvider(BaseProvider):
             return ProviderStatus.UNAVAILABLE_MISSING_KEY
         return ProviderStatus.ENABLED
 
-    async def search(self, query: SearchQuery) -> Tuple[List[SearchResult], ProviderTrace]:
+    async def search(
+        self, query: SearchQuery
+    ) -> Tuple[List[SearchResult], ProviderTrace]:
         start = time.monotonic()
 
         if not self._available:
@@ -94,21 +98,24 @@ class DuckDuckGoProvider(BaseProvider):
             url = item.get("href", "")
             if not url:
                 continue
-            results.append(SearchResult(
-                url=url,
-                title=item.get("title", ""),
-                snippet=item.get("body", ""),
-                domain=self._extract_domain(url),
-                provider=self.name,
-                score=0.0,
-                raw_rank=i,
-            ))
+            results.append(
+                SearchResult(
+                    url=url,
+                    title=item.get("title", ""),
+                    snippet=item.get("body", ""),
+                    domain=self._extract_domain(url),
+                    provider=self.name,
+                    score=0.0,
+                    raw_rank=i,
+                )
+            )
         return results
 
     @staticmethod
     def _extract_domain(url: str) -> str:
         try:
             from urllib.parse import urlparse
+
             return urlparse(url).netloc
         except Exception:
             return ""

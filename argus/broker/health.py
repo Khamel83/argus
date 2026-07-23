@@ -67,6 +67,38 @@ class HealthTracker:
         """Read status without consuming a post-cooldown half-open attempt."""
         return self._status(provider, claim_half_open=False)
 
+    def peek_execution_status(self, provider: ProviderName) -> Optional[ProviderStatus]:
+        """Plan an invocation without consuming an available half-open token."""
+        health = self._health.get(provider)
+        if (
+            health is not None
+            and not health.is_in_cooldown()
+            and health.consecutive_failures >= self._failure_threshold
+            and health.disabled_until is not None
+            and not health.half_open_claimed
+        ):
+            return None
+        return self.peek_status(provider)
+
+    def claim_execution(self, provider: ProviderName) -> bool | None:
+        """Atomically claim provider execution; True means half-open."""
+        health = self._health.get(provider)
+        if health is None or health.consecutive_failures < self._failure_threshold:
+            return False
+        if health.is_in_cooldown() or health.half_open_claimed:
+            return None
+        if health.disabled_until is not None:
+            health.half_open_claimed = True
+            return True
+        return None
+
+    def release_execution_claim(self, provider: ProviderName, half_open: bool) -> None:
+        if not half_open:
+            return
+        health = self._health.get(provider)
+        if health is not None:
+            health.half_open_claimed = False
+
     def _status(
         self,
         provider: ProviderName,

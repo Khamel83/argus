@@ -58,6 +58,46 @@ class StubProvider:
         )
 
 
+def _half_open_paid_executor(monkeypatch, provider, *, caller_caps=None):
+    from unittest.mock import MagicMock
+
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.broker.reachability import ReachabilityMatrix
+
+    now = [100.0]
+    monkeypatch.setattr("argus.broker.health.time.time", lambda: now[0])
+    matrix = ReachabilityMatrix(clock=lambda: now[0], failure_ttl_seconds=30)
+    matrix.update_probe(
+        "local",
+        ProviderName.BRAVE,
+        reachable=False,
+        latency_ms=450,
+        source="provider_execution",
+    )
+    health = HealthTracker(failure_threshold=1, cooldown_minutes=0.5)
+    health.record_failure(ProviderName.BRAVE)
+    now[0] += 31
+    budgets = BudgetTracker()
+    budgets.set_budget(ProviderName.BRAVE, 100.0)
+    spend = MagicMock()
+    spend.reserve.side_effect = lambda **kwargs: MagicMock(
+        attempt_id=kwargs["idempotency_key"],
+        reserved_charge=0.01,
+    )
+    spend.provider_summary.return_value = {"remaining": 99.0}
+    executor = ProviderExecutor(
+        providers={ProviderName.BRAVE: provider},
+        health_tracker=health,
+        budget_tracker=budgets,
+        reachability=matrix,
+        caller_tier_caps=caller_caps,
+        spend_repository=spend,
+    )
+    return executor, health, matrix, spend, now
+
+
 @pytest.mark.asyncio
 async def test_successful_paid_execution_records_public_reachability_evidence():
     from argus.broker.budgets import BudgetTracker
@@ -107,15 +147,106 @@ async def test_background_probe_refresh_establishes_health_evidence():
     broker._health = HealthTracker()
     broker._reachability = MagicMock()
     broker._reachability.probe_all = AsyncMock()
-    broker._reachability.get_all.return_value = {
-        ProviderName.DUCKDUCKGO: {
-            "probes": {"local": {"reachable": True, "latency_ms": 12}}
-        }
-    }
+    broker._reachability.probe_all.return_value = {ProviderName.DUCKDUCKGO: [True]}
 
     await broker.refresh_provider_evidence()
 
     assert broker._health.peek_health(ProviderName.DUCKDUCKGO).last_success is not None
+
+
+@pytest.mark.asyncio
+async def test_refresh_health_uses_only_outcomes_from_current_probe_run():
+    from argus.broker.health import HealthTracker
+    from argus.broker.reachability import ReachabilityMatrix
+    from argus.broker.router import SearchBroker
+
+    now = [100.0]
+    matrix = ReachabilityMatrix(clock=lambda: now[0])
+    matrix.update_probe(
+        "local",
+        ProviderName.BRAVE,
+        reachable=True,
+        latency_ms=9,
+        source="provider_execution",
+    )
+    duck = StubProvider(
+        name=ProviderName.DUCKDUCKGO,
+        trace=ProviderTrace(
+            provider=ProviderName.DUCKDUCKGO,
+            status="error",
+            latency_ms=20,
+        ),
+    )
+    broker = SearchBroker.__new__(SearchBroker)
+    broker._providers = {ProviderName.DUCKDUCKGO: duck}
+    broker._egress_nodes = {}
+    broker._health = HealthTracker()
+    broker._reachability = matrix
+
+    await broker.refresh_provider_evidence()
+
+    assert broker._health.peek_health(ProviderName.BRAVE) is None
+    assert broker._health.peek_health(ProviderName.DUCKDUCKGO).consecutive_failures == 1
+
+    now[0] += 1
+    duck.trace = ProviderTrace(
+        provider=ProviderName.DUCKDUCKGO,
+        status="success",
+        latency_ms=10,
+    )
+    await broker.refresh_provider_evidence()
+
+    duck_health = broker._health.peek_health(ProviderName.DUCKDUCKGO)
+    assert duck_health.consecutive_failures == 0
+    assert duck.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_cancelled_probe_cannot_mutate_shared_evidence_after_shutdown():
+    import asyncio
+    import threading
+    import time
+
+    from argus.broker.health import HealthTracker
+    from argus.broker.reachability import ReachabilityMatrix
+    from argus.broker.router import SearchBroker
+
+    entered = threading.Event()
+
+    class BlockingProvider(StubProvider):
+        probe_is_blocking = True
+
+        async def search(self, query):
+            entered.set()
+            time.sleep(0.35)
+            return await super().search(query)
+
+    matrix = ReachabilityMatrix()
+    health = HealthTracker()
+    broker = SearchBroker.__new__(SearchBroker)
+    broker._providers = {
+        ProviderName.DUCKDUCKGO: BlockingProvider(name=ProviderName.DUCKDUCKGO)
+    }
+    broker._egress_nodes = {}
+    broker._health = health
+    broker._reachability = matrix
+
+    task = asyncio.create_task(broker.refresh_provider_evidence())
+    loop = asyncio.get_running_loop()
+
+    def cancel_when_entered():
+        assert entered.wait(timeout=1)
+        loop.call_soon_threadsafe(task.cancel)
+
+    canceller = threading.Thread(target=cancel_when_entered)
+    canceller.start()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    canceller.join(timeout=1)
+    await asyncio.sleep(0.4)
+
+    assert ProviderName.DUCKDUCKGO not in matrix.get_all()
+    assert health.peek_health(ProviderName.DUCKDUCKGO) is None
 
 
 @pytest.mark.asyncio
@@ -181,6 +312,162 @@ async def test_paid_provider_recovers_after_bounded_reachability_half_open(monke
     assert recovered.traces[0].status == "success"
     assert provider.calls == 2
     assert matrix.get_all()[ProviderName.BRAVE]["probes"]["local"]["reachable"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gate", ["free_only", "tier_cap", "free_results", "budget"])
+async def test_paid_pre_call_gates_do_not_consume_half_open_claim(monkeypatch, gate):
+    provider = StubProvider(name=ProviderName.BRAVE)
+    caps = {"limited": 0} if gate == "tier_cap" else None
+    executor, health, matrix, _, _ = _half_open_paid_executor(
+        monkeypatch, provider, caller_caps=caps
+    )
+    query = SearchQuery(
+        query="gate",
+        caller="limited" if gate == "tier_cap" else "test",
+        free_only=gate == "free_only",
+        max_results=1,
+    )
+    order = [ProviderName.BRAVE]
+    if gate == "free_results":
+        free = StubProvider(
+            name=ProviderName.DUCKDUCKGO,
+            results=[
+                SearchResult(
+                    url="https://free.example",
+                    title="free",
+                    snippet="free",
+                    provider=ProviderName.DUCKDUCKGO,
+                )
+            ],
+        )
+        executor._providers[ProviderName.DUCKDUCKGO] = free
+        order = [ProviderName.DUCKDUCKGO, ProviderName.BRAVE]
+    if gate == "budget":
+        executor._should_query_paid = lambda provider, tier: (
+            False,
+            "over pace, conserving monthly credits",
+        )
+
+    await executor.execute(query, order)
+
+    assert health.get_health(ProviderName.BRAVE).half_open_claimed is False
+    assert matrix.peek_best_egress(ProviderName.BRAVE) == "local"
+    assert provider.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_reservation_skip_does_not_consume_half_open_claim(monkeypatch):
+    from argus.persistence.provider_spend import BudgetExhaustedError
+
+    provider = StubProvider(name=ProviderName.BRAVE)
+    executor, health, matrix, spend, _ = _half_open_paid_executor(monkeypatch, provider)
+    spend.reserve.side_effect = BudgetExhaustedError("exhausted")
+
+    await executor.execute(
+        SearchQuery(query="reservation", caller="test"),
+        [ProviderName.BRAVE],
+    )
+
+    assert health.get_health(ProviderName.BRAVE).half_open_claimed is False
+    assert matrix.peek_best_egress(ProviderName.BRAVE) == "local"
+    assert provider.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_second_claim_failure_rolls_back_health_and_no_call_reservation(
+    monkeypatch,
+):
+    provider = StubProvider(name=ProviderName.BRAVE)
+    executor, health, matrix, spend, _ = _half_open_paid_executor(monkeypatch, provider)
+    matrix.claim_egress = lambda provider, egress: None
+
+    outcome = await executor.execute(
+        SearchQuery(query="claim race", caller="test"),
+        [ProviderName.BRAVE],
+    )
+
+    assert outcome.traces[0].error == "half-open claim unavailable"
+    assert health.get_health(ProviderName.BRAVE).half_open_claimed is False
+    assert provider.calls == 0
+    spend.settle.assert_called_once()
+    assert spend.settle.call_args.kwargs == {
+        "actual_charge": 0.0,
+        "outcome": "skipped",
+    }
+
+
+@pytest.mark.asyncio
+async def test_cancelled_paid_invocation_releases_half_open_claims(monkeypatch):
+    import asyncio
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class GateProvider(StubProvider):
+        async def search(self, query):
+            self.calls += 1
+            entered.set()
+            await release.wait()
+            return [], ProviderTrace(provider=self.name, status="success")
+
+    provider = GateProvider(name=ProviderName.BRAVE)
+    executor, health, matrix, _, _ = _half_open_paid_executor(monkeypatch, provider)
+    first = asyncio.create_task(
+        executor.execute(
+            SearchQuery(query="cancel", caller="test"),
+            [ProviderName.BRAVE],
+        )
+    )
+    await entered.wait()
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+
+    release.set()
+    recovered = await executor.execute(
+        SearchQuery(query="recover", caller="test"),
+        [ProviderName.BRAVE],
+    )
+
+    assert recovered.traces[0].status == "success"
+    assert health.get_health(ProviderName.BRAVE).half_open_claimed is False
+    assert matrix.get_all()[ProviderName.BRAVE]["probes"]["local"]["reachable"] is True
+
+
+@pytest.mark.asyncio
+async def test_exactly_one_concurrent_paid_caller_claims_half_open(monkeypatch):
+    import asyncio
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class GateProvider(StubProvider):
+        async def search(self, query):
+            self.calls += 1
+            entered.set()
+            await release.wait()
+            return [], ProviderTrace(provider=self.name, status="success")
+
+    provider = GateProvider(name=ProviderName.BRAVE)
+    executor, _, _, _, _ = _half_open_paid_executor(monkeypatch, provider)
+    first = asyncio.create_task(
+        executor.execute(
+            SearchQuery(query="first", caller="test"),
+            [ProviderName.BRAVE],
+        )
+    )
+    await entered.wait()
+    second = await executor.execute(
+        SearchQuery(query="second", caller="test"),
+        [ProviderName.BRAVE],
+    )
+
+    assert second.traces[0].status == "skipped"
+    assert provider.calls == 1
+
+    release.set()
+    assert (await first).traces[0].status == "success"
 
 
 # --- Policies ---

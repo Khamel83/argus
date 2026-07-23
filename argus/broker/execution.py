@@ -147,7 +147,7 @@ class ProviderExecutor:
                 )
                 continue
 
-            health_status = self._health.get_status(pname)
+            health_status = self._health.peek_execution_status(pname)
             if health_status is not None:
                 traces.append(
                     ProviderTrace(
@@ -180,7 +180,7 @@ class ProviderExecutor:
                 continue
 
             # Reachability check — route to worker if local is blocked
-            best_egress = self._reachability.best_egress(pname)
+            best_egress = self._reachability.peek_best_egress(pname)
             if best_egress is None:
                 traces.append(
                     ProviderTrace(
@@ -224,20 +224,42 @@ class ProviderExecutor:
                         )
                     )
                     continue
-                try:
-                    results, trace = await remote.search(query)
-                    uncertain = not self._trace_charge_known(pname, trace)
-                except Exception as exc:
-                    # Network failures can occur after the provider accepted
-                    # work. The durable reservation remains uncertain.
-                    results = []
+                claims = self._claim_invocation(pname, best_egress)
+                if claims is None:
                     trace = ProviderTrace(
                         provider=pname,
-                        status="error",
-                        error=str(exc),
-                        egress=best_egress,
+                        status="skipped",
+                        error="half-open claim unavailable",
                     )
-                    uncertain = True
+                    if tier > 0:
+                        self._record_known_outcome(
+                            query,
+                            pname,
+                            tier,
+                            attempt_scope,
+                            index,
+                            trace,
+                            reservation,
+                        )
+                    traces.append(trace)
+                    continue
+                try:
+                    try:
+                        results, trace = await remote.search(query)
+                        uncertain = not self._trace_charge_known(pname, trace)
+                    except Exception as exc:
+                        # Network failures can occur after the provider accepted
+                        # work. The durable reservation remains uncertain.
+                        results = []
+                        trace = ProviderTrace(
+                            provider=pname,
+                            status="error",
+                            error=str(exc),
+                            egress=best_egress,
+                        )
+                        uncertain = True
+                finally:
+                    self._release_invocation_claims(pname, claims)
                 if not uncertain or tier <= 0:
                     self._record_known_outcome(
                         query,
@@ -333,10 +355,32 @@ class ProviderExecutor:
                     )
                 )
                 continue
+            claims = self._claim_invocation(pname, best_egress)
+            if claims is None:
+                trace = ProviderTrace(
+                    provider=pname,
+                    status="skipped",
+                    error="half-open claim unavailable",
+                )
+                if tier > 0:
+                    self._record_known_outcome(
+                        query,
+                        pname,
+                        tier,
+                        attempt_scope,
+                        index,
+                        trace,
+                        reservation,
+                    )
+                traces.append(trace)
+                continue
 
-            results, trace, uncertain = await self._execute_provider(
-                query, provider, pname
-            )
+            try:
+                results, trace, uncertain = await self._execute_provider(
+                    query, provider, pname
+                )
+            finally:
+                self._release_invocation_claims(pname, claims)
             if not uncertain or tier <= 0:
                 self._record_known_outcome(
                     query,
@@ -359,6 +403,21 @@ class ProviderExecutor:
             live_providers_used=live_providers_used,
             budget_pace_warnings=pace_warnings,
         )
+
+    def _claim_invocation(self, provider: ProviderName, egress: str):
+        health_claim = self._health.claim_execution(provider)
+        if health_claim is None:
+            return None
+        reachability_claim = self._reachability.claim_egress(provider, egress)
+        if reachability_claim is None:
+            self._health.release_execution_claim(provider, health_claim)
+            return None
+        return health_claim, reachability_claim
+
+    def _release_invocation_claims(self, provider: ProviderName, claims) -> None:
+        health_claim, reachability_claim = claims
+        self._reachability.release_claim(reachability_claim)
+        self._health.release_execution_claim(provider, health_claim)
 
     async def _execute_provider(
         self,

@@ -636,6 +636,7 @@ def test_disconnected_browser_snapshot_cannot_render_runtime_healthy():
     browser = service.full_status()["dependencies"]["browser"]
     assert browser["state"] == "degraded"
     assert browser["reason"] == "browser_disconnected"
+    assert browser["source"] == "browser_runtime"
 
 
 def test_accounting_failure_cannot_render_healthy_zero_uncertainty():
@@ -928,6 +929,50 @@ def test_expired_reachability_probe_renders_unknown_not_failed():
     ]
     assert reachability["state"] == "unknown"
     assert reachability["reason"] == "reachability_evidence_expired"
+
+
+def test_reachability_source_and_time_use_same_current_probe_subset():
+    from argus.operations.status import refresh_operational_status
+
+    service = _service()
+    broker = _runtime_broker()
+    evidence = broker.operational_provider_evidence()
+    evidence["duckduckgo"]["reachability"]["probes"] = {
+        "stale-local": {
+            "reachable": False,
+            "last_checked": NOW.timestamp() - 5,
+            "source": "provider_execution",
+            "stale": True,
+        },
+        "current-worker": {
+            "reachable": True,
+            "last_checked": NOW.timestamp() - 10,
+            "source": "background_probe",
+            "stale": False,
+        },
+        "current-failed-execution": {
+            "reachable": False,
+            "last_checked": NOW.timestamp() - 7,
+            "source": "provider_execution",
+            "stale": False,
+        },
+    }
+    broker.operational_provider_evidence.side_effect = None
+    broker.operational_provider_evidence.return_value = evidence
+
+    refresh_operational_status(
+        service,
+        broker=broker,
+        repository=_runtime_repository(),
+        now=NOW,
+    )
+
+    reachability = service.full_status()["providers"]["duckduckgo"]["observations"][
+        "reachability"
+    ]
+    assert reachability["state"] == "healthy"
+    assert reachability["source"] == "reachability_probe"
+    assert reachability["observed_at"] == "2026-07-23T11:59:50Z"
 
 
 def test_repository_authority_loss_is_cached_unready_and_restoration_recovers():
@@ -1261,15 +1306,35 @@ def test_blocking_background_probe_cannot_delay_liveness(monkeypatch):
     from fastapi.testclient import TestClient
 
     import argus.api.main as api_main
+    from argus.broker.health import HealthTracker
+    from argus.broker.reachability import ReachabilityMatrix
+    from argus.broker.router import SearchBroker
+    from argus.models import ProviderName, ProviderTrace
 
     entered = threading.Event()
     broker = _runtime_broker()
 
-    async def blocking_probe():
-        entered.set()
-        time.sleep(0.5)
+    class BlockingProvider:
+        probe_is_blocking = True
 
-    broker.refresh_provider_evidence.side_effect = blocking_probe
+        def is_available(self):
+            return True
+
+        async def search(self, query):
+            entered.set()
+            time.sleep(0.5)
+            return [], ProviderTrace(
+                provider=ProviderName.DUCKDUCKGO,
+                status="success",
+            )
+
+    broker._providers = {ProviderName.DUCKDUCKGO: BlockingProvider()}
+    broker._egress_nodes = {}
+    broker._reachability = ReachabilityMatrix()
+    broker._health = HealthTracker()
+    broker.refresh_provider_evidence = SearchBroker.refresh_provider_evidence.__get__(
+        broker, SearchBroker
+    )
     service = _service()
     service.metrics.request_started = MagicMock(
         side_effect=AssertionError("liveness telemetry must remain untouched")

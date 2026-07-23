@@ -212,15 +212,14 @@ class SearchBroker:
 
     async def refresh_provider_evidence(self) -> None:
         """Probe free providers and translate results into health evidence."""
-        await self._reachability.probe_all(
+        current_outcomes = await self._reachability.probe_all(
             local_providers=self._providers,
             egress_nodes=list(self._egress_nodes.values()),
         )
-        for provider, evidence in self._reachability.get_all().items():
-            probes = evidence.get("probes", {})
-            if any(probe.get("reachable") is True for probe in probes.values()):
+        for provider, outcomes in current_outcomes.items():
+            if any(outcomes):
                 self._health.record_success(provider)
-            elif probes:
+            elif outcomes:
                 self._health.record_failure(provider)
 
 
