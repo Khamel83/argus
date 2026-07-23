@@ -32,6 +32,10 @@ Use this file as the task ledger until the audit work is exhausted:
   durable-event semantics, authentication boundaries, capability reporting,
   and resource ownership across homelab services instead of creating Argus-only
   exceptions.
+- Do not install, start, configure, or invoke Docker/Compose on the Mac mini.
+  Mac development uses native tooling; image builds and container/resource
+  canaries run in GitHub Actions or on the homelab only when separately
+  authorized.
 - If an item is deliberately declined, record the decision and its replacement
   control.
 
