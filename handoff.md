@@ -94,10 +94,15 @@ State and integration:
 
 Capability, recovery, and operations:
 
-- [ ] [Ship the declared Chromium capability and pass bounded browser canaries](https://github.com/Khamel83/argus/issues/38)
-  — draft PR
+- [x] [Ship the declared Chromium capability and pass bounded browser canaries](https://github.com/Khamel83/argus/issues/38)
+  — merged PR
   [feat: ship sandboxed Chromium capability](https://github.com/Khamel83/argus/pull/49)
-  is in image/canary verification; no deployment is included.
+  as `f84565f`. Tamper-evident browser admission, truthful loaded/degraded
+  status, sandbox/nonroot enforcement, and Chromium plus Playwright-driver
+  cleanup were independently approved. The final 1 GiB canary completed 20/20
+  browser extractions at 338.34 MiB peak; the 512 MiB missing-browser
+  regression peaked at 80.08 MiB. Both had zero OOMs and zero orphan runtime
+  processes. The `[skip ci]` merge triggered no deployment.
 - [ ] [Expose truthful readiness, runtime identity, and bounded operational evidence](https://github.com/Khamel83/argus/issues/39)
   — blocked by the sole HTTP authority and declared browser capability.
 - [ ] [Run Argus on shared homelab PostgreSQL with verified recovery](https://github.com/Khamel83/argus/issues/40)
