@@ -4,7 +4,14 @@ from dataclasses import dataclass
 
 import pytest
 
-from argus.models import ProviderName, ProviderStatus, ProviderTrace, SearchMode, SearchQuery, SearchResult
+from argus.models import (
+    ProviderName,
+    ProviderStatus,
+    ProviderTrace,
+    SearchMode,
+    SearchQuery,
+    SearchResult,
+)
 
 
 @dataclass
@@ -30,7 +37,11 @@ class StubProvider:
         return self.available
 
     def status(self) -> ProviderStatus:
-        return ProviderStatus.ENABLED if self.available else ProviderStatus.DISABLED_BY_CONFIG
+        return (
+            ProviderStatus.ENABLED
+            if self.available
+            else ProviderStatus.DISABLED_BY_CONFIG
+        )
 
     async def search(self, query: SearchQuery):
         self.calls += 1
@@ -47,11 +58,73 @@ class StubProvider:
         )
 
 
+@pytest.mark.asyncio
+async def test_successful_paid_execution_records_public_reachability_evidence():
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.broker.reachability import ReachabilityMatrix
+
+    matrix = ReachabilityMatrix()
+    health = HealthTracker()
+    provider = StubProvider(
+        name=ProviderName.BRAVE,
+        trace=ProviderTrace(
+            provider=ProviderName.BRAVE,
+            status="success",
+            latency_ms=37,
+            egress="local",
+        ),
+    )
+    executor = ProviderExecutor(
+        providers={ProviderName.BRAVE: provider},
+        health_tracker=health,
+        budget_tracker=BudgetTracker(),
+        reachability=matrix,
+    )
+
+    await executor._execute_provider(
+        SearchQuery(query="paid evidence"), provider, ProviderName.BRAVE
+    )
+
+    evidence = matrix.get_all()[ProviderName.BRAVE]["probes"]["local"]
+    assert evidence["reachable"] is True
+    assert evidence["latency_ms"] == 37
+    assert evidence["source"] == "provider_execution"
+    assert health.peek_health(ProviderName.BRAVE).last_success is not None
+
+
+@pytest.mark.asyncio
+async def test_background_probe_refresh_establishes_health_evidence():
+    from unittest.mock import AsyncMock, MagicMock
+
+    from argus.broker.health import HealthTracker
+    from argus.broker.router import SearchBroker
+
+    broker = SearchBroker.__new__(SearchBroker)
+    broker._providers = {}
+    broker._egress_nodes = {}
+    broker._health = HealthTracker()
+    broker._reachability = MagicMock()
+    broker._reachability.probe_all = AsyncMock()
+    broker._reachability.get_all.return_value = {
+        ProviderName.DUCKDUCKGO: {
+            "probes": {"local": {"reachable": True, "latency_ms": 12}}
+        }
+    }
+
+    await broker.refresh_provider_evidence()
+
+    assert broker._health.peek_health(ProviderName.DUCKDUCKGO).last_success is not None
+
+
 # --- Policies ---
+
 
 class TestPolicies:
     def test_recovery_order(self):
         from argus.broker.policies import get_provider_order
+
         order = get_provider_order(SearchMode.RECOVERY)
         assert order[0] == ProviderName.CACHE
         assert ProviderName.SEARXNG in order
@@ -59,11 +132,13 @@ class TestPolicies:
 
     def test_discovery_order(self):
         from argus.broker.policies import get_provider_order
+
         order = get_provider_order(SearchMode.DISCOVERY)
         assert order[0] == ProviderName.CACHE
 
     def test_grounding_order(self):
         from argus.broker.policies import get_provider_order
+
         order = get_provider_order(SearchMode.GROUNDING)
         assert ProviderName.BRAVE in order
         assert ProviderName.SERPER in order
@@ -71,6 +146,7 @@ class TestPolicies:
 
     def test_research_order(self):
         from argus.broker.policies import get_provider_order
+
         order = get_provider_order(SearchMode.RESEARCH)
         assert ProviderName.TAVILY in order
         assert ProviderName.EXA in order
@@ -78,22 +154,27 @@ class TestPolicies:
     def test_tier_sorting_free_first(self):
         """Tier 0 (SearXNG) should always come before tier 1+ providers."""
         from argus.broker.policies import get_provider_order
+
         for mode in SearchMode:
             order = get_provider_order(mode)
             # CACHE is index 0, SearXNG (tier 0) should be index 1
-            assert order[1] == ProviderName.SEARXNG, f"{mode}: expected SearXNG at position 1, got {order[1]}"
+            assert order[1] == ProviderName.SEARXNG, (
+                f"{mode}: expected SearXNG at position 1, got {order[1]}"
+            )
 
     def test_tier_sorting_monthly_before_onetime(self):
         """Tier 1 (monthly) should always come before tier 3 (one-time)."""
         from argus.broker.policies import get_provider_order
+
         for mode in SearchMode:
             order = get_provider_order(mode)
             searxng_idx = order.index(ProviderName.SEARXNG)
             # Find first tier-1 and first tier-3 provider
             from argus.broker.budgets import PROVIDER_TIERS
+
             first_monthly = None
             first_onetime = None
-            for p in order[searxng_idx + 1:]:
+            for p in order[searxng_idx + 1 :]:
                 tier = PROVIDER_TIERS.get(p, 99)
                 if tier == 1 and first_monthly is None:
                     first_monthly = p
@@ -107,6 +188,7 @@ class TestPolicies:
     def test_override_providers_sorted_by_tier(self):
         """Override provider lists should also be tier-sorted."""
         from argus.broker.policies import resolve_routing
+
         # Serper (tier 3) before Brave (tier 1) in override -> should reorder
         override = [ProviderName.SERPER, ProviderName.BRAVE]
         result = resolve_routing(SearchMode.DISCOVERY, override)
@@ -125,6 +207,7 @@ class TestPolicies:
 
     def test_no_override_uses_policy(self):
         from argus.broker.policies import resolve_routing
+
         result = resolve_routing(SearchMode.DISCOVERY, None)
         assert ProviderName.CACHE in result
 
@@ -145,17 +228,39 @@ class TestPolicies:
 
 # --- Ranking ---
 
+
 class TestRanking:
     def test_rrf_basic(self):
         from argus.broker.ranking import reciprocal_rank_fusion
+
         provider_results = {
             "provider_a": [
-                SearchResult(url="https://a.com/1", title="A1", snippet="", provider=ProviderName.BRAVE),
-                SearchResult(url="https://a.com/2", title="A2", snippet="", provider=ProviderName.BRAVE),
+                SearchResult(
+                    url="https://a.com/1",
+                    title="A1",
+                    snippet="",
+                    provider=ProviderName.BRAVE,
+                ),
+                SearchResult(
+                    url="https://a.com/2",
+                    title="A2",
+                    snippet="",
+                    provider=ProviderName.BRAVE,
+                ),
             ],
             "provider_b": [
-                SearchResult(url="https://b.com/1", title="B1", snippet="", provider=ProviderName.SERPER),
-                SearchResult(url="https://a.com/1", title="A1", snippet="", provider=ProviderName.SERPER),
+                SearchResult(
+                    url="https://b.com/1",
+                    title="B1",
+                    snippet="",
+                    provider=ProviderName.SERPER,
+                ),
+                SearchResult(
+                    url="https://a.com/1",
+                    title="A1",
+                    snippet="",
+                    provider=ProviderName.SERPER,
+                ),
             ],
         }
         merged = reciprocal_rank_fusion(provider_results)
@@ -165,6 +270,7 @@ class TestRanking:
 
     def test_rrf_single_provider(self):
         from argus.broker.ranking import reciprocal_rank_fusion
+
         results = [
             SearchResult(url="https://a.com", title="A", snippet=""),
             SearchResult(url="https://b.com", title="B", snippet=""),
@@ -175,15 +281,18 @@ class TestRanking:
 
     def test_rrf_empty(self):
         from argus.broker.ranking import reciprocal_rank_fusion
+
         merged = reciprocal_rank_fusion({})
         assert merged == []
 
 
 # --- Dedupe ---
 
+
 class TestDedupe:
     def test_dedupes_same_url(self):
         from argus.broker.dedupe import dedupe_results
+
         results = [
             SearchResult(url="https://example.com", title="A", snippet=""),
             SearchResult(url="https://example.com", title="B", snippet=""),
@@ -193,6 +302,7 @@ class TestDedupe:
 
     def test_dedupes_www_prefix(self):
         from argus.broker.dedupe import dedupe_results
+
         results = [
             SearchResult(url="https://example.com/page", title="A", snippet=""),
             SearchResult(url="https://www.example.com/page", title="B", snippet=""),
@@ -202,6 +312,7 @@ class TestDedupe:
 
     def test_dedupes_trailing_slash(self):
         from argus.broker.dedupe import dedupe_results
+
         results = [
             SearchResult(url="https://example.com/", title="A", snippet=""),
             SearchResult(url="https://example.com", title="B", snippet=""),
@@ -211,6 +322,7 @@ class TestDedupe:
 
     def test_keeps_distinct_urls(self):
         from argus.broker.dedupe import dedupe_results
+
         results = [
             SearchResult(url="https://a.com", title="A", snippet=""),
             SearchResult(url="https://b.com", title="B", snippet=""),
@@ -221,14 +333,17 @@ class TestDedupe:
 
 # --- URL Normalization ---
 
+
 class TestUrlNormalization:
     def test_normalizes_case(self):
         from argus.broker.dedupe import normalize_url
+
         result = normalize_url("https://EXAMPLE.com")
         assert result == "https://example.com/"
 
     def test_strips_tracking_params(self):
         from argus.broker.dedupe import normalize_url
+
         url = "https://example.com/page?utm_source=fb&ref=abc&id=1"
         normalized = normalize_url(url)
         assert "utm_" not in normalized
@@ -237,21 +352,25 @@ class TestUrlNormalization:
 
     def test_strips_www(self):
         from argus.broker.dedupe import normalize_url
+
         result = normalize_url("https://www.example.com")
         assert result == "https://example.com/"
 
     def test_sorts_query_params(self):
         from argus.broker.dedupe import normalize_url
+
         url = normalize_url("https://example.com?b=2&a=1")
         assert url == "https://example.com/?a=1&b=2"
 
 
 # --- Cache ---
 
+
 class TestCache:
     def test_put_and_get(self):
         from argus.broker.cache import SearchCache
         from argus.models import SearchResponse
+
         cache = SearchCache(ttl_hours=1)
         resp = SearchResponse(query="test", mode=SearchMode.DISCOVERY, results=[])
         cache.put("test", SearchMode.DISCOVERY, resp)
@@ -259,12 +378,14 @@ class TestCache:
 
     def test_cache_miss(self):
         from argus.broker.cache import SearchCache
+
         cache = SearchCache()
         assert cache.get("nonexistent", SearchMode.DISCOVERY) is None
 
     def test_different_modes_separate(self):
         from argus.broker.cache import SearchCache
         from argus.models import SearchResponse
+
         cache = SearchCache()
         r1 = SearchResponse(query="test", mode=SearchMode.DISCOVERY, results=[])
         r2 = SearchResponse(query="test", mode=SearchMode.GROUNDING, results=[])
@@ -298,6 +419,7 @@ class TestCache:
     def test_case_insensitive(self):
         from argus.broker.cache import SearchCache
         from argus.models import SearchResponse
+
         cache = SearchCache()
         resp = SearchResponse(query="test", mode=SearchMode.DISCOVERY, results=[])
         cache.put("Test", SearchMode.DISCOVERY, resp)
@@ -306,18 +428,25 @@ class TestCache:
     def test_clear(self):
         from argus.broker.cache import SearchCache
         from argus.models import SearchResponse
+
         cache = SearchCache()
-        cache.put("test", SearchMode.DISCOVERY, SearchResponse(query="test", mode=SearchMode.DISCOVERY, results=[]))
+        cache.put(
+            "test",
+            SearchMode.DISCOVERY,
+            SearchResponse(query="test", mode=SearchMode.DISCOVERY, results=[]),
+        )
         cache.clear()
         assert cache.size() == 0
 
 
 # --- Health ---
 
+
 class TestHealth:
     def test_initial_state(self):
         from argus.broker.health import HealthTracker
         from argus.models import ProviderName
+
         h = HealthTracker()
         status = h.get_status(ProviderName.BRAVE)
         assert status is None
@@ -325,6 +454,7 @@ class TestHealth:
     def test_success_resets_failures(self):
         from argus.broker.health import HealthTracker
         from argus.models import ProviderName
+
         h = HealthTracker(failure_threshold=2)
         h.record_failure(ProviderName.BRAVE)
         h.record_failure(ProviderName.BRAVE)
@@ -335,6 +465,7 @@ class TestHealth:
     def test_degraded_after_threshold(self):
         from argus.broker.health import HealthTracker
         from argus.models import ProviderName, ProviderStatus
+
         h = HealthTracker(failure_threshold=3)
         for _ in range(3):
             h.record_failure(ProviderName.BRAVE)
@@ -344,6 +475,7 @@ class TestHealth:
     def test_degraded_when_cooldown_expires(self):
         from argus.broker.health import HealthTracker
         from argus.models import ProviderName
+
         h = HealthTracker(failure_threshold=2, cooldown_minutes=60)
         h.record_failure(ProviderName.BRAVE)
         h.record_failure(ProviderName.BRAVE)
@@ -356,6 +488,7 @@ class TestHealth:
     def test_cooldown_applied_after_threshold(self):
         from argus.broker.health import HealthTracker
         from argus.models import ProviderName
+
         h = HealthTracker(failure_threshold=2, cooldown_minutes=60)
         h.record_failure(ProviderName.BRAVE)
         h.record_failure(ProviderName.BRAVE)
@@ -367,6 +500,7 @@ class TestHealth:
     def test_all_status(self):
         from argus.broker.health import HealthTracker
         from argus.models import ProviderName
+
         h = HealthTracker()
         h.record_failure(ProviderName.BRAVE)
         all_status = h.get_all_status()
@@ -376,16 +510,19 @@ class TestHealth:
 
 # --- Budget ---
 
+
 class TestBudgets:
     def test_no_budget_unlimited(self):
         from argus.broker.budgets import BudgetTracker
         from argus.models import ProviderName
+
         b = BudgetTracker()
         assert b.is_budget_exhausted(ProviderName.BRAVE) is False
 
     def test_set_budget_and_track(self):
         from argus.broker.budgets import BudgetTracker
         from argus.models import ProviderName
+
         b = BudgetTracker()
         b.set_budget(ProviderName.BRAVE, 1.0)
         b.record_usage(ProviderName.BRAVE, 0.5)
@@ -395,6 +532,7 @@ class TestBudgets:
     def test_budget_exhausted(self):
         from argus.broker.budgets import BudgetTracker
         from argus.models import ProviderName
+
         b = BudgetTracker()
         b.set_budget(ProviderName.BRAVE, 1.0)
         b.record_usage(ProviderName.BRAVE, 1.0)
@@ -403,6 +541,7 @@ class TestBudgets:
     def test_usage_count(self):
         from argus.broker.budgets import BudgetTracker
         from argus.models import ProviderName
+
         b = BudgetTracker()
         b.record_usage(ProviderName.BRAVE)
         b.record_usage(ProviderName.BRAVE)
@@ -411,6 +550,7 @@ class TestBudgets:
     def test_check_status(self):
         from argus.broker.budgets import BudgetTracker
         from argus.models import ProviderName, ProviderStatus
+
         b = BudgetTracker()
         assert b.check_status(ProviderName.BRAVE) is None
         b.set_budget(ProviderName.BRAVE, 0.5)
@@ -420,6 +560,7 @@ class TestBudgets:
     def test_daily_pace_calculation(self):
         from argus.broker.budgets import BudgetTracker
         from argus.models import ProviderName
+
         b = BudgetTracker()
         b.set_budget(ProviderName.BRAVE, 3000.0)
         b.record_usage(ProviderName.BRAVE)
@@ -431,6 +572,7 @@ class TestBudgets:
     def test_over_pace_detection(self):
         from argus.broker.budgets import BudgetTracker
         from argus.models import ProviderName
+
         b = BudgetTracker()
         b.set_budget(ProviderName.BRAVE, 30.0)
         # Use all 30 today → remaining 0 → over pace
@@ -475,6 +617,7 @@ class TestBudgets:
     def test_unlimited_provider_never_over_pace(self):
         from argus.broker.budgets import BudgetTracker
         from argus.models import ProviderName
+
         b = BudgetTracker()
         # No budget set → unlimited
         assert b.daily_pace(ProviderName.BRAVE) == float("inf")
@@ -494,9 +637,13 @@ class TestBudgets:
         # Simulate 3 usages 31 days ago
         old_ts = time.time() - (31 * 24 * 3600)
         b._usage[ProviderName.SERPER] = [
-            (old_ts, 1.0), (old_ts + 1, 1.0), (old_ts + 2, 1.0),
-            (time.time(), 1.0), (time.time() + 1, 1.0),
-            (time.time() + 2, 1.0), (time.time() + 3, 1.0),
+            (old_ts, 1.0),
+            (old_ts + 1, 1.0),
+            (old_ts + 2, 1.0),
+            (time.time(), 1.0),
+            (time.time() + 1, 1.0),
+            (time.time() + 2, 1.0),
+            (time.time() + 3, 1.0),
             (time.time() + 4, 1.0),
         ]
         # Should show 8 total (3 old + 5 recent) — old entries NOT aged out
@@ -580,7 +727,9 @@ class TestBudgets:
 
         provider = StubProvider(
             name=ProviderName.VALYU,
-            results=[SearchResult(url="https://example.com", title="Result", snippet="ok")],
+            results=[
+                SearchResult(url="https://example.com", title="Result", snippet="ok")
+            ],
             trace=ProviderTrace(
                 provider=ProviderName.VALYU,
                 status="success",
@@ -607,12 +756,15 @@ class TestBudgets:
 
 # --- Router ---
 
+
 class TestRouter:
     def test_create_broker(self):
         from argus.broker.router import create_broker
         from argus.models import ProviderName
+
         # Reset config singleton so env doesn't interfere
         import argus.config as cfg_mod
+
         cfg_mod._config = None
         broker = create_broker()
         assert ProviderName.SEARXNG in broker._providers
@@ -642,19 +794,44 @@ class TestRouter:
 
         searxng = StubProvider(
             name=ProviderName.SEARXNG,
-            results=[SearchResult(url="https://example.com/1", title="Result 1", snippet="ok", provider=ProviderName.SEARXNG)],
+            results=[
+                SearchResult(
+                    url="https://example.com/1",
+                    title="Result 1",
+                    snippet="ok",
+                    provider=ProviderName.SEARXNG,
+                )
+            ],
         )
         ddg = StubProvider(
             name=ProviderName.DUCKDUCKGO,
-            results=[SearchResult(url="https://example.com/2", title="Result 2", snippet="ok", provider=ProviderName.DUCKDUCKGO)],
+            results=[
+                SearchResult(
+                    url="https://example.com/2",
+                    title="Result 2",
+                    snippet="ok",
+                    provider=ProviderName.DUCKDUCKGO,
+                )
+            ],
         )
         paid = StubProvider(
             name=ProviderName.BRAVE,
-            results=[SearchResult(url="https://backup.com", title="Backup", snippet="backup", provider=ProviderName.BRAVE)],
+            results=[
+                SearchResult(
+                    url="https://backup.com",
+                    title="Backup",
+                    snippet="backup",
+                    provider=ProviderName.BRAVE,
+                )
+            ],
         )
 
         broker = SearchBroker(
-            providers={ProviderName.SEARXNG: searxng, ProviderName.DUCKDUCKGO: ddg, ProviderName.BRAVE: paid},
+            providers={
+                ProviderName.SEARXNG: searxng,
+                ProviderName.DUCKDUCKGO: ddg,
+                ProviderName.BRAVE: paid,
+            },
         )
 
         response = await broker.search(
@@ -662,7 +839,11 @@ class TestRouter:
                 query="always use free",
                 mode=SearchMode.DISCOVERY,
                 max_results=5,
-                providers=[ProviderName.SEARXNG, ProviderName.DUCKDUCKGO, ProviderName.BRAVE],
+                providers=[
+                    ProviderName.SEARXNG,
+                    ProviderName.DUCKDUCKGO,
+                    ProviderName.BRAVE,
+                ],
             )
         )
 
@@ -673,7 +854,9 @@ class TestRouter:
         assert response.total_results == 3
 
     @pytest.mark.asyncio
-    async def test_paid_provider_skipped_when_free_results_satisfy_query(self, monkeypatch):
+    async def test_paid_provider_skipped_when_free_results_satisfy_query(
+        self, monkeypatch
+    ):
         from argus.broker.router import SearchBroker
 
         monkeypatch.setattr(
@@ -682,24 +865,41 @@ class TestRouter:
         )
 
         free_results = [
-            SearchResult(url=f"https://example.com/{i}", title=f"Free {i}", snippet="ok", provider=ProviderName.DUCKDUCKGO)
+            SearchResult(
+                url=f"https://example.com/{i}",
+                title=f"Free {i}",
+                snippet="ok",
+                provider=ProviderName.DUCKDUCKGO,
+            )
             for i in range(5)
         ]
         free = StubProvider(name=ProviderName.DUCKDUCKGO, results=free_results)
         paid = StubProvider(
             name=ProviderName.VALYU,
-            results=[SearchResult(url="https://paid.example.com", title="Paid", snippet="ok", provider=ProviderName.VALYU)],
+            results=[
+                SearchResult(
+                    url="https://paid.example.com",
+                    title="Paid",
+                    snippet="ok",
+                    provider=ProviderName.VALYU,
+                )
+            ],
         )
-        broker = SearchBroker(providers={ProviderName.DUCKDUCKGO: free, ProviderName.VALYU: paid})
+        broker = SearchBroker(
+            providers={ProviderName.DUCKDUCKGO: free, ProviderName.VALYU: paid}
+        )
 
         response = await broker.search(
-            SearchQuery(query="free is enough", mode=SearchMode.DISCOVERY, max_results=5)
+            SearchQuery(
+                query="free is enough", mode=SearchMode.DISCOVERY, max_results=5
+            )
         )
 
         assert free.calls == 1
         assert paid.calls == 0
         assert any(
-            trace.provider == ProviderName.VALYU and trace.error == "free results satisfied query"
+            trace.provider == ProviderName.VALYU
+            and trace.error == "free results satisfied query"
             for trace in response.traces
         )
 
@@ -716,11 +916,25 @@ class TestRouter:
 
         free = StubProvider(
             name=ProviderName.SEARXNG,
-            results=[SearchResult(url="https://example.com", title="Free", snippet="ok", provider=ProviderName.SEARXNG)],
+            results=[
+                SearchResult(
+                    url="https://example.com",
+                    title="Free",
+                    snippet="ok",
+                    provider=ProviderName.SEARXNG,
+                )
+            ],
         )
         paid = StubProvider(
             name=ProviderName.BRAVE,
-            results=[SearchResult(url="https://backup.com", title="Paid", snippet="ok", provider=ProviderName.BRAVE)],
+            results=[
+                SearchResult(
+                    url="https://backup.com",
+                    title="Paid",
+                    snippet="ok",
+                    provider=ProviderName.BRAVE,
+                )
+            ],
         )
 
         budget = BudgetTracker()
@@ -760,11 +974,25 @@ class TestRouter:
 
         free = StubProvider(
             name=ProviderName.SEARXNG,
-            results=[SearchResult(url="https://example.com", title="Free", snippet="ok", provider=ProviderName.SEARXNG)],
+            results=[
+                SearchResult(
+                    url="https://example.com",
+                    title="Free",
+                    snippet="ok",
+                    provider=ProviderName.SEARXNG,
+                )
+            ],
         )
         paid = StubProvider(
             name=ProviderName.BRAVE,
-            results=[SearchResult(url="https://backup.com", title="Paid", snippet="ok", provider=ProviderName.BRAVE)],
+            results=[
+                SearchResult(
+                    url="https://backup.com",
+                    title="Paid",
+                    snippet="ok",
+                    provider=ProviderName.BRAVE,
+                )
+            ],
         )
 
         budget = BudgetTracker()
@@ -803,11 +1031,25 @@ class TestRouter:
 
         free = StubProvider(
             name=ProviderName.SEARXNG,
-            results=[SearchResult(url="https://example.com", title="Free", snippet="ok", provider=ProviderName.SEARXNG)],
+            results=[
+                SearchResult(
+                    url="https://example.com",
+                    title="Free",
+                    snippet="ok",
+                    provider=ProviderName.SEARXNG,
+                )
+            ],
         )
         onetime = StubProvider(
             name=ProviderName.SERPER,
-            results=[SearchResult(url="https://one.com", title="One", snippet="ok", provider=ProviderName.SERPER)],
+            results=[
+                SearchResult(
+                    url="https://one.com",
+                    title="One",
+                    snippet="ok",
+                    provider=ProviderName.SERPER,
+                )
+            ],
         )
 
         budget = BudgetTracker()
@@ -845,7 +1087,9 @@ class TestRouter:
 
         backup = StubProvider(
             name=ProviderName.SERPER,
-            results=[SearchResult(url="https://fallback.com", title="Fallback", snippet="ok")],
+            results=[
+                SearchResult(url="https://fallback.com", title="Fallback", snippet="ok")
+            ],
         )
 
         exhausted_budget = BudgetTracker()
@@ -886,7 +1130,9 @@ class TestRouter:
         )
         backup = StubProvider(
             name=ProviderName.BRAVE,
-            results=[SearchResult(url="https://backup.com", title="Backup", snippet="ok")],
+            results=[
+                SearchResult(url="https://backup.com", title="Backup", snippet="ok")
+            ],
         )
         broker = SearchBroker(
             providers={
@@ -913,12 +1159,16 @@ class TestRouter:
 
         monkeypatch.setattr(
             "argus.persistence.db.persist_search",
-            lambda query, response: (_ for _ in ()).throw(RuntimeError("persist failed")),
+            lambda query, response: (_ for _ in ()).throw(
+                RuntimeError("persist failed")
+            ),
         )
 
         primary = StubProvider(
             name=ProviderName.SEARXNG,
-            results=[SearchResult(url="https://example.com", title="Result", snippet="ok")],
+            results=[
+                SearchResult(url="https://example.com", title="Result", snippet="ok")
+            ],
         )
         broker = SearchBroker(providers={ProviderName.SEARXNG: primary})
 
@@ -973,19 +1223,24 @@ class TestRouter:
 
 # --- FreeOnly ---
 
+
 class TestFreeOnly:
     def test_search_query_free_only_defaults_false(self):
         from argus.models import SearchQuery
+
         q = SearchQuery(query="test")
         assert q.free_only is False
 
     def test_search_query_free_only_can_be_set(self):
         from argus.models import SearchQuery
+
         q = SearchQuery(query="test", free_only=True)
         assert q.free_only is True
 
     @pytest.mark.asyncio
-    async def test_free_only_skips_paid_providers_even_when_results_insufficient(self, monkeypatch):
+    async def test_free_only_skips_paid_providers_even_when_results_insufficient(
+        self, monkeypatch
+    ):
         """free_only=True must skip tier > 0 providers regardless of result count."""
         from argus.broker.budgets import BudgetTracker
         from argus.broker.execution import ProviderExecutor
@@ -994,18 +1249,31 @@ class TestFreeOnly:
         free_provider = StubProvider(
             name=ProviderName.DUCKDUCKGO,
             results=[
-                SearchResult(url="https://free.com/1", title="Free 1", snippet="ok", provider=ProviderName.DUCKDUCKGO)
+                SearchResult(
+                    url="https://free.com/1",
+                    title="Free 1",
+                    snippet="ok",
+                    provider=ProviderName.DUCKDUCKGO,
+                )
             ],
         )
         paid_provider = StubProvider(
             name=ProviderName.BRAVE,
             results=[
-                SearchResult(url="https://paid.com/1", title="Paid 1", snippet="ok", provider=ProviderName.BRAVE)
+                SearchResult(
+                    url="https://paid.com/1",
+                    title="Paid 1",
+                    snippet="ok",
+                    provider=ProviderName.BRAVE,
+                )
             ],
         )
 
         executor = ProviderExecutor(
-            providers={ProviderName.DUCKDUCKGO: free_provider, ProviderName.BRAVE: paid_provider},
+            providers={
+                ProviderName.DUCKDUCKGO: free_provider,
+                ProviderName.BRAVE: paid_provider,
+            },
             health_tracker=HealthTracker(),
             budget_tracker=BudgetTracker(),
         )
@@ -1033,18 +1301,31 @@ class TestFreeOnly:
         free_provider = StubProvider(
             name=ProviderName.DUCKDUCKGO,
             results=[
-                SearchResult(url="https://free.com/1", title="Free 1", snippet="ok", provider=ProviderName.DUCKDUCKGO)
+                SearchResult(
+                    url="https://free.com/1",
+                    title="Free 1",
+                    snippet="ok",
+                    provider=ProviderName.DUCKDUCKGO,
+                )
             ],
         )
         paid_provider = StubProvider(
             name=ProviderName.BRAVE,
             results=[
-                SearchResult(url="https://paid.com/1", title="Paid 1", snippet="ok", provider=ProviderName.BRAVE)
+                SearchResult(
+                    url="https://paid.com/1",
+                    title="Paid 1",
+                    snippet="ok",
+                    provider=ProviderName.BRAVE,
+                )
             ],
         )
 
         executor = ProviderExecutor(
-            providers={ProviderName.DUCKDUCKGO: free_provider, ProviderName.BRAVE: paid_provider},
+            providers={
+                ProviderName.DUCKDUCKGO: free_provider,
+                ProviderName.BRAVE: paid_provider,
+            },
             health_tracker=HealthTracker(),
             budget_tracker=BudgetTracker(),
         )
@@ -1058,6 +1339,7 @@ class TestFreeOnly:
 
 # --- Remote egress routing ---
 
+
 def _make_executor(reachability=None, egress_nodes=None):
     """Build a ProviderExecutor with mocked providers for egress routing tests."""
     from argus.broker.execution import ProviderExecutor
@@ -1066,7 +1348,14 @@ def _make_executor(reachability=None, egress_nodes=None):
 
     mock_provider = StubProvider(
         name=ProviderName.YAHOO,
-        results=[SearchResult(url="https://yahoo.com/r", title="R", snippet="s", provider=ProviderName.YAHOO)],
+        results=[
+            SearchResult(
+                url="https://yahoo.com/r",
+                title="R",
+                snippet="s",
+                provider=ProviderName.YAHOO,
+            )
+        ],
     )
 
     return (
@@ -1097,20 +1386,25 @@ async def test_executor_routes_to_remote_when_local_blocked():
     )
 
     fake_result = SearchResult(
-        url="https://yahoo.com/r", title="R", snippet="s",
-        provider=ProviderName.YAHOO
+        url="https://yahoo.com/r", title="R", snippet="s", provider=ProviderName.YAHOO
     )
     fake_trace = ProviderTrace(
-        provider=ProviderName.YAHOO, status="success",
-        results_count=1, latency_ms=90, egress="oci-dev"
+        provider=ProviderName.YAHOO,
+        status="success",
+        results_count=1,
+        latency_ms=90,
+        egress="oci-dev",
     )
 
     # Patch RemoteProviderClient to return our fake result
     import argus.broker.remote_provider as rp_module
+
     original = rp_module.RemoteProviderClient
 
     class FakeRemote:
-        def __init__(self, *a, **kw): pass
+        def __init__(self, *a, **kw):
+            pass
+
         async def search(self, q):
             return [fake_result], fake_trace
 
@@ -1197,12 +1491,17 @@ async def test_executor_uses_local_when_reachable():
 
     executor, local_provider = _make_executor(reachability=matrix)
 
-    fake_result = SearchResult(url="u", title="t", snippet="s", provider=ProviderName.YAHOO)
-    fake_trace = ProviderTrace(provider=ProviderName.YAHOO, status="success", results_count=1)
+    fake_result = SearchResult(
+        url="u", title="t", snippet="s", provider=ProviderName.YAHOO
+    )
+    fake_trace = ProviderTrace(
+        provider=ProviderName.YAHOO, status="success", results_count=1
+    )
 
     async def patched_search(q):
         local_provider.calls += 1
         return [fake_result], fake_trace
+
     local_provider.search = patched_search
 
     query = SearchQuery(query="test", mode=SearchMode.DISCOVERY, max_results=5)

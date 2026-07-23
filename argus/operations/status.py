@@ -32,7 +32,16 @@ _PROVIDER_DIMENSIONS = frozenset(
     {"reachability", "health", "cooldown", "balance", "capability"}
 )
 _DEPENDENCIES = frozenset(
-    {"postgresql", "schema", "outbox", "maya", "browser", "recovery"}
+    {
+        "postgresql",
+        "schema",
+        "outbox",
+        "maya",
+        "browser",
+        "recovery",
+        "backup",
+        "restore",
+    }
 )
 _METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"})
 _STATUS_CLASSES = frozenset({"1xx", "2xx", "3xx", "4xx", "5xx"})
@@ -98,7 +107,11 @@ class StatusObservation:
             "observed_at": _iso(self.observed_at),
             "expires_at": _iso(self.expires_at),
             "reason": "observation_expired" if stale else self.reason,
-            "last_transition": _iso(self.last_transition),
+            "last_transition": _iso(
+                self.expires_at
+                if stale and self.state != "unknown"
+                else self.last_transition
+            ),
             "stale": stale,
         }
         if self.details:
@@ -182,6 +195,12 @@ def _bounded_details(details: Mapping[str, Any]) -> dict[str, Any]:
         "processes",
         "memory_bytes",
         "process_restarts",
+        "runtime_state",
+        "fresh",
+        "verified",
+        "scope_complete",
+        "age_seconds",
+        "evidence_at",
     }
     result: dict[str, Any] = {}
     for key, value in details.items():
@@ -191,11 +210,17 @@ def _bounded_details(details: Mapping[str, Any]) -> dict[str, Any]:
             result[key] = {
                 str(nested_key)[:32]: int(nested_value)
                 for nested_key, nested_value in list(value.items())[:16]
-                if isinstance(nested_value, (int, float)) and not isinstance(nested_value, bool)
+                if isinstance(nested_value, (int, float))
+                and not isinstance(nested_value, bool)
             }
         elif value is None or isinstance(value, (bool, int, float)):
             result[key] = value
-        elif key in {"cooldown_until", "schema_head"}:
+        elif key in {
+            "cooldown_until",
+            "schema_head",
+            "runtime_state",
+            "evidence_at",
+        }:
             result[key] = _safe_identity(value)
     return result
 
@@ -225,9 +250,7 @@ class BoundedMetrics:
         safe = {
             route
             for route in routes[: self.max_series]
-            if isinstance(route, str)
-            and route.startswith("/")
-            and len(route) <= 160
+            if isinstance(route, str) and route.startswith("/") and len(route) <= 160
         }
         with self._lock:
             self._route_templates.update(safe)
@@ -513,8 +536,7 @@ class OperationalStatusService:
         counts = {
             name: int(value)
             for name, value in outcomes.items()
-            if name
-            in {"acknowledged", "retried", "dead_lettered", "lease_lost"}
+            if name in {"acknowledged", "retried", "dead_lettered", "lease_lost"}
             and isinstance(value, (int, float))
             and not isinstance(value, bool)
             and value > 0
@@ -560,9 +582,9 @@ class OperationalStatusService:
         )
         return store.observe(dimension, **observation)
 
-    def _render(self) -> tuple[
-        dict[str, dict[str, Any]], dict[str, dict[str, dict[str, Any]]]
-    ]:
+    def _render(
+        self,
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, dict[str, Any]]]]:
         now = _aware(self._clock())
         dependencies = self._dependencies.rendered(now=now)
         providers = {
@@ -700,7 +722,6 @@ def create_operational_status(
     """Build process identity without network calls or runtime artifact rehashing."""
     values = environ if environ is not None else os.environ
     from argus import __version__
-    from argus.runtime_manifest import EXPECTED_RUNTIME_CAPABILITIES
 
     manifest: dict[str, Any] = {}
     manifest_path = Path(
@@ -717,7 +738,7 @@ def create_operational_status(
     lock_digest = manifest.get("lock_sha256")
     capabilities = manifest.get("capabilities")
     if not isinstance(capabilities, dict):
-        capabilities = EXPECTED_RUNTIME_CAPABILITIES
+        capabilities = {}
     db_url = values.get("ARGUS_DB_URL", "")
     backend = (
         "postgresql"
@@ -742,9 +763,7 @@ def create_operational_status(
                 if isinstance(lock_digest, str) and _DIGEST.fullmatch(lock_digest)
                 else "unknown"
             ),
-            "manifest_source": (
-                "runtime_manifest" if manifest else "package_metadata"
-            ),
+            "manifest_source": ("runtime_manifest" if manifest else "package_metadata"),
         },
         deployment={
             "deployment_id": values.get("ARGUS_DEPLOYMENT_ID", "unknown"),
@@ -776,7 +795,9 @@ def _provider_observed_at(status: Mapping[str, Any], now: datetime) -> datetime:
         for value in (health.get("last_success"), health.get("last_failure"))
         if isinstance(value, (int, float))
     ]
-    return datetime.fromtimestamp(max(timestamps), tz=timezone.utc) if timestamps else now
+    return (
+        datetime.fromtimestamp(max(timestamps), tz=timezone.utc) if timestamps else now
+    )
 
 
 def _observe_provider_status(
@@ -786,17 +807,21 @@ def _observe_provider_status(
     now: datetime,
 ) -> None:
     try:
-        reachability = broker._reachability.get_all()
+        broker_evidence = broker.operational_provider_evidence()
     except Exception:
-        reachability = {}
+        broker_evidence = {}
     uncertain_total = 0.0
+    reconciliation_failures = 0
 
     for provider in ProviderName:
         name = provider.value
         if name not in _PROVIDERS:
             continue
         try:
-            status = broker.get_provider_status(provider)
+            evidence = broker_evidence.get(name, {})
+            status = evidence.get("status")
+            if not isinstance(status, Mapping):
+                status = broker.get_provider_status(provider)
         except Exception:
             service.observe_provider(
                 name,
@@ -824,7 +849,7 @@ def _observe_provider_status(
         if not admitted:
             continue
 
-        provider_reachability = reachability.get(provider) or reachability.get(name)
+        provider_reachability = evidence.get("reachability")
         if isinstance(provider_reachability, Mapping):
             probes = provider_reachability.get("probes") or {}
             probe_values = [
@@ -841,11 +866,19 @@ def _observe_provider_status(
                 else now
             )
             reachable = any(probe.get("reachable") is True for probe in probe_values)
+            reachability_source = (
+                "provider_execution"
+                if any(
+                    probe.get("source") == "provider_execution"
+                    for probe in probe_values
+                )
+                else "reachability_probe"
+            )
             service.observe_provider(
                 name,
                 "reachability",
                 state="healthy" if reachable else "unready",
-                source="reachability_probe",
+                source=reachability_source,
                 observed_at=observed,
                 ttl=timedelta(minutes=35),
                 reason=None if reachable else "all_egress_probes_failed",
@@ -892,11 +925,7 @@ def _observe_provider_status(
                 source="process_memory",
                 observed_at=health_observed,
                 ttl=timedelta(minutes=35),
-                reason=(
-                    "provider_failures"
-                    if failures
-                    else None
-                ),
+                reason=("provider_failures" if failures else None),
                 details={"consecutive_failures": failures},
             )
             disabled_until = health.get("disabled_until")
@@ -981,6 +1010,7 @@ def _observe_provider_status(
                 },
             )
         except Exception:
+            reconciliation_failures += 1
             service.observe_provider(
                 name,
                 "balance",
@@ -990,11 +1020,21 @@ def _observe_provider_status(
                 ttl=timedelta(minutes=5),
                 reason="balance_unavailable",
             )
+            service.metrics.increment(
+                "accounting_reconciliation",
+                {"provider": name, "state": "unknown"},
+            )
 
     service.metrics.set_gauge(
         "accounting_uncertain_charge",
-        uncertain_total,
-        state="degraded" if uncertain_total else "healthy",
+        None if reconciliation_failures else uncertain_total,
+        state=(
+            "unknown"
+            if reconciliation_failures
+            else "degraded"
+            if uncertain_total
+            else "healthy"
+        ),
         source="accounting_ledger",
     )
 
@@ -1041,21 +1081,33 @@ def refresh_operational_status(
         backend = str(authority.get("backend") or "unknown")
         service.authority["backend"] = _safe_identity(backend)
         connected = authority.get("connected") is True
-        postgres_healthy = connected and (
-            backend == "postgresql" or not service.production
+        sqlite_development = (
+            connected and backend == "sqlite" and not service.production
         )
+        postgres_healthy = connected and backend == "postgresql"
         service.observe_dependency(
             "postgresql",
-            state="healthy" if postgres_healthy else "unready",
+            state=(
+                "healthy"
+                if postgres_healthy
+                else "disabled"
+                if sqlite_development
+                else "unready"
+            ),
             source="authority_probe",
             observed_at=observed,
             ttl=timedelta(minutes=1),
-            reason=None if postgres_healthy else "postgresql_authority_unavailable",
+            reason=(
+                None
+                if postgres_healthy
+                else "not_applicable_sqlite"
+                if sqlite_development
+                else "postgresql_authority_unavailable"
+            ),
         )
         schema_head = authority.get("schema_head")
-        schema_healthy = (
-            schema_head == EXPECTED_SCHEMA_HEAD
-            or (not service.production and schema_head == "sqlite-managed")
+        schema_healthy = schema_head == EXPECTED_SCHEMA_HEAD or (
+            not service.production and schema_head == "sqlite-managed"
         )
         service.observe_dependency(
             "schema",
@@ -1102,7 +1154,11 @@ def refresh_operational_status(
             state="degraded" if counts.get("dead_letter", 0) else "healthy",
             source="authority_ledger",
         )
-        if postgres_healthy and schema_healthy and outbox_healthy:
+        if (
+            (postgres_healthy or sqlite_development)
+            and schema_healthy
+            and outbox_healthy
+        ):
             service.mark_initialized(source="authority_probe")
         else:
             service.mark_initialization_failed(
@@ -1115,15 +1171,25 @@ def refresh_operational_status(
     if browser_status is not None:
         available = browser_status.get("available") is True
         loaded = browser_status.get("loaded") is True
+        runtime_state = str(browser_status.get("runtime_state") or "unknown")
+        browser_state = (
+            "degraded"
+            if not available or runtime_state == "degraded"
+            else "healthy"
+            if runtime_state == "healthy"
+            else "unknown"
+        )
         service.observe_dependency(
             "browser",
-            state="healthy" if available else "degraded",
+            state=browser_state,
             source="runtime_manifest",
             observed_at=observed,
             ttl=timedelta(hours=24),
             reason=(
                 browser_status.get("degraded_reason")
                 if not available
+                else browser_status.get("runtime_reason")
+                if browser_state != "healthy"
                 else None
             ),
             details={
@@ -1131,21 +1197,17 @@ def refresh_operational_status(
                 "processes": browser_status.get("processes"),
                 "memory_bytes": browser_status.get("memory_bytes"),
                 "process_restarts": browser_status.get("process_restarts"),
+                "runtime_state": runtime_state,
             },
         )
-        metrics_source = str(
-            browser_status.get("metrics_source") or "process_memory"
-        )
+        metrics_source = str(browser_status.get("metrics_source") or "process_memory")
         for name, key in (
             ("browser_processes", "processes"),
             ("browser_memory_bytes", "memory_bytes"),
             ("process_restarts", "process_restarts"),
         ):
             value = browser_status.get(key)
-            numeric = (
-                isinstance(value, (int, float))
-                and not isinstance(value, bool)
-            )
+            numeric = isinstance(value, (int, float)) and not isinstance(value, bool)
             service.metrics.set_gauge(
                 name,
                 value if numeric else None,
@@ -1183,3 +1245,57 @@ def refresh_operational_status(
                 )
             },
         )
+        for name, timestamp_key in (
+            ("backup", "completed_at"),
+            ("restore", "verified_at"),
+        ):
+            section = recovery_status.get(name)
+            if not isinstance(section, Mapping):
+                service.observe_dependency(
+                    name,
+                    state="unknown",
+                    source="recovery_evidence",
+                    observed_at=observed,
+                    ttl=timedelta(minutes=5),
+                    reason=f"{name}_evidence_unavailable",
+                )
+                continue
+            fresh = section.get("fresh") is True
+            scope_complete = (
+                section.get("scope_complete") is True
+                if name == "backup"
+                else section.get("verified") is True
+            )
+            state = "healthy" if fresh and scope_complete else "degraded"
+            evidence_at = None
+            try:
+                evidence_at = _iso(
+                    _aware(
+                        datetime.fromisoformat(
+                            str(section[timestamp_key]).replace("Z", "+00:00")
+                        )
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                pass
+            service.observe_dependency(
+                name,
+                state=state,
+                source="recovery_evidence",
+                observed_at=observed,
+                ttl=timedelta(minutes=5),
+                reason=(
+                    None
+                    if state == "healthy"
+                    else f"{name}_stale"
+                    if not fresh
+                    else f"{name}_scope_incomplete"
+                ),
+                details={
+                    "fresh": fresh,
+                    "verified": section.get("verified") is True,
+                    "scope_complete": scope_complete,
+                    "age_seconds": section.get("age_seconds"),
+                    "evidence_at": evidence_at,
+                },
+            )

@@ -70,7 +70,9 @@ class SearchBroker:
             cache=self._cache,
             persistence=SearchPersistenceGateway(),
         )
-        self._session_service = session_service or SessionSearchService(session_store=session_store)
+        self._session_service = session_service or SessionSearchService(
+            session_store=session_store
+        )
 
         budget_map = {
             ProviderName.BRAVE: self._config.brave.monthly_budget_usd,
@@ -126,7 +128,10 @@ class SearchBroker:
         if res_policy != "off":
             if res_policy == "always":
                 query.metadata["prefer_residential"] = True
-            elif res_policy == "prefer_on_datacenter" and self._config.node.egress_type != "residential":
+            elif (
+                res_policy == "prefer_on_datacenter"
+                and self._config.node.egress_type != "residential"
+            ):
                 query.metadata["prefer_residential"] = True
 
         provider_order = resolve_routing(query.mode, query.providers)
@@ -193,6 +198,30 @@ class SearchBroker:
             "budget_remaining": self._budgets.get_remaining_budget(provider),
             "effective_status": effective,
         }
+
+    def operational_provider_evidence(self) -> dict[str, dict]:
+        """Return the broker-owned, public provider evidence snapshot."""
+        reachability = self._reachability.get_all()
+        return {
+            provider.value: {
+                "status": self.get_provider_status(provider),
+                "reachability": reachability.get(provider),
+            }
+            for provider in ProviderName
+        }
+
+    async def refresh_provider_evidence(self) -> None:
+        """Probe free providers and translate results into health evidence."""
+        await self._reachability.probe_all(
+            local_providers=self._providers,
+            egress_nodes=list(self._egress_nodes.values()),
+        )
+        for provider, evidence in self._reachability.get_all().items():
+            probes = evidence.get("probes", {})
+            if any(probe.get("reachable") is True for probe in probes.values()):
+                self._health.record_success(provider)
+            elif probes:
+                self._health.record_failure(provider)
 
 
 def create_broker(*, authority_capability: object | None = None) -> SearchBroker:

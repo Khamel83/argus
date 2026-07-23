@@ -71,10 +71,9 @@ def _build_broker_provider(
     current = broker
     initialization_lock = threading.Lock()
     if broker_factory is None:
+
         def factory():
-            return create_broker(
-                authority_capability=_HTTP_API_AUTHORITY_CAPABILITY
-            )
+            return create_broker(authority_capability=_HTTP_API_AUTHORITY_CAPABILITY)
     else:
         factory = broker_factory
 
@@ -117,8 +116,7 @@ def create_app(
 ) -> FastAPI:
     auth_config = AuthConfig.from_env()
     production_mode = (
-        os.environ.get("ARGUS_ENV", "development").strip().lower()
-        == "production"
+        os.environ.get("ARGUS_ENV", "development").strip().lower() == "production"
     )
 
     @asynccontextmanager
@@ -136,8 +134,7 @@ def create_app(
                         app.state.operational_status.mark_initialization_failed(
                             source="startup",
                             reason=(
-                                "broker_initialization_failed:"
-                                f"{type(exc).__name__}"
+                                f"broker_initialization_failed:{type(exc).__name__}"
                             ),
                         )
                         logger.warning(
@@ -155,8 +152,7 @@ def create_app(
                         app.state.operational_status.mark_initialization_failed(
                             source="startup",
                             reason=(
-                                "repository_initialization_failed:"
-                                f"{type(exc).__name__}"
+                                f"repository_initialization_failed:{type(exc).__name__}"
                             ),
                         )
                         logger.warning(
@@ -176,9 +172,7 @@ def create_app(
                     )
 
                     browser_status_reader = browser_capability_status
-                    browser_status = await asyncio.to_thread(
-                        browser_status_reader
-                    )
+                    browser_status = await asyncio.to_thread(browser_status_reader)
                 except Exception:
                     browser_status = _unavailable_browser_status()
                 try:
@@ -229,13 +223,9 @@ def create_app(
 
                 async def _run_probes_background() -> None:
                     """Run network probes every 30 minutes."""
-                    cfg = get_config()
                     while True:
                         try:
-                            await b._reachability.probe_all(
-                                local_providers=b._providers,
-                                egress_nodes=list(cfg.egress_nodes),
-                            )
+                            await b.refresh_provider_evidence()
                         except Exception as exc:
                             logger.warning(
                                 "Reachability probe failed: %s",
@@ -258,14 +248,10 @@ def create_app(
                     )
                     while True:
                         try:
-                            outcomes = await asyncio.to_thread(
-                                dispatcher.run_once
-                            )
+                            outcomes = await asyncio.to_thread(dispatcher.run_once)
                             app.state.operational_status.observe_maya_delivery(
                                 outcomes,
-                                ttl=timedelta(
-                                    seconds=max(15, cfg.poll_seconds * 3)
-                                ),
+                                ttl=timedelta(seconds=max(15, cfg.poll_seconds * 3)),
                             )
                         except Exception as exc:
                             logger.warning(
@@ -276,9 +262,7 @@ def create_app(
                                 "maya",
                                 state="degraded",
                                 source="maya_dispatcher",
-                                ttl=timedelta(
-                                    seconds=max(15, cfg.poll_seconds * 3)
-                                ),
+                                ttl=timedelta(seconds=max(15, cfg.poll_seconds * 3)),
                                 reason=f"delivery_failed:{type(exc).__name__}",
                             )
                         else:
@@ -287,9 +271,7 @@ def create_app(
                                 await asyncio.to_thread(
                                     repository.compact_maya_outbox,
                                     acknowledged_before=now
-                                    - timedelta(
-                                        days=cfg.acknowledged_retention_days
-                                    ),
+                                    - timedelta(days=cfg.acknowledged_retention_days),
                                     limit=100,
                                     now=now,
                                 )
@@ -307,16 +289,10 @@ def create_app(
                     ]
                 )
                 maya_cfg = get_config().maya_capture
-                if (
-                    repository is not None
-                    and maya_cfg.endpoint
-                    and maya_cfg.token
-                ):
+                if repository is not None and maya_cfg.endpoint and maya_cfg.token:
                     app.state.operational_status.observe_maya_configuration(
                         configured=True,
-                        ttl=timedelta(
-                            seconds=max(15, maya_cfg.poll_seconds * 3)
-                        ),
+                        ttl=timedelta(seconds=max(15, maya_cfg.poll_seconds * 3)),
                     )
                     child_tasks.append(
                         asyncio.create_task(_run_maya_outbox_background())
@@ -523,6 +499,12 @@ def create_app(
     @app.middleware("http")
     async def operational_evidence_middleware(request: Request, call_next):
         """Attach safe correlation and record only bounded route-template metrics."""
+        if request.url.path in {"/api/live", "/api/health"}:
+            request_id = safe_correlation_id(request.headers.get("x-request-id"))
+            request.state.request_id = request_id
+            response = await call_next(request)
+            response.headers["x-request-id"] = request_id
+            return response
         request_id = safe_correlation_id(request.headers.get("x-request-id"))
         request.state.request_id = request_id
         started = request.app.state.operational_status.metrics.request_started()

@@ -14,6 +14,12 @@ turning them into container restart storms.
 | `GET /api/admin/status` | Admin token | `200` | Full operator view: build/deployment/instance identity, authority and schema identity, capabilities, typed observations, promotion state, and bounded metrics. |
 | `GET /api/health` | Public | `200` | Liveness-only compatibility surface. It is deliberately safe for old health checks but new deployments should use `/api/live`. |
 
+`/api/live` and `/api/health` bypass Argus application request metrics and
+application request logging so neither a metrics lock nor a synchronous log
+handler can delay liveness. Uvicorn access logging is outside this application
+contract; deployments requiring the same strict behavior must disable it or
+route it through a non-blocking handler.
+
 `/api/admin/status` uses the existing admin boundary:
 `Authorization: Bearer $ARGUS_ADMIN_API_KEY` or
 `X-Admin-API-Key: $ARGUS_ADMIN_API_KEY`.

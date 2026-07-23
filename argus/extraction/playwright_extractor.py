@@ -34,14 +34,21 @@ _PLAYWRIGHT_AVAILABLE = None
 _browser_unavailable = False
 _browser_lock: asyncio.Lock | None = None
 _browser_start_count = 0
+_remote_connection_count = 0
+_browser_runtime_state = "unknown"
+_browser_runtime_reason = "not_observed_since_restart"
 
 
 def _check_playwright():
     global _PLAYWRIGHT_AVAILABLE
     if _PLAYWRIGHT_AVAILABLE is None:
-        _PLAYWRIGHT_AVAILABLE = importlib.util.find_spec("playwright.async_api") is not None
+        _PLAYWRIGHT_AVAILABLE = (
+            importlib.util.find_spec("playwright.async_api") is not None
+        )
         if not _PLAYWRIGHT_AVAILABLE:
-            logger.debug("playwright not installed — headless browser extraction disabled")
+            logger.debug(
+                "playwright not installed — headless browser extraction disabled"
+            )
     return _PLAYWRIGHT_AVAILABLE
 
 
@@ -65,13 +72,13 @@ async def _close_browser_resources() -> None:
     if browser:
         try:
             await browser.close()
-        except Exception as exc:
-            logger.debug("Failed to close Playwright browser: %s", exc)
+        except Exception:
+            logger.debug("Failed to close Playwright browser reason=close_failed")
     if playwright_instance:
         try:
             await playwright_instance.stop()
-        except Exception as exc:
-            logger.debug("Failed to stop Playwright runtime: %s", exc)
+        except Exception:
+            logger.debug("Failed to stop Playwright runtime reason=stop_failed")
 
 
 async def _get_browser():
@@ -81,7 +88,8 @@ async def _get_browser():
     back to launching headless Chrome.
     """
     global _browser, _playwright_instance, _using_obscura_cdp
-    global _browser_unavailable, _browser_start_count
+    global _browser_unavailable, _browser_start_count, _remote_connection_count
+    global _browser_runtime_state, _browser_runtime_reason
 
     async with _get_browser_lock():
         if _browser and _browser.is_connected():
@@ -95,19 +103,25 @@ async def _get_browser():
 
         try:
             from playwright.async_api import async_playwright
+
             _playwright_instance = await async_playwright().start()
 
             if OBSCURA_CDP_URL:
                 try:
-                    _browser = await _playwright_instance.chromium.connect_over_cdp(OBSCURA_CDP_URL)
+                    _browser = await _playwright_instance.chromium.connect_over_cdp(
+                        OBSCURA_CDP_URL
+                    )
                     _using_obscura_cdp = True
-                    _browser_start_count += 1
-                    logger.info("Connected to Obscura CDP at %s", OBSCURA_CDP_URL)
+                    _remote_connection_count += 1
+                    _browser_runtime_state = "healthy"
+                    _browser_runtime_reason = None
+                    logger.info("Connected to remote browser transport=cdp")
                     return _browser
-                except Exception as e:
+                except Exception as exc:
                     logger.warning(
-                        "Obscura CDP connection failed (%s), falling back to Chrome: %s",
-                        OBSCURA_CDP_URL, e,
+                        "Remote browser connection failed reason=connect_failed class=%s; "
+                        "falling back to local browser",
+                        type(exc).__name__,
                     )
                     _using_obscura_cdp = False
 
@@ -116,11 +130,18 @@ async def _get_browser():
                 chromium_sandbox=True,
             )
             _browser_start_count += 1
+            _browser_runtime_state = "healthy"
+            _browser_runtime_reason = None
             return _browser
-        except Exception as e:
-            logger.warning("Failed to launch Playwright browser: %s", e)
+        except Exception as exc:
+            logger.warning(
+                "Failed to launch Playwright browser reason=launch_failed class=%s",
+                type(exc).__name__,
+            )
             await _close_browser_resources()
             _browser_unavailable = True
+            _browser_runtime_state = "degraded"
+            _browser_runtime_reason = "launch_failed"
             return None
 
 
@@ -135,12 +156,14 @@ async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedCon
     try:
         context = await browser.new_context()
         page = await context.new_page()
-        await page.goto(url, wait_until='domcontentloaded', timeout=timeout_ms)
+        await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
         final_url = page.url
         if final_url and final_url != url:
             safe, reason = is_safe_url(final_url)
             if not safe:
-                return ExtractedContent(url=url, error=f"playwright: unsafe redirect blocked: {reason}")
+                return ExtractedContent(
+                    url=url, error=f"playwright: unsafe redirect blocked: {reason}"
+                )
         await asyncio.sleep(1)
 
         title = await page.title()
@@ -153,8 +176,11 @@ async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedCon
                 result = await cdp.send("LP.getMarkdown")
                 text = result.get("markdown", "").strip()
                 await cdp.detach()
-            except Exception as e:
-                logger.debug("LP.getMarkdown failed, falling back to innerText: %s", e)
+            except Exception as exc:
+                logger.debug(
+                    "Browser markdown conversion failed reason=conversion_failed class=%s",
+                    type(exc).__name__,
+                )
 
         # Standard path (Chrome, or Obscura CDP fallback)
         if not text or len(text.split()) < 50:
@@ -168,7 +194,9 @@ async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedCon
             text = text.strip() if text else ""
 
         if not text or len(text.strip()) < 100:
-            return ExtractedContent(url=url, error="playwright: too little content after render")
+            return ExtractedContent(
+                url=url, error="playwright: too little content after render"
+            )
 
         return ExtractedContent(
             url=final_url or url,
@@ -177,20 +205,23 @@ async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedCon
             word_count=len(text.split()),
             extractor=ExtractorName.PLAYWRIGHT,
         )
-    except Exception as e:
-        logger.debug("Playwright extraction failed for %s: %s", url[:60], e)
-        return ExtractedContent(url=url, error=f"playwright: {e}")
+    except Exception as exc:
+        logger.debug(
+            "Playwright extraction failed reason=request_failed class=%s",
+            type(exc).__name__,
+        )
+        return ExtractedContent(url=url, error=f"playwright: {exc}")
     finally:
         if page:
             try:
                 await page.close()
-            except Exception as exc:
-                logger.debug("Failed to close Playwright page for %s: %s", url[:60], exc)
+            except Exception:
+                logger.debug("Failed to close Playwright page reason=close_failed")
         if context:
             try:
                 await context.close()
-            except Exception as exc:
-                logger.debug("Failed to close Playwright context for %s: %s", url[:60], exc)
+            except Exception:
+                logger.debug("Failed to close Playwright context reason=close_failed")
 
 
 async def extract_playwright(url: str) -> ExtractedContent:
@@ -214,10 +245,12 @@ async def reset_browser():
     This is deliberately not automatic: a failed local Chromium launch remains
     cached until an operator has changed the runtime environment.
     """
-    global _browser_unavailable
+    global _browser_unavailable, _browser_runtime_state, _browser_runtime_reason
     async with _get_browser_lock():
         await _close_browser_resources()
         _browser_unavailable = False
+        _browser_runtime_state = "unknown"
+        _browser_runtime_reason = "reset_pending_runtime_verification"
 
 
 def _local_browser_process_metrics() -> tuple[int | None, int | None]:
@@ -259,10 +292,7 @@ def _local_browser_process_metrics() -> tuple[int | None, int | None]:
         row
         for pid, row in rows.items()
         if pid in descendants
-        and any(
-            marker in row[2]
-            for marker in ("chromium", "chrome", "headless_shell")
-        )
+        and any(marker in row[2] for marker in ("chromium", "chrome", "headless_shell"))
     ]
     if not browser_rows:
         return None, None
@@ -292,6 +322,9 @@ def browser_capability_status() -> dict[str, object]:
     status["processes"] = processes
     status["memory_bytes"] = memory_bytes
     status["process_restarts"] = max(0, _browser_start_count - 1)
+    status["remote_connections"] = _remote_connection_count
+    status["runtime_state"] = _browser_runtime_state
+    status["runtime_reason"] = _browser_runtime_reason
     status["metrics_source"] = "process_memory_since_start"
     status["matches_declared"] = (
         status.get("declared") is status.get("available")

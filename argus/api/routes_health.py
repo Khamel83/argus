@@ -97,9 +97,7 @@ async def provider_health(
         if provider_display_state(status) != "disabled"
     ]
     healthy = any(state in {"healthy", "degraded"} for state in active_states)
-    fully_healthy = healthy and all(
-        state == "healthy" for state in active_states
-    )
+    fully_healthy = healthy and all(state == "healthy" for state in active_states)
     return {
         "status": "ok" if fully_healthy else "degraded",
         "providers": providers,
@@ -147,17 +145,17 @@ async def health_detail(broker: SearchBroker = Depends(get_broker)):
     from argus.extraction.playwright_extractor import browser_capability_status
     from argus.recovery.evidence import recovery_status_from_environment
 
-    providers = {}
-    for pname in ProviderName:
-        providers[pname.value] = broker.get_provider_status(pname)
+    provider_evidence = broker.operational_provider_evidence()
+    providers = {
+        name: dict(entry.get("status") or {})
+        for name, entry in provider_evidence.items()
+    }
 
     health_all = broker.health_tracker.get_all_status()
 
-    reachability = broker._reachability.get_all()
     for pname_str, entry in providers.items():
         try:
-            pname = ProviderName(pname_str)
-            r = reachability.get(pname)
+            r = (provider_evidence.get(pname_str) or {}).get("reachability")
             if r:
                 entry["best_egress"] = r["best"]
                 entry["egress_probes"] = r["probes"]

@@ -68,14 +68,10 @@ def _runtime_broker():
     broker.get_provider_status.side_effect = lambda provider: {
         "provider": provider.value,
         "config_status": (
-            "enabled"
-            if provider.value == "duckduckgo"
-            else "disabled_by_config"
+            "enabled" if provider.value == "duckduckgo" else "disabled_by_config"
         ),
         "effective_status": (
-            "enabled"
-            if provider.value == "duckduckgo"
-            else "disabled_by_config"
+            "enabled" if provider.value == "duckduckgo" else "disabled_by_config"
         ),
         "health": (
             {
@@ -109,7 +105,21 @@ def _runtime_broker():
         "uncertain_charge": 0,
         "provider_snapshot": None,
     }
+    _configure_public_evidence(broker)
     return broker
+
+
+def _configure_public_evidence(broker):
+    from argus.models import ProviderName
+
+    broker.operational_provider_evidence.side_effect = lambda: {
+        provider.value: {
+            "status": broker.get_provider_status(provider),
+            "reachability": broker._reachability.get_all().get(provider.value)
+            or broker._reachability.get_all().get(provider),
+        }
+        for provider in ProviderName
+    }
 
 
 def _runtime_repository():
@@ -182,6 +192,23 @@ def test_observation_refresh_after_expiry_starts_a_new_transition():
     )
 
     assert refreshed.last_transition == NOW + timedelta(seconds=20)
+
+
+def test_expired_observation_transitions_to_unknown_at_expiry():
+    from argus.operations.status import ObservationStore
+
+    store = ObservationStore(clock=lambda: NOW)
+    store.observe(
+        "backup",
+        state="healthy",
+        source="recovery_evidence",
+        ttl=timedelta(seconds=30),
+    )
+
+    rendered = store.rendered(now=NOW + timedelta(seconds=31))["backup"]
+
+    assert rendered["state"] == "unknown"
+    assert rendered["last_transition"] == "2026-07-23T12:00:30Z"
 
 
 @pytest.mark.parametrize(
@@ -436,9 +463,9 @@ def test_invalid_request_id_is_replaced_and_never_used_as_a_metric_label():
     client = TestClient(create_app(broker=MagicMock(), operational_status=service))
     secret = "query=https://secret.example/private?token=must-not-leak"
 
-    response = client.get("/api/live", headers={"X-Request-ID": secret})
+    response = client.get("/api/ready", headers={"X-Request-ID": secret})
 
-    assert response.status_code == 200
+    assert response.status_code == 503
     assert response.headers["x-request-id"] != secret
     assert "must-not-leak" not in str(service.metrics.snapshot())
 
@@ -462,7 +489,9 @@ def test_dependency_refresh_maps_repository_provider_browser_and_recovery_truth(
     broker.get_provider_status.side_effect = lambda provider: {
         "provider": provider.value,
         "config_status": (
-            "enabled" if provider.value in {"duckduckgo", "brave"} else "disabled_by_config"
+            "enabled"
+            if provider.value in {"duckduckgo", "brave"}
+            else "disabled_by_config"
         ),
         "effective_status": (
             "enabled"
@@ -500,8 +529,8 @@ def test_dependency_refresh_maps_repository_provider_browser_and_recovery_truth(
             }
         }
     }
-    broker.budget_tracker.get_budget_limit.side_effect = (
-        lambda provider: 0 if provider.value == "duckduckgo" else 100
+    broker.budget_tracker.get_budget_limit.side_effect = lambda provider: (
+        0 if provider.value == "duckduckgo" else 100
     )
     broker.spend_repository.provider_summary.side_effect = (
         lambda provider, budget_limit: {
@@ -511,6 +540,7 @@ def test_dependency_refresh_maps_repository_provider_browser_and_recovery_truth(
             "provider_snapshot": None,
         }
     )
+    _configure_public_evidence(broker)
 
     refresh_operational_status(
         service,
@@ -571,6 +601,123 @@ def test_dependency_refresh_maps_repository_provider_browser_and_recovery_truth(
     }
 
 
+def test_accounting_failure_cannot_render_healthy_zero_uncertainty():
+    from argus.operations.status import refresh_operational_status
+
+    service = _service()
+    broker = _runtime_broker()
+    broker.spend_repository.provider_summary.side_effect = RuntimeError("ledger down")
+
+    refresh_operational_status(
+        service,
+        broker=broker,
+        repository=_runtime_repository(),
+        now=NOW,
+    )
+
+    gauge = service.full_status()["metrics"]["gauges"]["accounting_uncertain_charge"]
+    assert gauge == {
+        "value": None,
+        "state": "unknown",
+        "source": "accounting_ledger",
+    }
+    balance = service.full_status()["providers"]["duckduckgo"]["observations"][
+        "balance"
+    ]
+    assert balance["state"] == "unknown"
+
+
+def test_mixed_accounting_reconciliation_preserves_success_and_uncertainty():
+    from argus.operations.status import refresh_operational_status
+
+    service = _service()
+    broker = _runtime_broker()
+    original_status = broker.get_provider_status.side_effect
+
+    def provider_status(provider):
+        if provider.value == "brave":
+            return {
+                "provider": "brave",
+                "config_status": "enabled",
+                "effective_status": "enabled",
+                "health": {
+                    "consecutive_failures": 0,
+                    "last_success": NOW.timestamp(),
+                    "last_failure": None,
+                    "disabled_until": None,
+                },
+            }
+        return original_status(provider)
+
+    broker.get_provider_status.side_effect = provider_status
+    _configure_public_evidence(broker)
+
+    def summary(provider, budget_limit):
+        if provider.value == "brave":
+            raise RuntimeError("ledger unavailable")
+        return {
+            "remaining": None,
+            "argus_estimated_charge": 0,
+            "uncertain_charge": 0,
+            "provider_snapshot": None,
+        }
+
+    broker.spend_repository.provider_summary.side_effect = summary
+    refresh_operational_status(
+        service,
+        broker=broker,
+        repository=_runtime_repository(),
+        now=NOW,
+    )
+
+    status = service.full_status()
+    assert (
+        status["providers"]["duckduckgo"]["observations"]["balance"]["state"]
+        == "healthy"
+    )
+    assert status["providers"]["brave"]["observations"]["balance"]["state"] == (
+        "unknown"
+    )
+    assert status["metrics"]["gauges"]["accounting_uncertain_charge"]["state"] == (
+        "unknown"
+    )
+
+
+def test_backup_and_restore_are_separate_typed_admin_observations():
+    from argus.operations.status import refresh_operational_status
+
+    service = _service()
+    refresh_operational_status(
+        service,
+        broker=_runtime_broker(),
+        repository=_runtime_repository(),
+        recovery_status={
+            "state": "degraded",
+            "schema_promotion_allowed": False,
+            "reasons": ["restore_stale"],
+            "backup": {
+                "completed_at": NOW.isoformat(),
+                "age_seconds": 0,
+                "fresh": True,
+                "scope_complete": True,
+            },
+            "restore": {
+                "verified_at": (NOW - timedelta(days=40)).isoformat(),
+                "age_seconds": 40 * 86400,
+                "fresh": False,
+                "verified": True,
+            },
+        },
+        now=NOW,
+    )
+
+    dependencies = service.full_status()["dependencies"]
+    assert dependencies["backup"]["state"] == "healthy"
+    assert dependencies["backup"]["source"] == "recovery_evidence"
+    assert dependencies["restore"]["state"] == "degraded"
+    assert dependencies["restore"]["reason"] == "restore_stale"
+
+
 def test_repository_refresh_updates_actual_backend_identity():
     from argus.operations.status import (
         create_operational_status,
@@ -607,14 +754,10 @@ def test_fresh_provider_without_health_evidence_is_unknown_and_unready():
     broker.get_provider_status.side_effect = lambda provider: {
         "provider": provider.value,
         "config_status": (
-            "enabled"
-            if provider.value == "duckduckgo"
-            else "disabled_by_config"
+            "enabled" if provider.value == "duckduckgo" else "disabled_by_config"
         ),
         "effective_status": (
-            "enabled"
-            if provider.value == "duckduckgo"
-            else "disabled_by_config"
+            "enabled" if provider.value == "duckduckgo" else "disabled_by_config"
         ),
         "health": None,
         "budget_remaining": None,
@@ -640,12 +783,14 @@ def test_fresh_provider_without_health_evidence_is_unknown_and_unready():
 
     status = service.full_status()
 
-    assert status["providers"]["duckduckgo"]["observations"]["health"][
-        "state"
-    ] == "unknown"
-    assert status["providers"]["duckduckgo"]["observations"]["cooldown"][
-        "state"
-    ] == "unknown"
+    assert (
+        status["providers"]["duckduckgo"]["observations"]["health"]["state"]
+        == "unknown"
+    )
+    assert (
+        status["providers"]["duckduckgo"]["observations"]["cooldown"]["state"]
+        == "unknown"
+    )
     assert status["status"] == "unready"
     assert status["reason_codes"] == ["retrieval_path"]
 
@@ -718,6 +863,7 @@ def test_repository_authority_loss_is_cached_unready_and_restoration_recovers():
         "uncertain_charge": 0,
         "provider_snapshot": None,
     }
+    _configure_public_evidence(broker)
 
     refresh_operational_status(
         service,
@@ -759,9 +905,7 @@ def test_container_health_contract_targets_network_free_liveness():
 
     root = Path(__file__).parents[1]
     dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
-    compose = yaml.safe_load(
-        (root / "docker-compose.yml").read_text(encoding="utf-8")
-    )
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8"))
 
     assert "/api/live" in dockerfile
     assert "/api/health" not in dockerfile
@@ -789,9 +933,7 @@ def test_touched_request_paths_do_not_log_raw_query_or_exception_text():
 def test_sqlite_repository_reports_bounded_authority_status(tmp_path):
     from argus.persistence.search_ledger import create_search_ledger_repository
 
-    repository = create_search_ledger_repository(
-        f"sqlite:///{tmp_path / 'status.db'}"
-    )
+    repository = create_search_ledger_repository(f"sqlite:///{tmp_path / 'status.db'}")
 
     status = repository.operational_status(now=NOW)
 
@@ -843,17 +985,55 @@ def test_request_log_uses_safe_correlation_and_route_template(monkeypatch):
     client = TestClient(create_app(broker=MagicMock(), operational_status=service))
     unsafe = "query=https://secret.example/private?token=must-not-leak"
 
-    response = client.get("/api/live", headers={"X-Request-ID": unsafe})
+    response = client.get("/api/ready", headers={"X-Request-ID": unsafe})
 
-    assert response.status_code == 200
+    assert response.status_code == 503
     messages = "\n".join(
         str(call.args[0]) % call.args[1:] for call in logged.call_args_list
     )
     assert "http_request" in messages
-    assert "route=/api/live" in messages
+    assert "route=/api/ready" in messages
     assert f"request_id={response.headers['x-request-id']}" in messages
     assert "must-not-leak" not in messages
     assert "secret.example" not in messages
+
+
+def test_extract_application_logs_do_not_include_target_url_or_query(
+    monkeypatch, caplog
+):
+    import logging
+
+    from fastapi.testclient import TestClient
+
+    from argus.api.main import create_app
+    from argus.extraction.models import ExtractedContent, ExtractorName
+
+    target = "https://private.example/report?token=must-not-leak"
+    caplog.set_level(logging.INFO)
+    monkeypatch.setattr(
+        "argus.api.routes_extract.extract_url",
+        AsyncMock(
+            return_value=ExtractedContent(
+                url=target,
+                text="safe content",
+                word_count=2,
+                extractor=ExtractorName.TRAFILATURA,
+            )
+        ),
+    )
+
+    response = TestClient(
+        create_app(
+            broker=MagicMock(),
+            search_repository=MagicMock(),
+            operational_status=_service(),
+        )
+    ).post("/api/extract", json={"url": target})
+
+    assert response.status_code == 200
+    assert target not in caplog.text
+    assert "must-not-leak" not in caplog.text
+    assert "private.example" not in caplog.text
 
 
 def test_provider_health_compatibility_surface_includes_cached_nested_evidence():
@@ -887,9 +1067,7 @@ def test_provider_health_compatibility_surface_includes_cached_nested_evidence()
             else "disabled_by_config"
         ),
     }
-    client = TestClient(
-        create_app(broker=broker, operational_status=service)
-    )
+    client = TestClient(create_app(broker=broker, operational_status=service))
 
     response = client.get("/api/provider-health")
 
@@ -919,6 +1097,64 @@ def test_liveness_is_exempt_from_request_rate_limits():
 
     assert client.get("/api/live").status_code == 200
     assert client.get("/api/live").status_code == 200
+
+
+@pytest.mark.parametrize("path", ["/api/live", "/api/health"])
+def test_liveness_bypasses_application_metrics_and_logging(path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import argus.api.main as api_main
+
+    service = _service()
+    service.metrics.request_started = MagicMock(
+        side_effect=AssertionError("metrics lock must not be touched")
+    )
+    logged = MagicMock(side_effect=AssertionError("application log must not run"))
+    monkeypatch.setattr(api_main.logger, "info", logged)
+
+    response = TestClient(api_main.create_app(operational_status=service)).get(path)
+
+    assert response.status_code == 200
+    service.metrics.request_started.assert_not_called()
+    logged.assert_not_called()
+
+
+def test_missing_manifest_does_not_invent_optional_capabilities(tmp_path):
+    from argus.operations.status import create_operational_status
+
+    service = create_operational_status(
+        {"ARGUS_RUNTIME_MANIFEST": str(tmp_path / "missing.json")}
+    )
+
+    assert service.full_status()["capabilities"] == {}
+
+
+def test_sqlite_marks_postgresql_not_applicable():
+    from argus.operations.status import (
+        create_operational_status,
+        refresh_operational_status,
+    )
+
+    service = create_operational_status({}, clock=lambda: NOW)
+    broker = _runtime_broker()
+    repository = MagicMock()
+    repository.operational_status.return_value = {
+        "backend": "sqlite",
+        "connected": True,
+        "schema_head": "sqlite-managed",
+        "outbox": {"counts": {}},
+    }
+
+    refresh_operational_status(
+        service,
+        broker=broker,
+        repository=repository,
+        now=NOW,
+    )
+
+    postgresql = service.full_status()["dependencies"]["postgresql"]
+    assert postgresql["state"] == "disabled"
+    assert postgresql["reason"] == "not_applicable_sqlite"
 
 
 def test_background_and_request_share_one_broker_initialization():
@@ -1066,9 +1302,7 @@ def test_broker_construction_failure_recovers_without_process_restart(
             response = client.get("/api/ready")
 
         assert response.status_code == 200
-        assert service.full_status()["dependencies"]["postgresql"][
-            "state"
-        ] == "healthy"
+        assert service.full_status()["dependencies"]["postgresql"]["state"] == "healthy"
         assert attempts >= 2
 
 
@@ -1256,9 +1490,7 @@ def test_maya_worker_uses_real_dispatcher_outcomes(
         while calls == 0 and time.monotonic() < deadline:
             time.sleep(0.01)
         assert calls > 0
-        assert service.full_status()["dependencies"]["maya"][
-            "state"
-        ] == expected_state
+        assert service.full_status()["dependencies"]["maya"]["state"] == expected_state
 
 
 def test_outbox_compaction_failure_does_not_rewrite_maya_delivery_evidence(
@@ -1299,9 +1531,7 @@ def test_outbox_compaction_failure_does_not_rewrite_maya_delivery_evidence(
 
     monkeypatch.setattr(maya_outbox, "MayaOutboxDispatcher", Dispatcher)
     repository = _runtime_repository()
-    repository.compact_maya_outbox.side_effect = RuntimeError(
-        "local compaction failed"
-    )
+    repository.compact_maya_outbox.side_effect = RuntimeError("local compaction failed")
     service = _service(production=True)
 
     with TestClient(
@@ -1315,6 +1545,4 @@ def test_outbox_compaction_failure_does_not_rewrite_maya_delivery_evidence(
         while not delivered and time.monotonic() < deadline:
             time.sleep(0.01)
         assert delivered is True
-        assert service.full_status()["dependencies"]["maya"][
-            "state"
-        ] == "healthy"
+        assert service.full_status()["dependencies"]["maya"]["state"] == "healthy"

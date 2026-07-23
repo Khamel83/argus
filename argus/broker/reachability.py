@@ -15,9 +15,10 @@ if TYPE_CHECKING:
 
 @dataclass
 class EgressProbe:
-    egress: str        # "local" | "oci-dev" | "macmini"
+    egress: str  # "local" | "oci-dev" | "macmini"
     reachable: bool
     latency_ms: int
+    source: str = "background_probe"
     last_checked: float = field(default_factory=time.time)
 
 
@@ -44,6 +45,7 @@ class ReachabilityMatrix:
         provider: ProviderName,
         reachable: bool,
         latency_ms: int,
+        source: str = "background_probe",
     ) -> None:
         if provider not in self._probes:
             self._probes[provider] = {}
@@ -51,6 +53,7 @@ class ReachabilityMatrix:
             egress=egress,
             reachable=reachable,
             latency_ms=latency_ms,
+            source=source,
         )
 
     def best_egress(self, provider: ProviderName) -> Optional[str]:
@@ -87,6 +90,7 @@ class ReachabilityMatrix:
                         "reachable": p.reachable,
                         "latency_ms": p.latency_ms,
                         "last_checked": p.last_checked,
+                        "source": p.source,
                     }
                     for name, p in probes.items()
                 },
@@ -121,8 +125,9 @@ class ReachabilityMatrix:
                 try:
                     _, trace = await provider.search(probe_query)
                     reachable = trace.status == "success"
-                    self.update_probe("local", pname, reachable=reachable,
-                                      latency_ms=trace.latency_ms)
+                    self.update_probe(
+                        "local", pname, reachable=reachable, latency_ms=trace.latency_ms
+                    )
                     outcome = trace.status
                 except Exception:
                     self.update_probe("local", pname, reachable=False, latency_ms=0)
@@ -140,8 +145,12 @@ class ReachabilityMatrix:
                     remote = RemoteProviderClient(pname, node)
                     _, trace = await remote.search(probe_query)
                     reachable = trace.status == "success"
-                    self.update_probe(node.name, pname, reachable=reachable,
-                                      latency_ms=trace.latency_ms)
+                    self.update_probe(
+                        node.name,
+                        pname,
+                        reachable=reachable,
+                        latency_ms=trace.latency_ms,
+                    )
                     outcome = trace.status
                 except Exception:
                     self.update_probe(node.name, pname, reachable=False, latency_ms=0)
