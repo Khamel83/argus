@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import hashlib
 import re
@@ -20,9 +21,29 @@ _AUTH_HEADER_RE = re.compile(
 )
 _AUTH_SCHEME_RE = re.compile(r"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9+/._~=-]{4,}")
 _COOKIE_HEADER_RE = re.compile(r"(?i)\b(?:set-cookie|cookie)\s*:\s*[^\r\n]+")
-_SECRET_ASSIGNMENT_RE = re.compile(
-    r"(?i)\b(?:api[_ -]?key|access[_ -]?key|client[_ -]?secret|token|secret|"
-    r"password|passwd)\b\s*[:=]\s*[\"']?[^\s,;\"']+"
+_SENSITIVE_KEY_PATTERN = r"""
+    (?:
+        authorization|proxy[_ -]?authorization|
+        cookie|set[_ -]?cookie|session[_ -]?cookie|
+        access[_ -]?token|refresh[_ -]?token|id[_ -]?token|
+        api[_ -]?key|access[_ -]?key|client[_ -]?secret|
+        refresh|id|token|secret|password|passwd|signature
+    )
+"""
+_SENSITIVE_KEY_RE = re.compile(rf"(?ix)^{_SENSITIVE_KEY_PATTERN}$")
+_SENSITIVE_KEY_VALUE_RE = re.compile(
+    rf"""(?ix)
+    (?<![A-Za-z0-9_])
+    ["']?
+    {_SENSITIVE_KEY_PATTERN}
+    ["']?
+    \s*[:=]\s*
+    (?:
+        "(?:\\.|[^"\\\r\n])*"|
+        '(?:\\.|[^'\\\r\n])*'|
+        [^\s,;}}\]\r\n]+
+    )
+    """
 )
 _MAYA_SECRET_TOKEN_RE = re.compile(
     r"(?i)\b(?:token|secret|key)[_-][A-Za-z0-9][A-Za-z0-9._-]{7,}\b|"
@@ -31,7 +52,7 @@ _MAYA_SECRET_TOKEN_RE = re.compile(
     r"AKIA[0-9A-Z]{12,})\b"
 )
 _PEM_RE = re.compile(
-    r"-----BEGIN [^-]+-----.*?-----END [^-]+-----",
+    r"-----BEGIN [^-]+-----.*?(?:-----END [^-]+-----|$)",
     re.IGNORECASE | re.DOTALL,
 )
 _MAYA_ID_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -52,26 +73,84 @@ _MAYA_RECEIPT_KEYS = {
 }
 
 
-def _redact_text(value: object) -> str:
-    text = str(value or "").replace("\x00", "")
+def _is_sensitive_key(value: object) -> bool:
+    return _SENSITIVE_KEY_RE.fullmatch(str(value).strip()) is not None
+
+
+def _sanitize_structure(value: object, *, depth: int = 0) -> object:
+    if depth >= 8:
+        return "[truncated]"
+    if isinstance(value, dict):
+        sanitized = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= 128:
+                sanitized["[truncated]"] = True
+                break
+            safe_key = str(key)[:256]
+            sanitized[safe_key] = (
+                "[redacted]"
+                if _is_sensitive_key(safe_key)
+                else _sanitize_structure(item, depth=depth + 1)
+            )
+        return sanitized
+    if isinstance(value, (list, tuple)):
+        return [
+            _sanitize_structure(item, depth=depth + 1) for item in value[:128]
+        ]
+    if isinstance(value, str):
+        return value[:4096]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return str(value)[:4096]
+
+
+def _bounded_text(value: object, scan_limit: int) -> str:
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(
+            _sanitize_structure(value),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )[:scan_limit]
+    text = str(value or "")[:scan_limit]
+    stripped = text.strip()
+    if stripped.startswith(("{", "[")):
+        parsed = None
+        try:
+            parsed = json.loads(stripped)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            try:
+                parsed = ast.literal_eval(stripped)
+            except (TypeError, ValueError, SyntaxError, MemoryError, RecursionError):
+                pass
+        if isinstance(parsed, (dict, list, tuple)):
+            return json.dumps(
+                _sanitize_structure(parsed),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )[:scan_limit]
+    return text
+
+
+def _redact_text(value: object, limit: int) -> str:
+    scan_limit = min(max(limit * 4, 4096), 65_536)
+    text = _bounded_text(value, scan_limit).replace("\x00", "")
     text = _AUTH_HEADER_RE.sub("[redacted]", text)
     text = _AUTH_SCHEME_RE.sub("[redacted]", text)
     text = _COOKIE_HEADER_RE.sub("[redacted]", text)
-    text = _SECRET_ASSIGNMENT_RE.sub("[redacted]", text)
+    text = _SENSITIVE_KEY_VALUE_RE.sub("[redacted]", text)
     text = _MAYA_SECRET_TOKEN_RE.sub("[redacted]", text)
-    return _PEM_RE.sub("[redacted]", text)
+    return _PEM_RE.sub("[redacted]", text)[:limit]
 
 
 def safe_failure_summary(value: str | None) -> str | None:
     if not value:
         return None
-    redacted = _redact_text(value)
-    return redacted.replace("\n", " ").replace("\r", " ")[:256]
+    redacted = _redact_text(value, 256)
+    return redacted.replace("\n", " ").replace("\r", " ")
 
 
 def _safe_text(value: object, limit: int) -> str:
-    text = _redact_text(value).replace("\r", " ").replace("\n", " ")
-    return text[:limit]
+    return _redact_text(value, limit).replace("\r", " ").replace("\n", " ")
 
 
 def _safe_url(value: str) -> str:
@@ -84,10 +163,7 @@ def _safe_url(value: str) -> str:
     query = [
         (_safe_text(key, 256), _safe_text(item, 2048))
         for key, item in parse_qsl(parts.query, keep_blank_values=True)
-        if not any(
-            marker in key.lower()
-            for marker in ("token", "key", "secret", "auth", "signature", "password")
-        )
+        if not _is_sensitive_key(key)
     ]
     path = quote(_safe_text(unquote(parts.path), 2048), safe="/:@-._~")
     return urlunsplit((parts.scheme, host, path, urlencode(query), ""))[:2048]
@@ -313,7 +389,7 @@ class MayaOutboxDispatcher:
                 error_summary=type(exc).__name__,
                 now=now,
             )
-            return "retried" if status == "retry" else "dead_lettered"
+            return self._failure_outcome(status)
 
         if response.status_code in {200, 201}:
             try:
@@ -334,7 +410,7 @@ class MayaOutboxDispatcher:
                     error_summary="Maya returned an invalid success receipt",
                     now=now,
                 )
-                return "retried" if status == "retry" else "dead_lettered"
+                return self._failure_outcome(status)
             acknowledged = self.repository.acknowledge_maya_outbox(
                 item["id"],
                 lease_token=item["lease_token"],
@@ -352,7 +428,7 @@ class MayaOutboxDispatcher:
                 error_summary="Maya returned an unsupported success status",
                 now=now,
             )
-            return "retried" if status == "retry" else "dead_lettered"
+            return self._failure_outcome(status)
 
         transient = (
             response.status_code in {408, 425, 429} or response.status_code >= 500
@@ -366,7 +442,15 @@ class MayaOutboxDispatcher:
             error_summary=summary,
             now=now,
         )
-        return "retried" if status == "retry" else "dead_lettered"
+        return self._failure_outcome(status)
+
+    @staticmethod
+    def _failure_outcome(status: str | None) -> str:
+        if status is None:
+            return "lease_lost"
+        if status == "retry":
+            return "retried"
+        return "dead_lettered"
 
     @staticmethod
     def _validated_receipt(

@@ -123,6 +123,16 @@ def test_search_acceptance_atomically_enqueues_a_bounded_sanitized_maya_parent(
         "api_key=super-secret-api-key",
         "token: super-secret-token",
         "client_secret=super-secret-client-secret",
+        "cookie=session=s3nt1n3lLeakValue987",
+        "session_cookie=s3nt1n3lLeakValue987",
+        "access_token=s3nt1n3lLeakValue987",
+        "refresh_token=s3nt1n3lLeakValue987",
+        "id_token=s3nt1n3lLeakValue987",
+        "refresh=s3nt1n3lLeakValue987",
+        "id=s3nt1n3lLeakValue987",
+        '{"token":"s3nt1n3lLeakValue987"}',
+        "{'api_key':'s3nt1n3lLeakValue987'}",
+        '"authorization": "s3nt1n3lLeakValue987"',
     ],
 )
 def test_extraction_outbox_redacts_comprehensive_credential_material(
@@ -151,7 +161,70 @@ def test_extraction_outbox_redacts_comprehensive_credential_material(
     payload = _outbox_row(repository).payload_json
     assert "super-secret" not in payload
     assert "dXNlcjpwYXNzd29yZA" not in payload
+    assert "s3nt1n3lLeakValue987" not in payload
     assert "[redacted]" in payload
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "cookie=session=d34dL3tt3rLeakValue987",
+        "session_cookie=d34dL3tt3rLeakValue987",
+        "access_token=d34dL3tt3rLeakValue987",
+        "refresh_token=d34dL3tt3rLeakValue987",
+        "id_token=d34dL3tt3rLeakValue987",
+        "refresh=d34dL3tt3rLeakValue987",
+        "id=d34dL3tt3rLeakValue987",
+        '{"token":"d34dL3tt3rLeakValue987"}',
+        "{'api_key':'d34dL3tt3rLeakValue987'}",
+        '"authorization": "d34dL3tt3rLeakValue987"',
+    ],
+)
+def test_dead_letter_summary_redacts_structured_and_assignment_secrets(
+    tmp_path,
+    message,
+):
+    from argus.persistence.maya_outbox import MayaOutboxDispatcher
+
+    repository = _repository(tmp_path)
+    repository.accept(SearchQuery(query="unsafe dead letter"), _response())
+    dispatcher = MayaOutboxDispatcher(
+        repository,
+        endpoint="http://maya/captures",
+        token="test-token",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                422,
+                json={
+                    "detail": {
+                        "code": "invalid_capture_request",
+                        "message": message,
+                    }
+                },
+            )
+        ),
+        clock=lambda: datetime(2026, 7, 23, 12, 0),
+    )
+
+    assert dispatcher.run_once() == {"dead_lettered": 1}
+    row = _outbox_row(repository)
+    assert "d34dL3tt3rLeakValue987" not in row.last_error_summary
+    assert "[redacted]" in row.last_error_summary
+
+
+def test_outbox_url_query_redacts_all_sensitive_key_aliases(tmp_path):
+    repository = _repository(tmp_path)
+    response = _response()
+    response.results[0].url = (
+        "https://example.com/article?"
+        "session_cookie=urlLeakValue987&refresh=urlLeakValue987&id=urlLeakValue987"
+    )
+
+    repository.accept(SearchQuery(query="sensitive url"), response)
+
+    payload = _outbox_row(repository).payload_json
+    assert "urlLeakValue987" not in payload
+    assert "session_cookie" not in payload
 
 
 def test_remote_error_code_is_allowlisted_and_never_persists_assignment(tmp_path):
@@ -449,6 +522,62 @@ def test_sqlite_stale_worker_cannot_overwrite_reclaimed_lease(tmp_path):
         now=started + timedelta(seconds=12),
     )
     assert _outbox_row(repository).status == "acknowledged"
+
+
+@pytest.mark.parametrize(
+    "handler",
+    [
+        lambda request: httpx.Response(204),
+        lambda request: httpx.Response(200, json={"capture_id": "partial"}),
+        lambda request: httpx.Response(503, json={"detail": "unavailable"}),
+        lambda request: (_ for _ in ()).throw(httpx.ReadTimeout("unavailable")),
+    ],
+    ids=["unsupported-204", "invalid-receipt", "http-503", "exception"],
+)
+def test_dispatcher_reports_lease_lost_for_every_stale_failure_branch(
+    tmp_path,
+    handler,
+):
+    from argus.persistence.maya_outbox import MayaOutboxDispatcher
+
+    repository = _repository(tmp_path)
+    repository.accept(SearchQuery(query="stale dispatcher"), _response())
+    started = datetime(2026, 7, 23, 12, 0)
+    stale = repository.claim_maya_outbox(
+        now=started,
+        limit=1,
+        lease_seconds=10,
+    )[0]
+    current = repository.claim_maya_outbox(
+        now=started + timedelta(seconds=11),
+        limit=1,
+        lease_seconds=10,
+    )[0]
+    dispatcher = MayaOutboxDispatcher(
+        repository,
+        endpoint="http://maya/captures",
+        token="test-token",
+        transport=httpx.MockTransport(handler),
+        clock=lambda: started + timedelta(seconds=11),
+    )
+
+    with httpx.Client(
+        transport=dispatcher.transport,
+        timeout=dispatcher.timeout_seconds,
+    ) as client:
+        outcome = dispatcher._deliver_one(
+            client,
+            {
+                "Authorization": "Bearer test-token",
+                "Content-Type": "application/json",
+            },
+            stale,
+        )
+
+    row = _outbox_row(repository)
+    assert outcome == "lease_lost"
+    assert row.status == "delivering"
+    assert row.lease_token == current["lease_token"]
 
 
 def test_acknowledgement_rejects_oversized_audit_response(tmp_path):
