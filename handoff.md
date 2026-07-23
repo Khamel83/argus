@@ -94,12 +94,20 @@ State and integration:
   locally plus all seven CI jobs, including real PostgreSQL concurrency and
   both production image canaries. The `[skip ci]` merge triggered no workflow
   or deployment.
-- [ ] [Reserve and reconcile paid-provider spending durably](https://github.com/Khamel83/argus/issues/35)
-  — review fixes are in implementation on an isolated issue branch, rebasing
-  onto issue 34 as the next migration.
+- [x] [Reserve and reconcile paid-provider spending durably](https://github.com/Khamel83/argus/issues/35)
+  — merged PR
+  [feat: reserve and reconcile provider spending durably](https://github.com/Khamel83/argus/pull/50)
+  as `e570e64`. Conservative provider/query-specific reservations, durable
+  uncertain obligations, scoped-caller enforcement, provider-authoritative
+  reconciliation, replay-safe evidence, free-attempt accounting, and truthful
+  estimator-overrun audits passed four independent review rounds. Final
+  evidence was 521 passed and 14 skipped locally, real PostgreSQL concurrency,
+  and all seven CI jobs. The `[skip ci]` merge triggered no workflow or
+  deployment.
 - [ ] [Deliver user-visible retrievals to Maya through a transactional outbox](https://github.com/Khamel83/argus/issues/36)
-  — both blockers are closed; implementation has started from `43f28dc` on an
-  isolated issue branch.
+  — both blockers are closed. The non-migration implementation passed 472
+  local tests and direct Maya contract validation; it is rebasing onto
+  `e570e64` to add migration 0006 and real PostgreSQL evidence.
 - [ ] [Make HTTP the sole Argus execution authority and MCP stateless](https://github.com/Khamel83/argus/issues/37)
   — blocked by durable provider accounting and the Maya outbox.
 
@@ -131,7 +139,8 @@ Capability, recovery, and operations:
 Independent follow-ons:
 
 - [ ] [Correct Parallel's recurring-credit tier](https://github.com/Khamel83/argus/issues/21)
-  — blocked by durable paid-provider accounting.
+  — durable paid-provider accounting is merged; isolated implementation has
+  started from `e570e64`.
 - [x] [Normalize Trafilatura output and audit extraction quality](https://github.com/Khamel83/argus/issues/43)
   — merged PR
   [fix: normalize Trafilatura results and preserve quality decisions](https://github.com/Khamel83/argus/pull/48)
