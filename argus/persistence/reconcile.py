@@ -17,6 +17,7 @@ from argus.models import (
 )
 from argus.persistence.search_ledger import (
     SqlAlchemySearchLedgerRepository,
+    _safe_persisted_url,
     acceptance_fingerprint,
     acceptance_state,
 )
@@ -114,13 +115,16 @@ def reconcile_legacy_sessions(
                     ),
                     {"session_id": session_id, "ordinal": ordinal},
                 ).scalars().all()
+                sanitized_urls = list(
+                    dict.fromkeys(_safe_persisted_url(url) for url in urls)
+                )
                 expected.append(
                     {
                         "query": query["query"],
                         "mode": query["mode"],
                         "timestamp": datetime.fromtimestamp(query["timestamp"]),
                         "results_count": query["results_count"],
-                        "extracted_urls": list(urls),
+                        "extracted_urls": sanitized_urls,
                     }
                 )
 

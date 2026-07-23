@@ -21,6 +21,7 @@ Obscura (https://github.com/h4ckf0r0day/obscura): optional Rust headless browser
 """
 
 import asyncio
+import copy
 import os
 import time
 
@@ -230,7 +231,20 @@ async def _extract_url_unpersisted(
     cached = _cache.get(url)
     if cached is not None:
         logger.debug("Extraction cache hit for %s", url[:60])
-        return cached
+        result = copy.deepcopy(cached)
+        result.cache_hit = True
+        result.cache_source_extractor = (
+            result.extractor.value if result.extractor else None
+        )
+        result.extractors_tried = ["cache"]
+        result.attempts = [
+            ExtractionAttempt(
+                extractor="cache",
+                status="success",
+                latency_ms=0,
+            )
+        ]
+        return result
 
     # YouTube watch pages are application shells rather than article pages.
     # Route them through the free metadata/caption adapter and do not spend

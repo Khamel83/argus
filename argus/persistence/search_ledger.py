@@ -903,6 +903,8 @@ class SqlAlchemySearchLedgerRepository:
                         {
                             "quality_reason": result.quality_reason,
                             "extractors_tried": list(result.extractors_tried),
+                            "cache_hit": bool(result.cache_hit),
+                            "source_extractor": result.cache_source_extractor,
                         }
                     ),
                 )
@@ -914,13 +916,27 @@ class SqlAlchemySearchLedgerRepository:
     ) -> None:
         """Create a durable multi-turn session, idempotently."""
         with self.session_factory.begin() as session:
-            if session.get(RetrievalSessionRow, session_id) is None:
-                session.add(
-                    RetrievalSessionRow(
-                        id=session_id,
-                        created_at=created_at or datetime.now(tz=None),
-                    )
+            values = {
+                "id": session_id,
+                "created_at": created_at or datetime.now(tz=None),
+            }
+            dialect = session.get_bind().dialect.name
+            if dialect == "postgresql":
+                from sqlalchemy.dialects.postgresql import insert
+
+                statement = insert(RetrievalSessionRow).values(**values)
+                session.execute(
+                    statement.on_conflict_do_nothing(index_elements=["id"])
                 )
+            elif dialect == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert
+
+                statement = insert(RetrievalSessionRow).values(**values)
+                session.execute(
+                    statement.on_conflict_do_nothing(index_elements=["id"])
+                )
+            elif session.get(RetrievalSessionRow, session_id) is None:
+                session.add(RetrievalSessionRow(**values))
 
     def session_exists(self, session_id: str) -> bool:
         with self.session_factory() as session:
@@ -936,13 +952,24 @@ class SqlAlchemySearchLedgerRepository:
         results_count: int,
     ) -> int:
         with self.session_factory.begin() as session:
-            if session.get(RetrievalSessionRow, session_id) is None:
-                raise KeyError(f"unknown session {session_id!r}")
-            ordinal = session.scalar(
-                select(func.count())
-                .select_from(SessionQueryRow)
-                .where(SessionQueryRow.session_id == session_id)
+            dialect = session.get_bind().dialect.name
+            if dialect == "sqlite":
+                from sqlalchemy import text
+
+                session.execute(text("BEGIN IMMEDIATE"))
+            statement = select(RetrievalSessionRow).where(
+                RetrievalSessionRow.id == session_id
             )
+            if dialect == "postgresql":
+                statement = statement.with_for_update()
+            if session.scalar(statement) is None:
+                raise KeyError(f"unknown session {session_id!r}")
+            previous = session.scalar(
+                select(func.max(SessionQueryRow.ordinal)).where(
+                    SessionQueryRow.session_id == session_id
+                )
+            )
+            ordinal = 0 if previous is None else previous + 1
             session.add(
                 SessionQueryRow(
                     id=uuid.uuid4().hex,
@@ -959,6 +986,7 @@ class SqlAlchemySearchLedgerRepository:
     def append_session_extracted_url(
         self, session_id: str, query_index: int, url: str
     ) -> None:
+        sanitized_url = _safe_persisted_url(url)
         with self.session_factory.begin() as session:
             query_row = session.scalar(
                 select(SessionQueryRow).where(
@@ -971,7 +999,7 @@ class SqlAlchemySearchLedgerRepository:
             exists = session.scalar(
                 select(SessionExtractedUrlRow.id).where(
                     SessionExtractedUrlRow.query_id == query_row.id,
-                    SessionExtractedUrlRow.url == url,
+                    SessionExtractedUrlRow.url == sanitized_url,
                 )
             )
             if exists is None:
@@ -979,7 +1007,7 @@ class SqlAlchemySearchLedgerRepository:
                     SessionExtractedUrlRow(
                         id=uuid.uuid4().hex,
                         query_id=query_row.id,
-                        url=_safe_persisted_url(url),
+                        url=sanitized_url,
                     )
                 )
 

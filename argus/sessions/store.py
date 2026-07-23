@@ -22,21 +22,14 @@ class SessionStore:
         self._persist = persist
         self._db = repository
         if persist:
-            try:
-                if self._db is None:
-                    from argus.persistence.search_ledger import (
-                        create_search_ledger_repository,
-                    )
-
-                    db_url = f"sqlite:///{db_path}" if db_path else None
-                    self._db = create_search_ledger_repository(db_url)
-                logger.info("Session persistence enabled")
-            except Exception as exc:
-                logger.warning(
-                    "Session persistence failed to init, using in-memory only: %s",
-                    exc,
+            if self._db is None:
+                from argus.persistence.search_ledger import (
+                    create_search_ledger_repository,
                 )
-                self._persist = False
+
+                db_url = f"sqlite:///{db_path}" if db_path else None
+                self._db = create_search_ledger_repository(db_url)
+            logger.info("Session persistence enabled")
 
     def _load_session(self, session_id: str) -> Optional[Session]:
         if not self._db:
@@ -44,31 +37,35 @@ class SessionStore:
         session = self._db.load_session(session_id)
         if session is None:
             return None
+        cached = self._sessions.get(session_id)
+        if cached is not None:
+            cached.created_at = session.created_at
+            cached.queries = session.queries
+            return cached
         self._sessions[session_id] = session
         return session
 
     def create_session(self, session_id: Optional[str] = None) -> Session:
         sid = session_id or str(uuid.uuid4())[:8]
-        if sid in self._sessions:
-            return self._sessions[sid]
-        if self._persist and self._db and self._db.session_exists(sid):
+        if self._persist and self._db:
+            candidate = Session(id=sid)
+            self._db.create_session(sid, candidate.created_at)
             loaded = self._load_session(sid)
             if loaded is not None:
                 return loaded
-
-        session = Session(id=sid)
-        if self._persist and self._db:
-            self._db.create_session(sid, session.created_at)
+            session = candidate
+        elif sid in self._sessions:
+            return self._sessions[sid]
+        else:
+            session = Session(id=sid)
         self._sessions[sid] = session
         logger.debug("Created session %s", sid)
         return session
 
     def get_session(self, session_id: str) -> Optional[Session]:
-        if session_id in self._sessions:
-            return self._sessions[session_id]
         if self._persist and self._db:
             return self._load_session(session_id)
-        return None
+        return self._sessions.get(session_id)
 
     def add_query(
         self,
@@ -93,7 +90,9 @@ class SessionStore:
                 timestamp=record.timestamp,
                 results_count=results_count,
             )
-        session.queries.append(record)
+            session = self._load_session(session_id)
+        else:
+            session.queries.append(record)
         logger.debug(
             "Session %s: added query #%d: %s",
             session_id,
@@ -110,7 +109,9 @@ class SessionStore:
             return
         if self._persist and self._db:
             self._db.append_session_extracted_url(session_id, query_index, url)
-        session.queries[query_index].extracted_urls.append(url)
+            self._load_session(session_id)
+        else:
+            session.queries[query_index].extracted_urls.append(url)
 
     def list_sessions(self) -> list[Session]:
         if self._persist and self._db:

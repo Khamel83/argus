@@ -84,6 +84,62 @@ def test_extraction_is_committed_with_attempts_artifact_and_provenance(tmp_path)
     assert artifact.machine == "homelab"
 
 
+@pytest.mark.asyncio
+async def test_cached_extraction_records_a_fresh_cache_attempt(tmp_path):
+    import json
+
+    from argus.extraction.extractor import extract_url, get_extraction_cache
+    from argus.persistence.search_ledger import (
+        ExtractionArtifactRow,
+        ExtractorAttemptRow,
+    )
+
+    repository = _repository(tmp_path)
+    cache = get_extraction_cache()
+    cache.clear()
+    cached = ExtractedContent(
+        url="https://example.com/cached",
+        text="previously extracted content",
+        word_count=3,
+        extractor=ExtractorName.TRAFILATURA,
+        source_type="live",
+        egress="residential",
+        machine="homelab",
+        extractors_tried=["trafilatura"],
+        attempts=[
+            ExtractionAttempt(
+                extractor="trafilatura",
+                status="success",
+                latency_ms=987,
+            )
+        ],
+    )
+    cache.put(cached.url, cached)
+
+    result = await extract_url(
+        cached.url,
+        caller="maya",
+        repository=repository,
+    )
+
+    with repository.session_factory() as session:
+        attempt = session.scalar(select(ExtractorAttemptRow))
+        artifact = session.scalar(select(ExtractionArtifactRow))
+    metadata = json.loads(artifact.metadata_json)
+    cache.clear()
+
+    assert [(item.extractor, item.status) for item in result.attempts] == [
+        ("cache", "success")
+    ]
+    assert (attempt.extractor, attempt.status, attempt.latency_ms) == (
+        "cache",
+        "success",
+        0,
+    )
+    assert metadata["cache_hit"] is True
+    assert metadata["source_extractor"] == "trafilatura"
+
+
 def test_failed_extraction_persists_only_a_safe_bounded_summary(tmp_path):
     from argus.persistence.search_ledger import ExtractionRunRow, ExtractorAttemptRow
 
@@ -203,12 +259,107 @@ def test_sessions_continue_across_repository_and_store_restart(tmp_path):
     ]
 
 
+def test_persistent_session_store_reloads_authoritative_history(tmp_path):
+    from argus.sessions.store import SessionStore
+
+    database_url = f"sqlite:///{tmp_path / 'shared-sessions.db'}"
+    first = SessionStore(repository=_repository_for_url(database_url))
+    second = SessionStore(repository=_repository_for_url(database_url))
+    first.create_session("shared")
+    assert first.get_session("shared").queries == []
+
+    second.create_session("shared")
+    second.add_query("shared", query="written by another worker")
+
+    refreshed = first.get_session("shared")
+    assert [record.query for record in refreshed.queries] == [
+        "written by another worker"
+    ]
+
+
+def test_persistent_create_session_returns_authoritative_existing_history(tmp_path):
+    from argus.sessions.store import SessionStore
+
+    database_url = f"sqlite:///{tmp_path / 'existing-shared-session.db'}"
+    first = SessionStore(repository=_repository_for_url(database_url))
+    second = SessionStore(repository=_repository_for_url(database_url))
+    first.create_session("shared")
+    second.create_session("shared")
+    second.add_query("shared", query="new durable turn")
+
+    existing = first.create_session("shared")
+    assert [record.query for record in existing.queries] == ["new durable turn"]
+
+
+def test_concurrent_session_creation_and_query_allocation_are_atomic(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from argus.sessions.store import SessionStore
+
+    database_url = f"sqlite:///{tmp_path / 'concurrent-sessions.db'}"
+    _repository_for_url(database_url)
+    worker_count = 8
+    barrier = Barrier(worker_count)
+
+    def append(worker: int) -> None:
+        store = SessionStore(repository=_repository_for_url(database_url))
+        barrier.wait()
+        store.create_session("concurrent")
+        store.add_query("concurrent", query=f"query-{worker}")
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        list(executor.map(append, range(worker_count)))
+
+    session = SessionStore(
+        repository=_repository_for_url(database_url)
+    ).get_session("concurrent")
+    assert len(session.queries) == worker_count
+    assert {record.query for record in session.queries} == {
+        f"query-{worker}" for worker in range(worker_count)
+    }
+
+
+def test_session_url_deduplication_uses_sanitized_identity(tmp_path):
+    from argus.persistence.search_ledger import SessionExtractedUrlRow
+    from argus.sessions.store import SessionStore
+
+    store = SessionStore(repository=_repository(tmp_path))
+    store.create_session("sanitized-urls")
+    store.add_query("sanitized-urls", query="one")
+    store.add_extracted_url(
+        "sanitized-urls",
+        0,
+        "https://example.com/article?token=first",
+    )
+    store.add_extracted_url(
+        "sanitized-urls",
+        0,
+        "https://example.com/article?token=second",
+    )
+
+    loaded = store.get_session("sanitized-urls")
+    with store._db.session_factory() as session:
+        count = session.scalar(
+            select(func.count()).select_from(SessionExtractedUrlRow)
+        )
+    assert loaded.queries[0].extracted_urls == [
+        "https://example.com/article?token=%5Bredacted%5D"
+    ]
+    assert count == 1
+
+
 def test_session_cache_does_not_advance_when_durable_append_fails():
     from argus.sessions.store import SessionStore
 
     class FailingSessionRepository:
         def create_session(self, session_id, created_at):
             pass
+
+        def load_session(self, session_id):
+            from argus.sessions.models import Session
+
+            return Session(id=session_id)
 
         def session_exists(self, session_id):
             return False
@@ -340,6 +491,43 @@ def test_legacy_session_import_is_dry_run_first_and_idempotent(tmp_path):
     assert repository.load_session("legacy").queries[0].extracted_urls == [
         "https://example.com/old"
     ]
+
+
+def test_legacy_session_reconciliation_compares_sanitized_urls(tmp_path):
+    import sqlite3
+
+    from argus.persistence.reconcile import reconcile_legacy_sessions
+
+    source = tmp_path / "legacy-secret-sessions.db"
+    connection = sqlite3.connect(source)
+    connection.executescript(
+        """
+        CREATE TABLE sessions (id TEXT PRIMARY KEY, created_at REAL NOT NULL);
+        CREATE TABLE session_queries (
+            id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, query TEXT NOT NULL,
+            mode TEXT NOT NULL, timestamp REAL NOT NULL, results_count INTEGER NOT NULL
+        );
+        CREATE TABLE session_extracted_urls (
+            id INTEGER PRIMARY KEY, session_id TEXT NOT NULL,
+            query_index INTEGER NOT NULL, url TEXT NOT NULL
+        );
+        INSERT INTO sessions VALUES ('legacy-secret', 1000);
+        INSERT INTO session_queries VALUES
+            (1, 'legacy-secret', 'old query', 'research', 1001, 1);
+        INSERT INTO session_extracted_urls VALUES
+            (1, 'legacy-secret', 0, 'https://example.com/old?token=sensitive');
+        """
+    )
+    connection.commit()
+    connection.close()
+    repository = _repository(tmp_path)
+
+    assert reconcile_legacy_sessions(
+        f"sqlite:///{source}", repository, apply=True
+    )["imported"] == 1
+    assert reconcile_legacy_sessions(
+        f"sqlite:///{source}", repository, apply=True
+    ) == {"source": 1, "imported": 0, "skipped": 1, "conflicting": 0}
 
 
 def test_session_snapshot_import_rolls_back_as_one_transaction(tmp_path):
@@ -540,3 +728,33 @@ def test_postgresql_extraction_and_session_contract(migrated_postgres_ledger):
     assert loaded.queries[0].query == "first turn"
     with repository.session_factory() as session:
         assert session.scalar(select(func.count()).select_from(ExtractionRunRow)) == 1
+
+
+def test_postgresql_concurrent_session_creation_and_query_allocation(
+    migrated_postgres_ledger,
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from argus.sessions.store import SessionStore
+
+    repository = migrated_postgres_ledger
+    worker_count = 8
+    barrier = Barrier(worker_count)
+
+    def append(worker: int) -> None:
+        store = SessionStore(repository=repository)
+        barrier.wait()
+        store.create_session("postgres-concurrent")
+        store.add_query("postgres-concurrent", query=f"query-{worker}")
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        list(executor.map(append, range(worker_count)))
+
+    loaded = SessionStore(repository=repository).get_session(
+        "postgres-concurrent"
+    )
+    assert len(loaded.queries) == worker_count
+    assert {record.query for record in loaded.queries} == {
+        f"query-{worker}" for worker in range(worker_count)
+    }

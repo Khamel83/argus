@@ -56,6 +56,8 @@ class ExtractedContent:
     extractors_tried: list = field(default_factory=list)
     attempts: list[ExtractionAttempt] = field(default_factory=list)
     completeness_result: Optional["CompletenessResult"] = None
+    cache_hit: bool = False
+    cache_source_extractor: Optional[str] = None
 
     # Provenance metadata
     source_type: Optional[str] = None  # live|authenticated|residential|wayback|archive|paid_api|search_recovery

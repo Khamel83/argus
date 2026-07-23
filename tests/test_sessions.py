@@ -169,6 +169,32 @@ class TestRefinement:
 # --- Session Persistence ---
 
 class TestSessionPersistence:
+    def test_configured_persistence_initialization_fails_closed(self, monkeypatch):
+        def fail_repository(*args, **kwargs):
+            raise RuntimeError("configured database unavailable")
+
+        monkeypatch.setattr(
+            "argus.persistence.search_ledger.create_search_ledger_repository",
+            fail_repository,
+        )
+
+        with pytest.raises(RuntimeError, match="configured database unavailable"):
+            SessionStore(persist=True)
+
+    def test_explicit_nonpersistent_store_does_not_initialize_database(
+        self, monkeypatch
+    ):
+        def fail_repository(*args, **kwargs):
+            raise AssertionError("database initialization was not expected")
+
+        monkeypatch.setattr(
+            "argus.persistence.search_ledger.create_search_ledger_repository",
+            fail_repository,
+        )
+
+        store = SessionStore(persist=False)
+        assert store.create_session("ephemeral").id == "ephemeral"
+
     def test_persist_and_load_session(self):
         """Session persists across SessionStore instances using the same DB."""
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
