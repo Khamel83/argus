@@ -73,7 +73,7 @@ jobs:
         run: |
           DIFF=$(head -c 40000 /tmp/diff.txt)
           PAYLOAD=$(jq -n --arg diff "$DIFF" '{
-            model: "openrouter/free",
+            model: "inclusionai/ling-3.0-flash:free",
             messages: [{
               role: "user",
               content: ("Review this git diff for architecture concerns, runtime edge cases, and performance issues. Be concise — a short paragraph or a few bullets, not an essay.\n\nDiff:\n" + $diff)
@@ -85,7 +85,7 @@ jobs:
             -d "$PAYLOAD")
           echo "$RESP" | jq -r '.choices[0].message.content // "(no response from model)"' > /tmp/review.md
           {
-            echo "**Deep review** (openrouter/free, automated)"
+            echo "**Deep review** (inclusionai/ling-3.0-flash:free, automated)"
             echo ""
             cat /tmp/review.md
           } > /tmp/comment.md
@@ -106,7 +106,7 @@ jobs:
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
           PAYLOAD=$(jq -n --arg title "$ISSUE_TITLE" --arg body "$ISSUE_BODY" '{
-            model: "openrouter/free",
+            model: "openai/gpt-oss-20b:free",
             messages: [{
               role: "user",
               content: ("Triage this new issue. If it is missing clear reproduction steps or key details, ask for exactly what is missing in 1-2 sentences. Otherwise give a one-line initial assessment.\n\nTitle: " + $title + "\n\nBody:\n" + $body)
@@ -118,7 +118,7 @@ jobs:
             -d "$PAYLOAD")
           echo "$RESP" | jq -r '.choices[0].message.content // "(no response from model)"' > /tmp/triage.md
           {
-            echo "**Auto-triage** (openrouter/free, automated)"
+            echo "**Auto-triage** (openai/gpt-oss-20b:free, automated)"
             echo ""
             cat /tmp/triage.md
           } > /tmp/comment.md
