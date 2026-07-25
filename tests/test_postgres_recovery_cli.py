@@ -118,26 +118,12 @@ def test_restore_script_supports_container_archive_streaming():
     assert "dropdb" in source
 
 
-def test_record_restore_cli_accepts_explicit_container_migration_skip(tmp_path):
-    result = _run(
-        "record-restore",
-        "--skip-migration",
-        "--evidence",
-        str(tmp_path / "evidence.json"),
-        "--backup-set",
-        str(tmp_path / "backup"),
-        "--root",
-        str(tmp_path / "root"),
-        "--live-data",
-        str(tmp_path / "live"),
-        "--argus-database",
-        "argus_restore_cli_migration",
-        "--atlas-database",
-        "atlas_restore_cli_migration",
-    )
+def test_record_restore_cli_documents_container_migration_skip():
+    result = _run("record-restore", "--help")
 
-    assert result.returncode == 2
-    assert "unrecognized arguments: --skip-migration" not in result.stderr
+    assert result.returncode == 0
+    assert "--skip-migration" in result.stdout
+    assert "container" in result.stdout.lower()
 
 
 def test_import_rejects_credentialed_url_without_echoing_secret():

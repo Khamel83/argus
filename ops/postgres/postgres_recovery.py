@@ -76,7 +76,9 @@ def _parser() -> argparse.ArgumentParser:
     restore.add_argument(
         "--skip-migration",
         action="store_true",
-        help="skip Alembic when the restored dump is already verified at head",
+        help=(
+            "for a containerized restore already verified at head, skip Alembic"
+        ),
     )
 
     verify = commands.add_parser("verify-argus-db")

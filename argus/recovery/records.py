@@ -590,6 +590,9 @@ def _assert_path_matches_path(
     *,
     label: str,
 ) -> None:
+    # Live PGDATA deliberately uses this path-based boundary check because
+    # retention never reads it. Snapshot and marker files remain descriptor-
+    # bound so their contents cannot be redirected between validation steps.
     try:
         current = os.stat(path, follow_symlinks=False)
     except OSError as error:
