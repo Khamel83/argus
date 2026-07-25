@@ -341,7 +341,6 @@ def plan_snapshot_retention(
     if not root_path.is_absolute() or not live_path.is_absolute():
         raise ValueError("backup root and live data directory must be absolute")
     root_fd = _open_directory_no_follow(root_path, label="backup root")
-    live_fd = -1
     root_marker_fd = -1
     root_marker_signature = ""
     held_snapshots: dict[
@@ -356,11 +355,13 @@ def plan_snapshot_retention(
                 "backup root must be operator-owned and not group/world writable"
             )
         resolved = root_path.resolve(strict=True)
-        live_fd = _open_directory_no_follow(live_path, label="live data directory")
-        live_metadata = os.fstat(live_fd)
-        _assert_path_matches_descriptor(
+        # The live directory is a boundary check only; retention never reads
+        # its contents.  stat(..., follow_symlinks=False) lets an operator
+        # validate a root-owned/container-owned PGDATA path without requiring
+        # read permission or changing its ownership.  Snapshot and marker
+        # files still use descriptor-bound O_NOATIME reads below.
+        live_metadata = _stat_real_directory_no_follow(
             live_path,
-            live_metadata,
             label="live data directory",
         )
         resolved_live = live_path.resolve(strict=True)
@@ -395,7 +396,7 @@ def plan_snapshot_retention(
             )
         root_id = root_payload["root_id"]
         _assert_path_matches_descriptor(root_path, root_metadata, label="backup root")
-        _assert_path_matches_descriptor(
+        _assert_path_matches_path(
             live_path,
             live_metadata,
             label="live data directory",
@@ -469,7 +470,7 @@ def plan_snapshot_retention(
         if sorted(os.listdir(root_fd)) != root_names:
             raise ValueError("backup root changed during retention planning")
         _assert_path_matches_descriptor(root_path, root_metadata, label="backup root")
-        _assert_path_matches_descriptor(
+        _assert_path_matches_path(
             live_path,
             live_metadata,
             label="live data directory",
@@ -480,8 +481,6 @@ def plan_snapshot_retention(
         if root_marker_fd >= 0:
             fcntl.flock(root_marker_fd, fcntl.LOCK_UN)
             os.close(root_marker_fd)
-        if live_fd >= 0:
-            os.close(live_fd)
         os.close(root_fd)
     observed = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     return {
@@ -517,6 +516,20 @@ def _open_directory_no_follow(path: Path, *, label: str) -> int:
         return os.open(path, _directory_read_flags())
     except OSError as error:
         raise ValueError(f"{label} must be an existing real directory") from error
+
+
+def _stat_real_directory_no_follow(
+    path: Path,
+    *,
+    label: str,
+) -> os.stat_result:
+    try:
+        metadata = os.stat(path, follow_symlinks=False)
+    except OSError as error:
+        raise ValueError(f"{label} must be an existing real directory") from error
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise ValueError(f"{label} must be an existing real directory")
+    return metadata
 
 
 def _noatime_flag() -> int:
@@ -563,6 +576,15 @@ def _open_regular_noatime_at(
 
 
 def _assert_path_matches_descriptor(
+    path: Path,
+    metadata: os.stat_result,
+    *,
+    label: str,
+) -> None:
+    _assert_path_matches_path(path, metadata, label=label)
+
+
+def _assert_path_matches_path(
     path: Path,
     metadata: os.stat_result,
     *,

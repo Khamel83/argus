@@ -499,6 +499,24 @@ def test_retention_plan_is_deterministic_and_byte_for_byte_read_only(
     assert _filesystem_state(root) == before
 
 
+def test_planner_only_needs_metadata_access_to_live_data(tmp_path, monkeypatch):
+    import argus.recovery.records as records
+
+    from argus.recovery.records import plan_snapshot_retention
+
+    root, live, _ = _owned_root(tmp_path)
+    monkeypatch.setattr(records.os, "O_NOATIME", 0, raising=False)
+    monkeypatch.setattr(records, "_regular_descriptor_signature", lambda *args, **kwargs: "marker")
+    live.chmod(0)
+    try:
+        report = plan_snapshot_retention(root, live_data=live, now=NOW)
+    finally:
+        live.chmod(0o700)
+
+    assert report["owned_snapshot_count"] == 0
+    assert report["mutation_performed"] is False
+
+
 def test_retention_api_rejects_apply_without_touching_filesystem(tmp_path):
     import pytest
 

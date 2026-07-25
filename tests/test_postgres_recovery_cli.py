@@ -6,6 +6,8 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).parents[1] / "ops/postgres/postgres_recovery.py"
+BACKUP_SCRIPT = Path(__file__).parents[1] / "ops/postgres/backup_shared_postgres.sh"
+RESTORE_SCRIPT = Path(__file__).parents[1] / "ops/postgres/verify_restore.sh"
 
 
 def _run(*args, env=None):
@@ -97,6 +99,45 @@ def test_retention_cli_has_no_apply_or_prune_mode(tmp_path):
     assert "unrecognized arguments: --apply" in forbidden_apply.stderr
     assert removed_prune.returncode != 0
     assert "invalid choice" in removed_prune.stderr
+
+
+def test_shared_backup_script_supports_container_archive_streaming():
+    source = BACKUP_SCRIPT.read_text(encoding="utf-8")
+
+    assert "ARGUS_PG_CONTAINER" in source
+    assert "docker exec -i" in source
+    assert "pg_restore --list < \"$1\"" in source
+
+
+def test_restore_script_supports_container_archive_streaming():
+    source = RESTORE_SCRIPT.read_text(encoding="utf-8")
+
+    assert "ARGUS_PG_CONTAINER" in source
+    assert "docker exec -i" in source
+    assert "createdb" in source
+    assert "dropdb" in source
+
+
+def test_record_restore_cli_accepts_explicit_container_migration_skip(tmp_path):
+    result = _run(
+        "record-restore",
+        "--skip-migration",
+        "--evidence",
+        str(tmp_path / "evidence.json"),
+        "--backup-set",
+        str(tmp_path / "backup"),
+        "--root",
+        str(tmp_path / "root"),
+        "--live-data",
+        str(tmp_path / "live"),
+        "--argus-database",
+        "argus_restore_cli_migration",
+        "--atlas-database",
+        "atlas_restore_cli_migration",
+    )
+
+    assert result.returncode == 2
+    assert "unrecognized arguments: --skip-migration" not in result.stderr
 
 
 def test_import_rejects_credentialed_url_without_echoing_secret():
