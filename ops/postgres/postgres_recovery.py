@@ -73,6 +73,13 @@ def _parser() -> argparse.ArgumentParser:
     restore.add_argument("--live-data", type=Path, required=True)
     restore.add_argument("--argus-database", required=True)
     restore.add_argument("--atlas-database", required=True)
+    restore.add_argument(
+        "--skip-migration",
+        action="store_true",
+        help=(
+            "for a containerized restore already verified at head, skip Alembic"
+        ),
+    )
 
     verify = commands.add_parser("verify-argus-db")
     verify.add_argument("--database", required=True)
@@ -139,6 +146,7 @@ def run(arguments: list[str] | None = None) -> int:
             live_data=args.live_data,
             argus_database=args.argus_database,
             atlas_database=args.atlas_database,
+            migrate_argus=(lambda _database: None) if args.skip_migration else None,
         )
         result = {"recorded": True}
     elif args.command == "verify-argus-db":

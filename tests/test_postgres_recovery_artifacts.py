@@ -235,7 +235,9 @@ def test_backup_and_restore_scripts_never_accept_embedded_credentials():
     assert "--exit-on-error" in restore
     assert "dropdb" in restore
     assert "PGPASSWORD" not in restore
-    assert restore.index("trap cleanup EXIT") < restore.index("createdb --")
+    assert restore.index("trap cleanup EXIT") < restore.index(
+        'create_database "$SCRATCH_DATABASE"'
+    )
 
 
 def test_import_wrapper_requires_postgres_and_explicit_verified_backup_gate():

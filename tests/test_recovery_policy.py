@@ -8,11 +8,11 @@ import pytest
 NOW = datetime(2026, 7, 23, 8, 0, tzinfo=timezone.utc)
 
 
-def _valid_evidence() -> dict:
+def _valid_evidence(now: datetime = NOW) -> dict:
     return {
         "schema_version": 1,
         "backup": {
-            "completed_at": (NOW - timedelta(hours=2)).isoformat(),
+            "completed_at": (now - timedelta(hours=2)).isoformat(),
             "databases": ["atlas", "argus"],
             "globals": True,
             "manifest_sha256": "a" * 64,
@@ -21,7 +21,7 @@ def _valid_evidence() -> dict:
             "unsafe_internal_path": "/srv/private/backups",
         },
         "restore": {
-            "verified_at": (NOW - timedelta(days=3)).isoformat(),
+            "verified_at": (now - timedelta(days=3)).isoformat(),
             "databases": ["atlas", "argus"],
             "globals_validated": True,
             "schema_head": "0006_maya_outbox",
@@ -164,7 +164,10 @@ def test_lifecycle_recovery_reader_preserves_normal_evidence(tmp_path, monkeypat
     from argus.recovery.evidence import lifecycle_recovery_status_from_environment
 
     path = tmp_path / "recovery.json"
-    path.write_text(json.dumps(_valid_evidence()), encoding="utf-8")
+    path.write_text(
+        json.dumps(_valid_evidence(now=datetime.now(timezone.utc))),
+        encoding="utf-8",
+    )
     monkeypatch.setenv("ARGUS_RECOVERY_EVIDENCE_PATH", str(path))
 
     status = lifecycle_recovery_status_from_environment(
@@ -262,7 +265,10 @@ async def test_authenticated_health_detail_includes_sanitized_recovery_evidence(
     from argus.api.routes_health import health_detail
 
     path = tmp_path / "recovery.json"
-    path.write_text(json.dumps(_valid_evidence()), encoding="utf-8")
+    path.write_text(
+        json.dumps(_valid_evidence(now=datetime.now(timezone.utc))),
+        encoding="utf-8",
+    )
     monkeypatch.setenv("ARGUS_RECOVERY_EVIDENCE_PATH", str(path))
     broker = MagicMock()
     broker.get_provider_status.return_value = {"effective_status": "enabled"}
