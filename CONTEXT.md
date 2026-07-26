@@ -7,6 +7,47 @@
 
 ## Glossary
 
+### Competitive enough
+
+An Argus profile is **competitive enough** when it improves the evidence package
+over a frozen Argus baseline on the agreed golden corpus. It does not mean
+parity with a named external search engine or reward speed for its own sake.
+
+### Evaluation profile
+
+A scorecard verdict applies to one Argus release and operating profile, not to
+Argus globally. The canonical profiles are **free** and **budgeted**.
+
+### Free profile
+
+An explicit `--free` or `free_only=true` operation that may use free recurring
+quota and eligible cached evidence but initiates no billable provider call.
+
+### Scorecard verdict
+
+The separate **stable** and **competitive** conclusions for an evaluation
+profile. The exact gates, thresholds, and evidence rules live in
+[the stability and competitive evidence scorecard](docs/scorecards/stability-competitive.md).
+
+### Golden corpus
+
+A versioned set of query intents and extraction cases used to compare an Argus
+candidate with its baseline. Live cases judge intent satisfaction; exact
+outputs belong to hermetic contract fixtures.
+
+### Evidence package
+
+The **evidence package** is the normalized results, extracted content,
+provenance, provider traces, freshness signals, and failure evidence that Argus
+returns for downstream use. Argus is scored on this package, not on prose
+synthesized by the calling model or agent.
+
+### Benchmark generation
+
+A set of scorecard runs that share one frozen corpus, evaluator, profile,
+topology class, and other comparison identities. Changing a frozen identity
+starts a new generation rather than extending an incomparable score series.
+
 ### RRF Score Attribution
 
 Per-result attribution that decomposes a fused Reciprocal Rank Fusion score into
