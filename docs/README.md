@@ -18,6 +18,7 @@ Top-level entry points live at the repo root:
 - [troubleshooting.md](troubleshooting.md) — common installation, MCP, search, and extraction issues
 - [operations-status.md](operations-status.md) — liveness, startup, readiness, authenticated status, and bounded telemetry semantics
 - [dashboard-design.md](dashboard-design.md) — dashboard UI design system reference
+- [scorecards/stability-competitive.md](scorecards/stability-competitive.md) — hard stability gates and automated competitive-evidence verdicts
 - [PUBLICITY-CHECKLIST.md](PUBLICITY-CHECKLIST.md) — project-internal launch / publicity checklist
 - [roadmaps/](roadmaps/) — long-range roadmap documents
 - [research/](research/) — research notes used while building features
