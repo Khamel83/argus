@@ -22,7 +22,11 @@ from argus.models import (
     SearchQuery,
 )
 from argus.providers.base import BaseProvider, ProbeCapability
-from argus.broker.provider_evidence import ProviderSearchBatch
+from argus.broker.provider_evidence import (
+    FailureCategory,
+    ProviderFailure,
+    ProviderSearchBatch,
+)
 
 logger = get_logger("providers.duckduckgo")
 
@@ -118,6 +122,31 @@ class DuckDuckGoProvider(BaseProvider):
             if len(stdout) > 1_048_576:
                 raise ValueError("worker response exceeded IPC bound")
             payload = json.loads(stdout.decode("utf-8"))
+            worker_error = payload.get("error") if isinstance(payload, dict) else None
+            if worker_error == "rate_limited":
+                retry_after = payload.get("retry_after_seconds")
+                failure = ProviderFailure(
+                    FailureCategory.RATE_LIMITED,
+                    self.name,
+                    retry_after_seconds=(
+                        retry_after
+                        if isinstance(retry_after, (int, float))
+                        and not isinstance(retry_after, bool)
+                        else None
+                    ),
+                    summary="duckduckgo library rate limit",
+                )
+                return self._failure_batch(
+                    failure,
+                    started_at=start,
+                    request_evidence=request_evidence,
+                )
+            if worker_error == "timeout":
+                return self._failure_batch(
+                    TimeoutError("duckduckgo library timeout"),
+                    started_at=start,
+                    request_evidence=request_evidence,
+                )
             if process.returncode != 0 or not isinstance(payload, dict):
                 raise RuntimeError("worker failed")
             if payload.get("error") is not None:
@@ -141,6 +170,8 @@ class DuckDuckGoProvider(BaseProvider):
                 await _cancellation_safe_reap(process)
             raise
         except Exception as error:
+            if process is not None:
+                await _cancellation_safe_reap(process)
             logger.warning("DuckDuckGo worker failed: %s", type(error).__name__)
             return self._failure_batch(
                 error, started_at=start, request_evidence=request_evidence

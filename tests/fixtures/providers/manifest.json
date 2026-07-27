@@ -24,41 +24,68 @@
       },
       "failures": {
         "401": {
-          "reason": "The cited searxng required-evidence cell does not document the 401 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-401.json",
+          "source": "https://docs.searxng.org/dev/search_api.html#parameters",
+          "shape_source": "https://docs.searxng.org/dev/search_api.html#parameters"
         },
         "402": {
-          "reason": "The cited searxng required-evidence cell does not document the 402 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-402.json",
+          "source": "https://docs.searxng.org/dev/search_api.html#parameters",
+          "shape_source": "https://docs.searxng.org/dev/search_api.html#parameters"
         },
         "403": {
           "fixture": "error-403.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://docs.searxng.org/dev/search_api.html"
+          "source": "https://docs.searxng.org/dev/search_api.html#parameters",
+          "shape_source": "https://docs.searxng.org/dev/search_api.html#parameters"
         },
         "422": {
-          "reason": "The cited searxng required-evidence cell does not document the 422 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-422.json",
+          "source": "https://docs.searxng.org/dev/search_api.html#parameters",
+          "shape_source": "https://docs.searxng.org/dev/search_api.html#parameters"
         },
         "429": {
-          "reason": "The cited searxng required-evidence cell does not document the 429 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-429.json",
+          "source": "https://docs.searxng.org/dev/search_api.html#parameters",
+          "shape_source": "https://docs.searxng.org/dev/search_api.html#parameters"
         },
         "408_504": {
           "fixture": "error-408_504.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://docs.searxng.org/dev/search_api.html"
+          "source": "https://docs.searxng.org/dev/search_api.html#parameters",
+          "shape_source": "https://docs.searxng.org/dev/search_api.html#parameters"
         },
         "5xx": {
           "fixture": "error-5xx.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://docs.searxng.org/dev/search_api.html"
+          "source": "https://docs.searxng.org/dev/search_api.html#parameters",
+          "shape_source": "https://docs.searxng.org/dev/search_api.html#parameters"
         }
       },
       "signals": {
         "typed": [
           "warnings"
         ]
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
       }
     },
     "duckduckgo": {
@@ -72,37 +99,70 @@
       },
       "failures": {
         "401": {
-          "reason": "The cited duckduckgo required-evidence cell does not document the 401 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "reason": "DDGS is not an HTTP provider; its public exception contract raises only typed library failures and cannot emit an HTTP 401 status field.",
+          "source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
         },
         "402": {
-          "reason": "The cited duckduckgo required-evidence cell does not document the 402 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "reason": "DDGS is not an HTTP provider; its public exception contract raises only typed library failures and cannot emit an HTTP 402 status field.",
+          "source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
         },
         "403": {
-          "reason": "The cited duckduckgo required-evidence cell does not document the 403 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "reason": "DDGS is not an HTTP provider; its public exception contract raises only typed library failures and cannot emit an HTTP 403 status field.",
+          "source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
         },
         "422": {
-          "reason": "The cited duckduckgo required-evidence cell does not document the 422 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "reason": "DDGS is not an HTTP provider; its public exception contract raises only typed library failures and cannot emit an HTTP 422 status field.",
+          "source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
         },
         "429": {
-          "reason": "The cited duckduckgo required-evidence cell does not document the 429 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "reason": "DDGS is not an HTTP provider; its public exception contract raises only typed library failures and cannot emit an HTTP 429 status field.",
+          "source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
         },
         "408_504": {
-          "reason": "The cited duckduckgo required-evidence cell does not document the 408_504 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "reason": "DDGS is not an HTTP provider; its public exception contract raises only typed library failures and cannot emit an HTTP 408_504 status field.",
+          "source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
         },
         "5xx": {
-          "reason": "The cited duckduckgo required-evidence cell does not document the 5xx status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "reason": "DDGS is not an HTTP provider; its public exception contract raises only typed library failures and cannot emit an HTTP 5xx status field.",
+          "source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
         }
       },
       "signals": {
-        "reason": "The provider health matrix records no allowlisted duckduckgo usage or rate signal in the checked-in response contract.",
-        "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+        "reason": "The public DDGS result and exception contracts do not expose successful-response usage or rate metadata.",
+        "source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
+      },
+      "native_boundary": {
+        "success": "native-success.json",
+        "empty": "native-empty.json",
+        "unexpected": "native-unexpected.json",
+        "library_failure": "native-library-failure.json"
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "library_exception",
+          "payload": {
+            "error": "rate_limited",
+            "retry_after_seconds": 60
+          },
+          "returncode": 1,
+          "source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "library_exception",
+          "payload": {
+            "error": "rate_limited"
+          },
+          "returncode": 1,
+          "source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
+        },
+        "transport_timeout": {
+          "kind": "library_exception",
+          "payload": {
+            "error": "timeout"
+          },
+          "returncode": 1,
+          "source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
+        }
       }
     },
     "yahoo": {
@@ -111,7 +171,7 @@
         "success": "success.json",
         "empty": {
           "reason": "Yahoo HTML has no authoritative valid-empty contract; a successful page with no parsed results is a parse failure.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "source": "argus/providers/yahoo.py#YahooProvider.search"
         },
         "malformed": "malformed.json",
         "usage_rate": "usage_rate.json",
@@ -119,40 +179,67 @@
       },
       "failures": {
         "401": {
-          "reason": "The cited yahoo required-evidence cell does not document the 401 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-401.json",
+          "source": "argus/providers/yahoo.py#YahooProvider.search",
+          "shape_source": "argus/providers/yahoo.py#YahooProvider.search"
         },
         "402": {
-          "reason": "The cited yahoo required-evidence cell does not document the 402 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-402.json",
+          "source": "argus/providers/yahoo.py#YahooProvider.search",
+          "shape_source": "argus/providers/yahoo.py#YahooProvider.search"
         },
         "403": {
           "fixture": "error-403.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "docs/research/2026-07-26-provider-extraction-contract-drift.md#3-yahoo"
+          "source": "argus/providers/yahoo.py#YahooProvider.search",
+          "shape_source": "argus/providers/yahoo.py#YahooProvider.search"
         },
         "422": {
-          "reason": "The cited yahoo required-evidence cell does not document the 422 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-422.json",
+          "source": "argus/providers/yahoo.py#YahooProvider.search",
+          "shape_source": "argus/providers/yahoo.py#YahooProvider.search"
         },
         "429": {
-          "reason": "The cited yahoo required-evidence cell does not document the 429 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-429.json",
+          "source": "argus/providers/yahoo.py#YahooProvider.search",
+          "shape_source": "argus/providers/yahoo.py#YahooProvider.search"
         },
         "408_504": {
           "fixture": "error-408_504.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "docs/research/2026-07-26-provider-extraction-contract-drift.md#3-yahoo"
+          "source": "argus/providers/yahoo.py#YahooProvider.search",
+          "shape_source": "argus/providers/yahoo.py#YahooProvider.search"
         },
         "5xx": {
           "fixture": "error-5xx.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "docs/research/2026-07-26-provider-extraction-contract-drift.md#3-yahoo"
+          "source": "argus/providers/yahoo.py#YahooProvider.search",
+          "shape_source": "argus/providers/yahoo.py#YahooProvider.search"
         }
       },
       "signals": {
-        "reason": "The provider health matrix records no allowlisted yahoo usage or rate signal in the checked-in response contract.",
-        "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+        "reason": "The checked-in Yahoo HTML adapter contract parses result markup only and cannot emit successful-response usage or rate metadata.",
+        "source": "argus/providers/yahoo.py#YahooProvider.search"
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
       }
     },
     "github": {
@@ -167,34 +254,38 @@
       "failures": {
         "401": {
           "fixture": "error-401.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors",
           "shape_source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"
         },
         "402": {
-          "reason": "The cited github required-evidence cell does not document the 402 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-402.json",
+          "source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors",
+          "shape_source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"
         },
         "403": {
           "fixture": "error-403.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors",
           "shape_source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"
         },
         "422": {
-          "reason": "The cited github required-evidence cell does not document the 422 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-422.json",
+          "source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors",
+          "shape_source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"
         },
         "429": {
           "fixture": "error-429.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors",
           "shape_source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"
         },
         "408_504": {
-          "reason": "The cited github required-evidence cell does not document the 408_504 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-408_504.json",
+          "source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors",
+          "shape_source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"
         },
         "5xx": {
-          "reason": "The cited github required-evidence cell does not document the 5xx status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-5xx.json",
+          "source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors",
+          "shape_source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"
         }
       },
       "signals": {
@@ -203,6 +294,29 @@
           "rate_limit.remaining",
           "rate_limit.reset_at"
         ]
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
       }
     },
     "wolfram": {
@@ -217,38 +331,67 @@
       "failures": {
         "401": {
           "fixture": "error-401.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://products.wolframalpha.com/llm-api/documentation"
+          "source": "https://products.wolframalpha.com/llm-api/documentation#errors",
+          "shape_source": "https://products.wolframalpha.com/llm-api/documentation#errors"
         },
         "402": {
-          "reason": "The cited wolfram required-evidence cell does not document the 402 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-402.json",
+          "source": "https://products.wolframalpha.com/llm-api/documentation#errors",
+          "shape_source": "https://products.wolframalpha.com/llm-api/documentation#errors"
         },
         "403": {
-          "reason": "The cited wolfram required-evidence cell does not document the 403 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-403.json",
+          "source": "https://products.wolframalpha.com/llm-api/documentation#errors",
+          "shape_source": "https://products.wolframalpha.com/llm-api/documentation#errors"
         },
         "422": {
-          "reason": "The cited wolfram required-evidence cell does not document the 422 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-422.json",
+          "source": "https://products.wolframalpha.com/llm-api/documentation#errors",
+          "shape_source": "https://products.wolframalpha.com/llm-api/documentation#errors"
         },
         "429": {
-          "reason": "The cited wolfram required-evidence cell does not document the 429 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-429.json",
+          "source": "https://products.wolframalpha.com/llm-api/documentation#errors",
+          "shape_source": "https://products.wolframalpha.com/llm-api/documentation#errors"
         },
         "408_504": {
-          "reason": "The cited wolfram required-evidence cell does not document the 408_504 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-408_504.json",
+          "source": "https://products.wolframalpha.com/llm-api/documentation#errors",
+          "shape_source": "https://products.wolframalpha.com/llm-api/documentation#errors"
         },
         "5xx": {
-          "reason": "The cited wolfram required-evidence cell does not document the 5xx status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-5xx.json",
+          "source": "https://products.wolframalpha.com/llm-api/documentation#errors",
+          "shape_source": "https://products.wolframalpha.com/llm-api/documentation#errors"
         }
       },
       "signals": {
         "typed": [
           "suggestions"
         ]
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
       }
     },
     "brave": {
@@ -263,36 +406,38 @@
       "failures": {
         "401": {
           "fixture": "error-401.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://api-dashboard.search.brave.com/documentation/guides/rate-limiting"
+          "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses",
+          "shape_source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"
         },
         "402": {
-          "reason": "The cited brave required-evidence cell does not document the 402 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-402.json",
+          "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses",
+          "shape_source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"
         },
         "403": {
           "fixture": "error-403.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://api-dashboard.search.brave.com/documentation/guides/rate-limiting"
+          "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses",
+          "shape_source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"
         },
         "422": {
           "fixture": "error-422.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://api-dashboard.search.brave.com/documentation/guides/rate-limiting"
+          "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses",
+          "shape_source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"
         },
         "429": {
           "fixture": "error-429.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://api-dashboard.search.brave.com/documentation/guides/rate-limiting"
+          "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses",
+          "shape_source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"
         },
         "408_504": {
-          "reason": "The cited brave required-evidence cell does not document the 408_504 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-408_504.json",
+          "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses",
+          "shape_source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"
         },
         "5xx": {
           "fixture": "error-5xx.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://api-dashboard.search.brave.com/documentation/guides/rate-limiting"
+          "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses",
+          "shape_source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"
         }
       },
       "signals": {
@@ -300,6 +445,29 @@
           "rate_limit.remaining",
           "rate_limit.reset_at"
         ]
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
       }
     },
     "tavily": {
@@ -314,35 +482,38 @@
       "failures": {
         "401": {
           "fixture": "error-401.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://docs.tavily.com/documentation/api-reference/introduction"
+          "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes",
+          "shape_source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"
         },
         "402": {
-          "reason": "The cited tavily required-evidence cell does not document the 402 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-402.json",
+          "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes",
+          "shape_source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"
         },
         "403": {
-          "reason": "The cited tavily required-evidence cell does not document the 403 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-403.json",
+          "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes",
+          "shape_source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"
         },
         "422": {
           "fixture": "error-422.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://docs.tavily.com/documentation/api-reference/introduction"
+          "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes",
+          "shape_source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"
         },
         "429": {
           "fixture": "error-429.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://docs.tavily.com/documentation/api-reference/introduction"
+          "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes",
+          "shape_source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"
         },
         "408_504": {
-          "reason": "The cited tavily required-evidence cell does not document the 408_504 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-408_504.json",
+          "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes",
+          "shape_source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"
         },
         "5xx": {
           "fixture": "error-5xx.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://docs.tavily.com/documentation/api-reference/introduction"
+          "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes",
+          "shape_source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"
         }
       },
       "signals": {
@@ -350,6 +521,29 @@
           "request_id",
           "usage.count"
         ]
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
       }
     },
     "exa": {
@@ -364,37 +558,38 @@
       "failures": {
         "401": {
           "fixture": "error-401.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://exa.ai/docs/reference/error-codes"
+          "source": "https://exa.ai/docs/reference/error-codes#error-response-structure",
+          "shape_source": "https://exa.ai/docs/reference/error-codes#error-response-structure"
         },
         "402": {
           "fixture": "error-402.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://exa.ai/docs/reference/error-codes"
+          "source": "https://exa.ai/docs/reference/error-codes#error-response-structure",
+          "shape_source": "https://exa.ai/docs/reference/error-codes#error-response-structure"
         },
         "403": {
           "fixture": "error-403.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://exa.ai/docs/reference/error-codes"
+          "source": "https://exa.ai/docs/reference/error-codes#error-response-structure",
+          "shape_source": "https://exa.ai/docs/reference/error-codes#error-response-structure"
         },
         "422": {
           "fixture": "error-422.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://exa.ai/docs/reference/error-codes"
+          "source": "https://exa.ai/docs/reference/error-codes#error-response-structure",
+          "shape_source": "https://exa.ai/docs/reference/error-codes#error-response-structure"
         },
         "429": {
           "fixture": "error-429.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://exa.ai/docs/reference/error-codes"
+          "source": "https://exa.ai/docs/reference/error-codes#error-response-structure",
+          "shape_source": "https://exa.ai/docs/reference/error-codes#error-response-structure"
         },
         "408_504": {
           "fixture": "error-408_504.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://exa.ai/docs/reference/error-codes"
+          "source": "https://exa.ai/docs/reference/error-codes#error-response-structure",
+          "shape_source": "https://exa.ai/docs/reference/error-codes#error-response-structure"
         },
         "5xx": {
-          "reason": "The cited exa required-evidence cell does not document the 5xx status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-5xx.json",
+          "source": "https://exa.ai/docs/reference/error-codes#error-response-structure",
+          "shape_source": "https://exa.ai/docs/reference/error-codes#error-response-structure"
         }
       },
       "signals": {
@@ -402,6 +597,29 @@
           "request_id",
           "usage.cost_usd"
         ]
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
       }
     },
     "linkup": {
@@ -416,39 +634,66 @@
       "failures": {
         "401": {
           "fixture": "error-401.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference"
+          "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses",
+          "shape_source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"
         },
         "402": {
-          "reason": "The cited linkup required-evidence cell does not document the 402 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-402.json",
+          "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses",
+          "shape_source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"
         },
         "403": {
-          "reason": "The cited linkup required-evidence cell does not document the 403 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-403.json",
+          "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses",
+          "shape_source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"
         },
         "422": {
           "fixture": "error-422.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference"
+          "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses",
+          "shape_source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"
         },
         "429": {
           "fixture": "error-429.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference"
+          "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses",
+          "shape_source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"
         },
         "408_504": {
-          "reason": "The cited linkup required-evidence cell does not document the 408_504 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-408_504.json",
+          "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses",
+          "shape_source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"
         },
         "5xx": {
-          "reason": "The cited linkup required-evidence cell does not document the 5xx status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-5xx.json",
+          "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses",
+          "shape_source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"
         }
       },
       "signals": {
-        "reason": "The provider health matrix records no allowlisted linkup usage or rate signal in the checked-in response contract.",
-        "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+        "reason": "The primary Linkup search response schema does not expose successful-response usage or rate metadata.",
+        "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
       }
     },
     "parallel": {
@@ -463,37 +708,38 @@
       "failures": {
         "401": {
           "fixture": "error-401.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors"
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"
         },
         "402": {
           "fixture": "error-402.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors"
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"
         },
         "403": {
-          "reason": "The cited parallel required-evidence cell does not document the 403 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-403.json",
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"
         },
         "422": {
           "fixture": "error-422.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors"
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"
         },
         "429": {
           "fixture": "error-429.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors"
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"
         },
         "408_504": {
           "fixture": "error-408_504.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors"
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"
         },
         "5xx": {
           "fixture": "error-5xx.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors"
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"
         }
       },
       "signals": {
@@ -501,6 +747,29 @@
           "request_id",
           "usage.count"
         ]
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
       }
     },
     "serper": {
@@ -515,40 +784,66 @@
       "failures": {
         "401": {
           "fixture": "error-401.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://serper.dev/"
+          "source": "https://serper.dev/#api",
+          "shape_source": "https://serper.dev/#api"
         },
         "402": {
           "fixture": "error-402.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://serper.dev/"
+          "source": "https://serper.dev/#api",
+          "shape_source": "https://serper.dev/#api"
         },
         "403": {
-          "reason": "The cited serper required-evidence cell does not document the 403 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-403.json",
+          "source": "https://serper.dev/#api",
+          "shape_source": "https://serper.dev/#api"
         },
         "422": {
-          "reason": "The cited serper required-evidence cell does not document the 422 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-422.json",
+          "source": "https://serper.dev/#api",
+          "shape_source": "https://serper.dev/#api"
         },
         "429": {
           "fixture": "error-429.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://serper.dev/"
+          "source": "https://serper.dev/#api",
+          "shape_source": "https://serper.dev/#api"
         },
         "408_504": {
-          "reason": "The cited serper required-evidence cell does not document the 408_504 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-408_504.json",
+          "source": "https://serper.dev/#api",
+          "shape_source": "https://serper.dev/#api"
         },
         "5xx": {
           "fixture": "error-5xx.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://serper.dev/"
+          "source": "https://serper.dev/#api",
+          "shape_source": "https://serper.dev/#api"
         }
       },
       "signals": {
-        "reason": "The provider health matrix records no allowlisted serper usage or rate signal in the checked-in response contract.",
-        "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+        "reason": "The public Serper API contract does not expose a verifiable successful-response usage or rate field.",
+        "source": "https://serper.dev/#api"
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
       }
     },
     "you": {
@@ -563,43 +858,67 @@
       "failures": {
         "401": {
           "fixture": "error-401.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://you.com/docs/error-handling/error-code-reference"
+          "source": "https://you.com/docs/error-handling/error-code-reference#in-depth",
+          "shape_source": "https://you.com/docs/error-handling/error-code-reference#in-depth"
         },
         "402": {
           "fixture": "error-402.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://you.com/docs/error-handling/error-code-reference"
+          "source": "https://you.com/docs/error-handling/error-code-reference#in-depth",
+          "shape_source": "https://you.com/docs/error-handling/error-code-reference#in-depth"
         },
         "403": {
           "fixture": "error-403.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://you.com/docs/error-handling/error-code-reference"
+          "source": "https://you.com/docs/error-handling/error-code-reference#in-depth",
+          "shape_source": "https://you.com/docs/error-handling/error-code-reference#in-depth"
         },
         "422": {
           "fixture": "error-422.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://you.com/docs/error-handling/error-code-reference"
+          "source": "https://you.com/docs/error-handling/error-code-reference#in-depth",
+          "shape_source": "https://you.com/docs/error-handling/error-code-reference#in-depth"
         },
         "429": {
           "fixture": "error-429.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://you.com/docs/error-handling/error-code-reference"
+          "source": "https://you.com/docs/error-handling/error-code-reference#in-depth",
+          "shape_source": "https://you.com/docs/error-handling/error-code-reference#in-depth"
         },
         "408_504": {
-          "reason": "The cited you required-evidence cell does not document the 408_504 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-408_504.json",
+          "source": "https://you.com/docs/error-handling/error-code-reference#in-depth",
+          "shape_source": "https://you.com/docs/error-handling/error-code-reference#in-depth"
         },
         "5xx": {
           "fixture": "error-5xx.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://you.com/docs/error-handling/error-code-reference"
+          "source": "https://you.com/docs/error-handling/error-code-reference#in-depth",
+          "shape_source": "https://you.com/docs/error-handling/error-code-reference#in-depth"
         }
       },
       "signals": {
         "typed": [
           "request_id"
         ]
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
       }
     },
     "valyu": {
@@ -614,33 +933,38 @@
       "failures": {
         "401": {
           "fixture": "error-401.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://docs.valyu.ai/sdk/python-sdk/search"
+          "source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling",
+          "shape_source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling"
         },
         "402": {
           "fixture": "error-402.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://docs.valyu.ai/sdk/python-sdk/search"
+          "source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling",
+          "shape_source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling"
         },
         "403": {
-          "reason": "The cited valyu required-evidence cell does not document the 403 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-403.json",
+          "source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling",
+          "shape_source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling"
         },
         "422": {
-          "reason": "The cited valyu required-evidence cell does not document the 422 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-422.json",
+          "source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling",
+          "shape_source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling"
         },
         "429": {
-          "reason": "The cited valyu required-evidence cell does not document the 429 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-429.json",
+          "source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling",
+          "shape_source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling"
         },
         "408_504": {
-          "reason": "The cited valyu required-evidence cell does not document the 408_504 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-408_504.json",
+          "source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling",
+          "shape_source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling"
         },
         "5xx": {
-          "reason": "The cited valyu required-evidence cell does not document the 5xx status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-5xx.json",
+          "source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling",
+          "shape_source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling"
         }
       },
       "signals": {
@@ -648,6 +972,29 @@
           "transaction_id",
           "usage.cost_usd"
         ]
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
       }
     },
     "searchapi": {
@@ -662,38 +1009,67 @@
       "failures": {
         "401": {
           "fixture": "error-401.json",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "shape_source": "https://www.searchapi.io/docs/google"
+          "source": "https://www.searchapi.io/docs/google#api-errors",
+          "shape_source": "https://www.searchapi.io/docs/google#api-errors"
         },
         "402": {
-          "reason": "The cited searchapi required-evidence cell does not document the 402 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-402.json",
+          "source": "https://www.searchapi.io/docs/google#api-errors",
+          "shape_source": "https://www.searchapi.io/docs/google#api-errors"
         },
         "403": {
-          "reason": "The cited searchapi required-evidence cell does not document the 403 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-403.json",
+          "source": "https://www.searchapi.io/docs/google#api-errors",
+          "shape_source": "https://www.searchapi.io/docs/google#api-errors"
         },
         "422": {
-          "reason": "The cited searchapi required-evidence cell does not document the 422 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-422.json",
+          "source": "https://www.searchapi.io/docs/google#api-errors",
+          "shape_source": "https://www.searchapi.io/docs/google#api-errors"
         },
         "429": {
-          "reason": "The cited searchapi required-evidence cell does not document the 429 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-429.json",
+          "source": "https://www.searchapi.io/docs/google#api-errors",
+          "shape_source": "https://www.searchapi.io/docs/google#api-errors"
         },
         "408_504": {
-          "reason": "The cited searchapi required-evidence cell does not document the 408_504 status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-408_504.json",
+          "source": "https://www.searchapi.io/docs/google#api-errors",
+          "shape_source": "https://www.searchapi.io/docs/google#api-errors"
         },
         "5xx": {
-          "reason": "The cited searchapi required-evidence cell does not document the 5xx status class; no native semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-5xx.json",
+          "source": "https://www.searchapi.io/docs/google#api-errors",
+          "shape_source": "https://www.searchapi.io/docs/google#api-errors"
         }
       },
       "signals": {
         "typed": [
           "request_id"
         ]
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
       }
     }
   }

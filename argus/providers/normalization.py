@@ -458,7 +458,10 @@ def _parse_failure(
 
 
 def classify_provider_failure_response(
-    provider: ProviderName, captured_response: object
+    provider: ProviderName,
+    captured_response: object,
+    *,
+    observed_at: datetime | None = None,
 ) -> ProviderFailure:
     """Classify a captured native response using only allowlisted fields."""
     capture = _mapping(captured_response)
@@ -470,21 +473,19 @@ def classify_provider_failure_response(
             summary="invalid captured provider failure",
         )
     observed_status = int(transport["status_code"])
+    observed = observed_at or datetime.now(timezone.utc)
     classification_status = observed_status
     headers = _mapping(transport.get("headers")) or {}
     body = _mapping(capture.get("body")) or {}
     error = body.get("error")
     error_map = _mapping(error) or {}
-    detail = _mapping(body.get("detail")) or {}
     query_result = _mapping(body.get("queryresult")) or {}
     nested_query_error = _mapping(query_result.get("error")) or {}
     code = (
         error_map.get("code")
         or error_map.get("type")
         or body.get("tag")
-        or detail.get("error")
         or nested_query_error.get("code")
-        or (error if isinstance(error, str) else None)
     )
     retry_after_raw = _header(headers, "retry-after")
     retry_after = _numeric_header(retry_after_raw)
@@ -518,7 +519,6 @@ def classify_provider_failure_response(
     ):
         if "credit" in message.lower():
             classification_status = 402
-            code = "not_enough_credits"
     if (
         provider is ProviderName.VALYU
         and observed_status < 400
@@ -527,16 +527,23 @@ def classify_provider_failure_response(
         and "credit" in error.lower()
     ):
         classification_status = 402
-        code = "insufficient_credits"
-    classified = classify_http_failure(
-        provider,
-        classification_status,
-        provider_code=code if isinstance(code, str) else None,
-        request_id=request_id,
-        retry_after_seconds=retry_after,
-        rate_limit_reset=reset_at,
-        summary=f"{provider.value} native response rejected the request",
-    )
+    classification_kwargs = {
+        "provider_code": code if isinstance(code, str) else None,
+        "request_id": request_id,
+        "retry_after_seconds": retry_after,
+        "rate_limit_reset": reset_at,
+        "observed_at": observed,
+        "summary": f"{provider.value} native response rejected the request",
+    }
+    try:
+        classified = classify_http_failure(
+            provider, classification_status, **classification_kwargs
+        )
+    except ValueError:
+        classification_kwargs["rate_limit_reset"] = None
+        classified = classify_http_failure(
+            provider, classification_status, **classification_kwargs
+        )
     if classification_status == observed_status:
         return classified
     return ProviderFailure(
@@ -548,6 +555,7 @@ def classify_provider_failure_response(
         retry_after_seconds=classified.retry_after_seconds,
         rate_limit_reset=classified.rate_limit_reset,
         summary=classified.summary,
+        observed_at=observed,
     )
 
 

@@ -1,0 +1,14 @@
+{
+  "transport": {
+    "status_code": 422,
+    "headers": {}
+  },
+  "body": {
+    "queryresult": {
+      "success": false,
+      "error": {
+        "msg": "Invalid request"
+      }
+    }
+  }
+}

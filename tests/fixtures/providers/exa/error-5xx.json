@@ -1,0 +1,10 @@
+{
+  "transport": {
+    "status_code": 503,
+    "headers": {}
+  },
+  "body": {
+    "error": "Provider unavailable",
+    "requestId": "exa-5xx-request"
+  }
+}

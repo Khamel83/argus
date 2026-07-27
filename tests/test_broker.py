@@ -247,6 +247,62 @@ async def test_executor_outer_deadline_terminates_and_reaps_ddg_child(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_ddg_communicate_error_terminates_and_reaps_real_child(monkeypatch):
+    import asyncio
+    import sys
+
+    from argus.config import ProviderConfig
+    from argus.providers.duckduckgo import DuckDuckGoProvider
+
+    native_create = asyncio.create_subprocess_exec
+    child = None
+
+    class BrokenCommunication:
+        def __init__(self, process):
+            self._process = process
+
+        @property
+        def returncode(self):
+            return self._process.returncode
+
+        async def communicate(self, _input):
+            raise OSError("fixture IPC failure")
+
+        def terminate(self):
+            self._process.terminate()
+
+        def kill(self):
+            self._process.kill()
+
+        async def wait(self):
+            return await self._process.wait()
+
+    async def spawn_broken_worker(*_args, **_kwargs):
+        nonlocal child
+        child = await native_create(
+            sys.executable,
+            "-c",
+            "import time; time.sleep(60)",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        return BrokenCommunication(child)
+
+    monkeypatch.setattr(
+        "argus.providers.duckduckgo.asyncio.create_subprocess_exec",
+        spawn_broken_worker,
+    )
+    provider = DuckDuckGoProvider(ProviderConfig(enabled=True))
+    provider._available = True
+    batch = await provider.search(SearchQuery(query="broken child IPC"))
+
+    assert batch.failure is not None
+    assert child is not None
+    assert child.returncode is not None
+
+
+@pytest.mark.asyncio
 async def test_executor_preserves_normalized_batch_and_projects_only_at_compatibility_boundary():
     from datetime import datetime, timezone
 

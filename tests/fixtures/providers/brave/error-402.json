@@ -1,0 +1,10 @@
+{
+  "transport": {
+    "status_code": 402,
+    "headers": {}
+  },
+  "body": {
+    "type": "ErrorResponse",
+    "error": {}
+  }
+}

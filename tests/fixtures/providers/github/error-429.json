@@ -6,7 +6,8 @@
     }
   },
   "body": {
-    "message": "fixture rejection",
+    "message": "API rate limit exceeded",
+    "documentation_url": "https://docs.github.com/rest/using-the-rest-api/troubleshooting-the-rest-api",
     "status": "429"
   }
 }

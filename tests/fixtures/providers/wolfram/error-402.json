@@ -1,0 +1,14 @@
+{
+  "transport": {
+    "status_code": 402,
+    "headers": {}
+  },
+  "body": {
+    "queryresult": {
+      "success": false,
+      "error": {
+        "msg": "Payment required"
+      }
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "transport": {
+    "status_code": 402,
+    "headers": {}
+  },
+  "body": {
+    "error": "Payment required"
+  }
+}

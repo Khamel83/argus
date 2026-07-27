@@ -11,7 +11,7 @@ import hashlib
 import math
 import re
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from typing import Awaitable, Mapping, Sequence, TypeVar
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -33,6 +33,7 @@ MAX_USAGE_COUNT = 1_000_000_000_000
 MAX_COST_USD = 1_000_000_000
 MAX_RATE_LIMIT_REMAINING = 1_000_000_000_000
 MAX_RETRY_AFTER_SECONDS = 31_536_000
+MAX_RATE_RESET_AHEAD_SECONDS = 366 * 24 * 60 * 60
 
 _SECRET_KEY = re.compile(
     r"(?:api[_-]?key|appid|authorization|cookie|credential|password|"
@@ -173,6 +174,29 @@ def _bounded_nonnegative(value: object, maximum: float) -> float | None:
     if normalized is None or normalized > maximum:
         return None
     return normalized
+
+
+def _validated_rate_reset(
+    value: object, *, observed_at: datetime
+) -> datetime | None:
+    if value is None:
+        return None
+    if (
+        not isinstance(value, datetime)
+        or value.tzinfo is None
+        or not isinstance(observed_at, datetime)
+        or observed_at.tzinfo is None
+    ):
+        raise ValueError("rate reset and observation must be timezone-aware")
+    reset = value.astimezone(timezone.utc)
+    observed = observed_at.astimezone(timezone.utc)
+    try:
+        latest = observed + timedelta(seconds=MAX_RATE_RESET_AHEAD_SECONDS)
+    except OverflowError as error:
+        raise ValueError("rate reset reference is implausible") from error
+    if reset < observed or reset > latest:
+        raise ValueError("rate reset must not be backward or implausibly far")
+    return reset
 
 
 def _safe_url(value: object) -> str | None:
@@ -589,15 +613,12 @@ class ProviderResponseEvidence:
             ),
         )
         if self.rate_limit_reset is not None:
-            if (
-                not isinstance(self.rate_limit_reset, datetime)
-                or self.rate_limit_reset.tzinfo is None
-            ):
-                raise ValueError("response rate reset must be timezone-aware")
             object.__setattr__(
                 self,
                 "rate_limit_reset",
-                self.rate_limit_reset.astimezone(timezone.utc),
+                _validated_rate_reset(
+                    self.rate_limit_reset, observed_at=self.observed_at
+                ),
             )
         usage = self.usage or UsageEvidence(
             self.usage_count, self.cost_usd, self.transaction_id
@@ -610,6 +631,8 @@ class ProviderResponseEvidence:
         rate_limit = self.rate_limit or RateLimitEvidence(
             self.rate_limit_remaining, self.rate_limit_reset
         )
+        if rate_limit.reset_at is not None:
+            _validated_rate_reset(rate_limit.reset_at, observed_at=self.observed_at)
         if rate_limit.remaining is not None or rate_limit.reset_at is not None:
             object.__setattr__(self, "rate_limit", rate_limit)
         if self.http_status is not None and (
@@ -634,6 +657,7 @@ class ProviderFailure(Exception):
     rate_limit_reset: datetime | None = None
     request_id: str | None = None
     summary: str = ""
+    observed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __post_init__(self) -> None:
         if not isinstance(self.category, FailureCategory):
@@ -645,13 +669,18 @@ class ProviderFailure(Exception):
         ):
             raise ValueError("failure HTTP status must be in range 100..599")
         if self.rate_limit_reset is not None:
-            if self.rate_limit_reset.tzinfo is None:
-                raise ValueError("rate reset must be timezone-aware")
             object.__setattr__(
                 self,
                 "rate_limit_reset",
-                self.rate_limit_reset.astimezone(timezone.utc),
+                _validated_rate_reset(
+                    self.rate_limit_reset, observed_at=self.observed_at
+                ),
             )
+        if not isinstance(self.observed_at, datetime) or self.observed_at.tzinfo is None:
+            raise ValueError("failure observation time must be timezone-aware")
+        object.__setattr__(
+            self, "observed_at", self.observed_at.astimezone(timezone.utc)
+        )
         if (
             self.retry_after_seconds is not None
             and _bounded_nonnegative(
@@ -1027,6 +1056,7 @@ def classify_http_failure(
     summary: str = "",
     retry_after_seconds: float | None = None,
     rate_limit_reset: datetime | None = None,
+    observed_at: datetime | None = None,
     raw_body: object = None,
     request_url: object = None,
     headers: object = None,
@@ -1056,6 +1086,7 @@ def classify_http_failure(
         rate_limit_reset=rate_limit_reset,
         request_id=request_id,
         summary=summary or category.value.replace("_", " "),
+        observed_at=observed_at or datetime.now(timezone.utc),
     )
 
 
@@ -1283,6 +1314,7 @@ def failure_batch(
                 http_status=failure.http_status,
                 request_id=failure.request_id,
                 rate_limit_reset=failure.rate_limit_reset,
+                observed_at=failure.observed_at,
             ),
             failure=failure,
         )
@@ -1318,6 +1350,7 @@ def failure_batch(
             http_status=failure.http_status,
             request_id=failure.request_id,
             rate_limit_reset=failure.rate_limit_reset,
+            observed_at=failure.observed_at,
         ),
         failure=failure,
     )

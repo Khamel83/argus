@@ -197,6 +197,29 @@ class TestDuckDuckGoProvider:
         assert batch.failure.category.value == "timeout"
 
     @pytest.mark.asyncio
+    async def test_enabled_provider_reaps_live_worker_after_communicate_error(self):
+        from argus.providers.duckduckgo import DuckDuckGoProvider
+
+        process = MagicMock()
+        process.returncode = None
+        process.communicate = AsyncMock(side_effect=OSError("broken IPC"))
+        process.wait = AsyncMock(return_value=-15)
+        process.terminate = MagicMock()
+        process.kill = MagicMock()
+        provider = DuckDuckGoProvider(ProviderConfig(enabled=True))
+        provider._available = True
+        with patch(
+            "argus.providers.duckduckgo.asyncio.create_subprocess_exec",
+            new=AsyncMock(return_value=process),
+        ):
+            batch = await provider.search(SearchQuery(query="broken IPC"))
+
+        process.terminate.assert_called_once()
+        process.wait.assert_awaited_once()
+        assert batch.failure is not None
+        assert batch.failure.category.value == "provider_unavailable"
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("fixture_name", "expected_status", "expected_failure"),
         [

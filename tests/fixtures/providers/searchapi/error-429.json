@@ -1,0 +1,11 @@
+{
+  "transport": {
+    "status_code": 429,
+    "headers": {
+      "retry-after": "60"
+    }
+  },
+  "body": {
+    "error": "Rate limit exceeded"
+  }
+}

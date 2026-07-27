@@ -64,7 +64,11 @@ def execute_request(
         if len(encoded) > MAX_IPC_BYTES:
             return {"error": "response_too_large"}, 3
         return payload, 0
-    except Exception:
+    except Exception as error:
+        if type(error).__name__ == "RatelimitException":
+            return {"error": "rate_limited"}, 1
+        if type(error).__name__ == "TimeoutException":
+            return {"error": "timeout"}, 1
         return {"error": "worker_failed"}, 1
 
 

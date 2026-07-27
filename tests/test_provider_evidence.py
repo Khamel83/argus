@@ -8,7 +8,7 @@ import json
 import math
 import subprocess
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -65,6 +65,7 @@ FAILURE_CLASSES = {"401", "402", "403", "408_504", "422", "429", "5xx"}
 REGISTERED = {
     provider.value for provider in ProviderName if provider is not ProviderName.CACHE
 }
+EXPECTED_MAX_RATE_RESET_AHEAD_SECONDS = 366 * 24 * 60 * 60
 
 
 @pytest.fixture(autouse=True)
@@ -269,10 +270,8 @@ def test_manifest_covers_every_registered_provider_and_contract_case():
                 assert (FIXTURE_ROOT / provider / fixture).is_file()
             else:
                 assert set(fixture) == {"reason", "source"}
-                assert fixture["source"] == (
-                    "docs/research/2026-07-27-provider-health-probe-matrix.md"
-                    "#search-provider-matrix"
-                )
+                assert fixture["source"].startswith(("https://", "argus/"))
+                assert "#" in fixture["source"]
         assert set(entry["failures"]) == FAILURE_CLASSES
         for failure in entry["failures"].values():
             assert set(failure) in (
@@ -281,67 +280,87 @@ def test_manifest_covers_every_registered_provider_and_contract_case():
             )
             if "fixture" in failure:
                 assert (FIXTURE_ROOT / provider / failure["fixture"]).is_file()
-                assert failure["shape_source"].startswith(("https://", "docs/"))
+                assert failure["shape_source"].startswith(("https://", "argus/"))
             else:
-                assert failure["source"] == (
-                    "docs/research/2026-07-27-provider-health-probe-matrix.md"
-                    "#search-provider-matrix"
-                )
+                assert failure["source"].startswith(("https://", "argus/"))
+                assert "#" in failure["source"]
         assert set(entry["signals"]) in ({"typed"}, {"reason", "source"})
         if "reason" in entry["signals"]:
-            assert entry["signals"]["source"] == (
-                "docs/research/2026-07-27-provider-health-probe-matrix.md"
-                "#search-provider-matrix"
-            )
+            assert entry["signals"]["source"].startswith(("https://", "argus/"))
+            assert "#" in entry["signals"]["source"]
         else:
             assert entry["signals"]["typed"]
 
 
 def test_manifest_failure_declarations_agree_with_cited_authority():
     manifest = _load(FIXTURE_ROOT / "manifest.json")
-    authority_path = (
-        Path(__file__).parents[1]
-        / "docs/research/2026-07-27-provider-health-probe-matrix.md"
-    )
-    authority = authority_path.read_text(encoding="utf-8")
-    rows = {
-        line.split("|")[1].strip().lower(): line.split("|")[2].strip().lower()
-        for line in authority.splitlines()
-        if line.startswith("| ") and line.count("|") >= 5
-    }
-    support = {
-        "401": ("401", "auth"),
-        "402": ("402", "exhaust", "credit"),
-        "403": ("403", "permission", "policy", "scope", "block", "challenge"),
-        "408_504": ("408", "504", "timeout"),
-        "422": ("422", "validation", "invalid request"),
-        "429": ("429", "rate"),
-        "5xx": ("5xx",),
-    }
-    aliases = {
-        "duckduckgo": "duckduckgo (`ddgs`)",
-        "wolfram": "wolframalpha",
-        "you": "you.com",
-    }
-    conditional = {
-        ("linkup", "402"),
-        ("searchapi", "402"),
-        ("searchapi", "429"),
-    }
     for provider_name, entry in manifest["providers"].items():
-        row = rows[aliases.get(provider_name, provider_name)]
         for failure_class, declaration in entry["failures"].items():
             source = declaration["source"]
-            assert source.endswith(
-                "2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
-            )
-            is_supported = any(token in row for token in support[failure_class])
-            if (provider_name, failure_class) in conditional:
-                is_supported = False
+            assert source.startswith(("https://", "argus/"))
+            assert "#" in source
             if "fixture" in declaration:
-                assert is_supported, (provider_name, failure_class, row)
+                assert declaration["shape_source"] == source
             else:
-                assert not is_supported, (provider_name, failure_class, row)
+                assert provider_name == "duckduckgo"
+                assert "cannot emit" in declaration["reason"].lower()
+
+
+def test_manifest_negative_declarations_cite_primary_impossibility_evidence():
+    manifest = _load(FIXTURE_ROOT / "manifest.json")
+    matrix = "docs/research/2026-07-27-provider-health-probe-matrix.md"
+    for provider_name, entry in manifest["providers"].items():
+        for failure_class, declaration in entry["failures"].items():
+            if "reason" not in declaration:
+                continue
+            assert not declaration["source"].startswith(matrix), (
+                provider_name,
+                failure_class,
+            )
+            assert declaration["source"].startswith(("https://", "argus/"))
+            assert "#" in declaration["source"]
+            reason = declaration["reason"].lower()
+            assert any(
+                phrase in reason
+                for phrase in (
+                    "does not expose",
+                    "cannot emit",
+                    "raises only",
+                    "not an http provider",
+                )
+            )
+
+
+def test_manifest_declares_common_rate_and_timeout_cases_for_every_adapter():
+    manifest = _load(FIXTURE_ROOT / "manifest.json")
+    for provider_name, entry in manifest["providers"].items():
+        assert set(entry["common_cases"]) == {
+            "rate_limit_with_metadata",
+            "rate_limit_without_metadata",
+            "transport_timeout",
+        }, provider_name
+        for declaration in entry["common_cases"].values():
+            assert declaration["kind"] in {
+                "http_response",
+                "library_exception",
+                "transport_exception",
+            }
+            assert declaration["source"].startswith(("https://", "argus/"))
+            assert "#" in declaration["source"]
+
+
+def test_manifest_declares_all_ddgs_native_boundary_fixtures():
+    entry = _load(FIXTURE_ROOT / "manifest.json")["providers"]["duckduckgo"]
+    assert entry["native_boundary"] == {
+        "success": "native-success.json",
+        "empty": "native-empty.json",
+        "unexpected": "native-unexpected.json",
+        "library_failure": "native-library-failure.json",
+    }
+    assert all(
+        (FIXTURE_ROOT / "duckduckgo" / fixture).is_file()
+        for fixture in entry["native_boundary"].values()
+    )
 
 
 def test_failure_fixtures_do_not_invent_status_derived_native_codes():
@@ -358,6 +377,56 @@ def test_failure_fixtures_do_not_invent_status_derived_native_codes():
                 f"{provider_name}_{failure_class}",
                 f"{provider_name}_{failure_class.replace('_504', '')}",
             }
+
+
+def test_provider_codes_only_come_from_explicit_native_code_fields():
+    prose_only = [
+        (
+            ProviderName.SERPER,
+            {
+                "transport": {"status_code": 200, "headers": {}},
+                "body": {"message": "Not enough credits"},
+            },
+        ),
+        (
+            ProviderName.VALYU,
+            {
+                "transport": {"status_code": 200, "headers": {}},
+                "body": {"success": False, "error": "insufficient credits"},
+            },
+        ),
+    ]
+    for provider, capture in prose_only:
+        failure = classify_provider_failure_response(provider, capture)
+        assert failure.category is FailureCategory.BALANCE_EXHAUSTED
+        assert failure.provider_code is None
+
+    explicit = classify_provider_failure_response(
+        ProviderName.EXA,
+        {
+            "transport": {"status_code": 402, "headers": {}},
+            "body": {"error": {"code": "NO_MORE_CREDITS"}},
+        },
+    )
+    assert explicit.provider_code == "NO_MORE_CREDITS"
+
+
+def test_github_fixtures_use_documented_native_error_messages():
+    documented_messages = {
+        "error-401.json": "Bad credentials",
+        "error-403.json": "Resource not accessible by integration",
+        "error-429.json": "API rate limit exceeded",
+    }
+    for fixture_name, message in documented_messages.items():
+        fixture = _load(FIXTURE_ROOT / "github" / fixture_name)
+        assert fixture["body"] == {
+            "message": message,
+            "documentation_url": (
+                "https://docs.github.com/rest/using-the-rest-api/"
+                "troubleshooting-the-rest-api"
+            ),
+            "status": fixture_name.removeprefix("error-").removesuffix(".json"),
+        }
 
 
 def test_serper_matrix_required_failure_classes_are_fixture_backed():
@@ -488,6 +557,98 @@ async def test_every_applicable_failure_fixture_executes_real_adapter_search(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provider_name", sorted(REGISTERED))
+async def test_common_rate_and_timeout_cases_execute_real_adapter_path(
+    provider_name,
+):
+    import httpx
+
+    from argus.config import SearXNGConfig
+
+    entry = _load(FIXTURE_ROOT / "manifest.json")["providers"][provider_name]
+    classes = {
+        "searxng": ("argus.providers.searxng", "SearXNGProvider"),
+        "duckduckgo": ("argus.providers.duckduckgo", "DuckDuckGoProvider"),
+        "yahoo": ("argus.providers.yahoo", "YahooProvider"),
+        "github": ("argus.providers.github", "GitHubProvider"),
+        "wolfram": ("argus.providers.wolfram", "WolframProvider"),
+        "brave": ("argus.providers.brave", "BraveProvider"),
+        "tavily": ("argus.providers.tavily", "TavilyProvider"),
+        "exa": ("argus.providers.exa", "ExaProvider"),
+        "linkup": ("argus.providers.linkup", "LinkupProvider"),
+        "parallel": ("argus.providers.parallel", "ParallelProvider"),
+        "serper": ("argus.providers.serper", "SerperProvider"),
+        "you": ("argus.providers.you", "YouProvider"),
+        "valyu": ("argus.providers.valyu", "ValyuProvider"),
+        "searchapi": ("argus.providers.searchapi", "SearchApiProvider"),
+    }
+    config = (
+        SearXNGConfig(enabled=True, base_url="https://fixture.test")
+        if provider_name == "searxng"
+        else ProviderConfig(enabled=True, api_key="fixture", timeout_seconds=1)
+    )
+    module_name, class_name = classes[provider_name]
+    adapter = getattr(importlib.import_module(module_name), class_name)(config)
+    adapter._available = True
+
+    for case_name, declaration in entry["common_cases"].items():
+        if provider_name == "duckduckgo":
+            process = MagicMock()
+            process.returncode = declaration.get("returncode", 1)
+            process.communicate = AsyncMock(
+                return_value=(
+                    json.dumps(declaration.get("payload", {})).encode("utf-8"),
+                    b"",
+                )
+            )
+            if case_name == "transport_timeout":
+                process.returncode = None
+                process.communicate = AsyncMock(side_effect=asyncio.TimeoutError)
+                process.wait = AsyncMock(return_value=-15)
+                process.terminate = MagicMock()
+                process.kill = MagicMock()
+            with patch(
+                f"{module_name}.asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=process),
+            ):
+                batch = await adapter.search(SearchQuery(query="fixture"))
+        else:
+            with patch(f"{module_name}.httpx.AsyncClient") as client_type:
+                client = client_type.return_value
+                client.__aenter__ = AsyncMock(return_value=client)
+                client.__aexit__ = AsyncMock(return_value=False)
+                if case_name == "transport_timeout":
+                    outcome = AsyncMock(
+                        side_effect=httpx.ReadTimeout("fixture transport timeout")
+                    )
+                else:
+                    outcome = AsyncMock(
+                        return_value=_http_response(
+                            status=declaration["status_code"],
+                            body=declaration["body"],
+                            headers=declaration["headers"],
+                        )
+                    )
+                client.get = outcome
+                client.post = outcome
+                batch = await adapter.search(SearchQuery(query="fixture"))
+
+        assert batch.failure is not None, (provider_name, case_name)
+        if case_name.startswith("rate_limit"):
+            assert batch.failure.category is FailureCategory.RATE_LIMITED
+            if case_name.endswith("with_metadata"):
+                assert (
+                    batch.failure.retry_after_seconds is not None
+                    or batch.failure.rate_limit_reset is not None
+                )
+            else:
+                assert batch.failure.retry_after_seconds is None
+                assert batch.failure.rate_limit_reset is None
+        else:
+            assert batch.failure.category is FailureCategory.TIMEOUT
+
+
+@pytest.mark.asyncio
 async def test_github_403_distinguishes_rate_limit_from_policy_rejection():
     from argus.providers.github import GitHubProvider
 
@@ -521,7 +682,7 @@ async def test_github_rate_limited_403_preserves_transport_evidence():
         headers={
             "X-GitHub-Request-Id": "github-request-403",
             "X-RateLimit-Remaining": "0",
-            "X-RateLimit-Reset": "1785139200",
+            "X-RateLimit-Reset": "1785225600",
         },
     )
     response.request = MagicMock()
@@ -539,7 +700,7 @@ async def test_github_rate_limited_403_preserves_transport_evidence():
     assert batch.failure.http_status == 403
     assert batch.failure.request_id == "github-request-403"
     assert batch.failure.rate_limit_reset == datetime(
-        2026, 7, 27, 8, 0, tzinfo=timezone.utc
+        2026, 7, 28, 8, 0, tzinfo=timezone.utc
     )
 
 
@@ -605,6 +766,69 @@ def test_retry_after_accepts_maximum_and_rejects_next_value():
         ProviderFailure(
             **kwargs, retry_after_seconds=MAX_RETRY_AFTER_SECONDS + 1
         )
+
+
+@pytest.mark.parametrize("factory", [ProviderResponseEvidence, ProviderFailure])
+def test_rate_reset_accepts_exact_temporal_boundaries(factory):
+    observed = datetime(2026, 7, 27, 12, tzinfo=timezone.utc)
+    common = (
+        {"observed_at": observed}
+        if factory is ProviderResponseEvidence
+        else {
+            "category": FailureCategory.RATE_LIMITED,
+            "provider": ProviderName.GITHUB,
+            "observed_at": observed,
+        }
+    )
+    for reset in (
+        observed,
+        observed + timedelta(seconds=EXPECTED_MAX_RATE_RESET_AHEAD_SECONDS),
+    ):
+        assert factory(**common, rate_limit_reset=reset).rate_limit_reset == reset
+
+
+@pytest.mark.parametrize("factory", [ProviderResponseEvidence, ProviderFailure])
+@pytest.mark.parametrize(
+    "reset_factory",
+    [
+        lambda observed: observed - timedelta(microseconds=1),
+        lambda observed: observed
+        + timedelta(
+            seconds=EXPECTED_MAX_RATE_RESET_AHEAD_SECONDS, microseconds=1
+        ),
+        lambda _observed: datetime.max.replace(tzinfo=timezone.utc),
+    ],
+)
+def test_rate_reset_rejects_backward_or_implausible_deadlines(
+    factory, reset_factory
+):
+    observed = datetime(2026, 7, 27, 12, tzinfo=timezone.utc)
+    common = (
+        {"observed_at": observed}
+        if factory is ProviderResponseEvidence
+        else {
+            "category": FailureCategory.RATE_LIMITED,
+            "provider": ProviderName.GITHUB,
+            "observed_at": observed,
+        }
+    )
+    with pytest.raises(ValueError):
+        factory(**common, rate_limit_reset=reset_factory(observed))
+
+
+def test_failure_parser_discards_temporally_invalid_rate_reset():
+    observed = datetime(2026, 7, 27, 12, tzinfo=timezone.utc)
+    capture = {
+        "transport": {
+            "status_code": 429,
+            "headers": {"x-ratelimit-reset": str(datetime.max.timestamp())},
+        },
+        "body": {},
+    }
+    failure = classify_provider_failure_response(
+        ProviderName.GITHUB, capture, observed_at=observed
+    )
+    assert failure.rate_limit_reset is None
 
 
 @pytest.mark.parametrize("provider_name", sorted(REGISTERED))

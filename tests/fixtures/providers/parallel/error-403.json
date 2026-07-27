@@ -1,0 +1,12 @@
+{
+  "transport": {
+    "status_code": 403,
+    "headers": {}
+  },
+  "body": {
+    "error": {
+      "message": "Forbidden",
+      "detail": {}
+    }
+  }
+}
