@@ -207,6 +207,49 @@ def corrupted_cases(
             "cache origin spend does not reconcile",
         )
     )
+
+    over_age_hit = copy.deepcopy(by_name["eligible_cache_hit"])
+    over_age_hit["cache"]["age_ms"] = (
+        over_age_hit["cache"]["maximum_age_ms"] + 1
+    )
+    cases.append(
+        (
+            "cache hit is older than the accepted maximum",
+            over_age_hit,
+            "cache hit age must be bounded and eligible",
+        )
+    )
+
+    orphaned_link = copy.deepcopy(by_name["success"])
+    orphaned_link["fusion"]["clusters"][0]["extraction_link"] = None
+    cases.append(
+        (
+            "cluster omits its composition link",
+            orphaned_link,
+            "cluster declarations and composition links are not bijective",
+        )
+    )
+
+    output_order = copy.deepcopy(by_name["success"])
+    output_order["fusion"]["clusters"][0]["output_rank"] = 1
+    output_order["fusion"]["clusters"][1]["output_rank"] = 0
+    output_order["final"]["result_refs"] = [
+        "cluster-success-b",
+        "cluster-success-a",
+        "cluster-success-c",
+    ]
+    output_order["final"]["caller_result"]["results"] = [
+        output_order["final"]["caller_result"]["results"][1],
+        output_order["final"]["caller_result"]["results"][0],
+        output_order["final"]["caller_result"]["results"][2],
+    ]
+    cases.append(
+        (
+            "output order changes without a selection policy",
+            output_order,
+            "output ranking must equal base ranking",
+        )
+    )
     return cases
 
 

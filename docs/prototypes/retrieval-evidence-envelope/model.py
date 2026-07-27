@@ -172,6 +172,12 @@ def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[
             violations.append(
                 "cache hit must be served from origin attempts with zero current calls"
             )
+        if (
+            cache["age_ms"] is None
+            or cache["age_ms"] < 0
+            or cache["age_ms"] > cache["maximum_age_ms"]
+        ):
+            violations.append("cache hit age must be bounded and eligible")
     elif cache["served"]:
         violations.append("only a cache hit may be served")
     if (
@@ -306,6 +312,12 @@ def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[
         item["cluster_id"] for item in expected_base_order
     ]:
         violations.append("base ranking does not follow exact RRF/tie-break policy")
+    if any(
+        cluster["output_rank"] != cluster["base_rank"] for cluster in clusters
+    ):
+        violations.append(
+            "output ranking must equal base ranking without a selection policy"
+        )
 
     distinct_sites = {cluster["site_key"] for cluster in clusters}
     floor_should_pass = (
@@ -451,7 +463,24 @@ def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[
     link_ids = [item["link_id"] for item in links]
     if duplicates := _duplicate(link_ids):
         violations.append(f"duplicate extraction link ids: {sorted(duplicates)}")
+    link_cluster_refs = [item["cluster_ref"] for item in links]
+    if duplicates := _duplicate(link_cluster_refs):
+        violations.append(
+            f"multiple extraction links for clusters: {sorted(duplicates)}"
+        )
+    link_extraction_refs = [item["extraction_run_ref"] for item in links]
+    if duplicates := _duplicate(link_extraction_refs):
+        violations.append(
+            f"multiple links for extraction runs: {sorted(duplicates)}"
+        )
     link_by_id = {item["link_id"]: item for item in links}
+    declared_link_refs = {
+        cluster["extraction_link"]
+        for cluster in clusters
+        if cluster["extraction_link"] is not None
+    }
+    if declared_link_refs != set(link_ids):
+        violations.append("cluster declarations and composition links are not bijective")
     for cluster in clusters:
         link_ref = cluster["extraction_link"]
         if link_ref is not None:
@@ -461,6 +490,14 @@ def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[
     for link in links:
         if link["cluster_ref"] not in cluster_ids:
             violations.append(f"{link['link_id']} has dangling cluster ref")
+        else:
+            cluster = next(
+                item for item in clusters if item["cluster_id"] == link["cluster_ref"]
+            )
+            if cluster["extraction_link"] != link["link_id"]:
+                violations.append(
+                    f"{link['link_id']} is not declared by its cluster"
+                )
         extraction = extraction_by_id.get(link["extraction_run_ref"])
         if extraction is None:
             violations.append(f"{link['link_id']} has dangling extraction ref")
@@ -485,7 +522,7 @@ def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[
             rejection["rejection_id"] if rejection is not None else None
         ):
             violations.append(f"{link['link_id']} rejection ref differs from extraction")
-    if {link["extraction_run_ref"] for link in links} != set(extraction_ids):
+    if set(link_extraction_refs) != set(extraction_ids):
         violations.append("composition links do not cover extraction runs exactly")
 
     accepted_refs = set(composition["accepted_artifact_refs"])
