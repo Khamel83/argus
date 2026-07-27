@@ -171,8 +171,8 @@ downgrade is forbidden.
 |---|---|---|---|---|
 | S0 Contract kernel | Frozen v1/v2 fixtures, exhaustive outer outcome maps, prototype source/copy hashes | New internal package only; prototype remains executable | Human PR merge only | Allowed before #40/#41/#42/#44 |
 | S1 Retrieval plan | ADR 0002 identity vectors, deadline/canonicalization tests | External `SearchQuery` unchanged; planner unused until S7 | Human PR merge only | Allowed before operational gates |
-| S2 Provider evidence | 14 adapter fixture matrices and secret-leak sentinels | `LegacyProviderBatchAdapter` preserves tuple callers | Human PR merge only; live paid probes excluded | Allowed before operational gates |
-| S3 Extraction outcome | Exact one-time rejection/finalization/composition tests | Existing `ExtractedContent` remains legacy projection; no historical replay | Human PR merge only | Allowed before operational gates |
+| S2 Provider evidence | 14-adapter applicability matrices, Crawl4AI/Firecrawl fixtures, and secret-leak sentinels | `LegacyProviderBatchAdapter` preserves tuple callers | Human PR merge only; live paid probes excluded | Allowed before operational gates |
+| S3 Extraction outcome | Exact one-time rejection/finalization/composition tests plus default archive lookup-only proof | Existing `ExtractedContent` remains legacy projection; no historical replay or archive creation | Human PR merge only; archive creation requires a separate irreversible-action approval | Allowed before operational gates |
 | S4 Evidence fusion | Exact rational ordering, freshness, duplicate, diversity, floor tests | Legacy `ranking.py` remains active until S7 | Human PR merge only | Allowed before operational gates |
 | S5 Readiness authority | Repository-time expiry, no-spend diagnostics, leases, terminal exhaustion, concurrency | New tables additive; legacy trackers are migration inputs only | Human PR merge only; account reconciliation remains operator-gated | Code/migration allowed before gates; production migration only in P1 |
 | S6 Accepted retrieval/cache | Atomic acceptance, immutable hits, origin spend, no cache on failure, timeout tests | New cache unused until S7; old cache remains active | Human PR merge only | Code/migration allowed before gates; production activation only in P1 |
@@ -202,6 +202,7 @@ The owner is not assigned research, result labeling, or manual benchmark work.
 - Create: `tests/test_contract_outcomes.py`
 - Create: `tests/test_architecture_boundaries.py`
 - Create: `tests/fixtures/contracts/retrieval_evidence_v2/*.json`
+- Create: `tests/fixtures/contracts/retrieval_evidence_v2/manifest.json`
 - Create: `tests/fixtures/transports/v1/*.json`
 - Create: `tests/fixtures/transports/v2/*.json`
 - Modify: `docs/prototypes/retrieval-evidence-envelope/README.md`
@@ -399,6 +400,7 @@ evidence, ADR 0004 failure taxonomy, and S1 plan controls.
 - Create: `tests/test_provider_evidence.py`
 - Create: `tests/test_extractor_contracts.py`
 - Create: `tests/fixtures/providers/<provider>/*.json`
+- Create: `tests/fixtures/providers/manifest.json`
 - Create: `tests/fixtures/extractors/crawl4ai/*.json`
 - Create: `tests/fixtures/extractors/firecrawl/*.json`
 - Modify: `argus/providers/base.py`
@@ -416,7 +418,6 @@ evidence, ADR 0004 failure taxonomy, and S1 plan controls.
 - Modify: `argus/providers/you.py`
 - Modify: `argus/providers/valyu.py`
 - Modify: `argus/providers/searchapi.py`
-- Modify: `argus/providers/__init__.py` only if the typed batch export is needed
 - Modify: `argus/provider_controls.py`
 - Modify: `argus/extraction/crawl4ai_extractor.py`
 - Modify: `argus/extraction/firecrawl_extractor.py`
