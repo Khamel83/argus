@@ -114,6 +114,7 @@ The external `SearchQuery` remains unchanged. Internally:
 ```text
 resolve_plan(
   effective_query,
+  controls,
   include_attribution,
   policy_snapshot,
   utc_clock,
@@ -129,6 +130,11 @@ commit(plan, accepted_response, acceptance_receipt) -> CacheEntry
 Callers and tests cross the same seam. Provider adapters receive validated
 plan controls translated back into their private request shape; they never
 receive caller-native HTTP/MCP structures.
+
+`controls` is a typed internal `RetrievalControls` value. Existing callers
+receive the defaults below. Benchmark and corpus callers may populate the
+typed fields directly. Issue #66 may later map versioned public fields into
+this value without creating a second planning path.
 
 `RetrievalPlan` version 1 contains:
 
@@ -172,6 +178,12 @@ versions:
 Only typed, allowlisted fields enter the plan. Runtime provider health,
 remaining balance, reservation IDs, attempt scope, caller label, and unknown
 metadata are evidence inputs, not plan controls.
+
+Planning validates before hashing: the normalized query must be non-empty,
+`result_limit` must be between 1 and 50 inclusive, explicit providers are
+deduplicated while preserving order, and the synthetic `cache` provider is
+never a valid explicit provider. Any invalid typed value fails as
+`invalid_request`; it is never coerced into a broader plan.
 
 ### Effective query
 
@@ -256,11 +268,20 @@ must be recorded in the trace.
 The plan records the effective caller tier cap and configured spend-policy
 version, not volatile remaining balances.
 
+`candidate_providers` is the static ordered set remaining after explicit
+provider restrictions, profile/tier limits, configured organization policy,
+and routing policy are resolved. It is fixed before hashing. Volatile
+credential presence, health, cooldown, balance, and reservation state only
+determine which candidates can execute and are recorded in the run evidence.
+They never change `plan_id` after resolution.
+
 ### Deadline
 
 The default and maximum operation deadline is 120,000 milliseconds for every
-mode and surface. A caller may request a shorter internal deadline once a
-typed control exists, but never a longer one.
+mode and surface. It starts before cache lookup and bounds single-flight wait,
+provider execution, normalization/ranking, durable persistence, and response
+assembly. A caller may request a shorter internal deadline once a typed
+control exists, but never a longer one.
 
 Each provider receives:
 
@@ -550,10 +571,11 @@ Existing callers resolve as follows:
 | `SearchQuery.providers` | ordered explicit restriction or `null` |
 | `SearchQuery.free_only` | `free` or `budgeted` profile |
 | `SearchQuery.caller` | tier/spend policy lookup; excluded from cache identity |
+| `SearchQuery.user_visible` | delivery/evidence only; excluded from plan and cache identity |
 | `compute_attribution` | semantic attribution requirement |
 | `metadata.caller_label` | evidence only |
 | `metadata.attempt_scope` | spend idempotency only |
-| `metadata.prefer_residential` | execution egress preference only |
+| `metadata.prefer_residential` | resolved execution egress preference before identity/lookup |
 | unknown metadata | ignored by planning and identity |
 
 Defaults preserve current public request shapes:
