@@ -416,12 +416,17 @@ Changing translation, parser, strictness, or date-comparison semantics bumps
 
 ## Proven duplicate clustering
 
-Fusion operates on document clusters, not raw provider rows. A relation is
-strong enough to merge only when at least one is true:
+Search EvidenceFusion operates on document clusters, not raw provider rows. In
+a version 1 search-only operation, one relation is strong enough to merge:
 
-1. the URLs have the same conservative document key;
-2. extraction proves the same safe redirect/canonical chain; or
-3. extraction produces the same versioned normalized-content fingerprint.
+1. the URLs have the same conservative document key.
+
+The later combined evidence stage in issue #65 may additionally merge when:
+
+1. separately authorized extraction proves the same safe
+   redirect/canonical chain; or
+2. separately authorized extraction produces the same versioned
+   normalized-content fingerprint.
 
 Title similarity, snippet similarity, shared hostname, `www` variation,
 trailing-slash variation, syndicated appearance, and tracking-parameter
@@ -431,14 +436,11 @@ Provider-supplied canonical URLs are also weak hints until Argus validates the
 URL and proves the redirect/canonical relation through the safe extraction
 path.
 
-EvidenceFusion never invokes extraction or follows a URL. In a version 1
-search-only operation, only the conservative document-key equality can merge
-before RRF. Redirect/canonical and content-fingerprint proof produced by a
-separately authorized extraction may deduplicate the later combined evidence
-package in issue #65, but cannot retroactively mutate an acknowledged search
-response or its cache entry. Using pre-existing extraction relations in search
-ranking would require an explicit retrieval-plan control, durable compatible
-lineage, and normalization/ranking version bumps; it is not enabled here.
+EvidenceFusion never invokes extraction or follows a URL. Combined-evidence
+deduplication cannot retroactively mutate an acknowledged search response or
+its cache entry. Using pre-existing extraction relations in search ranking
+would require an explicit retrieval-plan control, durable compatible lineage,
+and normalization/ranking version bumps; it is not enabled here.
 
 ### Conservative document key
 
@@ -501,7 +503,10 @@ denominator=60+provider_rank+1)`. Providers are sorted by enum value before
 serialization, but rational addition is order-independent. The compatibility
 `SearchResult.score` and outward attribution values are rendered floats derived
 from the exact rationals after ordering; no rendered float participates in
-sorting or cache identity.
+sorting or cache identity. Independently rounded public floats are
+approximately additive, not an exact evidence invariant. Consumers compare
+their sum to `SearchResult.score` with absolute tolerance `1e-15`; exact
+reconstruction uses the retained numerator/denominator contributions.
 
 Every eligible provider has weight 1. Provider tier, cost, latency, native
 score, source type, freshness age, snippet length, and provider health do not
@@ -757,7 +762,8 @@ Hermetic tests must prove:
 - native-score scale changes do not alter order;
 - duplicate clusters accumulate all provider contributions;
 - every tie-break is deterministic across provider mapping insertion order;
-- optional outward attribution exactly reconstructs the stored score;
+- exact rational attribution reconstructs the stored score, while outward
+  compatibility floats agree within absolute tolerance `1e-15`;
 - ranking policy version changes alter plan/cache identity.
 
 ### Diversity and floors

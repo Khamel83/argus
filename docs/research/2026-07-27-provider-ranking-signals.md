@@ -371,7 +371,8 @@ are poor. It adds no provider call but creates a high evidence burden.
 ### B. Provider-order RRF plus deterministic diversity
 
 Accepted. It works for every provider, preserves multi-provider agreement,
-keeps attribution exact, and can be reproduced from immutable cache evidence.
+keeps internal rational attribution exact, and can be reproduced from
+immutable cache evidence.
 The only result-order inputs are provider order and the versioned host
 selection policy.
 
@@ -429,7 +430,8 @@ Hermetic contract fixtures must prove:
 - latency, tier, and cost never change result order;
 - no provider-native payload, secret, or authorization-bearing URL survives
   serialization;
-- persisted evidence can recompute the exact returned order and attribution.
+- persisted rational evidence can recompute the exact returned order and
+  internal attribution; compatibility floats agree within `1e-15`.
 
 The accepted 24-query corpus then compares the unchanged baseline with this
 candidate under the same provider snapshot. Speed and ordinary spend are
