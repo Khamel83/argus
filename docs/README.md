@@ -23,6 +23,7 @@ Top-level entry points live at the repo root:
 - [adr/0004-no-spend-provider-readiness.md](adr/0004-no-spend-provider-readiness.md) — typed provider readiness, no-spend diagnostics, terminal exhaustion, and profile registration
 - [adr/0005-structured-extraction-outcome-composition.md](adr/0005-structured-extraction-outcome-composition.md) — typed extraction finalization, terminal-cause mapping, and retrieval composition
 - [adr/0006-http-mcp-compatibility-contract.md](adr/0006-http-mcp-compatibility-contract.md) — legacy HTTP preservation, evidence-rich opt-in, MCP lifecycle, and transport parity
+- [prototypes/retrieval-evidence-envelope/README.md](prototypes/retrieval-evidence-envelope/README.md) — throwaway canonical retrieval/evidence envelope with eight hermetic scenario vectors and fail-closed reference checks
 - [dashboard-design.md](dashboard-design.md) — dashboard UI design system reference
 - [scorecards/stability-competitive.md](scorecards/stability-competitive.md) — hard stability gates and automated competitive-evidence verdicts
 - [PUBLICITY-CHECKLIST.md](PUBLICITY-CHECKLIST.md) — project-internal launch / publicity checklist
