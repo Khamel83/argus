@@ -108,6 +108,7 @@ artifact. The typed step trace preserves it.
 | incomplete artifact then complete fallback | incomplete evidence retained + success step | `success` |
 | incomplete artifact, fallbacks exhausted, partial allowed | all steps retained | `degraded/incomplete_content` |
 | every path empty/failed | all evaluated steps retained | hard failure with causative rejection |
+| heterogeneous failures exhaust the chain without one plan-stopping attempt | all typed failures retained plus `terminal_cause=chain_exhausted` | `extraction_failed/provider_unavailable`; no marker-order guess |
 | operation deadline before plan exhausted | evaluated steps retained; deadline fact | `timeout`; no hidden later fallback |
 | fallback hint but no eligible step remains | mapper cannot emit `fallback_provider` | terminal or bounded retry guidance |
 
@@ -133,7 +134,7 @@ Search evidence remains immutable.
 |---|---|---|---|
 | search only | retrieval outcome | unchanged | not requested |
 | search empty or terminal before result selection | retrieval outcome unchanged | unchanged | no extraction attempted |
-| search success, every required artifact usable | `success` | unchanged | accepted |
+| search success, every selected extraction usable and required floor met | `success` | unchanged | accepted |
 | search degraded, artifact floor met | `degraded` | unchanged | accepted, retrieval degradation visible |
 | artifact floor met with allowed partial | `degraded` | unchanged | partial labels required |
 | artifact floor met but a selected candidate rejected | `degraded` | unchanged, rejection link retained | only accepted artifacts |

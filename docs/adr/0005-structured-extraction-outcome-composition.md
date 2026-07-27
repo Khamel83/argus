@@ -170,6 +170,7 @@ plan_ref
 artifact?
 rejection?
 attempt_summary
+terminal_cause_ref?
 trace_ref
 cache_evidence
 provenance
@@ -292,6 +293,14 @@ Classification order is explicit:
 An early timeout, empty result, or parse failure followed by a complete
 fallback is visible in the step trace but never becomes the final rejection.
 
+The orchestrator supplies `terminal_cause_ref`; the mapper never guesses it by
+searching all failures. Preflight policy and the operation deadline are
+intrinsic terminal causes. Otherwise the cause is the plan-stopping attempt
+after which no eligible bounded fallback remained. If the chain merely
+exhausted heterogeneous independent failures and no single attempt stopped it,
+the terminal fact is `chain_exhausted`, which maps to
+`provider_unavailable`; every individual category remains in the trace.
+
 ### Recommended actions
 
 The #57 action is bounded guidance:
@@ -410,7 +419,7 @@ The composite decision is:
 |---|---|
 | no artifact requirement | accepted retrieval outcome unchanged |
 | retrieval is `empty` or a terminal retrieval failure before any result selection | retrieval outcome unchanged; no extraction failure is invented |
-| all required artifacts usable and floor met | retrieval outcome, unless it was already degraded |
+| every selected extraction is usable and the required floor is met | retrieval outcome, unless it was already degraded |
 | floor met using allowed partial artifacts | `degraded` |
 | floor met but any selected candidate ended rejected | `degraded`, with every rejection link |
 | artifact floor not met after eligible attempts | `extraction_failed`; search results remain retrieval evidence |
@@ -576,6 +585,8 @@ parallel status system.
 Hermetic fixtures must prove:
 
 - final rejection is classified exactly once and returned/persisted identically;
+- heterogeneous chain exhaustion uses the orchestrator's terminal cause rather
+  than whichever error happens to be scanned first;
 - complete fallback success has no final rejection while retaining failed
   earlier steps;
 - missing quality or completeness evidence fails visibly;
