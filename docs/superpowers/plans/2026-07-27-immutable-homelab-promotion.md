@@ -257,8 +257,8 @@ Expected: both tests fail against the old workflows.
 Use these verified tag commits, retaining a version comment after each reference:
 
 ```yaml
-uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
 uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
 ```
@@ -292,7 +292,7 @@ jobs:
       digest: ${{ steps.build.outputs.digest }}
       receipt_sha256: ${{ steps.receipt.outputs.sha256 }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
