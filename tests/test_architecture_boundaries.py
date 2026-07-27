@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from importlib.util import resolve_name
 from pathlib import Path
 
 import pytest
@@ -12,23 +13,36 @@ ROOT = Path(__file__).resolve().parents[1]
 PRESENTER = ROOT / "argus/api/presenters.py"
 FORBIDDEN = {
     "argus.providers",
-    "argus.extraction.extractor",
-    "argus.extraction.rejection",
+    "argus.extraction",
     "argus.persistence",
     "argus.broker.cache",
 }
 
 
-def _imports(path: Path) -> set[str]:
+def _module_package(path: Path) -> str:
+    relative = path.relative_to(ROOT).with_suffix("")
+    module = ".".join(relative.parts)
+    return module.rpartition(".")[0]
+
+
+def _imports(path: Path, *, package: str | None = None) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    package = _module_package(path) if package is None else package
     imported: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             imported.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module is not None:
-            imported.add(node.module)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level:
+                module = resolve_name(
+                    "." * node.level + module,
+                    package,
+                )
+            if node.module is not None:
+                imported.add(module)
             imported.update(
-                f"{node.module}.{alias.name}" for alias in node.names
+                f"{module}.{alias.name}" for alias in node.names
             )
     return imported
 
@@ -57,3 +71,19 @@ def test_contract_kernel_does_not_import_the_throwaway_prototype():
     imported = _imports(outcomes)
     assert not any(module.startswith("docs.prototypes") for module in imported)
     assert "jsonschema" not in imported
+
+
+def test_import_parser_resolves_relative_reexport_seams(tmp_path):
+    module = tmp_path / "presenters.py"
+    module.write_text(
+        "from .. import extraction\n"
+        "from ..extraction import extractor\n"
+        "from . import routes_search\n",
+        encoding="utf-8",
+    )
+
+    assert _imports(module, package="argus.api") == {
+        "argus.extraction",
+        "argus.extraction.extractor",
+        "argus.api.routes_search",
+    }

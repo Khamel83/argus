@@ -38,6 +38,45 @@ NARROW = {
     "internal_failure": ("unready", 503),
 }
 
+V1_SHA256 = {
+    "http_authentication_rejected.json": (
+        "fe6df51e5393e58b9f7013d9f118bf359af42acc33d53a4818e3740a9c91ee71"
+    ),
+    "http_persistence_failure.json": (
+        "53041873f7f33ca31661a349dbc97d8bacdda2f2832ddde5266d895ff87be63c"
+    ),
+    "http_rate_limited.json": (
+        "6e211ce8edeaf2dc489c73b6179da5f642b8f1a6c6c68d0572dad5b3e1276024"
+    ),
+    "http_recover_archive_success.json": (
+        "db6b6064f775b375cc69e64aae68a65800ec196d69ff4d36a20a0d8d81516c74"
+    ),
+    "http_search_success.json": (
+        "52255c0c0c256c33c9de08e4be52e7b911926eda81e1fd602d7f1787c0cc13df"
+    ),
+    "http_validation_error.json": (
+        "17756a11c2f4fd42b53565ae9cf919b54b754c4c4043201c331ba1a773c2100e"
+    ),
+    "mcp_extract_success.json": (
+        "4ef543803ed8fee2f86660588ecf55852564b745204822c77f48a31afc3617a6"
+    ),
+    "mcp_read_pack_file_rejected.json": (
+        "4723e0d55e13fe19e559834625978ebd9962b2e7425c97fe4cd516587d740068"
+    ),
+    "mcp_read_pack_file_utf8.json": (
+        "61e0169a74bb79fa94076f8680ff16474dc849543c115c4bf8c324c94c0595a6"
+    ),
+    "mcp_search_success.json": (
+        "fc5e9899eac78cec97a1af75734e60fc732a648b8e4b8119284c39eb3819c4e9"
+    ),
+    "mcp_workflow_json_failed.json": (
+        "00bfcc9fde50a6c09478597b5c43861e10a5c08d4c1b79bfbd440b64cbdce07f"
+    ),
+    "mcp_workflow_success.json": (
+        "16bdebcc9a527f6b03b77ae322407ab935c6b3a4429db335de9c2b4f91a66461"
+    ),
+}
+
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE_ROOT = ROOT / "tests/fixtures/contracts/retrieval_evidence_v2"
 TRANSPORT_ROOT = ROOT / "tests/fixtures/transports"
@@ -58,7 +97,16 @@ def _contracts():
     return importlib.import_module("argus.contracts")
 
 
-def _error(outcome, *, code: str | None = None, status: int | None = None):
+def _error(
+    outcome,
+    *,
+    code: str | None = None,
+    status: int | None = None,
+    title: str | None = None,
+    retryable: bool = False,
+    retry_after_seconds: int | None = None,
+    operation_began: bool | None = None,
+):
     contracts = _contracts()
     actual_code = code or outcome.value
     actual_status = (
@@ -66,17 +114,20 @@ def _error(outcome, *, code: str | None = None, status: int | None = None):
         if status is None
         else status
     )
-    return contracts.OperationError(
-        outcome=outcome,
-        type=f"urn:argus:problem:{actual_code}",
-        title=actual_code.replace("_", " ").title(),
-        status=actual_status,
-        detail=actual_code.replace("_", " "),
-        instance="urn:argus:request:request-1",
-        code=actual_code,
-        retryable=False,
-        retry_after_seconds=None,
-    )
+    arguments = {
+        "outcome": outcome,
+        "type": f"urn:argus:problem:{actual_code}",
+        "title": title or actual_code.replace("_", " ").title(),
+        "status": actual_status,
+        "detail": actual_code.replace("_", " "),
+        "instance": "urn:argus:request:request-1",
+        "code": actual_code,
+        "retryable": retryable,
+        "retry_after_seconds": retry_after_seconds,
+    }
+    if operation_began is not None:
+        arguments["operation_began"] = operation_began
+    return contracts.OperationError(**arguments)
 
 
 def _freeze(value: Any) -> Any:
@@ -164,6 +215,13 @@ def test_operation_error_contains_only_stable_public_fields():
         "retryable",
         "retry_after_seconds",
     ]
+    assert [field.name for field in fields(contracts.AcceptedOperation)] == [
+        "outcome",
+        "request_id",
+        "result",
+        "error",
+        "contract_version",
+    ]
 
 
 def test_operation_error_rejects_a_status_that_disagrees_with_the_outcome():
@@ -190,6 +248,33 @@ def test_operation_error_rejects_retry_after_without_retryable():
             code="unready",
             retryable=False,
             retry_after_seconds=1,
+        )
+
+
+def test_operation_error_title_is_canonical_for_its_code():
+    contracts = _contracts()
+
+    with pytest.raises(ValueError, match="title"):
+        _error(
+            contracts.CanonicalOutcome.UNREADY,
+            title="A caller-specific unready title",
+        )
+
+
+def test_operation_error_retry_delay_has_a_finite_inclusive_maximum():
+    contracts = _contracts()
+
+    accepted = _error(
+        contracts.CanonicalOutcome.UNREADY,
+        retryable=True,
+        retry_after_seconds=86_400,
+    )
+    assert accepted.retry_after_seconds == 86_400
+    with pytest.raises(ValueError, match="retry_after_seconds"):
+        _error(
+            contracts.CanonicalOutcome.UNREADY,
+            retryable=True,
+            retry_after_seconds=86_401,
         )
 
 
@@ -283,6 +368,73 @@ def test_failure_operation_rejects_an_error_for_another_request():
         )
 
 
+@pytest.mark.parametrize(("code", "case"), NARROW.items())
+def test_admission_only_codes_are_rejected_after_operation_begins(code, case):
+    contracts = _contracts()
+    outcome_name, status = case
+    outcome = contracts.CanonicalOutcome(outcome_name)
+
+    with pytest.raises(ValueError, match="admission"):
+        _error(outcome, code=code, status=status)
+
+    error = _error(
+        outcome,
+        code=code,
+        status=status,
+        operation_began=False,
+    )
+    with pytest.raises(ValueError, match="admission"):
+        contracts.AcceptedOperation(
+            outcome=outcome,
+            request_id="request-1",
+            result=None,
+            error=error,
+        )
+    operation = contracts.AcceptedOperation(
+        outcome=outcome,
+        request_id="request-1",
+        result=None,
+        error=error,
+        operation_began=False,
+    )
+    assert operation.error is error
+
+
+def test_result_is_recursively_immutable_and_rejects_non_json_leaves():
+    contracts = _contracts()
+    source = {"nested": {"items": [{"accepted": True}]}}
+    operation = contracts.AcceptedOperation(
+        outcome=contracts.CanonicalOutcome.SUCCESS,
+        request_id="request-1",
+        result=source,
+        error=None,
+    )
+
+    source["nested"]["items"][0]["accepted"] = False
+    assert operation.result["nested"]["items"][0]["accepted"] is True
+    with pytest.raises(TypeError):
+        operation.result["nested"]["items"][0]["accepted"] = False
+
+    unsupported = (object(), b"bytes", {"set"}, float("nan"), float("inf"))
+    for value in unsupported:
+        with pytest.raises(ValueError, match="JSON"):
+            contracts.AcceptedOperation(
+                outcome=contracts.CanonicalOutcome.SUCCESS,
+                request_id="request-1",
+                result={"unsupported": value},
+                error=None,
+            )
+    cycle = {}
+    cycle["self"] = cycle
+    with pytest.raises(ValueError, match="acyclic JSON"):
+        contracts.AcceptedOperation(
+            outcome=contracts.CanonicalOutcome.SUCCESS,
+            request_id="request-1",
+            result=cycle,
+            error=None,
+        )
+
+
 @pytest.mark.parametrize(
     "request_id",
     (
@@ -324,6 +476,10 @@ def test_retrieval_evidence_manifest_hashes_every_source_and_fixture():
     assert manifest["valid_vector_count"] == 8
     assert manifest["invalid_mutation_count"] == 19
     assert len(manifest["fixtures"]) == 27
+    assert {path.name for path in EVIDENCE_ROOT.glob("*.json")} == {
+        "manifest.json",
+        *(entry["path"] for entry in manifest["fixtures"]),
+    }
     for entry in manifest["sources"]:
         path = ROOT / entry["path"]
         assert hashlib.sha256(path.read_bytes()).hexdigest() == entry["sha256"]
@@ -354,6 +510,13 @@ def test_every_retrieval_fixture_loads_immutably_and_obeys_outer_contract():
 
     for entry in manifest["fixtures"]:
         fixture = _freeze(_load_json(EVIDENCE_ROOT / entry["path"]))
+        assert set(fixture) == {
+            "contract_version",
+            "outcome",
+            "request_id",
+            "result",
+            "error",
+        }
         assert isinstance(fixture, MappingProxyType)
         with pytest.raises(TypeError):
             fixture["outcome"] = "changed"
@@ -408,13 +571,23 @@ def test_retrieval_fixtures_reject_private_fields_and_credential_like_text():
 def test_v1_transport_goldens_have_named_inputs_status_and_response_values():
     fixtures = sorted((TRANSPORT_ROOT / "v1").glob("*.json"))
 
-    assert len(fixtures) == 12
+    assert {path.name for path in fixtures} == set(V1_SHA256)
     assert {(_load_json(path)["transport"]) for path in fixtures} == {
         "http",
         "mcp",
     }
     for path in fixtures:
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == V1_SHA256[
+            path.name
+        ]
         fixture = _load_json(path)
+        assert set(fixture) == {
+            "transport",
+            "name",
+            "input",
+            "status",
+            "response_value",
+        }
         assert fixture["name"]
         assert isinstance(fixture["input"], dict)
         assert isinstance(fixture["status"], dict)
@@ -430,12 +603,23 @@ def test_v2_transport_goldens_cover_default_and_narrow_mappings():
     for path in fixtures:
         fixture = _load_json(path)
         response = fixture["response_value"]
+        assert set(response) == {
+            "contract_version",
+            "outcome",
+            "request_id",
+            "result",
+            "error",
+        }
         outcome = contracts.CanonicalOutcome(response["outcome"])
         error_data = response["error"]
         error = (
             None
             if error_data is None
-            else contracts.OperationError(outcome=outcome, **error_data)
+            else contracts.OperationError(
+                outcome=outcome,
+                operation_began=not path.name.startswith("narrow_"),
+                **error_data,
+            )
         )
         operation = contracts.AcceptedOperation(
             contract_version=response["contract_version"],
@@ -443,6 +627,7 @@ def test_v2_transport_goldens_cover_default_and_narrow_mappings():
             request_id=response["request_id"],
             result=response["result"],
             error=error,
+            operation_began=not path.name.startswith("narrow_"),
         )
         code = error.code if error is not None else outcome.value
         observed.add((outcome.value, code))

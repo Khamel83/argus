@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import InitVar, dataclass
@@ -50,6 +51,14 @@ _NARROW_HTTP_STATUS = {
     "rate_limited": (CanonicalOutcome.UNREADY, 429),
     "internal_failure": (CanonicalOutcome.UNREADY, 503),
 }
+_ADMISSION_ONLY_CODES = frozenset(_NARROW_HTTP_STATUS)
+_CANONICAL_ERROR_TITLES = {
+    code: code.replace("_", " ").title()
+    for code in (
+        *(outcome.value for outcome in CanonicalOutcome),
+        *_ADMISSION_ONLY_CODES,
+    )
+}
 
 _SUCCESS_LIKE = {
     CanonicalOutcome.SUCCESS,
@@ -59,6 +68,7 @@ _SUCCESS_LIKE = {
 _SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _SAFE_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _CONTRACT_VERSION = "2.0"
+_MAX_RETRY_AFTER_SECONDS = 86_400
 
 T = TypeVar("T")
 
@@ -124,16 +134,42 @@ def _require_bounded_text(
         raise ValueError(f"{name} must be non-empty and at most {maximum} characters")
 
 
-def _freeze(value: Any) -> Any:
+def _freeze(value: Any, active: set[int] | None = None) -> Any:
+    active = set() if active is None else active
     if isinstance(value, Mapping):
+        identity = id(value)
+        if identity in active:
+            raise ValueError("result must contain acyclic JSON-compatible values")
         if not all(isinstance(key, str) for key in value):
             raise ValueError("result object keys must be strings")
-        return MappingProxyType(
-            {key: _freeze(child) for key, child in value.items()}
-        )
+        active.add(identity)
+        try:
+            return MappingProxyType(
+                {
+                    str(key): _freeze(child, active)
+                    for key, child in value.items()
+                }
+            )
+        finally:
+            active.remove(identity)
     if isinstance(value, (list, tuple)):
-        return tuple(_freeze(child) for child in value)
-    return value
+        identity = id(value)
+        if identity in active:
+            raise ValueError("result must contain acyclic JSON-compatible values")
+        active.add(identity)
+        try:
+            return tuple(_freeze(child, active) for child in value)
+        finally:
+            active.remove(identity)
+    if value is None or type(value) is bool:
+        return value
+    if isinstance(value, str):
+        return str(value)
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float) and math.isfinite(value):
+        return float(value)
+    raise ValueError("result leaves must be immutable JSON-compatible values")
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,13 +185,26 @@ class OperationError:
     code: str
     retryable: bool
     retry_after_seconds: int | None
+    operation_began: InitVar[bool] = True
 
-    def __post_init__(self, outcome: CanonicalOutcome) -> None:
+    def __post_init__(
+        self,
+        outcome: CanonicalOutcome,
+        operation_began: bool,
+    ) -> None:
         canonical = _as_outcome(outcome)
+        if not isinstance(operation_began, bool):
+            raise ValueError("operation_began must be a boolean")
         if not isinstance(self.code, str) or not _SAFE_CODE.fullmatch(self.code):
             raise ValueError("code must be a bounded stable identifier")
+        if operation_began and self.code in _ADMISSION_ONLY_CODES:
+            raise ValueError(
+                f"{self.code!r} is admission-only after operation acceptance"
+            )
         if self.type != f"urn:argus:problem:{self.code}":
             raise ValueError("type must be the stable URN for code")
+        if self.title != _CANONICAL_ERROR_TITLES.get(self.code):
+            raise ValueError("title must be canonical for code")
         _require_bounded_text("title", self.title, maximum=128)
         _require_bounded_text("detail", self.detail, maximum=1024)
         _require_bounded_text("instance", self.instance, maximum=128)
@@ -177,9 +226,11 @@ class OperationError:
                 isinstance(self.retry_after_seconds, bool)
                 or not isinstance(self.retry_after_seconds, int)
                 or self.retry_after_seconds < 0
+                or self.retry_after_seconds > _MAX_RETRY_AFTER_SECONDS
             ):
                 raise ValueError(
-                    "retry_after_seconds must be a non-negative integer"
+                    "retry_after_seconds must be an integer from 0 through "
+                    f"{_MAX_RETRY_AFTER_SECONDS}"
                 )
             if not self.retryable:
                 raise ValueError(
@@ -196,10 +247,13 @@ class AcceptedOperation(Generic[T]):
     result: T | None
     error: OperationError | None
     contract_version: str = _CONTRACT_VERSION
+    operation_began: InitVar[bool] = True
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, operation_began: bool) -> None:
         canonical = _as_outcome(self.outcome)
         object.__setattr__(self, "outcome", canonical)
+        if not isinstance(operation_began, bool):
+            raise ValueError("operation_began must be a boolean")
         if self.contract_version != _CONTRACT_VERSION:
             raise ValueError("contract_version must be exactly '2.0'")
         if not isinstance(self.request_id, str) or not _SAFE_REQUEST_ID.fullmatch(
@@ -220,6 +274,10 @@ class AcceptedOperation(Generic[T]):
 
         if self.error is None:
             raise ValueError("failure outcome requires an error")
+        if operation_began and self.error.code in _ADMISSION_ONLY_CODES:
+            raise ValueError(
+                f"{self.error.code!r} is admission-only after operation acceptance"
+            )
         expected_status = http_status_for(canonical, self.error.code)
         if self.error.status != expected_status:
             raise ValueError("error does not match the operation outcome")
