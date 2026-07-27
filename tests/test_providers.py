@@ -225,6 +225,8 @@ class TestDuckDuckGoProvider:
         [
             ("native-success.json", "success", None),
             ("native-empty.json", "empty", "empty"),
+            ("native-rate-limit.json", "error", "rate_limited"),
+            ("native-timeout.json", "error", "timeout"),
             ("native-unexpected.json", "error", "parse_error"),
             ("native-library-failure.json", "error", "provider_unavailable"),
         ],
@@ -245,7 +247,15 @@ class TestDuckDuckGoProvider:
 
         class FakeDDGS:
             def text(self, *_args, **_kwargs):
-                if "exception" in fixture:
+                if fixture.get("exception") == "RatelimitException":
+                    from ddgs.exceptions import RatelimitException
+
+                    raise RatelimitException("native rate limit")
+                if fixture.get("exception") == "TimeoutException":
+                    from ddgs.exceptions import TimeoutException
+
+                    raise TimeoutException("native timeout")
+                if fixture.get("exception") == "RuntimeError":
                     raise RuntimeError("fixture library failure")
                 return fixture["rows"]
 
@@ -273,6 +283,10 @@ class TestDuckDuckGoProvider:
         if fixture_name == "native-unexpected.json":
             encoded = json.dumps(payload)
             assert "must not stringify" not in encoded
+        if fixture_name == "native-rate-limit.json":
+            assert payload == {"error": {"kind": "rate_limit"}}
+        if fixture_name == "native-timeout.json":
+            assert payload == {"error": {"kind": "timeout"}}
 
 
 # --- Brave ---

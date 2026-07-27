@@ -123,17 +123,15 @@ class DuckDuckGoProvider(BaseProvider):
                 raise ValueError("worker response exceeded IPC bound")
             payload = json.loads(stdout.decode("utf-8"))
             worker_error = payload.get("error") if isinstance(payload, dict) else None
-            if worker_error == "rate_limited":
-                retry_after = payload.get("retry_after_seconds")
+            worker_error_kind = (
+                worker_error.get("kind")
+                if isinstance(worker_error, dict)
+                else None
+            )
+            if worker_error_kind == "rate_limit":
                 failure = ProviderFailure(
                     FailureCategory.RATE_LIMITED,
                     self.name,
-                    retry_after_seconds=(
-                        retry_after
-                        if isinstance(retry_after, (int, float))
-                        and not isinstance(retry_after, bool)
-                        else None
-                    ),
                     summary="duckduckgo library rate limit",
                 )
                 return self._failure_batch(
@@ -141,7 +139,7 @@ class DuckDuckGoProvider(BaseProvider):
                     started_at=start,
                     request_evidence=request_evidence,
                 )
-            if worker_error == "timeout":
+            if worker_error_kind == "timeout":
                 return self._failure_batch(
                     TimeoutError("duckduckgo library timeout"),
                     started_at=start,

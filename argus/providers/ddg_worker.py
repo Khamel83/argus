@@ -66,10 +66,10 @@ def execute_request(
         return payload, 0
     except Exception as error:
         if type(error).__name__ == "RatelimitException":
-            return {"error": "rate_limited"}, 1
+            return {"error": {"kind": "rate_limit"}}, 1
         if type(error).__name__ == "TimeoutException":
-            return {"error": "timeout"}, 1
-        return {"error": "worker_failed"}, 1
+            return {"error": {"kind": "timeout"}}, 1
+        return {"error": {"kind": "library_failure"}}, 1
 
 
 def main() -> int:

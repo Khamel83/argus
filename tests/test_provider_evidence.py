@@ -66,6 +66,22 @@ REGISTERED = {
     provider.value for provider in ProviderName if provider is not ProviderName.CACHE
 }
 EXPECTED_MAX_RATE_RESET_AHEAD_SECONDS = 366 * 24 * 60 * 60
+EXPECTED_REQUIRED_FAILURES = {
+    "searxng": {"403", "408_504", "5xx"},
+    "duckduckgo": set(),
+    "yahoo": {"403", "408_504", "5xx"},
+    "github": {"401", "403", "429"},
+    "wolfram": {"401"},
+    "brave": {"401", "403", "422", "429", "5xx"},
+    "tavily": {"401", "422", "429", "5xx"},
+    "exa": {"401", "402", "403", "408_504", "422", "429"},
+    "linkup": {"401", "422", "429"},
+    "parallel": {"401", "402", "408_504", "422", "429", "5xx"},
+    "serper": {"401", "402", "429", "5xx"},
+    "you": {"401", "402", "403", "422", "429", "5xx"},
+    "searchapi": {"401"},
+    "valyu": {"401", "402"},
+}
 
 
 @pytest.fixture(autouse=True)
@@ -276,13 +292,15 @@ def test_manifest_covers_every_registered_provider_and_contract_case():
         for failure in entry["failures"].values():
             assert set(failure) in (
                 {"fixture", "source", "shape_source"},
-                {"reason", "source"},
+                {"state", "reason", "source", "primary_source"},
             )
             if "fixture" in failure:
                 assert (FIXTURE_ROOT / provider / failure["fixture"]).is_file()
                 assert failure["shape_source"].startswith(("https://", "argus/"))
             else:
-                assert failure["source"].startswith(("https://", "argus/"))
+                assert failure["source"].startswith(
+                    ("https://", "argus/", "docs/")
+                )
                 assert "#" in failure["source"]
         assert set(entry["signals"]) in ({"typed"}, {"reason", "source"})
         if "reason" in entry["signals"]:
@@ -297,38 +315,71 @@ def test_manifest_failure_declarations_agree_with_cited_authority():
     for provider_name, entry in manifest["providers"].items():
         for failure_class, declaration in entry["failures"].items():
             source = declaration["source"]
-            assert source.startswith(("https://", "argus/"))
+            assert source.startswith(("https://", "argus/", "docs/"))
             assert "#" in source
             if "fixture" in declaration:
                 assert declaration["shape_source"] == source
             else:
-                assert provider_name == "duckduckgo"
-                assert "cannot emit" in declaration["reason"].lower()
+                assert declaration["state"] == "not_documented"
+                assert declaration["primary_source"].startswith(
+                    ("https://", "argus/")
+                )
+                assert "not documented" in declaration["reason"].lower()
+                assert "cannot emit" not in declaration["reason"].lower()
 
 
-def test_manifest_negative_declarations_cite_primary_impossibility_evidence():
+def test_manifest_exactly_matches_required_and_not_documented_matrix():
     manifest = _load(FIXTURE_ROOT / "manifest.json")
-    matrix = "docs/research/2026-07-27-provider-health-probe-matrix.md"
+    matrix_source = (
+        "docs/research/2026-07-27-provider-health-probe-matrix.md"
+        "#search-provider-matrix"
+    )
     for provider_name, entry in manifest["providers"].items():
         for failure_class, declaration in entry["failures"].items():
-            if "reason" not in declaration:
-                continue
-            assert not declaration["source"].startswith(matrix), (
-                provider_name,
-                failure_class,
-            )
-            assert declaration["source"].startswith(("https://", "argus/"))
-            assert "#" in declaration["source"]
-            reason = declaration["reason"].lower()
-            assert any(
-                phrase in reason
-                for phrase in (
-                    "does not expose",
-                    "cannot emit",
-                    "raises only",
-                    "not an http provider",
+            if failure_class in EXPECTED_REQUIRED_FAILURES[provider_name]:
+                assert "fixture" in declaration, (provider_name, failure_class)
+                assert declaration["source"].startswith(("https://", "argus/"))
+            else:
+                assert declaration["state"] == "not_documented", (
+                    provider_name,
+                    failure_class,
                 )
-            )
+                assert declaration["source"] == matrix_source
+                assert declaration["primary_source"].startswith(
+                    ("https://", "argus/")
+                )
+                assert "not documented" in declaration["reason"].lower()
+                assert "cannot emit" not in declaration["reason"].lower()
+
+
+def test_provider_failure_tree_contains_only_manifest_referenced_fixtures():
+    manifest = _load(FIXTURE_ROOT / "manifest.json")
+    referenced = {
+        FIXTURE_ROOT / provider_name / declaration["fixture"]
+        for provider_name, entry in manifest["providers"].items()
+        for declaration in entry["failures"].values()
+        if "fixture" in declaration
+    }
+    actual = set(FIXTURE_ROOT.glob("*/error-*.json"))
+    assert actual == referenced
+
+
+def test_manifest_negative_declarations_are_honest_non_applicability_records():
+    manifest = _load(FIXTURE_ROOT / "manifest.json")
+    matrix = (
+        "docs/research/2026-07-27-provider-health-probe-matrix.md"
+        "#search-provider-matrix"
+    )
+    for provider_name, entry in manifest["providers"].items():
+        for failure_class, declaration in entry["failures"].items():
+            if "fixture" in declaration:
+                continue
+            assert declaration["state"] == "not_documented"
+            assert declaration["source"] == matrix
+            assert declaration["primary_source"].startswith(("https://", "argus/"))
+            reason = declaration["reason"].lower()
+            assert "not documented" in reason
+            assert "cannot emit" not in reason
 
 
 def test_manifest_declares_common_rate_and_timeout_cases_for_every_adapter():
@@ -356,11 +407,24 @@ def test_manifest_declares_all_ddgs_native_boundary_fixtures():
         "empty": "native-empty.json",
         "unexpected": "native-unexpected.json",
         "library_failure": "native-library-failure.json",
+        "rate_limit": "native-rate-limit.json",
+        "timeout": "native-timeout.json",
     }
     assert all(
         (FIXTURE_ROOT / "duckduckgo" / fixture).is_file()
         for fixture in entry["native_boundary"].values()
     )
+
+
+def test_ddgs_common_cases_do_not_claim_impossible_retry_metadata():
+    cases = _load(FIXTURE_ROOT / "manifest.json")["providers"]["duckduckgo"][
+        "common_cases"
+    ]
+    assert cases["rate_limit_with_metadata"]["state"] == "not_documented"
+    assert "retry" not in json.dumps(
+        cases["rate_limit_without_metadata"].get("payload", {})
+    )
+    assert cases["transport_timeout"]["exception"] == "TimeoutException"
 
 
 def test_failure_fixtures_do_not_invent_status_derived_native_codes():
@@ -593,20 +657,29 @@ async def test_common_rate_and_timeout_cases_execute_real_adapter_path(
 
     for case_name, declaration in entry["common_cases"].items():
         if provider_name == "duckduckgo":
-            process = MagicMock()
-            process.returncode = declaration.get("returncode", 1)
-            process.communicate = AsyncMock(
-                return_value=(
-                    json.dumps(declaration.get("payload", {})).encode("utf-8"),
-                    b"",
-                )
+            if declaration.get("state") == "not_documented":
+                continue
+            from argus.providers import ddg_worker
+            from ddgs.exceptions import RatelimitException, TimeoutException
+
+            exception_type = {
+                "RatelimitException": RatelimitException,
+                "TimeoutException": TimeoutException,
+            }[declaration["exception"]]
+
+            class NativeFailureDDGS:
+                def text(self, *_args, **_kwargs):
+                    raise exception_type("native fixture failure")
+
+            payload, returncode = ddg_worker.execute_request(
+                {"query": "fixture", "max_results": 5, "timelimit": None},
+                ddgs_factory=NativeFailureDDGS,
             )
-            if case_name == "transport_timeout":
-                process.returncode = None
-                process.communicate = AsyncMock(side_effect=asyncio.TimeoutError)
-                process.wait = AsyncMock(return_value=-15)
-                process.terminate = MagicMock()
-                process.kill = MagicMock()
+            process = MagicMock()
+            process.returncode = returncode
+            process.communicate = AsyncMock(
+                return_value=(json.dumps(payload).encode("utf-8"), b"")
+            )
             with patch(
                 f"{module_name}.asyncio.create_subprocess_exec",
                 new=AsyncMock(return_value=process),
