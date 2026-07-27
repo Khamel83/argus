@@ -404,7 +404,7 @@ The outward representative is selected deterministically:
 
 1. a verified canonical URL, when one exists;
 2. otherwise the observation with the best provider rank;
-3. then the earliest provider in the resolved plan;
+3. then provider enum value in lexical order;
 4. then canonical URL byte order.
 
 Title and snippet come from the same representative observation. Argus does
@@ -433,12 +433,27 @@ The final base order is:
 1. descending RRF score;
 2. ascending best contributing provider rank;
 3. descending contributor count;
-4. ascending earliest resolved-provider position;
+4. ascending lexicographically smallest contributing provider enum value;
 5. ascending `cluster_sort_key` bytes.
 
 All five values and every provider contribution are retained, so the order can
 be reproduced exactly. A change to `k`, eligibility, tie-breaking, or
 contribution semantics bumps `ranking_policy_version`.
+
+### Version ownership
+
+ADR 0002 already includes these narrow versions in plan/cache identity:
+
+| Change | Version to bump |
+|---|---|
+| provider field alias, typed evidence projection, URL/document-key normalization | `result_normalization_version` |
+| date parser, filter-strength contract, conflict rule, or freshness comparison | `freshness_policy_version` |
+| hostname/site-key normalization or pinned PSL snapshot | `domain_policy_version` |
+| RRF constant/contribution, duplicate-fusion timing, tie-break, diversity selection, or evidence floor | `ranking_policy_version` |
+
+If one change crosses multiple rows, every affected version bumps. Provider
+contract versions remain in attempt evidence; they do not replace the semantic
+cache invalidation versions.
 
 ## Site diversity and evidence floors
 

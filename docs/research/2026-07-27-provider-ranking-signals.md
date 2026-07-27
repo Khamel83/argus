@@ -262,7 +262,7 @@ There is at most one contribution per provider per document cluster. All
 contributor identities, ranks, canonical contributions, time claims, and
 request traces remain attached. Select the outward representative
 deterministically: verified canonical URL first, then best provider rank,
-earliest provider in the resolved plan, then document-key byte order. Title
+provider enum value in lexical order, then canonical URL byte order. Title
 and summary come from that same observation; Argus does not splice fields from
 different sources into synthetic source text. Other bounded excerpts remain
 provenance. A longer snippet does not earn a relevance bonus.
@@ -272,8 +272,9 @@ Sort fused groups by:
 1. descending RRF score;
 2. ascending best provider rank;
 3. descending contributor count;
-4. ascending earliest resolved-provider position;
-5. ascending document-key bytes.
+4. ascending lexicographically smallest contributor provider enum value;
+5. ascending cluster sort key (verified canonical key, otherwise the smallest
+   member document key).
 
 The extra keys make ties independent of dictionary completion order. Native
 scores, latency, provider tier, cost, and snippet length are excluded.
