@@ -469,14 +469,27 @@ unknown-source sentinels. Assert none crosses the batch seam or safe log
 record, while the batch retains bounded typed request IDs, warnings, usage,
 cost, rate reset, publication evidence, and native score semantics.
 
-- [ ] **Step 3: Implement normalized evidence types**
+- [ ] **Step 3: Write bounded attempt/redirect tests**
+
+For adapters that retry or follow redirects, assert the exact configured
+maximum retry and redirect trace entries, a typed overflow failure, and no
+unbounded warning/failure accumulation. A cross-origin redirect strips
+authorization, cookies, and signed query material before any redirected
+request; a fixture trap fails if those values cross origins. With an injected
+monotonic clock, prove the adapter timeout is exactly
+`min(configured_timeout, provider_phase_remaining)`, refuses to start at or
+after the phase deadline, and cancels an in-flight attempt at that boundary.
+All redirected requests remain children of the single provider attempt and
+are counted in its bounded trace.
+
+- [ ] **Step 4: Implement normalized evidence types**
 
 Use frozen bounded values and the closed evidence/source/snippet/failure enums
 from ADRs 0003 and 0004. Provider rank is unique, zero-based returned-array
 order after structurally invalid rows are removed. Unknown provider fields
 remain private and are not copied into generic metadata.
 
-- [ ] **Step 4: Port providers in deterministic groups**
+- [ ] **Step 5: Port providers in deterministic groups**
 
 Port and test in this order:
 
@@ -488,7 +501,7 @@ Correct Parallel `/v1/search`, Exa field casing/bounded contents request, and
 Crawl4AI's locked result object. Correct dormant Firecrawl v2 parsing but keep
 Firecrawl disabled behind its existing spend/config gate.
 
-- [ ] **Step 5: Add extractor compatibility fixtures**
+- [ ] **Step 6: Add extractor compatibility fixtures**
 
 Freeze Crawl4AI locked markdown-object success/malformed shapes and Firecrawl
 v2 success/error shapes. Prove Firecrawl remains disabled without its explicit
@@ -496,14 +509,14 @@ config/spend authorization and that fixture tests make no external request.
 Run these through `tests/test_extractor_contracts.py` and the existing
 extraction suite.
 
-- [ ] **Step 6: Translate typed controls**
+- [ ] **Step 7: Translate typed controls**
 
 Each adapter declares `none`, `relative_only`, `date_range`,
 `relative_and_date_range`, or `query_qualifier`, records exact/widened/
 unsupported precision and strict/best-effort/unknown strength, and rejects a
 required unsupported control rather than silently dropping it.
 
-- [ ] **Step 7: Verify and commit**
+- [ ] **Step 8: Verify and commit**
 
 ```bash
 uv run pytest tests/test_provider_evidence.py tests/test_extractor_contracts.py \
@@ -871,6 +884,11 @@ fallback.
 Use hanging async, blocking-worker, slow-fusion, slow-persistence, failed
 leader, same-cohort, and policy-divergent cohort fakes. Assert typed timeout or
 persistence failure inside the operation deadline and no unsafe entry.
+Reassert the execution boundary independently of adapter tests: every attempt
+receives exactly `min(configured_timeout, provider_phase_remaining)`, no
+provider starts at or after the provider-phase deadline, outstanding attempts
+are cancelled at that boundary, and retry/redirect trace overflow becomes the
+typed provider failure without cache or partial evidence publication.
 
 - [ ] **Step 3: Add normalized evidence persistence**
 
