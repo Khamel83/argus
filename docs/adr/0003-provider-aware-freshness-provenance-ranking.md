@@ -23,7 +23,7 @@ provider evidence. One internal `EvidenceFusion` deep module then:
 3. clusters only results proven to represent the same document;
 4. performs deterministic unweighted reciprocal-rank fusion (RRF);
 5. applies a bounded research-mode site-diversity pass;
-6. checks the mode-specific evidence floor; and
+6. checks the mode-specific structural breadth floor; and
 7. returns ranked evidence plus a complete, renderable fusion trace.
 
 The external HTTP, MCP, CLI, and Python shapes do not change in this decision.
@@ -62,7 +62,7 @@ evaluated offline against the frozen corpus.
 Treat each provider's returned ordering as its only production ranking vote.
 Normalize evidence, fail closed on declared freshness, fuse proven duplicate
 documents with equal-provider RRF, and apply only the minimum deterministic
-site-diversity rule required by the research evidence floor.
+site-diversity rule required by the research structural breadth floor.
 
 This preserves the current ranking model, adds no provider call, does not
 reward speed, and creates a reproducible baseline for later measured changes.
@@ -102,8 +102,9 @@ fuse_evidence(
 ) -> FusionOutcome
 ```
 
-Provider adapters satisfy the existing provider seam but return a private
-normalized batch:
+The target replaces the current internal
+`BaseProvider.search() -> tuple[list[SearchResult], ProviderTrace]` result
+interface with a normalized batch interface:
 
 ```text
 ProviderSearchBatch:
@@ -124,6 +125,12 @@ ResultObservation:
   native_score_evidence?
   provider_result_ref?
 ```
+
+During the mechanical port, one temporary `LegacyProviderBatchAdapter`
+translates an unchanged legacy tuple into the typed batch with explicitly
+missing evidence. Provider execution consumes only `ProviderSearchBatch`.
+The compatibility adapter is deleted after all 14 provider adapters cross the
+new seam. Public caller interfaces remain unchanged.
 
 `FusionOutcome` contains:
 
@@ -235,6 +242,26 @@ not authoritative. Provider `page_age` or human-readable age text is retained
 as `provider_age`; it becomes a publication date only when the adapter has a
 versioned, deterministic parser and the provider contract defines its
 semantics.
+
+A publication claim is approved for strict freshness only when all are true:
+
+```text
+kind == published
+source in {provider_field, provider_age}
+contract_confidence in {
+  official_contract,
+  owned_library_contract,
+  fixture_backed
+}
+semantic_contract_ref is present
+parser_version is allowlisted by freshness_policy_version
+the normalized interval is valid
+```
+
+`fixture_backed` still requires a semantic contract reference; a captured
+display string alone does not prove publication meaning. `unverified`,
+generic `result_text`, modified/indexed times, and an uncontracted age remain
+diagnostic and can never become approved through parsing alone.
 
 The retrieval observation time is never substituted for publication time.
 Timestamps without a timezone are invalid for strict freshness. Date, month,
@@ -354,7 +381,8 @@ and never boosts or penalizes rank.
 
 When freshness is declared:
 
-1. every approved claim becomes its UTC precision interval;
+1. every claim satisfying the approval predicate becomes its UTC precision
+   interval;
 2. at least one claim interval must lie wholly inside the inclusive window;
 3. disjoint approved claims reject the result as conflicting;
 4. an in-window result is eligible;
@@ -377,8 +405,11 @@ only when:
 
 Otherwise an empty response is useful provider evidence but does not by itself
 prove a freshness-scoped empty result. If all returned observations are
-out-of-window or unproven and no strict empty proof exists, the internal reason
-is `freshness_unproven`, mapped to canonical `providers_failed`.
+out-of-window or unproven and no strict empty proof exists, the visible
+internal rejection is `freshness_unproven`. It is not `providers_failed`,
+because the provider may have succeeded while its evidence failed the declared
+freshness gate. Issue #66 must assign the truthful stable
+HTTP/MCP/CLI/Python outcome before this policy can ship.
 
 Changing translation, parser, strictness, or date-comparison semantics bumps
 `freshness_policy_version` and invalidates incompatible cache entries.
@@ -389,14 +420,16 @@ Fusion operates on document clusters, not raw provider rows. A relation is
 strong enough to merge only when at least one is true:
 
 1. the URLs have the same conservative document key;
-2. a provider supplies the same documented canonical URL for both;
-3. extraction proves the same safe redirect/canonical chain; or
-4. extraction produces the same versioned normalized-content fingerprint.
+2. extraction proves the same safe redirect/canonical chain; or
+3. extraction produces the same versioned normalized-content fingerprint.
 
 Title similarity, snippet similarity, shared hostname, `www` variation,
 trailing-slash variation, syndicated appearance, and tracking-parameter
 variation are weak hints only. They may be reported diagnostically but never
 merge evidence or contributions without one of the proofs above.
+Provider-supplied canonical URLs are also weak hints until Argus validates the
+URL and proves the redirect/canonical relation through the safe extraction
+path.
 
 ### Conservative document key
 
@@ -439,18 +472,26 @@ The outward representative is selected deterministically:
 Title and snippet come from the same representative observation. Argus does
 not splice fields from different sources into synthetic source text.
 
-Verified duplicate and syndicated clusters count once toward the scorecard
-evidence floor. Weak hints remain separate and therefore cannot hide
+Verified duplicate and syndicated clusters count once toward both structural
+and scorecard evidence evaluation. Weak hints remain separate and cannot hide
 potentially distinct evidence.
 
 ## Deterministic fusion
 
-Version 1 retains unweighted RRF with `k=60`:
+Version 1 retains unweighted RRF with `k=60`. Ordering uses exact rational
+arithmetic, not incremental binary floating-point addition:
 
 ```text
-cluster_score =
-  sum(1 / (60 + provider_rank + 1) for each contributing provider)
+contribution = Fraction(1, 60 + provider_rank + 1)
+exact_cluster_score = sum(contribution for each contributing provider)
 ```
+
+The canonical stored contribution is `(provider, provider_rank, numerator=1,
+denominator=60+provider_rank+1)`. Providers are sorted by enum value before
+serialization, but rational addition is order-independent. The compatibility
+`SearchResult.score` and outward attribution values are rendered floats derived
+from the exact rationals after ordering; no rendered float participates in
+sorting or cache identity.
 
 Every eligible provider has weight 1. Provider tier, cost, latency, native
 score, source type, freshness age, snippet length, and provider health do not
@@ -459,15 +500,16 @@ not evidence relevance.
 
 The final base order is:
 
-1. descending RRF score;
+1. descending exact RRF rational;
 2. ascending best contributing provider rank;
 3. descending contributor count;
 4. ascending lexicographically smallest contributing provider enum value;
 5. ascending `cluster_sort_key` bytes.
 
-All five values and every provider contribution are retained, so the order can
-be reproduced exactly. A change to `k`, eligibility, tie-breaking, or
-contribution semantics bumps `ranking_policy_version`.
+All five values and every rational provider contribution are retained, so the
+order can be reproduced exactly. A change to `k`, arithmetic representation,
+eligibility, tie-breaking, or contribution semantics bumps
+`ranking_policy_version`.
 
 ### Version ownership
 
@@ -478,13 +520,13 @@ ADR 0002 already includes these narrow versions in plan/cache identity:
 | provider field alias, typed evidence projection, URL/document-key normalization | `result_normalization_version` |
 | date parser, filter-strength contract, conflict rule, or freshness comparison | `freshness_policy_version` |
 | hostname/site-key normalization or pinned PSL snapshot | `domain_policy_version` |
-| RRF constant/contribution, duplicate-fusion timing, tie-break, diversity selection, or evidence floor | `ranking_policy_version` |
+| RRF constant/contribution, duplicate-fusion timing, tie-break, diversity selection, or structural floor | `ranking_policy_version` |
 
 If one change crosses multiple rows, every affected version bumps. Provider
 contract versions remain in attempt evidence; they do not replace the semantic
 cache invalidation versions.
 
-## Site diversity and evidence floors
+## Site diversity and structural breadth
 
 `site_key` is the registrable domain derived from a pinned Public Suffix List
 snapshot. Subdomains of one registrable domain share a site key. IP literals
@@ -496,7 +538,7 @@ Mode behavior:
 
 - `discovery`: preserve base order; report site diversity diagnostically.
 - `grounding`: preserve base order; one eligible URL-backed cluster or computed
-  answer may satisfy the runtime floor.
+  answer may satisfy the runtime structural floor.
 - `recovery`: preserve base order; one proven canonical replacement may
   satisfy the floor.
 - `research`: apply a two-per-site cap while an eligible result from another
@@ -542,23 +584,31 @@ Coverage can move only the earliest result from the second required site ahead
 of same-site results. During fill, no deferred item can jump ahead of an
 eligible base-order item from another site.
 
-After diversification, the runtime research floor is:
+After diversification, the runtime research structural floor is:
 
 ```text
 required_clusters = min(3, result_limit)
 required_sites = min(2, required_clusters)
 ```
 
-The frozen competitive corpus uses `result_limit >= 3`, so its full floor
-remains three URL-backed clusters across at least two site keys. This preserves
-the existing valid `1..50` result-limit contract for callers that explicitly
-request a smaller package without pretending the benchmark floor was met.
-Proven mirrors and syndicated clusters count once. If eligible providers
-returned evidence but the effective floor cannot be met, Argus produces a
-visible internal rejection `research_evidence_floor_unmet`; it does not label
-a thin package `success`, `degraded`, `empty`, or `providers_failed`. Issue #66
-must assign the truthful stable HTTP/MCP/CLI/Python outcome before this policy
-can ship. A genuine strict successful empty remains `empty`.
+The frozen competitive corpus uses `result_limit >= 3`, so its full structural
+minimum remains three URL-backed clusters across at least two site keys. This
+preserves the existing valid `1..50` result-limit contract for callers that
+explicitly request a smaller package. Proven mirrors and syndicated clusters
+count once.
+
+Passing this structural proxy does not prove relevance, editorial
+independence, authority, or the accepted scorecard floor. The frozen evaluator
+must separately confirm three relevant sources across two independent domains
+before the competitive evidence package passes. Runtime result success and
+competitive promotion are distinct verdicts.
+
+If eligible providers returned evidence but the effective structural minimum
+cannot be met, Argus produces a visible internal rejection
+`research_structural_floor_unmet`; it does not label a thin package `success`,
+`degraded`, `empty`, or `providers_failed`. Issue #66 must assign the truthful
+stable HTTP/MCP/CLI/Python outcome before this policy can ship. A genuine strict
+successful empty remains `empty`.
 
 ## Latency and credit policy
 
@@ -661,11 +711,16 @@ Hermetic tests must prove:
 
 - exact day/week/month/year and explicit-date boundaries from ADR 0002;
 - timestamp and date precision at both inclusive edges;
+- the approval predicate rejects unverified/result-text/modified/indexed and
+  uncontracted-age claims even when they parse;
+- fixture-backed aliases require an allowlisted parser and semantic contract
+  reference;
 - out-of-window and undated results are excluded;
 - widened provider translation requires exact broker post-filtering;
 - strict exact-filter empty can produce `empty`;
 - best-effort/unknown empty cannot prove a freshness-scoped empty;
-- all-unproven evidence maps to `providers_failed/freshness_unproven`;
+- all-unproven evidence returns internal `freshness_unproven` without a false
+  provider-failure outcome;
 - freshness age never changes order among eligible results;
 - freshness policy version changes invalidate the cache fingerprint.
 
@@ -675,6 +730,7 @@ Hermetic tests must prove:
 - HTTP/HTTPS, path case, trailing slash, query order, and non-tracking
   parameters remain distinct without proof;
 - `www`, tracking, title, and snippet similarity alone never merge;
+- provider-supplied canonical hints alone never merge;
 - verified canonical, redirect, or content-fingerprint relations merge;
 - one provider contributes only its best rank once per cluster;
 - all observations and provider ranks survive representative selection.
@@ -683,6 +739,9 @@ Hermetic tests must prove:
 
 - current single-provider order is preserved;
 - equal-provider RRF with `k=60` matches exact expected values;
+- equal rational term multisets remain exactly tied under every provider-map
+  permutation, including the ranks 7/11/29 floating-point counterexample;
+- rendered float scores never participate in ordering;
 - native-score scale changes do not alter order;
 - duplicate clusters accumulate all provider contributions;
 - every tie-break is deterministic across provider mapping insertion order;
@@ -698,9 +757,11 @@ Hermetic tests must prove:
 - proven duplicate/syndicated clusters count once;
 - runtime research floor scales only when the caller explicitly requests fewer
   than three results;
-- three URL-backed clusters across two sites pass the full research floor;
+- three URL-backed clusters across two sites pass the full structural minimum;
+- passing the structural site floor never by itself proves relevance,
+  editorial independence, authority, or a competitive scorecard pass;
 - thin research evidence fails visibly with
-  `research_evidence_floor_unmet` and awaits #66's truthful surface mapping;
+  `research_structural_floor_unmet` and awaits #66's truthful surface mapping;
 - computed and sourced answers do not masquerade as independent URL-backed
   sources.
 

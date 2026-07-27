@@ -1,6 +1,6 @@
 # Provider-aware freshness, provenance, and ranking policy
 
-Status: proposed decision record
+Status: completed supporting research for ADR 0003
 
 Scope: research and policy selection, not implementation
 
@@ -202,6 +202,12 @@ Freshness evaluation happens in this order:
    `wrong_time_kind`, `out_of_range`, or `conflicting_time`) and the provider
    translation.
 
+“Policy-approved” uses ADR 0003's exact allowlist: a `published` claim from a
+provider field or contracted provider-age mapping, supported by an official,
+owned-library, or fixture-backed semantic contract reference and an allowlisted
+parser version. Unverified/result-text/modified/indexed and uncontracted age
+claims remain diagnostic even when parseable.
+
 Version 1 strict-freshness capability is therefore:
 
 | Capability | Providers |
@@ -224,7 +230,8 @@ A freshness-scoped empty response is a proven `empty` only when:
 - the trace retains that translation and success evidence.
 
 Otherwise, zero retained results after freshness rejection is
-`freshness_unproven` and maps through the ADR's fail-closed outcome rule.
+the visible internal rejection `freshness_unproven`. It is not provider
+failure; issue #66 owns the stable surface outcome mapping.
 
 ## Deterministic duplicate and ranking policy
 
@@ -251,18 +258,19 @@ encoding, and removes fragments. It preserves scheme, path case, trailing
 slash, query order, duplicate query parameters, empty values, key-only
 parameters, and every parameter name and value.
 
-Only stronger evidence may join different document keys: a provider-supplied
-documented canonical URL, a proven safe redirect/canonical chain, or a
-versioned normalized-content fingerprint from extraction. `www` variation,
-tracking parameters, title/snippet similarity, and syndication are weak
-diagnostics only. They do not drive fusion. This replaces the current split
-behavior where RRF keys raw URLs and a later dedupe step applies unsafe,
-different assumptions.
+Only stronger Argus-verified evidence may join different document keys: a
+proven safe redirect/canonical chain or a versioned normalized-content
+fingerprint from extraction. A provider-supplied canonical URL, `www`
+variation, tracking parameters, title/snippet similarity, and syndication are
+weak diagnostics until Argus proves the relation. They do not drive fusion.
+This replaces the current split behavior where RRF keys raw URLs and a later
+dedupe step applies unsafe, different assumptions.
 
 For each group:
 
 ```text
-rrf_score = sum(1 / (60 + provider_rank + 1))
+contribution = Fraction(1, 60 + provider_rank + 1)
+exact_rrf_score = sum(contribution for each provider)
 ```
 
 There is at most one contribution per provider per document cluster. All
@@ -276,15 +284,17 @@ provenance. A longer snippet does not earn a relevance bonus.
 
 Sort fused groups by:
 
-1. descending RRF score;
+1. descending exact RRF rational;
 2. ascending best provider rank;
 3. descending contributor count;
 4. ascending lexicographically smallest contributor provider enum value;
 5. ascending cluster sort key (verified canonical key, otherwise the smallest
    member document key).
 
-The extra keys make ties independent of dictionary completion order. Native
-scores, latency, provider tier, cost, and snippet length are excluded.
+Exact rationals, rather than incremental floats, make score equality and the
+extra tie keys independent of dictionary completion order. Rendered float
+scores are compatibility presentation only. Native scores, latency, provider
+tier, cost, and snippet length are excluded.
 
 Near-duplicate text, mirrors, and syndication remain separate in version 1.
 Their suspected relationship is diagnostic. Collapsing them without a stable
@@ -309,14 +319,16 @@ evidence but does not by itself prove corporate or editorial independence.
   cannot fill the request. Emit base rank, output rank, site key, and every
   coverage/skip/backfill reason.
 
-The runtime research floor is `min(3, result_limit)` URL-backed document
+The runtime research structural floor is `min(3, result_limit)` URL-backed document
 clusters across `min(2, required_clusters)` site keys. The frozen corpus uses a
-result limit of at least three, so its full floor remains three sources across
-two sites. Site diversity helps produce candidates but does not prove
-relevance or independence. A result that misses its effective floor fails
-visibly as internal `research_evidence_floor_unmet`; it is not rescued by a
-diversity statistic or mislabeled as provider failure. Issue #66 owns the
-stable surface outcome mapping.
+result limit of at least three, so its full structural minimum remains three
+sources across two sites. Site diversity helps produce candidates but does not
+prove relevance, authority, editorial independence, or the scorecard floor;
+the frozen evaluator must judge those semantic requirements separately. A
+result that misses its effective structural minimum fails visibly as internal
+`research_structural_floor_unmet`; it is not rescued by a diversity statistic
+or mislabeled as provider failure. Issue #66 owns the stable surface outcome
+mapping.
 
 The diversity algorithm affects selection and is therefore part of
 `ranking_policy_version` and the cache fingerprint.
