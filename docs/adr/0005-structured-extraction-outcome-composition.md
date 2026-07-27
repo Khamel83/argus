@@ -741,6 +741,13 @@ composer, then migrate persistence/HTTP, then MCP/CLI, and finally workflows.
 It should replace the old classification paths rather than layering another
 parallel status system.
 
+That is implementation order, not permission to expose a mixed authority.
+Intermediate commits may exist on an isolated branch, but production keeps the
+old path active until every selected surface uses the accepted finalizer
+projection. Cutover is atomic or feature-gated and fail-closed; no partially
+migrated state may merge or deploy as the authoritative contract, and no
+dual-write classifier may remain after cutover.
+
 ## Verification obligations
 
 Hermetic fixtures must prove:
@@ -752,6 +759,8 @@ Hermetic fixtures must prove:
   and inconsistent distinct-outcome sets;
 - the closed attempt taxonomy never mixes adapter execution with artifact
   quality/completeness, and attempt count excludes skips/cache decisions;
+- every attempt-outcome enum member has exactly one exhaustive terminal
+  mapping; adding a member requires a policy-version change and fixture update;
 - complete fallback success has no final rejection while retaining failed
   earlier steps;
 - missing quality or completeness evidence fails visibly;
