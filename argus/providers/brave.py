@@ -59,6 +59,7 @@ class BraveProvider(BaseProvider):
             provider_request_material=self._canonical_request_material(params),
         )
 
+        resp = None
         try:
             async with httpx.AsyncClient(
                 timeout=self._attempt_timeout(query)
@@ -83,7 +84,10 @@ class BraveProvider(BaseProvider):
         except Exception as e:
             logger.warning("Brave search failed: %s", type(e).__name__)
             return self._failure_batch(
-                e, started_at=start, request_evidence=request_evidence
+                e,
+                started_at=start,
+                request_evidence=request_evidence,
+                observed_status=self._response_status(resp),
             )
 
     def _normalize(self, raw_results: list) -> List[SearchResult]:

@@ -60,6 +60,7 @@ class SearchApiProvider(BaseProvider):
             ),
         )
 
+        resp = None
         try:
             async with httpx.AsyncClient(
                 timeout=self._attempt_timeout(query)
@@ -83,7 +84,10 @@ class SearchApiProvider(BaseProvider):
         except Exception as exc:
             logger.warning("SearchApi search failed: %s", type(exc).__name__)
             return self._failure_batch(
-                exc, started_at=start, request_evidence=request_evidence
+                exc,
+                started_at=start,
+                request_evidence=request_evidence,
+                observed_status=self._response_status(resp),
             )
 
     def _normalize(self, data: dict, max_results: int) -> List[SearchResult]:

@@ -70,6 +70,7 @@ class ValyuProvider(BaseProvider):
             provider_request_material=self._canonical_request_material(payload),
         )
 
+        resp = None
         try:
             async with httpx.AsyncClient(
                 timeout=self._attempt_timeout(query)
@@ -82,7 +83,7 @@ class ValyuProvider(BaseProvider):
                     return native_failure
                 data = resp.json()
 
-            if not data.get("success"):
+            if data.get("success") is False:
                 error_msg = data.get("error", "unknown error")
                 category = (
                     FailureCategory.BALANCE_EXHAUSTED
@@ -95,6 +96,7 @@ class ValyuProvider(BaseProvider):
                     "valyu rejected the search request",
                     started_at=start,
                     request_evidence=request_evidence,
+                    observed_status=self._response_status(resp),
                 )
 
             return self._normalized_batch(
@@ -112,13 +114,19 @@ class ValyuProvider(BaseProvider):
                 e.response.status_code,
             )
             return self._failure_batch(
-                e, started_at=start, request_evidence=request_evidence
+                e,
+                started_at=start,
+                request_evidence=request_evidence,
+                observed_status=self._response_status(resp),
             )
 
         except Exception as e:
             logger.warning("Valyu search failed: %s", type(e).__name__)
             return self._failure_batch(
-                e, started_at=start, request_evidence=request_evidence
+                e,
+                started_at=start,
+                request_evidence=request_evidence,
+                observed_status=self._response_status(resp),
             )
 
     def _normalize(self, raw_results: list) -> List[SearchResult]:

@@ -153,6 +153,172 @@ YAHOO_RESULT_HTML = """
 </body></html>
 """
 
+HTTP_ADAPTERS = {
+    "searxng": ("argus.providers.searxng", "SearXNGProvider"),
+    "yahoo": ("argus.providers.yahoo", "YahooProvider"),
+    "github": ("argus.providers.github", "GitHubProvider"),
+    "wolfram": ("argus.providers.wolfram", "WolframProvider"),
+    "brave": ("argus.providers.brave", "BraveProvider"),
+    "tavily": ("argus.providers.tavily", "TavilyProvider"),
+    "exa": ("argus.providers.exa", "ExaProvider"),
+    "linkup": ("argus.providers.linkup", "LinkupProvider"),
+    "parallel": ("argus.providers.parallel", "ParallelProvider"),
+    "serper": ("argus.providers.serper", "SerperProvider"),
+    "you": ("argus.providers.you", "YouProvider"),
+    "valyu": ("argus.providers.valyu", "ValyuProvider"),
+    "searchapi": ("argus.providers.searchapi", "SearchApiProvider"),
+}
+JSON_HTTP_ADAPTERS = tuple(
+    provider for provider in HTTP_ADAPTERS if provider not in {"yahoo", "wolfram"}
+)
+
+
+def _http_adapter(provider_name: str):
+    from argus.config import SearXNGConfig
+
+    provider = ProviderName(provider_name)
+    config = (
+        SearXNGConfig(enabled=True, base_url="https://fixture.test")
+        if provider is ProviderName.SEARXNG
+        else ProviderConfig(enabled=True, api_key="fixture")
+    )
+    module_name, class_name = HTTP_ADAPTERS[provider_name]
+    return getattr(importlib.import_module(module_name), class_name)(config)
+
+
+async def _search_with_http_response(provider_name: str, response):
+    adapter = _http_adapter(provider_name)
+    module = type(adapter).__module__
+    with patch(f"{module}.httpx.AsyncClient") as client_type:
+        client = client_type.return_value
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.get = AsyncMock(return_value=response)
+        client.post = AsyncMock(return_value=response)
+        return await adapter.search(SearchQuery(query="fixture"))
+
+
+def _assert_failure_status(batch, category: FailureCategory, status: int | None):
+    assert batch.failure is not None
+    assert batch.failure.category is category
+    assert batch.failure.http_status == status
+    assert batch.response_evidence.http_status == status
+    assert batch.trace.http_status == status
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_name", tuple(HTTP_ADAPTERS))
+async def test_recognized_success_preserves_exact_status_everywhere(provider_name):
+    if provider_name == "yahoo":
+        response = _http_response(status=200, text=YAHOO_RESULT_HTML)
+    elif provider_name == "wolfram":
+        response = _http_response(status=200, text="fixture answer")
+    else:
+        payload = _load(FIXTURE_ROOT / provider_name / "success.json")
+        response = _http_response(status=200, body=payload)
+    batch = await _search_with_http_response(provider_name, response)
+
+    assert batch.failure is None
+    assert batch.response_evidence.http_status == 200
+    assert batch.trace.http_status == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider_name", tuple(name for name in HTTP_ADAPTERS if name != "yahoo")
+)
+async def test_valid_empty_preserves_exact_status_everywhere(provider_name):
+    if provider_name == "wolfram":
+        response = _http_response(status=204, text="")
+    else:
+        payload = _load(FIXTURE_ROOT / provider_name / "empty.json")
+        response = _http_response(status=204, body=payload)
+    batch = await _search_with_http_response(provider_name, response)
+
+    _assert_failure_status(batch, FailureCategory.EMPTY, 204)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_name", JSON_HTTP_ADAPTERS)
+async def test_unknown_success_json_is_parse_error_with_exact_status(provider_name):
+    response = _http_response(status=207, body={"unexpected": "shape"})
+    batch = await _search_with_http_response(provider_name, response)
+
+    _assert_failure_status(batch, FailureCategory.PARSE_ERROR, 207)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_name", JSON_HTTP_ADAPTERS)
+async def test_invalid_success_json_is_parse_error_with_exact_status(provider_name):
+    response = _http_response(status=206)
+    response.json.side_effect = json.JSONDecodeError("invalid fixture JSON", "", 0)
+    batch = await _search_with_http_response(provider_name, response)
+
+    _assert_failure_status(batch, FailureCategory.PARSE_ERROR, 206)
+
+
+@pytest.mark.asyncio
+async def test_yahoo_unfamiliar_html_is_parse_error_with_exact_status():
+    response = _http_response(
+        status=203, text="<html><body>unfamiliar fixture</body></html>"
+    )
+    batch = await _search_with_http_response("yahoo", response)
+
+    _assert_failure_status(batch, FailureCategory.PARSE_ERROR, 203)
+
+
+@pytest.mark.asyncio
+async def test_yahoo_arbitrary_parser_exception_preserves_exact_status():
+    response = _http_response(status=205, text=YAHOO_RESULT_HTML)
+    adapter = _http_adapter("yahoo")
+    with (
+        patch("argus.providers.yahoo.httpx.AsyncClient") as client_type,
+        patch.object(adapter, "_parse", side_effect=ValueError("fixture parser error")),
+    ):
+        client = client_type.return_value
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.get = AsyncMock(return_value=response)
+        batch = await adapter.search(SearchQuery(query="fixture"))
+
+    _assert_failure_status(batch, FailureCategory.PARSE_ERROR, 205)
+
+
+@pytest.mark.asyncio
+async def test_wolfram_post_response_parser_exception_preserves_exact_status():
+    response = _http_response(status=202)
+    response.text = MagicMock()
+    response.text.strip.side_effect = ValueError("invalid fixture text")
+    batch = await _search_with_http_response("wolfram", response)
+
+    _assert_failure_status(batch, FailureCategory.PARSE_ERROR, 202)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_name", tuple(HTTP_ADAPTERS))
+async def test_classified_http_error_preserves_exact_status_everywhere(provider_name):
+    response = _http_response(status=503, body={})
+    batch = await _search_with_http_response(provider_name, response)
+
+    _assert_failure_status(batch, FailureCategory.PROVIDER_UNAVAILABLE, 503)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_name", tuple(HTTP_ADAPTERS))
+async def test_pre_response_transport_exception_remains_statusless(provider_name):
+    adapter = _http_adapter(provider_name)
+    module = type(adapter).__module__
+    with patch(f"{module}.httpx.AsyncClient") as client_type:
+        client = client_type.return_value
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        error = OSError("fixture transport failure")
+        client.get = AsyncMock(side_effect=error)
+        client.post = AsyncMock(side_effect=error)
+        batch = await adapter.search(SearchQuery(query="fixture"))
+
+    _assert_failure_status(batch, FailureCategory.PROVIDER_UNAVAILABLE, None)
+
 
 @pytest.mark.asyncio
 async def test_yahoo_filtered_success_preserves_monotonic_started_at():
@@ -287,6 +453,9 @@ async def test_yahoo_redirect_overflow_is_typed_and_trace_is_bounded():
 
     assert batch.failure is not None
     assert batch.failure.category is FailureCategory.POLICY_REJECTED
+    assert batch.failure.http_status == 302
+    assert batch.response_evidence.http_status == 302
+    assert batch.trace.http_status == 302
     assert len(batch.request_evidence.redirect_children) == 3
     assert client.get.await_count == 4
 

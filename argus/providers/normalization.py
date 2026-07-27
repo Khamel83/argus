@@ -362,7 +362,15 @@ def normalize_provider_response(
     observed = observed_at or datetime.now(timezone.utc)
     if data is None or isinstance(max_results, bool) or max_results <= 0:
         return _parse_failure(
-            provider, request_evidence, "invalid provider response shape"
+            provider,
+            request_evidence,
+            "invalid provider response shape",
+            data=data or {},
+            http_status=http_status,
+            response_headers=response_headers or {},
+            observed_at=observed,
+            egress=egress,
+            machine=machine,
         )
     rows, recognized = _rows(provider, data)
     if rows is None or not recognized:
@@ -370,6 +378,12 @@ def normalize_provider_response(
             provider,
             request_evidence,
             "provider success response did not match contract",
+            data=data,
+            http_status=http_status,
+            response_headers=response_headers or {},
+            observed_at=observed,
+            egress=egress,
+            machine=machine,
         )
     observations: list[ResultObservation] = []
     for item in rows:
@@ -456,12 +470,35 @@ def _parse_failure(
     provider: ProviderName,
     request_evidence: ProviderRequestEvidence | None,
     summary: str,
+    *,
+    data: Mapping[str, Any],
+    http_status: int | None,
+    response_headers: Mapping[str, object],
+    observed_at: datetime,
+    egress: EgressType,
+    machine: str | None,
 ) -> ProviderSearchBatch:
     return ProviderSearchBatch(
         provider=provider,
         provider_contract_version=_CONTRACT_VERSION[provider],
         request_evidence=request_evidence or ProviderRequestEvidence(),
-        failure=ProviderFailure(FailureCategory.PARSE_ERROR, provider, summary=summary),
+        response_evidence=_response(
+            provider,
+            data,
+            0,
+            http_status=http_status,
+            headers=response_headers,
+            observed_at=observed_at,
+            egress=egress,
+            machine=machine,
+        ),
+        failure=ProviderFailure(
+            FailureCategory.PARSE_ERROR,
+            provider,
+            http_status=http_status,
+            summary=summary,
+            observed_at=observed_at,
+        ),
     )
 
 

@@ -112,7 +112,7 @@ class YahooProvider(BaseProvider):
                     max_redirects=3,
                 )
             except ProviderFailure as failure:
-                return None, tuple(children), failure
+                return response, tuple(children), failure
             children.append(request.child_evidence)
             source_url = request.url
             response = await client.get(
@@ -128,6 +128,7 @@ class YahooProvider(BaseProvider):
         children: tuple[RedirectChildEvidence, ...] = ()
         relation = QueryRelation.EXACT
 
+        resp = None
         try:
             freshness = self._freshness_params(query)
             qualifier = freshness.get("query_qualifier")
@@ -164,6 +165,7 @@ class YahooProvider(BaseProvider):
                         redirect_failure.summary,
                         started_at=started_at,
                         request_evidence=request_evidence,
+                        observed_status=self._response_status(resp),
                     )
                 assert resp is not None
                 native_failure = self._response_failure_batch(
@@ -180,6 +182,7 @@ class YahooProvider(BaseProvider):
                     "Yahoo success page did not match the parser contract",
                     started_at=started_at,
                     request_evidence=request_evidence,
+                    observed_status=self._response_status(resp),
                 )
 
             return self._normalized_batch(
@@ -213,6 +216,7 @@ class YahooProvider(BaseProvider):
                 e,
                 started_at=started_at,
                 request_evidence=request_evidence,
+                observed_status=self._response_status(resp),
             )
 
     def _parse(self, html_text: str, max_results: int) -> List[SearchResult]:

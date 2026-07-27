@@ -183,12 +183,14 @@ class BaseProvider(ABC):
         *,
         started_at: float,
         request_evidence: ProviderRequestEvidence | None = None,
+        observed_status: int | None = None,
     ) -> ProviderSearchBatch:
         return failure_batch(
             self.name,
             error,
             latency_ms=int((time.monotonic() - started_at) * 1000),
             request_evidence=request_evidence,
+            observed_status=observed_status,
         )
 
     def _response_failure_batch(
@@ -235,18 +237,24 @@ class BaseProvider(ABC):
         *,
         started_at: float,
         request_evidence: ProviderRequestEvidence | None = None,
+        observed_status: int | None = None,
     ) -> ProviderSearchBatch:
+        observed_at = datetime.now(timezone.utc)
         return ProviderSearchBatch(
             provider=self.name,
             provider_contract_version="2026-07-27-v1",
             request_evidence=request_evidence or ProviderRequestEvidence(),
             response_evidence=ProviderResponseEvidence(
-                latency_ms=int((time.monotonic() - started_at) * 1000)
+                latency_ms=int((time.monotonic() - started_at) * 1000),
+                http_status=observed_status,
+                observed_at=observed_at,
             ),
             failure=ProviderFailure(
                 category,
                 self.name,
+                http_status=observed_status,
                 summary=summary,
+                observed_at=observed_at,
             ),
         )
 
@@ -275,3 +283,8 @@ class BaseProvider(ABC):
     def _response_headers(response: object) -> dict[str, object]:
         headers = getattr(response, "headers", None)
         return dict(headers) if isinstance(headers, Mapping) else {}
+
+    @staticmethod
+    def _response_status(response: object | None) -> int | None:
+        status = getattr(response, "status_code", None)
+        return status if type(status) is int else None

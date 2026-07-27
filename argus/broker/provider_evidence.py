@@ -1304,10 +1304,15 @@ def failure_batch(
     *,
     latency_ms: int = 0,
     request_evidence: ProviderRequestEvidence | None = None,
+    observed_status: int | None = None,
 ) -> ProviderSearchBatch:
     """Convert a transport/parser exception into bounded private evidence."""
     if isinstance(error, ProviderFailure):
-        failure = error
+        failure = (
+            replace(error, http_status=observed_status)
+            if error.http_status is None and observed_status is not None
+            else error
+        )
         return ProviderSearchBatch(
             provider=provider,
             provider_contract_version=_CONTRACT_VERSION[provider],
@@ -1328,6 +1333,13 @@ def failure_batch(
             provider,
             status,
             summary=f"{provider.value} HTTP request failed",
+        )
+    elif observed_status is not None:
+        failure = ProviderFailure(
+            FailureCategory.PARSE_ERROR,
+            provider,
+            http_status=observed_status,
+            summary=f"{provider.value} response parsing failed ({type(error).__name__})",
         )
     elif (
         isinstance(error, (TimeoutError, asyncio.TimeoutError))

@@ -67,6 +67,7 @@ class ExaProvider(BaseProvider):
             provider_request_material=self._canonical_request_material(payload),
         )
 
+        resp = None
         try:
             async with httpx.AsyncClient(
                 timeout=self._attempt_timeout(query)
@@ -91,7 +92,10 @@ class ExaProvider(BaseProvider):
         except Exception as e:
             logger.warning("Exa search failed: %s", type(e).__name__)
             return self._failure_batch(
-                e, started_at=start, request_evidence=request_evidence
+                e,
+                started_at=start,
+                request_evidence=request_evidence,
+                observed_status=self._response_status(resp),
             )
 
     def _normalize(self, raw_results: list) -> List[SearchResult]:
