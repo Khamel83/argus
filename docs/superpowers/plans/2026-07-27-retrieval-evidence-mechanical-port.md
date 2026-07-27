@@ -178,7 +178,13 @@ The owner is not assigned research, result labeling, or manual benchmark work.
 - Create: `tests/fixtures/contracts/retrieval_evidence_v2/*.json`
 - Create: `tests/fixtures/transports/v1/*.json`
 - Create: `tests/fixtures/transports/v2/*.json`
+- Delete after hash-verified fixture port:
+  `docs/prototypes/retrieval-evidence-envelope/model.py`,
+  `docs/prototypes/retrieval-evidence-envelope/prototype.py`,
+  `docs/prototypes/retrieval-evidence-envelope/envelope.schema.json`, and
+  `docs/prototypes/retrieval-evidence-envelope/vectors.json`
 - Modify: `docs/prototypes/retrieval-evidence-envelope/README.md`
+- Modify: `docs/README.md`
 
 **Interfaces:**
 - Produces: `CanonicalOutcome`, `OperationError`, `AcceptedOperation[T]`, `is_success_like()`, `http_status_for()`, and `mcp_is_error_for()`.
@@ -218,7 +224,13 @@ EXPECTED = {
 }
 ```
 
-Assert enum iteration equals the table keys, success-like outcomes have
+The table is the default accepted-operation mapping. Add exact narrow
+transport-code cases from ADR 0006:
+`malformed_request=400`, `payload_too_large=413`,
+`unsupported_media_type=415`, `route_not_found=404`,
+`idempotency_conflict=409`, `session_not_found=404`,
+`rate_limited=429`, and `internal_failure=503`. Assert enum iteration equals
+the canonical table keys, success-like outcomes have
 `error is None` and an object result, failure outcomes have an error, and
 `request_id` is bounded before `AcceptedOperation` construction succeeds.
 
@@ -227,7 +239,9 @@ Assert enum iteration equals the table keys, success-like outcomes have
 Use frozen dataclasses and a closed enum. `AcceptedOperation.__post_init__`
 rejects contradictory outcome/result/error combinations. `OperationError`
 stores only stable type/title/status/detail/instance/code/retry fields and
-validates `status == http_status_for(outcome)`.
+validates `status == http_status_for(outcome, code)`. Unknown code/outcome
+combinations fail closed; the narrow transport codes never reclassify an
+operation that already began.
 
 - [ ] **Step 4: Port the prototype fixtures**
 
@@ -243,7 +257,15 @@ manifest with SHA-256 for every file and a test that:
 The production contract package may reuse bounded value objects, but it must
 not import the throwaway prototype executable or JSON Schema.
 
-- [ ] **Step 5: Add the architecture import test**
+- [ ] **Step 5: Retire the throwaway executable after proof is ported**
+
+After the fixture manifest proves byte/hash correspondence for all eight valid
+vectors and nineteen named corruptions, delete the prototype executable,
+validator, schema, and aggregate vector file listed above. Keep `NOTES.md` as
+the durable decision record. Change both README entries to point to the
+production contract fixtures/tests and state the exact retirement commit.
+
+- [ ] **Step 6: Add the architecture import test**
 
 Parse the AST of `argus/api/presenters.py` when it exists and fail if it imports
 from `argus.providers`, `argus.extraction.extractor`,
@@ -251,7 +273,7 @@ from `argus.providers`, `argus.extraction.extractor`,
 test skipped only while the presenter file does not exist; S7 removes that
 skip.
 
-- [ ] **Step 6: Verify and commit**
+- [ ] **Step 7: Verify and commit**
 
 ```bash
 uv run pytest tests/test_contract_outcomes.py \
@@ -260,7 +282,7 @@ uv run pytest -q
 git diff --check
 git add argus/contracts tests/fixtures/contracts tests/fixtures/transports \
   tests/test_contract_outcomes.py tests/test_architecture_boundaries.py \
-  docs/prototypes/retrieval-evidence-envelope/README.md
+  docs/prototypes/retrieval-evidence-envelope docs/README.md
 git commit -m "feat: freeze accepted operation contracts"
 ```
 
@@ -813,6 +835,8 @@ and ADRs 0005/0006.
 - Modify: `argus/api/schemas.py`
 - Modify: `argus/broker/router.py`
 - Modify: `argus/extraction/extractor.py`
+- Modify: `argus/config.py`
+- Modify: `.env.example`
 - Modify: `tests/test_architecture_boundaries.py`
 
 **Interfaces:**
@@ -857,7 +881,8 @@ uv run pytest -q
 git diff --check
 git add argus/api/presenters.py argus/api/routes_search.py \
   argus/api/routes_extract.py argus/api/schemas.py argus/broker/router.py \
-  argus/extraction/extractor.py tests/test_accepted_operations.py \
+  argus/extraction/extractor.py argus/config.py .env.example \
+  tests/test_accepted_operations.py \
   tests/test_architecture_boundaries.py
 git commit -m "feat: render legacy routes from accepted operations"
 ```
