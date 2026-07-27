@@ -295,10 +295,11 @@ individual result. The broker always post-filters on each returned result's
 normalized publication date. Every returned result must have a parseable date
 inside the inclusive resolved range. An undated or out-of-range result is
 removed and recorded. `freshness_unproven` is an internal rejection reason,
-never a new surface outcome; absent proof that the provider returned a
-genuinely empty freshness-scoped result, it maps to canonical
-`providers_failed`. Issue #62 owns the versioned provider-signal rules that
-distinguish a strictly filtered empty response from unproven returned evidence.
+never a new surface outcome and never mislabeled as `providers_failed` when a
+provider successfully returned evidence. Issue #62 owns the versioned
+provider-signal rules that distinguish a strictly filtered empty response from
+unproven returned evidence; issue #66 owns the truthful surface outcome
+mapping.
 
 Default cache age:
 
@@ -674,7 +675,8 @@ every successful provider, and an explicit proven-empty classification.
 Providers whose rows were all removed as undated or out of range remain
 attempted/successful provider evidence but are not result contributors; without
 provider-native or post-filter proof that the eligible set is genuinely empty,
-the outcome is `freshness_unproven`/`providers_failed` and is not cacheable.
+the outcome is `freshness_unproven`, not `providers_failed`, and is not
+cacheable. Issue #66 owns its truthful stable surface mapping.
 
 ### Free-profile rule
 
