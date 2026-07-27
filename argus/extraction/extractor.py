@@ -8,7 +8,7 @@ Chain order:
   residential (Tailscale) → quality gate →
   jina → quality gate → valyu_contents → quality gate →
   firecrawl → quality gate → you_contents → quality gate →
-  wayback → quality gate → archive.is → quality gate → return best result
+  wayback → quality gate → archive.is lookup → quality gate → return best result
 
 Results are cached in memory to avoid re-extracting the same URL.
 
@@ -203,6 +203,15 @@ def get_extraction_cache() -> ExtractionCache:
     return _cache
 
 
+def project_accepted_extraction(accepted_outcome) -> ExtractedContent:
+    """Return the legacy readable projection without reclassifying S3 truth."""
+    from argus.extraction.outcomes import AcceptedExtractionOutcome
+
+    if not isinstance(accepted_outcome, AcceptedExtractionOutcome):
+        raise TypeError("accepted_outcome must be an AcceptedExtractionOutcome")
+    return accepted_outcome.to_legacy_extracted_content()
+
+
 async def _extract_url_unpersisted(
     url: str, domain: str = None, mode: str = "default"
 ) -> ExtractedContent:
@@ -216,7 +225,7 @@ async def _extract_url_unpersisted(
       SSRF → cache → rate limit → auth → QG → trafilatura → QG →
       crawl4ai → QG → obscura → QG → playwright → QG → residential → QG →
       jina → QG → valyu_contents → QG → firecrawl → QG → you_contents → QG →
-      wayback → QG → archive.is → QG → return best result
+      wayback → QG → archive.is lookup → QG → return best result
     """
     config = get_config()
     from argus.extraction.domain_memory import get_domain_memory
@@ -508,7 +517,8 @@ async def _extract_url_unpersisted(
         except Exception as e:
             logger.warning("%s failed for %s: %s", step_name.capitalize(), url[:60], e)
 
-    # Step 11 & 12: Archive Recovery
+    # Step 11 & 12: Existing-archive recovery. External archive creation is a
+    # separate explicitly authorized operation and is never part of this chain.
     for step_num, step_name, extractor_func in [
         (11, "wayback", None),
         (12, "archive_is", None),

@@ -211,3 +211,49 @@ def classify_extraction_rejection(
         code=RejectionCode.PROVIDER_UNAVAILABLE,
         action=RejectionAction.RETRY_LATER,
     )
+
+
+def classify_typed_extraction_rejection(facts) -> ExtractionRejection:
+    """Issue #57 mapper for the normalized S3 fact seam."""
+    from argus.extraction.outcomes import (
+        ExtractionContractRejected,
+        RejectionFacts,
+    )
+
+    if not isinstance(facts, RejectionFacts):
+        raise ExtractionContractRejected()
+    if facts.autonomous and facts.code in {
+        RejectionCode.QUALITY_GATE_FAILED,
+        RejectionCode.UNSUPPORTED_SOURCE,
+        RejectionCode.PROVIDER_UNAVAILABLE,
+    }:
+        action = RejectionAction.TERMINAL
+    elif (
+        facts.eligible_fallback_remains
+        and facts.code
+        in {
+            RejectionCode.PARSE_ERROR,
+            RejectionCode.EMPTY_RESULT,
+            RejectionCode.PROVIDER_UNAVAILABLE,
+        }
+    ):
+        action = RejectionAction.FALLBACK_PROVIDER
+    elif facts.code in {
+        RejectionCode.TIMEOUT,
+        RejectionCode.RATE_LIMITED,
+        RejectionCode.INCOMPLETE_CONTENT,
+        RejectionCode.EMPTY_RESULT,
+    }:
+        action = RejectionAction.RETRY_LATER
+    else:
+        action = RejectionAction.TERMINAL
+    return ExtractionRejection(
+        code=facts.code,
+        provider=facts.provider,
+        quality_passed=facts.quality_passed,
+        is_complete=facts.is_complete,
+        recommended_action=action,
+        attempt_count=facts.attempt_count,
+        last_status=facts.last_status,
+        total_latency_ms=facts.total_latency_ms,
+    )

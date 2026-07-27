@@ -13,7 +13,7 @@ from argus.recovery.operator import (
 )
 
 
-EXPECTED_SCHEMA_HEAD = "0006_maya_outbox"
+EXPECTED_SCHEMA_HEAD = "0007_extraction_outcomes"
 REQUIRED_TABLES = {
     "retrieval_requests",
     "retrieval_runs",
