@@ -7,8 +7,8 @@ Less reliable than SearXNG (depends on DDG's HTML not changing).
 Uses the `ddgs` package: https://pypi.org/project/ddgs/
 """
 
-import importlib.util
 import asyncio
+import importlib.util
 import json
 import sys
 from typing import List
@@ -25,6 +25,33 @@ from argus.providers.base import BaseProvider, ProbeCapability
 from argus.broker.provider_evidence import ProviderSearchBatch
 
 logger = get_logger("providers.duckduckgo")
+
+
+async def _terminate_and_reap(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is not None:
+        return
+    try:
+        process.terminate()
+    except ProcessLookupError:
+        pass
+    try:
+        await asyncio.wait_for(process.wait(), timeout=1.0)
+    except asyncio.TimeoutError:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        await process.wait()
+
+
+async def _cancellation_safe_reap(process: asyncio.subprocess.Process) -> None:
+    cleanup = asyncio.create_task(_terminate_and_reap(process))
+    while not cleanup.done():
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError:
+            continue
+    await cleanup
 
 
 class DuckDuckGoProvider(BaseProvider):
@@ -102,18 +129,17 @@ class DuckDuckGoProvider(BaseProvider):
                 request_evidence=request_evidence,
             )
         except (asyncio.TimeoutError, TimeoutError):
-            if process is not None and process.returncode is None:
-                process.terminate()
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=1.0)
-                except asyncio.TimeoutError:
-                    process.kill()
-                    await process.wait()
+            if process is not None:
+                await _cancellation_safe_reap(process)
             return self._failure_batch(
                 TimeoutError("duckduckgo worker deadline reached"),
                 started_at=start,
                 request_evidence=request_evidence,
             )
+        except asyncio.CancelledError:
+            if process is not None:
+                await _cancellation_safe_reap(process)
+            raise
         except Exception as error:
             logger.warning("DuckDuckGo worker failed: %s", type(error).__name__)
             return self._failure_batch(

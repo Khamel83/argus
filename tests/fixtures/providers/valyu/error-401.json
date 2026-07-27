@@ -5,8 +5,6 @@
   },
   "body": {
     "success": false,
-    "error": {
-      "code": "valyu_401"
-    }
+    "error": "Invalid or missing credentials"
   }
 }

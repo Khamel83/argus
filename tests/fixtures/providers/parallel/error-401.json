@@ -5,7 +5,8 @@
   },
   "body": {
     "error": {
-      "type": "parallel_401"
+      "message": "Invalid or missing credentials",
+      "detail": {}
     }
   }
 }

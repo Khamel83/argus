@@ -4,7 +4,6 @@
     "headers": {}
   },
   "body": {
-    "error": "exa_408_504",
-    "requestId": "exa-request"
+    "requestId": "exa-408_504-request"
   }
 }

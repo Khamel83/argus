@@ -5,7 +5,8 @@
   },
   "body": {
     "error": {
-      "type": "parallel_402"
+      "message": "Insufficient credits",
+      "detail": {}
     }
   }
 }

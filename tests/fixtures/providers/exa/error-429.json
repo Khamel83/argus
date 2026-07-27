@@ -6,7 +6,6 @@
     }
   },
   "body": {
-    "error": "exa_429",
-    "requestId": "exa-request"
+    "error": "Rate limit exceeded"
   }
 }

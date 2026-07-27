@@ -3,9 +3,5 @@
     "status_code": 401,
     "headers": {}
   },
-  "body": {
-    "error": {
-      "code": "searchapi_401"
-    }
-  }
+  "body": {}
 }

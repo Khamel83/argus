@@ -3,9 +3,5 @@
     "status_code": 422,
     "headers": {}
   },
-  "body": {
-    "error": {
-      "code": "linkup_422"
-    }
-  }
+  "body": {}
 }

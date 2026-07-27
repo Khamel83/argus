@@ -6,8 +6,6 @@
     }
   },
   "body": {
-    "detail": {
-      "error": "tavily_429"
-    }
+    "detail": "Rate limit exceeded"
   }
 }

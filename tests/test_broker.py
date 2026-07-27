@@ -194,6 +194,59 @@ async def test_executor_refuses_to_start_provider_after_absolute_phase_deadline(
 
 
 @pytest.mark.asyncio
+async def test_executor_outer_deadline_terminates_and_reaps_ddg_child(monkeypatch):
+    import asyncio
+    import sys
+
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.config import ProviderConfig
+    from argus.providers.duckduckgo import DuckDuckGoProvider
+
+    native_create = asyncio.create_subprocess_exec
+    child = None
+
+    async def spawn_blocked_worker(*_args, **_kwargs):
+        nonlocal child
+        child = await native_create(
+            sys.executable,
+            "-c",
+            "import time; time.sleep(60)",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        return child
+
+    monkeypatch.setattr(
+        "argus.providers.duckduckgo.asyncio.create_subprocess_exec",
+        spawn_blocked_worker,
+    )
+    provider = DuckDuckGoProvider(
+        ProviderConfig(enabled=True, timeout_seconds=10)
+    )
+    provider._available = True
+    executor = ProviderExecutor(
+        providers={ProviderName.DUCKDUCKGO: provider},
+        health_tracker=HealthTracker(),
+        budget_tracker=BudgetTracker(),
+    )
+    loop = asyncio.get_running_loop()
+    outcome = await executor._execute_provider(
+        SearchQuery(query="outer deadline"),
+        provider,
+        ProviderName.DUCKDUCKGO,
+        provider_phase_deadline=loop.time() + 0.05,
+    )
+
+    assert outcome.batch.failure is not None
+    assert outcome.batch.failure.category.value == "timeout"
+    assert child is not None
+    assert child.returncode is not None
+
+
+@pytest.mark.asyncio
 async def test_executor_preserves_normalized_batch_and_projects_only_at_compatibility_boundary():
     from datetime import datetime, timezone
 

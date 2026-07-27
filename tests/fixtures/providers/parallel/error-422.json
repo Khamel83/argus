@@ -5,7 +5,8 @@
   },
   "body": {
     "error": {
-      "type": "parallel_422"
+      "message": "Request validation failed",
+      "detail": {}
     }
   }
 }

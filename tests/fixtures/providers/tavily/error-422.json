@@ -4,8 +4,6 @@
     "headers": {}
   },
   "body": {
-    "detail": {
-      "error": "tavily_422"
-    }
+    "detail": "Request validation failed"
   }
 }

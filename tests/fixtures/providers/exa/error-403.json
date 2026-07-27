@@ -4,7 +4,8 @@
     "headers": {}
   },
   "body": {
-    "error": "exa_403",
-    "requestId": "exa-request"
+    "error": "Insufficient permissions",
+    "tag": "ACCESS_DENIED",
+    "requestId": "exa-403-request"
   }
 }

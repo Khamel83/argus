@@ -4,8 +4,6 @@
     "headers": {}
   },
   "body": {
-    "detail": {
-      "error": "tavily_401"
-    }
+    "detail": "Invalid or missing credentials"
   }
 }

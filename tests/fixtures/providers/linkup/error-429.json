@@ -5,9 +5,5 @@
       "retry-after": "60"
     }
   },
-  "body": {
-    "error": {
-      "code": "linkup_429"
-    }
-  }
+  "body": {}
 }

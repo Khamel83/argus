@@ -5,7 +5,8 @@
   },
   "body": {
     "error": {
-      "type": "parallel_5xx"
+      "message": "Provider unavailable",
+      "detail": {}
     }
   }
 }

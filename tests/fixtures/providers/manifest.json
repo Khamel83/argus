@@ -24,29 +24,35 @@
       },
       "failures": {
         "401": {
-          "reason": "The provider health matrix does not authorize a searxng native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited searxng required-evidence cell does not document the 401 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "402": {
-          "reason": "The provider health matrix does not authorize a searxng native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited searxng required-evidence cell does not document the 402 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "403": {
-          "fixture": "error-403.json"
+          "fixture": "error-403.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.searxng.org/dev/search_api.html"
         },
         "422": {
-          "reason": "The provider health matrix does not authorize a searxng native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited searxng required-evidence cell does not document the 422 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "429": {
-          "reason": "The provider health matrix does not authorize a searxng native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited searxng required-evidence cell does not document the 429 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "408_504": {
-          "fixture": "error-408_504.json"
+          "fixture": "error-408_504.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.searxng.org/dev/search_api.html"
         },
         "5xx": {
-          "fixture": "error-5xx.json"
+          "fixture": "error-5xx.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.searxng.org/dev/search_api.html"
         }
       },
       "signals": {
@@ -66,31 +72,31 @@
       },
       "failures": {
         "401": {
-          "reason": "The provider health matrix does not authorize a duckduckgo native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited duckduckgo required-evidence cell does not document the 401 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "402": {
-          "reason": "The provider health matrix does not authorize a duckduckgo native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited duckduckgo required-evidence cell does not document the 402 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "403": {
-          "reason": "The provider health matrix does not authorize a duckduckgo native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited duckduckgo required-evidence cell does not document the 403 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "422": {
-          "reason": "The provider health matrix does not authorize a duckduckgo native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited duckduckgo required-evidence cell does not document the 422 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "429": {
-          "reason": "The provider health matrix does not authorize a duckduckgo native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited duckduckgo required-evidence cell does not document the 429 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "408_504": {
-          "reason": "The provider health matrix does not authorize a duckduckgo native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited duckduckgo required-evidence cell does not document the 408_504 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "5xx": {
-          "reason": "The provider health matrix does not authorize a duckduckgo native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited duckduckgo required-evidence cell does not document the 5xx status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         }
       },
@@ -113,28 +119,35 @@
       },
       "failures": {
         "401": {
-          "reason": "The provider health matrix does not authorize a yahoo native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited yahoo required-evidence cell does not document the 401 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "402": {
-          "reason": "The provider health matrix does not authorize a yahoo native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited yahoo required-evidence cell does not document the 402 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "403": {
-          "fixture": "error-403.json"
+          "fixture": "error-403.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "docs/research/2026-07-26-provider-extraction-contract-drift.md#3-yahoo"
         },
         "422": {
-          "reason": "The provider health matrix does not authorize a yahoo native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited yahoo required-evidence cell does not document the 422 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "429": {
-          "fixture": "error-429.json"
+          "reason": "The cited yahoo required-evidence cell does not document the 429 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "408_504": {
-          "fixture": "error-408_504.json"
+          "fixture": "error-408_504.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "docs/research/2026-07-26-provider-extraction-contract-drift.md#3-yahoo"
         },
         "5xx": {
-          "fixture": "error-5xx.json"
+          "fixture": "error-5xx.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "docs/research/2026-07-26-provider-extraction-contract-drift.md#3-yahoo"
         }
       },
       "signals": {
@@ -153,26 +166,35 @@
       },
       "failures": {
         "401": {
-          "fixture": "error-401.json"
+          "fixture": "error-401.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"
         },
         "402": {
-          "reason": "The provider health matrix does not authorize a github native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited github required-evidence cell does not document the 402 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "403": {
-          "fixture": "error-403.json"
+          "fixture": "error-403.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"
         },
         "422": {
-          "fixture": "error-422.json"
+          "reason": "The cited github required-evidence cell does not document the 422 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "429": {
-          "fixture": "error-429.json"
+          "fixture": "error-429.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"
         },
         "408_504": {
-          "fixture": "error-408_504.json"
+          "reason": "The cited github required-evidence cell does not document the 408_504 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "5xx": {
-          "fixture": "error-5xx.json"
+          "reason": "The cited github required-evidence cell does not document the 5xx status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         }
       },
       "signals": {
@@ -194,29 +216,33 @@
       },
       "failures": {
         "401": {
-          "reason": "The provider health matrix does not authorize a wolfram native fixture for this status class; unsupported status cases remain not_documented.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-401.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://products.wolframalpha.com/llm-api/documentation"
         },
         "402": {
-          "reason": "The provider health matrix does not authorize a wolfram native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited wolfram required-evidence cell does not document the 402 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "403": {
-          "fixture": "error-403.json"
+          "reason": "The cited wolfram required-evidence cell does not document the 403 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "422": {
-          "reason": "The provider health matrix does not authorize a wolfram native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited wolfram required-evidence cell does not document the 422 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "429": {
-          "reason": "The provider health matrix does not authorize a wolfram native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited wolfram required-evidence cell does not document the 429 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "408_504": {
-          "fixture": "error-408_504.json"
+          "reason": "The cited wolfram required-evidence cell does not document the 408_504 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "5xx": {
-          "fixture": "error-5xx.json"
+          "reason": "The cited wolfram required-evidence cell does not document the 5xx status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         }
       },
       "signals": {
@@ -236,26 +262,37 @@
       },
       "failures": {
         "401": {
-          "fixture": "error-401.json"
+          "fixture": "error-401.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://api-dashboard.search.brave.com/documentation/guides/rate-limiting"
         },
         "402": {
-          "reason": "The provider health matrix does not authorize a brave native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited brave required-evidence cell does not document the 402 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "403": {
-          "fixture": "error-403.json"
+          "fixture": "error-403.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://api-dashboard.search.brave.com/documentation/guides/rate-limiting"
         },
         "422": {
-          "fixture": "error-422.json"
+          "fixture": "error-422.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://api-dashboard.search.brave.com/documentation/guides/rate-limiting"
         },
         "429": {
-          "fixture": "error-429.json"
+          "fixture": "error-429.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://api-dashboard.search.brave.com/documentation/guides/rate-limiting"
         },
         "408_504": {
-          "fixture": "error-408_504.json"
+          "reason": "The cited brave required-evidence cell does not document the 408_504 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "5xx": {
-          "fixture": "error-5xx.json"
+          "fixture": "error-5xx.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://api-dashboard.search.brave.com/documentation/guides/rate-limiting"
         }
       },
       "signals": {
@@ -276,26 +313,36 @@
       },
       "failures": {
         "401": {
-          "fixture": "error-401.json"
+          "fixture": "error-401.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.tavily.com/documentation/api-reference/introduction"
         },
         "402": {
-          "reason": "The provider health matrix does not authorize a tavily native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited tavily required-evidence cell does not document the 402 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "403": {
-          "fixture": "error-403.json"
+          "reason": "The cited tavily required-evidence cell does not document the 403 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "422": {
-          "fixture": "error-422.json"
+          "fixture": "error-422.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.tavily.com/documentation/api-reference/introduction"
         },
         "429": {
-          "fixture": "error-429.json"
+          "fixture": "error-429.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.tavily.com/documentation/api-reference/introduction"
         },
         "408_504": {
-          "fixture": "error-408_504.json"
+          "reason": "The cited tavily required-evidence cell does not document the 408_504 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "5xx": {
-          "fixture": "error-5xx.json"
+          "fixture": "error-5xx.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.tavily.com/documentation/api-reference/introduction"
         }
       },
       "signals": {
@@ -316,25 +363,38 @@
       },
       "failures": {
         "401": {
-          "fixture": "error-401.json"
+          "fixture": "error-401.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://exa.ai/docs/reference/error-codes"
         },
         "402": {
-          "fixture": "error-402.json"
+          "fixture": "error-402.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://exa.ai/docs/reference/error-codes"
         },
         "403": {
-          "fixture": "error-403.json"
+          "fixture": "error-403.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://exa.ai/docs/reference/error-codes"
         },
         "422": {
-          "fixture": "error-422.json"
+          "fixture": "error-422.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://exa.ai/docs/reference/error-codes"
         },
         "429": {
-          "fixture": "error-429.json"
+          "fixture": "error-429.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://exa.ai/docs/reference/error-codes"
         },
         "408_504": {
-          "fixture": "error-408_504.json"
+          "fixture": "error-408_504.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://exa.ai/docs/reference/error-codes"
         },
         "5xx": {
-          "fixture": "error-5xx.json"
+          "reason": "The cited exa required-evidence cell does not document the 5xx status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         }
       },
       "signals": {
@@ -355,26 +415,35 @@
       },
       "failures": {
         "401": {
-          "fixture": "error-401.json"
+          "fixture": "error-401.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference"
         },
         "402": {
-          "reason": "The provider health matrix does not authorize a linkup native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited linkup required-evidence cell does not document the 402 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "403": {
-          "fixture": "error-403.json"
+          "reason": "The cited linkup required-evidence cell does not document the 403 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "422": {
-          "fixture": "error-422.json"
+          "fixture": "error-422.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference"
         },
         "429": {
-          "fixture": "error-429.json"
+          "fixture": "error-429.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference"
         },
         "408_504": {
-          "fixture": "error-408_504.json"
+          "reason": "The cited linkup required-evidence cell does not document the 408_504 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "5xx": {
-          "fixture": "error-5xx.json"
+          "reason": "The cited linkup required-evidence cell does not document the 5xx status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         }
       },
       "signals": {
@@ -393,25 +462,38 @@
       },
       "failures": {
         "401": {
-          "fixture": "error-401.json"
+          "fixture": "error-401.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors"
         },
         "402": {
-          "fixture": "error-402.json"
+          "fixture": "error-402.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors"
         },
         "403": {
-          "fixture": "error-403.json"
+          "reason": "The cited parallel required-evidence cell does not document the 403 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "422": {
-          "fixture": "error-422.json"
+          "fixture": "error-422.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors"
         },
         "429": {
-          "fixture": "error-429.json"
+          "fixture": "error-429.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors"
         },
         "408_504": {
-          "fixture": "error-408_504.json"
+          "fixture": "error-408_504.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors"
         },
         "5xx": {
-          "fixture": "error-5xx.json"
+          "fixture": "error-5xx.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors"
         }
       },
       "signals": {
@@ -432,31 +514,36 @@
       },
       "failures": {
         "401": {
-          "reason": "The provider health matrix does not authorize a serper native fixture for this status class; unsupported status cases remain not_documented.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-401.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://serper.dev/"
         },
         "402": {
-          "fixture": "error-402.json"
+          "fixture": "error-402.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://serper.dev/"
         },
         "403": {
-          "reason": "The provider health matrix does not authorize a serper native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited serper required-evidence cell does not document the 403 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "422": {
-          "reason": "The provider health matrix does not authorize a serper native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited serper required-evidence cell does not document the 422 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "429": {
-          "reason": "The provider health matrix does not authorize a serper native fixture for this status class; unsupported status cases remain not_documented.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-429.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://serper.dev/"
         },
         "408_504": {
-          "reason": "The provider health matrix does not authorize a serper native fixture for this status class; unsupported status cases remain not_documented.",
+          "reason": "The cited serper required-evidence cell does not document the 408_504 status class; no native semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "5xx": {
-          "reason": "The provider health matrix does not authorize a serper native fixture for this status class; unsupported status cases remain not_documented.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+          "fixture": "error-5xx.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://serper.dev/"
         }
       },
       "signals": {
@@ -475,25 +562,38 @@
       },
       "failures": {
         "401": {
-          "fixture": "error-401.json"
+          "fixture": "error-401.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://you.com/docs/error-handling/error-code-reference"
         },
         "402": {
-          "fixture": "error-402.json"
+          "fixture": "error-402.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://you.com/docs/error-handling/error-code-reference"
         },
         "403": {
-          "fixture": "error-403.json"
+          "fixture": "error-403.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://you.com/docs/error-handling/error-code-reference"
         },
         "422": {
-          "fixture": "error-422.json"
+          "fixture": "error-422.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://you.com/docs/error-handling/error-code-reference"
         },
         "429": {
-          "fixture": "error-429.json"
+          "fixture": "error-429.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://you.com/docs/error-handling/error-code-reference"
         },
         "408_504": {
-          "fixture": "error-408_504.json"
+          "reason": "The cited you required-evidence cell does not document the 408_504 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "5xx": {
-          "fixture": "error-5xx.json"
+          "fixture": "error-5xx.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://you.com/docs/error-handling/error-code-reference"
         }
       },
       "signals": {
@@ -513,25 +613,34 @@
       },
       "failures": {
         "401": {
-          "fixture": "error-401.json"
+          "fixture": "error-401.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.valyu.ai/sdk/python-sdk/search"
         },
         "402": {
-          "fixture": "error-402.json"
+          "fixture": "error-402.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://docs.valyu.ai/sdk/python-sdk/search"
         },
         "403": {
-          "fixture": "error-403.json"
+          "reason": "The cited valyu required-evidence cell does not document the 403 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "422": {
-          "fixture": "error-422.json"
+          "reason": "The cited valyu required-evidence cell does not document the 422 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "429": {
-          "fixture": "error-429.json"
+          "reason": "The cited valyu required-evidence cell does not document the 429 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "408_504": {
-          "fixture": "error-408_504.json"
+          "reason": "The cited valyu required-evidence cell does not document the 408_504 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "5xx": {
-          "fixture": "error-5xx.json"
+          "reason": "The cited valyu required-evidence cell does not document the 5xx status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         }
       },
       "signals": {
@@ -552,25 +661,33 @@
       },
       "failures": {
         "401": {
-          "fixture": "error-401.json"
+          "fixture": "error-401.json",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "shape_source": "https://www.searchapi.io/docs/google"
         },
         "402": {
-          "fixture": "error-402.json"
+          "reason": "The cited searchapi required-evidence cell does not document the 402 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "403": {
-          "fixture": "error-403.json"
+          "reason": "The cited searchapi required-evidence cell does not document the 403 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "422": {
-          "fixture": "error-422.json"
+          "reason": "The cited searchapi required-evidence cell does not document the 422 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "429": {
-          "fixture": "error-429.json"
+          "reason": "The cited searchapi required-evidence cell does not document the 429 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "408_504": {
-          "fixture": "error-408_504.json"
+          "reason": "The cited searchapi required-evidence cell does not document the 408_504 status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "5xx": {
-          "fixture": "error-5xx.json"
+          "reason": "The cited searchapi required-evidence cell does not document the 5xx status class; no native semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         }
       },
       "signals": {

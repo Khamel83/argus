@@ -30,6 +30,7 @@ from argus.broker.provider_evidence import (
 )
 from argus.providers.normalization import normalize_provider_response
 from argus.providers.normalization import classify_provider_failure_response
+from argus.providers.normalization import provider_response_indicates_failure
 from argus.broker.planning import FreshnessWindow
 from argus.models import (
     ProviderName,
@@ -206,14 +207,7 @@ class BaseProvider(ABC):
             pass
         if not isinstance(status, int):
             return None
-        provider_native_failure = (
-            self.name is ProviderName.SERPER
-            and status < 400
-            and isinstance(body, dict)
-            and isinstance(body.get("message") or body.get("error"), str)
-            and "credit" in str(body.get("message") or body.get("error")).lower()
-        )
-        if status < 400 and not provider_native_failure:
+        if not provider_response_indicates_failure(self.name, status, body):
             return None
         failure = classify_provider_failure_response(
             self.name,

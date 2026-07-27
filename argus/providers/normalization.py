@@ -469,7 +469,8 @@ def classify_provider_failure_response(
             provider,
             summary="invalid captured provider failure",
         )
-    status = int(transport["status_code"])
+    observed_status = int(transport["status_code"])
+    classification_status = observed_status
     headers = _mapping(transport.get("headers")) or {}
     body = _mapping(capture.get("body")) or {}
     error = body.get("error")
@@ -480,6 +481,7 @@ def classify_provider_failure_response(
     code = (
         error_map.get("code")
         or error_map.get("type")
+        or body.get("tag")
         or detail.get("error")
         or nested_query_error.get("code")
         or (error if isinstance(error, str) else None)
@@ -487,21 +489,85 @@ def classify_provider_failure_response(
     retry_after_raw = _header(headers, "retry-after")
     retry_after = _numeric_header(retry_after_raw)
     remaining = _header(headers, "x-ratelimit-remaining")
+    request_id = (
+        body.get("requestId")
+        or body.get("request_id")
+        or _header(headers, "x-request-id")
+        or _header(headers, "x-github-request-id")
+    )
+    if not isinstance(request_id, str):
+        request_id = None
+    reset_at = None
+    reset_raw = _header(headers, "x-ratelimit-reset")
+    if reset_raw is not None:
+        try:
+            reset_at = datetime.fromtimestamp(float(reset_raw), tz=timezone.utc)
+        except (TypeError, ValueError, OverflowError):
+            pass
     if (
         provider is ProviderName.GITHUB
-        and status == 403
+        and observed_status == 403
         and (remaining == "0" or retry_after_raw is not None)
     ):
-        status = 429
+        classification_status = 429
     message = body.get("message")
-    if provider is ProviderName.SERPER and status < 400 and isinstance(message, str):
+    if (
+        provider is ProviderName.SERPER
+        and observed_status < 400
+        and isinstance(message, str)
+    ):
         if "credit" in message.lower():
-            status = 402
+            classification_status = 402
             code = "not_enough_credits"
-    return classify_http_failure(
+    if (
+        provider is ProviderName.VALYU
+        and observed_status < 400
+        and body.get("success") is False
+        and isinstance(error, str)
+        and "credit" in error.lower()
+    ):
+        classification_status = 402
+        code = "insufficient_credits"
+    classified = classify_http_failure(
         provider,
-        status,
+        classification_status,
         provider_code=code if isinstance(code, str) else None,
+        request_id=request_id,
         retry_after_seconds=retry_after,
+        rate_limit_reset=reset_at,
         summary=f"{provider.value} native response rejected the request",
+    )
+    if classification_status == observed_status:
+        return classified
+    return ProviderFailure(
+        category=classified.category,
+        provider=provider,
+        http_status=observed_status,
+        provider_code=classified.provider_code,
+        request_id=classified.request_id,
+        retry_after_seconds=classified.retry_after_seconds,
+        rate_limit_reset=classified.rate_limit_reset,
+        summary=classified.summary,
+    )
+
+
+def provider_response_indicates_failure(
+    provider: ProviderName, status: int, body: object
+) -> bool:
+    if status >= 400:
+        return True
+    data = _mapping(body)
+    message = data.get("message") if data is not None else None
+    return bool(
+        (
+            provider is ProviderName.SERPER
+            and isinstance(message, str)
+            and "credit" in message.lower()
+        )
+        or (
+            provider is ProviderName.VALYU
+            and data is not None
+            and data.get("success") is False
+            and isinstance(data.get("error"), str)
+        )
     )

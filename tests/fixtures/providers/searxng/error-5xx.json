@@ -3,7 +3,5 @@
     "status_code": 503,
     "headers": {}
   },
-  "body": {
-    "message": "searxng_5xx"
-  }
+  "body": {}
 }

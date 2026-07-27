@@ -1,0 +1,15 @@
+{
+  "rows": [
+    {
+      "href": {
+        "nested": "must not stringify"
+      },
+      "title": [
+        "must not stringify"
+      ],
+      "body": {
+        "nested": "must not stringify"
+      }
+    }
+  ]
+}

@@ -4,8 +4,6 @@
     "headers": {}
   },
   "body": {
-    "error": {
-      "code": "you_401"
-    }
+    "detail": "Invalid or missing credentials"
   }
 }

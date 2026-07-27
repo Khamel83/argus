@@ -22,6 +22,10 @@ from argus.broker.provider_evidence import (
     FailureCategory,
     FilterStrength,
     LegacyProviderBatchAdapter,
+    MAX_COST_USD,
+    MAX_RATE_LIMIT_REMAINING,
+    MAX_RETRY_AFTER_SECONDS,
+    MAX_USAGE_COUNT,
     NativeScoreEvidence,
     NativeScoreSemantics,
     ProviderFailure,
@@ -30,11 +34,13 @@ from argus.broker.provider_evidence import (
     ProviderSearchBatch,
     PublicationEvidence,
     QueryRelation,
+    RateLimitEvidence,
     RedirectChildEvidence,
     ResultObservation,
     SnippetEvidence,
     SnippetKind,
     TranslationPrecision,
+    UsageEvidence,
     attempt_timeout_seconds,
     classify_http_failure,
     query_hash,
@@ -269,9 +275,13 @@ def test_manifest_covers_every_registered_provider_and_contract_case():
                 )
         assert set(entry["failures"]) == FAILURE_CLASSES
         for failure in entry["failures"].values():
-            assert set(failure) in ({"fixture"}, {"reason", "source"})
+            assert set(failure) in (
+                {"fixture", "source", "shape_source"},
+                {"reason", "source"},
+            )
             if "fixture" in failure:
                 assert (FIXTURE_ROOT / provider / failure["fixture"]).is_file()
+                assert failure["shape_source"].startswith(("https://", "docs/"))
             else:
                 assert failure["source"] == (
                     "docs/research/2026-07-27-provider-health-probe-matrix.md"
@@ -285,6 +295,76 @@ def test_manifest_covers_every_registered_provider_and_contract_case():
             )
         else:
             assert entry["signals"]["typed"]
+
+
+def test_manifest_failure_declarations_agree_with_cited_authority():
+    manifest = _load(FIXTURE_ROOT / "manifest.json")
+    authority_path = (
+        Path(__file__).parents[1]
+        / "docs/research/2026-07-27-provider-health-probe-matrix.md"
+    )
+    authority = authority_path.read_text(encoding="utf-8")
+    rows = {
+        line.split("|")[1].strip().lower(): line.split("|")[2].strip().lower()
+        for line in authority.splitlines()
+        if line.startswith("| ") and line.count("|") >= 5
+    }
+    support = {
+        "401": ("401", "auth"),
+        "402": ("402", "exhaust", "credit"),
+        "403": ("403", "permission", "policy", "scope", "block", "challenge"),
+        "408_504": ("408", "504", "timeout"),
+        "422": ("422", "validation", "invalid request"),
+        "429": ("429", "rate"),
+        "5xx": ("5xx",),
+    }
+    aliases = {
+        "duckduckgo": "duckduckgo (`ddgs`)",
+        "wolfram": "wolframalpha",
+        "you": "you.com",
+    }
+    conditional = {
+        ("linkup", "402"),
+        ("searchapi", "402"),
+        ("searchapi", "429"),
+    }
+    for provider_name, entry in manifest["providers"].items():
+        row = rows[aliases.get(provider_name, provider_name)]
+        for failure_class, declaration in entry["failures"].items():
+            source = declaration["source"]
+            assert source.endswith(
+                "2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
+            )
+            is_supported = any(token in row for token in support[failure_class])
+            if (provider_name, failure_class) in conditional:
+                is_supported = False
+            if "fixture" in declaration:
+                assert is_supported, (provider_name, failure_class, row)
+            else:
+                assert not is_supported, (provider_name, failure_class, row)
+
+
+def test_failure_fixtures_do_not_invent_status_derived_native_codes():
+    manifest = _load(FIXTURE_ROOT / "manifest.json")
+    for provider_name, entry in manifest["providers"].items():
+        for failure_class, declaration in entry["failures"].items():
+            if "fixture" not in declaration:
+                continue
+            fixture = _load(FIXTURE_ROOT / provider_name / declaration["fixture"])
+            body = fixture["body"]
+            error = body.get("error") if isinstance(body, dict) else None
+            code = error.get("code") if isinstance(error, dict) else error
+            assert code not in {
+                f"{provider_name}_{failure_class}",
+                f"{provider_name}_{failure_class.replace('_504', '')}",
+            }
+
+
+def test_serper_matrix_required_failure_classes_are_fixture_backed():
+    failures = _load(FIXTURE_ROOT / "manifest.json")["providers"]["serper"][
+        "failures"
+    ]
+    assert all("fixture" in failures[key] for key in ("401", "429", "5xx"))
 
 
 @pytest.mark.parametrize("provider_name", sorted(REGISTERED))
@@ -429,6 +509,102 @@ async def test_github_403_distinguishes_rate_limit_from_policy_rejection():
         FailureCategory.POLICY_REJECTED,
         FailureCategory.RATE_LIMITED,
     ]
+
+
+@pytest.mark.asyncio
+async def test_github_rate_limited_403_preserves_transport_evidence():
+    from argus.providers.github import GitHubProvider
+
+    response = _http_response(
+        status=403,
+        body={"message": "API rate limit exceeded"},
+        headers={
+            "X-GitHub-Request-Id": "github-request-403",
+            "X-RateLimit-Remaining": "0",
+            "X-RateLimit-Reset": "1785139200",
+        },
+    )
+    response.request = MagicMock()
+    with patch("argus.providers.github.httpx.AsyncClient") as client_type:
+        client = client_type.return_value
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.get = AsyncMock(return_value=response)
+        batch = await GitHubProvider(ProviderConfig(enabled=True)).search(
+            SearchQuery(query="fixture")
+        )
+
+    assert batch.failure is not None
+    assert batch.failure.category is FailureCategory.RATE_LIMITED
+    assert batch.failure.http_status == 403
+    assert batch.failure.request_id == "github-request-403"
+    assert batch.failure.rate_limit_reset == datetime(
+        2026, 7, 27, 8, 0, tzinfo=timezone.utc
+    )
+
+
+@pytest.mark.parametrize(
+    ("factory", "kwargs"),
+    [
+        (UsageEvidence, {"count": 1e308}),
+        (UsageEvidence, {"cost_usd": 1e308}),
+        (RateLimitEvidence, {"remaining": 1e308}),
+        (ProviderResponseEvidence, {"usage_count": 1e308}),
+        (ProviderResponseEvidence, {"cost_usd": 1e308}),
+        (ProviderResponseEvidence, {"rate_limit_remaining": 1e308}),
+        (
+            ProviderFailure,
+            {
+                "category": FailureCategory.RATE_LIMITED,
+                "provider": ProviderName.GITHUB,
+                "retry_after_seconds": 1e308,
+            },
+        ),
+    ],
+)
+def test_numeric_usage_cost_and_rate_evidence_has_semantic_maxima(factory, kwargs):
+    with pytest.raises(ValueError):
+        factory(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("factory", "field", "maximum"),
+    [
+        (UsageEvidence, "count", MAX_USAGE_COUNT),
+        (UsageEvidence, "cost_usd", MAX_COST_USD),
+        (RateLimitEvidence, "remaining", MAX_RATE_LIMIT_REMAINING),
+        (ProviderResponseEvidence, "usage_count", MAX_USAGE_COUNT),
+        (ProviderResponseEvidence, "cost_usd", MAX_COST_USD),
+        (
+            ProviderResponseEvidence,
+            "rate_limit_remaining",
+            MAX_RATE_LIMIT_REMAINING,
+        ),
+    ],
+)
+def test_numeric_evidence_accepts_maximum_and_rejects_next_value(
+    factory, field, maximum
+):
+    assert getattr(factory(**{field: maximum}), field) == maximum
+    with pytest.raises(ValueError):
+        factory(**{field: maximum + 1})
+
+
+def test_retry_after_accepts_maximum_and_rejects_next_value():
+    kwargs = {
+        "category": FailureCategory.RATE_LIMITED,
+        "provider": ProviderName.GITHUB,
+    }
+    assert (
+        ProviderFailure(
+            **kwargs, retry_after_seconds=MAX_RETRY_AFTER_SECONDS
+        ).retry_after_seconds
+        == MAX_RETRY_AFTER_SECONDS
+    )
+    with pytest.raises(ValueError):
+        ProviderFailure(
+            **kwargs, retry_after_seconds=MAX_RETRY_AFTER_SECONDS + 1
+        )
 
 
 @pytest.mark.parametrize("provider_name", sorted(REGISTERED))

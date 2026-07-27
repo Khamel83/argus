@@ -7,8 +7,6 @@
   },
   "body": {
     "type": "ErrorResponse",
-    "error": {
-      "code": "brave_429"
-    }
+    "error": {}
   }
 }

@@ -3,7 +3,5 @@
     "status_code": 504,
     "headers": {}
   },
-  "body": {
-    "message": "searxng_408_504"
-  }
+  "body": {}
 }

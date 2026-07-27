@@ -6,8 +6,6 @@
     }
   },
   "body": {
-    "error": {
-      "code": "you_429"
-    }
+    "detail": "Rate limit exceeded"
   }
 }

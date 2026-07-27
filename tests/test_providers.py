@@ -2,6 +2,8 @@
 
 import asyncio
 import inspect
+import json
+from pathlib import Path
 import httpx
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -193,6 +195,61 @@ class TestDuckDuckGoProvider:
         process.terminate.assert_called_once()
         assert batch.failure is not None
         assert batch.failure.category.value == "timeout"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("fixture_name", "expected_status", "expected_failure"),
+        [
+            ("native-success.json", "success", None),
+            ("native-empty.json", "empty", "empty"),
+            ("native-unexpected.json", "error", "parse_error"),
+            ("native-library-failure.json", "error", "provider_unavailable"),
+        ],
+    )
+    async def test_ddgs_native_objects_cross_worker_then_parent_adapter(
+        self, fixture_name, expected_status, expected_failure
+    ):
+        from argus.providers import ddg_worker
+        from argus.providers.duckduckgo import DuckDuckGoProvider
+
+        fixture = json.loads(
+            (
+                Path(__file__).parent
+                / "fixtures/providers/duckduckgo"
+                / fixture_name
+            ).read_text(encoding="utf-8")
+        )
+
+        class FakeDDGS:
+            def text(self, *_args, **_kwargs):
+                if "exception" in fixture:
+                    raise RuntimeError("fixture library failure")
+                return fixture["rows"]
+
+        payload, returncode = ddg_worker.execute_request(
+            {"query": "fixture", "max_results": 5, "timelimit": None},
+            ddgs_factory=FakeDDGS,
+        )
+        process = MagicMock()
+        process.returncode = returncode
+        process.communicate = AsyncMock(
+            return_value=(json.dumps(payload).encode("utf-8"), b"")
+        )
+        provider = DuckDuckGoProvider(ProviderConfig(enabled=True))
+        provider._available = True
+        with patch(
+            "argus.providers.duckduckgo.asyncio.create_subprocess_exec",
+            new=AsyncMock(return_value=process),
+        ):
+            batch = await provider.search(SearchQuery(query="fixture"))
+
+        assert batch.trace.status == expected_status
+        assert (
+            batch.failure.category.value if batch.failure is not None else None
+        ) == expected_failure
+        if fixture_name == "native-unexpected.json":
+            encoded = json.dumps(payload)
+            assert "must not stringify" not in encoded
 
 
 # --- Brave ---

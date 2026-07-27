@@ -86,7 +86,8 @@ class ValyuProvider(BaseProvider):
                 error_msg = data.get("error", "unknown error")
                 category = (
                     FailureCategory.BALANCE_EXHAUSTED
-                    if "credit" in str(error_msg).lower()
+                    if isinstance(error_msg, str)
+                    and "credit" in error_msg.lower()
                     else FailureCategory.PROVIDER_UNAVAILABLE
                 )
                 return self._typed_failure_batch(

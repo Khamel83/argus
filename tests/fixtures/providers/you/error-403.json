@@ -4,8 +4,6 @@
     "headers": {}
   },
   "body": {
-    "error": {
-      "code": "you_403"
-    }
+    "detail": "Insufficient permissions"
   }
 }

@@ -5,8 +5,6 @@
   },
   "body": {
     "type": "ErrorResponse",
-    "error": {
-      "code": "brave_403"
-    }
+    "error": {}
   }
 }

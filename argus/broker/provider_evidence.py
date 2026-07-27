@@ -29,6 +29,10 @@ MAX_WARNING = 256
 MAX_WARNINGS = 5
 MAX_RAW_DATE = 128
 MAX_REDIRECTS = 3
+MAX_USAGE_COUNT = 1_000_000_000_000
+MAX_COST_USD = 1_000_000_000
+MAX_RATE_LIMIT_REMAINING = 1_000_000_000_000
+MAX_RETRY_AFTER_SECONDS = 31_536_000
 
 _SECRET_KEY = re.compile(
     r"(?:api[_-]?key|appid|authorization|cookie|credential|password|"
@@ -162,6 +166,13 @@ def _finite_nonnegative(value: object) -> float | None:
         return None
     normalized = float(value)
     return normalized if math.isfinite(normalized) and normalized >= 0 else None
+
+
+def _bounded_nonnegative(value: object, maximum: float) -> float | None:
+    normalized = _finite_nonnegative(value)
+    if normalized is None or normalized > maximum:
+        return None
+    return normalized
 
 
 def _safe_url(value: object) -> str | None:
@@ -460,12 +471,17 @@ class UsageEvidence:
     transaction_id: str | None = None
 
     def __post_init__(self) -> None:
-        for name in ("count", "cost_usd"):
+        limits = {"count": MAX_USAGE_COUNT, "cost_usd": MAX_COST_USD}
+        for name, maximum in limits.items():
             value = getattr(self, name)
-            if value is not None and _finite_nonnegative(value) is None:
-                raise ValueError(f"usage {name} must be finite and non-negative")
-        object.__setattr__(self, "count", _finite_nonnegative(self.count))
-        object.__setattr__(self, "cost_usd", _finite_nonnegative(self.cost_usd))
+            if value is not None and _bounded_nonnegative(value, maximum) is None:
+                raise ValueError(f"usage {name} must be finite and bounded")
+        object.__setattr__(
+            self, "count", _bounded_nonnegative(self.count, MAX_USAGE_COUNT)
+        )
+        object.__setattr__(
+            self, "cost_usd", _bounded_nonnegative(self.cost_usd, MAX_COST_USD)
+        )
         object.__setattr__(
             self, "transaction_id", _bounded_reference(self.transaction_id)
         )
@@ -477,9 +493,15 @@ class RateLimitEvidence:
     reset_at: datetime | None = None
 
     def __post_init__(self) -> None:
-        if self.remaining is not None and _finite_nonnegative(self.remaining) is None:
-            raise ValueError("rate remaining must be finite and non-negative")
-        object.__setattr__(self, "remaining", _finite_nonnegative(self.remaining))
+        if self.remaining is not None and _bounded_nonnegative(
+            self.remaining, MAX_RATE_LIMIT_REMAINING
+        ) is None:
+            raise ValueError("rate remaining must be finite and bounded")
+        object.__setattr__(
+            self,
+            "remaining",
+            _bounded_nonnegative(self.remaining, MAX_RATE_LIMIT_REMAINING),
+        )
         if self.reset_at is not None:
             if not isinstance(self.reset_at, datetime) or self.reset_at.tzinfo is None:
                 raise ValueError("rate reset must be timezone-aware")
@@ -542,12 +564,29 @@ class ProviderResponseEvidence:
         )
         object.__setattr__(self, "warnings", _safe_warnings(self.warnings))
         object.__setattr__(self, "suggestions", _safe_warnings(self.suggestions))
-        object.__setattr__(self, "usage_count", _finite_nonnegative(self.usage_count))
-        object.__setattr__(self, "cost_usd", _finite_nonnegative(self.cost_usd))
+        numeric_limits = {
+            "usage_count": MAX_USAGE_COUNT,
+            "cost_usd": MAX_COST_USD,
+            "rate_limit_remaining": MAX_RATE_LIMIT_REMAINING,
+        }
+        for name, maximum in numeric_limits.items():
+            value = getattr(self, name)
+            if value is not None and _bounded_nonnegative(value, maximum) is None:
+                raise ValueError(f"response {name} must be finite and bounded")
+        object.__setattr__(
+            self,
+            "usage_count",
+            _bounded_nonnegative(self.usage_count, MAX_USAGE_COUNT),
+        )
+        object.__setattr__(
+            self, "cost_usd", _bounded_nonnegative(self.cost_usd, MAX_COST_USD)
+        )
         object.__setattr__(
             self,
             "rate_limit_remaining",
-            _finite_nonnegative(self.rate_limit_remaining),
+            _bounded_nonnegative(
+                self.rate_limit_remaining, MAX_RATE_LIMIT_REMAINING
+            ),
         )
         if self.rate_limit_reset is not None:
             if (
@@ -615,16 +654,23 @@ class ProviderFailure(Exception):
             )
         if (
             self.retry_after_seconds is not None
-            and _finite_nonnegative(self.retry_after_seconds) is None
+            and _bounded_nonnegative(
+                self.retry_after_seconds, MAX_RETRY_AFTER_SECONDS
+            )
+            is None
         ):
-            raise ValueError("retry-after must be finite and non-negative")
+            raise ValueError("retry-after must be finite and bounded")
         Exception.__init__(self, self.category.value)
         object.__setattr__(self, "provider_code", _bounded_label(self.provider_code))
         object.__setattr__(self, "request_id", _bounded_reference(self.request_id))
         summary, _ = _bounded_text(self.summary, MAX_WARNING)
         object.__setattr__(self, "summary", summary)
         object.__setattr__(
-            self, "retry_after_seconds", _finite_nonnegative(self.retry_after_seconds)
+            self,
+            "retry_after_seconds",
+            _bounded_nonnegative(
+                self.retry_after_seconds, MAX_RETRY_AFTER_SECONDS
+            ),
         )
 
     def safe_log_record(self) -> dict[str, object]:
@@ -1235,6 +1281,7 @@ def failure_batch(
             response_evidence=ProviderResponseEvidence(
                 latency_ms=latency_ms,
                 http_status=failure.http_status,
+                request_id=failure.request_id,
                 rate_limit_reset=failure.rate_limit_reset,
             ),
             failure=failure,
@@ -1269,6 +1316,7 @@ def failure_batch(
         response_evidence=ProviderResponseEvidence(
             latency_ms=latency_ms,
             http_status=failure.http_status,
+            request_id=failure.request_id,
             rate_limit_reset=failure.rate_limit_reset,
         ),
         failure=failure,
