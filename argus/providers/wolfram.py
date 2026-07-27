@@ -80,7 +80,12 @@ class WolframProvider(BaseProvider):
                     response_headers=self._response_headers(resp),
                 )
 
-            resp.raise_for_status()
+            native_failure = self._response_failure_batch(
+                resp, started_at=start, request_evidence=request_evidence
+            )
+
+            if native_failure is not None:
+                return native_failure
             text = resp.text.strip()
 
             if not text:

@@ -20,11 +20,7 @@ from argus.models import (
     SearchQuery,
 )
 from argus.providers.base import BaseProvider
-from argus.broker.provider_evidence import (
-    FailureCategory,
-    ProviderSearchBatch,
-    QueryRelation,
-)
+from argus.broker.provider_evidence import ProviderSearchBatch, QueryRelation
 
 logger = get_logger("providers.github")
 
@@ -86,22 +82,11 @@ class GitHubProvider(BaseProvider):
             ) as client:
                 resp = await client.get(GITHUB_API_BASE, params=params, headers=headers)
 
-                # GitHub returns 403 on rate limit
-                if resp.status_code == 403:
-                    remaining = resp.headers.get("X-RateLimit-Remaining")
-                    failure_category = (
-                        FailureCategory.RATE_LIMITED
-                        if remaining == "0" or resp.headers.get("Retry-After")
-                        else FailureCategory.POLICY_REJECTED
-                    )
-                    return self._typed_failure_batch(
-                        failure_category,
-                        "github request was rejected",
-                        started_at=start,
-                        request_evidence=request_evidence,
-                    )
-
-                resp.raise_for_status()
+                native_failure = self._response_failure_batch(
+                    resp, started_at=start, request_evidence=request_evidence
+                )
+                if native_failure is not None:
+                    return native_failure
                 data = resp.json()
 
             return self._normalized_batch(

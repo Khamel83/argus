@@ -40,15 +40,15 @@ def _mapping(data: object) -> Mapping[str, Any] | None:
     return data if isinstance(data, Mapping) else None
 
 
-def _sequence(value: object) -> list[Mapping[str, Any]] | None:
+def _sequence(value: object) -> list[object] | None:
     if not isinstance(value, list):
         return None
-    return [item for item in value if isinstance(item, Mapping)]
+    return list(value)
 
 
 def _rows(
     provider: ProviderName, data: Mapping[str, Any]
-) -> tuple[list[Mapping[str, Any]] | None, bool]:
+) -> tuple[list[object] | None, bool]:
     if provider is ProviderName.BRAVE:
         web = _mapping(data.get("web"))
         return (_sequence(web.get("results")) if web else None, web is not None)
@@ -68,11 +68,16 @@ def _rows(
     if provider is ProviderName.WOLFRAM:
         answer = data.get("answer")
         if isinstance(answer, str):
-            return ([{
-                "url": data.get("query_url") or "https://www.wolframalpha.com/",
-                "title": data.get("title") or "WolframAlpha",
-                "text": answer,
-            }], True)
+            return (
+                [
+                    {
+                        "url": data.get("query_url") or "https://www.wolframalpha.com/",
+                        "title": data.get("title") or "WolframAlpha",
+                        "text": answer,
+                    }
+                ],
+                True,
+            )
         return ([], data.get("empty") is True)
     return _sequence(data.get("results")), "results" in data
 
@@ -81,32 +86,77 @@ def _fields(
     provider: ProviderName, item: Mapping[str, Any]
 ) -> tuple[object, object, object, SnippetKind]:
     fields = {
-        ProviderName.DUCKDUCKGO: ("href", "title", "body", SnippetKind.PROVIDER_SNIPPET),
-        ProviderName.GITHUB: ("html_url", "full_name", "description", SnippetKind.PROVIDER_DESCRIPTION),
-        ProviderName.LINKUP: ("url", "name", "content", SnippetKind.PROVIDER_TEXT_EXCERPT),
+        ProviderName.DUCKDUCKGO: (
+            "href",
+            "title",
+            "body",
+            SnippetKind.PROVIDER_SNIPPET,
+        ),
+        ProviderName.GITHUB: (
+            "html_url",
+            "full_name",
+            "description",
+            SnippetKind.PROVIDER_DESCRIPTION,
+        ),
+        ProviderName.LINKUP: (
+            "url",
+            "name",
+            "content",
+            SnippetKind.PROVIDER_TEXT_EXCERPT,
+        ),
         ProviderName.SERPER: ("link", "title", "snippet", SnippetKind.PROVIDER_SNIPPET),
         ProviderName.SEARXNG: ("url", "title", "content", SnippetKind.PROVIDER_SNIPPET),
-        ProviderName.TAVILY: ("url", "title", "content", SnippetKind.PROVIDER_TEXT_EXCERPT),
-        ProviderName.VALYU: ("url", "title", "description", SnippetKind.PROVIDER_DESCRIPTION),
-        ProviderName.BRAVE: ("url", "title", "description", SnippetKind.PROVIDER_DESCRIPTION),
-        ProviderName.WOLFRAM: ("url", "title", "text", SnippetKind.PROVIDER_TEXT_EXCERPT),
+        ProviderName.TAVILY: (
+            "url",
+            "title",
+            "content",
+            SnippetKind.PROVIDER_TEXT_EXCERPT,
+        ),
+        ProviderName.VALYU: (
+            "url",
+            "title",
+            "description",
+            SnippetKind.PROVIDER_DESCRIPTION,
+        ),
+        ProviderName.BRAVE: (
+            "url",
+            "title",
+            "description",
+            SnippetKind.PROVIDER_DESCRIPTION,
+        ),
+        ProviderName.WOLFRAM: (
+            "url",
+            "title",
+            "text",
+            SnippetKind.PROVIDER_TEXT_EXCERPT,
+        ),
     }
     if provider is ProviderName.PARALLEL:
         excerpts = item.get("excerpts")
         snippet = (
-            " ".join(str(value) for value in excerpts[:3])
+            " ".join(value for value in excerpts[:3] if isinstance(value, str))
             if isinstance(excerpts, list)
             else item.get("excerpt") or item.get("snippet")
         )
-        return item.get("url"), item.get("title"), snippet, SnippetKind.PROVIDER_TEXT_EXCERPT
+        return (
+            item.get("url"),
+            item.get("title"),
+            snippet,
+            SnippetKind.PROVIDER_TEXT_EXCERPT,
+        )
     if provider is ProviderName.EXA:
         highlights = item.get("highlights")
         snippet = (
-            " ".join(str(value) for value in highlights[:3])
+            " ".join(value for value in highlights[:3] if isinstance(value, str))
             if isinstance(highlights, list) and highlights
             else item.get("text")
         )
-        return item.get("url"), item.get("title"), snippet, SnippetKind.PROVIDER_HIGHLIGHT
+        return (
+            item.get("url"),
+            item.get("title"),
+            snippet,
+            SnippetKind.PROVIDER_HIGHLIGHT,
+        )
     if provider is ProviderName.SEARCHAPI:
         return (
             item.get("link") or item.get("url"),
@@ -184,7 +234,11 @@ def _score(
     return NativeScoreEvidence.from_value(
         value,
         semantics=semantics,
-        confidence=ContractConfidence.OFFICIAL_CONTRACT,
+        confidence=(
+            ContractConfidence.UNVERIFIED
+            if provider is ProviderName.SEARXNG
+            else ContractConfidence.OFFICIAL_CONTRACT
+        ),
     )
 
 
@@ -194,17 +248,38 @@ def _kind(provider: ProviderName, item: Mapping[str, Any]) -> EvidenceKind:
     if provider is ProviderName.WOLFRAM:
         return EvidenceKind.COMPUTED_ANSWER
     source = item.get("source_type") or item.get("type")
+    normalized_source = source.lower() if isinstance(source, str) else ""
     return {
         "web": EvidenceKind.WEB_PAGE,
         "news": EvidenceKind.NEWS,
         "paper": EvidenceKind.PAPER,
         "proprietary": EvidenceKind.PROPRIETARY,
-    }.get(str(source).lower(), EvidenceKind.WEB_PAGE if source is None else EvidenceKind.UNKNOWN)
+    }.get(
+        normalized_source,
+        EvidenceKind.WEB_PAGE if source is None else EvidenceKind.UNKNOWN,
+    )
 
 
 def _header(headers: Mapping[str, object], name: str) -> object:
     lowered = name.lower()
-    return next((value for key, value in headers.items() if str(key).lower() == lowered), None)
+    return next(
+        (
+            value
+            for key, value in headers.items()
+            if isinstance(key, str) and key.lower() == lowered
+        ),
+        None,
+    )
+
+
+def _numeric_header(value: object) -> float | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = float(value)
+    except ValueError:
+        return None
+    return parsed if parsed >= 0 else None
 
 
 def _response(
@@ -243,7 +318,7 @@ def _response(
         cost = cost.get("total")
     if cost is None:
         cost = data.get("total_deduction_dollars")
-    remaining = _header(headers, "x-ratelimit-remaining")
+    remaining = _numeric_header(_header(headers, "x-ratelimit-remaining"))
     reset = _header(headers, "x-ratelimit-reset")
     reset_at = None
     try:
@@ -283,49 +358,59 @@ def normalize_provider_response(
     data = _mapping(payload)
     observed = observed_at or datetime.now(timezone.utc)
     if data is None or isinstance(max_results, bool) or max_results <= 0:
-        return _parse_failure(provider, request_evidence, "invalid provider response shape")
+        return _parse_failure(
+            provider, request_evidence, "invalid provider response shape"
+        )
     rows, recognized = _rows(provider, data)
     if rows is None or not recognized:
         return _parse_failure(
-            provider, request_evidence, "provider success response did not match contract"
+            provider,
+            request_evidence,
+            "provider success response did not match contract",
         )
     observations: list[ResultObservation] = []
     for item in rows:
         if len(observations) >= max_results:
             break
+        if not isinstance(item, Mapping):
+            continue
         url, title, snippet, snippet_kind = _fields(provider, item)
         try:
             engines = item.get("engines")
             if not isinstance(engines, list):
                 engines = [item.get("engine")] if item.get("engine") else []
             highlights = item.get("highlights")
-            observations.append(ResultObservation(
-                provider=provider,
-                provider_rank=len(observations),
-                url=url,
-                title=title or "",
-                snippet=SnippetEvidence(
-                    snippet or "",
-                    snippet_kind if snippet else SnippetKind.EMPTY,
-                    tuple(highlights) if isinstance(highlights, list) else (),
-                ),
-                source_kind=_kind(provider, item),
-                provider_source_type=item.get("source_type") or item.get("type"),
-                upstream_engines=tuple(engines),
-                publication=_publication(provider, item),
-                native_score=_score(provider, item),
-                provider_result_ref=item.get("id"),
-                provider_position=item.get("position"),
-                author=item.get("author"),
-                language=item.get("language"),
-                section=item.get("_section"),
-                star_count=item.get("stargazers_count"),
-                fork_count=item.get("forks_count"),
-                topics=tuple(item.get("topics")) if isinstance(item.get("topics"), list) else (),
-                observed_at=observed,
-                egress=egress,
-                machine=machine,
-            ))
+            observations.append(
+                ResultObservation(
+                    provider=provider,
+                    provider_rank=len(observations),
+                    url=url,
+                    title=title or "",
+                    snippet=SnippetEvidence(
+                        snippet or "",
+                        snippet_kind if snippet else SnippetKind.EMPTY,
+                        tuple(highlights) if isinstance(highlights, list) else (),
+                    ),
+                    source_kind=_kind(provider, item),
+                    provider_source_type=item.get("source_type") or item.get("type"),
+                    upstream_engines=tuple(engines),
+                    publication=_publication(provider, item),
+                    native_score=_score(provider, item),
+                    provider_result_ref=item.get("id"),
+                    provider_position=item.get("position"),
+                    author=item.get("author"),
+                    language=item.get("language"),
+                    section=item.get("_section"),
+                    star_count=item.get("stargazers_count"),
+                    fork_count=item.get("forks_count"),
+                    topics=tuple(item.get("topics"))
+                    if isinstance(item.get("topics"), list)
+                    else (),
+                    observed_at=observed,
+                    egress=egress,
+                    machine=machine,
+                )
+            )
         except (TypeError, ValueError):
             continue
     response = _response(
@@ -339,7 +424,8 @@ def normalize_provider_response(
     )
     if rows and not observations:
         failure = ProviderFailure(
-            FailureCategory.PARSE_ERROR, provider,
+            FailureCategory.PARSE_ERROR,
+            provider,
             summary="all provider result rows were structurally invalid",
         )
     elif not rows:
@@ -398,7 +484,20 @@ def classify_provider_failure_response(
         or nested_query_error.get("code")
         or (error if isinstance(error, str) else None)
     )
-    retry_after = _header(headers, "retry-after")
+    retry_after_raw = _header(headers, "retry-after")
+    retry_after = _numeric_header(retry_after_raw)
+    remaining = _header(headers, "x-ratelimit-remaining")
+    if (
+        provider is ProviderName.GITHUB
+        and status == 403
+        and (remaining == "0" or retry_after_raw is not None)
+    ):
+        status = 429
+    message = body.get("message")
+    if provider is ProviderName.SERPER and status < 400 and isinstance(message, str):
+        if "credit" in message.lower():
+            status = 402
+            code = "not_enough_credits"
     return classify_http_failure(
         provider,
         status,

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import math
+import subprocess
+import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -14,6 +17,7 @@ import pytest
 from argus.broker.planning import FreshnessWindow
 from argus.broker.provider_evidence import (
     ContractConfidence,
+    ControlTranslation,
     EvidenceKind,
     FailureCategory,
     FilterStrength,
@@ -26,6 +30,7 @@ from argus.broker.provider_evidence import (
     ProviderSearchBatch,
     PublicationEvidence,
     QueryRelation,
+    RedirectChildEvidence,
     ResultObservation,
     SnippetEvidence,
     SnippetKind,
@@ -257,18 +262,27 @@ def test_manifest_covers_every_registered_provider_and_contract_case():
             if isinstance(fixture, str):
                 assert (FIXTURE_ROOT / provider / fixture).is_file()
             else:
-                assert set(fixture) == {"reason"}
-                assert len(fixture["reason"]) >= 24
+                assert set(fixture) == {"reason", "source"}
+                assert fixture["source"] == (
+                    "docs/research/2026-07-27-provider-health-probe-matrix.md"
+                    "#search-provider-matrix"
+                )
         assert set(entry["failures"]) == FAILURE_CLASSES
         for failure in entry["failures"].values():
-            assert set(failure) in ({"fixture"}, {"reason"})
+            assert set(failure) in ({"fixture"}, {"reason", "source"})
             if "fixture" in failure:
                 assert (FIXTURE_ROOT / provider / failure["fixture"]).is_file()
             else:
-                assert len(failure["reason"]) >= 24
-        assert set(entry["signals"]) in ({"typed"}, {"reason"})
+                assert failure["source"] == (
+                    "docs/research/2026-07-27-provider-health-probe-matrix.md"
+                    "#search-provider-matrix"
+                )
+        assert set(entry["signals"]) in ({"typed"}, {"reason", "source"})
         if "reason" in entry["signals"]:
-            assert len(entry["signals"]["reason"]) >= 24
+            assert entry["signals"]["source"] == (
+                "docs/research/2026-07-27-provider-health-probe-matrix.md"
+                "#search-provider-matrix"
+            )
         else:
             assert entry["signals"]["typed"]
 
@@ -320,6 +334,101 @@ def test_manifest_native_failure_fixtures_cross_provider_classifiers(provider_na
         failure = classify_provider_failure_response(provider, fixture)
         assert failure.category is expected[failure_class]
         assert "fixture rejection" not in failure.summary
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_name", sorted(REGISTERED - {"duckduckgo"}))
+async def test_every_applicable_failure_fixture_executes_real_adapter_search(
+    provider_name,
+):
+    """The fixture matrix must test the adapter, not a parallel test classifier."""
+    from argus.config import SearXNGConfig
+
+    manifest = _load(FIXTURE_ROOT / "manifest.json")
+    provider = ProviderName(provider_name)
+    classes = {
+        "searxng": ("argus.providers.searxng", "SearXNGProvider"),
+        "yahoo": ("argus.providers.yahoo", "YahooProvider"),
+        "github": ("argus.providers.github", "GitHubProvider"),
+        "wolfram": ("argus.providers.wolfram", "WolframProvider"),
+        "brave": ("argus.providers.brave", "BraveProvider"),
+        "tavily": ("argus.providers.tavily", "TavilyProvider"),
+        "exa": ("argus.providers.exa", "ExaProvider"),
+        "linkup": ("argus.providers.linkup", "LinkupProvider"),
+        "parallel": ("argus.providers.parallel", "ParallelProvider"),
+        "serper": ("argus.providers.serper", "SerperProvider"),
+        "you": ("argus.providers.you", "YouProvider"),
+        "valyu": ("argus.providers.valyu", "ValyuProvider"),
+        "searchapi": ("argus.providers.searchapi", "SearchApiProvider"),
+    }
+    config = (
+        SearXNGConfig(enabled=True, base_url="https://fixture.test")
+        if provider is ProviderName.SEARXNG
+        else ProviderConfig(enabled=True, api_key="fixture")
+    )
+    module_name, class_name = classes[provider_name]
+    adapter = getattr(importlib.import_module(module_name), class_name)(config)
+    module = type(adapter).__module__
+    expected = {
+        "401": FailureCategory.AUTHENTICATION_REJECTED,
+        "402": FailureCategory.BALANCE_EXHAUSTED,
+        "403": FailureCategory.POLICY_REJECTED,
+        "408_504": FailureCategory.TIMEOUT,
+        "422": FailureCategory.INVALID_REQUEST,
+        "429": FailureCategory.RATE_LIMITED,
+        "5xx": FailureCategory.PROVIDER_UNAVAILABLE,
+    }
+    for failure_class, declaration in manifest["providers"][provider_name][
+        "failures"
+    ].items():
+        if "reason" in declaration:
+            continue
+        fixture = _load(FIXTURE_ROOT / provider_name / declaration["fixture"])
+        transport = fixture["transport"]
+        response = _http_response(
+            status=transport["status_code"],
+            body=fixture["body"],
+            headers=transport["headers"],
+        )
+        response.request = MagicMock()
+        with patch(f"{module}.httpx.AsyncClient") as client_type:
+            client = client_type.return_value
+            client.__aenter__ = AsyncMock(return_value=client)
+            client.__aexit__ = AsyncMock(return_value=False)
+            client.get = AsyncMock(return_value=response)
+            client.post = AsyncMock(return_value=response)
+            batch = await adapter.search(SearchQuery(query="fixture"))
+        assert batch.failure is not None, (provider_name, failure_class)
+        assert batch.failure.category is expected[failure_class]
+        native_error = fixture["body"].get("error")
+        if isinstance(native_error, dict):
+            native_code = native_error.get("code") or native_error.get("type")
+            if isinstance(native_code, str):
+                assert batch.failure.provider_code == native_code
+
+
+@pytest.mark.asyncio
+async def test_github_403_distinguishes_rate_limit_from_policy_rejection():
+    from argus.providers.github import GitHubProvider
+
+    adapter = GitHubProvider(ProviderConfig(enabled=True))
+    categories = []
+    for headers in ({}, {"X-RateLimit-Remaining": "0"}):
+        response = _http_response(
+            status=403, body={"message": "forbidden"}, headers=headers
+        )
+        response.request = MagicMock()
+        with patch("argus.providers.github.httpx.AsyncClient") as client_type:
+            client = client_type.return_value
+            client.__aenter__ = AsyncMock(return_value=client)
+            client.__aexit__ = AsyncMock(return_value=False)
+            client.get = AsyncMock(return_value=response)
+            batch = await adapter.search(SearchQuery(query="fixture"))
+        categories.append(batch.failure.category)
+    assert categories == [
+        FailureCategory.POLICY_REJECTED,
+        FailureCategory.RATE_LIMITED,
+    ]
 
 
 @pytest.mark.parametrize("provider_name", sorted(REGISTERED))
@@ -427,6 +536,29 @@ def test_ambiguous_publication_fields_are_explicitly_unverified():
         assert publication is not None
         assert publication.contract_confidence is ContractConfidence.UNVERIFIED
         assert publication.semantic_contract_ref is None
+
+
+def test_searxng_native_score_is_unverified_without_engine_specific_contract():
+    batch = normalize_provider_response(
+        ProviderName.SEARXNG,
+        {
+            "results": [
+                {
+                    "url": "https://example.test",
+                    "title": "Result",
+                    "content": "Fixture",
+                    "engine": "unknown-engine",
+                    "score": 1.5,
+                }
+            ]
+        },
+        max_results=1,
+    )
+    assert batch.observations[0].native_score is not None
+    assert (
+        batch.observations[0].native_score.contract_confidence
+        is ContractConfidence.UNVERIFIED
+    )
 
 
 @pytest.mark.asyncio
@@ -597,6 +729,172 @@ def test_private_sentinels_are_scrubbed_and_all_projection_values_are_bounded():
     assert batch.observations[0].native_score is None
     assert batch.observations[0].publication is None
     assert batch.observations[0].source_kind is EvidenceKind.UNKNOWN
+
+
+def test_nested_private_values_are_never_stringified_at_normalization_seams():
+    batches = [
+        normalize_provider_response(
+            ProviderName.BRAVE,
+            {
+                "web": {
+                    "results": [
+                        {
+                            "url": "https://example.test",
+                            "title": {"raw_body": "nested title sentinel"},
+                            "description": ["nested snippet sentinel"],
+                        }
+                    ]
+                },
+                "warnings": [{"raw_body": "nested warning sentinel"}],
+            },
+            max_results=1,
+        ),
+        normalize_provider_response(
+            ProviderName.PARALLEL,
+            {
+                "results": [
+                    {
+                        "url": "https://example.test/parallel",
+                        "title": "Result",
+                        "excerpts": [{"raw_body": "parallel nested sentinel"}],
+                    }
+                ]
+            },
+            max_results=1,
+        ),
+        normalize_provider_response(
+            ProviderName.EXA,
+            {
+                "results": [
+                    {
+                        "url": "https://example.test/exa",
+                        "title": "Result",
+                        "highlights": [["exa nested sentinel"]],
+                    }
+                ]
+            },
+            max_results=1,
+        ),
+    ]
+    rendered = json.dumps([batch.safe_log_record() for batch in batches])
+    assert "nested title sentinel" not in rendered
+    assert "nested snippet sentinel" not in rendered
+    assert "nested warning sentinel" not in rendered
+    assert "parallel nested sentinel" not in rendered
+    assert "exa nested sentinel" not in rendered
+
+
+def test_nonempty_native_list_with_only_malformed_rows_is_parse_error():
+    batch = normalize_provider_response(
+        ProviderName.TAVILY,
+        {"results": ["raw body sentinel", 7, ["nested"]]},
+        max_results=10,
+    )
+    assert batch.failure is not None
+    assert batch.failure.category is FailureCategory.PARSE_ERROR
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        lambda: ProviderResponseEvidence(latency_ms="1"),
+        lambda: ProviderResponseEvidence(result_count=1.5),
+        lambda: ProviderFailure(
+            FailureCategory.RATE_LIMITED,
+            ProviderName.BRAVE,
+            http_status=99,
+        ),
+        lambda: ProviderFailure(
+            FailureCategory.RATE_LIMITED,
+            ProviderName.BRAVE,
+            rate_limit_reset=datetime(2026, 7, 27),
+        ),
+        lambda: ProviderSearchBatch(
+            provider=ProviderName.BRAVE,
+            provider_contract_version="v1",
+            request_evidence="not evidence",
+        ),
+        lambda: ProviderSearchBatch(
+            provider=ProviderName.BRAVE,
+            provider_contract_version="v1",
+            response_evidence="not evidence",
+        ),
+        lambda: ProviderSearchBatch(
+            provider=ProviderName.BRAVE,
+            provider_contract_version="v1",
+            observations=("not an observation",),
+        ),
+        lambda: ProviderSearchBatch(
+            provider=ProviderName.BRAVE,
+            provider_contract_version="v1",
+            failure=ProviderFailure(FailureCategory.POLICY_REJECTED, ProviderName.EXA),
+        ),
+        lambda: ProviderResponseEvidence(usage="not usage"),
+        lambda: ProviderResponseEvidence(warnings="not a warning tuple"),
+        lambda: ProviderResponseEvidence(skipped=1),
+        lambda: ProviderResponseEvidence(observed_at="not a datetime"),
+        lambda: ProviderResponseEvidence(egress="local"),
+        lambda: ProviderRequestEvidence(redirect_children=[]),
+        lambda: ResultObservation(
+            provider=ProviderName.BRAVE,
+            provider_rank=0,
+            url="https://example.test",
+            title="Result",
+            snippet=SnippetEvidence("text", SnippetKind.PROVIDER_SNIPPET),
+            publication="not publication",
+        ),
+        lambda: SnippetEvidence(
+            "text", SnippetKind.PROVIDER_SNIPPET, highlights=["not tuple"]
+        ),
+        lambda: PublicationEvidence(contract_confidence="unverified"),
+        lambda: NativeScoreEvidence(math.nan, NativeScoreSemantics.RELEVANCE),
+        lambda: ControlTranslation("none", "exact", FilterStrength.STRICT_CONTRACT),
+        lambda: RedirectChildEvidence(
+            "attempt",
+            1,
+            "https://source.test",
+            "https://destination.test",
+            cross_origin=1,
+            credentials_stripped=True,
+            timeout_seconds=1.0,
+        ),
+        lambda: ResultObservation(
+            provider=ProviderName.BRAVE,
+            provider_rank=0,
+            url="https://example.test",
+            title="Result",
+            snippet=SnippetEvidence("text", SnippetKind.PROVIDER_SNIPPET),
+            observed_at="not datetime",
+        ),
+        lambda: ProviderFailure(
+            FailureCategory.RATE_LIMITED,
+            ProviderName.BRAVE,
+            retry_after_seconds="60",
+        ),
+    ],
+)
+def test_evidence_model_rejects_invalid_nested_types_and_ranges(factory):
+    with pytest.raises((TypeError, ValueError)):
+        factory()
+
+
+def test_provider_modules_import_cleanly_in_fresh_processes():
+    root = Path(__file__).parents[1]
+    for module in (
+        "argus.providers.base",
+        "argus.providers.brave",
+        "argus.providers.github",
+        "argus.providers.normalization",
+    ):
+        completed = subprocess.run(
+            [sys.executable, "-c", f"import {module}"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
 
 
 def test_batch_rejects_duplicate_or_noncontiguous_provider_positions():

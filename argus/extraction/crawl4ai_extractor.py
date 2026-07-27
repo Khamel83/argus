@@ -52,9 +52,11 @@ def normalize_crawl4ai_result(url: str, result: object) -> ExtractedContent:
         return ExtractedContent(url=url, error="crawl4ai: content too short")
     metadata = _field(result, "metadata") or {}
     title = metadata.get("title", "") if isinstance(metadata, Mapping) else ""
+    if not isinstance(title, str):
+        title = ""
     return ExtractedContent(
         url=final_url,
-        title=str(title)[:1_000],
+        title=title[:1_000],
         text=text,
         word_count=len(text.split()),
         extractor=ExtractorName.CRAWL4AI,

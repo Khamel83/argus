@@ -133,7 +133,9 @@ class EgressType(str, Enum):
 def _bounded_text(value: object, limit: int) -> tuple[str, bool]:
     if value is None:
         return "", False
-    text = str(value)
+    if not isinstance(value, str):
+        return "", False
+    text = value
     if _SECRET_TEXT.search(text):
         return "", False
     return text[:limit], len(text) > limit
@@ -156,12 +158,9 @@ def _bounded_reference(value: object) -> str | None:
 
 
 def _finite_nonnegative(value: object) -> float | None:
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    try:
-        normalized = float(value)
-    except (TypeError, ValueError):
-        return None
+    normalized = float(value)
     return normalized if math.isfinite(normalized) and normalized >= 0 else None
 
 
@@ -200,6 +199,10 @@ class SnippetEvidence:
     truncated: bool = False
 
     def __post_init__(self) -> None:
+        if not isinstance(self.kind, SnippetKind):
+            raise TypeError("snippet kind must be closed")
+        if not isinstance(self.highlights, tuple):
+            raise TypeError("snippet highlights must be a tuple")
         primary, truncated = _bounded_text(self.primary_text, MAX_SNIPPET)
         raw_highlights = tuple(self.highlights)
         highlights: list[str] = []
@@ -230,6 +233,37 @@ class PublicationEvidence:
     contract_confidence: ContractConfidence = ContractConfidence.UNVERIFIED
     raw_field_name: str | None = None
     semantic_contract_ref: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.precision, PublicationPrecision):
+            raise TypeError("publication precision must be closed")
+        if not isinstance(self.source, PublicationSource):
+            raise TypeError("publication source must be closed")
+        if not isinstance(self.contract_confidence, ContractConfidence):
+            raise TypeError("publication confidence must be closed")
+        if self.published_at_utc is not None:
+            if (
+                not isinstance(self.published_at_utc, datetime)
+                or self.published_at_utc.tzinfo is None
+            ):
+                raise ValueError("publication timestamp must be timezone-aware")
+            object.__setattr__(
+                self,
+                "published_at_utc",
+                self.published_at_utc.astimezone(timezone.utc),
+            )
+        if self.published_date is not None and not isinstance(
+            self.published_date, date
+        ):
+            raise TypeError("publication date must be a date")
+        if self.published_at_utc is not None and self.published_date is not None:
+            raise ValueError("publication evidence must have one temporal value")
+        object.__setattr__(self, "raw_field_name", _bounded_label(self.raw_field_name))
+        object.__setattr__(
+            self,
+            "semantic_contract_ref",
+            _bounded_reference(self.semantic_contract_ref),
+        )
 
     @classmethod
     def from_raw(
@@ -278,6 +312,19 @@ class NativeScoreEvidence:
     scale_max: float | None = None
     contract_confidence: ContractConfidence = ContractConfidence.UNVERIFIED
 
+    def __post_init__(self) -> None:
+        value = _finite_nonnegative(self.value)
+        if value is None:
+            raise ValueError("native score must be finite and non-negative")
+        if not isinstance(self.semantics, NativeScoreSemantics):
+            raise TypeError("native score semantics must be closed")
+        if not isinstance(self.contract_confidence, ContractConfidence):
+            raise TypeError("native score confidence must be closed")
+        for name in ("scale_min", "scale_max"):
+            raw = getattr(self, name)
+            if raw is not None and _finite_nonnegative(raw) is None:
+                raise ValueError("native score scale must be finite")
+
     @classmethod
     def from_value(
         cls,
@@ -309,6 +356,10 @@ class ControlTranslation:
     provider_value: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.precision, TranslationPrecision):
+            raise TypeError("control precision must be closed")
+        if not isinstance(self.strength, FilterStrength):
+            raise TypeError("control strength must be closed")
         capabilities = {
             "none",
             "relative_only",
@@ -351,6 +402,12 @@ class ProviderRequestEvidence:
     redirect_children: tuple[RedirectChildEvidence, ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.query_relation, QueryRelation):
+            raise TypeError("query relation must be closed")
+        if self.freshness_translation is not None and not isinstance(
+            self.freshness_translation, ControlTranslation
+        ):
+            raise TypeError("freshness translation must be typed")
         if self.effective_query_hash and not re.fullmatch(
             r"[0-9a-f]{64}", self.effective_query_hash
         ):
@@ -368,7 +425,9 @@ class ProviderRequestEvidence:
             if timeout is None or timeout <= 0 or timeout > 300:
                 raise ValueError("attempt timeout must be finite and bounded")
             object.__setattr__(self, "timeout_seconds", timeout)
-        children = tuple(self.redirect_children)
+        if not isinstance(self.redirect_children, tuple):
+            raise TypeError("redirect children must be a tuple")
+        children = self.redirect_children
         if len(children) > MAX_REDIRECTS:
             children = children[:MAX_REDIRECTS]
         if any(
@@ -401,6 +460,10 @@ class UsageEvidence:
     transaction_id: str | None = None
 
     def __post_init__(self) -> None:
+        for name in ("count", "cost_usd"):
+            value = getattr(self, name)
+            if value is not None and _finite_nonnegative(value) is None:
+                raise ValueError(f"usage {name} must be finite and non-negative")
         object.__setattr__(self, "count", _finite_nonnegative(self.count))
         object.__setattr__(self, "cost_usd", _finite_nonnegative(self.cost_usd))
         object.__setattr__(
@@ -414,14 +477,13 @@ class RateLimitEvidence:
     reset_at: datetime | None = None
 
     def __post_init__(self) -> None:
+        if self.remaining is not None and _finite_nonnegative(self.remaining) is None:
+            raise ValueError("rate remaining must be finite and non-negative")
         object.__setattr__(self, "remaining", _finite_nonnegative(self.remaining))
         if self.reset_at is not None:
-            if self.reset_at.tzinfo is None:
-                object.__setattr__(self, "reset_at", None)
-            else:
-                object.__setattr__(
-                    self, "reset_at", self.reset_at.astimezone(timezone.utc)
-                )
+            if not isinstance(self.reset_at, datetime) or self.reset_at.tzinfo is None:
+                raise ValueError("rate reset must be timezone-aware")
+            object.__setattr__(self, "reset_at", self.reset_at.astimezone(timezone.utc))
 
 
 @dataclass(frozen=True, slots=True)
@@ -448,6 +510,31 @@ class ProviderResponseEvidence:
     machine: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.warnings, tuple) or not isinstance(
+            self.suggestions, tuple
+        ):
+            raise TypeError("warnings and suggestions must be tuples")
+        for name in (
+            "evidence_missing",
+            "charge_reported_invalid",
+            "skipped",
+        ):
+            if type(getattr(self, name)) is not bool:
+                raise TypeError(f"{name} must be boolean")
+        if not isinstance(self.observed_at, datetime):
+            raise TypeError("provider observation time must be datetime")
+        if not isinstance(self.egress, EgressType):
+            raise TypeError("provider egress must be closed")
+        if self.usage is not None and not isinstance(self.usage, UsageEvidence):
+            raise TypeError("usage evidence must be typed")
+        if self.rate_limit is not None and not isinstance(
+            self.rate_limit, RateLimitEvidence
+        ):
+            raise TypeError("rate-limit evidence must be typed")
+        if type(self.latency_ms) is not int or not 0 <= self.latency_ms <= 86_400_000:
+            raise ValueError("latency must be a bounded integer")
+        if type(self.result_count) is not int or not 0 <= self.result_count <= 10_000:
+            raise ValueError("result count must be a bounded integer")
         object.__setattr__(self, "request_id", _bounded_reference(self.request_id))
         object.__setattr__(self, "session_id", _bounded_reference(self.session_id))
         object.__setattr__(
@@ -462,8 +549,17 @@ class ProviderResponseEvidence:
             "rate_limit_remaining",
             _finite_nonnegative(self.rate_limit_remaining),
         )
-        if self.rate_limit_reset is not None and (self.rate_limit_reset.tzinfo is None):
-            object.__setattr__(self, "rate_limit_reset", None)
+        if self.rate_limit_reset is not None:
+            if (
+                not isinstance(self.rate_limit_reset, datetime)
+                or self.rate_limit_reset.tzinfo is None
+            ):
+                raise ValueError("response rate reset must be timezone-aware")
+            object.__setattr__(
+                self,
+                "rate_limit_reset",
+                self.rate_limit_reset.astimezone(timezone.utc),
+            )
         usage = self.usage or UsageEvidence(
             self.usage_count, self.cost_usd, self.transaction_id
         )
@@ -477,10 +573,10 @@ class ProviderResponseEvidence:
         )
         if rate_limit.remaining is not None or rate_limit.reset_at is not None:
             object.__setattr__(self, "rate_limit", rate_limit)
-        if type(self.http_status) is not int or not 100 <= self.http_status <= 599:
-            object.__setattr__(self, "http_status", None)
-        object.__setattr__(self, "latency_ms", max(0, int(self.latency_ms)))
-        object.__setattr__(self, "result_count", max(0, int(self.result_count)))
+        if self.http_status is not None and (
+            type(self.http_status) is not int or not 100 <= self.http_status <= 599
+        ):
+            raise ValueError("HTTP status must be in range 100..599")
         if self.observed_at.tzinfo is None:
             raise ValueError("provider observation time must be timezone-aware")
         object.__setattr__(
@@ -501,6 +597,27 @@ class ProviderFailure(Exception):
     summary: str = ""
 
     def __post_init__(self) -> None:
+        if not isinstance(self.category, FailureCategory):
+            raise TypeError("failure category must be closed")
+        if not isinstance(self.provider, ProviderName):
+            raise TypeError("failure provider must be closed")
+        if self.http_status is not None and (
+            type(self.http_status) is not int or not 100 <= self.http_status <= 599
+        ):
+            raise ValueError("failure HTTP status must be in range 100..599")
+        if self.rate_limit_reset is not None:
+            if self.rate_limit_reset.tzinfo is None:
+                raise ValueError("rate reset must be timezone-aware")
+            object.__setattr__(
+                self,
+                "rate_limit_reset",
+                self.rate_limit_reset.astimezone(timezone.utc),
+            )
+        if (
+            self.retry_after_seconds is not None
+            and _finite_nonnegative(self.retry_after_seconds) is None
+        ):
+            raise ValueError("retry-after must be finite and non-negative")
         Exception.__init__(self, self.category.value)
         object.__setattr__(self, "provider_code", _bounded_label(self.provider_code))
         object.__setattr__(self, "request_id", _bounded_reference(self.request_id))
@@ -548,6 +665,28 @@ class ResultObservation:
     machine: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.provider, ProviderName):
+            raise TypeError("observation provider must be closed")
+        if not isinstance(self.snippet, SnippetEvidence):
+            raise TypeError("observation snippet must be typed")
+        if not isinstance(self.source_kind, EvidenceKind):
+            raise TypeError("observation source kind must be closed")
+        if not isinstance(self.egress, EgressType):
+            raise TypeError("observation egress must be closed")
+        if self.publication is not None and not isinstance(
+            self.publication, PublicationEvidence
+        ):
+            raise TypeError("publication evidence must be typed")
+        if self.native_score is not None and not isinstance(
+            self.native_score, NativeScoreEvidence
+        ):
+            raise TypeError("native-score evidence must be typed")
+        if not isinstance(self.upstream_engines, tuple) or not isinstance(
+            self.topics, tuple
+        ):
+            raise TypeError("observation collections must be tuples")
+        if not isinstance(self.observed_at, datetime):
+            raise TypeError("observation time must be datetime")
         if type(self.provider_rank) is not int or self.provider_rank < 0:
             raise ValueError("provider rank must be a non-negative integer")
         url = _safe_url(self.url)
@@ -600,14 +739,6 @@ class ResultObservation:
             self, "observed_at", self.observed_at.astimezone(timezone.utc)
         )
         object.__setattr__(self, "machine", _bounded_label(self.machine, MAX_REFERENCE))
-        if self.publication is not None and not isinstance(
-            self.publication, PublicationEvidence
-        ):
-            object.__setattr__(self, "publication", None)
-        if self.native_score is not None and not isinstance(
-            self.native_score, NativeScoreEvidence
-        ):
-            object.__setattr__(self, "native_score", None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -624,11 +755,27 @@ class ProviderSearchBatch:
     failure: ProviderFailure | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.provider, ProviderName):
+            raise TypeError("batch provider must be closed")
+        if not isinstance(self.request_evidence, ProviderRequestEvidence):
+            raise TypeError("batch request evidence must be typed")
+        if not isinstance(self.response_evidence, ProviderResponseEvidence):
+            raise TypeError("batch response evidence must be typed")
+        if self.failure is not None and not isinstance(self.failure, ProviderFailure):
+            raise TypeError("batch failure must be typed")
+        if self.failure is not None and self.failure.provider is not self.provider:
+            raise ValueError("batch failure provider must match batch provider")
         version = _bounded_label(self.provider_contract_version)
         if version is None:
             raise ValueError("provider contract version must be bounded")
         object.__setattr__(self, "provider_contract_version", version)
-        observations = tuple(self.observations)
+        if not isinstance(self.observations, tuple):
+            raise TypeError("batch observations must be a tuple")
+        observations = self.observations
+        if any(not isinstance(item, ResultObservation) for item in observations):
+            raise TypeError("batch observations must be typed")
+        if any(item.provider is not self.provider for item in observations):
+            raise ValueError("observation provider must match batch provider")
         expected = list(range(len(observations)))
         ranks = [item.provider_rank for item in observations]
         if ranks != expected or any(
@@ -912,6 +1059,11 @@ class RedirectChildEvidence:
     timeout_seconds: float
 
     def __post_init__(self) -> None:
+        if (
+            type(self.cross_origin) is not bool
+            or type(self.credentials_stripped) is not bool
+        ):
+            raise TypeError("redirect flags must be boolean")
         parent = _bounded_reference(self.parent_attempt_id)
         if parent is None:
             raise ValueError("redirect parent attempt ID must be bounded")
@@ -1029,6 +1181,41 @@ def with_response_timing(
         rate_limit_reset=rate_limit_reset or batch.response_evidence.rate_limit_reset,
     )
     return replace(batch, response_evidence=response)
+
+
+def with_trusted_provenance(
+    batch: ProviderSearchBatch,
+    *,
+    egress: EgressType,
+    machine: str | None,
+) -> ProviderSearchBatch:
+    """Stamp trusted route provenance without overriding adapter route evidence."""
+    if egress is EgressType.UNKNOWN and machine is None:
+        return batch
+    selected_egress = (
+        batch.response_evidence.egress
+        if batch.response_evidence.egress is not EgressType.UNKNOWN
+        else egress
+    )
+    selected_machine = batch.response_evidence.machine or machine
+    response = replace(
+        batch.response_evidence,
+        egress=selected_egress,
+        machine=selected_machine,
+    )
+    observations = tuple(
+        replace(
+            item,
+            egress=(
+                item.egress
+                if item.egress is not EgressType.UNKNOWN
+                else selected_egress
+            ),
+            machine=item.machine or selected_machine,
+        )
+        for item in batch.observations
+    )
+    return replace(batch, response_evidence=response, observations=observations)
 
 
 def failure_batch(

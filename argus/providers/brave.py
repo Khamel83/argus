@@ -64,7 +64,11 @@ class BraveProvider(BaseProvider):
                 timeout=self._attempt_timeout(query)
             ) as client:
                 resp = await client.get(BRAVE_API_BASE, params=params, headers=headers)
-                resp.raise_for_status()
+                native_failure = self._response_failure_batch(
+                    resp, started_at=start, request_evidence=request_evidence
+                )
+                if native_failure is not None:
+                    return native_failure
                 data = resp.json()
 
             return self._normalized_batch(

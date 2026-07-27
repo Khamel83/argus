@@ -166,7 +166,11 @@ class YahooProvider(BaseProvider):
                         request_evidence=request_evidence,
                     )
                 assert resp is not None
-                resp.raise_for_status()
+                native_failure = self._response_failure_batch(
+                    resp, started_at=started_at, request_evidence=request_evidence
+                )
+                if native_failure is not None:
+                    return native_failure
 
             results = self._parse(resp.text, query.max_results)
 

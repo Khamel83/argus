@@ -252,6 +252,49 @@ async def test_executor_preserves_normalized_batch_and_projects_only_at_compatib
 
 
 @pytest.mark.asyncio
+async def test_executor_stamps_trusted_node_provenance_on_ordinary_provider_batch():
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.broker.provider_evidence import ProviderSearchBatch
+    from argus.config import NodeConfig
+
+    native = ProviderSearchBatch(
+        provider=ProviderName.YAHOO,
+        provider_contract_version="fixture-v1",
+    )
+
+    class Provider:
+        name = ProviderName.YAHOO
+        probe_capability = ProbeCapability.ASYNC_NATIVE
+
+        def is_available(self):
+            return True
+
+        async def search(self, query):
+            return native
+
+    executor = ProviderExecutor(
+        providers={ProviderName.YAHOO: Provider()},
+        health_tracker=HealthTracker(),
+        budget_tracker=BudgetTracker(),
+        node_config=NodeConfig(egress_type="datacenter", machine_name="argus-primary"),
+    )
+    outcome = await execute_with_plan(
+        executor,
+        SearchQuery(
+            query="provenance",
+            providers=[ProviderName.YAHOO],
+            metadata={"egress": "residential", "machine": "caller-forgery"},
+        ),
+        [ProviderName.YAHOO],
+    )
+    response = outcome.provider_batches["yahoo"].response_evidence
+    assert response.egress.value == "datacenter"
+    assert response.machine == "argus-primary"
+
+
+@pytest.mark.asyncio
 async def test_executor_adapts_only_genuinely_legacy_provider_tuples():
     from argus.broker.budgets import BudgetTracker
     from argus.broker.execution import ProviderExecutor

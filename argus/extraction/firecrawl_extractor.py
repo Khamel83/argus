@@ -36,11 +36,17 @@ def parse_firecrawl_v2_response(url: str, payload: object) -> ExtractedContent:
     if (type(status) is int and status >= 400) or metadata.get("error"):
         return ExtractedContent(url=url, error="firecrawl: extraction failed")
     text = markdown.strip()
+    title = metadata.get("title") or result.get("title") or ""
+    author = metadata.get("author") or ""
+    if not isinstance(title, str):
+        title = ""
+    if not isinstance(author, str):
+        author = ""
     return ExtractedContent(
         url=url,
-        title=str(metadata.get("title") or result.get("title") or "")[:1_000],
+        title=title[:1_000],
         text=text,
-        author=str(metadata.get("author") or "")[:256],
+        author=author[:256],
         date=None,
         word_count=len(text.split()),
         extractor=ExtractorName.FIRECRAWL,

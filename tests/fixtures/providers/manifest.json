@@ -24,19 +24,23 @@
       },
       "failures": {
         "401": {
-          "reason": "No authoritative checked-in contract establishes this provider can emit HTTP 401 for search."
+          "reason": "The provider health matrix does not authorize a searxng native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "402": {
-          "reason": "No authoritative checked-in contract establishes balance exhaustion as HTTP 402 for search."
+          "reason": "The provider health matrix does not authorize a searxng native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "403": {
           "fixture": "error-403.json"
         },
         "422": {
-          "reason": "No authoritative checked-in contract establishes HTTP 422 validation behavior for search."
+          "reason": "The provider health matrix does not authorize a searxng native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "429": {
-          "reason": "No authoritative checked-in contract establishes HTTP 429 rate behavior for search."
+          "reason": "The provider health matrix does not authorize a searxng native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "408_504": {
           "fixture": "error-408_504.json"
@@ -62,29 +66,37 @@
       },
       "failures": {
         "401": {
-          "reason": "No authoritative checked-in contract establishes this provider can emit HTTP 401 for search."
+          "reason": "The provider health matrix does not authorize a duckduckgo native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "402": {
-          "reason": "No authoritative checked-in contract establishes balance exhaustion as HTTP 402 for search."
+          "reason": "The provider health matrix does not authorize a duckduckgo native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "403": {
-          "reason": "No authoritative checked-in contract establishes this provider can emit HTTP 403 for search."
+          "reason": "The provider health matrix does not authorize a duckduckgo native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "422": {
-          "reason": "No authoritative checked-in contract establishes HTTP 422 validation behavior for search."
+          "reason": "The provider health matrix does not authorize a duckduckgo native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "429": {
-          "reason": "No authoritative checked-in contract establishes HTTP 429 rate behavior for search."
+          "reason": "The provider health matrix does not authorize a duckduckgo native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "408_504": {
-          "reason": "This non-HTTP or undocumented transport has no authoritative 408 or 504 response contract."
+          "reason": "The provider health matrix does not authorize a duckduckgo native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "5xx": {
-          "reason": "No authoritative checked-in contract establishes a provider-specific HTTP 5xx response shape."
+          "reason": "The provider health matrix does not authorize a duckduckgo native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         }
       },
       "signals": {
-        "reason": "The owned DDGS result contract exposes no authoritative usage or rate-limit signal."
+        "reason": "The provider health matrix records no allowlisted duckduckgo usage or rate signal in the checked-in response contract.",
+        "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
       }
     },
     "yahoo": {
@@ -92,7 +104,8 @@
       "fixtures": {
         "success": "success.json",
         "empty": {
-          "reason": "Yahoo HTML has no authoritative valid-empty contract; a successful page with no parsed results is a parse failure."
+          "reason": "Yahoo HTML has no authoritative valid-empty contract; a successful page with no parsed results is a parse failure.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "malformed": "malformed.json",
         "usage_rate": "usage_rate.json",
@@ -100,16 +113,19 @@
       },
       "failures": {
         "401": {
-          "reason": "No authoritative checked-in contract establishes this provider can emit HTTP 401 for search."
+          "reason": "The provider health matrix does not authorize a yahoo native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "402": {
-          "reason": "No authoritative checked-in contract establishes balance exhaustion as HTTP 402 for search."
+          "reason": "The provider health matrix does not authorize a yahoo native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "403": {
           "fixture": "error-403.json"
         },
         "422": {
-          "reason": "No authoritative checked-in contract establishes HTTP 422 validation behavior for search."
+          "reason": "The provider health matrix does not authorize a yahoo native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "429": {
           "fixture": "error-429.json"
@@ -122,7 +138,8 @@
         }
       },
       "signals": {
-        "reason": "The Yahoo HTML adapter exposes no authoritative usage or rate-limit signal."
+        "reason": "The provider health matrix records no allowlisted yahoo usage or rate signal in the checked-in response contract.",
+        "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
       }
     },
     "github": {
@@ -139,7 +156,8 @@
           "fixture": "error-401.json"
         },
         "402": {
-          "reason": "No authoritative checked-in contract establishes balance exhaustion as HTTP 402 for search."
+          "reason": "The provider health matrix does not authorize a github native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "403": {
           "fixture": "error-403.json"
@@ -176,19 +194,23 @@
       },
       "failures": {
         "401": {
-          "reason": "No authoritative checked-in contract establishes this provider can emit HTTP 401 for search."
+          "reason": "The provider health matrix does not authorize a wolfram native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "402": {
-          "reason": "No authoritative checked-in contract establishes balance exhaustion as HTTP 402 for search."
+          "reason": "The provider health matrix does not authorize a wolfram native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "403": {
           "fixture": "error-403.json"
         },
         "422": {
-          "reason": "No authoritative checked-in contract establishes HTTP 422 validation behavior for search."
+          "reason": "The provider health matrix does not authorize a wolfram native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "429": {
-          "reason": "No authoritative checked-in contract establishes HTTP 429 rate behavior for search."
+          "reason": "The provider health matrix does not authorize a wolfram native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "408_504": {
           "fixture": "error-408_504.json"
@@ -217,7 +239,8 @@
           "fixture": "error-401.json"
         },
         "402": {
-          "reason": "No authoritative checked-in contract establishes balance exhaustion as HTTP 402 for search."
+          "reason": "The provider health matrix does not authorize a brave native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "403": {
           "fixture": "error-403.json"
@@ -256,7 +279,8 @@
           "fixture": "error-401.json"
         },
         "402": {
-          "reason": "No authoritative checked-in contract establishes balance exhaustion as HTTP 402 for search."
+          "reason": "The provider health matrix does not authorize a tavily native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "403": {
           "fixture": "error-403.json"
@@ -334,7 +358,8 @@
           "fixture": "error-401.json"
         },
         "402": {
-          "reason": "No authoritative checked-in contract establishes balance exhaustion as HTTP 402 for search."
+          "reason": "The provider health matrix does not authorize a linkup native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "403": {
           "fixture": "error-403.json"
@@ -353,7 +378,8 @@
         }
       },
       "signals": {
-        "reason": "The checked-in Linkup search contract exposes no authoritative usage or rate-limit signal."
+        "reason": "The provider health matrix records no allowlisted linkup usage or rate signal in the checked-in response contract.",
+        "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
       }
     },
     "parallel": {
@@ -406,29 +432,36 @@
       },
       "failures": {
         "401": {
-          "reason": "No authoritative checked-in contract establishes this provider can emit HTTP 401 for search."
+          "reason": "The provider health matrix does not authorize a serper native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "402": {
-          "reason": "No authoritative checked-in contract establishes balance exhaustion as HTTP 402 for search."
+          "fixture": "error-402.json"
         },
         "403": {
-          "reason": "No authoritative checked-in contract establishes this provider can emit HTTP 403 for search."
+          "reason": "The provider health matrix does not authorize a serper native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "422": {
-          "reason": "No authoritative checked-in contract establishes HTTP 422 validation behavior for search."
+          "reason": "The provider health matrix does not authorize a serper native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "429": {
-          "reason": "No authoritative checked-in contract establishes HTTP 429 rate behavior for search."
+          "reason": "The provider health matrix does not authorize a serper native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "408_504": {
-          "reason": "This non-HTTP or undocumented transport has no authoritative 408 or 504 response contract."
+          "reason": "The provider health matrix does not authorize a serper native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         },
         "5xx": {
-          "reason": "No authoritative checked-in contract establishes a provider-specific HTTP 5xx response shape."
+          "reason": "The provider health matrix does not authorize a serper native fixture for this status class; unsupported status cases remain not_documented.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
         }
       },
       "signals": {
-        "reason": "The checked-in Serper response contract exposes no authoritative usage or rate-limit signal."
+        "reason": "The provider health matrix records no allowlisted serper usage or rate signal in the checked-in response contract.",
+        "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix"
       }
     },
     "you": {

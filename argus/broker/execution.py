@@ -13,12 +13,14 @@ from argus.broker.planning import RetrievalPlan
 from argus.broker.provider_evidence import (
     LegacyProviderBatchAdapter,
     ProviderSearchBatch,
+    EgressType,
     attempt_timeout_seconds,
     failure_batch,
     run_with_attempt_deadline,
+    with_trusted_provenance,
 )
 from argus.broker.reachability import ReachabilityClaim, ReachabilityMatrix
-from argus.config import EgressNode
+from argus.config import EgressNode, NodeConfig
 from argus.logging import get_logger
 from argus.models import ProviderName, ProviderTrace, SearchQuery, SearchResult
 from argus.providers.base import BaseProvider
@@ -115,6 +117,7 @@ class ProviderExecutor:
         caller_tier_caps: Mapping[str, int] | None = None,
         spend_repository=None,
         monotonic=time.monotonic,
+        node_config: NodeConfig | None = None,
     ):
         self._providers = providers
         self._health = health_tracker
@@ -124,6 +127,7 @@ class ProviderExecutor:
         self._caller_tier_caps = dict(caller_tier_caps or {})
         self._spend = spend_repository
         self._monotonic = monotonic
+        self._node_config = node_config or NodeConfig()
 
     def _should_query_paid(self, provider: ProviderName, tier: int) -> tuple[bool, str]:
         """Decide whether to query a paid provider based on budget pace.
@@ -296,8 +300,7 @@ class ProviderExecutor:
                             provider=pname,
                             status="error",
                             error=(
-                                "remote provider request failed "
-                                f"({type(exc).__name__})"
+                                f"remote provider request failed ({type(exc).__name__})"
                             ),
                             egress=best_egress,
                         )
@@ -523,6 +526,15 @@ class ProviderExecutor:
                 batch = LegacyProviderBatchAdapter.from_legacy(raw_output)
             else:
                 raise TypeError("provider returned an invalid batch contract")
+            try:
+                trusted_egress = EgressType(self._node_config.egress_type)
+            except ValueError:
+                trusted_egress = EgressType.UNKNOWN
+            batch = with_trusted_provenance(
+                batch,
+                egress=trusted_egress,
+                machine=self._node_config.machine_name or None,
+            )
             results = batch.results
             trace = batch.trace
             if trace.status == "success":

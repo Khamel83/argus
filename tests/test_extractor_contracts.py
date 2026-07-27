@@ -94,6 +94,33 @@ def test_crawl4ai_redirect_fixture_is_hermetic_and_dns_is_never_used():
     safe_url.assert_called_once_with("https://redirected.example.test/article")
 
 
+def test_extractor_metadata_never_stringifies_nested_private_values():
+    crawl = normalize_crawl4ai_result(
+        "https://example.test/article",
+        {
+            "success": True,
+            "markdown": "# Fixture\n\n" + "content " * 20,
+            "metadata": {"title": {"raw_body": "crawl nested sentinel"}},
+        },
+    )
+    fire = parse_firecrawl_v2_response(
+        "https://example.test/article",
+        {
+            "success": True,
+            "data": {
+                "markdown": "# Fixture\n\n" + "content " * 20,
+                "metadata": {
+                    "title": ["fire nested sentinel"],
+                    "author": {"raw_body": "author sentinel"},
+                },
+            },
+        },
+    )
+    assert "sentinel" not in crawl.title
+    assert "sentinel" not in fire.title
+    assert "sentinel" not in (fire.author or "")
+
+
 @pytest.mark.asyncio
 async def test_firecrawl_remains_disabled_without_spend_authorization_and_never_calls_network():
     with patch("argus.extraction.firecrawl_extractor.httpx.AsyncClient") as client:

@@ -1,5 +1,6 @@
 """Tests for provider adapters."""
 
+import asyncio
 import inspect
 import httpx
 import pytest
@@ -148,19 +149,50 @@ class TestDuckDuckGoProvider:
         assert trace.status == "skipped"
 
     @pytest.mark.asyncio
-    async def test_enabled_blocking_provider_skips_without_starting_unowned_work(
-        self,
-    ):
+    async def test_enabled_provider_runs_in_killable_worker_and_returns_results(self):
         from argus.providers.duckduckgo import DuckDuckGoProvider
 
+        process = MagicMock()
+        process.returncode = 0
+        process.communicate = AsyncMock(
+            return_value=(
+                b'{"results":[{"href":"https://example.test","title":"Result","body":"Snippet"}]}',
+                b"",
+            )
+        )
         provider = DuckDuckGoProvider(ProviderConfig(enabled=True))
         provider._available = True
-        with patch("asyncio.to_thread", new=AsyncMock()) as to_thread:
+        with patch(
+            "argus.providers.duckduckgo.asyncio.create_subprocess_exec",
+            new=AsyncMock(return_value=process),
+        ) as create_process:
             batch = await provider.search(SearchQuery(query="must stay bounded"))
 
-        to_thread.assert_not_awaited()
-        assert batch.trace.status == "skipped"
-        assert "killable deadline" in (batch.trace.error or "")
+        create_process.assert_awaited_once()
+        assert batch.trace.status == "success"
+        assert batch.results[0].url == "https://example.test"
+
+    @pytest.mark.asyncio
+    async def test_enabled_provider_terminates_worker_at_hard_deadline(self):
+        from argus.providers.duckduckgo import DuckDuckGoProvider
+
+        process = MagicMock()
+        process.returncode = None
+        process.communicate = AsyncMock(side_effect=asyncio.TimeoutError)
+        process.wait = AsyncMock(return_value=-15)
+        process.terminate = MagicMock()
+        process.kill = MagicMock()
+        provider = DuckDuckGoProvider(ProviderConfig(enabled=True, timeout_seconds=1))
+        provider._available = True
+        with patch(
+            "argus.providers.duckduckgo.asyncio.create_subprocess_exec",
+            new=AsyncMock(return_value=process),
+        ):
+            batch = await provider.search(SearchQuery(query="deadline"))
+
+        process.terminate.assert_called_once()
+        assert batch.failure is not None
+        assert batch.failure.category.value == "timeout"
 
 
 # --- Brave ---

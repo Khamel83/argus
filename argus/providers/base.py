@@ -29,6 +29,7 @@ from argus.broker.provider_evidence import (
     attempt_timeout_seconds,
 )
 from argus.providers.normalization import normalize_provider_response
+from argus.providers.normalization import classify_provider_failure_response
 from argus.broker.planning import FreshnessWindow
 from argus.models import (
     ProviderName,
@@ -183,6 +184,50 @@ class BaseProvider(ABC):
         return failure_batch(
             self.name,
             error,
+            latency_ms=int((time.monotonic() - started_at) * 1000),
+            request_evidence=request_evidence,
+        )
+
+    def _response_failure_batch(
+        self,
+        response: object,
+        *,
+        started_at: float,
+        request_evidence: ProviderRequestEvidence | None = None,
+    ) -> ProviderSearchBatch | None:
+        """Classify one native HTTP response inside the provider boundary."""
+        status = getattr(response, "status_code", None)
+        body: object = {}
+        try:
+            candidate = response.json()
+            if isinstance(candidate, dict):
+                body = candidate
+        except Exception:
+            pass
+        if not isinstance(status, int):
+            return None
+        provider_native_failure = (
+            self.name is ProviderName.SERPER
+            and status < 400
+            and isinstance(body, dict)
+            and isinstance(body.get("message") or body.get("error"), str)
+            and "credit" in str(body.get("message") or body.get("error")).lower()
+        )
+        if status < 400 and not provider_native_failure:
+            return None
+        failure = classify_provider_failure_response(
+            self.name,
+            {
+                "transport": {
+                    "status_code": status,
+                    "headers": self._response_headers(response),
+                },
+                "body": body,
+            },
+        )
+        return failure_batch(
+            self.name,
+            failure,
             latency_ms=int((time.monotonic() - started_at) * 1000),
             request_evidence=request_evidence,
         )
