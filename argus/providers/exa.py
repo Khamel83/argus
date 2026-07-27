@@ -52,38 +52,27 @@ class ExaProvider(BaseProvider):
         }
         payload = {
             "query": query.query,
-            "num_results": min(query.max_results, 10),
+            "numResults": min(query.max_results, 10),
             "type": "auto",
+            "contents": {
+                "highlights": {
+                    "maxCharacters": 500,
+                },
+            },
         }
+        payload.update(self._freshness_params(query))
 
         try:
-            async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=self._attempt_timeout(query)) as client:
                 resp = await client.post(EXA_API_BASE, json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
 
-            raw_results = data.get("results", [])
-            results = self._normalize(raw_results)
-            latency_ms = int((time.monotonic() - start) * 1000)
-
-            trace = ProviderTrace(
-                provider=self.name,
-                status="success",
-                results_count=len(results),
-                latency_ms=latency_ms,
-            )
-            return results, trace
+            return self._normalized_batch(data, query, started_at=start)
 
         except Exception as e:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("Exa search failed: %s", e)
-            trace = ProviderTrace(
-                provider=self.name,
-                status="error",
-                latency_ms=latency_ms,
-                error=str(e),
-            )
-            return [], trace
+            logger.warning("Exa search failed: %s", type(e).__name__)
+            return self._failure_batch(e, started_at=start)
 
     def _normalize(self, raw_results: list) -> List[SearchResult]:
         results = []

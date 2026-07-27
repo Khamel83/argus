@@ -1,0 +1,10 @@
+{
+  "results": [
+    {
+      "url": "https://example.test/linkup",
+      "name": "Linkup result",
+      "content": "fixture content",
+      "type": "web"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "success": true,
+  "url": "https://example.test/article",
+  "markdown": {
+    "raw_markdown": "# Fixture\n\nThis fixture contains enough words to pass the extraction compatibility contract without a network request.",
+    "fit_markdown": "# Fixture\n\nThis fixture contains enough words to pass the extraction compatibility contract without a network request."
+  },
+  "metadata": {"title": "Fixture title"}
+}

@@ -3,7 +3,7 @@
 import fnmatch
 import math
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Mapping, Sequence
 
 from argus.broker.budgets import BudgetTracker, PROVIDER_TIERS
@@ -396,7 +396,11 @@ class ProviderExecutor:
 
             try:
                 results, trace, uncertain = await self._execute_provider(
-                    query, provider, pname
+                    query,
+                    provider,
+                    pname,
+                    plan=plan,
+                    provider_phase_deadline=provider_phase_deadline,
                 )
             finally:
                 self._release_invocation_claims(claims)
@@ -444,9 +448,22 @@ class ProviderExecutor:
         query: SearchQuery,
         provider: BaseProvider,
         provider_name: ProviderName,
+        *,
+        plan: RetrievalPlan | None = None,
+        provider_phase_deadline: float | None = None,
     ) -> tuple[List[SearchResult], ProviderTrace, bool]:
+        metadata = dict(query.metadata)
+        if plan is not None:
+            metadata["_retrieval_plan"] = plan
+            metadata["_freshness_window"] = plan.freshness
+        if provider_phase_deadline is not None:
+            metadata["_provider_phase_deadline"] = provider_phase_deadline
+        adapter_query = replace(
+            query,
+            metadata=metadata,
+        )
         try:
-            results, trace = await provider.search(query)
+            results, trace = await provider.search(adapter_query)
             if trace.status == "success":
                 self._health.record_success(provider_name)
                 self._reachability.update_probe(

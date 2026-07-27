@@ -48,11 +48,7 @@ class YouProvider(BaseProvider):
         start = time.monotonic()
 
         if not self.is_available():
-            return [], ProviderTrace(
-                provider=self.name,
-                status="skipped",
-                error="You.com provider not configured",
-            )
+            return self._skipped_batch("You.com provider not configured")
 
         headers = {
             "X-API-Key": self._config.api_key,
@@ -60,37 +56,21 @@ class YouProvider(BaseProvider):
         params = {
             "query": query.query,
             "count": query.max_results,
-            "safesearch": "off",
+            "safesearch": "moderate",
         }
+        params.update(self._freshness_params(query))
 
         try:
-            async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=self._attempt_timeout(query)) as client:
                 resp = await client.get(YOU_API_BASE, params=params, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
 
-            web_results = data.get("results", {}).get("web", [])
-            results = self._normalize(web_results)
-            latency_ms = int((time.monotonic() - start) * 1000)
-
-            trace = ProviderTrace(
-                provider=self.name,
-                status="success",
-                results_count=len(results),
-                latency_ms=latency_ms,
-            )
-            return results, trace
+            return self._normalized_batch(data, query, started_at=start)
 
         except Exception as e:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("You.com search failed: %s", e)
-            trace = ProviderTrace(
-                provider=self.name,
-                status="error",
-                latency_ms=latency_ms,
-                error=str(e),
-            )
-            return [], trace
+            logger.warning("You.com search failed: %s", type(e).__name__)
+            return self._failure_batch(e, started_at=start)
 
     def _normalize(self, raw_results: list) -> List[SearchResult]:
         results = []

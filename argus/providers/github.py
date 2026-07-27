@@ -46,7 +46,7 @@ class GitHubProvider(BaseProvider):
 
     async def search(self, query: SearchQuery) -> Tuple[List[SearchResult], ProviderTrace]:
         if not self.is_available():
-            return [], ProviderTrace(provider=self.name, status="skipped")
+            return self._skipped_batch("GitHub provider disabled by config")
 
         start = time.monotonic()
         headers = {
@@ -56,70 +56,50 @@ class GitHubProvider(BaseProvider):
         if self._config.api_key:
             headers["Authorization"] = f"token {self._config.api_key}"
 
+        provider_query = query.query
+        freshness = self._freshness_params(query)
+        qualifier = freshness.get("query_qualifier")
+        if qualifier:
+            provider_query += f" pushed:{qualifier}"
         params = {
-            "q": query.query,
+            "q": provider_query,
             "per_page": min(query.max_results, 30),
-            "sort": "stars",
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=self._attempt_timeout(query)) as client:
                 resp = await client.get(GITHUB_API_BASE, params=params, headers=headers)
 
                 # GitHub returns 403 on rate limit
                 if resp.status_code == 403:
-                    latency_ms = int((time.monotonic() - start) * 1000)
-                    trace = ProviderTrace(
-                        provider=self.name,
-                        status="error",
-                        latency_ms=latency_ms,
-                        error="rate limited",
+                    remaining = resp.headers.get("X-RateLimit-Remaining")
+                    category = (
+                        "rate limit"
+                        if remaining == "0" or resp.headers.get("Retry-After")
+                        else "policy rejection"
                     )
-                    return [], trace
+                    error = httpx.HTTPStatusError(
+                        category,
+                        request=resp.request,
+                        response=resp,
+                    )
+                    return self._failure_batch(error, started_at=start)
 
                 resp.raise_for_status()
                 data = resp.json()
 
-            items = data.get("items", [])
-            results = self._normalize(items)
-            latency_ms = int((time.monotonic() - start) * 1000)
-
-            # Extract rate limit info from headers
-            credit_info = {}
-            for hdr in ("X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Used"):
-                if hdr in resp.headers:
-                    credit_info[hdr] = resp.headers[hdr]
-
-            trace = ProviderTrace(
-                provider=self.name,
-                status="success",
-                results_count=len(results),
-                latency_ms=latency_ms,
-                credit_info=credit_info or None,
-            )
-            return results, trace
+            return self._normalized_batch(data, query, started_at=start)
 
         except httpx.HTTPStatusError as e:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("GitHub search failed (HTTP %s): %s", e.response.status_code, e)
-            trace = ProviderTrace(
-                provider=self.name,
-                status="error",
-                latency_ms=latency_ms,
-                error=str(e),
+            logger.warning(
+                "GitHub search failed (HTTP %s)",
+                e.response.status_code,
             )
-            return [], trace
+            return self._failure_batch(e, started_at=start)
 
         except Exception as e:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("GitHub search failed: %s", e)
-            trace = ProviderTrace(
-                provider=self.name,
-                status="error",
-                latency_ms=latency_ms,
-                error=str(e),
-            )
-            return [], trace
+            logger.warning("GitHub search failed: %s", type(e).__name__)
+            return self._failure_batch(e, started_at=start)
 
     def _normalize(self, items: list) -> List[SearchResult]:
         results = []

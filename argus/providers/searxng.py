@@ -40,20 +40,14 @@ class SearXNGProvider(BaseProvider):
         return ProviderStatus.ENABLED
 
     async def search(self, query: SearchQuery) -> Tuple[List[SearchResult], ProviderTrace]:
-        from argus.config import get_config
-        config = get_config()
         start = time.monotonic()
 
         # Decide which URL to use
         use_residential = query.metadata.get("prefer_residential", False)
         base_url = self._config.base_url
-        egress = config.node.egress_type
-        machine = config.node.machine_name or None
 
         if use_residential and self._config.residential_base_url:
             base_url = self._config.residential_base_url
-            egress = "residential"
-            machine = None  # Remote residential node unknown here unless we add more metadata
 
         url = f"{base_url.rstrip('/')}/search"
 
@@ -62,35 +56,23 @@ class SearXNGProvider(BaseProvider):
             "format": "json",
             "pageno": 1,
         }
+        params.update(self._freshness_params(query))
         headers = {"Accept": "application/json"}
 
         try:
-            async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=self._attempt_timeout(query)) as client:
                 resp = await client.get(url, params=params, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
 
-            results = self._normalize(data.get("results", []), egress=egress, machine=machine)
-            latency_ms = int((time.monotonic() - start) * 1000)
-
-            trace = ProviderTrace(
-                provider=self.name,
-                status="success",
-                results_count=len(results),
-                latency_ms=latency_ms,
-            )
-            return results, trace
+            return self._normalized_batch(data, query, started_at=start)
 
         except Exception as e:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("SearXNG search failed: %s", e)
-            trace = ProviderTrace(
-                provider=self.name,
-                status="error",
-                latency_ms=latency_ms,
-                error=str(e),
+            logger.warning(
+                "SearXNG search failed: %s",
+                type(e).__name__,
             )
-            return [], trace
+            return self._failure_batch(e, started_at=start)
 
     def _normalize(self, raw_results: list, egress: str = "unknown", machine: str = None) -> List[SearchResult]:
         results = []

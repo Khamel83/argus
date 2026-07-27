@@ -53,44 +53,23 @@ class LinkupProvider(BaseProvider):
         }
         body = {
             "q": query.query,
-            "depth": "standard",
+            "depth": "fast",
             "outputType": "searchResults",
+            "maxResults": min(query.max_results, 20),
         }
+        body.update(self._freshness_params(query))
 
         try:
-            async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=self._attempt_timeout(query)) as client:
                 resp = await client.post(LINKUP_API_BASE, json=body, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
 
-            raw_results = data.get("results", [])
-            results = self._normalize(raw_results)
-            latency_ms = int((time.monotonic() - start) * 1000)
-
-            credit_info = {}
-            for hdr in ("X-RateLimit-Remaining", "X-RateLimit-Limit", "X-Credits-Remaining"):
-                if hdr in resp.headers:
-                    credit_info[hdr] = resp.headers[hdr]
-
-            trace = ProviderTrace(
-                provider=self.name,
-                status="success",
-                results_count=len(results),
-                latency_ms=latency_ms,
-                credit_info=credit_info or None,
-            )
-            return results, trace
+            return self._normalized_batch(data, query, started_at=start)
 
         except Exception as e:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("Linkup search failed: %s", e)
-            trace = ProviderTrace(
-                provider=self.name,
-                status="error",
-                latency_ms=latency_ms,
-                error=str(e),
-            )
-            return [], trace
+            logger.warning("Linkup search failed: %s", type(e).__name__)
+            return self._failure_batch(e, started_at=start)
 
     def _normalize(self, raw_results: list) -> List[SearchResult]:
         results = []

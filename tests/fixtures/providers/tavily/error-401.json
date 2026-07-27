@@ -1,0 +1,5 @@
+{
+  "status": 401,
+  "provider_code": "tavily_401",
+  "message": "fixture 401"
+}

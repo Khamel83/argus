@@ -1,0 +1,11 @@
+{
+  "web": {
+    "results": [
+      {
+        "url": "https://example.test/brave",
+        "title": "Brave result",
+        "description": "fixture description"
+      }
+    ]
+  }
+}

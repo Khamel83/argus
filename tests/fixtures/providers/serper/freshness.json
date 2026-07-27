@@ -1,0 +1,10 @@
+{
+  "organic": [
+    {
+      "link": "https://example.test/serper",
+      "title": "Serper result",
+      "snippet": "fixture snippet",
+      "position": 1
+    }
+  ]
+}

@@ -48,45 +48,21 @@ class SearchApiProvider(BaseProvider):
         params = {
             "engine": "google",
             "q": query.query,
-            "num": min(query.max_results, 100),
+            "num": min(query.max_results, 10),
             "api_key": self._config.api_key,
         }
+        params.update(self._freshness_params(query))
 
         try:
-            async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=self._attempt_timeout(query)) as client:
                 resp = await client.get(SEARCHAPI_ENDPOINT, params=params)
                 resp.raise_for_status()
                 data = resp.json()
 
-            results = self._normalize(data, query.max_results)
-            latency_ms = int((time.monotonic() - start) * 1000)
-            credit_info = {}
-            for hdr in ("X-RateLimit-Remaining", "X-Rate-Limit-Remaining"):
-                if hdr in resp.headers:
-                    credit_info[hdr] = resp.headers[hdr]
-            if "search_metadata" in data:
-                metadata = data["search_metadata"]
-                if isinstance(metadata, dict):
-                    for key in ("id", "status", "created_at", "processed_at"):
-                        if key in metadata:
-                            credit_info[f"search_metadata.{key}"] = metadata[key]
-
-            return results, ProviderTrace(
-                provider=self.name,
-                status="success",
-                results_count=len(results),
-                latency_ms=latency_ms,
-                credit_info=credit_info or None,
-            )
+            return self._normalized_batch(data, query, started_at=start)
         except Exception as exc:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("SearchApi search failed: %s", exc)
-            return [], ProviderTrace(
-                provider=self.name,
-                status="error",
-                latency_ms=latency_ms,
-                error=str(exc),
-            )
+            logger.warning("SearchApi search failed: %s", type(exc).__name__)
+            return self._failure_batch(exc, started_at=start)
 
     def _normalize(self, data: dict, max_results: int) -> List[SearchResult]:
         raw_results = data.get("organic_results") or data.get("organic") or []

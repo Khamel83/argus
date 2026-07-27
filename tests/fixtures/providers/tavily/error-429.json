@@ -1,0 +1,5 @@
+{
+  "status": 429,
+  "provider_code": "tavily_429",
+  "message": "fixture 429"
+}

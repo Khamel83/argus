@@ -9,6 +9,7 @@ Uses the `ddgs` package: https://pypi.org/project/ddgs/
 
 import time
 import importlib.util
+import asyncio
 from typing import List, Tuple
 
 from argus.config import ProviderConfig
@@ -55,42 +56,41 @@ class DuckDuckGoProvider(BaseProvider):
         start = time.monotonic()
 
         if not self._available:
-            return [], ProviderTrace(
-                provider=self.name,
-                status="skipped",
-                error=(
+            return self._skipped_batch(
+                (
                     "disabled by config"
                     if not self._config.enabled
                     else "ddgs package not installed (pip install ddgs)"
-                ),
+                )
             )
 
         try:
             from ddgs import DDGS
 
-            ddgs = DDGS()
-            raw_results = list(ddgs.text(query.query, max_results=query.max_results))
-            results = self._normalize(raw_results)
-            latency_ms = int((time.monotonic() - start) * 1000)
+            def run_search():
+                freshness = self._freshness_params(query)
+                return list(
+                    DDGS().text(
+                        query.query,
+                        max_results=query.max_results,
+                        backend="duckduckgo",
+                        **freshness,
+                    )
+                )
 
-            trace = ProviderTrace(
-                provider=self.name,
-                status="success",
-                results_count=len(results),
-                latency_ms=latency_ms,
+            raw_results = await asyncio.wait_for(
+                asyncio.to_thread(run_search),
+                timeout=self._attempt_timeout(query),
             )
-            return results, trace
+            return self._normalized_batch(
+                {"results": raw_results},
+                query,
+                started_at=start,
+            )
 
         except Exception as e:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("DuckDuckGo search failed: %s", e)
-            trace = ProviderTrace(
-                provider=self.name,
-                status="error",
-                latency_ms=latency_ms,
-                error=str(e),
-            )
-            return [], trace
+            logger.warning("DuckDuckGo search failed: %s", type(e).__name__)
+            return self._failure_batch(e, started_at=start)
 
     def _normalize(self, raw_results: list) -> List[SearchResult]:
         results = []

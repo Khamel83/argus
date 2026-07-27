@@ -1,0 +1,5 @@
+{
+  "success": true,
+  "url": "https://example.test/article",
+  "markdown": "# Legacy\n\nThis legacy fixture contains enough words to prove the migration reader remains deliberately compatible."
+}

@@ -51,42 +51,20 @@ class BraveProvider(BaseProvider):
             "Accept-Encoding": "gzip",
             "X-Subscription-Token": self._config.api_key,
         }
-        params = {"q": query.query, "count": query.max_results}
+        params = {"q": query.query, "count": min(query.max_results, 20)}
+        params.update(self._freshness_params(query))
 
         try:
-            async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=self._attempt_timeout(query)) as client:
                 resp = await client.get(BRAVE_API_BASE, params=params, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
 
-            web_results = data.get("web", {}).get("results", [])
-            results = self._normalize(web_results)
-            latency_ms = int((time.monotonic() - start) * 1000)
-
-            credit_info = {}
-            for hdr in ("X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Used"):
-                if hdr in resp.headers:
-                    credit_info[hdr] = resp.headers[hdr]
-
-            trace = ProviderTrace(
-                provider=self.name,
-                status="success",
-                results_count=len(results),
-                latency_ms=latency_ms,
-                credit_info=credit_info or None,
-            )
-            return results, trace
+            return self._normalized_batch(data, query, started_at=start)
 
         except Exception as e:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("Brave search failed: %s", e)
-            trace = ProviderTrace(
-                provider=self.name,
-                status="error",
-                latency_ms=latency_ms,
-                error=str(e),
-            )
-            return [], trace
+            logger.warning("Brave search failed: %s", type(e).__name__)
+            return self._failure_batch(e, started_at=start)
 
     def _normalize(self, raw_results: list) -> List[SearchResult]:
         results = []

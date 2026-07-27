@@ -21,6 +21,7 @@ from argus.models import (
     SearchQuery,
 )
 from argus.providers.base import BaseProvider
+from argus.broker.provider_evidence import FailureCategory
 
 logger = get_logger("providers.valyu")
 
@@ -49,7 +50,7 @@ class ValyuProvider(BaseProvider):
 
     async def search(self, query: SearchQuery) -> Tuple[List[SearchResult], ProviderTrace]:
         if not self.is_available():
-            return [], ProviderTrace(provider=self.name, status="skipped")
+            return self._skipped_batch("Valyu provider not configured")
 
         start = time.monotonic()
 
@@ -63,65 +64,39 @@ class ValyuProvider(BaseProvider):
             "search_type": "web",
             "fast_mode": True,
         }
+        payload.update(self._freshness_params(query))
 
         try:
-            async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=self._attempt_timeout(query)) as client:
                 resp = await client.post(VALYU_API_BASE, json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
 
             if not data.get("success"):
                 error_msg = data.get("error", "unknown error")
-                latency_ms = int((time.monotonic() - start) * 1000)
-                trace = ProviderTrace(
-                    provider=self.name,
-                    status="error",
-                    latency_ms=latency_ms,
-                    error=error_msg,
+                category = (
+                    FailureCategory.BALANCE_EXHAUSTED
+                    if "credit" in str(error_msg).lower()
+                    else FailureCategory.PROVIDER_UNAVAILABLE
                 )
-                return [], trace
+                return self._typed_failure_batch(
+                    category,
+                    str(error_msg),
+                    started_at=start,
+                )
 
-            raw_results = data.get("results", [])
-            results = self._normalize(raw_results)
-            latency_ms = int((time.monotonic() - start) * 1000)
-
-            credit_info = {
-                "total_characters": data.get("total_characters", 0),
-                "tx_id": data.get("tx_id", ""),
-            }
-            if data.get("total_deduction_dollars") is not None:
-                credit_info["cost_usd"] = data["total_deduction_dollars"]
-
-            trace = ProviderTrace(
-                provider=self.name,
-                status="success",
-                results_count=len(results),
-                latency_ms=latency_ms,
-                credit_info=credit_info,
-            )
-            return results, trace
+            return self._normalized_batch(data, query, started_at=start)
 
         except httpx.HTTPStatusError as e:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("Valyu search failed (HTTP %s): %s", e.response.status_code, e)
-            trace = ProviderTrace(
-                provider=self.name,
-                status="error",
-                latency_ms=latency_ms,
-                error=str(e),
+            logger.warning(
+                "Valyu search failed (HTTP %s)",
+                e.response.status_code,
             )
-            return [], trace
+            return self._failure_batch(e, started_at=start)
 
         except Exception as e:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("Valyu search failed: %s", e)
-            trace = ProviderTrace(
-                provider=self.name,
-                status="error",
-                latency_ms=latency_ms,
-                error=str(e),
-            )
-            return [], trace
+            logger.warning("Valyu search failed: %s", type(e).__name__)
+            return self._failure_batch(e, started_at=start)
 
     def _normalize(self, raw_results: list) -> List[SearchResult]:
         results = []

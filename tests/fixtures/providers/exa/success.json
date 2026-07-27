@@ -1,0 +1,17 @@
+{
+  "results": [
+    {
+      "id": "exa-1",
+      "url": "https://example.test/exa",
+      "title": "Exa result",
+      "highlights": [
+        "fixture highlight"
+      ],
+      "publishedDate": "2026-07-27"
+    }
+  ],
+  "requestId": "exa-request-1",
+  "costDollars": {
+    "total": 0.01
+  }
+}

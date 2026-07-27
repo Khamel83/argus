@@ -1,0 +1,15 @@
+{
+  "success": true,
+  "results": [
+    {
+      "url": "https://example.test/valyu",
+      "title": "Valyu result",
+      "description": "fixture description",
+      "relevance_score": 0.7,
+      "source_type": "web",
+      "publication_date": "2026-07-27"
+    }
+  ],
+  "tx_id": "valyu-tx-1",
+  "total_deduction_dollars": 0.0015
+}

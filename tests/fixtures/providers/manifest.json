@@ -1,0 +1,479 @@
+{
+  "schema_version": 1,
+  "migration_aliases": {
+    "exa": [
+      "published_date"
+    ],
+    "parallel": [
+      "excerpt",
+      "snippet"
+    ],
+    "searchapi": [
+      "organic"
+    ]
+  },
+  "providers": {
+    "searxng": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "reason": "No authoritative checked-in contract establishes this provider can emit HTTP 401 for search."
+        },
+        "402": {
+          "reason": "No authoritative checked-in contract establishes balance exhaustion as HTTP 402 for search."
+        },
+        "403": {
+          "fixture": "error-403.json"
+        },
+        "422": {
+          "reason": "No authoritative checked-in contract establishes HTTP 422 validation behavior for search."
+        },
+        "429": {
+          "reason": "No authoritative checked-in contract establishes HTTP 429 rate behavior for search."
+        },
+        "408_504": {
+          "fixture": "error-408_504.json"
+        },
+        "5xx": {
+          "fixture": "error-5xx.json"
+        }
+      }
+    },
+    "duckduckgo": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "reason": "No authoritative checked-in contract establishes this provider can emit HTTP 401 for search."
+        },
+        "402": {
+          "reason": "No authoritative checked-in contract establishes balance exhaustion as HTTP 402 for search."
+        },
+        "403": {
+          "reason": "No authoritative checked-in contract establishes this provider can emit HTTP 403 for search."
+        },
+        "422": {
+          "reason": "No authoritative checked-in contract establishes HTTP 422 validation behavior for search."
+        },
+        "429": {
+          "reason": "No authoritative checked-in contract establishes HTTP 429 rate behavior for search."
+        },
+        "408_504": {
+          "reason": "This non-HTTP or undocumented transport has no authoritative 408 or 504 response contract."
+        },
+        "5xx": {
+          "reason": "No authoritative checked-in contract establishes a provider-specific HTTP 5xx response shape."
+        }
+      }
+    },
+    "yahoo": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "reason": "No authoritative checked-in contract establishes this provider can emit HTTP 401 for search."
+        },
+        "402": {
+          "reason": "No authoritative checked-in contract establishes balance exhaustion as HTTP 402 for search."
+        },
+        "403": {
+          "fixture": "error-403.json"
+        },
+        "422": {
+          "reason": "No authoritative checked-in contract establishes HTTP 422 validation behavior for search."
+        },
+        "429": {
+          "fixture": "error-429.json"
+        },
+        "408_504": {
+          "fixture": "error-408_504.json"
+        },
+        "5xx": {
+          "fixture": "error-5xx.json"
+        }
+      }
+    },
+    "github": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "fixture": "error-401.json"
+        },
+        "402": {
+          "reason": "No authoritative checked-in contract establishes balance exhaustion as HTTP 402 for search."
+        },
+        "403": {
+          "fixture": "error-403.json"
+        },
+        "422": {
+          "fixture": "error-422.json"
+        },
+        "429": {
+          "fixture": "error-429.json"
+        },
+        "408_504": {
+          "fixture": "error-408_504.json"
+        },
+        "5xx": {
+          "fixture": "error-5xx.json"
+        }
+      }
+    },
+    "wolfram": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "reason": "No authoritative checked-in contract establishes this provider can emit HTTP 401 for search."
+        },
+        "402": {
+          "reason": "No authoritative checked-in contract establishes balance exhaustion as HTTP 402 for search."
+        },
+        "403": {
+          "fixture": "error-403.json"
+        },
+        "422": {
+          "reason": "No authoritative checked-in contract establishes HTTP 422 validation behavior for search."
+        },
+        "429": {
+          "reason": "No authoritative checked-in contract establishes HTTP 429 rate behavior for search."
+        },
+        "408_504": {
+          "fixture": "error-408_504.json"
+        },
+        "5xx": {
+          "fixture": "error-5xx.json"
+        }
+      }
+    },
+    "brave": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "fixture": "error-401.json"
+        },
+        "402": {
+          "reason": "No authoritative checked-in contract establishes balance exhaustion as HTTP 402 for search."
+        },
+        "403": {
+          "fixture": "error-403.json"
+        },
+        "422": {
+          "fixture": "error-422.json"
+        },
+        "429": {
+          "fixture": "error-429.json"
+        },
+        "408_504": {
+          "fixture": "error-408_504.json"
+        },
+        "5xx": {
+          "fixture": "error-5xx.json"
+        }
+      }
+    },
+    "tavily": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "fixture": "error-401.json"
+        },
+        "402": {
+          "reason": "No authoritative checked-in contract establishes balance exhaustion as HTTP 402 for search."
+        },
+        "403": {
+          "fixture": "error-403.json"
+        },
+        "422": {
+          "fixture": "error-422.json"
+        },
+        "429": {
+          "fixture": "error-429.json"
+        },
+        "408_504": {
+          "fixture": "error-408_504.json"
+        },
+        "5xx": {
+          "fixture": "error-5xx.json"
+        }
+      }
+    },
+    "exa": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "fixture": "error-401.json"
+        },
+        "402": {
+          "fixture": "error-402.json"
+        },
+        "403": {
+          "fixture": "error-403.json"
+        },
+        "422": {
+          "fixture": "error-422.json"
+        },
+        "429": {
+          "fixture": "error-429.json"
+        },
+        "408_504": {
+          "fixture": "error-408_504.json"
+        },
+        "5xx": {
+          "fixture": "error-5xx.json"
+        }
+      }
+    },
+    "linkup": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "fixture": "error-401.json"
+        },
+        "402": {
+          "reason": "No authoritative checked-in contract establishes balance exhaustion as HTTP 402 for search."
+        },
+        "403": {
+          "fixture": "error-403.json"
+        },
+        "422": {
+          "fixture": "error-422.json"
+        },
+        "429": {
+          "fixture": "error-429.json"
+        },
+        "408_504": {
+          "fixture": "error-408_504.json"
+        },
+        "5xx": {
+          "fixture": "error-5xx.json"
+        }
+      }
+    },
+    "parallel": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "fixture": "error-401.json"
+        },
+        "402": {
+          "fixture": "error-402.json"
+        },
+        "403": {
+          "fixture": "error-403.json"
+        },
+        "422": {
+          "fixture": "error-422.json"
+        },
+        "429": {
+          "fixture": "error-429.json"
+        },
+        "408_504": {
+          "fixture": "error-408_504.json"
+        },
+        "5xx": {
+          "fixture": "error-5xx.json"
+        }
+      }
+    },
+    "serper": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "reason": "No authoritative checked-in contract establishes this provider can emit HTTP 401 for search."
+        },
+        "402": {
+          "reason": "No authoritative checked-in contract establishes balance exhaustion as HTTP 402 for search."
+        },
+        "403": {
+          "reason": "No authoritative checked-in contract establishes this provider can emit HTTP 403 for search."
+        },
+        "422": {
+          "reason": "No authoritative checked-in contract establishes HTTP 422 validation behavior for search."
+        },
+        "429": {
+          "reason": "No authoritative checked-in contract establishes HTTP 429 rate behavior for search."
+        },
+        "408_504": {
+          "reason": "This non-HTTP or undocumented transport has no authoritative 408 or 504 response contract."
+        },
+        "5xx": {
+          "reason": "No authoritative checked-in contract establishes a provider-specific HTTP 5xx response shape."
+        }
+      }
+    },
+    "you": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "fixture": "error-401.json"
+        },
+        "402": {
+          "fixture": "error-402.json"
+        },
+        "403": {
+          "fixture": "error-403.json"
+        },
+        "422": {
+          "fixture": "error-422.json"
+        },
+        "429": {
+          "fixture": "error-429.json"
+        },
+        "408_504": {
+          "fixture": "error-408_504.json"
+        },
+        "5xx": {
+          "fixture": "error-5xx.json"
+        }
+      }
+    },
+    "valyu": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "fixture": "error-401.json"
+        },
+        "402": {
+          "fixture": "error-402.json"
+        },
+        "403": {
+          "fixture": "error-403.json"
+        },
+        "422": {
+          "fixture": "error-422.json"
+        },
+        "429": {
+          "fixture": "error-429.json"
+        },
+        "408_504": {
+          "fixture": "error-408_504.json"
+        },
+        "5xx": {
+          "fixture": "error-5xx.json"
+        }
+      }
+    },
+    "searchapi": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "fixture": "error-401.json"
+        },
+        "402": {
+          "fixture": "error-402.json"
+        },
+        "403": {
+          "fixture": "error-403.json"
+        },
+        "422": {
+          "fixture": "error-422.json"
+        },
+        "429": {
+          "fixture": "error-429.json"
+        },
+        "408_504": {
+          "fixture": "error-408_504.json"
+        },
+        "5xx": {
+          "fixture": "error-5xx.json"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "results": [
+    {
+      "url": "https://example.test/tavily",
+      "title": "Tavily result",
+      "content": "fixture content",
+      "score": 0.8,
+      "published_date": "2026-07-27"
+    }
+  ],
+  "request_id": "tavily-request-1",
+  "usage": {
+    "credits": 1
+  }
+}

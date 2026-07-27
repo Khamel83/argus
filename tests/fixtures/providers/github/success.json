@@ -1,0 +1,10 @@
+{
+  "items": [
+    {
+      "html_url": "https://github.com/example/project",
+      "full_name": "example/project",
+      "description": "fixture repository",
+      "id": "repo-1"
+    }
+  ]
+}

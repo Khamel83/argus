@@ -1,0 +1,5 @@
+{
+  "status": 503,
+  "provider_code": "tavily_5xx",
+  "message": "fixture 5xx"
+}

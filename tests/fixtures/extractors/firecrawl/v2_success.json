@@ -1,0 +1,11 @@
+{
+  "success": true,
+  "data": {
+    "markdown": "# Firecrawl\n\nThis fixture contains enough words to prove the dormant v2 response parser without consuming credits.",
+    "metadata": {
+      "title": "Firecrawl fixture",
+      "author": "Fixture author",
+      "statusCode": 200
+    }
+  }
+}

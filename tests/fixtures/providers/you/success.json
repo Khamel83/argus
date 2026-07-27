@@ -1,0 +1,18 @@
+{
+  "results": {
+    "web": [
+      {
+        "url": "https://example.test/you",
+        "title": "You result",
+        "snippets": [
+          "fixture snippet"
+        ],
+        "page_age": "2 days"
+      }
+    ]
+  },
+  "metadata": {
+    "search_uuid": "you-request-1",
+    "latency": 12
+  }
+}

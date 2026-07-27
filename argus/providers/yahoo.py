@@ -11,7 +11,7 @@ lxml is available as a transitive dependency via trafilatura.
 import re
 import time
 from typing import List, Tuple
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 import httpx
 
@@ -25,6 +25,8 @@ from argus.models import (
     SearchQuery,
 )
 from argus.providers.base import BaseProvider
+from argus.broker.provider_evidence import safe_redirect_request
+from argus.broker.provider_evidence import FailureCategory
 
 logger = get_logger("providers.yahoo")
 
@@ -74,46 +76,75 @@ class YahooProvider(BaseProvider):
             return ProviderStatus.DISABLED_BY_CONFIG
         return ProviderStatus.ENABLED
 
+    async def _get_bounded(self, client, params):
+        response = await client.get(YAHOO_SEARCH_URL, params=params)
+        source_url = YAHOO_SEARCH_URL
+        for redirect_count in range(1, 5):
+            if response.status_code not in {301, 302, 303, 307, 308}:
+                return response
+            location = response.headers.get("location")
+            if not isinstance(location, str):
+                return response
+            request = safe_redirect_request(
+                source_url=source_url,
+                destination_url=urljoin(source_url, location),
+                headers=_HEADERS,
+                redirect_count=redirect_count,
+                max_redirects=3,
+            )
+            source_url = request.url
+            response = await client.get(request.url, headers=request.headers)
+        return response
+
     async def search(self, query: SearchQuery) -> Tuple[List[SearchResult], ProviderTrace]:
         start = time.monotonic()
 
         try:
-            params = {"p": query.query, "n": min(query.max_results, 10), "ei": "UTF-8"}
+            provider_query = query.query
+            freshness = self._freshness_params(query)
+            qualifier = freshness.get("query_qualifier")
+            if qualifier:
+                start, _, end = str(qualifier).partition("..")
+                if start:
+                    provider_query += f" after:{start}"
+                if end:
+                    provider_query += f" before:{end}"
+            params = {"p": provider_query, "n": min(query.max_results, 10), "ei": "UTF-8"}
             async with httpx.AsyncClient(
-                timeout=self._config.timeout_seconds,
+                timeout=self._attempt_timeout(query),
                 headers=_HEADERS,
-                follow_redirects=True,
+                follow_redirects=False,
             ) as client:
-                resp = await client.get(YAHOO_SEARCH_URL, params=params)
+                resp = await self._get_bounded(client, params)
                 resp.raise_for_status()
 
             results = self._parse(resp.text, query.max_results)
-            latency_ms = int((time.monotonic() - start) * 1000)
 
             if not results:
-                return [], ProviderTrace(
-                    provider=self.name,
-                    status="empty",
-                    latency_ms=latency_ms,
-                    error="no results parsed — Yahoo HTML may have changed",
+                return self._typed_failure_batch(
+                    FailureCategory.PARSE_ERROR,
+                    "Yahoo success page did not match the parser contract",
+                    started_at=start,
                 )
 
-            return results, ProviderTrace(
-                provider=self.name,
-                status="success",
-                results_count=len(results),
-                latency_ms=latency_ms,
+            return self._normalized_batch(
+                {
+                    "results": [
+                        {
+                            "url": item.url,
+                            "title": item.title,
+                            "snippet": item.snippet,
+                        }
+                        for item in results
+                    ]
+                },
+                query,
+                started_at=start,
             )
 
         except Exception as e:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("Yahoo search failed: %s", e)
-            return [], ProviderTrace(
-                provider=self.name,
-                status="error",
-                latency_ms=latency_ms,
-                error=str(e),
-            )
+            logger.warning("Yahoo search failed: %s", type(e).__name__)
+            return self._failure_batch(e, started_at=start)
 
     def _parse(self, html_text: str, max_results: int) -> List[SearchResult]:
         try:

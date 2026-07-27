@@ -54,45 +54,19 @@ class SerperProvider(BaseProvider):
             "q": query.query,
             "num": query.max_results,
         }
+        self._freshness_params(query)
 
         try:
-            async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=self._attempt_timeout(query)) as client:
                 resp = await client.post(SERPER_API_BASE, json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
 
-            organic = data.get("organic", [])
-            results = self._normalize(organic)
-            latency_ms = int((time.monotonic() - start) * 1000)
-
-            credit_info = {}
-            if "credits" in data:
-                credit_info["credits"] = data["credits"]
-            if "credit_limit" in data:
-                credit_info["credit_limit"] = data["credit_limit"]
-            for hdr in ("X-Credits-Remaining", "X-RateLimit-Remaining"):
-                if hdr in resp.headers:
-                    credit_info[hdr] = resp.headers[hdr]
-
-            trace = ProviderTrace(
-                provider=self.name,
-                status="success",
-                results_count=len(results),
-                latency_ms=latency_ms,
-                credit_info=credit_info or None,
-            )
-            return results, trace
+            return self._normalized_batch(data, query, started_at=start)
 
         except Exception as e:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("Serper search failed: %s", e)
-            trace = ProviderTrace(
-                provider=self.name,
-                status="error",
-                latency_ms=latency_ms,
-                error=str(e),
-            )
-            return [], trace
+            logger.warning("Serper search failed: %s", type(e).__name__)
+            return self._failure_batch(e, started_at=start)
 
     def _normalize(self, raw_results: list) -> List[SearchResult]:
         results = []
