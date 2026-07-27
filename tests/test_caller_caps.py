@@ -5,7 +5,14 @@ import pytest
 from argus.broker.budgets import BudgetTracker
 from argus.broker.execution import ProviderExecutor, caller_tier_cap
 from argus.broker.health import HealthTracker
-from argus.models import ProviderName, SearchMode, SearchQuery, SearchResult, ProviderTrace
+from argus.models import (
+    ProviderName,
+    SearchMode,
+    SearchQuery,
+    SearchResult,
+    ProviderTrace,
+)
+from tests.planning_helpers import execute_with_plan
 
 
 class _StubProvider:
@@ -32,7 +39,7 @@ class _StubProvider:
 def _executor(caps: dict[str, int]) -> ProviderExecutor:
     providers = {
         ProviderName.DUCKDUCKGO: _StubProvider(ProviderName.DUCKDUCKGO),  # tier 0
-        ProviderName.SERPER: _StubProvider(ProviderName.SERPER),          # tier 3
+        ProviderName.SERPER: _StubProvider(ProviderName.SERPER),  # tier 3
     }
     return ProviderExecutor(
         providers=providers,
@@ -69,8 +76,8 @@ class TestExecutorEnforcement:
         query = SearchQuery(
             query="q", mode=SearchMode.DISCOVERY, max_results=10, caller="clio-lane-b"
         )
-        outcome = await executor.execute(
-            query, [ProviderName.DUCKDUCKGO, ProviderName.SERPER]
+        outcome = await execute_with_plan(
+            executor, query, [ProviderName.DUCKDUCKGO, ProviderName.SERPER]
         )
         serper_traces = [t for t in outcome.traces if t.provider == ProviderName.SERPER]
         assert serper_traces and serper_traces[0].status == "skipped"
@@ -84,7 +91,7 @@ class TestExecutorEnforcement:
         query = SearchQuery(
             query="q", mode=SearchMode.DISCOVERY, max_results=50, caller="someone-else"
         )
-        outcome = await executor.execute(query, [ProviderName.SERPER])
+        outcome = await execute_with_plan(executor, query, [ProviderName.SERPER])
         serper_traces = [t for t in outcome.traces if t.provider == ProviderName.SERPER]
         assert serper_traces and serper_traces[0].status != "skipped"
         assert executor._providers[ProviderName.SERPER].calls == 1

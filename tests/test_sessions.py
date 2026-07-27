@@ -8,6 +8,7 @@ from argus.models import SearchMode, SearchQuery, SearchResponse
 from argus.sessions.models import Session, QueryRecord
 from argus.sessions.store import SessionStore
 from argus.sessions.refinement import refine_query
+from tests.planning_helpers import execute_with_plan
 
 
 # --- Models ---
@@ -194,7 +195,7 @@ class TestRefinement:
 
         async def search_fn(query):
             seen.append(query)
-            outcome = await executor.execute(query, [ProviderName.BRAVE])
+            outcome = await execute_with_plan(executor, query, [ProviderName.BRAVE])
             return SearchResponse(
                 query=query.query,
                 mode=query.mode,

@@ -66,6 +66,17 @@ class DomainConstraints:
     include: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        for name in ("include", "exclude"):
+            source = getattr(self, name)
+            if isinstance(source, list):
+                source = tuple(source)
+            elif not isinstance(source, tuple):
+                raise TypeError(f"{name} domains must be a list or tuple")
+            if not all(isinstance(value, str) for value in source):
+                raise TypeError(f"{name} domains must contain only strings")
+            object.__setattr__(self, name, source)
+
 
 @dataclass(frozen=True, slots=True)
 class RetrievalControls:
@@ -92,6 +103,18 @@ class ExecutionPolicySnapshot:
     domain_policy_version: str = "1"
     ranking_policy_version: str = "1"
     result_normalization_version: str = "1"
+
+    def __post_init__(self) -> None:
+        source = self.allowed_providers
+        if source is None:
+            return
+        if isinstance(source, list):
+            source = tuple(source)
+        elif not isinstance(source, tuple):
+            raise TypeError("allowed providers must be a list, tuple, or None")
+        if not all(isinstance(value, ProviderName) for value in source):
+            raise TypeError("allowed providers must contain only ProviderName values")
+        object.__setattr__(self, "allowed_providers", source)
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,6 +288,12 @@ def _normalize_domain(raw_domain: object) -> str:
         normalized = raw_domain.lower().encode("idna").decode("ascii")
     except UnicodeError as error:
         raise _invalid("domain constraint is not valid IDNA") from error
+    try:
+        ipaddress.ip_address(normalized)
+    except ValueError:
+        pass
+    else:
+        raise _invalid("IP literals are not domain constraints")
     if (
         not normalized
         or len(normalized.encode("ascii")) > _MAX_DOMAIN_BYTES
@@ -507,9 +536,7 @@ def resolve_plan(
         ]
     )
     effective_tier = (
-        0
-        if effective_query.free_only
-        else policy.effective_max_provider_tier
+        0 if effective_query.free_only else policy.effective_max_provider_tier
     )
     candidates = tuple(
         provider

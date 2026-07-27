@@ -4,19 +4,18 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, dataclass, replace
 from datetime import date, datetime, timezone
+from inspect import Parameter, signature
 from typing import Callable
 
 import pytest
 
 from argus.broker.planning import (
     DomainConstraints,
-    EgressPreference,
     ExecutionPolicySnapshot,
     FreshnessRelative,
     FreshnessWindow,
     InvalidRetrievalPlan,
     RetrievalControls,
-    SafeSearch,
     resolve_plan,
 )
 from argus.contracts.outcomes import CanonicalOutcome
@@ -152,7 +151,9 @@ def _pair_for_identity_vector(name: str) -> tuple[PlanInput, PlanInput]:
         )
         return (
             replace(base, controls=controls),
-            replace(base, controls=controls, now=datetime(2026, 7, 28, tzinfo=timezone.utc)),
+            replace(
+                base, controls=controls, now=datetime(2026, 7, 28, tzinfo=timezone.utc)
+            ),
         )
     if name == "attribution presentation difference":
         return base, replace(base, attribution=True)
@@ -250,9 +251,7 @@ def test_adr_0002_identity_vectors(
     right = _plan(right_input)
 
     assert (left.plan_id == right.plan_id) is same_plan_id
-    assert (
-        left.cache_fingerprint == right.cache_fingerprint
-    ) is same_cache_fingerprint
+    assert (left.cache_fingerprint == right.cache_fingerprint) is same_cache_fingerprint
 
     if name.startswith("cross-tier"):
         expected = (
@@ -334,9 +333,7 @@ def test_relative_freshness_uses_one_injected_utc_clock(
 
     plan = resolve_plan(
         _input().query,
-        RetrievalControls(
-            freshness=FreshnessWindow(requested_relative=relative)
-        ),
+        RetrievalControls(freshness=FreshnessWindow(requested_relative=relative)),
         False,
         ExecutionPolicySnapshot(),
         clock,
@@ -378,6 +375,35 @@ def test_controls_and_plan_are_immutable() -> None:
         controls.deadline_ms = 10  # type: ignore[misc]
     with pytest.raises(FrozenInstanceError):
         plan.deadline_ms = 10  # type: ignore[misc]
+
+
+def test_collection_snapshots_do_not_retain_mutable_source_lists() -> None:
+    include = ["example.com"]
+    allowed = [ProviderName.BRAVE]
+
+    domains = DomainConstraints(include=include)  # type: ignore[arg-type]
+    policy = ExecutionPolicySnapshot(allowed_providers=allowed)  # type: ignore[arg-type]
+    include.append("mutated.example")
+    allowed.append(ProviderName.SERPER)
+
+    assert domains.include == ("example.com",)
+    assert policy.allowed_providers == (ProviderName.BRAVE,)
+
+
+@pytest.mark.parametrize(
+    "constructor",
+    [
+        lambda: DomainConstraints(include={"example.com"}),  # type: ignore[arg-type]
+        lambda: ExecutionPolicySnapshot(
+            allowed_providers={ProviderName.BRAVE}  # type: ignore[arg-type]
+        ),
+    ],
+)
+def test_collection_snapshots_reject_non_sequence_containers(
+    constructor: Callable[[], object],
+) -> None:
+    with pytest.raises(TypeError):
+        constructor()
 
 
 @pytest.mark.parametrize(
@@ -445,6 +471,8 @@ def test_invalid_freshness_returns_invalid_request(
         "127.0.0.1",
         "2001:db8::1",
         "[2001:db8::1]",
+        "１２７.０.０.１",
+        "①②⑦.⓪.⓪.①",
         "",
     ],
 )
@@ -545,6 +573,30 @@ def test_deadline_scaffolding_never_exceeds_120_seconds() -> None:
     assert plan.deadline_ms == 6_000
     assert plan.provider_phase_budget_ms == 1_000
     assert plan.deadline_ms <= 120_000
+
+
+def test_provider_executor_requires_a_retrieval_plan_argument() -> None:
+    from argus.broker.execution import ProviderExecutor
+
+    parameter = signature(ProviderExecutor.execute).parameters["plan"]
+
+    assert parameter.default is Parameter.empty
+
+
+@pytest.mark.asyncio
+async def test_provider_executor_unconditionally_validates_the_plan() -> None:
+    from argus.broker.execution import ProviderExecutor
+
+    executor = ProviderExecutor.__new__(ProviderExecutor)
+
+    with pytest.raises(TypeError, match="validated retrieval plan is required"):
+        await executor.execute(
+            SearchQuery("query"),
+            [],
+            plan=None,
+            operation_deadline=130.0,
+            provider_phase_deadline=125.0,
+        )
 
 
 @pytest.mark.asyncio
