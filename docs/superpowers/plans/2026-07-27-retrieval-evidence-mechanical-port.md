@@ -21,6 +21,7 @@
 - Search-only duplicate clustering uses only the conservative document key; weak URL/title/snippet hints never merge evidence.
 - Extraction evaluates at most `16` steps; a composition contains at most `200` result links.
 - Rejected or diagnostic-only extraction content never becomes a citation, source document, synthesis input, delivery, or positive cache entry.
+- Archive fallback is lookup-only by default. Submitting a URL to create an external archive requires a distinct typed policy, explicit irreversible-action authority, and a human gate.
 - Durable authority acceptance precedes cache publication and caller acknowledgment.
 - The version-2 HTTP envelope is exactly `contract_version`, `outcome`, `request_id`, `result`, and `error`.
 - MCP request bodies are capped at `4 MiB`; HTTP-authority responses consumed by MCP/CLI are capped at `11 MiB`.
@@ -86,9 +87,13 @@ S3 + S6
 
 S7
   └── S8 HTTP v2, transport security, and capabilities
-        └── S9 MCP v2, CLI negotiation, and workflows
-              └── S10 hermetic scorecard and release candidate bundle
-                    └── P1 immutable homelab port and scorecard promotion
+        └── S9a capability negotiation
+              └── S9b MCP transport/session security
+                    └── S9c versioned MCP tools
+                          └── S9d CLI negotiation
+                                └── S9e workflow composition
+                                      └── S10 hermetic scorecard and release candidate bundle
+                                            └── P1 immutable homelab port and scorecard promotion
 ```
 
 S1, S2, and S3 may be developed in parallel only in distinct worktrees. Their
@@ -126,7 +131,9 @@ mechanical. S4 through P1 are strictly serial.
 ### New tests and fixtures
 
 - `tests/fixtures/contracts/retrieval_evidence_v2/` — frozen valid and invalid envelopes ported from issue #65.
-- `tests/fixtures/providers/<provider>/` — first-party-shape success, empty, error, malformed, usage, and freshness fixtures for all 14 providers.
+- `tests/fixtures/providers/<provider>/` — first-party-shape success, empty, applicable auth/exhaustion/policy/timeout/rate-limit/5xx failures, malformed, usage, and freshness fixtures for all 14 providers.
+- `tests/fixtures/extractors/crawl4ai/` — locked-result and malformed-result compatibility fixtures.
+- `tests/fixtures/extractors/firecrawl/` — disabled-by-default v2 success/error compatibility fixtures.
 - `tests/fixtures/transports/v1/` — frozen legacy HTTP/MCP golden responses.
 - `tests/fixtures/transports/v2/` — version-2 envelopes for every canonical outcome.
 - `tests/fixtures/scorecard/` — 24 search intents, 12 extraction cases, paired evaluator outputs, and bundle identities.
@@ -162,18 +169,22 @@ downgrade is forbidden.
 
 | Slice | Independently accepted evidence | Compatibility and rollback boundary | Owner decision still required | Promotion-gate timing |
 |---|---|---|---|---|
-| S0 Contract kernel | Frozen v1/v2 fixtures, exhaustive outcome maps, prototype mutations rejected | New internal package only; remove package/fixtures to revert | Human PR merge only | Allowed before #40/#41/#42/#44 |
+| S0 Contract kernel | Frozen v1/v2 fixtures, exhaustive outer outcome maps, prototype source/copy hashes | New internal package only; prototype remains executable | Human PR merge only | Allowed before #40/#41/#42/#44 |
 | S1 Retrieval plan | ADR 0002 identity vectors, deadline/canonicalization tests | External `SearchQuery` unchanged; planner unused until S7 | Human PR merge only | Allowed before operational gates |
 | S2 Provider evidence | 14 adapter fixture matrices and secret-leak sentinels | `LegacyProviderBatchAdapter` preserves tuple callers | Human PR merge only; live paid probes excluded | Allowed before operational gates |
 | S3 Extraction outcome | Exact one-time rejection/finalization/composition tests | Existing `ExtractedContent` remains legacy projection; no historical replay | Human PR merge only | Allowed before operational gates |
 | S4 Evidence fusion | Exact rational ordering, freshness, duplicate, diversity, floor tests | Legacy `ranking.py` remains active until S7 | Human PR merge only | Allowed before operational gates |
 | S5 Readiness authority | Repository-time expiry, no-spend diagnostics, leases, terminal exhaustion, concurrency | New tables additive; legacy trackers are migration inputs only | Human PR merge only; account reconciliation remains operator-gated | Code/migration allowed before gates; production migration only in P1 |
 | S6 Accepted retrieval/cache | Atomic acceptance, immutable hits, origin spend, no cache on failure, timeout tests | New cache unused until S7; old cache remains active | Human PR merge only | Code/migration allowed before gates; production activation only in P1 |
-| S7 Accepted operation/v1 | One execution feeds legacy presenters; architecture test forbids secondary authority | Legacy byte semantics frozen; one release flag selects the complete path | Human PR merge only | Allowed before operational gates; flag remains off in production |
+| S7 Accepted operation/v1 | One execution feeds legacy presenters; production modules replay all prototype invariants; architecture test forbids secondary authority | Legacy byte semantics frozen; one release flag selects the complete path; throwaway executable retires only after replay | Human PR merge only | Allowed before operational gates; flag remains off in production |
 | S8 HTTP v2/security | Every status/envelope, auth, Host/Origin, body bound, session ownership tests | `/api/*` remains; `/api/v2/*` additive; security rejection may tighten unsafe behavior | Human PR merge only | Allowed before gates; remote production enablement only in P1 |
-| S9 MCP/CLI/workflows | MCP protocol/session/error layers, exact structured content, CLI stdout/exit, durable workflow links | Legacy tool names/SSE remain; no fallback POST | Human PR merge only | Allowed before gates; client cutover only in P1 |
+| S9a Capability negotiation | Origin/deployment-scoped cache and no speculative/fallback POST | Resolver unused until adapters port | Human PR merge only | Allowed before gates |
+| S9b MCP transport | Protocol/media/session concurrency and secured legacy SSE | Existing tool schemas unchanged | Human PR merge only | Allowed before gates; remote exposure only in P1 |
+| S9c MCP tools | Frozen v1 tools and exact v2 structured content/error layers | Remove new `*_v2` registrations; legacy tools remain | Human PR merge only | Allowed before gates; client cutover only in P1 |
+| S9d CLI | Exact negotiation/stdout/stderr/exit suite | Legacy-server selection remains supported | Human PR merge only | Allowed before gates; installed-client cutover only in P1 |
+| S9e Workflows | Durable total extraction links and no rejected-content delivery | Activation remains under the atomic evidence-authority setting | Human PR merge only | Allowed before gates; external delivery canaries only in P1 |
 | S10 Scorecard candidate | Hermetic stability bundle and reproducible candidate bundle verifier | Diagnostic tooling only; no runtime authority | Human PR merge only | Allowed before gates; live competitive lane only for P1 |
-| P1 Production port | Immutable digest, migration receipt, canaries, stable profiles, competitive verdict, rollback proof | Roll back exact digest without deleting new schema; legacy v1 remains readable | Protected deployment approval and human merge; destructive cleanup separately prohibited | Only after #40, #41, #42, and #44 are satisfied with current evidence |
+| P1 Production port | Immutable digest, migration receipt, canaries, stable profiles, competitive verdict, rollback proof | Roll back exact digest without deleting new schema; legacy v1 remains readable | Protected deployment approval and human merge; each budgeted live run also needs a bounded run authorization; destructive cleanup separately prohibited | Only after #40, #41, #42, and #44 are satisfied with current evidence |
 
 There are no unresolved design questions in S0 through S10. Implementation
 agents decide ordinary code organization within the file boundaries above.
@@ -193,13 +204,7 @@ The owner is not assigned research, result labeling, or manual benchmark work.
 - Create: `tests/fixtures/contracts/retrieval_evidence_v2/*.json`
 - Create: `tests/fixtures/transports/v1/*.json`
 - Create: `tests/fixtures/transports/v2/*.json`
-- Delete after hash-verified fixture port:
-  `docs/prototypes/retrieval-evidence-envelope/model.py`,
-  `docs/prototypes/retrieval-evidence-envelope/prototype.py`,
-  `docs/prototypes/retrieval-evidence-envelope/envelope.schema.json`, and
-  `docs/prototypes/retrieval-evidence-envelope/vectors.json`
 - Modify: `docs/prototypes/retrieval-evidence-envelope/README.md`
-- Modify: `docs/README.md`
 
 **Interfaces:**
 - Produces: `CanonicalOutcome`, `OperationError`, `AcceptedOperation[T]`, `is_success_like()`, `http_status_for()`, and `mcp_is_error_for()`.
@@ -262,25 +267,20 @@ operation that already began.
 
 Copy the eight valid vectors and nineteen invalid mutations into standalone
 fixture files without importing `docs/prototypes/.../model.py`. Add a fixture
-manifest with SHA-256 for every file and a test that:
+manifest with SHA-256 for every source and copied fixture. At this slice, the
+tests:
 
-1. verifies manifest hashes;
-2. loads every valid vector;
-3. rejects every invalid vector for its named invariant; and
-4. rejects forbidden keys/text recursively.
+1. verify manifest hashes;
+2. load every valid and invalid vector as immutable fixture data;
+3. apply only the S0 outer outcome/error/request-ID invariants; and
+4. reject forbidden keys/text recursively.
 
-The production contract package may reuse bounded value objects, but it must
-not import the throwaway prototype executable or JSON Schema.
+The complete nineteen-mutation replay remains owned by S7, after S3/S4/S6
+production modules exist. Until then, the original prototype command remains
+green and executable. The production contract package may reuse bounded value
+objects, but it must not import the throwaway validator or JSON Schema.
 
-- [ ] **Step 5: Retire the throwaway executable after proof is ported**
-
-After the fixture manifest proves byte/hash correspondence for all eight valid
-vectors and nineteen named corruptions, delete the prototype executable,
-validator, schema, and aggregate vector file listed above. Keep `NOTES.md` as
-the durable decision record. Change both README entries to point to the
-production contract fixtures/tests and state the exact retirement commit.
-
-- [ ] **Step 6: Add the architecture import test**
+- [ ] **Step 5: Add the architecture import test**
 
 Parse the AST of `argus/api/presenters.py` when it exists and fail if it imports
 from `argus.providers`, `argus.extraction.extractor`,
@@ -288,7 +288,7 @@ from `argus.providers`, `argus.extraction.extractor`,
 test skipped only while the presenter file does not exist; S7 removes that
 skip.
 
-- [ ] **Step 7: Verify and commit**
+- [ ] **Step 6: Verify and commit**
 
 ```bash
 uv run pytest tests/test_contract_outcomes.py \
@@ -297,13 +297,14 @@ uv run pytest -q
 git diff --check
 git add argus/contracts tests/fixtures/contracts tests/fixtures/transports \
   tests/test_contract_outcomes.py tests/test_architecture_boundaries.py \
-  docs/prototypes/retrieval-evidence-envelope docs/README.md
+  docs/prototypes/retrieval-evidence-envelope/README.md
 git commit -m "feat: freeze accepted operation contracts"
 ```
 
 **Acceptance evidence:** Exhaustive outcome/status/MCP mapping, immutable
-constructor invariants, v1 goldens, all eight valid envelope scenarios, all
-nineteen fail-closed mutations, full suite green.
+constructor invariants, v1 goldens, hash-frozen envelope source/copies,
+outer-contract subset checks, original prototype still green, and full suite
+green.
 
 **Rollback boundary:** Internal types and fixtures are unused by runtime.
 
@@ -396,12 +397,32 @@ evidence, ADR 0004 failure taxonomy, and S1 plan controls.
 **Files:**
 - Create: `argus/broker/provider_evidence.py`
 - Create: `tests/test_provider_evidence.py`
+- Create: `tests/test_extractor_contracts.py`
 - Create: `tests/fixtures/providers/<provider>/*.json`
+- Create: `tests/fixtures/extractors/crawl4ai/*.json`
+- Create: `tests/fixtures/extractors/firecrawl/*.json`
 - Modify: `argus/providers/base.py`
-- Modify: all 14 files under `argus/providers/`
+- Modify: `argus/providers/searxng.py`
+- Modify: `argus/providers/duckduckgo.py`
+- Modify: `argus/providers/yahoo.py`
+- Modify: `argus/providers/github.py`
+- Modify: `argus/providers/wolfram.py`
+- Modify: `argus/providers/brave.py`
+- Modify: `argus/providers/tavily.py`
+- Modify: `argus/providers/exa.py`
+- Modify: `argus/providers/linkup.py`
+- Modify: `argus/providers/parallel.py`
+- Modify: `argus/providers/serper.py`
+- Modify: `argus/providers/you.py`
+- Modify: `argus/providers/valyu.py`
+- Modify: `argus/providers/searchapi.py`
+- Modify: `argus/providers/__init__.py` only if the typed batch export is needed
 - Modify: `argus/provider_controls.py`
 - Modify: `argus/extraction/crawl4ai_extractor.py`
 - Modify: `argus/extraction/firecrawl_extractor.py`
+
+`argus/providers/valyu_answer.py` is not one of the 14 search adapters and is
+not changed in this slice.
 
 **Interfaces:**
 - Produces `ProviderSearchBatch`, `ResultObservation`,
@@ -413,11 +434,15 @@ evidence, ADR 0004 failure taxonomy, and S1 plan controls.
 
 - [ ] **Step 1: Build the 14-provider fixture manifest**
 
-For every registered provider, add current success, valid empty, documented
-error, malformed success, usage/rate evidence, and freshness translation
-fixtures. Add migration aliases only for Exa `published_date`, Parallel
-`excerpt`/`snippet`, and SearchAPI `organic` where the inventory authorizes
-dual-read. The test fails when a registered provider lacks a required fixture.
+For every registered provider, add current success, valid empty, malformed
+success, usage/rate evidence, and freshness translation fixtures. Maintain a
+machine-readable applicability matrix for `401`, `402`/balance exhaustion,
+`403`, `408`/`504`, `422`, `429`, and `5xx`; every cell names a fixture or an
+authoritative reason the provider cannot emit that class. A generic
+“documented error” fixture does not satisfy the matrix. Add migration aliases
+only for Exa `published_date`, Parallel `excerpt`/`snippet`, and SearchAPI
+`organic` where the inventory authorizes dual-read. The test fails when a
+registered provider or applicable failure class lacks a fixture.
 
 - [ ] **Step 2: Write privacy and bounds tests**
 
@@ -446,29 +471,41 @@ Correct Parallel `/v1/search`, Exa field casing/bounded contents request, and
 Crawl4AI's locked result object. Correct dormant Firecrawl v2 parsing but keep
 Firecrawl disabled behind its existing spend/config gate.
 
-- [ ] **Step 5: Translate typed controls**
+- [ ] **Step 5: Add extractor compatibility fixtures**
+
+Freeze Crawl4AI locked markdown-object success/malformed shapes and Firecrawl
+v2 success/error shapes. Prove Firecrawl remains disabled without its explicit
+config/spend authorization and that fixture tests make no external request.
+Run these through `tests/test_extractor_contracts.py` and the existing
+extraction suite.
+
+- [ ] **Step 6: Translate typed controls**
 
 Each adapter declares `none`, `relative_only`, `date_range`,
 `relative_and_date_range`, or `query_qualifier`, records exact/widened/
 unsupported precision and strict/best-effort/unknown strength, and rejects a
 required unsupported control rather than silently dropping it.
 
-- [ ] **Step 6: Verify and commit**
+- [ ] **Step 7: Verify and commit**
 
 ```bash
-uv run pytest tests/test_provider_evidence.py tests/test_providers.py -q
+uv run pytest tests/test_provider_evidence.py tests/test_extractor_contracts.py \
+  tests/test_providers.py tests/test_extraction.py -q
 uv run pytest -q
 git diff --check
 git add argus/broker/provider_evidence.py argus/providers \
   argus/provider_controls.py argus/extraction/crawl4ai_extractor.py \
   argus/extraction/firecrawl_extractor.py tests/test_provider_evidence.py \
-  tests/fixtures/providers
+  tests/test_extractor_contracts.py tests/fixtures/providers \
+  tests/fixtures/extractors
 git commit -m "feat: normalize provider evidence batches"
 ```
 
-**Acceptance evidence:** Complete 14-provider fixture matrix, stable failure
-taxonomy, current request shapes, intentional aliases only, and secret/bounds
-sentinels rejected.
+**Acceptance evidence:** Complete 14-provider applicability/fixture matrix for
+success, empty, malformed, auth, exhaustion, policy, timeout, rate-limit, and
+5xx behavior; Crawl4AI/Firecrawl fixture contracts; stable failure taxonomy;
+current request shapes; intentional aliases only; and secret/bounds sentinels
+rejected.
 
 **Rollback boundary:** `LegacyProviderBatchAdapter` preserves the old broker
 tuple while no runtime consumer requires the new batch.
@@ -491,6 +528,7 @@ vectors.
 - Create: `tests/test_extraction_composition.py`
 - Modify: `argus/extraction/models.py`
 - Modify: `argus/extraction/extractor.py`
+- Modify: `argus/extraction/archive_extractor.py`
 - Modify: `argus/extraction/cache.py`
 - Modify: `argus/persistence/search_ledger.py`
 - Create: `migrations/versions/0007_extraction_outcomes.py`
@@ -518,14 +556,25 @@ Reject dangling/duplicate/mismatched ordinals, inconsistent exhausted sets,
 over-16 steps, over-bound IDs/labels/signals/latency/cost, raw errors, URLs,
 content, credentials, and request bodies inside rejection evidence.
 
-- [ ] **Step 3: Implement immutable extraction plan/outcome values**
+- [ ] **Step 3: Separate archive lookup from external archive creation**
+
+Write tests that return an archive lookup miss and instrument every HTTP POST
+to fail. The default extraction chain must return a typed miss/fallback without
+submitting the caller URL to archive.ph/archive.is or any other external
+archive. If an archive-creation function remains available, it accepts a
+distinct `ArchiveCreationAuthorization` carrying caller policy, authority
+receipt, idempotency key, and bounded target; absence or reuse is
+`policy_rejected` before network work. No autonomous profile constructs that
+authorization, and no test performs a live submission.
+
+- [ ] **Step 4: Implement immutable extraction plan/outcome values**
 
 Separate cache decisions, extractor execution outcomes, artifact quality,
 completeness, terminal cause, selected extractor, causative rejection provider,
 provenance, and spend. Do not overload `ExtractionAttempt.status` with final
 quality semantics at the new seam.
 
-- [ ] **Step 4: Implement the finalizer and composer**
+- [ ] **Step 5: Implement the finalizer and composer**
 
 The finalizer validates, calls #57 once when required, chooses disposition and
 canonical outcome, atomically persists exact facts/projection, and returns the
@@ -538,7 +587,7 @@ otherwise duplicate artifact/extraction references are rejected. This
 preserves ADR 0005's authorized artifact reuse without allowing an accidental
 many-to-one link to hide a missing extraction.
 
-- [ ] **Step 5: Add the migration and repository tests**
+- [ ] **Step 6: Add the migration and repository tests**
 
 Migration 0007 creates additive plan/step/artifact/rejection/link/composition
 tables. Foreign keys close extraction-plan, step, artifact, rejection, and
@@ -550,14 +599,14 @@ foreign key to a future table. Test SQLite upgrade from 0006, PostgreSQL
 upgrade/rollback in the disposable database fixture, atomic rollback on fault
 injection, idempotent retry by run ID, and no legacy row rewrite/replay.
 
-- [ ] **Step 6: Keep legacy extraction readable**
+- [ ] **Step 7: Keep legacy extraction readable**
 
 Project `AcceptedExtractionOutcome` back to the existing `ExtractedContent`
 fields for legacy callers. The old top-level completeness
 `recommended_action` remains distinct from #57 rejection action. Runtime
 activation waits for S7.
 
-- [ ] **Step 7: Verify and commit**
+- [ ] **Step 8: Verify and commit**
 
 ```bash
 uv run pytest tests/test_extraction_outcomes.py \
@@ -573,12 +622,15 @@ git commit -m "feat: finalize and compose extraction outcomes"
 
 **Acceptance evidence:** Exhaustive mappings, one-time classification,
 durable identity, composition precedence, privacy bounds, cache isolation, and
-no fabricated receipt.
+no fabricated receipt, plus a lookup-miss test proving the default chain
+performs no external archive-creation POST.
 
 **Rollback boundary:** Additive schema and legacy projection; new tables are
 unused in production until P1.
 
-**Human gate:** Merge only. No extraction wave or historical replay.
+**Human gate:** Merge only. No extraction wave, historical replay, or archive
+creation. A future archive submission is a separately authorized irreversible
+external action and is outside this plan.
 
 ---
 
@@ -857,6 +909,13 @@ and ADRs 0005/0006.
 - Modify: `argus/config.py`
 - Modify: `.env.example`
 - Modify: `tests/test_architecture_boundaries.py`
+- Delete after production replay passes:
+  `docs/prototypes/retrieval-evidence-envelope/model.py`,
+  `docs/prototypes/retrieval-evidence-envelope/prototype.py`,
+  `docs/prototypes/retrieval-evidence-envelope/envelope.schema.json`, and
+  `docs/prototypes/retrieval-evidence-envelope/vectors.json`
+- Modify: `docs/prototypes/retrieval-evidence-envelope/README.md`
+- Modify: `docs/README.md`
 
 **Interfaces:**
 - Produces one `AcceptedOperation` from search/extraction services.
@@ -890,7 +949,26 @@ workflow entry, count provider/extractor/repository calls. Every accepted
 request has one execution identity and one acceptance receipt; presenter
 failure cannot initiate another execution.
 
-- [ ] **Step 5: Verify and commit**
+- [ ] **Step 5: Replay the complete issue #65 invariant corpus**
+
+Route each of the eight valid frozen fixtures through the S1/S3/S4/S5/S6/S7
+production constructors and validators. Route each of the nineteen corruptions
+to its owning production invariant and require the named rejection. This test
+must not import or call the prototype validator. It proves cache age/origin
+spend, exact ranking/order, composition/link/artifact/citation closure,
+extractor provenance, persistence acceptance, and exact caller projection
+before the executable proof is removed.
+
+- [ ] **Step 6: Retire the throwaway executable**
+
+After the production replay and source/copy manifest pass, delete the
+prototype executable, validator, JSON Schema, and aggregate vector file listed
+above. Keep `NOTES.md` as the decision record and the frozen production
+fixtures as executable evidence. Update both README entries in the same commit
+to point to the production test command; do not attempt to embed the commit's
+own not-yet-created hash.
+
+- [ ] **Step 7: Verify and commit**
 
 ```bash
 uv run pytest tests/test_accepted_operations.py \
@@ -902,12 +980,16 @@ git add argus/api/presenters.py argus/api/routes_search.py \
   argus/api/routes_extract.py argus/api/schemas.py argus/broker/router.py \
   argus/extraction/extractor.py argus/config.py .env.example \
   tests/test_accepted_operations.py \
-  tests/test_architecture_boundaries.py
+  tests/test_architecture_boundaries.py \
+  tests/fixtures/contracts/retrieval_evidence_v2 \
+  docs/prototypes/retrieval-evidence-envelope docs/README.md
 git commit -m "feat: render legacy routes from accepted operations"
 ```
 
 **Acceptance evidence:** Golden v1 semantics, exactly one execution/acceptance,
-no presenter authority, and startup rejection of a mixed path.
+no presenter authority, startup rejection of a mixed path, all eight envelope
+scenarios accepted, and all nineteen corruptions rejected by production
+modules before prototype retirement.
 
 **Rollback boundary:** Production setting stays `legacy` until P1. Reverting
 the image restores the old orchestrator without changing legacy wire shapes.
@@ -1001,102 +1083,290 @@ and evidence authority remain disabled until P1.
 
 ---
 
-### Task 10: S9 — MCP v2, CLI negotiation, and workflow composition
+### Task 10: S9a — Fail-closed HTTP capability negotiation
 
-**Inputs:** S8 capabilities/HTTP v2, S3 composer, and ADR 0006.
+**Inputs:** S8 capability document and ADR 0006 negotiation rules.
 
 **Files:**
 - Create: `argus/mcp/capabilities.py`
-- Create: `argus/mcp/sessions.py`
-- Create: `argus/mcp/v2_tools.py`
 - Create: `tests/test_capability_negotiation.py`
-- Create: `tests/test_mcp_v2.py`
+- Modify: `argus/authority.py`
+
+**Interfaces:**
+- Produces
+  `resolve_http_contract(authority_origin, deployment_id, clock) -> ContractSelection`.
+- Produces a bounded in-process cache keyed by authority origin and deployment
+  ID; it performs discovery only and never executes an operation.
+
+- [ ] **Step 1: Write negotiation/cache tests**
+
+Cover advertised v2, a proven legacy document with no `http_contracts`,
+malformed/unavailable discovery, a server that advertised v2 then fails,
+60-second expiry, origin separation, deployment change, and an error while a
+still-valid entry exists.
+
+- [ ] **Step 2: Implement fail-closed selection**
+
+Select v2 only when advertised and legacy only when discovery proves the old
+capability shape. Malformed/unavailable discovery is `unready`. Never probe a
+POST to discover a contract, never overwrite a valid entry with an error, and
+never retry an ambiguous execution against another version.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+uv run pytest tests/test_capability_negotiation.py \
+  tests/test_http_authority.py -q
+uv run pytest -q
+git diff --check
+git add argus/mcp/capabilities.py argus/authority.py \
+  tests/test_capability_negotiation.py
+git commit -m "feat: negotiate HTTP contracts without replay"
+```
+
+**Acceptance evidence:** Exact legacy/v2 selection, bounded cache behavior,
+and zero speculative or fallback execution requests.
+
+**Rollback boundary:** New resolver is unused by MCP/CLI until S9c/S9d.
+
+**Human gate:** Merge only. Allowed before operational gates.
+
+---
+
+### Task 11: S9b — MCP transport sessions and legacy SSE security
+
+**Inputs:** S8 `TransportSecurityGuard`, the pinned MCP SDK, and ADR 0006
+transport/session rules.
+
+**Files:**
+- Create: `argus/mcp/sessions.py`
+- Create: `tests/test_mcp_transport.py`
 - Modify: `argus/mcp/server.py`
+- Modify: `argus/config.py`
+- Modify: `.env.example`
+
+**Interfaces:**
+- Produces a process-local `McpSessionRegistry` with atomic
+  `initialize`, `lookup`, `touch`, `terminate`, and `sweep` operations.
+- Keeps existing tool registration and result shapes unchanged.
+
+- [ ] **Step 1: Write protocol/method/media tests**
+
+Contract-test `2024-11-05`, `2025-03-26`, `2025-06-18`, and `2025-11-25`;
+POST/GET/DELETE/OPTIONS; JSON/SSE Accept and Content-Type; 4 MiB body bound;
+202 notification/response acknowledgment; and 405 `Allow`.
+
+- [ ] **Step 2: Write session concurrency/security tests**
+
+Cover missing, wrong, expired, terminated, wrong-principal, post-restart, and
+capacity-limited sessions; 256 concurrent initialize attempts; cryptographic
+IDs; forced collision retry; 30-minute idle expiry; bounded sweep; and no LRU
+eviction.
+
+- [ ] **Step 3: Implement and bind the registry**
+
+Reclaim expiry, reserve capacity, collision-check, and insert atomically.
+Bind every session to the authenticated principal and negotiated protocol.
+Session IDs never authenticate, identify retrieval sessions, or derive from
+request IDs/tokens.
+
+- [ ] **Step 4: Secure legacy SSE without changing its shape**
+
+Keep `GET /sse` and `POST /messages/` wire behavior, but apply the shared
+bearer, Host, Origin, CORS, body, and principal guard before session/tool work.
+Capabilities continue to direct new clients to `/mcp`.
+
+- [ ] **Step 5: Verify and commit**
+
+```bash
+uv run pytest tests/test_mcp_transport.py tests/test_transport_security.py \
+  tests/test_http_authority.py -q
+uv run pytest -q
+git diff --check
+git add argus/mcp/sessions.py argus/mcp/server.py argus/config.py \
+  .env.example tests/test_mcp_transport.py
+git commit -m "feat: bind and bound MCP transport sessions"
+```
+
+**Acceptance evidence:** Exact MCP protocol/method/media behavior,
+principal-owned bounded sessions, concurrent capacity proof, and secured
+legacy SSE.
+
+**Rollback boundary:** Existing tool names/results remain unchanged; reverting
+this slice removes only new session/security machinery.
+
+**Human gate:** Merge only. Allowed before operational gates; remote exposure
+still waits for P1.
+
+---
+
+### Task 12: S9c — Versioned MCP tools and exact structured content
+
+**Inputs:** S9a contract resolver, S9b transport, S8 HTTP v2, and ADR 0006 tool
+compatibility.
+
+**Files:**
+- Create: `argus/mcp/v2_tools.py`
+- Create: `tests/test_mcp_v2.py`
 - Modify: `argus/mcp/http_adapter.py`
 - Modify: `argus/mcp/tools.py`
-- Modify: `argus/cli/main.py`
-- Modify: `argus/workflows/service.py`
-- Modify: `argus/workflows/models.py`
-- Modify: `tests/test_workflows.py`
+- Modify: `argus/mcp/server.py`
 
 **Interfaces:**
 - Produces explicit `search_web_v2`, `recover_url_v2`, `expand_links_v2`, and
   `extract_content_v2`.
-- Produces fail-closed HTTP contract negotiation and principal-bound MCP
-  transport sessions.
-- Workflows consume accepted operations and persist one link for every planned
-  extraction.
+- Existing tool names retain their current inputs, text, and
+  `{"result": "<text>"}` structured schema.
 
-- [ ] **Step 1: Write capability negotiation tests**
-
-Cover advertised v2, proven legacy server, malformed/unavailable discovery,
-advertised-v2 failure, 60-second origin/deployment-scoped cache, deployment
-change, and expiry. Assert no POST fallback after ambiguous failure and no
-provider call when discovery cannot establish a contract.
-
-- [ ] **Step 2: Write MCP transport/session tests**
-
-Contract-test protocol revisions `2024-11-05`, `2025-03-26`, `2025-06-18`,
-and `2025-11-25`; POST/GET/DELETE/OPTIONS; Accept/Content-Type; 202
-notifications; missing/wrong/expired/terminated/wrong-principal/restarted
-sessions; 256-capacity concurrency; cryptographic IDs/collision retry; and no
-LRU eviction.
-
-- [ ] **Step 3: Write MCP error-layer/tool tests**
+- [ ] **Step 1: Write MCP error-layer tests**
 
 Keep listener HTTP, JSON-RPC, SDK input-schema, Argus tool error, and accepted
-operation layers distinct. Existing tool names retain text plus
-`{"result": text}`. V2 tools return the exact HTTP envelope as
-`structuredContent`, bounded text, advertised output schema, and correct
-`isError`.
+operation layers distinct. Schema-invalid values return bounded SDK errors
+without `structuredContent`, rejected-value echo, HTTP execution, or provider
+work.
 
-- [ ] **Step 4: Secure legacy SSE**
+- [ ] **Step 2: Write v1/v2 tool contract tests**
 
-Keep `GET /sse` and `POST /messages/` shapes, but apply the same bearer,
-Host/Origin/CORS/body/principal protections. New docs and capabilities point
-only to `/mcp`.
+Freeze every legacy tool golden. V2 tools advertise exact input/output schemas,
+return the exact HTTP envelope as `structuredContent`, include bounded text,
+and set `isError=false` only for success/degraded/empty.
 
-- [ ] **Step 5: Port CLI**
+- [ ] **Step 3: Implement HTTP-only tool adapters**
 
-New CLI negotiates once, prefers v2, emits exact envelope and nothing else on
-`--json` stdout, sends diagnostics to stderr, exits 0 for
-success/degraded/empty, 1 for canonical failures, and keeps Click usage exit 2.
+Use S9a discovery before the first execution. Once v2 is selected, a failure
+never falls back to v1. Presenters do not classify outcomes or parse Markdown
+for evidence.
 
-- [ ] **Step 6: Port workflows to composition**
-
-Every planned result gets a durable `ResultExtractionLink`, including rejected
-and exception paths. Workflows enforce declared per-result and aggregate
-artifact floors. Diagnostic/rejected content never reaches `StoredDocument`,
-`CitationRef`, summarizer, report, or delivery. Failed composition may display
-accepted evidence but cannot accept synthesis/delivery.
-
-- [ ] **Step 7: Verify and commit**
+- [ ] **Step 4: Verify and commit**
 
 ```bash
-uv run pytest tests/test_capability_negotiation.py tests/test_mcp_v2.py \
-  tests/test_http_authority.py tests/test_cli.py tests/test_workflows.py -q
+uv run pytest tests/test_mcp_v2.py tests/test_mcp_transport.py \
+  tests/test_http_authority.py -q
 uv run pytest -q
 git diff --check
-git add argus/mcp/capabilities.py argus/mcp/sessions.py \
-  argus/mcp/v2_tools.py argus/mcp/server.py argus/mcp/http_adapter.py \
-  argus/mcp/tools.py argus/cli/main.py argus/workflows \
-  tests/test_capability_negotiation.py tests/test_mcp_v2.py \
-  tests/test_workflows.py
-git commit -m "feat: port MCP CLI and workflows to version two evidence"
+git add argus/mcp/v2_tools.py argus/mcp/http_adapter.py \
+  argus/mcp/tools.py argus/mcp/server.py tests/test_mcp_v2.py
+git commit -m "feat: add versioned MCP evidence tools"
 ```
 
-**Acceptance evidence:** No fallback POST, exact MCP structured content,
-bounded sessions/protocol behavior, legacy compatibility, exact CLI behavior,
-and durable workflow composition.
+**Acceptance evidence:** Frozen legacy tool contracts, exact v2 structured
+content/schema, correct error layers, and no fallback POST.
 
-**Rollback boundary:** Legacy tools/SSE/v1 HTTP remain. New clients are not
-cut over until P1.
+**Rollback boundary:** Remove explicit `*_v2` registrations; legacy tools and
+transport remain.
 
-**Human gate:** Merge only.
+**Human gate:** Merge only. Allowed before operational gates; clients stay on
+legacy until P1.
 
 ---
 
-### Task 11: S10 — Hermetic scorecard and immutable candidate evidence bundle
+### Task 13: S9d — CLI version negotiation and exact output behavior
+
+**Inputs:** S9a resolver, S8 HTTP v2 envelope, and ADR 0006 CLI rules.
+
+**Files:**
+- Create: `tests/test_cli_v2.py`
+- Modify: `argus/cli/main.py`
+
+**Interfaces:**
+- CLI consumes only authenticated HTTP and `ContractSelection`.
+- `--json` emits one exact version-2 envelope to stdout.
+
+- [ ] **Step 1: Write stdout/stderr/exit tests**
+
+Cover v2 preference, proven legacy fallback, failed discovery, no fallback
+POST, exact JSON stdout, diagnostic stderr, exit 0 for success/degraded/empty,
+exit 1 for canonical failures, and unchanged Click usage exit 2.
+
+- [ ] **Step 2: Implement negotiated CLI rendering**
+
+Human rendering preserves core legacy result text and adds visible
+outcome/request/evidence labels. JSON mode writes no progress, warning, or log
+text to stdout.
+
+- [ ] **Step 3: Verify and commit**
+
+```bash
+uv run pytest tests/test_cli_v2.py tests/test_cli.py \
+  tests/test_http_authority.py -q
+uv run pytest -q
+git diff --check
+git add argus/cli/main.py tests/test_cli_v2.py
+git commit -m "feat: negotiate CLI evidence responses"
+```
+
+**Acceptance evidence:** Exact stdout/stderr/exit behavior and no ambiguous
+execution retry.
+
+**Rollback boundary:** Old CLI/server negotiation still selects v1; no server
+or workflow state changes.
+
+**Human gate:** Merge only. Allowed before operational gates; installed client
+cutover waits for P1.
+
+---
+
+### Task 14: S9e — Workflow extraction composition and delivery safety
+
+**Inputs:** S3 composer, S7 accepted operations, and ADR 0005 workflow
+obligations.
+
+**Files:**
+- Create: `tests/test_workflow_composition.py`
+- Modify: `argus/workflows/service.py`
+- Modify: `argus/workflows/models.py`
+- Modify: `tests/test_workflows.py`
+- Modify: `argus/persistence/search_ledger.py`
+
+**Interfaces:**
+- Workflows consume `AcceptedOperation` and persist one
+  `ResultExtractionLink` for every planned selection.
+- Workflows never classify raw errors or bypass the artifact requirement.
+
+- [ ] **Step 1: Write link/floor/failure tests**
+
+Cover success, optional rejection/degraded, required rejection,
+no-eligible-path/unready, persistence failure, exception paths, per-result
+minimum, aggregate minimum, explicit partial policy, shared eligible artifact,
+and idempotent resume.
+
+- [ ] **Step 2: Write negative delivery tests**
+
+Instrument `StoredDocument`, `CitationRef`, summarizer, report, and delivery
+constructors. Diagnostic/rejected artifacts must never reach them. A failed
+composition may render accepted evidence but cannot accept synthesis or
+external delivery.
+
+- [ ] **Step 3: Port workflows to the composer**
+
+Remove silent `continue`/status reconstruction paths. Persist every planned
+link, enforce the immutable requirement, and return the exact accepted
+composition projection.
+
+- [ ] **Step 4: Verify and commit**
+
+```bash
+uv run pytest tests/test_workflow_composition.py tests/test_workflows.py \
+  tests/test_search_ledger.py -q
+uv run pytest -q
+git diff --check
+git add argus/workflows argus/persistence/search_ledger.py \
+  tests/test_workflow_composition.py tests/test_workflows.py
+git commit -m "feat: compose workflow extraction evidence"
+```
+
+**Acceptance evidence:** Durable total link coverage, deterministic artifact
+floors, idempotent resume, and no rejected-content delivery.
+
+**Rollback boundary:** HTTP/MCP/CLI transport changes remain independently
+usable; workflow activation remains behind the S7 atomic evidence authority.
+
+**Human gate:** Merge only. Allowed before operational gates; external
+production delivery waits for P1 canaries.
+
+---
+
+### Task 15: S10 — Hermetic scorecard and immutable candidate evidence bundle
 
 **Inputs:** Accepted scorecard and complete S0-S9 release candidate.
 
@@ -1151,7 +1421,12 @@ headers, provider-native payloads, and secret sentinels.
 PR CI runs only hermetic stability and publishes the bundle artifact. Live
 competitive execution is a separate weekly or explicit-promotion workflow
 through canonical HTTP, with the baseline and candidate close together under
-the same topology/profile/provider snapshot.
+the same topology/profile/provider snapshot. The free profile may run
+automatically. A budgeted run requires an immutable authorization receipt for
+that exact run ID/generation naming permitted providers, maximum tier, call
+count, and cost/credit cap; absence or reuse fails before reservation.
+One-time-credit providers remain disabled unless the receipt names them
+individually.
 
 - [ ] **Step 6: Verify and commit**
 
@@ -1180,7 +1455,7 @@ runtime execution or deployment by itself.
 
 ---
 
-### Task 12: P1 — Immutable homelab port, competitive proof, and rollback
+### Task 16: P1 — Immutable homelab port, competitive proof, and rollback
 
 **Inputs:** Exact merged S10 revision, closed/current operational gates #40,
 #41, #42, and #44, protected production environment, canonical
@@ -1234,8 +1509,15 @@ downgrade or delete the new tables.
 Through canonical HTTP, run baseline and candidate close together for the
 declared profile/topology/provider snapshot. Run both evaluator orders and
 verify the bundle. Promotion requires exact candidate `stable` plus
-`competitive`; `inconclusive` leaves production unchanged and schedules a new
-automated run without owner labeling.
+`competitive`. The free profile may run under the automated lane. Before a
+budgeted profile reserves anything, require a distinct, unused authorization
+receipt for this exact run/generation with provider allowlist, maximum tier,
+maximum calls, and maximum cost/credit exposure. Existing deployment approval,
+configured budget, or an older run receipt is not spend authorization.
+One-time-credit providers remain disabled unless individually named.
+`inconclusive` leaves production unchanged; a free rerun may be scheduled
+automatically, while a budgeted rerun requires a new authorization receipt.
+Neither path creates owner labeling work.
 
 - [ ] **Step 5: Publish one Homelab review PR**
 
@@ -1290,9 +1572,11 @@ transports, current recovery proof, client canaries, and tested rollback.
 **Rollback boundary:** Promote the retained previous digest; never delete or
 downgrade accepted evidence tables during emergency rollback.
 
-**Human gate:** Human merge and protected deployment approval. Secret rotation,
-credit purchase, destructive legacy cleanup, and irreversible data operations
-remain separate explicit approvals and are not part of this plan.
+**Human gate:** Human merge and protected deployment approval. A budgeted live
+competitive run additionally requires its bounded run authorization. Secret
+rotation, credit purchase, destructive legacy cleanup, external archive
+creation, and irreversible data operations remain separate explicit approvals
+and are not part of this plan.
 
 ---
 
