@@ -361,8 +361,14 @@ The terminal mapping is closed:
 | terminal/exhausted `adapter_request_rejected` | `extraction_failed` | `parse_error` |
 | terminal/exhausted `provider_authentication_rejected` | `unready` | `provider_unavailable` |
 | terminal/exhausted `provider_policy_rejected` | `extraction_failed` | `provider_unavailable` |
+| terminal/exhausted `empty` | `extraction_failed` | `empty_result` |
+| terminal/exhausted `rate_limited` | `unready` | `rate_limited` |
 | terminal/exhausted `balance_exhausted` | `unready` | `provider_unavailable` |
-| terminal/exhausted other homogeneous outcome | mapper rule for that outcome | corresponding #57 code |
+| terminal/exhausted attempt `timeout` before the operation deadline | `extraction_failed` | `timeout` |
+| terminal/exhausted `provider_unavailable` | `extraction_failed` | `provider_unavailable` |
+| terminal/exhausted `parse_error` | `extraction_failed` | `parse_error` |
+| terminal/exhausted `unknown_failure` | `extraction_failed` | `provider_unavailable` |
+| terminal/exhausted `content` after no artifact rule matched | `extraction_failed` internal-contract path | `provider_unavailable`, terminal; never attributed to a provider |
 | heterogeneous exhaustion | `extraction_failed` | `provider_unavailable` |
 
 ### Recommended actions
