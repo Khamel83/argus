@@ -117,10 +117,10 @@ resolve_plan(
   controls,
   include_attribution,
   policy_snapshot,
-  utc_clock,
+  operation_clock,
 ) -> RetrievalPlan
 
-lookup(plan, cache_policy_snapshot, utc_clock) -> CacheDecision
+lookup(plan, cache_policy_snapshot, operation_clock) -> CacheDecision
 
 execute(plan, runtime_health_and_budget_snapshot) -> RetrievalCandidate
 
@@ -142,6 +142,15 @@ this value without creating a second planning path.
 the original query, session/refinement lineage, caller and delivery policy,
 and the secret-free request metadata allowlist. This keeps the original and
 effective queries explicit at the acceptance seam.
+
+`operation_clock` is captured exactly once before planning as an immutable
+pair: an aware UTC start instant and a monotonic start value from the same
+authority. Planning resolves relative dates from that pair. Later deadline,
+age, expiry, and admission checks derive their effective UTC instant as
+`utc_started_at + (monotonic_now - monotonic_started_at)`; they never sample a
+second wall clock. This preserves elapsed-time correctness across
+single-flight waits and prevents wall-clock skew or rollback from making
+fingerprinting and admission disagree.
 
 `RetrievalPlan` version 1 contains:
 
@@ -177,6 +186,7 @@ presentation:
   include_attribution
 
 versions:
+  cache_identity_schema_version
   query_normalization_version
   routing_policy_version
   spend_policy_version
@@ -190,11 +200,49 @@ Only typed, allowlisted fields enter the plan. Runtime provider health,
 remaining balance, reservation IDs, attempt scope, caller label, and unknown
 metadata are evidence inputs, not plan controls.
 
+Every version is a narrow semantic gate, not a release or catch-all policy
+counter:
+
+| Version | May change only when |
+|---|---|
+| `plan_schema_version` | The complete plan shape changes; it affects `plan_id` only |
+| `cache_identity_schema_version` | The cache-fingerprint projection shape or scalar encoding changes |
+| `query_normalization_version` | Query Unicode/whitespace normalization changes |
+| `routing_policy_version` | Static provider eligibility/order or declared control translation changes in a way that can change acquired evidence |
+| `spend_policy_version` | Reservation/tier execution eligibility changes; it does not enter cache content identity |
+| `freshness_policy_version` | Window resolution, date proof, or freshness admission semantics change |
+| `domain_policy_version` | Host normalization, matching, or domain admission semantics change |
+| `ranking_policy_version` | Fusion, contribution, tie-break, or diversity semantics change |
+| `result_normalization_version` | Stored result field normalization or contributor projection changes |
+
+A version bump requires a named old/new contract vector proving the affected
+identity and admission behavior. Provider enablement, credentials, balance,
+cooldown, deployment SHA, unrelated configuration, or code cleanup never
+bumps these fields. There is no omnibus “policy version.” A semantic version
+included in `cache_fingerprint` intentionally invalidates entries produced
+under the changed meaning; unchanged component versions preserve them.
+
 Planning validates before hashing: the normalized query must be non-empty,
 `result_limit` must be between 1 and 50 inclusive, explicit providers are
 deduplicated while preserving order, and the synthetic `cache` provider is
 never a valid explicit provider. Any invalid typed value fails as
 `invalid_request`; it is never coerced into a broader plan.
+
+Bounds are checked before normalization or deduplication:
+
+- the effective query is at most 16,384 UTF-8 bytes before and after
+  normalization;
+- the raw explicit-provider list has at most 32 entries, then resolves to at
+  most the 14 catalog providers;
+- include and exclude domains have at most 64 raw entries combined, including
+  duplicates;
+- each raw domain is at most 1,024 UTF-8 bytes before IDNA processing and its
+  normalized DNS name is at most 253 ASCII bytes;
+- each policy/version identifier is printable ASCII and at most 64 bytes.
+
+These are semantic validation limits, not truncation points. Overflow is
+`invalid_request` before sorting, hashing, cache lookup, reservation, or
+provider execution.
 
 ### Effective query
 
@@ -225,12 +273,20 @@ Freshness is either:
 - one relative window: `day`, `week`, `month`, or `year`; or
 - inclusive `start_date`/`end_date` ISO dates.
 
-A relative window resolves against an injected UTC clock into inclusive UTC
-dates. `day` is `[today, today]`, `week` is `[today - 6 days, today]`,
+A relative window resolves against `operation_clock` into inclusive UTC dates.
+`day` is `[today, today]`, `week` is `[today - 6 days, today]`,
 `month` is `[today - 29 days, today]`, and `year` is
 `[today - 364 days, today]`. Both the requested relative value and resolved
 dates enter the plan. The resolved dates enter the cache fingerprint, so a
 relative window naturally rolls forward without a background invalidator.
+
+“Today” is deliberately the UTC calendar date, not the caller, host, or
+provider local timezone. Midnight UTC therefore creates a new fingerprint for
+relative windows; that churn is required invalidation for a different declared
+date range, not premature expiry. Existing callers promise no local-calendar
+interpretation. A future caller-timezone control would be a new typed semantic
+input with its own compatibility/version decision rather than an ambient locale
+lookup.
 
 Invalid dates, `start_date > end_date`, or a relative window combined with
 explicit dates are `invalid_request`. Adapters translate supported controls,
@@ -324,6 +380,20 @@ persistence timeout, and assembly must fit strictly inside the remaining
 reserve. Persistence that cannot finish there returns `persistence_failed`;
 no cache entry is published.
 
+“Skipped” is never silent. Every candidate not invoked receives one bounded
+`not_attempted` trace entry with a closed reason such as
+`unready_unbounded_adapter`, `provider_phase_expired`, `policy_ineligible`, or
+`readiness_rejected`. The final outcome and degraded/unready diagnostics derive
+from candidate, attempted, succeeded, failed, and not-attempted sets, so callers
+cannot mistake an omitted blocking adapter for a provider that responded.
+
+`not_attempted` is an internal trace classification, not a new public status.
+Legacy `ProviderTrace` projects it as the existing `status="skipped"` with the
+closed, sanitized reason in the existing `error` field. HTTP, MCP, CLI, Python,
+and session serializers preserve that projection exactly. Issue #66 may expose
+a typed reason in an additive versioned contract; version 1 does not add an
+outward enum or field.
+
 Each provider receives:
 
 ```text
@@ -359,6 +429,16 @@ the leader publishes. If admission rejects the entry, the follower may start
 or join its own policy-valid cohort while time remains. A failed leader does
 not publish an entry.
 
+The cohort owns one generation-scoped completion primitive. In a `finally`
+path the leader publishes exactly one terminal `FillOutcome`: `published`,
+`failed`, `cancelled`, or `deadline_expired`, with the fingerprint and
+generation but no reusable transient response. Followers wait on that
+primitive only until their own deadline. A non-`published` outcome or a
+published outcome with no admissible entry causes the follower to rerun cache
+admission exactly once, then atomically become or join a newer generation if
+time remains. Generation compare-and-set and the outer deadline prevent a
+follower from rejoining the failed generation or spinning indefinitely.
+
 ## Evidence trace
 
 Every logical retrieval records one bounded, secret-free planning trace,
@@ -368,6 +448,7 @@ whether it hits cache, executes providers, or fails before execution:
 plan_id
 cache_fingerprint
 plan_schema_version
+cache_identity_schema_version
 effective query hash and declared intent
 resolved semantic controls
 profile and effective tier cap
@@ -429,6 +510,13 @@ The complete plan includes profile, tier cap, candidate providers, deadline,
 revalidation, and egress preference. It excludes wall-clock `deadline_at`,
 health/balance snapshots, reservation IDs, caller label, and attempt scope.
 
+Canonicalization happens once inside `resolve_plan`. The immutable plan retains
+its precomputed `plan_id`, `cache_fingerprint`, and private canonical semantic
+bytes; lookup consumes those values and never re-sorts controls or re-hashes
+the plan. Normalized provider/domain collections have strict input caps, so
+sorting is bounded. Both SHA-256 digests are derived from the same normalized
+object graph, not two independently normalized copies that could drift.
+
 ### `cache_fingerprint`
 
 `cache_fingerprint` is:
@@ -437,7 +525,7 @@ health/balance snapshots, reservation IDs, caller label, and attempt scope.
 sha256(
   UTF8("argus-cache-v1\0") +
   canonical_json({
-    plan_schema_version,
+    cache_identity_schema_version,
     normalized_query,
     intent,
     result_limit,
@@ -478,6 +566,23 @@ freshness policy, not a requesting caller's shorter age preference. Lookup
 then applies the caller's `max_cache_age_seconds`. This permits a young entry
 to satisfy both strict and ordinary callers without weakening either.
 
+The implementation adds `scripts/benchmark-retrieval-plan.py` and checks in
+`benchmarks/retrieval-plan-identity-v1.json`. The fixture records the exact
+source revision, Python version, runner image/architecture, default case, and
+maximum valid case (32 raw provider entries, 64 raw domain entries, and the
+maximum query/version sizes). The script performs 1,000 untimed warmups, then
+30 independently timed batches of 1,000 plans and reports median and p95
+nanoseconds per plan plus allocated bytes.
+
+Blocking deterministic tests assert one normalization pass, two canonical
+serializations, two SHA-256 digests during planning, and zero sorting,
+canonicalization, or hashing during lookup. Timing comparison is blocking only
+when runner image, architecture, and Python minor version match the checked
+baseline; a greater-than-two-times median or p95 regression fails that job.
+Mismatched runners publish informational measurements but cannot fail on noisy
+wall time. Raw string concatenation is not an acceptable fallback because it
+loses typed identity.
+
 ## Cache entry
 
 A cache entry is an immutable snapshot, never the live `SearchResponse`
@@ -486,6 +591,7 @@ instance. It contains:
 ```text
 cache_fingerprint
 plan_schema_version
+cache_identity_schema_version
 stored_at
 expires_at
 original_search_run_id
@@ -507,7 +613,7 @@ acceptance receipt identity
 Secrets, raw provider payloads, request URLs containing credentials,
 authorization headers, and unsanitized exception text are forbidden.
 
-A hit returns a deep copy/new response with:
+A hit returns a new per-request response projection with:
 
 - a new search run ID;
 - `cached=true`;
@@ -516,7 +622,13 @@ A hit returns a deep copy/new response with:
 - unchanged original provider/spend/provenance evidence;
 - a current zero-new-call accounting record.
 
-It never mutates the stored entry or original response.
+The stored results, contributor ranks, and provider traces are frozen values
+(or immutable serialized bytes) and may be structurally shared by the
+per-request projection. Argus does not deep-copy the complete evidence graph on
+every hit. A compatibility surface that requires mutable result objects copies
+only its bounded outward result projection, never the full trace. Serializers
+are read-only and receive the new run/receipt/accounting overlay separately.
+No caller can mutate the stored entry, shared evidence, or original response.
 
 ## Fail-closed cache admission
 
@@ -531,7 +643,10 @@ original_search_run_id?
 
 An entry is admitted only when all applicable checks pass:
 
-1. Fingerprint and schema/contract versions match.
+1. Fingerprint, cache-identity schema, and included semantic component
+   versions match. The complete-plan schema is retained for lineage but an
+   execution- or presentation-only shape change does not reject reusable
+   evidence.
 2. The entry is durably accepted and its acceptance identity is present.
 3. `now < expires_at` and age is within the plan's maximum cache age.
 4. Every result has complete contributing-provider identities, raw ranks,
@@ -551,6 +666,15 @@ Missing evidence rejects the hit. It never degrades into “probably eligible.�
 Contributor mappings are mandatory internal provenance even when outward
 attribution is not requested; `include_attribution` controls presentation, not
 whether Argus retains evidence.
+
+For a zero-result entry, per-result checks are not treated as vacuous proof.
+Admission additionally requires at least one eligible provider with a
+successful terminal trace, complete request/response/control evidence for
+every successful provider, and an explicit proven-empty classification.
+Providers whose rows were all removed as undated or out of range remain
+attempted/successful provider evidence but are not result contributors; without
+provider-native or post-filter proof that the eligible set is genuinely empty,
+the outcome is `freshness_unproven`/`providers_failed` and is not cacheable.
 
 ### Free-profile rule
 
@@ -596,8 +720,32 @@ and the retrieval fails visibly. A cache hit is a new logical retrieval and
 must itself be durably accepted with its new run ID and cache lineage before
 acknowledgment.
 
+Durable acceptance and cache publication have separate explicit commits. The
+acceptance transaction commits the run/evidence/receipt first. A publication
+transaction then inserts one immutable cache row referencing that receipt and
+becomes lookup-visible only at commit; it never exposes a pre-commit row. If a
+backend uses a staging row, lookup filters to `publication_state=published`,
+and failed/crashed staging is unreachable and reclaimable. Database
+transaction isolation and WAL recovery must prove that concurrent readers and
+restart recovery see either the complete published row or no row, never a
+partial entry. Failure after acceptance therefore retains truthful accepted-run
+evidence but no reusable cache entry or in-memory index record.
+
 This changes the current `SearchResultPipeline` ordering without changing the
-public transport interfaces.
+public transport interfaces. One accepted-operation orchestrator owns the
+state machine:
+
+```text
+planned -> decided -> executed_or_hit -> durably_accepted
+        -> cache_published_or_not_applicable -> acknowledged
+```
+
+It completes one request-scoped future and consumes one acknowledgment token.
+HTTP, MCP, CLI, Python, and session adapters only present the finalized
+accepted operation; they cannot acknowledge a raw candidate, persist again, or
+retry after an ambiguous completion. Presenter failure after durable acceptance
+records delivery failure against the same run and never creates a second
+acceptance or provider execution.
 
 ## Invalidation
 
@@ -691,12 +839,26 @@ The implementation plan must include hermetic tests proving:
 | attribution presentation difference | different | same |
 | shorter deadline | different | same |
 | force revalidation | different | same, lookup bypassed |
-| routing/freshness/domain/ranking/normalization version bump | different | different |
+| execution/presentation-only complete-plan schema bump | different | same |
+| cache-identity schema bump | different | different |
+| query-normalization version bump | different | different; query semantics changed |
+| routing version bump | different | different; acquired evidence semantics changed |
+| freshness version bump | different | different; date proof semantics changed |
+| domain version bump | different | different; host admission semantics changed |
+| ranking version bump | different | different; contribution/order semantics changed |
+| result-normalization version bump | different | different; stored projection semantics changed |
 | spend-policy version bump | different | same |
+| deployment SHA or unrelated config change | same | same |
 | unknown metadata difference | same | same |
 
 Admission tests must additionally prove:
 
+- raw provider/domain/query/version bounds reject before normalization,
+  deduplication, hashing, cache, reservation, or execution;
+- one operation-clock pair drives relative-date resolution, deadline elapsed
+  time, and admission age even if the host wall clock jumps;
+- relative `day` rolls at midnight UTC and is unaffected by caller/host
+  timezone;
 - free miss never initiates a billable attempt;
 - free hit may reuse paid-origin evidence and reports zero new spend;
 - an entry created without outward attribution renders identical attribution
@@ -706,15 +868,32 @@ Admission tests must additionally prove:
 - freshness/domain failures reject the hit;
 - expired and forced entries are not returned;
 - stale evidence is not served after execution failure;
-- cached empty is short-lived and requires a successful-provider trace;
-- persistence failure publishes no entry;
-- a hit creates a new immutable response/run without mutating the entry;
+- cached empty is short-lived, requires at least one eligible successful
+  provider with complete terminal traces, and cannot pass vacuously after all
+  rows are removed as freshness-unproven;
+- persistence failure publishes no entry, and concurrent readers/WAL restart
+  never observe a staged or partially committed row;
+- a hit creates a new immutable response/run without mutating the entry or
+  deep-copying the complete immutable evidence graph;
+- every cache miss and hit produces exactly one durable acceptance and one
+  caller acknowledgment across HTTP, MCP, CLI, Python, and session adapters;
 - same-cohort concurrent misses produce at most one live fill;
 - policy-divergent cohorts never share an in-flight execution and each
   follower reruns admission;
+- failed/cancelled/deadline leaders complete their generation; followers do
+  not spin or reuse transient output and may re-admit/join only a newer
+  generation within their own deadline;
 - a spend-policy version bump changes the execution cohort;
 - hanging async, blocking, and slow-persistence fakes terminate with typed
   evidence inside the operation deadline and publish no unsafe cache entry;
+- every uninvoked blocking adapter has a bounded visible `not_attempted`
+  reason, affects degraded/unready evidence, and serializes through every
+  legacy surface as `status="skipped"` plus the existing sanitized error;
+- plan canonicalization occurs once, cache lookup does not re-hash, and the
+  declared benchmark fixture/protocol distinguishes blocking same-runner
+  regressions from informational mismatched-runner results;
+- default-off or absent model-proposal support preserves byte-identical plan
+  identities and execution behavior;
 - all callers receive timeout evidence within 120 seconds.
 
 ## Explicit limits
@@ -732,10 +911,15 @@ Version 1 does not include:
 - public transport changes owned by #66;
 - the canonical evidence envelope owned by #65.
 
-A future optional model may propose a typed plan only outside this module. Its
-output must pass the same deterministic validator, budget/deadline gates, and
-fingerprinting. The deterministic planner remains required and authoritative;
-model availability can never be required for retrieval.
+Version 1 exposes no runtime model-proposal entry point. A future optional
+model may propose typed controls only outside this module after a separate
+review adds an explicit default-off feature flag (for example,
+`ARGUS_MODEL_PLAN_PROPOSALS=off|allow`). Enabling it may not bypass caller
+policy and cannot be inferred from model availability. Proposed controls are
+untrusted input: they pass the same deterministic validator,
+budget/deadline/spend gates, versioning, and fingerprinting before a plan
+exists. The deterministic planner remains required and authoritative; disabled
+or unavailable model support preserves identical retrieval behavior.
 
 ## Consequences
 
