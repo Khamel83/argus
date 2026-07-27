@@ -14,18 +14,32 @@
 - The deterministic planner performs no model call, query rewrite, vector lookup, network operation, or inferred intent.
 - Operation deadline is at most `120000` milliseconds and reserves the final `5000` milliseconds for fusion, durable acceptance, and presentation.
 - Search result limits remain integers from `1` through `50`.
-- Each provider is invoked at most once per plan; retries and redirects remain inside that attempt deadline.
+- Each provider adapter is invoked at most once per plan. Any provider-native
+  retry or redirect stays inside that one attempt, is individually counted in
+  the attempt trace, follows a fixed redirect bound, and never forwards
+  credentials across origins.
+- Each provider attempt receives `min(configured_timeout,
+  provider_phase_remaining)`; no attempt starts after the provider-phase
+  deadline, and outstanding attempts are cancelled at that boundary.
 - `free_only=true` is enforced both during planning and immediately before reservation/invocation.
 - Routine diagnostics invoke no search provider and consume no monetary or quota-bearing request.
 - RRF uses exact rational `1 / (60 + provider_rank + 1)` contributions and the accepted five-part deterministic tie-break.
 - Search-only duplicate clustering uses only the conservative document key; weak URL/title/snippet hints never merge evidence.
-- Extraction evaluates at most `16` steps; a composition contains at most `200` result links.
+- Extraction evaluates at most `16` steps; a composition contains at most
+  `200` result links. The 16th step and 200th unique link are accepted, while a
+  17th step or 201st unique link is a visible bounded rejection, never silent
+  truncation.
 - Rejected or diagnostic-only extraction content never becomes a citation, source document, synthesis input, delivery, or positive cache entry.
 - Archive fallback is lookup-only by default. Submitting a URL to create an external archive requires a distinct typed policy, explicit irreversible-action authority, and a human gate.
 - Durable authority acceptance precedes cache publication and caller acknowledgment.
 - The version-2 HTTP envelope is exactly `contract_version`, `outcome`, `request_id`, `result`, and `error`.
-- MCP request bodies are capped at `4 MiB`; HTTP-authority responses consumed by MCP/CLI are capped at `11 MiB`.
-- MCP transport sessions are process-local, principal-bound, cryptographically random, capped at `256`, and expire after `30` idle minutes.
+- MCP request bodies are capped at `4 MiB`; HTTP-authority responses consumed
+  by MCP/CLI are streamed through an `11 MiB` counting bound and aborted before
+  buffering an oversized body.
+- MCP transport sessions are process-local, principal-bound, cryptographically
+  random, capped at `256`, and expire after `30` idle minutes. A bounded
+  periodic sweep plus opportunistic access-time reclamation removes expired
+  entries.
 - No presenter imports or calls providers, extractors, cache-fill code, persistence mappers, or rejection classifiers.
 - No mixed execution, persistence, classification, or presentation authority may be deployed.
 - No manual result labeling, owner research queue, provider-credit purchase, destructive cleanup, secret rotation, broad rewrite, production LLM dependency, vector database, or silent stale fallback.
@@ -160,10 +174,12 @@ mechanical. S4 through P1 are strictly serial.
 - `migrations/versions/0009_retrieval_evidence.py` — plans, normalized batches/observations, clusters/contributions, cache lineage, accounting, and accepted operation identity.
 
 The migrations are additive. They neither rewrite legacy rows nor import the
-legacy SQLite database. Downgrade removes only the new, unused schema while
-the release flag is still disabled. After version-2 evidence has been accepted
-in production, rollback is an image rollback with schema retained; destructive
-downgrade is forbidden.
+legacy SQLite database. Migration tests inspect upgrade and downgrade
+operations: a pre-activation downgrade may remove only tables introduced by
+its own revision and may not touch legacy objects; an activation receipt makes
+every evidence-schema downgrade fail closed. After version-2 evidence has been
+accepted in production, rollback is an image rollback with schema retained;
+destructive downgrade is forbidden.
 
 ## Slice Decision Matrix
 
@@ -556,6 +572,9 @@ Assert no autonomous path emits `manual_review`.
 Reject dangling/duplicate/mismatched ordinals, inconsistent exhausted sets,
 over-16 steps, over-bound IDs/labels/signals/latency/cost, raw errors, URLs,
 content, credentials, and request bodies inside rejection evidence.
+Assert the inclusive boundaries exactly: a valid 16th step and 200th unique
+result link are retained, while a 17th step or 201st unique link yields the
+typed bounded rejection without partial publication or silent truncation.
 
 - [ ] **Step 3: Separate archive lookup from external archive creation**
 
@@ -599,6 +618,9 @@ it against `RetrievalEvidenceView` before acceptance rather than declaring a
 foreign key to a future table. Test SQLite upgrade from 0006, PostgreSQL
 upgrade/rollback in the disposable database fixture, atomic rollback on fault
 injection, idempotent retry by run ID, and no legacy row rewrite/replay.
+Inspect the downgrade operations: before activation they may remove only 0007
+objects, and after an activation receipt exists they must refuse the downgrade
+without issuing a `DROP`.
 
 - [ ] **Step 7: Keep legacy extraction readable**
 
@@ -682,8 +704,10 @@ scaled `min(3, result_limit)` / `min(2, required_clusters)` floor.
 
 Normalize/filter, cluster, rank, diversify, and produce the full immutable
 trace. No network import or async function is permitted. Slow-fusion fake
-tests consume the operation's remaining deadline and return timeout evidence
-without persistence/cache publication.
+tests exercise monotonic deadline checks before and after each bounded fusion
+phase. Expiry returns timeout evidence without starting the next phase or
+publishing persistence/cache state. Input counts are bounded before fusion, so
+no unbounded synchronous phase can consume the final reserve.
 
 - [ ] **Step 6: Add a compatibility projection**
 
@@ -767,6 +791,8 @@ Migration 0008 creates observations, materialized snapshots, evidence refs,
 leases, and alert-dedupe state. Repository transactions use database time,
 not process time, for expiry and fencing. Every provider-attempt/spend
 transaction records normalized observations and rematerializes the snapshot.
+Upgrade/downgrade tests prove 0008 cannot alter legacy or 0007 objects and
+refuses downgrade without issuing a `DROP` after evidence activation.
 
 - [ ] **Step 5: Split catalog and executable registry**
 
@@ -852,7 +878,9 @@ Migration 0009 adds plans, provider batches/attempts, observations, clusters,
 exact contributions, readiness decisions, cache lineage, accounting,
 accepted-operation identity, and bounded trace refs. Use foreign keys and
 unique constraints to enforce run/link identity. Preserve legacy rows and
-acceptance fingerprints.
+acceptance fingerprints. Test that a pre-activation downgrade targets only
+0009 objects and that any accepted activation receipt makes downgrade refuse
+before issuing a `DROP`.
 
 - [ ] **Step 4: Implement immutable cache storage and admission**
 
@@ -860,6 +888,10 @@ Key by `cache_fingerprint`; single-flight by fingerprint plus execution cohort.
 Store accepted immutable facts, not `SearchResponse`. Every hit receives a new
 logical run/receipt and current zero-call accounting while retaining origin
 attempt/spend/provenance.
+Acceptance uses one database transaction with unique receipt/publication keys
+and either row locking or conflict-safe compare-and-set. Concurrent leaders
+can never overwrite evidence, double-publish a cache entry, or acknowledge
+before the single accepted transaction commits.
 
 - [ ] **Step 5: Implement canonical outcome selection**
 
@@ -925,9 +957,17 @@ and ADRs 0005/0006.
 
 - [ ] **Step 1: Remove the architecture-test skip**
 
-The AST/import test now requires presenters and forbids execution-layer
-imports. Add monkeypatch traps proving presenters cannot invoke broker,
-extractor, repository, cache, or rejection mapper.
+The AST/import test inventories every transport/presentation adapter in
+`argus/api/routes_*.py`, `argus/api/presenters.py`, `argus/mcp/`,
+`argus/cli/`, and `argus/workflows/`. At S7, API routes and presenters may call
+only the accepted operation service; exact legacy MCP/CLI/workflow modules
+remain on a closed, no-wildcard exception list while evidence authority is
+disabled. Add monkeypatch traps proving ported adapters cannot invoke broker,
+extractor, repository, cache, rejection mapper, classification, or ranking
+except through that service. S8 through S9e remove their named exceptions as
+each adapter is ported; the test rejects a new adapter or a broader exception,
+and S10 requires the exception list to be empty before the release candidate
+can enable evidence authority.
 
 - [ ] **Step 2: Route legacy HTTP through accepted operations**
 
@@ -1185,7 +1225,10 @@ eviction.
 Reclaim expiry, reserve capacity, collision-check, and insert atomically.
 Bind every session to the authenticated principal and negotiated protocol.
 Session IDs never authenticate, identify retrieval sessions, or derive from
-request IDs/tokens.
+request IDs/tokens. Run a bounded periodic sweep even when no new session is
+created, and also reclaim expired entries opportunistically on registry
+access; tests prove idle expired entries leave memory without capacity
+pressure.
 
 - [ ] **Step 4: Secure legacy SSE without changing its shape**
 
@@ -1231,6 +1274,7 @@ compatibility.
 - Modify: `argus/mcp/http_adapter.py`
 - Modify: `argus/mcp/tools.py`
 - Modify: `argus/mcp/server.py`
+- Modify: `tests/test_architecture_boundaries.py`
 
 **Interfaces:**
 - Produces explicit `search_web_v2`, `recover_url_v2`, `expand_links_v2`, and
@@ -1249,13 +1293,17 @@ work.
 
 Freeze every legacy tool golden. V2 tools advertise exact input/output schemas,
 return the exact HTTP envelope as `structuredContent`, include bounded text,
-and set `isError=false` only for success/degraded/empty.
+and set `isError=false` only for success/degraded/empty. Feed chunked responses
+at, below, and one byte above the 11 MiB limit; the adapter counts while
+streaming and aborts the oversized body before full buffering or schema parse.
 
 - [ ] **Step 3: Implement HTTP-only tool adapters**
 
 Use S9a discovery before the first execution. Once v2 is selected, a failure
 never falls back to v1. Presenters do not classify outcomes or parse Markdown
-for evidence.
+for evidence. Remove the exact MCP entries from the architecture exception
+list; direct broker/extractor/persistence authority from any MCP module now
+fails the boundary test.
 
 - [ ] **Step 4: Advertise MCP v2 only after complete registration**
 
@@ -1281,12 +1329,13 @@ startup on incomplete or mismatched descriptors.
 
 ```bash
 uv run pytest tests/test_mcp_v2.py tests/test_mcp_transport.py \
-  tests/test_http_authority.py -q
+  tests/test_http_authority.py tests/test_architecture_boundaries.py -q
 uv run pytest -q
 git diff --check
 git add argus/capabilities.py argus/api/routes_health.py \
   argus/mcp/v2_tools.py argus/mcp/http_adapter.py argus/mcp/tools.py \
-  argus/mcp/server.py tests/test_mcp_v2.py
+  argus/mcp/server.py tests/test_mcp_v2.py \
+  tests/test_architecture_boundaries.py
 git commit -m "feat: add versioned MCP evidence tools"
 ```
 
@@ -1308,6 +1357,7 @@ legacy until P1.
 **Files:**
 - Create: `tests/test_cli_v2.py`
 - Modify: `argus/cli/main.py`
+- Modify: `tests/test_architecture_boundaries.py`
 
 **Interfaces:**
 - CLI consumes only authenticated HTTP and `ContractSelection`.
@@ -1323,16 +1373,19 @@ exit 1 for canonical failures, and unchanged Click usage exit 2.
 
 Human rendering preserves core legacy result text and adds visible
 outcome/request/evidence labels. JSON mode writes no progress, warning, or log
-text to stdout.
+text to stdout. Stream HTTP response chunks through the same 11 MiB counting
+bound used by MCP, with exact at/below/one-byte-over tests. Remove the exact CLI
+entries from the architecture exception list.
 
 - [ ] **Step 3: Verify and commit**
 
 ```bash
 uv run pytest tests/test_cli_v2.py tests/test_cli.py \
-  tests/test_http_authority.py -q
+  tests/test_http_authority.py tests/test_architecture_boundaries.py -q
 uv run pytest -q
 git diff --check
-git add argus/cli/main.py tests/test_cli_v2.py
+git add argus/cli/main.py tests/test_cli_v2.py \
+  tests/test_architecture_boundaries.py
 git commit -m "feat: negotiate CLI evidence responses"
 ```
 
@@ -1357,6 +1410,7 @@ obligations.
 - Modify: `argus/workflows/service.py`
 - Modify: `argus/workflows/models.py`
 - Modify: `tests/test_workflows.py`
+- Modify: `tests/test_architecture_boundaries.py`
 - Modify: `argus/persistence/search_ledger.py`
 
 **Interfaces:**
@@ -1382,17 +1436,20 @@ external delivery.
 
 Remove silent `continue`/status reconstruction paths. Persist every planned
 link, enforce the immutable requirement, and return the exact accepted
-composition projection.
+composition projection. Remove the exact workflow entries from the architecture
+exception list; the boundary test must now report no remaining presentation
+adapter with direct execution or semantic authority.
 
 - [ ] **Step 4: Verify and commit**
 
 ```bash
 uv run pytest tests/test_workflow_composition.py tests/test_workflows.py \
-  tests/test_search_ledger.py -q
+  tests/test_search_ledger.py tests/test_architecture_boundaries.py -q
 uv run pytest -q
 git diff --check
 git add argus/workflows argus/persistence/search_ledger.py \
-  tests/test_workflow_composition.py tests/test_workflows.py
+  tests/test_workflow_composition.py tests/test_workflows.py \
+  tests/test_architecture_boundaries.py
 git commit -m "feat: compose workflow extraction evidence"
 ```
 
@@ -1423,6 +1480,7 @@ production delivery waits for P1 canaries.
 - Create: `scripts/run-scorecard.py`
 - Modify: `.github/workflows/ci.yml`
 - Modify: `docs/scorecards/stability-competitive.md`
+- Modify: `tests/test_architecture_boundaries.py`
 
 **Interfaces:**
 - Produces deterministic hermetic stability verdict and validated checksummed
@@ -1442,6 +1500,8 @@ evaluator outputs for win/loss/tie/conflict/catastrophic/malformed/unavailable.
 Evaluate every scorecard gate independently. Any failed required gate yields
 `unstable`; missing evidence invalidates the verdict. Free and budgeted
 profiles are separate and strong budgeted evidence cannot mask free failure.
+Require the architecture exception list to be empty; a remaining direct
+presentation authority makes the release candidate `unstable`.
 
 - [ ] **Step 3: Implement exact competitive procedure**
 
@@ -1472,14 +1532,16 @@ individually.
 - [ ] **Step 6: Verify and commit**
 
 ```bash
-uv run pytest tests/test_scorecard.py tests/test_evidence_bundle.py -q
+uv run pytest tests/test_scorecard.py tests/test_evidence_bundle.py \
+  tests/test_architecture_boundaries.py -q
 uv run python scripts/run-scorecard.py --lane hermetic \
   --output .artifacts/scorecard-hermetic
 uv run pytest -q
 git diff --check
 git add argus/scorecard tests/fixtures/scorecard tests/test_scorecard.py \
   tests/test_evidence_bundle.py scripts/run-scorecard.py \
-  .github/workflows/ci.yml docs/scorecards/stability-competitive.md
+  .github/workflows/ci.yml docs/scorecards/stability-competitive.md \
+  tests/test_architecture_boundaries.py
 git commit -m "feat: automate retrieval stability scorecard"
 ```
 
