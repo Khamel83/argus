@@ -1,5 +1,12 @@
 {
-  "status": 402,
-  "provider_code": "valyu_402",
-  "message": "fixture 402"
+  "transport": {
+    "status_code": 402,
+    "headers": {}
+  },
+  "body": {
+    "success": false,
+    "error": {
+      "code": "valyu_402"
+    }
+  }
 }

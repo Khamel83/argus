@@ -1,5 +1,12 @@
 {
-  "status": 504,
-  "provider_code": "brave_408_504",
-  "message": "fixture 408_504"
+  "transport": {
+    "status_code": 504,
+    "headers": {}
+  },
+  "body": {
+    "type": "ErrorResponse",
+    "error": {
+      "code": "brave_408_504"
+    }
+  }
 }

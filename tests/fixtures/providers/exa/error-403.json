@@ -1,5 +1,10 @@
 {
-  "status": 403,
-  "provider_code": "exa_403",
-  "message": "fixture 403"
+  "transport": {
+    "status_code": 403,
+    "headers": {}
+  },
+  "body": {
+    "error": "exa_403",
+    "requestId": "exa-request"
+  }
 }

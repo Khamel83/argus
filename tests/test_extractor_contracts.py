@@ -19,6 +19,15 @@ from argus.extraction.models import ExtractorName
 FIXTURES = Path(__file__).parent / "fixtures" / "extractors"
 
 
+@pytest.fixture(autouse=True)
+def _prohibit_extractor_contract_dns(monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise AssertionError("extractor contract tests must not use DNS")
+
+    monkeypatch.setattr("socket.getaddrinfo", fail)
+    monkeypatch.setattr("socket.create_connection", fail)
+
+
 def _load(*parts: str) -> object:
     return json.loads((FIXTURES.joinpath(*parts)).read_text(encoding="utf-8"))
 
@@ -39,7 +48,7 @@ def test_locked_crawl4ai_markdown_object_and_legacy_string_are_supported():
 
 
 def test_crawl4ai_malformed_or_unsuccessful_shape_fails_closed():
-    for fixture in ("malformed.json", "error.json"):
+    for fixture in ("malformed.json", "error.json", "missing_success.json"):
         outcome = normalize_crawl4ai_result(
             "https://example.test/article",
             _load("crawl4ai", fixture),
@@ -60,7 +69,29 @@ def test_firecrawl_v2_success_and_error_shapes_are_bounded():
     assert FIRECRAWL_API_URL.endswith("/v2/scrape")
     assert success.extractor is ExtractorName.FIRECRAWL
     assert success.title == "Firecrawl fixture"
-    assert error.error == "firecrawl: provider rejected extraction"
+    metadata_error = parse_firecrawl_v2_response(
+        "https://example.test/article",
+        _load("firecrawl", "v2_metadata_error.json"),
+    )
+    assert error.error == "firecrawl: extraction failed"
+    assert metadata_error.error == "firecrawl: extraction failed"
+    assert "raw body sentinel" not in metadata_error.error
+
+
+def test_crawl4ai_redirect_fixture_is_hermetic_and_dns_is_never_used():
+    with (
+        patch(
+            "argus.extraction.crawl4ai_extractor.is_safe_url",
+            return_value=(True, ""),
+        ) as safe_url,
+        patch("socket.getaddrinfo", side_effect=AssertionError("DNS prohibited")),
+    ):
+        result = normalize_crawl4ai_result(
+            "https://example.test/article",
+            _load("crawl4ai", "redirect_success.json"),
+        )
+    assert result.url == "https://redirected.example.test/article"
+    safe_url.assert_called_once_with("https://redirected.example.test/article")
 
 
 @pytest.mark.asyncio

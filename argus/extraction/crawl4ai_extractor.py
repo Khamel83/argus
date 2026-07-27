@@ -23,7 +23,7 @@ def _field(result: object, name: str, default=None):
 
 def normalize_crawl4ai_result(url: str, result: object) -> ExtractedContent:
     """Normalize the locked Crawl4AI result object without retaining raw fields."""
-    if not result or _field(result, "success", True) is not True:
+    if not result or _field(result, "success") is not True:
         return ExtractedContent(url=url, error="crawl4ai: extraction failed")
 
     markdown = _field(result, "markdown")
@@ -36,11 +36,7 @@ def normalize_crawl4ai_result(url: str, result: object) -> ExtractedContent:
     if not isinstance(markdown, str):
         return ExtractedContent(url=url, error="crawl4ai: malformed markdown result")
 
-    final_url = (
-        _field(result, "url")
-        or _field(result, "redirected_url")
-        or url
-    )
+    final_url = _field(result, "url") or _field(result, "redirected_url") or url
     if not isinstance(final_url, str):
         final_url = url
     if final_url != url:

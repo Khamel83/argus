@@ -1,5 +1,10 @@
 {
-  "status": 401,
-  "provider_code": "exa_401",
-  "message": "fixture 401"
+  "transport": {
+    "status_code": 401,
+    "headers": {}
+  },
+  "body": {
+    "error": "exa_401",
+    "requestId": "exa-request"
+  }
 }

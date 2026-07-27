@@ -6,7 +6,7 @@ Independent index with vertical search (News, Healthcare, Legal).
 """
 
 import time
-from typing import List, Tuple
+from typing import List
 
 import httpx
 
@@ -15,11 +15,11 @@ from argus.logging import get_logger
 from argus.models import (
     ProviderName,
     ProviderStatus,
-    ProviderTrace,
     SearchResult,
     SearchQuery,
 )
 from argus.providers.base import BaseProvider
+from argus.broker.provider_evidence import ProviderSearchBatch
 
 logger = get_logger("providers.you")
 
@@ -44,7 +44,7 @@ class YouProvider(BaseProvider):
             return ProviderStatus.UNAVAILABLE_MISSING_KEY
         return ProviderStatus.ENABLED
 
-    async def search(self, query: SearchQuery) -> Tuple[List[SearchResult], ProviderTrace]:
+    async def search(self, query: SearchQuery) -> ProviderSearchBatch:
         start = time.monotonic()
 
         if not self.is_available():
@@ -59,18 +59,33 @@ class YouProvider(BaseProvider):
             "safesearch": "moderate",
         }
         params.update(self._freshness_params(query))
+        request_evidence = self._request_evidence(
+            query,
+            timeout_seconds=self._attempt_timeout(query),
+            provider_request_material=self._canonical_request_material(params),
+        )
 
         try:
-            async with httpx.AsyncClient(timeout=self._attempt_timeout(query)) as client:
+            async with httpx.AsyncClient(
+                timeout=self._attempt_timeout(query)
+            ) as client:
                 resp = await client.get(YOU_API_BASE, params=params, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
 
-            return self._normalized_batch(data, query, started_at=start)
+            return self._normalized_batch(
+                data,
+                query,
+                started_at=start,
+                request_evidence=request_evidence,
+                response_headers=self._response_headers(resp),
+            )
 
         except Exception as e:
             logger.warning("You.com search failed: %s", type(e).__name__)
-            return self._failure_batch(e, started_at=start)
+            return self._failure_batch(
+                e, started_at=start, request_evidence=request_evidence
+            )
 
     def _normalize(self, raw_results: list) -> List[SearchResult]:
         results = []
@@ -81,21 +96,24 @@ class YouProvider(BaseProvider):
             # You.com returns snippets as a list; join the first one
             snippets = item.get("snippets", [])
             snippet = snippets[0] if snippets else item.get("description", "")
-            results.append(SearchResult(
-                url=url,
-                title=item.get("title", ""),
-                snippet=snippet,
-                domain=self._extract_domain(url),
-                provider=self.name,
-                score=0.0,
-                raw_rank=i,
-            ))
+            results.append(
+                SearchResult(
+                    url=url,
+                    title=item.get("title", ""),
+                    snippet=snippet,
+                    domain=self._extract_domain(url),
+                    provider=self.name,
+                    score=0.0,
+                    raw_rank=i,
+                )
+            )
         return results
 
     @staticmethod
     def _extract_domain(url: str) -> str:
         try:
             from urllib.parse import urlparse
+
             return urlparse(url).netloc
         except Exception:
             return ""

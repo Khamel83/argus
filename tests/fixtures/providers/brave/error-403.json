@@ -1,5 +1,12 @@
 {
-  "status": 403,
-  "provider_code": "brave_403",
-  "message": "fixture 403"
+  "transport": {
+    "status_code": 403,
+    "headers": {}
+  },
+  "body": {
+    "type": "ErrorResponse",
+    "error": {
+      "code": "brave_403"
+    }
+  }
 }

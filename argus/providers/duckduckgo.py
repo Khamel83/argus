@@ -7,21 +7,19 @@ Less reliable than SearXNG (depends on DDG's HTML not changing).
 Uses the `ddgs` package: https://pypi.org/project/ddgs/
 """
 
-import time
 import importlib.util
-import asyncio
-from typing import List, Tuple
+from typing import List
 
 from argus.config import ProviderConfig
 from argus.logging import get_logger
 from argus.models import (
     ProviderName,
     ProviderStatus,
-    ProviderTrace,
     SearchResult,
     SearchQuery,
 )
 from argus.providers.base import BaseProvider, ProbeCapability
+from argus.broker.provider_evidence import ProviderSearchBatch
 
 logger = get_logger("providers.duckduckgo")
 
@@ -50,11 +48,7 @@ class DuckDuckGoProvider(BaseProvider):
             return ProviderStatus.UNAVAILABLE_MISSING_KEY
         return ProviderStatus.ENABLED
 
-    async def search(
-        self, query: SearchQuery
-    ) -> Tuple[List[SearchResult], ProviderTrace]:
-        start = time.monotonic()
-
+    async def search(self, query: SearchQuery) -> ProviderSearchBatch:
         if not self._available:
             return self._skipped_batch(
                 (
@@ -63,34 +57,7 @@ class DuckDuckGoProvider(BaseProvider):
                     else "ddgs package not installed (pip install ddgs)"
                 )
             )
-
-        try:
-            from ddgs import DDGS
-
-            def run_search():
-                freshness = self._freshness_params(query)
-                return list(
-                    DDGS().text(
-                        query.query,
-                        max_results=query.max_results,
-                        backend="duckduckgo",
-                        **freshness,
-                    )
-                )
-
-            raw_results = await asyncio.wait_for(
-                asyncio.to_thread(run_search),
-                timeout=self._attempt_timeout(query),
-            )
-            return self._normalized_batch(
-                {"results": raw_results},
-                query,
-                started_at=start,
-            )
-
-        except Exception as e:
-            logger.warning("DuckDuckGo search failed: %s", type(e).__name__)
-            return self._failure_batch(e, started_at=start)
+        return self._skipped_batch("blocking provider lacks killable deadline")
 
     def _normalize(self, raw_results: list) -> List[SearchResult]:
         results = []

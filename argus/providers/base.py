@@ -6,8 +6,11 @@ Provider-specific response shapes must never leak outside adapters.
 """
 
 from abc import ABC, abstractmethod
+from datetime import datetime, timezone
 from enum import Enum
+import json
 import time
+from typing import Mapping
 
 from argus.broker.planning import RetrievalPlan
 from argus.broker.provider_evidence import ProviderSearchBatch
@@ -15,15 +18,17 @@ from argus.broker.provider_evidence import (
     ProviderRequestEvidence,
     ProviderResponseEvidence,
     ProviderFailure,
+    RedirectChildEvidence,
     QueryRelation,
     FailureCategory,
+    EgressType,
     failure_batch,
-    normalize_provider_response,
     query_hash,
     skipped_batch,
     with_response_timing,
     attempt_timeout_seconds,
 )
+from argus.providers.normalization import normalize_provider_response
 from argus.broker.planning import FreshnessWindow
 from argus.models import (
     ProviderName,
@@ -59,9 +64,7 @@ class BaseProvider(ABC):
         ...
 
     @abstractmethod
-    async def search(
-        self, query: SearchQuery
-    ) -> ProviderSearchBatch:
+    async def search(self, query: SearchQuery) -> ProviderSearchBatch:
         """Execute a search and return one normalized bounded evidence batch."""
         ...
 
@@ -70,6 +73,9 @@ class BaseProvider(ABC):
         query: SearchQuery,
         *,
         timeout_seconds: float | None = None,
+        provider_request_material: str | None = None,
+        query_relation: QueryRelation = QueryRelation.EXACT,
+        redirect_children: tuple[RedirectChildEvidence, ...] = (),
     ) -> ProviderRequestEvidence:
         translation = None
         plan = query.metadata.get("_retrieval_plan")
@@ -90,10 +96,19 @@ class BaseProvider(ABC):
             )
         return ProviderRequestEvidence(
             effective_query_hash=query_hash(query.query),
-            provider_query_hash=query_hash(query.query),
-            query_relation=QueryRelation.EXACT,
+            provider_query_hash=query_hash(
+                provider_request_material
+                if provider_request_material is not None
+                else query.query
+            ),
+            query_relation=query_relation,
             freshness_translation=translation,
             timeout_seconds=timeout_seconds,
+            attempt_id=str(
+                query.metadata.get("_provider_attempt_id")
+                or f"{self.name.value}-attempt"
+            ),
+            redirect_children=redirect_children,
         )
 
     def _attempt_timeout(self, query: SearchQuery) -> float:
@@ -133,15 +148,25 @@ class BaseProvider(ABC):
         query: SearchQuery,
         *,
         started_at: float,
+        request_evidence: ProviderRequestEvidence | None = None,
+        response_headers: dict[str, object] | None = None,
+        egress: EgressType | None = None,
+        machine: str | None = None,
     ) -> ProviderSearchBatch:
+        observed_at = datetime.now(timezone.utc)
+        configured_egress, configured_machine = self._provenance()
         batch = normalize_provider_response(
             self.name,
             payload,
             max_results=query.max_results,
-            request_evidence=self._request_evidence(
-                query,
-                timeout_seconds=self._attempt_timeout(query),
+            request_evidence=request_evidence
+            or self._request_evidence(
+                query, timeout_seconds=self._attempt_timeout(query)
             ),
+            response_headers=response_headers,
+            observed_at=observed_at,
+            egress=egress or configured_egress,
+            machine=machine if machine is not None else configured_machine,
         )
         return with_response_timing(
             batch,
@@ -149,12 +174,17 @@ class BaseProvider(ABC):
         )
 
     def _failure_batch(
-        self, error: BaseException, *, started_at: float
+        self,
+        error: BaseException,
+        *,
+        started_at: float,
+        request_evidence: ProviderRequestEvidence | None = None,
     ) -> ProviderSearchBatch:
         return failure_batch(
             self.name,
             error,
             latency_ms=int((time.monotonic() - started_at) * 1000),
+            request_evidence=request_evidence,
         )
 
     def _typed_failure_batch(
@@ -163,10 +193,12 @@ class BaseProvider(ABC):
         summary: str,
         *,
         started_at: float,
+        request_evidence: ProviderRequestEvidence | None = None,
     ) -> ProviderSearchBatch:
         return ProviderSearchBatch(
             provider=self.name,
             provider_contract_version="2026-07-27-v1",
+            request_evidence=request_evidence or ProviderRequestEvidence(),
             response_evidence=ProviderResponseEvidence(
                 latency_ms=int((time.monotonic() - started_at) * 1000)
             ),
@@ -179,3 +211,26 @@ class BaseProvider(ABC):
 
     def _skipped_batch(self, summary: str) -> ProviderSearchBatch:
         return skipped_batch(self.name, summary)
+
+    def _provenance(self) -> tuple[EgressType, str | None]:
+        raw_egress = getattr(self._config, "egress_type", "unknown")
+        try:
+            egress = (
+                raw_egress
+                if isinstance(raw_egress, EgressType)
+                else EgressType(str(raw_egress))
+            )
+        except ValueError:
+            egress = EgressType.UNKNOWN
+        machine = getattr(self._config, "machine", None)
+        return egress, machine if isinstance(machine, str) else None
+
+    @staticmethod
+    def _canonical_request_material(value: object) -> str:
+        """Stable secret-free representation of the actual provider request."""
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+    @staticmethod
+    def _response_headers(response: object) -> dict[str, object]:
+        headers = getattr(response, "headers", None)
+        return dict(headers) if isinstance(headers, Mapping) else {}

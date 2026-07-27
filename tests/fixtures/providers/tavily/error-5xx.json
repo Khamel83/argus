@@ -1,5 +1,11 @@
 {
-  "status": 503,
-  "provider_code": "tavily_5xx",
-  "message": "fixture 5xx"
+  "transport": {
+    "status_code": 503,
+    "headers": {}
+  },
+  "body": {
+    "detail": {
+      "error": "tavily_5xx"
+    }
+  }
 }

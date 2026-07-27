@@ -1,0 +1,5 @@
+{
+  "success": true,
+  "url": "https://redirected.example.test/article",
+  "markdown": "# Redirected fixture\n\nThis redirected payload has enough content to pass the content quality threshold."
+}

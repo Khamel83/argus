@@ -168,6 +168,113 @@ async def test_successful_paid_execution_records_public_reachability_evidence():
 
 
 @pytest.mark.asyncio
+async def test_executor_refuses_to_start_provider_after_absolute_phase_deadline():
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+
+    provider = StubProvider(name=ProviderName.BRAVE)
+    executor = ProviderExecutor(
+        providers={ProviderName.BRAVE: provider},
+        health_tracker=HealthTracker(),
+        budget_tracker=BudgetTracker(),
+        monotonic=lambda: 10.0,
+    )
+
+    outcome = await executor._execute_provider(
+        SearchQuery(query="expired"),
+        provider,
+        ProviderName.BRAVE,
+        provider_phase_deadline=10.0,
+    )
+
+    assert provider.calls == 0
+    assert outcome.batch.failure is not None
+    assert outcome.batch.failure.category.value == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_executor_preserves_normalized_batch_and_projects_only_at_compatibility_boundary():
+    from datetime import datetime, timezone
+
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.broker.provider_evidence import (
+        ProviderResponseEvidence,
+        ProviderSearchBatch,
+    )
+    from argus.broker.reachability import ReachabilityMatrix
+
+    batch = ProviderSearchBatch(
+        provider=ProviderName.YAHOO,
+        provider_contract_version="fixture-v1",
+        response_evidence=ProviderResponseEvidence(
+            request_id="native-request-1",
+            observed_at=datetime(2026, 7, 27, tzinfo=timezone.utc),
+        ),
+    )
+
+    class BatchProvider:
+        name = ProviderName.YAHOO
+        probe_capability = ProbeCapability.ASYNC_NATIVE
+
+        def is_available(self):
+            return True
+
+        def status(self):
+            return ProviderStatus.ENABLED
+
+        async def search(self, query):
+            return batch
+
+    provider = BatchProvider()
+    executor = ProviderExecutor(
+        providers={ProviderName.YAHOO: provider},
+        health_tracker=HealthTracker(),
+        budget_tracker=BudgetTracker(),
+        reachability=ReachabilityMatrix(),
+    )
+
+    outcome = await execute_with_plan(
+        executor,
+        SearchQuery(query="batch evidence", providers=[ProviderName.YAHOO]),
+        [ProviderName.YAHOO],
+    )
+
+    assert outcome.provider_batches["yahoo"] is batch
+    assert (
+        outcome.provider_batches["yahoo"].response_evidence.request_id
+        == "native-request-1"
+    )
+    assert outcome.provider_results["yahoo"] == []
+    assert outcome.traces[0].status == "success"
+
+
+@pytest.mark.asyncio
+async def test_executor_adapts_only_genuinely_legacy_provider_tuples():
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.broker.reachability import ReachabilityMatrix
+
+    provider = StubProvider(name=ProviderName.YAHOO)
+    executor = ProviderExecutor(
+        providers={ProviderName.YAHOO: provider},
+        health_tracker=HealthTracker(),
+        budget_tracker=BudgetTracker(),
+        reachability=ReachabilityMatrix(),
+    )
+    outcome = await execute_with_plan(
+        executor,
+        SearchQuery(query="legacy evidence", providers=[ProviderName.YAHOO]),
+        [ProviderName.YAHOO],
+    )
+
+    assert outcome.provider_batches["yahoo"].response_evidence.evidence_missing is True
+
+
+@pytest.mark.asyncio
 async def test_background_probe_refresh_establishes_health_evidence():
     from unittest.mock import AsyncMock, MagicMock
 
@@ -1568,7 +1675,8 @@ class TestRouter:
         )
 
         assert response.traces[0].status == "error"
-        assert "boom" in response.traces[0].error
+        assert "boom" not in response.traces[0].error
+        assert "RuntimeError" in response.traces[0].error
         assert backup.calls == 1
 
     @pytest.mark.asyncio

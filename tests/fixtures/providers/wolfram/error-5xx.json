@@ -1,5 +1,14 @@
 {
-  "status": 503,
-  "provider_code": "wolfram_5xx",
-  "message": "fixture 5xx"
+  "transport": {
+    "status_code": 503,
+    "headers": {}
+  },
+  "body": {
+    "queryresult": {
+      "success": false,
+      "error": {
+        "code": "wolfram_5xx"
+      }
+    }
+  }
 }

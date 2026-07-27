@@ -1,5 +1,7 @@
 {
-  "status": 403,
-  "provider_code": "yahoo_403",
-  "message": "fixture 403"
+  "transport": {
+    "status_code": 403,
+    "headers": {}
+  },
+  "body": {}
 }

@@ -1,5 +1,14 @@
 {
-  "status": 429,
-  "provider_code": "brave_429",
-  "message": "fixture 429"
+  "transport": {
+    "status_code": 429,
+    "headers": {
+      "retry-after": "60"
+    }
+  },
+  "body": {
+    "type": "ErrorResponse",
+    "error": {
+      "code": "brave_429"
+    }
+  }
 }

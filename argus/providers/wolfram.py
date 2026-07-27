@@ -10,7 +10,6 @@ Get a key at https://developer.wolframalpha.com/
 
 import time
 from urllib.parse import quote_plus, urlparse
-from typing import List, Tuple
 
 import httpx
 
@@ -19,11 +18,10 @@ from argus.logging import get_logger
 from argus.models import (
     ProviderName,
     ProviderStatus,
-    ProviderTrace,
-    SearchResult,
     SearchQuery,
 )
 from argus.providers.base import BaseProvider
+from argus.broker.provider_evidence import ProviderSearchBatch
 
 logger = get_logger("providers.wolfram")
 
@@ -49,7 +47,7 @@ class WolframProvider(BaseProvider):
             return ProviderStatus.UNAVAILABLE_MISSING_KEY
         return ProviderStatus.ENABLED
 
-    async def search(self, query: SearchQuery) -> Tuple[List[SearchResult], ProviderTrace]:
+    async def search(self, query: SearchQuery) -> ProviderSearchBatch:
         start = time.monotonic()
 
         params = {
@@ -58,9 +56,18 @@ class WolframProvider(BaseProvider):
             "maxchars": 1000,
         }
         self._freshness_params(query)
+        request_evidence = self._request_evidence(
+            query,
+            timeout_seconds=self._attempt_timeout(query),
+            provider_request_material=self._canonical_request_material(
+                {key: value for key, value in params.items() if key != "appid"}
+            ),
+        )
 
         try:
-            async with httpx.AsyncClient(timeout=self._attempt_timeout(query)) as client:
+            async with httpx.AsyncClient(
+                timeout=self._attempt_timeout(query)
+            ) as client:
                 resp = await client.get(WOLFRAM_LLM_API, params=params)
 
             # 501 = Wolfram can't compute this query. Not a provider failure.
@@ -69,6 +76,8 @@ class WolframProvider(BaseProvider):
                     {"empty": True},
                     query,
                     started_at=start,
+                    request_evidence=request_evidence,
+                    response_headers=self._response_headers(resp),
                 )
 
             resp.raise_for_status()
@@ -79,6 +88,8 @@ class WolframProvider(BaseProvider):
                     {"empty": True},
                     query,
                     started_at=start,
+                    request_evidence=request_evidence,
+                    response_headers=self._response_headers(resp),
                 )
 
             return self._normalized_batch(
@@ -89,11 +100,15 @@ class WolframProvider(BaseProvider):
                 },
                 query,
                 started_at=start,
+                request_evidence=request_evidence,
+                response_headers=self._response_headers(resp),
             )
 
         except Exception as e:
             logger.warning("Wolfram search failed: %s", type(e).__name__)
-            return self._failure_batch(e, started_at=start)
+            return self._failure_batch(
+                e, started_at=start, request_evidence=request_evidence
+            )
 
     @staticmethod
     def _extract_domain(url: str) -> str:

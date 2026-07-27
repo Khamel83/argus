@@ -1,5 +1,10 @@
 {
-  "status": 401,
-  "provider_code": "github_401",
-  "message": "fixture 401"
+  "transport": {
+    "status_code": 401,
+    "headers": {}
+  },
+  "body": {
+    "message": "fixture rejection",
+    "status": "401"
+  }
 }

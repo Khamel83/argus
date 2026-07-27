@@ -22,10 +22,7 @@ def parse_firecrawl_v2_response(url: str, payload: object) -> ExtractedContent:
     if not isinstance(payload, dict):
         return ExtractedContent(url=url, error="firecrawl: malformed response")
     if payload.get("success") is not True:
-        message = payload.get("error")
-        if not isinstance(message, str) or not message or len(message) > 256:
-            message = "extraction failed"
-        return ExtractedContent(url=url, error=f"firecrawl: {message}")
+        return ExtractedContent(url=url, error="firecrawl: extraction failed")
     result = payload.get("data")
     if not isinstance(result, dict):
         return ExtractedContent(url=url, error="firecrawl: malformed response")
@@ -35,6 +32,9 @@ def parse_firecrawl_v2_response(url: str, payload: object) -> ExtractedContent:
     metadata = result.get("metadata")
     if not isinstance(metadata, dict):
         metadata = {}
+    status = metadata.get("statusCode")
+    if (type(status) is int and status >= 400) or metadata.get("error"):
+        return ExtractedContent(url=url, error="firecrawl: extraction failed")
     text = markdown.strip()
     return ExtractedContent(
         url=url,
@@ -67,7 +67,9 @@ async def extract_firecrawl(url: str) -> ExtractedContent:
     body = {"url": url, "formats": ["markdown"]}
 
     try:
-        async with httpx.AsyncClient(timeout=config.firecrawl.timeout_seconds) as client:
+        async with httpx.AsyncClient(
+            timeout=config.firecrawl.timeout_seconds
+        ) as client:
             resp = await client.post(FIRECRAWL_API_URL, json=body, headers=headers)
             resp.raise_for_status()
             data = resp.json()

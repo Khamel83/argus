@@ -1,5 +1,11 @@
 {
-  "status": 402,
-  "provider_code": "you_402",
-  "message": "fixture 402"
+  "transport": {
+    "status_code": 402,
+    "headers": {}
+  },
+  "body": {
+    "error": {
+      "code": "you_402"
+    }
+  }
 }

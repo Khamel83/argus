@@ -1,9 +1,11 @@
 {
-  "web": {
-    "results": []
+  "headers": {
+    "X-RateLimit-Remaining": "9",
+    "X-RateLimit-Reset": "1785200000"
   },
-  "rate_limit": {
-    "remaining": 9,
-    "reset": 60
+  "body": {
+    "web": {
+      "results": []
+    }
   }
 }

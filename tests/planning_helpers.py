@@ -42,6 +42,9 @@ async def execute_with_plan(
     provider_order: Sequence[ProviderName],
 ):
     """Invoke a ProviderExecutor with the policy cap it owns."""
+    # The synthetic deadline pair below is expressed in this deterministic
+    # monotonic clock domain.
+    executor._monotonic = lambda: 100.0
     cap = caller_tier_cap(
         query.caller,
         getattr(executor, "_caller_tier_caps", {}),

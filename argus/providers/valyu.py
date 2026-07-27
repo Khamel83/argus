@@ -7,7 +7,7 @@ Pricing: CPM-based (~$0.0015 per 1-result fast_mode search)
 """
 
 import time
-from typing import List, Tuple
+from typing import List
 
 import httpx
 
@@ -16,12 +16,11 @@ from argus.logging import get_logger
 from argus.models import (
     ProviderName,
     ProviderStatus,
-    ProviderTrace,
     SearchResult,
     SearchQuery,
 )
 from argus.providers.base import BaseProvider
-from argus.broker.provider_evidence import FailureCategory
+from argus.broker.provider_evidence import FailureCategory, ProviderSearchBatch
 
 logger = get_logger("providers.valyu")
 
@@ -48,7 +47,7 @@ class ValyuProvider(BaseProvider):
             return ProviderStatus.UNAVAILABLE_MISSING_KEY
         return ProviderStatus.ENABLED
 
-    async def search(self, query: SearchQuery) -> Tuple[List[SearchResult], ProviderTrace]:
+    async def search(self, query: SearchQuery) -> ProviderSearchBatch:
         if not self.is_available():
             return self._skipped_batch("Valyu provider not configured")
 
@@ -65,9 +64,16 @@ class ValyuProvider(BaseProvider):
             "fast_mode": True,
         }
         payload.update(self._freshness_params(query))
+        request_evidence = self._request_evidence(
+            query,
+            timeout_seconds=self._attempt_timeout(query),
+            provider_request_material=self._canonical_request_material(payload),
+        )
 
         try:
-            async with httpx.AsyncClient(timeout=self._attempt_timeout(query)) as client:
+            async with httpx.AsyncClient(
+                timeout=self._attempt_timeout(query)
+            ) as client:
                 resp = await client.post(VALYU_API_BASE, json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
@@ -81,22 +87,33 @@ class ValyuProvider(BaseProvider):
                 )
                 return self._typed_failure_batch(
                     category,
-                    str(error_msg),
+                    "valyu rejected the search request",
                     started_at=start,
+                    request_evidence=request_evidence,
                 )
 
-            return self._normalized_batch(data, query, started_at=start)
+            return self._normalized_batch(
+                data,
+                query,
+                started_at=start,
+                request_evidence=request_evidence,
+                response_headers=self._response_headers(resp),
+            )
 
         except httpx.HTTPStatusError as e:
             logger.warning(
                 "Valyu search failed (HTTP %s)",
                 e.response.status_code,
             )
-            return self._failure_batch(e, started_at=start)
+            return self._failure_batch(
+                e, started_at=start, request_evidence=request_evidence
+            )
 
         except Exception as e:
             logger.warning("Valyu search failed: %s", type(e).__name__)
-            return self._failure_batch(e, started_at=start)
+            return self._failure_batch(
+                e, started_at=start, request_evidence=request_evidence
+            )
 
     def _normalize(self, raw_results: list) -> List[SearchResult]:
         results = []
@@ -104,27 +121,30 @@ class ValyuProvider(BaseProvider):
             url = item.get("url") or ""
             if not url:
                 continue
-            results.append(SearchResult(
-                url=url,
-                title=item.get("title", ""),
-                snippet=item.get("description") or item.get("content", "")[:300],
-                domain=self._extract_domain(url),
-                provider=self.name,
-                score=item.get("relevance_score", 0.0),
-                raw_rank=i,
-                metadata={
-                    "source": item.get("source", ""),
-                    "source_type": item.get("source_type", ""),
-                    "publication_date": item.get("publication_date", ""),
-                    "cost_usd": item.get("price", 0),
-                },
-            ))
+            results.append(
+                SearchResult(
+                    url=url,
+                    title=item.get("title", ""),
+                    snippet=item.get("description") or item.get("content", "")[:300],
+                    domain=self._extract_domain(url),
+                    provider=self.name,
+                    score=item.get("relevance_score", 0.0),
+                    raw_rank=i,
+                    metadata={
+                        "source": item.get("source", ""),
+                        "source_type": item.get("source_type", ""),
+                        "publication_date": item.get("publication_date", ""),
+                        "cost_usd": item.get("price", 0),
+                    },
+                )
+            )
         return results
 
     @staticmethod
     def _extract_domain(url: str) -> str:
         try:
             from urllib.parse import urlparse
+
             return urlparse(url).netloc
         except Exception:
             return ""

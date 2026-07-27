@@ -1,5 +1,11 @@
 {
-  "status": 403,
-  "provider_code": "tavily_403",
-  "message": "fixture 403"
+  "transport": {
+    "status_code": 403,
+    "headers": {}
+  },
+  "body": {
+    "detail": {
+      "error": "tavily_403"
+    }
+  }
 }

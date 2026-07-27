@@ -1,5 +1,12 @@
 {
-  "status": 429,
-  "provider_code": "github_429",
-  "message": "fixture 429"
+  "transport": {
+    "status_code": 429,
+    "headers": {
+      "retry-after": "60"
+    }
+  },
+  "body": {
+    "message": "fixture rejection",
+    "status": "429"
+  }
 }

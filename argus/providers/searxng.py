@@ -5,7 +5,7 @@ Self-hosted metasearch — the free local provider floor.
 """
 
 import time
-from typing import List, Tuple
+from typing import List
 
 import httpx
 
@@ -14,11 +14,11 @@ from argus.logging import get_logger
 from argus.models import (
     ProviderName,
     ProviderStatus,
-    ProviderTrace,
     SearchResult,
     SearchQuery,
 )
 from argus.providers.base import BaseProvider
+from argus.broker.provider_evidence import EgressType, ProviderSearchBatch
 
 logger = get_logger("providers.searxng")
 
@@ -39,7 +39,7 @@ class SearXNGProvider(BaseProvider):
             return ProviderStatus.DISABLED_BY_CONFIG
         return ProviderStatus.ENABLED
 
-    async def search(self, query: SearchQuery) -> Tuple[List[SearchResult], ProviderTrace]:
+    async def search(self, query: SearchQuery) -> ProviderSearchBatch:
         start = time.monotonic()
 
         # Decide which URL to use
@@ -58,23 +58,45 @@ class SearXNGProvider(BaseProvider):
         }
         params.update(self._freshness_params(query))
         headers = {"Accept": "application/json"}
+        request_evidence = self._request_evidence(
+            query,
+            timeout_seconds=self._attempt_timeout(query),
+            provider_request_material=self._canonical_request_material(params),
+        )
 
         try:
-            async with httpx.AsyncClient(timeout=self._attempt_timeout(query)) as client:
+            async with httpx.AsyncClient(
+                timeout=self._attempt_timeout(query)
+            ) as client:
                 resp = await client.get(url, params=params, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
 
-            return self._normalized_batch(data, query, started_at=start)
+            return self._normalized_batch(
+                data,
+                query,
+                started_at=start,
+                request_evidence=request_evidence,
+                response_headers=self._response_headers(resp),
+                egress=(
+                    EgressType.RESIDENTIAL
+                    if use_residential and self._config.residential_base_url
+                    else None
+                ),
+            )
 
         except Exception as e:
             logger.warning(
                 "SearXNG search failed: %s",
                 type(e).__name__,
             )
-            return self._failure_batch(e, started_at=start)
+            return self._failure_batch(
+                e, started_at=start, request_evidence=request_evidence
+            )
 
-    def _normalize(self, raw_results: list, egress: str = "unknown", machine: str = None) -> List[SearchResult]:
+    def _normalize(
+        self, raw_results: list, egress: str = "unknown", machine: str = None
+    ) -> List[SearchResult]:
         results = []
         for i, item in enumerate(raw_results):
             url = item.get("url") or ""
@@ -106,6 +128,7 @@ class SearXNGProvider(BaseProvider):
     def _extract_domain(url: str) -> str:
         try:
             from urllib.parse import urlparse
+
             return urlparse(url).netloc
         except Exception:
             return ""

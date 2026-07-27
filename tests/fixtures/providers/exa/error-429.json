@@ -1,5 +1,12 @@
 {
-  "status": 429,
-  "provider_code": "exa_429",
-  "message": "fixture 429"
+  "transport": {
+    "status_code": 429,
+    "headers": {
+      "retry-after": "60"
+    }
+  },
+  "body": {
+    "error": "exa_429",
+    "requestId": "exa-request"
+  }
 }

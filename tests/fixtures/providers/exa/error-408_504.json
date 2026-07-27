@@ -1,5 +1,10 @@
 {
-  "status": 504,
-  "provider_code": "exa_408_504",
-  "message": "fixture 408_504"
+  "transport": {
+    "status_code": 504,
+    "headers": {}
+  },
+  "body": {
+    "error": "exa_408_504",
+    "requestId": "exa-request"
+  }
 }

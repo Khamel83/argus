@@ -1,5 +1,12 @@
 {
-  "status": 503,
-  "provider_code": "valyu_5xx",
-  "message": "fixture 5xx"
+  "transport": {
+    "status_code": 503,
+    "headers": {}
+  },
+  "body": {
+    "success": false,
+    "error": {
+      "code": "valyu_5xx"
+    }
+  }
 }

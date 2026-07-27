@@ -1,5 +1,11 @@
 {
-  "status": 401,
-  "provider_code": "parallel_401",
-  "message": "fixture 401"
+  "transport": {
+    "status_code": 401,
+    "headers": {}
+  },
+  "body": {
+    "error": {
+      "type": "parallel_401"
+    }
+  }
 }

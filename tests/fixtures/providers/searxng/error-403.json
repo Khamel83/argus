@@ -1,5 +1,9 @@
 {
-  "status": 403,
-  "provider_code": "searxng_403",
-  "message": "fixture 403"
+  "transport": {
+    "status_code": 403,
+    "headers": {}
+  },
+  "body": {
+    "message": "searxng_403"
+  }
 }

@@ -1,5 +1,10 @@
 {
-  "status": 403,
-  "provider_code": "github_403",
-  "message": "fixture 403"
+  "transport": {
+    "status_code": 403,
+    "headers": {}
+  },
+  "body": {
+    "message": "fixture rejection",
+    "status": "403"
+  }
 }

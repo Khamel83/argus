@@ -1,0 +1,4 @@
+{
+  "url": "https://example.test/article",
+  "markdown": "# Missing success\n\nThis payload is long enough to look valid but has no explicit success marker."
+}

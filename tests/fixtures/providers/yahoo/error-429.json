@@ -1,5 +1,9 @@
 {
-  "status": 429,
-  "provider_code": "yahoo_429",
-  "message": "fixture 429"
+  "transport": {
+    "status_code": 429,
+    "headers": {
+      "retry-after": "60"
+    }
+  },
+  "body": {}
 }

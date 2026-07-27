@@ -4,7 +4,7 @@ API: https://www.searchapi.io/api/v1/search?engine=google
 """
 
 import time
-from typing import List, Tuple
+from typing import List
 from urllib.parse import urlparse
 
 import httpx
@@ -14,11 +14,11 @@ from argus.logging import get_logger
 from argus.models import (
     ProviderName,
     ProviderStatus,
-    ProviderTrace,
     SearchResult,
     SearchQuery,
 )
 from argus.providers.base import BaseProvider
+from argus.broker.provider_evidence import ProviderSearchBatch
 
 logger = get_logger("providers.searchapi")
 
@@ -43,7 +43,7 @@ class SearchApiProvider(BaseProvider):
             return ProviderStatus.UNAVAILABLE_MISSING_KEY
         return ProviderStatus.ENABLED
 
-    async def search(self, query: SearchQuery) -> Tuple[List[SearchResult], ProviderTrace]:
+    async def search(self, query: SearchQuery) -> ProviderSearchBatch:
         start = time.monotonic()
         params = {
             "engine": "google",
@@ -52,17 +52,34 @@ class SearchApiProvider(BaseProvider):
             "api_key": self._config.api_key,
         }
         params.update(self._freshness_params(query))
+        request_evidence = self._request_evidence(
+            query,
+            timeout_seconds=self._attempt_timeout(query),
+            provider_request_material=self._canonical_request_material(
+                {key: value for key, value in params.items() if key != "api_key"}
+            ),
+        )
 
         try:
-            async with httpx.AsyncClient(timeout=self._attempt_timeout(query)) as client:
+            async with httpx.AsyncClient(
+                timeout=self._attempt_timeout(query)
+            ) as client:
                 resp = await client.get(SEARCHAPI_ENDPOINT, params=params)
                 resp.raise_for_status()
                 data = resp.json()
 
-            return self._normalized_batch(data, query, started_at=start)
+            return self._normalized_batch(
+                data,
+                query,
+                started_at=start,
+                request_evidence=request_evidence,
+                response_headers=self._response_headers(resp),
+            )
         except Exception as exc:
             logger.warning("SearchApi search failed: %s", type(exc).__name__)
-            return self._failure_batch(exc, started_at=start)
+            return self._failure_batch(
+                exc, started_at=start, request_evidence=request_evidence
+            )
 
     def _normalize(self, data: dict, max_results: int) -> List[SearchResult]:
         raw_results = data.get("organic_results") or data.get("organic") or []
@@ -71,18 +88,20 @@ class SearchApiProvider(BaseProvider):
             url = item.get("link") or item.get("url") or ""
             if not url:
                 continue
-            results.append(SearchResult(
-                url=url,
-                title=item.get("title", ""),
-                snippet=item.get("snippet") or item.get("description", ""),
-                domain=urlparse(url).netloc,
-                provider=self.name,
-                score=0.0,
-                raw_rank=item.get("position", i),
-                metadata={
-                    "position": item.get("position", i),
-                    "displayed_link": item.get("displayed_link", ""),
-                    "date": item.get("date", ""),
-                },
-            ))
+            results.append(
+                SearchResult(
+                    url=url,
+                    title=item.get("title", ""),
+                    snippet=item.get("snippet") or item.get("description", ""),
+                    domain=urlparse(url).netloc,
+                    provider=self.name,
+                    score=0.0,
+                    raw_rank=item.get("position", i),
+                    metadata={
+                        "position": item.get("position", i),
+                        "displayed_link": item.get("displayed_link", ""),
+                        "date": item.get("date", ""),
+                    },
+                )
+            )
         return results

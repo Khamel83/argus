@@ -44,6 +44,11 @@
         "5xx": {
           "fixture": "error-5xx.json"
         }
+      },
+      "signals": {
+        "typed": [
+          "warnings"
+        ]
       }
     },
     "duckduckgo": {
@@ -77,13 +82,18 @@
         "5xx": {
           "reason": "No authoritative checked-in contract establishes a provider-specific HTTP 5xx response shape."
         }
+      },
+      "signals": {
+        "reason": "The owned DDGS result contract exposes no authoritative usage or rate-limit signal."
       }
     },
     "yahoo": {
       "contract_version": "2026-07-27-v1",
       "fixtures": {
         "success": "success.json",
-        "empty": "empty.json",
+        "empty": {
+          "reason": "Yahoo HTML has no authoritative valid-empty contract; a successful page with no parsed results is a parse failure."
+        },
         "malformed": "malformed.json",
         "usage_rate": "usage_rate.json",
         "freshness": "freshness.json"
@@ -110,6 +120,9 @@
         "5xx": {
           "fixture": "error-5xx.json"
         }
+      },
+      "signals": {
+        "reason": "The Yahoo HTML adapter exposes no authoritative usage or rate-limit signal."
       }
     },
     "github": {
@@ -143,6 +156,13 @@
         "5xx": {
           "fixture": "error-5xx.json"
         }
+      },
+      "signals": {
+        "typed": [
+          "request_id",
+          "rate_limit.remaining",
+          "rate_limit.reset_at"
+        ]
       }
     },
     "wolfram": {
@@ -176,6 +196,11 @@
         "5xx": {
           "fixture": "error-5xx.json"
         }
+      },
+      "signals": {
+        "typed": [
+          "suggestions"
+        ]
       }
     },
     "brave": {
@@ -209,6 +234,12 @@
         "5xx": {
           "fixture": "error-5xx.json"
         }
+      },
+      "signals": {
+        "typed": [
+          "rate_limit.remaining",
+          "rate_limit.reset_at"
+        ]
       }
     },
     "tavily": {
@@ -242,6 +273,12 @@
         "5xx": {
           "fixture": "error-5xx.json"
         }
+      },
+      "signals": {
+        "typed": [
+          "request_id",
+          "usage.count"
+        ]
       }
     },
     "exa": {
@@ -275,6 +312,12 @@
         "5xx": {
           "fixture": "error-5xx.json"
         }
+      },
+      "signals": {
+        "typed": [
+          "request_id",
+          "usage.cost_usd"
+        ]
       }
     },
     "linkup": {
@@ -308,6 +351,9 @@
         "5xx": {
           "fixture": "error-5xx.json"
         }
+      },
+      "signals": {
+        "reason": "The checked-in Linkup search contract exposes no authoritative usage or rate-limit signal."
       }
     },
     "parallel": {
@@ -341,6 +387,12 @@
         "5xx": {
           "fixture": "error-5xx.json"
         }
+      },
+      "signals": {
+        "typed": [
+          "request_id",
+          "usage.count"
+        ]
       }
     },
     "serper": {
@@ -374,6 +426,9 @@
         "5xx": {
           "reason": "No authoritative checked-in contract establishes a provider-specific HTTP 5xx response shape."
         }
+      },
+      "signals": {
+        "reason": "The checked-in Serper response contract exposes no authoritative usage or rate-limit signal."
       }
     },
     "you": {
@@ -407,6 +462,11 @@
         "5xx": {
           "fixture": "error-5xx.json"
         }
+      },
+      "signals": {
+        "typed": [
+          "request_id"
+        ]
       }
     },
     "valyu": {
@@ -440,6 +500,12 @@
         "5xx": {
           "fixture": "error-5xx.json"
         }
+      },
+      "signals": {
+        "typed": [
+          "transaction_id",
+          "usage.cost_usd"
+        ]
       }
     },
     "searchapi": {
@@ -473,6 +539,11 @@
         "5xx": {
           "fixture": "error-5xx.json"
         }
+      },
+      "signals": {
+        "typed": [
+          "request_id"
+        ]
       }
     }
   }

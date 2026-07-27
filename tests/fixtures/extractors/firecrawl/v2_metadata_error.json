@@ -1,0 +1,10 @@
+{
+  "success": true,
+  "data": {
+    "markdown": "# Misleading content\n\nThis content must not be accepted because metadata reports an upstream error.",
+    "metadata": {
+      "statusCode": 403,
+      "error": "raw body sentinel"
+    }
+  }
+}

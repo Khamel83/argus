@@ -1,5 +1,14 @@
 {
-  "status": 429,
-  "provider_code": "valyu_429",
-  "message": "fixture 429"
+  "transport": {
+    "status_code": 429,
+    "headers": {
+      "retry-after": "60"
+    }
+  },
+  "body": {
+    "success": false,
+    "error": {
+      "code": "valyu_429"
+    }
+  }
 }

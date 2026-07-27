@@ -8,6 +8,10 @@ import time
 import uuid
 
 from argus.models import ProviderName
+from argus.broker.provider_evidence import (
+    LegacyProviderBatchAdapter,
+    ProviderSearchBatch,
+)
 
 if TYPE_CHECKING:
     from argus.providers.base import BaseProvider
@@ -249,7 +253,13 @@ class ReachabilityMatrix:
                 and provider.probe_capability is ProbeCapability.ASYNC_NATIVE
             ):
                 try:
-                    _, trace = await provider.search(probe_query)
+                    output = await provider.search(probe_query)
+                    batch = (
+                        output
+                        if isinstance(output, ProviderSearchBatch)
+                        else LegacyProviderBatchAdapter.from_legacy(output)
+                    )
+                    trace = batch.trace
                     reachable = trace.status == "success"
                     self.update_probe(
                         "local", pname, reachable=reachable, latency_ms=trace.latency_ms

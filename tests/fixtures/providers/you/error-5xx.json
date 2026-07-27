@@ -1,5 +1,11 @@
 {
-  "status": 503,
-  "provider_code": "you_5xx",
-  "message": "fixture 5xx"
+  "transport": {
+    "status_code": 503,
+    "headers": {}
+  },
+  "body": {
+    "error": {
+      "code": "you_5xx"
+    }
+  }
 }

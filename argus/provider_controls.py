@@ -105,6 +105,15 @@ def translate_freshness(
     capability = PROVIDER_CONTROL_CAPABILITIES[provider]
     has_relative = freshness.requested_relative is not None
     has_dates = freshness.start_date is not None or freshness.end_date is not None
+    if (
+        provider is ProviderName.PARALLEL
+        and freshness.start_date is None
+        and freshness.end_date is not None
+        and required
+    ):
+        raise RequiredControlUnsupported(
+            "parallel cannot enforce an end-only freshness window"
+        )
     if not has_relative and not has_dates:
         return ControlTranslation(
             capability.value,
@@ -164,9 +173,7 @@ def translate_freshness(
     elif capability is FreshnessControlCapability.QUERY_QUALIFIER:
         if has_dates:
             provider_control = "query_qualifier"
-            provider_value = _date_range_value(
-                freshness.start_date, freshness.end_date
-            )
+            provider_value = _date_range_value(freshness.start_date, freshness.end_date)
             strength = FilterStrength.BEST_EFFORT
         else:
             precision = TranslationPrecision.UNSUPPORTED

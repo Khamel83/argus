@@ -1,5 +1,11 @@
 {
-  "status": 422,
-  "provider_code": "searchapi_422",
-  "message": "fixture 422"
+  "transport": {
+    "status_code": 422,
+    "headers": {}
+  },
+  "body": {
+    "error": {
+      "code": "searchapi_422"
+    }
+  }
 }

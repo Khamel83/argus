@@ -32,8 +32,12 @@ from argus.broker.provider_evidence import (
     TranslationPrecision,
     attempt_timeout_seconds,
     classify_http_failure,
-    normalize_provider_response,
+    query_hash,
     safe_redirect_request,
+)
+from argus.providers.normalization import (
+    classify_provider_failure_response,
+    normalize_provider_response,
 )
 from argus.models import ProviderName, ProviderTrace, SearchResult
 from argus.models import SearchQuery
@@ -47,11 +51,190 @@ from argus.provider_controls import (
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "providers"
 FAILURE_CLASSES = {"401", "402", "403", "408_504", "422", "429", "5xx"}
-REGISTERED = {provider.value for provider in ProviderName if provider is not ProviderName.CACHE}
+REGISTERED = {
+    provider.value for provider in ProviderName if provider is not ProviderName.CACHE
+}
+
+
+@pytest.fixture(autouse=True)
+def _prohibit_provider_contract_dns(monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise AssertionError("provider contract tests must not use DNS")
+
+    monkeypatch.setattr("socket.getaddrinfo", fail)
+    monkeypatch.setattr("socket.create_connection", fail)
 
 
 def _load(path: Path) -> object:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _http_response(
+    *,
+    status: int = 200,
+    body: object | None = None,
+    text: str = "",
+    headers: dict[str, str] | None = None,
+):
+    response = MagicMock()
+    response.status_code = status
+    response.headers = headers or {}
+    response.text = text
+    response.json.return_value = body
+    if status >= 400:
+        response.raise_for_status.side_effect = __import__("httpx").HTTPStatusError(
+            "native failure",
+            request=MagicMock(),
+            response=response,
+        )
+    return response
+
+
+YAHOO_RESULT_HTML = """
+<html><body>
+  <div class="dd algo-sr">
+    <div class="compTitle"><a href="https://example.test/result"><h3>Result</h3></a></div>
+    <div class="compText">Fixture snippet</div>
+  </div>
+</body></html>
+"""
+
+
+@pytest.mark.asyncio
+async def test_yahoo_filtered_success_preserves_monotonic_started_at():
+    from argus.providers.yahoo import YahooProvider
+
+    response = _http_response(text=YAHOO_RESULT_HTML)
+    with patch("argus.providers.yahoo.httpx.AsyncClient") as client_type:
+        client = client_type.return_value
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.get = AsyncMock(return_value=response)
+        batch = await YahooProvider(ProviderConfig(enabled=True)).search(
+            SearchQuery(
+                query="fixture",
+                metadata={
+                    "_freshness_window": FreshnessWindow(
+                        start_date=date(2026, 7, 1),
+                        end_date=date(2026, 7, 27),
+                    )
+                },
+            )
+        )
+
+    assert batch.failure is None
+    assert batch.observations[0].url == "https://example.test/result"
+    sent = client.get.call_args_list[0].kwargs["params"]["p"]
+    assert sent == "fixture after:2026-07-01 before:2026-07-27"
+    assert batch.request_evidence.query_relation is QueryRelation.PROVIDER_REWRITE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "category"),
+    [
+        (
+            _http_response(text="<html><body>consent page</body></html>"),
+            FailureCategory.PARSE_ERROR,
+        ),
+        (_http_response(status=503), FailureCategory.PROVIDER_UNAVAILABLE),
+    ],
+)
+async def test_yahoo_filtered_parse_and_http_failures_are_typed(response, category):
+    from argus.providers.yahoo import YahooProvider
+
+    with patch("argus.providers.yahoo.httpx.AsyncClient") as client_type:
+        client = client_type.return_value
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.get = AsyncMock(return_value=response)
+        batch = await YahooProvider(ProviderConfig(enabled=True)).search(
+            SearchQuery(
+                query="fixture",
+                metadata={
+                    "_freshness_window": FreshnessWindow(start_date=date(2026, 7, 1))
+                },
+            )
+        )
+
+    assert batch.failure is not None
+    assert batch.failure.category is category
+
+
+@pytest.mark.asyncio
+async def test_yahoo_redirect_children_strip_cross_origin_secrets_and_recompute_timeout():
+    from argus.providers.yahoo import YahooProvider
+
+    first = _http_response(
+        status=302,
+        headers={"location": "https://other.test/next?signature=do-not-cross&ok=yes"},
+    )
+    second = _http_response(text=YAHOO_RESULT_HTML)
+    ticks = iter((100.0, 100.0, 102.0, 102.0, 102.0))
+    with (
+        patch(
+            "argus.providers.yahoo._HEADERS",
+            {
+                "Authorization": "Bearer do-not-cross",
+                "Cookie": "session=do-not-cross",
+                "Accept": "text/html",
+            },
+        ),
+        patch("argus.providers.yahoo.httpx.AsyncClient") as client_type,
+    ):
+        client = client_type.return_value
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.get = AsyncMock(side_effect=(first, second))
+        batch = await YahooProvider(
+            ProviderConfig(enabled=True, timeout_seconds=10)
+        ).search(
+            SearchQuery(
+                query="fixture",
+                metadata={
+                    "_provider_phase_deadline": 105.0,
+                    "_monotonic": lambda: next(ticks),
+                    "_provider_attempt_id": "attempt-1",
+                },
+            )
+        )
+
+    redirected = client.get.call_args_list[1]
+    assert "signature" not in redirected.args[0]
+    assert redirected.kwargs["headers"] == {"Accept": "text/html"}
+    assert redirected.kwargs["timeout"] == 3.0
+    assert len(batch.request_evidence.redirect_children) == 1
+    child = batch.request_evidence.redirect_children[0]
+    assert child.parent_attempt_id == "attempt-1"
+    assert child.child_index == 1
+    assert child.cross_origin is True
+    assert child.credentials_stripped is True
+
+
+@pytest.mark.asyncio
+async def test_yahoo_redirect_overflow_is_typed_and_trace_is_bounded():
+    from argus.providers.yahoo import YahooProvider
+
+    redirects = [
+        _http_response(status=302, headers={"location": f"/redirect-{index}"})
+        for index in range(4)
+    ]
+    with patch("argus.providers.yahoo.httpx.AsyncClient") as client_type:
+        client = client_type.return_value
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.get = AsyncMock(side_effect=redirects)
+        batch = await YahooProvider(ProviderConfig(enabled=True)).search(
+            SearchQuery(
+                query="fixture",
+                metadata={"_provider_attempt_id": "attempt-overflow"},
+            )
+        )
+
+    assert batch.failure is not None
+    assert batch.failure.category is FailureCategory.POLICY_REJECTED
+    assert len(batch.request_evidence.redirect_children) == 3
+    assert client.get.await_count == 4
 
 
 def test_manifest_covers_every_registered_provider_and_contract_case():
@@ -71,7 +254,11 @@ def test_manifest_covers_every_registered_provider_and_contract_case():
             "freshness",
         }
         for fixture in entry["fixtures"].values():
-            assert (FIXTURE_ROOT / provider / fixture).is_file()
+            if isinstance(fixture, str):
+                assert (FIXTURE_ROOT / provider / fixture).is_file()
+            else:
+                assert set(fixture) == {"reason"}
+                assert len(fixture["reason"]) >= 24
         assert set(entry["failures"]) == FAILURE_CLASSES
         for failure in entry["failures"].values():
             assert set(failure) in ({"fixture"}, {"reason"})
@@ -79,6 +266,60 @@ def test_manifest_covers_every_registered_provider_and_contract_case():
                 assert (FIXTURE_ROOT / provider / failure["fixture"]).is_file()
             else:
                 assert len(failure["reason"]) >= 24
+        assert set(entry["signals"]) in ({"typed"}, {"reason"})
+        if "reason" in entry["signals"]:
+            assert len(entry["signals"]["reason"]) >= 24
+        else:
+            assert entry["signals"]["typed"]
+
+
+@pytest.mark.parametrize("provider_name", sorted(REGISTERED))
+def test_manifest_usage_and_rate_signal_declarations_are_executable(provider_name):
+    entry = _load(FIXTURE_ROOT / "manifest.json")["providers"][provider_name]
+    signals = entry["signals"]
+    if "reason" in signals:
+        return
+    fixture = _load(FIXTURE_ROOT / provider_name / entry["fixtures"]["usage_rate"])
+    assert isinstance(fixture, dict)
+    batch = normalize_provider_response(
+        ProviderName(provider_name),
+        fixture.get("body", fixture),
+        max_results=10,
+        response_headers=fixture.get("headers", {}),
+    )
+
+    def resolve(path: str):
+        value = batch.response_evidence
+        for part in path.split("."):
+            value = getattr(value, part)
+        return value
+
+    for signal in signals["typed"]:
+        assert resolve(signal) is not None
+
+
+@pytest.mark.parametrize("provider_name", sorted(REGISTERED))
+def test_manifest_native_failure_fixtures_cross_provider_classifiers(provider_name):
+    expected = {
+        "401": FailureCategory.AUTHENTICATION_REJECTED,
+        "402": FailureCategory.BALANCE_EXHAUSTED,
+        "403": FailureCategory.POLICY_REJECTED,
+        "408_504": FailureCategory.TIMEOUT,
+        "422": FailureCategory.INVALID_REQUEST,
+        "429": FailureCategory.RATE_LIMITED,
+        "5xx": FailureCategory.PROVIDER_UNAVAILABLE,
+    }
+    entry = _load(FIXTURE_ROOT / "manifest.json")["providers"][provider_name]
+    provider = ProviderName(provider_name)
+    for failure_class, declaration in entry["failures"].items():
+        if "reason" in declaration:
+            continue
+        fixture = _load(FIXTURE_ROOT / provider_name / declaration["fixture"])
+        assert set(fixture) == {"transport", "body"}
+        assert not {"status", "provider_code", "message"} & set(fixture)
+        failure = classify_provider_failure_response(provider, fixture)
+        assert failure.category is expected[failure_class]
+        assert "fixture rejection" not in failure.summary
 
 
 @pytest.mark.parametrize("provider_name", sorted(REGISTERED))
@@ -92,10 +333,15 @@ def test_success_empty_and_malformed_fixtures_cross_one_typed_seam(provider_name
         _load(FIXTURE_ROOT / provider_name / fixtures["success"]),
         max_results=10,
     )
-    empty = normalize_provider_response(
-        provider,
-        _load(FIXTURE_ROOT / provider_name / fixtures["empty"]),
-        max_results=10,
+    empty_declaration = fixtures["empty"]
+    empty = (
+        normalize_provider_response(
+            provider,
+            _load(FIXTURE_ROOT / provider_name / empty_declaration),
+            max_results=10,
+        )
+        if isinstance(empty_declaration, str)
+        else None
     )
     malformed = normalize_provider_response(
         provider,
@@ -109,9 +355,13 @@ def test_success_empty_and_malformed_fixtures_cross_one_typed_seam(provider_name
     assert [item.provider_rank for item in success.observations] == list(
         range(len(success.observations))
     )
-    assert empty.observations == ()
-    assert empty.failure is not None
-    assert empty.failure.category is FailureCategory.EMPTY
+    if empty is None:
+        assert provider is ProviderName.YAHOO
+        assert "parse failure" in empty_declaration["reason"]
+    else:
+        assert empty.observations == ()
+        assert empty.failure is not None
+        assert empty.failure.category is FailureCategory.EMPTY
     assert malformed.failure is not None
     assert malformed.failure.category is FailureCategory.PARSE_ERROR
 
@@ -119,11 +369,18 @@ def test_success_empty_and_malformed_fixtures_cross_one_typed_seam(provider_name
 @pytest.mark.parametrize(
     ("provider", "field", "expected"),
     [
+        (ProviderName.BRAVE, "rate_remaining", 9.0),
+        (ProviderName.GITHUB, "request_id", "github-usage"),
+        (ProviderName.GITHUB, "rate_remaining", 9.0),
         (ProviderName.TAVILY, "request_id", "tavily-usage"),
+        (ProviderName.TAVILY, "usage_count", 1.0),
         (ProviderName.EXA, "request_id", "exa-usage"),
+        (ProviderName.EXA, "cost_usd", 0.01),
         (ProviderName.PARALLEL, "request_id", "parallel-usage"),
+        (ProviderName.PARALLEL, "usage_count", 9.0),
         (ProviderName.YOU, "request_id", "you-usage"),
         (ProviderName.VALYU, "transaction_id", "valyu-usage"),
+        (ProviderName.VALYU, "cost_usd", 0.0),
         (ProviderName.SEARCHAPI, "request_id", "searchapi-usage"),
     ],
 )
@@ -131,8 +388,19 @@ def test_usage_rate_fixtures_retain_only_typed_response_evidence(
     provider, field, expected
 ):
     fixture = _load(FIXTURE_ROOT / provider.value / "usage_rate.json")
-    batch = normalize_provider_response(provider, fixture, max_results=10)
-    assert getattr(batch.response_evidence, field) == expected
+    assert isinstance(fixture, dict)
+    payload = fixture.get("body", fixture)
+    headers = fixture.get("headers", {})
+    batch = normalize_provider_response(
+        provider, payload, max_results=10, response_headers=headers
+    )
+    response = batch.response_evidence
+    if field == "rate_remaining":
+        assert response.rate_limit is not None
+        actual = response.rate_limit.remaining
+    else:
+        actual = getattr(response, field)
+    assert actual == expected
 
 
 @pytest.mark.parametrize(
@@ -149,6 +417,61 @@ def test_documented_publication_fixtures_produce_typed_evidence(provider):
     fixture = _load(FIXTURE_ROOT / provider.value / "freshness.json")
     batch = normalize_provider_response(provider, fixture, max_results=10)
     assert batch.observations[0].publication is not None
+
+
+def test_ambiguous_publication_fields_are_explicitly_unverified():
+    for provider in (ProviderName.SEARXNG, ProviderName.TAVILY):
+        fixture = _load(FIXTURE_ROOT / provider.value / "freshness.json")
+        batch = normalize_provider_response(provider, fixture, max_results=10)
+        publication = batch.observations[0].publication
+        assert publication is not None
+        assert publication.contract_confidence is ContractConfidence.UNVERIFIED
+        assert publication.semantic_contract_ref is None
+
+
+@pytest.mark.asyncio
+async def test_searxng_residential_route_sets_real_provenance_and_ignores_caller_claims():
+    from argus.config import SearXNGConfig
+    from argus.providers.searxng import SearXNGProvider
+
+    response = _http_response(
+        body={
+            "results": [
+                {
+                    "url": "https://example.test/result",
+                    "title": "Result",
+                    "content": "Fixture",
+                }
+            ]
+        }
+    )
+    with patch("argus.providers.searxng.httpx.AsyncClient") as client_type:
+        client = client_type.return_value
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.get = AsyncMock(return_value=response)
+        batch = await SearXNGProvider(
+            SearXNGConfig(
+                enabled=True,
+                base_url="https://local.test",
+                residential_base_url="https://residential.test",
+            )
+        ).search(
+            SearchQuery(
+                query="provenance",
+                metadata={
+                    "prefer_residential": True,
+                    "egress": "datacenter",
+                    "machine": "/Volumes/private/caller-machine",
+                },
+            )
+        )
+
+    assert batch.response_evidence.egress.value == "residential"
+    assert batch.response_evidence.machine is None
+    assert batch.observations[0].egress.value == "residential"
+    assert batch.observations[0].machine is None
+    assert batch.observations[0].observed_at == batch.response_evidence.observed_at
 
 
 def test_only_inventory_authorized_migration_aliases_are_dual_read():
@@ -356,16 +679,22 @@ def test_legacy_tuple_adapter_marks_missing_evidence_explicitly():
 
 
 def test_deadline_timeout_is_exact_and_refuses_expired_phase():
-    assert attempt_timeout_seconds(
-        configured_timeout=15.0,
-        provider_phase_deadline=110.0,
-        monotonic=lambda: 100.0,
-    ) == 10.0
-    assert attempt_timeout_seconds(
-        configured_timeout=5.0,
-        provider_phase_deadline=110.0,
-        monotonic=lambda: 100.0,
-    ) == 5.0
+    assert (
+        attempt_timeout_seconds(
+            configured_timeout=15.0,
+            provider_phase_deadline=110.0,
+            monotonic=lambda: 100.0,
+        )
+        == 10.0
+    )
+    assert (
+        attempt_timeout_seconds(
+            configured_timeout=5.0,
+            provider_phase_deadline=110.0,
+            monotonic=lambda: 100.0,
+        )
+        == 5.0
+    )
     with pytest.raises(TimeoutError, match="deadline"):
         attempt_timeout_seconds(
             configured_timeout=5.0,
@@ -446,6 +775,12 @@ def test_all_provider_control_capabilities_are_closed_and_required_controls_fail
             FreshnessWindow(start_date=date(2026, 7, 1)),
             required=True,
         )
+    with pytest.raises(RequiredControlUnsupported):
+        translate_freshness(
+            ProviderName.PARALLEL,
+            FreshnessWindow(end_date=date(2026, 7, 27)),
+            required=True,
+        )
 
 
 @pytest.mark.asyncio
@@ -498,7 +833,7 @@ async def test_parallel_uses_v1_and_nested_advanced_settings():
         client.__aenter__ = AsyncMock(return_value=client)
         client.__aexit__ = AsyncMock(return_value=False)
         client.post = AsyncMock(return_value=response)
-        await ParallelProvider(
+        batch = await ParallelProvider(
             ProviderConfig(enabled=True, api_key="fixture")
         ).search(SearchQuery(query="current contract", max_results=7))
 
@@ -506,3 +841,34 @@ async def test_parallel_uses_v1_and_nested_advanced_settings():
     _, kwargs = client.post.call_args
     assert kwargs["json"]["advanced_settings"]["max_results"] == 7
     assert "parallel-beta" not in kwargs["headers"]
+    assert batch.request_evidence.provider_query_hash == query_hash(
+        json.dumps(kwargs["json"], sort_keys=True, separators=(",", ":"), default=str)
+    )
+    assert batch.request_evidence.provider_query_hash != query_hash("current contract")
+
+
+@pytest.mark.asyncio
+async def test_github_hashes_the_actual_freshness_rewritten_request():
+    from argus.providers.github import GitHubProvider
+
+    response = _http_response(body={"items": []})
+    with patch("argus.providers.github.httpx.AsyncClient") as client_type:
+        client = client_type.return_value
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.get = AsyncMock(return_value=response)
+        batch = await GitHubProvider(ProviderConfig(enabled=True)).search(
+            SearchQuery(
+                query="argus",
+                metadata={
+                    "_freshness_window": FreshnessWindow(start_date=date(2026, 7, 1))
+                },
+            )
+        )
+
+    params = client.get.call_args.kwargs["params"]
+    assert "pushed:" in params["q"]
+    assert batch.request_evidence.query_relation is QueryRelation.PROVIDER_REWRITE
+    assert batch.request_evidence.provider_query_hash == query_hash(
+        json.dumps(params, sort_keys=True, separators=(",", ":"), default=str)
+    )

@@ -1,5 +1,12 @@
 {
-  "status": 422,
-  "provider_code": "valyu_422",
-  "message": "fixture 422"
+  "transport": {
+    "status_code": 422,
+    "headers": {}
+  },
+  "body": {
+    "success": false,
+    "error": {
+      "code": "valyu_422"
+    }
+  }
 }

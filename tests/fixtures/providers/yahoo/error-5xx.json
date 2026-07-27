@@ -1,5 +1,7 @@
 {
-  "status": 503,
-  "provider_code": "yahoo_5xx",
-  "message": "fixture 5xx"
+  "transport": {
+    "status_code": 503,
+    "headers": {}
+  },
+  "body": {}
 }

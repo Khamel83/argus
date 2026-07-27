@@ -1,5 +1,11 @@
 {
-  "status": 401,
-  "provider_code": "tavily_401",
-  "message": "fixture 401"
+  "transport": {
+    "status_code": 401,
+    "headers": {}
+  },
+  "body": {
+    "detail": {
+      "error": "tavily_401"
+    }
+  }
 }

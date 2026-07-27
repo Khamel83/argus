@@ -1,5 +1,10 @@
 {
-  "status": 422,
-  "provider_code": "exa_422",
-  "message": "fixture 422"
+  "transport": {
+    "status_code": 422,
+    "headers": {}
+  },
+  "body": {
+    "error": "exa_422",
+    "requestId": "exa-request"
+  }
 }

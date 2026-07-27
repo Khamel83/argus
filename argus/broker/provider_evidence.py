@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from enum import Enum
-from typing import Any, Awaitable, Mapping, Sequence, TypeVar
+from typing import Awaitable, Mapping, Sequence, TypeVar
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from argus.models import ProviderName, ProviderTrace, SearchResult
@@ -38,7 +38,7 @@ _SECRET_KEY = re.compile(
 _SECRET_TEXT = re.compile(
     r"(?:authorization\s*:|bearer\s+|cookie\s*:|set-cookie\s*:|"
     r"(?:api[_-]?key|appid|credential|password|secret|signature|token)\s*[=:]|"
-    r"/(?:Users|home)/[^\s]+|[A-Z]:\\\\Users\\\\)",
+    r"/(?:Users|home|Volumes)/[^\s]+|[A-Z]:\\\\Users\\\\)",
     re.IGNORECASE,
 )
 
@@ -121,6 +121,13 @@ class FailureCategory(str, Enum):
     PROVIDER_UNAVAILABLE = "provider_unavailable"
     PARSE_ERROR = "parse_error"
     EMPTY = "empty"
+
+
+class EgressType(str, Enum):
+    RESIDENTIAL = "residential"
+    DATACENTER = "datacenter"
+    LOCAL = "local"
+    UNKNOWN = "unknown"
 
 
 def _bounded_text(value: object, limit: int) -> tuple[str, bool]:
@@ -301,6 +308,36 @@ class ControlTranslation:
     provider_control: str | None = None
     provider_value: str | None = None
 
+    def __post_init__(self) -> None:
+        capabilities = {
+            "none",
+            "relative_only",
+            "date_range",
+            "relative_and_date_range",
+            "query_qualifier",
+        }
+        controls = {
+            "freshness",
+            "start_date/end_date",
+            "startPublishedDate/endPublishedDate",
+            "fromDate/toDate",
+            "advanced_settings.source_policy.after_date",
+            "time_period_min/time_period_max",
+            "time_range",
+            "timelimit",
+            "time_period",
+            "query_qualifier",
+        }
+        if self.capability not in capabilities:
+            raise ValueError("unknown provider control capability")
+        if self.provider_control is not None and self.provider_control not in controls:
+            raise ValueError("unknown provider control name")
+        if self.provider_value is not None:
+            value, truncated = _bounded_text(self.provider_value, MAX_REFERENCE)
+            if not value or truncated:
+                raise ValueError("provider control value must be bounded and private")
+            object.__setattr__(self, "provider_value", value)
+
 
 @dataclass(frozen=True, slots=True)
 class ProviderRequestEvidence:
@@ -310,6 +347,8 @@ class ProviderRequestEvidence:
     resolved_search_mode: str | None = None
     freshness_translation: ControlTranslation | None = None
     timeout_seconds: float | None = None
+    attempt_id: str | None = None
+    redirect_children: tuple[RedirectChildEvidence, ...] = ()
 
     def __post_init__(self) -> None:
         if self.effective_query_hash and not re.fullmatch(
@@ -323,6 +362,25 @@ class ProviderRequestEvidence:
         object.__setattr__(
             self, "resolved_search_mode", _bounded_label(self.resolved_search_mode)
         )
+        object.__setattr__(self, "attempt_id", _bounded_reference(self.attempt_id))
+        if self.timeout_seconds is not None:
+            timeout = _finite_nonnegative(self.timeout_seconds)
+            if timeout is None or timeout <= 0 or timeout > 300:
+                raise ValueError("attempt timeout must be finite and bounded")
+            object.__setattr__(self, "timeout_seconds", timeout)
+        children = tuple(self.redirect_children)
+        if len(children) > MAX_REDIRECTS:
+            children = children[:MAX_REDIRECTS]
+        if any(
+            not isinstance(child, RedirectChildEvidence)
+            or child.child_index != index
+            or child.parent_attempt_id != self.attempt_id
+            for index, child in enumerate(children, start=1)
+        ):
+            raise ValueError(
+                "redirect children must be bounded ordered attempt children"
+            )
+        object.__setattr__(self, "redirect_children", children)
 
 
 def _safe_warnings(values: Sequence[object]) -> tuple[str, ...]:
@@ -337,6 +395,36 @@ def _safe_warnings(values: Sequence[object]) -> tuple[str, ...]:
 
 
 @dataclass(frozen=True, slots=True)
+class UsageEvidence:
+    count: float | None = None
+    cost_usd: float | None = None
+    transaction_id: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "count", _finite_nonnegative(self.count))
+        object.__setattr__(self, "cost_usd", _finite_nonnegative(self.cost_usd))
+        object.__setattr__(
+            self, "transaction_id", _bounded_reference(self.transaction_id)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RateLimitEvidence:
+    remaining: float | None = None
+    reset_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "remaining", _finite_nonnegative(self.remaining))
+        if self.reset_at is not None:
+            if self.reset_at.tzinfo is None:
+                object.__setattr__(self, "reset_at", None)
+            else:
+                object.__setattr__(
+                    self, "reset_at", self.reset_at.astimezone(timezone.utc)
+                )
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderResponseEvidence:
     request_id: str | None = None
     session_id: str | None = None
@@ -347,10 +435,17 @@ class ProviderResponseEvidence:
     cost_usd: float | None = None
     rate_limit_remaining: float | None = None
     rate_limit_reset: datetime | None = None
+    http_status: int | None = None
     latency_ms: int = 0
     result_count: int = 0
     evidence_missing: bool = False
+    charge_reported_invalid: bool = False
+    usage: UsageEvidence | None = None
+    rate_limit: RateLimitEvidence | None = None
     skipped: bool = False
+    observed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    egress: EgressType = EgressType.UNKNOWN
+    machine: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "request_id", _bounded_reference(self.request_id))
@@ -367,12 +462,31 @@ class ProviderResponseEvidence:
             "rate_limit_remaining",
             _finite_nonnegative(self.rate_limit_remaining),
         )
-        if self.rate_limit_reset is not None and (
-            self.rate_limit_reset.tzinfo is None
-        ):
+        if self.rate_limit_reset is not None and (self.rate_limit_reset.tzinfo is None):
             object.__setattr__(self, "rate_limit_reset", None)
+        usage = self.usage or UsageEvidence(
+            self.usage_count, self.cost_usd, self.transaction_id
+        )
+        if any(
+            value is not None
+            for value in (usage.count, usage.cost_usd, usage.transaction_id)
+        ):
+            object.__setattr__(self, "usage", usage)
+        rate_limit = self.rate_limit or RateLimitEvidence(
+            self.rate_limit_remaining, self.rate_limit_reset
+        )
+        if rate_limit.remaining is not None or rate_limit.reset_at is not None:
+            object.__setattr__(self, "rate_limit", rate_limit)
+        if type(self.http_status) is not int or not 100 <= self.http_status <= 599:
+            object.__setattr__(self, "http_status", None)
         object.__setattr__(self, "latency_ms", max(0, int(self.latency_ms)))
         object.__setattr__(self, "result_count", max(0, int(self.result_count)))
+        if self.observed_at.tzinfo is None:
+            raise ValueError("provider observation time must be timezone-aware")
+        object.__setattr__(
+            self, "observed_at", self.observed_at.astimezone(timezone.utc)
+        )
+        object.__setattr__(self, "machine", _bounded_label(self.machine, MAX_REFERENCE))
 
 
 @dataclass(frozen=True, slots=True)
@@ -429,6 +543,9 @@ class ResultObservation:
     star_count: int | None = None
     fork_count: int | None = None
     topics: tuple[str, ...] = ()
+    observed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    egress: EgressType = EgressType.UNKNOWN
+    machine: str | None = None
 
     def __post_init__(self) -> None:
         if type(self.provider_rank) is not int or self.provider_rank < 0:
@@ -461,9 +578,7 @@ class ResultObservation:
             ("country", MAX_LABEL),
             ("section", MAX_LABEL),
         ):
-            object.__setattr__(
-                self, name, _bounded_label(getattr(self, name), limit)
-            )
+            object.__setattr__(self, name, _bounded_label(getattr(self, name), limit))
         for name in ("star_count", "fork_count"):
             value = getattr(self, name)
             if type(value) is not int or value < 0:
@@ -474,12 +589,17 @@ class ResultObservation:
             tuple(
                 topic
                 for topic in (
-                    _bounded_label(value)
-                    for value in tuple(self.topics)[:16]
+                    _bounded_label(value) for value in tuple(self.topics)[:16]
                 )
                 if topic is not None
             ),
         )
+        if self.observed_at.tzinfo is None:
+            raise ValueError("result observation time must be timezone-aware")
+        object.__setattr__(
+            self, "observed_at", self.observed_at.astimezone(timezone.utc)
+        )
+        object.__setattr__(self, "machine", _bounded_label(self.machine, MAX_REFERENCE))
         if self.publication is not None and not isinstance(
             self.publication, PublicationEvidence
         ):
@@ -511,7 +631,9 @@ class ProviderSearchBatch:
         observations = tuple(self.observations)
         expected = list(range(len(observations)))
         ranks = [item.provider_rank for item in observations]
-        if ranks != expected or any(item.provider is not self.provider for item in observations):
+        if ranks != expected or any(
+            item.provider is not self.provider for item in observations
+        ):
             raise ValueError("provider ranks must be unique zero-based returned order")
         positions = [
             item.provider_position
@@ -545,24 +667,38 @@ class ProviderSearchBatch:
                 metadata["language"] = item.language
             if item.provider_result_ref:
                 metadata["id"] = item.provider_result_ref
-            results.append(SearchResult(
-                url=item.url,
-                title=item.title,
-                snippet=item.snippet.primary_text,
-                domain=urlsplit(item.url).hostname or "",
-                provider=item.provider,
-                score=item.native_score.value if item.native_score else 0.0,
-                raw_rank=item.provider_rank,
-                metadata=metadata,
-            ))
+            metadata["egress"] = item.egress.value
+            metadata["observed_at"] = item.observed_at.isoformat()
+            if item.machine:
+                metadata["machine"] = item.machine
+            results.append(
+                SearchResult(
+                    url=item.url,
+                    title=item.title,
+                    snippet=item.snippet.primary_text,
+                    domain=urlsplit(item.url).hostname or "",
+                    provider=item.provider,
+                    score=item.native_score.value if item.native_score else 0.0,
+                    raw_rank=item.provider_rank,
+                    metadata=metadata,
+                )
+            )
         return results
 
     @property
     def trace(self) -> ProviderTrace:
-        status = "skipped" if self.response_evidence.skipped else (
-            "success"
-            if self.failure is None
-            else ("empty" if self.failure.category is FailureCategory.EMPTY else "error")
+        status = (
+            "skipped"
+            if self.response_evidence.skipped
+            else (
+                "success"
+                if self.failure is None
+                else (
+                    "empty"
+                    if self.failure.category is FailureCategory.EMPTY
+                    else "error"
+                )
+            )
         )
         credit_info: dict[str, object] = {}
         if self.response_evidence.cost_usd is not None:
@@ -576,14 +712,18 @@ class ProviderSearchBatch:
             status=status,
             results_count=len(self.observations),
             latency_ms=self.response_evidence.latency_ms,
-            error=self.failure.summary if self.failure else None,
+            error=(
+                self.failure.summary
+                if self.failure
+                else (
+                    "provider returned an invalid charge; reservation left uncertain"
+                    if self.response_evidence.charge_reported_invalid
+                    else None
+                )
+            ),
             credit_info=credit_info or None,
+            egress=self.response_evidence.egress.value,
         )
-
-    def __iter__(self):
-        """Temporary tuple projection for callers removed in the next slice."""
-        yield self.results
-        yield self.trace
 
     def safe_log_record(self) -> dict[str, object]:
         return {
@@ -616,6 +756,15 @@ class LegacyProviderBatchAdapter:
         cls, legacy: tuple[list[SearchResult], ProviderTrace]
     ) -> ProviderSearchBatch:
         results, trace = legacy
+        credit_info = trace.credit_info or {}
+        reported_cost = credit_info.get("cost_usd")
+        cost = _finite_nonnegative(reported_cost)
+        charge_invalid = "cost_usd" in credit_info and cost is None
+        raw_egress = trace.egress or "local"
+        try:
+            egress = EgressType(raw_egress)
+        except ValueError:
+            egress = EgressType.UNKNOWN
         observations: list[ResultObservation] = []
         for result in results:
             provider = result.provider or trace.provider
@@ -638,6 +787,7 @@ class LegacyProviderBatchAdapter:
                             result.score,
                             semantics=NativeScoreSemantics.UNKNOWN,
                         ),
+                        egress=egress,
                     )
                 )
             except ValueError:
@@ -661,6 +811,14 @@ class LegacyProviderBatchAdapter:
                 latency_ms=trace.latency_ms,
                 result_count=len(observations),
                 evidence_missing=True,
+                cost_usd=cost,
+                usage_count=credit_info.get("usage_count"),
+                transaction_id=(
+                    credit_info.get("transaction_id") or credit_info.get("tx_id")
+                ),
+                egress=egress,
+                charge_reported_invalid=charge_invalid,
+                skipped=trace.status == "skipped",
             ),
             observations=tuple(observations),
             failure=failure,
@@ -744,10 +902,49 @@ async def run_with_attempt_deadline(
 
 
 @dataclass(frozen=True, slots=True)
+class RedirectChildEvidence:
+    parent_attempt_id: str
+    child_index: int
+    source_origin: str
+    destination_origin: str
+    cross_origin: bool
+    credentials_stripped: bool
+    timeout_seconds: float
+
+    def __post_init__(self) -> None:
+        parent = _bounded_reference(self.parent_attempt_id)
+        if parent is None:
+            raise ValueError("redirect parent attempt ID must be bounded")
+        if (
+            type(self.child_index) is not int
+            or not 1 <= self.child_index <= MAX_REDIRECTS
+        ):
+            raise ValueError("redirect child index exceeds the trace bound")
+        source = _bounded_label(self.source_origin, MAX_REFERENCE)
+        destination = _bounded_label(self.destination_origin, MAX_REFERENCE)
+        timeout = _finite_nonnegative(self.timeout_seconds)
+        if source is None or destination is None or timeout is None or timeout <= 0:
+            raise ValueError("redirect child evidence must be bounded")
+        object.__setattr__(self, "parent_attempt_id", parent)
+        object.__setattr__(self, "source_origin", source)
+        object.__setattr__(self, "destination_origin", destination)
+        object.__setattr__(self, "timeout_seconds", timeout)
+
+
+def _origin(url: str) -> str:
+    parts = urlsplit(url)
+    port = parts.port
+    default_port = 443 if parts.scheme == "https" else 80
+    suffix = f":{port}" if port is not None and port != default_port else ""
+    return f"{parts.scheme}://{parts.hostname}{suffix}"
+
+
+@dataclass(frozen=True, slots=True)
 class RedirectRequest:
     url: str
     headers: dict[str, str]
     redirect_count: int
+    child_evidence: RedirectChildEvidence
 
 
 def safe_redirect_request(
@@ -756,6 +953,8 @@ def safe_redirect_request(
     destination_url: str,
     headers: Mapping[str, str],
     redirect_count: int,
+    parent_attempt_id: str = "provider-attempt",
+    timeout_seconds: float = 1.0,
     max_redirects: int = MAX_REDIRECTS,
 ) -> RedirectRequest:
     if redirect_count > max_redirects:
@@ -782,12 +981,26 @@ def safe_redirect_request(
         target.hostname,
         target.port,
     )
+    removed_credentials = any(_SECRET_KEY.search(key) for key in headers)
     safe_headers = {
         key: value
         for key, value in headers.items()
         if not _SECRET_KEY.search(key) and (not cross_origin or key.lower() != "origin")
     }
-    return RedirectRequest(destination, safe_headers, redirect_count)
+    return RedirectRequest(
+        destination,
+        safe_headers,
+        redirect_count,
+        RedirectChildEvidence(
+            parent_attempt_id=parent_attempt_id,
+            child_index=redirect_count,
+            source_origin=_origin(source_url),
+            destination_origin=_origin(destination),
+            cross_origin=cross_origin,
+            credentials_stripped=cross_origin and removed_credentials,
+            timeout_seconds=timeout_seconds,
+        ),
+    )
 
 
 _CONTRACT_VERSION = {
@@ -795,308 +1008,6 @@ _CONTRACT_VERSION = {
     for provider in ProviderName
     if provider is not ProviderName.CACHE
 }
-
-
-def _mapping(data: object) -> Mapping[str, Any] | None:
-    return data if isinstance(data, Mapping) else None
-
-
-def _sequence(value: object) -> list[Mapping[str, Any]] | None:
-    if not isinstance(value, list):
-        return None
-    return [item for item in value if isinstance(item, Mapping)]
-
-
-def _result_rows(
-    provider: ProviderName, data: Mapping[str, Any]
-) -> tuple[list[Mapping[str, Any]] | None, bool]:
-    if provider is ProviderName.BRAVE:
-        web = _mapping(data.get("web"))
-        return (_sequence(web.get("results")) if web else None, web is not None)
-    if provider is ProviderName.GITHUB:
-        return _sequence(data.get("items")), "items" in data
-    if provider is ProviderName.SERPER:
-        return _sequence(data.get("organic")), "organic" in data
-    if provider is ProviderName.YOU:
-        results = _mapping(data.get("results"))
-        return (
-            _sequence(results.get("web")) if results else None,
-            results is not None and "web" in results,
-        )
-    if provider is ProviderName.SEARCHAPI:
-        key = "organic_results" if "organic_results" in data else "organic"
-        return _sequence(data.get(key)), key in data
-    if provider is ProviderName.WOLFRAM:
-        answer = data.get("answer")
-        if isinstance(answer, str):
-            return (
-                [
-                    {
-                        "url": data.get("query_url")
-                        or "https://www.wolframalpha.com/",
-                        "title": data.get("title") or "WolframAlpha",
-                        "text": answer,
-                    }
-                ],
-                True,
-            )
-        return ([], data.get("empty") is True)
-    key = "results"
-    return _sequence(data.get(key)), key in data
-
-
-def _row_fields(
-    provider: ProviderName, item: Mapping[str, Any]
-) -> tuple[object, object, object, SnippetKind]:
-    if provider is ProviderName.DUCKDUCKGO:
-        return item.get("href"), item.get("title"), item.get("body"), SnippetKind.PROVIDER_SNIPPET
-    if provider is ProviderName.GITHUB:
-        return item.get("html_url"), item.get("full_name") or item.get("name"), item.get("description"), SnippetKind.PROVIDER_DESCRIPTION
-    if provider is ProviderName.LINKUP:
-        return item.get("url"), item.get("name"), item.get("content"), SnippetKind.PROVIDER_TEXT_EXCERPT
-    if provider is ProviderName.PARALLEL:
-        excerpts = item.get("excerpts")
-        if isinstance(excerpts, list):
-            snippet = " ".join(str(value) for value in excerpts[:3])
-        else:
-            snippet = item.get("excerpt") or item.get("snippet")
-        return item.get("url"), item.get("title"), snippet, SnippetKind.PROVIDER_TEXT_EXCERPT
-    if provider is ProviderName.SERPER:
-        return item.get("link"), item.get("title"), item.get("snippet"), SnippetKind.PROVIDER_SNIPPET
-    if provider is ProviderName.SEARCHAPI:
-        return item.get("link") or item.get("url"), item.get("title"), item.get("snippet") or item.get("description"), SnippetKind.PROVIDER_SNIPPET
-    if provider is ProviderName.SEARXNG:
-        return item.get("url"), item.get("title"), item.get("content"), SnippetKind.PROVIDER_SNIPPET
-    if provider is ProviderName.TAVILY:
-        return item.get("url"), item.get("title"), item.get("content"), SnippetKind.PROVIDER_TEXT_EXCERPT
-    if provider is ProviderName.EXA:
-        highlights = item.get("highlights")
-        snippet = (
-            " ".join(str(value) for value in highlights[:3])
-            if isinstance(highlights, list) and highlights
-            else item.get("text")
-        )
-        return item.get("url"), item.get("title"), snippet, SnippetKind.PROVIDER_HIGHLIGHT
-    if provider is ProviderName.VALYU:
-        return item.get("url"), item.get("title"), item.get("description") or item.get("content"), SnippetKind.PROVIDER_DESCRIPTION
-    if provider is ProviderName.BRAVE:
-        return item.get("url"), item.get("title"), item.get("description"), SnippetKind.PROVIDER_DESCRIPTION
-    if provider is ProviderName.YOU:
-        snippets = item.get("snippets")
-        snippet = snippets[0] if isinstance(snippets, list) and snippets else item.get("description")
-        return item.get("url"), item.get("title"), snippet, SnippetKind.PROVIDER_SNIPPET
-    if provider is ProviderName.WOLFRAM:
-        return item.get("url"), item.get("title"), item.get("text"), SnippetKind.PROVIDER_TEXT_EXCERPT
-    return item.get("url"), item.get("title"), item.get("snippet"), SnippetKind.PROVIDER_SNIPPET
-
-
-def _publication(
-    provider: ProviderName, item: Mapping[str, Any]
-) -> PublicationEvidence | None:
-    candidates: tuple[str, ...]
-    if provider is ProviderName.EXA:
-        candidates = ("publishedDate", "published_date")
-    elif provider is ProviderName.PARALLEL:
-        candidates = ("publish_date",)
-    elif provider is ProviderName.VALYU:
-        candidates = ("publication_date",)
-    elif provider is ProviderName.TAVILY:
-        candidates = ("published_date",)
-    elif provider is ProviderName.SEARXNG:
-        candidates = ("publishedDate",)
-    else:
-        candidates = ()
-    for field_name in candidates:
-        if field_name in item:
-            confidence = (
-                ContractConfidence.FIXTURE_BACKED
-                if field_name == "published_date" and provider is ProviderName.EXA
-                else ContractConfidence.OFFICIAL_CONTRACT
-            )
-            return PublicationEvidence.from_raw(
-                item[field_name],
-                raw_field_name=field_name,
-                confidence=confidence,
-                semantic_contract_ref=f"{provider.value}-search-contract",
-            )
-    return None
-
-
-def _native_score(
-    provider: ProviderName, item: Mapping[str, Any]
-) -> NativeScoreEvidence | None:
-    if provider is ProviderName.SEARXNG:
-        value = item.get("score")
-        semantics = NativeScoreSemantics.PROVIDER_RANK_SCORE
-    elif provider is ProviderName.TAVILY:
-        value = item.get("score")
-        semantics = NativeScoreSemantics.RELEVANCE
-    elif provider is ProviderName.VALYU:
-        value = item.get("relevance_score")
-        semantics = NativeScoreSemantics.RELEVANCE
-    else:
-        return None
-    return NativeScoreEvidence.from_value(
-        value,
-        semantics=semantics,
-        confidence=ContractConfidence.OFFICIAL_CONTRACT,
-    )
-
-
-def _source(provider: ProviderName, item: Mapping[str, Any]) -> EvidenceKind:
-    if provider is ProviderName.GITHUB:
-        return EvidenceKind.REPOSITORY
-    if provider is ProviderName.WOLFRAM:
-        return EvidenceKind.COMPUTED_ANSWER
-    if provider is ProviderName.YOU and item.get("_section") == "news":
-        return EvidenceKind.NEWS
-    source = item.get("source_type") or item.get("type")
-    mapping = {
-        "web": EvidenceKind.WEB_PAGE,
-        "news": EvidenceKind.NEWS,
-        "paper": EvidenceKind.PAPER,
-        "proprietary": EvidenceKind.PROPRIETARY,
-    }
-    if source is not None:
-        return mapping.get(str(source).lower(), EvidenceKind.UNKNOWN)
-    return EvidenceKind.WEB_PAGE
-
-
-def _response_evidence(
-    provider: ProviderName, data: Mapping[str, Any], count: int
-) -> ProviderResponseEvidence:
-    metadata = _mapping(data.get("metadata")) or {}
-    usage = _mapping(data.get("usage")) or {}
-    search_metadata = _mapping(data.get("search_metadata")) or {}
-    warning_values = data.get("warnings")
-    if not isinstance(warning_values, list):
-        warning_values = [data.get("error")] if data.get("success") is True and data.get("error") else []
-    request_id = (
-        data.get("requestId")
-        or data.get("request_id")
-        or data.get("search_id")
-        or metadata.get("search_uuid")
-        or search_metadata.get("id")
-    )
-    session_id = data.get("session_id")
-    transaction_id = data.get("tx_id")
-    usage_count = usage.get("credits")
-    if usage_count is None:
-        usage_count = usage.get("total_tokens")
-    cost = data.get("costDollars")
-    if isinstance(cost, Mapping):
-        cost = cost.get("total")
-    if cost is None:
-        cost = data.get("total_deduction_dollars")
-    return ProviderResponseEvidence(
-        request_id=request_id,
-        session_id=session_id,
-        transaction_id=transaction_id,
-        warnings=tuple(warning_values),
-        usage_count=usage_count,
-        cost_usd=cost,
-        result_count=count,
-    )
-
-
-def normalize_provider_response(
-    provider: ProviderName,
-    payload: object,
-    *,
-    max_results: int,
-    request_evidence: ProviderRequestEvidence | None = None,
-) -> ProviderSearchBatch:
-    """Normalize one captured provider payload without retaining native fields."""
-    data = _mapping(payload)
-    if data is None or isinstance(max_results, bool) or max_results <= 0:
-        failure = ProviderFailure(
-            FailureCategory.PARSE_ERROR, provider, summary="invalid provider response shape"
-        )
-        return ProviderSearchBatch(
-            provider,
-            _CONTRACT_VERSION[provider],
-            request_evidence or ProviderRequestEvidence(),
-            ProviderResponseEvidence(),
-            (),
-            failure,
-        )
-    rows, recognized = _result_rows(provider, data)
-    if rows is None or not recognized:
-        failure = ProviderFailure(
-            FailureCategory.PARSE_ERROR,
-            provider,
-            summary="provider success response did not match contract",
-        )
-        return ProviderSearchBatch(
-            provider,
-            _CONTRACT_VERSION[provider],
-            request_evidence or ProviderRequestEvidence(),
-            ProviderResponseEvidence(),
-            (),
-            failure,
-        )
-    observations: list[ResultObservation] = []
-    for item in rows:
-        if len(observations) >= max_results:
-            break
-        url, title, snippet, snippet_kind = _row_fields(provider, item)
-        try:
-            engines = item.get("engines")
-            if not isinstance(engines, list):
-                engines = [item.get("engine")] if item.get("engine") else []
-            highlights = item.get("highlights")
-            observation = ResultObservation(
-                provider=provider,
-                provider_rank=len(observations),
-                url=url,
-                title=title or "",
-                snippet=SnippetEvidence(
-                    snippet or "",
-                    snippet_kind if snippet else SnippetKind.EMPTY,
-                    tuple(highlights) if isinstance(highlights, list) else (),
-                ),
-                source_kind=_source(provider, item),
-                provider_source_type=item.get("source_type") or item.get("type"),
-                upstream_engines=tuple(engines),
-                publication=_publication(provider, item),
-                native_score=_native_score(provider, item),
-                provider_result_ref=item.get("id"),
-                provider_position=item.get("position"),
-                author=item.get("author"),
-                language=item.get("language"),
-                section=item.get("_section"),
-                star_count=item.get("stargazers_count"),
-                fork_count=item.get("forks_count"),
-                topics=(
-                    tuple(item.get("topics"))
-                    if isinstance(item.get("topics"), list)
-                    else ()
-                ),
-            )
-        except (TypeError, ValueError):
-            continue
-        observations.append(observation)
-    response = _response_evidence(provider, data, len(observations))
-    if rows and not observations:
-        failure = ProviderFailure(
-            FailureCategory.PARSE_ERROR,
-            provider,
-            summary="all provider result rows were structurally invalid",
-        )
-    elif not rows:
-        failure = ProviderFailure(
-            FailureCategory.EMPTY, provider, summary="valid empty provider response"
-        )
-    else:
-        failure = None
-    return ProviderSearchBatch(
-        provider=provider,
-        provider_contract_version=_CONTRACT_VERSION[provider],
-        request_evidence=request_evidence or ProviderRequestEvidence(),
-        response_evidence=response,
-        observations=tuple(observations),
-        failure=failure,
-    )
 
 
 def with_response_timing(
@@ -1125,48 +1036,54 @@ def failure_batch(
     error: BaseException,
     *,
     latency_ms: int = 0,
+    request_evidence: ProviderRequestEvidence | None = None,
 ) -> ProviderSearchBatch:
     """Convert a transport/parser exception into bounded private evidence."""
+    if isinstance(error, ProviderFailure):
+        failure = error
+        return ProviderSearchBatch(
+            provider=provider,
+            provider_contract_version=_CONTRACT_VERSION[provider],
+            request_evidence=request_evidence or ProviderRequestEvidence(),
+            response_evidence=ProviderResponseEvidence(
+                latency_ms=latency_ms,
+                http_status=failure.http_status,
+                rate_limit_reset=failure.rate_limit_reset,
+            ),
+            failure=failure,
+        )
     response = getattr(error, "response", None)
     status = getattr(response, "status_code", None)
     if isinstance(status, int):
-        error_summary, _ = _bounded_text(str(error), MAX_WARNING)
-        if (
-            provider is ProviderName.GITHUB
-            and status == 403
-            and "rate limit" in error_summary.lower()
-        ):
-            failure = ProviderFailure(
-                FailureCategory.RATE_LIMITED,
-                provider,
-                http_status=status,
-                summary="rate limited",
-            )
-        else:
-            failure = classify_http_failure(
-                provider,
-                status,
-                summary=f"{provider.value} HTTP request failed",
-            )
-    elif isinstance(error, (TimeoutError, asyncio.TimeoutError)) or "timeout" in type(
-        error
-    ).__name__.lower():
+        failure = classify_http_failure(
+            provider,
+            status,
+            summary=f"{provider.value} HTTP request failed",
+        )
+    elif (
+        isinstance(error, (TimeoutError, asyncio.TimeoutError))
+        or "timeout" in type(error).__name__.lower()
+    ):
         failure = ProviderFailure(
             FailureCategory.TIMEOUT,
             provider,
             summary=f"{provider.value} request timed out",
         )
     else:
-        safe_summary, _ = _bounded_text(str(error), MAX_WARNING)
         failure = ProviderFailure(
             FailureCategory.PROVIDER_UNAVAILABLE,
             provider,
-            summary=safe_summary or f"{provider.value} request failed",
+            summary=f"{provider.value} request failed ({type(error).__name__})",
         )
     return ProviderSearchBatch(
         provider=provider,
         provider_contract_version=_CONTRACT_VERSION[provider],
-        response_evidence=ProviderResponseEvidence(latency_ms=latency_ms),
+        request_evidence=request_evidence or ProviderRequestEvidence(),
+        response_evidence=ProviderResponseEvidence(
+            latency_ms=latency_ms,
+            http_status=failure.http_status,
+            rate_limit_reset=failure.rate_limit_reset,
+        ),
         failure=failure,
     )
 
