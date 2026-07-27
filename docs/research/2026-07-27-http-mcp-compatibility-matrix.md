@@ -30,6 +30,7 @@ historical record was called.
 | Host | no application allowlist | explicit production allowlist before work |
 | response size to adapter | HTTP client caps at 11 MiB | preserve cap |
 | capability discovery | schema `1.0`, execution/capability booleans | additive contract-discovery entries |
+| capability cache | none for contract selection | in-process only, origin/deployment scoped, at most 60 seconds |
 
 Current `/api/live`, `/api/startup`, `/api/ready`, `/api/health`, and
 authenticated status surfaces already have separately documented operational
@@ -114,7 +115,7 @@ operation:
 | `X-Request-ID` | one HTTP operation | no | no | correlation only |
 | idempotency key | accepted operation/attempt | durable where declared | no | same caller and exact contract only |
 | search `session_id` | authenticated Argus caller | yes | no | same caller only |
-| `Mcp-Session-Id` | MCP process + authenticated principal | no | no | same principal until idle/delete/restart |
+| `Mcp-Session-Id` | atomic MCP registry + authenticated principal | no | no | same principal until idle/delete/restart; expired entries swept before capacity |
 | bearer token | credential authority | external | yes | never exposed as another identifier |
 | run/trace/artifact ref | HTTP authority | yes | no | access-controlled evidence reference |
 
@@ -173,6 +174,10 @@ MCP does not turn a 502/503/504 from the HTTP authority into ordinary Markdown
 success, and HTTP/MCP do not independently reclassify ADR 0005 rejection
 evidence.
 
+A transport-capacity 503 occurs before JSON-RPC/tool execution. An
+HTTP-authority 503 through `*_v2` is a JSON-RPC success carrying an
+`isError=true` tool result and canonical envelope.
+
 ## Migration fixtures
 
 The minimum hermetic fixture corpus includes:
@@ -185,22 +190,26 @@ The minimum hermetic fixture corpus includes:
 5. malformed JSON, non-finite input, oversized body, and injected secret/raw
    error values;
 6. capability discovery against a legacy and version-2 server;
-7. no fallback POST after ambiguous version-2 failure;
+7. origin/deployment-scoped 60-second capability expiry, deployment
+   invalidation, and no fallback POST after ambiguous version-2 failure;
 8. HTTP bearer/custom/multiple credential cases;
 9. caller-owned and cross-caller retrieval sessions;
 10. every Host/Origin/CORS case above;
 11. MCP initialize for every promised protocol revision;
 12. missing, invalid, expired, deleted, wrong-principal, at-capacity, and
-    post-restart MCP sessions, plus unpredictable generation and collision
-    handling;
+    post-restart MCP sessions, plus unpredictable generation, atomic collision
+    handling, atomic concurrent capacity admission, expired-session
+    reclamation, and no valid-session LRU eviction;
 13. MCP POST requests, 202/no-body notification/response acknowledgement, GET,
     DELETE, OPTIONS, content type, Accept, and body bounds;
 14. every `*_v2` tool success/degraded/empty/failure as text plus structured
     content, and schema-invalid arguments as bounded SDK tool errors with no
     rejected-value echo or HTTP execution;
 15. unchanged legacy-name `{"result": text}` schemas and text rendering;
-16. secured legacy `GET /sse` and `POST /messages/` compatibility; and
-17. CLI human/JSON stdout, stderr, and exit codes.
+16. secured legacy `GET /sse` and `POST /messages/` compatibility;
+17. CLI human/JSON stdout, stderr, and exit codes;
+18. presenter dependency boundaries; and
+19. rejection of over-bound accepted results without partial streaming.
 
 These fixtures use in-process fakes only. They must prove zero provider,
 extractor, paid, production, or secret access.

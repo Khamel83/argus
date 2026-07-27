@@ -139,6 +139,14 @@ already proved that the server is a legacy server. Timeouts, connection
 failure, 5xx, invalid bodies, or a server that advertised version 2 never
 trigger a second execution request.
 
+An adapter may cache a valid capability document only in process, for at most
+60 seconds, keyed by authority origin and deployment ID when advertised. A
+deployment-ID change invalidates it immediately. A cache miss or expired entry
+is resolved before execution; an error never overwrites a valid entry or
+authorizes speculative fallback. Using a still-valid legacy entry after a
+server upgrade remains safe because version 1 stays supported, and it
+converges to version 2 at expiry without duplicating an operation.
+
 ## Legacy HTTP contract
 
 The unversioned `/api/*` contract is compatibility version 1.
@@ -463,11 +471,18 @@ session identifier: opaque, at most 128 visible ASCII characters
 
 Session identifiers are generated with a cryptographically secure random
 source, are unpredictable, and are regenerated on the vanishingly unlikely
-event of an active-ID collision. A sequential ID, bearer-token derivative,
-request ID, retrieval session ID, or caller-provided value is forbidden.
+event of an active-ID collision. Collision check and registration are one
+atomic registry operation; concurrent initializes cannot both claim an ID.
+Expired-session reclamation, capacity check/reservation, collision check, and
+insertion are one atomic registry transaction (or equivalent semaphore-backed
+reservation), so concurrent initializes cannot exceed the capacity bound. A
+sequential ID, bearer-token derivative, request ID, retrieval session ID, or
+caller-provided value is forbidden.
 
-At capacity, a new initialize request fails 503 with bounded retry guidance;
-existing sessions continue.
+Expired sessions are reclaimed before every capacity decision and by a
+periodic bounded sweep. Valid sessions are never silently evicted by LRU.
+After reclamation, a registry still at capacity rejects a new initialize with
+transport HTTP 503 and bounded retry guidance; existing sessions continue.
 
 Version 2 does not promise SSE event replay or `Last-Event-ID` resumability.
 Disconnect is visible and is not cancellation by itself, but Argus performs
@@ -489,6 +504,12 @@ Three error layers remain distinct:
 Provider, extraction, policy, timeout, persistence, and readiness outcomes are
 tool results, not JSON-RPC protocol failures. This lets MCP-aware clients and
 models receive the same evidence as HTTP callers.
+
+Transport capacity exhaustion is an HTTP 503 before a tool exists and has no
+version-2 envelope. An HTTP-authority 503 reached through a version-2 tool is a
+successful JSON-RPC exchange carrying `isError=true` and the exact canonical
+envelope. Clients can therefore distinguish these layers without parsing
+display text.
 
 Input-schema validation happens in the pinned SDK before the version-2 tool
 adapter can create an Argus accepted operation. It therefore cannot truthfully
@@ -591,6 +612,11 @@ It never contains:
 - a full trace copied into logs.
 
 The HTTP-authority response remains capped at 11 MiB for MCP/CLI adapters.
+Version 2 does not promise arbitrary result streaming or chunk reconstruction:
+the accepted object must fit the bound before presentation. HTTP transfer
+framing and MCP SSE may stream bytes, but they do not relax that semantic
+bound. Server write deadlines and transport backpressure bound slow consumers;
+a future resumable/chunked artifact contract requires a separate decision.
 Every identifier, label, signal, retry value, and trace reference obeys its
 own accepted ADR bound. A presenter rejects an invalid accepted object rather
 than truncating identity or converting a failure into success.
@@ -622,6 +648,8 @@ Hermetic tests must prove:
 
 - every version-1 golden response remains byte-semantically compatible except
   permitted optional fields, safe redaction, and security rejection;
+- an architecture/dependency test proves presenters cannot import or invoke
+  providers, extractors, cache-fill, persistence, or rejection classifiers;
 - version 2 always emits the required envelope/header identity;
 - every canonical outcome maps to exactly one HTTP status and MCP `isError`;
 - partial accepted evidence remains visible on failures without becoming an
@@ -643,7 +671,8 @@ Hermetic tests must prove:
 - missing, wrong, expired, wrong-principal, terminated, capacity-limited, and
   post-restart MCP sessions have fixed behavior;
 - session IDs are cryptographically unpredictable, bounded, collision-checked,
-  and never derived from another identifier;
+  and never derived from another identifier; concurrent admission cannot
+  exceed capacity;
 - POST/GET/DELETE/OPTIONS, Accept, Content-Type, protocol version, and 4 MiB
   body bounds match the transport contract;
 - JSON-RPC errors and Argus tool errors never collapse into one another;
@@ -655,7 +684,8 @@ Hermetic tests must prove:
 - legacy SSE paths retain their current transport shape under the shared
   security boundary;
 - capability negotiation selects v2, safely recognizes a legacy server, and
-  never retries an ambiguous execution request;
+  never retries an ambiguous execution request; its cache is origin/deployment
+  scoped, expires within 60 seconds, and invalidates on deployment change;
 - CLI stdout/stderr and exit behavior are exact; and
 - no public response/log contains injected credential, cookie, raw error,
   request-body, environment, path, or provider-body sentinel.
