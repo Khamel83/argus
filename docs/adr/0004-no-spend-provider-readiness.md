@@ -444,18 +444,20 @@ Overall status is not `ok` merely because one registered provider is enabled.
 
 The repository transactionally materializes one current snapshot per provider
 and policy generation whenever an observation or policy input changes. The
-snapshot records `valid_until` as the earliest expiry of any observation that
-supports its decision. Every execution read compares `valid_until` with
-repository transaction time. At or after expiry, the repository atomically
-materializes a new generation with expired dimensions set to `unknown`, or
-fails closed to `unknown` while another writer does so; it never scans history
-on the request path.
+snapshot records `valid_until` as the earliest expiry of every materialized
+observation, including observations that do not currently determine the
+execution decision. Every execution and rendering read compares `valid_until`
+with repository transaction time. At or after expiry, the repository
+atomically materializes a new generation with every expired dimension set to
+`unknown`, or fails closed to `unknown` while another writer does so; it never
+scans history on the request path.
 
 Render surfaces read the same bounded snapshot. An in-process rendering cache
-may reuse a generation for at most five monotonic seconds and never beyond the
-authority-provided remaining duration observed when it fetched the snapshot.
-Execution does not use that cache. Cache loss causes a repository read and
-never changes the decision.
+may reuse a generation for at most five monotonic seconds. Its local deadline
+is the lesser of five seconds and the absolute authority `valid_until` minus
+the measured request elapsed time and a one-second safety margin. Non-positive
+remaining time bypasses the cache. Execution does not use that cache. Cache
+loss causes a repository read and never changes the decision.
 
 ### Admin smoke
 
@@ -628,6 +630,8 @@ The required negative tests include:
   rejection of late stale-fencing-token settlement;
 - authority/producer clock skew and implausible provider reset timestamps;
 - cached health expiring when repository time advances without any write;
+- a non-decision observation expiring and rendering `unknown` while another
+  dimension continues to block execution;
 - bounded snapshot and receipt-reference compaction under repeated
   observations and scope injection;
 - scope/receipt overflow failing startup or provider readiness without silently

@@ -195,7 +195,8 @@ proves:
 - fixture and live evidence expiry is deterministic under an injected clock;
 - repository time defeats producer clock skew and implausible reset times fail
   closed;
-- `valid_until` expires cached health without an intervening write;
+- `valid_until` expires every materialized observation, including
+  non-decision evidence, without an intervening write;
 - lease expiry cannot overlap an unproved original invocation, and stale
   fencing tokens cannot settle readiness;
 - repeated observations compact into bounded snapshots and receipt references;
