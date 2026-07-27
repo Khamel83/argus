@@ -102,10 +102,10 @@ artifact. The typed step trace preserves it.
 | cache miss | cache decision only | continue; no attempt increment |
 | eligible extractor invoked | `decision=invoked` plus one closed `attempt_outcome` | contributes to attempt summary |
 | extractor skipped by policy/config | `decision=policy_skipped` | visible, not an invocation |
-| complete artifact on first extractor | one success step | `success` |
-| timeout then complete fallback | timeout step + success step | `success`, rejection null |
-| quality failure then complete fallback | quality-failed step + success step | `success`, rejection null |
-| incomplete artifact then complete fallback | incomplete evidence retained + success step | `success` |
+| complete artifact on first extractor | one `content` attempt plus complete artifact evaluation | `success` |
+| timeout then complete fallback | `timeout`, then `content` plus complete artifact evaluation | `success`, rejection null |
+| quality failure then complete fallback | first `content` attempt with rejected artifact evaluation, then `content` with accepted evaluation | `success`, rejection null |
+| incomplete artifact then complete fallback | first `content` attempt with incomplete artifact evaluation, then accepted complete evaluation | `success` |
 | incomplete artifact, fallbacks exhausted, partial allowed | all steps retained | `degraded/incomplete_content` |
 | every path empty/failed | all evaluated steps retained | hard failure with causative rejection |
 | one attempt is stopped by an explicit terminal policy rule | `terminal_cause=attempt_terminal` plus ordinal and policy ref | map that closed attempt outcome |

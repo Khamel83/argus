@@ -340,6 +340,15 @@ must equal the ordered set of invoked decisions, and
 dangling, duplicated, or contradictory references are a contract failure, not
 facts for the rejection mapper to repair.
 
+Caller-boundary validation and internal-contract validation are different.
+Malformed caller-controlled request or `ArtifactRequirement` input is
+`invalid_request` before execution. Malformed orchestrator-generated trace,
+terminal cause, provenance, or bounded identity is a privacy-safe
+`extraction_failed/provider_unavailable` with `recommended_action=terminal`
+and an internal-contract-failure metric; raw values are neither returned nor
+logged. Failure to durably validate or accept an otherwise valid projection
+is `persistence_failed`. No internal defect is relabeled as caller error.
+
 The terminal mapping is closed:
 
 | Terminal fact | Canonical outcome | #57 rejection |
@@ -349,9 +358,9 @@ The terminal mapping is closed:
 | preflight `policy_rejected` | `policy_rejected` | `unsupported_source` only when a run exists; otherwise absent |
 | preflight `unready` | `unready` | `provider_unavailable` only when a run exists; otherwise absent |
 | operation deadline | `timeout` | `timeout` |
-| terminal/exhausted `invalid_request` | `invalid_request` | absent; canonical outcome is authoritative |
-| terminal/exhausted `authentication_rejected` | `authentication_rejected` | absent; canonical outcome is authoritative |
-| terminal/exhausted `policy_rejected` | `policy_rejected` | `unsupported_source` |
+| terminal/exhausted `adapter_request_rejected` | `extraction_failed` | `parse_error` |
+| terminal/exhausted `provider_authentication_rejected` | `unready` | `provider_unavailable` |
+| terminal/exhausted `provider_policy_rejected` | `extraction_failed` | `provider_unavailable` |
 | terminal/exhausted `balance_exhausted` | `unready` | `provider_unavailable` |
 | terminal/exhausted other homogeneous outcome | mapper rule for that outcome | corresponding #57 code |
 | heterogeneous exhaustion | `extraction_failed` | `provider_unavailable` |
@@ -419,9 +428,9 @@ ExtractorDecision:
 attempt_outcome =
   content |
   empty |
-  invalid_request |
-  authentication_rejected |
-  policy_rejected |
+  adapter_request_rejected |
+  provider_authentication_rejected |
+  provider_policy_rejected |
   rate_limited |
   balance_exhausted |
   timeout |
@@ -438,6 +447,11 @@ non-empty normalized text was returned, not that quality or completeness
 passed. Artifact quality and completeness are recorded only in the final
 artifact evaluation, never overloaded into execution status. Cache decisions
 are not extractor calls.
+
+The `adapter_*` and `provider_*` names are deliberate: they describe a failure
+after Argus began execution and cannot produce caller-facing
+`invalid_request` or `authentication_rejected`. Those canonical outcomes are
+reserved for the preflight caller boundary.
 
 The public rejection keeps only bounded `attempt_count`, causative provider,
 last status, and total attempt latency. The durable trace keeps the typed step
@@ -517,15 +531,26 @@ The composite decision uses this precedence:
 |---|---|
 | no artifact requirement | accepted retrieval outcome unchanged |
 | retrieval is `empty` or a terminal retrieval failure before any result selection | retrieval outcome unchanged; no extraction failure is invented |
-| a required selection has acceptance failure | `persistence_failed` |
+| any selected link or outcome cannot be durably accepted | `persistence_failed` |
 | a required selection has no eligible extraction path | `unready` |
-| any required-selection minimum or aggregate floor is unmet after eligible attempts | `extraction_failed`; search results remain retrieval evidence |
+| aggregate floor is unmet and excluding all no-eligible-path selections leaves fewer possible selections than `aggregate_floor.count` | `unready` |
+| any required-selection minimum or aggregate floor remains unmet after eligible attempts | `extraction_failed`; search results remain retrieval evidence |
 | every selected extraction is usable and all floors are met | retrieval outcome, unless it was already degraded |
 | floors met but any counted/selected artifact is partial or any optional selection rejected | `degraded`, with every link |
 
 Internal fallback failures followed by one accepted final extraction do not
 degrade that extraction. Cross-result selected failures do degrade the
 composite operation because partial execution must remain visible.
+
+For the aggregate readiness test, a “possible selection” is either already
+accepted at the aggregate minimum or had at least one eligible invoked path
+that could have produced that disposition. This counterfactual is evaluated
+only from the immutable plan and typed trace. Thus three selected clusters with
+a floor of three and one cluster having no eligible path is `unready`;
+four selected clusters with a floor of three, one unavailable cluster, and
+three attempted failures is `extraction_failed`. An optional unavailable link
+is merely degrading only when all per-selection and aggregate floors are
+already met without it.
 
 Rejected and diagnostic-only content cannot enter `StoredDocument`,
 `CitationRef`, summarizer input, or evidence scoring. Allowed partial content
@@ -641,12 +666,14 @@ physical bounds:
 |---|---|
 | evaluated extractor decisions | 16 |
 | selected result-cluster links in one composition | 200 |
+| `max_extractions` in one composition | integer from 0 through 200 |
+| operation deadline | integer from 1 through 120,000 milliseconds, inherited from ADR 0002 |
 | completeness signals | 16 entries, 64 characters each |
 | extractor/outcome/category/policy label | 64 characters |
 | extraction run ID | 64 characters |
 | opaque plan, trace, policy, spend, artifact, or origin reference | 128 characters |
 | latency | finite non-negative integer, capped at signed 64-bit milliseconds |
-| cost | finite non-negative decimal under the spend ledger's precision |
+| cost | non-negative USD decimal with at most 9 fractional digits and at most signed-64-bit nanodollars |
 
 Over-bound labels and identifiers are rejected, not truncated into false
 identity. Human-readable diagnostic text is not part of the rejection or typed
