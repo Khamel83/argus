@@ -1020,9 +1020,9 @@ the image restores the old orchestrator without changing legacy wire shapes.
 **Interfaces:**
 - Produces `EvidenceHttpPresenter`, `TransportSecurityGuard`, and authenticated
   `/api/v2/*`.
-- Produces one process-local `CapabilityRegistration` owner whose immutable
-  snapshot is replaced atomically only after a complete startup registration
-  check; later MCP slices extend this same owner.
+- Produces an immutable release capability manifest and pure deterministic
+  validator in `argus/capabilities.py`; later MCP slices extend the same
+  manifest. Each process validates the manifest independently at startup.
 - Adds authenticated `http_contracts` / `mcp_contract` capability entries.
 
 - [ ] **Step 1: Write exhaustive envelope/status tests**
@@ -1063,9 +1063,12 @@ registration check; otherwise it advertises only legacy HTTP capability. It
 does not advertise an MCP v2 suffix before S9c registers and proves those
 tools. A direct HTTP v2 request while the evidence authority is disabled
 returns `unready` before provider, extractor, cache, persistence, or session
-work. `argus/api/routes_health.py` reads exactly one immutable snapshot from
-the shared registration owner; it never reconstructs readiness from separate
-booleans. Existing capability fields remain unchanged.
+work. The HTTP process validates the immutable release manifest during its own
+startup and stores the resulting frozen snapshot in app state.
+`argus/api/routes_health.py` reads exactly that snapshot; it never reconstructs
+support from separate booleans. The manifest describes release contract
+support, not whether a separate MCP process is currently live. Existing
+capability fields remain unchanged.
 
 - [ ] **Step 6: Verify and commit**
 
@@ -1158,8 +1161,10 @@ transport/session rules.
 **Interfaces:**
 - Produces a process-local `McpSessionRegistry` with atomic
   `initialize`, `lookup`, `touch`, `terminate`, and `sweep` operations.
-- Records the complete S9b transport-registration result in the shared
-  `CapabilityRegistration` owner without advertising MCP v2 yet.
+- Extends the immutable release manifest with the S9b transport descriptor but
+  no externally advertised MCP v2 contract yet. The MCP process binds its
+  actual transport registration to that descriptor and validates it before
+  opening a listener.
 - Keeps existing tool registration and result shapes unchanged.
 
 - [ ] **Step 1: Write protocol/method/media tests**
@@ -1258,10 +1263,19 @@ Add the MCP v2 suffix and tool-contract version to capabilities only when the
 S9b transport and all four S9c `*_v2` tools/output schemas passed one startup
 registration check. Missing transport/tool/schema registration keeps the
 legacy MCP capability document and fails direct v2 tool registration before
-the listener accepts requests. The shared `CapabilityRegistration` owner
-publishes the complete MCP registration as one immutable replacement, and
-`argus/api/routes_health.py` renders that same snapshot. Neither side combines
-independently read transport/tool/schema flags.
+the listener accepts requests.
+
+S9c completes the immutable release manifest with one MCP descriptor containing
+the transport version, four tool names, and exact input/output schema digests.
+The HTTP authority and MCP server are separate processes: neither relies on a
+mutable singleton or cross-process update. The HTTP process independently
+validates the complete manifest at startup and
+`argus/api/routes_health.py` renders its frozen result as release contract
+support, not MCP-process liveness. The MCP process independently validates the
+same manifest against its actual bound transport, tools, and schemas before it
+opens a listener. Contract tests start the two processes independently, mutate
+each manifest field, and prove HTTP suppresses the MCP suffix while MCP refuses
+startup on incomplete or mismatched descriptors.
 
 - [ ] **Step 5: Verify and commit**
 
