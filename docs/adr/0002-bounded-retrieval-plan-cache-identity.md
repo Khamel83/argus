@@ -164,7 +164,6 @@ semantic:
   safe_search
   country?
   language?
-  include_attribution
 
 execution:
   profile
@@ -173,6 +172,9 @@ execution:
   deadline_ms
   revalidation
   egress_preference
+
+presentation:
+  include_attribution
 
 versions:
   query_normalization_version
@@ -233,11 +235,14 @@ relative window naturally rolls forward without a background invalidator.
 Invalid dates, `start_date > end_date`, or a relative window combined with
 explicit dates are `invalid_request`. Adapters translate supported controls,
 but a provider-applied filter is acquisition evidence, not proof about an
-individual result. The broker always post-filters on each result's normalized
-publication date. Every returned result must have a parseable date inside the
-inclusive resolved range. An undated or out-of-range result is removed and
-recorded. If no result remains and any candidate lacked per-result proof, the
-outcome is `freshness_unproven`, not a proven empty result.
+individual result. The broker always post-filters on each returned result's
+normalized publication date. Every returned result must have a parseable date
+inside the inclusive resolved range. An undated or out-of-range result is
+removed and recorded. `freshness_unproven` is an internal rejection reason,
+never a new surface outcome; absent proof that the provider returned a
+genuinely empty freshness-scoped result, it maps to canonical
+`providers_failed`. Issue #62 owns the versioned provider-signal rules that
+distinguish a strictly filtered empty response from unproven returned evidence.
 
 Default cache age:
 
@@ -281,11 +286,11 @@ optimization and must be recorded in the trace.
   reserve or initiate a billable attempt.
 - A budgeted cache miss uses registered providers within configured budget and
   caller caps.
-- An explicit provider list is a restriction, not a priority override. The
-  planner removes duplicates, then applies the existing stable tier sort:
-  tier 0 before tier 1 before tier 3, preserving mode-policy order within a
-  tier. It remains subject to profile, caller-cap, availability, and spend
-  gates.
+- An explicit provider list is a restriction with current compatibility
+  ordering. The planner removes later duplicates, then applies the existing
+  stable tier sort: tier 0 before tier 1 before tier 3, preserving caller order
+  within each tier. It remains subject to profile, caller-cap, availability,
+  and spend gates.
 - Current health, cooldown, balance, and reservation state are evaluated at
   execution time and recorded in evidence. They are not cache identity.
 
@@ -307,20 +312,22 @@ provider execution, normalization/ranking, durable persistence, and response
 assembly. A caller may request a shorter internal deadline once a typed
 control exists, but never a longer one.
 
-The executor enforces one monotonic outer cancellation scope. It reserves the
-last 5,000 milliseconds for normalization, durable acceptance, and response
-assembly; no provider starts after that reserve begins. Each async adapter must
-be cancellation-safe and accept the computed attempt timeout. A blocking
-adapter may run only behind a killable worker boundary or a provider-native
-timeout proven not to outlive cancellation. Otherwise it is `unready` and is
-skipped rather than allowed to escape the operation deadline. Persistence that
-cannot finish inside the reserve returns `persistence_failed`; no cache entry
-is published.
+The executor enforces one monotonic outer cancellation scope and a distinct
+provider-phase deadline. It reserves the last 5,000 milliseconds for
+normalization, durable acceptance, and response assembly; no provider starts
+after the provider-phase deadline. Each async adapter must be
+cancellation-safe and accept the computed attempt timeout. A blocking adapter
+may run only behind a killable worker boundary or a provider-native timeout
+proven not to outlive cancellation. Otherwise it is `unready` and is skipped
+rather than allowed to escape the operation deadline. Normalization,
+persistence timeout, and assembly must fit strictly inside the remaining
+reserve. Persistence that cannot finish there returns `persistence_failed`;
+no cache entry is published.
 
 Each provider receives:
 
 ```text
-min(provider configured timeout, remaining operation deadline)
+min(provider configured timeout, provider-phase deadline - monotonic now)
 ```
 
 The planner permits at most one invocation per provider in version 1.
@@ -395,8 +402,8 @@ deadline permit; it is not itself a caller-level `policy_rejected` outcome.
 - Enum: lowercase declared value.
 - Date: `YYYY-MM-DD`.
 - Boolean and integer: JSON native value; no floats in identity.
-- Explicit providers: remove duplicates, then stable-sort by effective tier
-  and mode-policy order.
+- Explicit providers: remove later duplicates, then stable-sort by effective
+  tier while preserving caller order within each tier.
 - Domain sets: normalize and sort.
 - Missing optional value: JSON `null`; never omit conditionally.
 - Unknown metadata: excluded.
@@ -441,7 +448,6 @@ sha256(
     safe_search,
     country,
     language,
-    include_attribution,
     query_normalization_version,
     routing_policy_version,
     freshness_policy_version,
@@ -458,6 +464,7 @@ It intentionally excludes:
 - caller identity and caller label;
 - caller tier cap;
 - request-specific maximum cache age;
+- outward attribution presentation;
 - current provider health, configuration presence, and balance;
 - deadline and revalidation mode;
 - egress preference;
@@ -536,7 +543,7 @@ An entry is admitted only when all applicable checks pass:
 7. Every result has a normalized publication date inside the current resolved
    range when freshness is required.
 8. Every result satisfies include/exclude domain constraints.
-9. Requested attribution is present.
+9. Mandatory contributor evidence can render requested outward attribution.
 10. The cached outcome is eligible for caching.
 
 Missing evidence rejects the hit. It never degrades into “probably eligible.”
@@ -605,8 +612,8 @@ An entry is rejected or naturally replaced when:
 - the caller forces revalidation.
 
 Do not include release SHA in the key. Unrelated deployments should not flush
-valid evidence. Instead, bump the narrow normalization/routing/ranking version
-whose semantics changed.
+valid evidence. Instead, bump the narrow normalization, routing, freshness,
+domain, ranking, or result-normalization version whose semantics changed.
 
 Current in-memory legacy entries have no versioned fingerprint or complete
 lineage. They are discarded on rollout; no migration is required.
@@ -629,7 +636,7 @@ Existing callers resolve as follows:
 | `SearchQuery.free_only` | `free` or `budgeted` profile |
 | `SearchQuery.caller` | tier/spend policy lookup; excluded from cache identity |
 | `SearchQuery.user_visible` | delivery/evidence only; excluded from plan and cache identity |
-| `compute_attribution` | semantic attribution requirement |
+| `compute_attribution` | outward attribution presentation policy |
 | `metadata.caller_label` | evidence only |
 | `metadata.attempt_scope` | spend idempotency only |
 | `metadata.prefer_residential` | resolved execution egress preference before identity/lookup |
@@ -640,7 +647,7 @@ Defaults preserve current public request shapes:
 ```text
 freshness = none
 domains = empty
-safe_search = moderate
+safe_search = unspecified
 country = null
 language = null
 deadline_ms = 120000
@@ -648,10 +655,12 @@ revalidation = normal
 max_cache_age_seconds = 604800
 ```
 
-`moderate` is a canonical planner enum, not a provider default token. Every
-adapter must explicitly map it to a provider control and record that mapping;
-an adapter that cannot provide the declared behavior is ineligible for that
-plan.
+`unspecified` is a canonical no-declared-constraint value that preserves
+existing callers. Adapters record their actual provider behavior. If a future
+typed control requests `moderate`, `strict`, or `off`, every candidate adapter
+must explicitly map that value and record the mapping; an adapter unable to
+provide the declared behavior is ineligible. A change to behavior relevant to
+reuse bumps the narrow routing policy version.
 
 No new HTTP, MCP, or CLI field is promised here. [Issue
 #66](https://github.com/Khamel83/argus/issues/66) owns additive external
@@ -672,15 +681,17 @@ The implementation plan must include hermetic tests proving:
 | caller tier-cap difference | different | same, admission may differ |
 | provider health/balance difference | same | same |
 | result limit difference | different | different |
-| explicit provider order difference | same after tier/policy resolution | same |
+| cross-tier explicit-provider permutation | same after stable tier sort | same |
+| same-tier explicit-provider order difference | different | different |
 | cross-tier explicit providers | tier 0, then 1, then 3 | same resolved order |
-| same-tier explicit providers | mode-policy order | same resolved order |
+| same-tier explicit providers | caller order | same caller order |
 | domain input order difference | same | same |
 | freshness resolved date difference | different | different |
-| attribution difference | different | different |
+| attribution presentation difference | different | same |
 | shorter deadline | different | same |
 | force revalidation | different | same, lookup bypassed |
-| routing/ranking/normalization version bump | different | different |
+| routing/freshness/domain/ranking/normalization version bump | different | different |
+| spend-policy version bump | different execution cohort | same |
 | unknown metadata difference | same | same |
 
 Admission tests must additionally prove:
