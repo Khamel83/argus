@@ -969,8 +969,12 @@ MCP transport session ID.
 - [ ] **Step 5: Register additive routes/capabilities**
 
 All `/api/v2` routes call the same S7 accepted-operation service exactly once.
-`GET /api/capabilities` advertises both HTTP contracts and the MCP v2 suffix
-without changing existing fields.
+`GET /api/capabilities` advertises HTTP contract 2 and the MCP v2 suffix only
+when `ARGUS_ACCEPTED_OPERATION_AUTHORITY=evidence` passed the complete startup
+registration check; otherwise it advertises only legacy capability. A direct
+v2 request while the evidence authority is disabled returns `unready` before
+provider, extractor, cache, persistence, or session work. Existing capability
+fields remain unchanged.
 
 - [ ] **Step 6: Verify and commit**
 
