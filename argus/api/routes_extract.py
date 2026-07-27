@@ -12,6 +12,7 @@ from argus.api.schemas import (
 )
 from argus.extraction import extract_url
 from argus.extraction.completeness import assess_completeness
+from argus.extraction.rejection import classify_extraction_rejection
 from argus.logging import get_logger
 
 logger = get_logger("api.extract")
@@ -52,6 +53,7 @@ async def extract(
             detail="Extraction could not be durably recorded",
         ) from exc
     cr = result.completeness_result
+    rejection = classify_extraction_rejection(result)
     return ExtractResponse(
         extraction_run_id=result.extraction_run_id,
         url=result.url,
@@ -70,6 +72,7 @@ async def extract(
         truncation_type=cr.truncation_type if cr else None,
         completeness_signals=cr.signals if cr else None,
         recommended_action=cr.recommended_action if cr else None,
+        rejection=rejection.to_dict() if rejection else None,
         # Provenance
         source_type=getattr(result, "source_type", None),
         egress=getattr(result, "egress", None),
