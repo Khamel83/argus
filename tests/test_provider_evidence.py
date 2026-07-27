@@ -66,57 +66,36 @@ REGISTERED = {
     provider.value for provider in ProviderName if provider is not ProviderName.CACHE
 }
 EXPECTED_MAX_RATE_RESET_AHEAD_SECONDS = 366 * 24 * 60 * 60
+
+
+def _matrix_exact_failure_statuses() -> dict[str, dict[str, int]]:
+    matrix = (
+        Path(__file__).parents[1]
+        / "docs/research/2026-07-27-provider-health-probe-matrix.md"
+    ).read_text(encoding="utf-8")
+    _, marker, tail = matrix.partition("## Exact hermetic failure fixtures")
+    assert marker, "canonical matrix must publish its exact fixture map"
+    rows: dict[str, dict[str, int]] = {}
+    for line in tail.splitlines():
+        if line.startswith("## "):
+            break
+        if not line.startswith("| ") or line.startswith("| Provider"):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        provider_name, encoded = cells[:2]
+        rows[provider_name] = {
+            failure_class: int(status)
+            for pair in encoded.split(", ")
+            if pair != "none"
+            for failure_class, status in [pair.split("=")]
+        }
+    return rows
+
+
+EXPECTED_FAILURE_HTTP_STATUSES = _matrix_exact_failure_statuses()
 EXPECTED_REQUIRED_FAILURES = {
-    "searxng": {"403", "408_504", "5xx"},
-    "duckduckgo": set(),
-    "yahoo": {"408_504", "5xx"},
-    "github": {"401", "403", "429"},
-    "wolfram": {"403"},
-    "brave": {"401", "403", "422", "429", "5xx"},
-    "tavily": {"401", "422", "429", "5xx"},
-    "exa": {"401", "402", "403", "408_504", "422", "429"},
-    "linkup": {"401", "422", "429"},
-    "parallel": {"401", "402", "408_504", "422", "429", "5xx"},
-    "serper": {"401", "402", "429", "5xx"},
-    "you": {"401", "402", "403", "422", "429", "5xx"},
-    "searchapi": {"401"},
-    "valyu": {"401", "402"},
-}
-EXPECTED_FAILURE_HTTP_STATUSES = {
-    "searxng": {"403": 403, "408_504": 504, "5xx": 503},
-    "yahoo": {"408_504": 504, "5xx": 503},
-    "github": {"401": 401, "403": 403, "429": 429},
-    "wolfram": {"403": 403},
-    "brave": {"401": 401, "403": 403, "422": 422, "429": 429, "5xx": 503},
-    "tavily": {"401": 401, "422": 422, "429": 429, "5xx": 503},
-    "exa": {
-        "401": 401,
-        "402": 402,
-        "403": 403,
-        "408_504": 504,
-        "422": 422,
-        "429": 429,
-    },
-    "linkup": {"401": 401, "422": 422, "429": 429},
-    "parallel": {
-        "401": 401,
-        "402": 402,
-        "408_504": 408,
-        "422": 422,
-        "429": 429,
-        "5xx": 503,
-    },
-    "serper": {"401": 401, "402": 200, "429": 429, "5xx": 503},
-    "you": {
-        "401": 401,
-        "402": 402,
-        "403": 403,
-        "422": 422,
-        "429": 429,
-        "5xx": 503,
-    },
-    "searchapi": {"401": 401},
-    "valyu": {"401": 401, "402": 200},
+    provider: set(statuses)
+    for provider, statuses in EXPECTED_FAILURE_HTTP_STATUSES.items()
 }
 
 
@@ -368,10 +347,6 @@ def test_manifest_failure_declarations_agree_with_cited_authority():
 
 def test_manifest_exactly_matches_required_and_not_documented_matrix():
     manifest = _load(FIXTURE_ROOT / "manifest.json")
-    matrix_source = (
-        "docs/research/2026-07-27-provider-health-probe-matrix.md"
-        "#search-provider-matrix"
-    )
     for provider_name, entry in manifest["providers"].items():
         for failure_class, declaration in entry["failures"].items():
             if failure_class in EXPECTED_REQUIRED_FAILURES[provider_name]:
@@ -382,7 +357,10 @@ def test_manifest_exactly_matches_required_and_not_documented_matrix():
                     provider_name,
                     failure_class,
                 )
-                assert declaration["source"] == matrix_source
+                assert declaration["source"].startswith(
+                    "docs/research/"
+                    "2026-07-27-provider-health-probe-matrix.md#"
+                )
                 assert declaration["primary_source"].startswith(
                     ("https://", "argus/")
                 )
@@ -442,6 +420,26 @@ def test_authoritative_matrix_names_corrected_exact_provider_statuses():
     assert "`504`" not in rows["Parallel"]
 
 
+def test_failure_expectations_are_derived_from_canonical_matrix():
+    assert set(EXPECTED_FAILURE_HTTP_STATUSES) == REGISTERED
+    assert EXPECTED_FAILURE_HTTP_STATUSES == _matrix_exact_failure_statuses()
+
+
+def test_wolfram_quota_exhaustion_is_explicitly_incomplete_not_documented():
+    declaration = _load(FIXTURE_ROOT / "manifest.json")["providers"]["wolfram"][
+        "failures"
+    ]["402"]
+    assert declaration["state"] == "not_documented"
+    assert declaration["primary_source"] == (
+        "https://products.wolframalpha.com/llm-api/documentation#errors"
+    )
+    reason = declaration["reason"].lower()
+    assert "quota exhaustion" in reason
+    assert "400" in reason and "403" in reason and "501" in reason
+    assert "does not document" in reason
+    assert "incomplete" in reason
+
+
 def test_provider_failure_tree_contains_only_manifest_referenced_fixtures():
     manifest = _load(FIXTURE_ROOT / "manifest.json")
     referenced = {
@@ -456,16 +454,15 @@ def test_provider_failure_tree_contains_only_manifest_referenced_fixtures():
 
 def test_manifest_negative_declarations_are_honest_non_applicability_records():
     manifest = _load(FIXTURE_ROOT / "manifest.json")
-    matrix = (
-        "docs/research/2026-07-27-provider-health-probe-matrix.md"
-        "#search-provider-matrix"
-    )
     for provider_name, entry in manifest["providers"].items():
         for failure_class, declaration in entry["failures"].items():
             if "fixture" in declaration:
                 continue
             assert declaration["state"] == "not_documented"
-            assert declaration["source"] == matrix
+            assert declaration["source"].startswith(
+                "docs/research/"
+                "2026-07-27-provider-health-probe-matrix.md#"
+            )
             assert declaration["primary_source"].startswith(("https://", "argus/"))
             reason = declaration["reason"].lower()
             assert "not documented" in reason

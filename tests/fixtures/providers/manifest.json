@@ -357,8 +357,8 @@
         },
         "402": {
           "state": "not_documented",
-          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "reason": "Wolfram quota exhaustion evidence is incomplete and not documented: the primary LLM API error reference documents 400, 403, and 501 but does not document a quota exhaustion status, native response shape, provider code, request metadata, or reset signal.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#exact-hermetic-failure-fixtures",
           "primary_source": "https://products.wolframalpha.com/llm-api/documentation#errors"
         },
         "403": {

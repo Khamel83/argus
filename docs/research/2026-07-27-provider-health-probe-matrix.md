@@ -75,7 +75,7 @@ The shared adapter contract also checks:
 | DuckDuckGo (`ddgs`) | library result objects; empty; library/transport error; unexpected object fields | deny routine search because it consumes upstream rate allowance and is egress-sensitive | bounded public query on named egress | rate/block evidence enters cooldown; parser drift is compatibility failure |
 | Yahoo | representative result markup; explicit no-results markup; consent/block/challenge pages; selector drift; standards-based transport `504`/`503`; HTTP `403` is not documented | deny routine search | bounded public query on named egress | HTTP 200 with unfamiliar markup is `parse_error`, never valid empty |
 | GitHub | result success/empty; `401`; primary/secondary `403`/`429`; retry/reset headers; malformed items | allow `/rate_limit` only if current GitHub contract and token scope confirm no search request is consumed; otherwise cached evidence only | anonymous public search by default; scoped token only if private visibility is in scope | rate bucket/cooldown is scoped to auth identity and egress; no money spend |
-| WolframAlpha | successful pods; valid no-result `501`; invalid or missing AppID `403`; quota error; malformed pods | deny; no routine query is spent to validate AppID or quota | one bounded grounding query after named recurring quota authorization | quota exhaustion lasts to authoritative/documented reset; missing AppID prevents registration |
+| WolframAlpha | successful pods; valid no-result `501`; invalid or missing AppID `403`; quota exhaustion response is incomplete/`not_documented` by the [primary LLM API error reference](https://products.wolframalpha.com/llm-api/documentation#errors); malformed pods | deny; no routine query is spent to validate AppID or quota | one bounded grounding query after named recurring quota authorization | no exhaustion state or reset may be inferred until authoritative response evidence exists; missing AppID prevents registration |
 | Brave | success/empty; `400/401/403/422/429/5xx`; rate headers; malformed web results | only a documented no-search account/rate endpoint on the versioned allowlist; otherwise deny | one bounded search after reservation | `429` cooldown from reset; provider-reported quota exhaustion persists to reset |
 | Tavily | success/empty; auth/validation; `429` plus `retry-after`; 5xx; malformed results | deny unless an official no-search account endpoint is allowlisted | one bounded search after reservation | rate limit cooldown; balance/quota evidence must be authoritative |
 | Exa | success/empty; `400/401/402/403/422/429/504`; stable tags; usage fields | deny unless an official no-search account endpoint is allowlisted | one bounded search after reservation | documented `402` is terminal exhaustion; `504` is timeout |
@@ -85,6 +85,40 @@ The shared adapter contract also checks:
 | You.com | success/empty; `401/402/403/422/429/5xx`; scopes; malformed hits | deny unless an official no-search account endpoint is allowlisted | one bounded search after reservation | documented `402` is terminal exhaustion; `403` scope failure is policy/configuration, not exhaustion |
 | SearchAPI | success/empty; missing key; auth; rate/exhaustion if documented; `organic_results` migration; malformed payload | deny unless an official no-search account endpoint is allowlisted | only after a key, finite budget, reservation, and named authorization exist | current missing-key state prevents registration and any live call |
 | Valyu | success/empty; `success:false`; auth; documented insufficient-credit shape; actual/estimated result cost; malformed results | deny unless an official no-search balance endpoint is allowlisted | one bounded search with result-count worst-case reservation | insufficient credit is terminal exhaustion; unknown per-result charge settles uncertain |
+
+## Exact hermetic failure fixtures
+
+This table is the machine-readable authority for the failure fixtures required
+by the search-provider matrix above. `Class=status` records the exact captured
+transport status; application-native exhaustion responses may therefore use
+HTTP 200. `none` means no HTTP failure fixture is justified by the checked
+primary contract.
+
+| Provider key | Required class=status fixtures |
+|---|---|
+| searxng | 403=403, 408_504=504, 5xx=503 |
+| duckduckgo | none |
+| yahoo | 408_504=504, 5xx=503 |
+| github | 401=401, 403=403, 429=429 |
+| wolfram | 403=403 |
+| brave | 401=401, 403=403, 422=422, 429=429, 5xx=503 |
+| tavily | 401=401, 422=422, 429=429, 5xx=503 |
+| exa | 401=401, 402=402, 403=403, 408_504=504, 422=422, 429=429 |
+| linkup | 401=401, 422=422, 429=429 |
+| parallel | 401=401, 402=402, 408_504=408, 422=422, 429=429, 5xx=503 |
+| serper | 401=401, 402=200, 429=429, 5xx=503 |
+| you | 401=401, 402=402, 403=403, 422=422, 429=429, 5xx=503 |
+| valyu | 401=401, 402=200 |
+| searchapi | 401=401 |
+
+Wolfram quota exhaustion is deliberately absent from this fixture table. The
+[primary LLM API error reference](https://products.wolframalpha.com/llm-api/documentation#errors)
+documents input `400`, invalid/missing AppID `403`, and uninterpretable-input
+`501`, but does not document a quota-exhaustion status, native response shape,
+provider code, request metadata, or reset signal. That evidence remains
+incomplete/`not_documented`; no balance category, code, metadata, or persistence
+state may be inferred until a primary contract or separately authorized,
+redacted capture establishes it.
 
 The allowlist for a no-spend account endpoint is code-reviewed data, not a
 runtime guess. Its entry includes the official contract reference, method and
