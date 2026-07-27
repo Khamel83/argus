@@ -90,6 +90,12 @@
           "exception": "ReadTimeout",
           "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
         }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.searxng",
+      "status_cases": {
+        "policy_rejected_403": "error-403.json",
+        "provider_unavailable_503": "error-5xx.json",
+        "timeout_504": "error-408_504.json"
       }
     },
     "duckduckgo": {
@@ -174,7 +180,9 @@
           "exception": "TimeoutException",
           "source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
         }
-      }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.duckduckgo",
+      "status_cases": {}
     },
     "yahoo": {
       "contract_version": "2026-07-27-v1",
@@ -256,6 +264,11 @@
           "exception": "ReadTimeout",
           "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
         }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.yahoo",
+      "status_cases": {
+        "provider_unavailable_503": "error-5xx.json",
+        "timeout_504": "error-408_504.json"
       }
     },
     "github": {
@@ -337,6 +350,12 @@
           "exception": "ReadTimeout",
           "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
         }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.github",
+      "status_cases": {
+        "authentication_rejected_401": "error-401.json",
+        "policy_rejected_403": "error-403.json",
+        "rate_limited_429": "error-429.json"
       }
     },
     "wolfram": {
@@ -418,6 +437,12 @@
           "exception": "ReadTimeout",
           "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
         }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.wolfram",
+      "status_cases": {
+        "invalid_request_400": "error-400.json",
+        "authentication_rejected_403": "error-403.json",
+        "empty_501": "status-501.json"
       }
     },
     "brave": {
@@ -496,6 +521,15 @@
           "exception": "ReadTimeout",
           "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
         }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.brave",
+      "status_cases": {
+        "invalid_request_400": "error-400.json",
+        "authentication_rejected_401": "error-401.json",
+        "policy_rejected_403": "error-403.json",
+        "invalid_request_422": "error-422.json",
+        "rate_limited_429": "error-429.json",
+        "provider_unavailable_503": "error-5xx.json"
       }
     },
     "tavily": {
@@ -575,6 +609,13 @@
           "exception": "ReadTimeout",
           "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
         }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.tavily",
+      "status_cases": {
+        "authentication_rejected_401": "error-401.json",
+        "invalid_request_422": "error-422.json",
+        "rate_limited_429": "error-429.json",
+        "provider_unavailable_503": "error-5xx.json"
       }
     },
     "exa": {
@@ -652,6 +693,16 @@
           "exception": "ReadTimeout",
           "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
         }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.exa",
+      "status_cases": {
+        "invalid_request_400": "error-400.json",
+        "authentication_rejected_401": "error-401.json",
+        "balance_exhausted_402": "error-402.json",
+        "policy_rejected_403": "error-403.json",
+        "invalid_request_422": "error-422.json",
+        "rate_limited_429": "error-429.json",
+        "timeout_504": "error-408_504.json"
       }
     },
     "linkup": {
@@ -730,6 +781,12 @@
           "exception": "ReadTimeout",
           "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
         }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.linkup",
+      "status_cases": {
+        "authentication_rejected_401": "error-401.json",
+        "invalid_request_422": "error-422.json",
+        "rate_limited_429": "error-429.json"
       }
     },
     "parallel": {
@@ -807,6 +864,17 @@
           "exception": "ReadTimeout",
           "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
         }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.parallel",
+      "status_cases": {
+        "authentication_rejected_401": "error-401.json",
+        "balance_exhausted_402": "error-402.json",
+        "timeout_408": "error-408_504.json",
+        "invalid_request_422": "error-422.json",
+        "rate_limited_429": "error-429.json",
+        "provider_unavailable_500": "error-500.json",
+        "provider_unavailable_502": "error-502.json",
+        "provider_unavailable_503": "error-5xx.json"
       }
     },
     "serper": {
@@ -884,6 +952,13 @@
           "exception": "ReadTimeout",
           "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
         }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.serper",
+      "status_cases": {
+        "balance_exhausted_200": "error-402.json",
+        "authentication_rejected_401": "error-401.json",
+        "rate_limited_429": "error-429.json",
+        "provider_unavailable_503": "error-5xx.json"
       }
     },
     "you": {
@@ -960,6 +1035,15 @@
           "exception": "ReadTimeout",
           "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
         }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.you",
+      "status_cases": {
+        "authentication_rejected_401": "error-401.json",
+        "balance_exhausted_402": "error-402.json",
+        "policy_rejected_403": "error-403.json",
+        "invalid_request_422": "error-422.json",
+        "rate_limited_429": "error-429.json",
+        "provider_unavailable_503": "error-5xx.json"
       }
     },
     "valyu": {
@@ -1041,6 +1125,11 @@
           "exception": "ReadTimeout",
           "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
         }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.valyu",
+      "status_cases": {
+        "balance_exhausted_200": "error-402.json",
+        "authentication_rejected_401": "error-401.json"
       }
     },
     "searchapi": {
@@ -1122,6 +1211,10 @@
           "exception": "ReadTimeout",
           "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
         }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.searchapi",
+      "status_cases": {
+        "authentication_rejected_401": "error-401.json"
       }
     }
   }

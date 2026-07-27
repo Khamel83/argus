@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "source_matrix": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+  "providers": {
+    "searxng": {
+      "cases": [
+        {"id": "policy_rejected_403", "status": 403, "normalized_outcome": "policy_rejected", "fixture": "error-403.json", "source": "https://docs.searxng.org/dev/search_api.html#parameters"},
+        {"id": "provider_unavailable_503", "status": 503, "normalized_outcome": "provider_unavailable", "fixture": "error-5xx.json", "source": "https://www.rfc-editor.org/rfc/rfc9110.html#name-503-service-unavailable"},
+        {"id": "timeout_504", "status": 504, "normalized_outcome": "timeout", "fixture": "error-408_504.json", "source": "https://www.rfc-editor.org/rfc/rfc9110.html#name-504-gateway-timeout"}
+      ]
+    },
+    "duckduckgo": {"cases": []},
+    "yahoo": {
+      "cases": [
+        {"id": "provider_unavailable_503", "status": 503, "normalized_outcome": "provider_unavailable", "fixture": "error-5xx.json", "source": "https://www.rfc-editor.org/rfc/rfc9110.html#name-503-service-unavailable"},
+        {"id": "timeout_504", "status": 504, "normalized_outcome": "timeout", "fixture": "error-408_504.json", "source": "https://www.rfc-editor.org/rfc/rfc9110.html#name-504-gateway-timeout"}
+      ]
+    },
+    "github": {
+      "cases": [
+        {"id": "authentication_rejected_401", "status": 401, "normalized_outcome": "authentication_rejected", "fixture": "error-401.json", "source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"},
+        {"id": "policy_rejected_403", "status": 403, "normalized_outcome": "policy_rejected", "fixture": "error-403.json", "source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"},
+        {"id": "rate_limited_429", "status": 429, "normalized_outcome": "rate_limited", "fixture": "error-429.json", "source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"}
+      ]
+    },
+    "wolfram": {
+      "cases": [
+        {"id": "invalid_request_400", "status": 400, "normalized_outcome": "invalid_request", "fixture": "error-400.json", "source": "https://products.wolframalpha.com/llm-api/documentation#errors"},
+        {"id": "authentication_rejected_403", "status": 403, "normalized_outcome": "authentication_rejected", "fixture": "error-403.json", "source": "https://products.wolframalpha.com/llm-api/documentation#errors"},
+        {"id": "empty_501", "status": 501, "normalized_outcome": "empty", "fixture": "status-501.json", "source": "https://products.wolframalpha.com/llm-api/documentation#errors"}
+      ]
+    },
+    "brave": {
+      "cases": [
+        {"id": "invalid_request_400", "status": 400, "normalized_outcome": "invalid_request", "fixture": "error-400.json", "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"},
+        {"id": "authentication_rejected_401", "status": 401, "normalized_outcome": "authentication_rejected", "fixture": "error-401.json", "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"},
+        {"id": "policy_rejected_403", "status": 403, "normalized_outcome": "policy_rejected", "fixture": "error-403.json", "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"},
+        {"id": "invalid_request_422", "status": 422, "normalized_outcome": "invalid_request", "fixture": "error-422.json", "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"},
+        {"id": "rate_limited_429", "status": 429, "normalized_outcome": "rate_limited", "fixture": "error-429.json", "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"},
+        {"id": "provider_unavailable_503", "status": 503, "normalized_outcome": "provider_unavailable", "fixture": "error-5xx.json", "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"}
+      ]
+    },
+    "tavily": {
+      "cases": [
+        {"id": "authentication_rejected_401", "status": 401, "normalized_outcome": "authentication_rejected", "fixture": "error-401.json", "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"},
+        {"id": "invalid_request_422", "status": 422, "normalized_outcome": "invalid_request", "fixture": "error-422.json", "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"},
+        {"id": "rate_limited_429", "status": 429, "normalized_outcome": "rate_limited", "fixture": "error-429.json", "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"},
+        {"id": "provider_unavailable_503", "status": 503, "normalized_outcome": "provider_unavailable", "fixture": "error-5xx.json", "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"}
+      ]
+    },
+    "exa": {
+      "cases": [
+        {"id": "invalid_request_400", "status": 400, "normalized_outcome": "invalid_request", "fixture": "error-400.json", "source": "https://exa.ai/docs/reference/error-codes#error-response-structure"},
+        {"id": "authentication_rejected_401", "status": 401, "normalized_outcome": "authentication_rejected", "fixture": "error-401.json", "source": "https://exa.ai/docs/reference/error-codes#error-response-structure"},
+        {"id": "balance_exhausted_402", "status": 402, "normalized_outcome": "balance_exhausted", "fixture": "error-402.json", "source": "https://exa.ai/docs/reference/error-codes#error-response-structure"},
+        {"id": "policy_rejected_403", "status": 403, "normalized_outcome": "policy_rejected", "fixture": "error-403.json", "source": "https://exa.ai/docs/reference/error-codes#error-response-structure"},
+        {"id": "invalid_request_422", "status": 422, "normalized_outcome": "invalid_request", "fixture": "error-422.json", "source": "https://exa.ai/docs/reference/error-codes#error-response-structure"},
+        {"id": "rate_limited_429", "status": 429, "normalized_outcome": "rate_limited", "fixture": "error-429.json", "source": "https://exa.ai/docs/reference/error-codes#error-response-structure"},
+        {"id": "timeout_504", "status": 504, "normalized_outcome": "timeout", "fixture": "error-408_504.json", "source": "https://exa.ai/docs/reference/error-codes#error-response-structure"}
+      ]
+    },
+    "linkup": {
+      "cases": [
+        {"id": "authentication_rejected_401", "status": 401, "normalized_outcome": "authentication_rejected", "fixture": "error-401.json", "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"},
+        {"id": "invalid_request_422", "status": 422, "normalized_outcome": "invalid_request", "fixture": "error-422.json", "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"},
+        {"id": "rate_limited_429", "status": 429, "normalized_outcome": "rate_limited", "fixture": "error-429.json", "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"}
+      ]
+    },
+    "parallel": {
+      "cases": [
+        {"id": "authentication_rejected_401", "status": 401, "normalized_outcome": "authentication_rejected", "fixture": "error-401.json", "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"},
+        {"id": "balance_exhausted_402", "status": 402, "normalized_outcome": "balance_exhausted", "fixture": "error-402.json", "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"},
+        {"id": "timeout_408", "status": 408, "normalized_outcome": "timeout", "fixture": "error-408_504.json", "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"},
+        {"id": "invalid_request_422", "status": 422, "normalized_outcome": "invalid_request", "fixture": "error-422.json", "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"},
+        {"id": "rate_limited_429", "status": 429, "normalized_outcome": "rate_limited", "fixture": "error-429.json", "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"},
+        {"id": "provider_unavailable_500", "status": 500, "normalized_outcome": "provider_unavailable", "fixture": "error-500.json", "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"},
+        {"id": "provider_unavailable_502", "status": 502, "normalized_outcome": "provider_unavailable", "fixture": "error-502.json", "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"},
+        {"id": "provider_unavailable_503", "status": 503, "normalized_outcome": "provider_unavailable", "fixture": "error-5xx.json", "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"}
+      ]
+    },
+    "serper": {
+      "cases": [
+        {"id": "balance_exhausted_200", "status": 200, "normalized_outcome": "balance_exhausted", "fixture": "error-402.json", "source": "https://serper.dev/#api"},
+        {"id": "authentication_rejected_401", "status": 401, "normalized_outcome": "authentication_rejected", "fixture": "error-401.json", "source": "https://serper.dev/#api"},
+        {"id": "rate_limited_429", "status": 429, "normalized_outcome": "rate_limited", "fixture": "error-429.json", "source": "https://serper.dev/#api"},
+        {"id": "provider_unavailable_503", "status": 503, "normalized_outcome": "provider_unavailable", "fixture": "error-5xx.json", "source": "https://serper.dev/#api"}
+      ]
+    },
+    "you": {
+      "cases": [
+        {"id": "authentication_rejected_401", "status": 401, "normalized_outcome": "authentication_rejected", "fixture": "error-401.json", "source": "https://you.com/docs/error-handling/error-code-reference#in-depth"},
+        {"id": "balance_exhausted_402", "status": 402, "normalized_outcome": "balance_exhausted", "fixture": "error-402.json", "source": "https://you.com/docs/error-handling/error-code-reference#in-depth"},
+        {"id": "policy_rejected_403", "status": 403, "normalized_outcome": "policy_rejected", "fixture": "error-403.json", "source": "https://you.com/docs/error-handling/error-code-reference#in-depth"},
+        {"id": "invalid_request_422", "status": 422, "normalized_outcome": "invalid_request", "fixture": "error-422.json", "source": "https://you.com/docs/error-handling/error-code-reference#in-depth"},
+        {"id": "rate_limited_429", "status": 429, "normalized_outcome": "rate_limited", "fixture": "error-429.json", "source": "https://you.com/docs/error-handling/error-code-reference#in-depth"},
+        {"id": "provider_unavailable_503", "status": 503, "normalized_outcome": "provider_unavailable", "fixture": "error-5xx.json", "source": "https://you.com/docs/error-handling/error-code-reference#in-depth"}
+      ]
+    },
+    "searchapi": {
+      "cases": [
+        {"id": "authentication_rejected_401", "status": 401, "normalized_outcome": "authentication_rejected", "fixture": "error-401.json", "source": "https://www.searchapi.io/docs/google#api-errors"}
+      ]
+    },
+    "valyu": {
+      "cases": [
+        {"id": "balance_exhausted_200", "status": 200, "normalized_outcome": "balance_exhausted", "fixture": "error-402.json", "source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling"},
+        {"id": "authentication_rejected_401", "status": 401, "normalized_outcome": "authentication_rejected", "fixture": "error-401.json", "source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling"}
+      ]
+    }
+  }
+}

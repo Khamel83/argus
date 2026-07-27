@@ -61,6 +61,10 @@ from argus.provider_controls import (
 )
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "providers"
+STATUS_SCHEMA_PATH = (
+    Path(__file__).parents[1]
+    / "docs/research/2026-07-27-provider-status-contract.json"
+)
 FAILURE_CLASSES = {"401", "402", "403", "408_504", "422", "429", "5xx"}
 REGISTERED = {
     provider.value for provider in ProviderName if provider is not ProviderName.CACHE
@@ -68,31 +72,34 @@ REGISTERED = {
 EXPECTED_MAX_RATE_RESET_AHEAD_SECONDS = 366 * 24 * 60 * 60
 
 
-def _matrix_exact_failure_statuses() -> dict[str, dict[str, int]]:
-    matrix = (
-        Path(__file__).parents[1]
-        / "docs/research/2026-07-27-provider-health-probe-matrix.md"
-    ).read_text(encoding="utf-8")
-    _, marker, tail = matrix.partition("## Exact hermetic failure fixtures")
-    assert marker, "canonical matrix must publish its exact fixture map"
-    rows: dict[str, dict[str, int]] = {}
-    for line in tail.splitlines():
-        if line.startswith("## "):
-            break
-        if not line.startswith("| ") or line.startswith("| Provider"):
-            continue
-        cells = [cell.strip() for cell in line.strip("|").split("|")]
-        provider_name, encoded = cells[:2]
-        rows[provider_name] = {
-            failure_class: int(status)
-            for pair in encoded.split(", ")
-            if pair != "none"
-            for failure_class, status in [pair.split("=")]
-        }
-    return rows
+def _canonical_status_schema() -> dict[str, object]:
+    assert STATUS_SCHEMA_PATH.is_file(), "canonical provider status schema is missing"
+    return json.loads(STATUS_SCHEMA_PATH.read_text(encoding="utf-8"))
 
 
-EXPECTED_FAILURE_HTTP_STATUSES = _matrix_exact_failure_statuses()
+def _legacy_failure_projection() -> dict[str, dict[str, int]]:
+    schema = _canonical_status_schema()
+    manifest = json.loads(
+        (FIXTURE_ROOT / "manifest.json").read_text(encoding="utf-8")
+    )
+    projection: dict[str, dict[str, int]] = {}
+    for provider, entry in manifest["providers"].items():
+        cases = schema["providers"][provider]["cases"]
+        projection[provider] = {}
+        for failure_class, declaration in entry["failures"].items():
+            if "fixture" not in declaration:
+                continue
+            matching = [
+                case
+                for case in cases
+                if case["fixture"] == declaration["fixture"]
+            ]
+            assert len(matching) == 1, (provider, failure_class)
+            projection[provider][failure_class] = matching[0]["status"]
+    return projection
+
+
+EXPECTED_FAILURE_HTTP_STATUSES = _legacy_failure_projection()
 EXPECTED_REQUIRED_FAILURES = {
     provider: set(statuses)
     for provider, statuses in EXPECTED_FAILURE_HTTP_STATUSES.items()
@@ -110,6 +117,10 @@ def _prohibit_provider_contract_dns(monkeypatch):
 
 def _load(path: Path) -> object:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _status_schema() -> dict[str, object]:
+    return _canonical_status_schema()
 
 
 def _http_response(
@@ -420,9 +431,176 @@ def test_authoritative_matrix_names_corrected_exact_provider_statuses():
     assert "`504`" not in rows["Parallel"]
 
 
-def test_failure_expectations_are_derived_from_canonical_matrix():
+def test_legacy_failure_expectations_are_derived_from_richer_status_schema():
     assert set(EXPECTED_FAILURE_HTTP_STATUSES) == REGISTERED
-    assert EXPECTED_FAILURE_HTTP_STATUSES == _matrix_exact_failure_statuses()
+    assert EXPECTED_FAILURE_HTTP_STATUSES == _legacy_failure_projection()
+
+
+def _human_required_native_statuses() -> dict[str, set[int]]:
+    matrix = (
+        Path(__file__).parents[1]
+        / "docs/research/2026-07-27-provider-health-probe-matrix.md"
+    ).read_text(encoding="utf-8")
+    display_to_key = {
+        "DuckDuckGo (`ddgs`)": "duckduckgo",
+        "WolframAlpha": "wolfram",
+        "You.com": "you",
+    }
+    required: dict[str, set[int]] = {}
+    marker = "[required native statuses: "
+    for line in matrix.splitlines():
+        if not line.startswith("| ") or marker not in line:
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        provider = display_to_key.get(cells[0], cells[0].lower())
+        encoded = line.split(marker, 1)[1].split("]", 1)[0]
+        required[provider] = (
+            set()
+            if encoded == "none"
+            else {int(status.strip()) for status in encoded.split(",")}
+        )
+    return required
+
+
+def test_human_provider_requirements_independently_reconcile_with_status_schema():
+    human = _human_required_native_statuses()
+    schema = _status_schema()
+    machine = {
+        provider: {case["status"] for case in entry["cases"]}
+        for provider, entry in schema["providers"].items()
+    }
+    assert set(human) == REGISTERED
+    assert human == machine
+
+
+def test_manifest_status_cases_are_derived_from_richer_canonical_schema():
+    schema = _status_schema()
+    manifest = _load(FIXTURE_ROOT / "manifest.json")
+    for provider, contract in schema["providers"].items():
+        entry = manifest["providers"][provider]
+        assert entry["status_schema"] == (
+            "docs/research/2026-07-27-provider-status-contract.json"
+            f"#providers.{provider}"
+        )
+        expected = {
+            case["id"]: case["fixture"] for case in contract["cases"]
+        }
+        assert entry["status_cases"] == expected
+        for case in contract["cases"]:
+            fixture = _load(FIXTURE_ROOT / provider / case["fixture"])
+            assert fixture["transport"]["status_code"] == case["status"]
+
+
+def test_richer_status_schema_is_closed_primary_sourced_and_unambiguous():
+    schema = _status_schema()
+    allowed_outcomes = {category.value for category in FailureCategory} | {"empty"}
+    assert schema["schema_version"] == 1
+    assert set(schema["providers"]) == REGISTERED
+    for provider, contract in schema["providers"].items():
+        cases = contract["cases"]
+        assert len({case["id"] for case in cases}) == len(cases), provider
+        assert len({case["status"] for case in cases}) == len(cases), provider
+        for case in cases:
+            assert set(case) == {
+                "id",
+                "status",
+                "normalized_outcome",
+                "fixture",
+                "source",
+            }
+            assert type(case["status"]) is int
+            assert 100 <= case["status"] <= 599
+            assert case["normalized_outcome"] in allowed_outcomes
+            assert case["source"].startswith("https://")
+            assert "#" in case["source"]
+
+
+def test_richer_schema_preserves_multiple_native_statuses_per_normalized_class():
+    parallel = _status_schema()["providers"]["parallel"]["cases"]
+    unavailable = {
+        case["status"]
+        for case in parallel
+        if case["normalized_outcome"] == "provider_unavailable"
+    }
+    assert unavailable == {500, 502, 503}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_name", "fixture_name"),
+    [("brave", "error-400.json"), ("exa", "error-400.json")],
+)
+async def test_documented_400_status_crosses_real_provider_adapter(
+    provider_name, fixture_name
+):
+    from argus.providers.brave import BraveProvider
+    from argus.providers.exa import ExaProvider
+
+    fixture_path = FIXTURE_ROOT / provider_name / fixture_name
+    assert fixture_path.is_file()
+    fixture = _load(fixture_path)
+    response = _http_response(
+        status=fixture["transport"]["status_code"],
+        body=fixture["body"],
+        headers=fixture["transport"]["headers"],
+    )
+    adapter_type = BraveProvider if provider_name == "brave" else ExaProvider
+    adapter = adapter_type(ProviderConfig(enabled=True, api_key="fixture"))
+    module = type(adapter).__module__
+    with patch(f"{module}.httpx.AsyncClient") as client_type:
+        client = client_type.return_value
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.get = AsyncMock(return_value=response)
+        client.post = AsyncMock(return_value=response)
+        batch = await adapter.search(SearchQuery(query="fixture"))
+
+    assert batch.failure is not None
+    assert batch.failure.category is FailureCategory.INVALID_REQUEST
+    assert batch.failure.http_status == 400
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_name", "fixture_name", "expected_outcome"),
+    [
+        ("wolfram", "error-400.json", FailureCategory.INVALID_REQUEST),
+        ("wolfram", "status-501.json", "empty"),
+        ("parallel", "error-500.json", FailureCategory.PROVIDER_UNAVAILABLE),
+        ("parallel", "error-502.json", FailureCategory.PROVIDER_UNAVAILABLE),
+    ],
+)
+async def test_adjacent_new_native_statuses_cross_real_provider_adapter(
+    provider_name, fixture_name, expected_outcome
+):
+    from argus.providers.parallel import ParallelProvider
+    from argus.providers.wolfram import WolframProvider
+
+    fixture = _load(FIXTURE_ROOT / provider_name / fixture_name)
+    response = _http_response(
+        status=fixture["transport"]["status_code"],
+        body=fixture["body"],
+        headers=fixture["transport"]["headers"],
+    )
+    adapter_type = WolframProvider if provider_name == "wolfram" else ParallelProvider
+    adapter = adapter_type(ProviderConfig(enabled=True, api_key="fixture"))
+    module = type(adapter).__module__
+    with patch(f"{module}.httpx.AsyncClient") as client_type:
+        client = client_type.return_value
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.get = AsyncMock(return_value=response)
+        client.post = AsyncMock(return_value=response)
+        batch = await adapter.search(SearchQuery(query="fixture"))
+
+    if expected_outcome == "empty":
+        assert batch.failure is not None
+        assert batch.failure.category is FailureCategory.EMPTY
+        assert batch.trace.status == "empty"
+    else:
+        assert batch.failure is not None
+        assert batch.failure.category is expected_outcome
+        assert batch.failure.http_status == fixture["transport"]["status_code"]
 
 
 def test_wolfram_quota_exhaustion_is_explicitly_incomplete_not_documented():
@@ -442,14 +620,20 @@ def test_wolfram_quota_exhaustion_is_explicitly_incomplete_not_documented():
 
 def test_provider_failure_tree_contains_only_manifest_referenced_fixtures():
     manifest = _load(FIXTURE_ROOT / "manifest.json")
-    referenced = {
+    referenced_failures = {
         FIXTURE_ROOT / provider_name / declaration["fixture"]
         for provider_name, entry in manifest["providers"].items()
         for declaration in entry["failures"].values()
         if "fixture" in declaration
     }
+    referenced_status_cases = {
+        FIXTURE_ROOT / provider_name / fixture
+        for provider_name, entry in manifest["providers"].items()
+        for fixture in entry["status_cases"].values()
+        if fixture.startswith("error-")
+    }
     actual = set(FIXTURE_ROOT.glob("*/error-*.json"))
-    assert actual == referenced
+    assert actual == referenced_failures | referenced_status_cases
 
 
 def test_manifest_negative_declarations_are_honest_non_applicability_records():

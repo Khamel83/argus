@@ -71,45 +71,30 @@ The shared adapter contract also checks:
 
 | Provider | Required hermetic evidence | Routine live | Explicit canary | Spend/terminal rule |
 |---|---|---|---|---|
-| SearXNG | JSON success/empty; JSON-disabled or policy `403`; malformed HTML/JSON; engine metadata; timeout/5xx | allow only a declared local component health/metadata endpoint with bounded timeout; never `/search` | bounded public query on declared instance to prove JSON/search capability | no provider fee; cooldown for reachability; JSON-disabled is configuration/compatibility failure |
-| DuckDuckGo (`ddgs`) | library result objects; empty; library/transport error; unexpected object fields | deny routine search because it consumes upstream rate allowance and is egress-sensitive | bounded public query on named egress | rate/block evidence enters cooldown; parser drift is compatibility failure |
-| Yahoo | representative result markup; explicit no-results markup; consent/block/challenge pages; selector drift; standards-based transport `504`/`503`; HTTP `403` is not documented | deny routine search | bounded public query on named egress | HTTP 200 with unfamiliar markup is `parse_error`, never valid empty |
-| GitHub | result success/empty; `401`; primary/secondary `403`/`429`; retry/reset headers; malformed items | allow `/rate_limit` only if current GitHub contract and token scope confirm no search request is consumed; otherwise cached evidence only | anonymous public search by default; scoped token only if private visibility is in scope | rate bucket/cooldown is scoped to auth identity and egress; no money spend |
-| WolframAlpha | successful pods; valid no-result `501`; invalid or missing AppID `403`; quota exhaustion response is incomplete/`not_documented` by the [primary LLM API error reference](https://products.wolframalpha.com/llm-api/documentation#errors); malformed pods | deny; no routine query is spent to validate AppID or quota | one bounded grounding query after named recurring quota authorization | no exhaustion state or reset may be inferred until authoritative response evidence exists; missing AppID prevents registration |
-| Brave | success/empty; `400/401/403/422/429/5xx`; rate headers; malformed web results | only a documented no-search account/rate endpoint on the versioned allowlist; otherwise deny | one bounded search after reservation | `429` cooldown from reset; provider-reported quota exhaustion persists to reset |
-| Tavily | success/empty; auth/validation; `429` plus `retry-after`; 5xx; malformed results | deny unless an official no-search account endpoint is allowlisted | one bounded search after reservation | rate limit cooldown; balance/quota evidence must be authoritative |
-| Exa | success/empty; `400/401/402/403/422/429/504`; stable tags; usage fields | deny unless an official no-search account endpoint is allowlisted | one bounded search after reservation | documented `402` is terminal exhaustion; `504` is timeout |
-| Linkup | current success/empty; auth; validation; rate; exhaustion if documented; malformed results | deny unless an official no-search account endpoint is allowlisted | one bounded search after reservation | unknown charging/error semantics fail closed; do not infer exhaustion from text alone |
-| Parallel | current `/v1/search` success/empty; `401`, `402`, `408`, `422`, `429`, `5xx`; warnings/usage; old-shape rejection | deny unless an official no-search balance endpoint is allowlisted | one bounded search after reservation and adapter contract repair | documented `402` is terminal exhaustion; the 2026-07-26 insufficient-credit observation is historical until imported with scope |
-| Serper | success/empty; auth; documented not-enough-credit response; rate/5xx; malformed organic results | deny unless an official no-search account endpoint is allowlisted | one bounded search after reservation | not-enough-credit is terminal exhaustion; one-time state has no automatic expiry |
-| You.com | success/empty; `401/402/403/422/429/5xx`; scopes; malformed hits | deny unless an official no-search account endpoint is allowlisted | one bounded search after reservation | documented `402` is terminal exhaustion; `403` scope failure is policy/configuration, not exhaustion |
-| SearchAPI | success/empty; missing key; auth; rate/exhaustion if documented; `organic_results` migration; malformed payload | deny unless an official no-search account endpoint is allowlisted | only after a key, finite budget, reservation, and named authorization exist | current missing-key state prevents registration and any live call |
-| Valyu | success/empty; `success:false`; auth; documented insufficient-credit shape; actual/estimated result cost; malformed results | deny unless an official no-search balance endpoint is allowlisted | one bounded search with result-count worst-case reservation | insufficient credit is terminal exhaustion; unknown per-result charge settles uncertain |
+| SearXNG | JSON success/empty; JSON-disabled or policy `403`; malformed HTML/JSON; engine metadata; timeout/5xx [required native statuses: 403, 503, 504] | allow only a declared local component health/metadata endpoint with bounded timeout; never `/search` | bounded public query on declared instance to prove JSON/search capability | no provider fee; cooldown for reachability; JSON-disabled is configuration/compatibility failure |
+| DuckDuckGo (`ddgs`) | library result objects; empty; library/transport error; unexpected object fields [required native statuses: none] | deny routine search because it consumes upstream rate allowance and is egress-sensitive | bounded public query on named egress | rate/block evidence enters cooldown; parser drift is compatibility failure |
+| Yahoo | representative result markup; explicit no-results markup; consent/block/challenge pages; selector drift; standards-based transport `504`/`503`; HTTP `403` is not documented [required native statuses: 503, 504] | deny routine search | bounded public query on named egress | HTTP 200 with unfamiliar markup is `parse_error`, never valid empty |
+| GitHub | result success/empty; `401`; primary/secondary `403`/`429`; retry/reset headers; malformed items [required native statuses: 401, 403, 429] | allow `/rate_limit` only if current GitHub contract and token scope confirm no search request is consumed; otherwise cached evidence only | anonymous public search by default; scoped token only if private visibility is in scope | rate bucket/cooldown is scoped to auth identity and egress; no money spend |
+| WolframAlpha | valid no-result `501`; missing input `400`; invalid or missing AppID `403`; quota exhaustion response is incomplete/`not_documented` by the [primary LLM API error reference](https://products.wolframalpha.com/llm-api/documentation#errors); malformed pods [required native statuses: 400, 403, 501] | deny; no routine query is spent to validate AppID or quota | one bounded grounding query after named recurring quota authorization | no exhaustion state or reset may be inferred until authoritative response evidence exists; missing AppID prevents registration |
+| Brave | success/empty; `400/401/403/422/429/5xx`; rate headers; malformed web results [required native statuses: 400, 401, 403, 422, 429, 503] | only a documented no-search account/rate endpoint on the versioned allowlist; otherwise deny | one bounded search after reservation | `429` cooldown from reset; provider-reported quota exhaustion persists to reset |
+| Tavily | success/empty; auth `401`; validation `422`; `429` plus `retry-after`; representative 5xx `503`; malformed results [required native statuses: 401, 422, 429, 503] | deny unless an official no-search account endpoint is allowlisted | one bounded search after reservation | rate limit cooldown; balance/quota evidence must be authoritative |
+| Exa | success/empty; `400/401/402/403/422/429/504`; stable tags; usage fields [required native statuses: 400, 401, 402, 403, 422, 429, 504] | deny unless an official no-search account endpoint is allowlisted | one bounded search after reservation | documented `402` is terminal exhaustion; `504` is timeout |
+| Linkup | current success/empty; auth `401`; validation `422`; rate `429`; exhaustion if documented; malformed results [required native statuses: 401, 422, 429] | deny unless an official no-search account endpoint is allowlisted | one bounded search after reservation | unknown charging/error semantics fail closed; do not infer exhaustion from text alone |
+| Parallel | current `/v1/search` success/empty; `401`, `402`, `408`, `422`, `429`, retriable `500`/`502`/`503`; warnings/usage; old-shape rejection [required native statuses: 401, 402, 408, 422, 429, 500, 502, 503] | deny unless an official no-search balance endpoint is allowlisted | one bounded search after reservation and adapter contract repair | documented `402` is terminal exhaustion; the 2026-07-26 insufficient-credit observation is historical until imported with scope |
+| Serper | success/empty; auth `401`; documented HTTP-200 not-enough-credit response; rate `429`; representative 5xx `503`; malformed organic results [required native statuses: 200, 401, 429, 503] | deny unless an official no-search account endpoint is allowlisted | one bounded search after reservation | not-enough-credit is terminal exhaustion; one-time state has no automatic expiry |
+| You.com | success/empty; `401/402/403/422/429/5xx`; scopes; malformed hits [required native statuses: 401, 402, 403, 422, 429, 503] | deny unless an official no-search account endpoint is allowlisted | one bounded search after reservation | documented `402` is terminal exhaustion; `403` scope failure is policy/configuration, not exhaustion |
+| SearchAPI | success/empty; missing key/auth `401`; rate/exhaustion if documented; `organic_results` migration; malformed payload [required native statuses: 401] | deny unless an official no-search account endpoint is allowlisted | only after a key, finite budget, reservation, and named authorization exist | current missing-key state prevents registration and any live call |
+| Valyu | success/empty; `success:false`; auth `401`; documented HTTP-200 insufficient-credit shape; actual/estimated result cost; malformed results [required native statuses: 200, 401] | deny unless an official no-search balance endpoint is allowlisted | one bounded search with result-count worst-case reservation | insufficient credit is terminal exhaustion; unknown per-result charge settles uncertain |
 
 ## Exact hermetic failure fixtures
 
-This table is the machine-readable authority for the failure fixtures required
-by the search-provider matrix above. `Class=status` records the exact captured
-transport status; application-native exhaustion responses may therefore use
-HTTP 200. `none` means no HTTP failure fixture is justified by the checked
-primary contract.
-
-| Provider key | Required class=status fixtures |
-|---|---|
-| searxng | 403=403, 408_504=504, 5xx=503 |
-| duckduckgo | none |
-| yahoo | 408_504=504, 5xx=503 |
-| github | 401=401, 403=403, 429=429 |
-| wolfram | 403=403 |
-| brave | 401=401, 403=403, 422=422, 429=429, 5xx=503 |
-| tavily | 401=401, 422=422, 429=429, 5xx=503 |
-| exa | 401=401, 402=402, 403=403, 408_504=504, 422=422, 429=429 |
-| linkup | 401=401, 422=422, 429=429 |
-| parallel | 401=401, 402=402, 408_504=408, 422=422, 429=429, 5xx=503 |
-| serper | 401=401, 402=200, 429=429, 5xx=503 |
-| you | 401=401, 402=402, 403=403, 422=422, 429=429, 5xx=503 |
-| valyu | 401=401, 402=200 |
-| searchapi | 401=401 |
+The machine-readable authority is
+[`2026-07-27-provider-status-contract.json`](2026-07-27-provider-status-contract.json).
+Unlike the legacy seven-class compatibility view, it records every required
+native status independently from its normalized outcome and fixture. This
+represents statuses outside the legacy classes, successful HTTP responses that
+carry native exhaustion, valid-empty statuses, and multiple exact statuses
+that normalize to one outcome.
 
 Wolfram quota exhaustion is deliberately absent from this fixture table. The
 [primary LLM API error reference](https://products.wolframalpha.com/llm-api/documentation#errors)
