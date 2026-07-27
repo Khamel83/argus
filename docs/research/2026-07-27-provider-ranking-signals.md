@@ -266,6 +266,13 @@ weak diagnostics until Argus proves the relation. They do not drive fusion.
 This replaces the current split behavior where RRF keys raw URLs and a later
 dedupe step applies unsafe, different assumptions.
 
+Search fusion itself never invokes extraction or follows a URL. Version 1
+search-only RRF therefore merges only equal conservative document keys.
+Separately authorized extraction proof may deduplicate the later combined
+evidence package, but does not retroactively reorder or mutate the acknowledged
+search response/cache. Reusing prior extraction relations in search ranking is
+a future explicit, versioned retrieval-plan feature.
+
 For each group:
 
 ```text

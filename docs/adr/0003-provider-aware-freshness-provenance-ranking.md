@@ -431,6 +431,15 @@ Provider-supplied canonical URLs are also weak hints until Argus validates the
 URL and proves the redirect/canonical relation through the safe extraction
 path.
 
+EvidenceFusion never invokes extraction or follows a URL. In a version 1
+search-only operation, only the conservative document-key equality can merge
+before RRF. Redirect/canonical and content-fingerprint proof produced by a
+separately authorized extraction may deduplicate the later combined evidence
+package in issue #65, but cannot retroactively mutate an acknowledged search
+response or its cache entry. Using pre-existing extraction relations in search
+ranking would require an explicit retrieval-plan control, durable compatible
+lineage, and normalization/ranking version bumps; it is not enabled here.
+
 ### Conservative document key
 
 The version 1 key:
@@ -464,7 +473,8 @@ document key. The key is evidence for ordering and identity, not a caller URL.
 
 The outward representative is selected deterministically:
 
-1. a verified canonical URL, when one exists;
+1. a verified canonical URL, when the current authorized evidence stage has
+   one;
 2. otherwise the observation with the best provider rank;
 3. then provider enum value in lexical order;
 4. then canonical URL byte order.
@@ -731,7 +741,9 @@ Hermetic tests must prove:
   parameters remain distinct without proof;
 - `www`, tracking, title, and snippet similarity alone never merge;
 - provider-supplied canonical hints alone never merge;
-- verified canonical, redirect, or content-fingerprint relations merge;
+- search-only fusion merges only equal conservative document keys;
+- an already-authorized combined evidence stage can merge verified redirect,
+  canonical, or content-fingerprint relations without mutating search cache;
 - one provider contributes only its best rank once per cluster;
 - all observations and provider ranks survive representative selection.
 
