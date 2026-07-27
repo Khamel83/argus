@@ -79,6 +79,22 @@ MODE_PROVIDER_PREFERENCES: dict[SearchMode, list[ProviderName]] = {
 }
 
 
+def stable_tier_sort(
+    providers: list[ProviderName] | tuple[ProviderName, ...],
+    *,
+    deduplicate: bool = False,
+) -> list[ProviderName]:
+    """Return providers in stable tier order.
+
+    When requested by the planner, later duplicates are removed before the
+    stable sort so caller order remains the tie-break within a tier.
+    """
+    ordered = list(providers)
+    if deduplicate:
+        ordered = list(dict.fromkeys(ordered))
+    return sorted(ordered, key=lambda provider: PROVIDER_TIERS.get(provider, 99))
+
+
 def get_provider_order(mode: SearchMode) -> list[ProviderName]:
     """Return tier-sorted provider list for a given search mode.
 
@@ -89,7 +105,7 @@ def get_provider_order(mode: SearchMode) -> list[ProviderName]:
         mode, MODE_PROVIDER_PREFERENCES[SearchMode.DISCOVERY]
     )
     # Stable sort by tier: free first, monthly next, one-time last
-    tier_sorted = sorted(preferences, key=lambda p: PROVIDER_TIERS.get(p, 99))
+    tier_sorted = stable_tier_sort(preferences)
     return [ProviderName.CACHE, *tier_sorted]
 
 
@@ -103,6 +119,6 @@ def resolve_routing(
     Otherwise use the mode-based tier-sorted policy.
     """
     if override_providers:
-        tier_sorted = sorted(override_providers, key=lambda p: PROVIDER_TIERS.get(p, 99))
+        tier_sorted = stable_tier_sort(override_providers)
         return tier_sorted
     return get_provider_order(mode)
