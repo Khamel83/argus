@@ -416,3 +416,48 @@ def test_success_fingerprint_omits_null_rejection_for_legacy_idempotency(
     )
 
     assert "rejection" not in captured["artifact"]
+
+
+def test_failure_fingerprint_omits_derived_rejection_for_legacy_idempotency(
+    tmp_path,
+    monkeypatch,
+):
+    import argus.persistence.search_ledger as ledger
+
+    repository = ledger.create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'legacy-failure-fingerprint.db'}",
+        create_schema=True,
+    )
+    result = ExtractedContent(
+        url="https://example.com/article",
+        error="provider unavailable",
+        quality_passed=False,
+        attempts=[
+            ExtractionAttempt(
+                extractor="jina",
+                status="failed",
+                latency_ms=11,
+                failure_summary="provider unavailable",
+            )
+        ],
+    )
+    captured = {}
+    real_fingerprint = ledger.acceptance_fingerprint
+
+    def capture_fingerprint(state):
+        captured.update(state)
+        return real_fingerprint(state)
+
+    monkeypatch.setattr(ledger, "acceptance_fingerprint", capture_fingerprint)
+
+    repository.record_extraction(
+        url=result.url,
+        domain=None,
+        mode="default",
+        caller="atlas",
+        result=result,
+        latency_ms=12,
+        extraction_run_id="legacy-compatible-failure",
+    )
+
+    assert "rejection" not in captured["artifact"]

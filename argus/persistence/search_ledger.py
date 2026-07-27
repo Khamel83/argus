@@ -935,8 +935,6 @@ class SqlAlchemySearchLedgerRepository:
             "archive_used": result.archive_used,
             "cost": result.cost,
         }
-        if rejection is not None:
-            artifact_state["rejection"] = rejection.to_dict()
         state = {
             "request_url": _safe_persisted_url(url),
             "domain": domain,
@@ -1051,7 +1049,9 @@ class SqlAlchemySearchLedgerRepository:
                             "extractors_tried": list(result.extractors_tried),
                             "cache_hit": bool(result.cache_hit),
                             "source_extractor": result.cache_source_extractor,
-                            "rejection": artifact.get("rejection"),
+                            "rejection": (
+                                rejection.to_dict() if rejection is not None else None
+                            ),
                         }
                     ),
                 )
