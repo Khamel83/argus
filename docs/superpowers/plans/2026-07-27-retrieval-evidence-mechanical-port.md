@@ -1004,6 +1004,7 @@ the image restores the old orchestrator without changing legacy wire shapes.
 **Inputs:** S7 accepted operations and ADR 0006.
 
 **Files:**
+- Create: `argus/capabilities.py`
 - Create: `argus/api/contracts_v2.py`
 - Create: `argus/api/routes_v2.py`
 - Create: `argus/api/security.py`
@@ -1011,6 +1012,7 @@ the image restores the old orchestrator without changing legacy wire shapes.
 - Create: `tests/test_transport_security.py`
 - Modify: `argus/api/main.py`
 - Modify: `argus/api/lifecycle.py`
+- Modify: `argus/api/routes_health.py`
 - Modify: `argus/auth.py`
 - Modify: `argus/config.py`
 - Modify: `argus/authority.py`
@@ -1018,6 +1020,9 @@ the image restores the old orchestrator without changing legacy wire shapes.
 **Interfaces:**
 - Produces `EvidenceHttpPresenter`, `TransportSecurityGuard`, and authenticated
   `/api/v2/*`.
+- Produces one process-local `CapabilityRegistration` owner whose immutable
+  snapshot is replaced atomically only after a complete startup registration
+  check; later MCP slices extend this same owner.
 - Adds authenticated `http_contracts` / `mcp_contract` capability entries.
 
 - [ ] **Step 1: Write exhaustive envelope/status tests**
@@ -1058,7 +1063,9 @@ registration check; otherwise it advertises only legacy HTTP capability. It
 does not advertise an MCP v2 suffix before S9c registers and proves those
 tools. A direct HTTP v2 request while the evidence authority is disabled
 returns `unready` before provider, extractor, cache, persistence, or session
-work. Existing capability fields remain unchanged.
+work. `argus/api/routes_health.py` reads exactly one immutable snapshot from
+the shared registration owner; it never reconstructs readiness from separate
+booleans. Existing capability fields remain unchanged.
 
 - [ ] **Step 6: Verify and commit**
 
@@ -1067,9 +1074,9 @@ uv run pytest tests/test_transport_v2.py tests/test_transport_security.py \
   tests/test_api.py tests/test_http_authority.py -q
 uv run pytest -q
 git diff --check
-git add argus/api/contracts_v2.py argus/api/routes_v2.py \
+git add argus/capabilities.py argus/api/contracts_v2.py argus/api/routes_v2.py \
   argus/api/security.py argus/api/main.py argus/api/lifecycle.py \
-  argus/auth.py argus/config.py argus/authority.py \
+  argus/api/routes_health.py argus/auth.py argus/config.py argus/authority.py \
   tests/test_transport_v2.py tests/test_transport_security.py
 git commit -m "feat: add secure version two HTTP contract"
 ```
@@ -1143,6 +1150,7 @@ transport/session rules.
 **Files:**
 - Create: `argus/mcp/sessions.py`
 - Create: `tests/test_mcp_transport.py`
+- Modify: `argus/capabilities.py`
 - Modify: `argus/mcp/server.py`
 - Modify: `argus/config.py`
 - Modify: `.env.example`
@@ -1150,6 +1158,8 @@ transport/session rules.
 **Interfaces:**
 - Produces a process-local `McpSessionRegistry` with atomic
   `initialize`, `lookup`, `touch`, `terminate`, and `sweep` operations.
+- Records the complete S9b transport-registration result in the shared
+  `CapabilityRegistration` owner without advertising MCP v2 yet.
 - Keeps existing tool registration and result shapes unchanged.
 
 - [ ] **Step 1: Write protocol/method/media tests**
@@ -1185,7 +1195,8 @@ uv run pytest tests/test_mcp_transport.py tests/test_transport_security.py \
   tests/test_http_authority.py -q
 uv run pytest -q
 git diff --check
-git add argus/mcp/sessions.py argus/mcp/server.py argus/config.py \
+git add argus/capabilities.py argus/mcp/sessions.py argus/mcp/server.py \
+  argus/config.py \
   .env.example tests/test_mcp_transport.py
 git commit -m "feat: bind and bound MCP transport sessions"
 ```
@@ -1210,6 +1221,8 @@ compatibility.
 **Files:**
 - Create: `argus/mcp/v2_tools.py`
 - Create: `tests/test_mcp_v2.py`
+- Modify: `argus/capabilities.py`
+- Modify: `argus/api/routes_health.py`
 - Modify: `argus/mcp/http_adapter.py`
 - Modify: `argus/mcp/tools.py`
 - Modify: `argus/mcp/server.py`
@@ -1245,7 +1258,10 @@ Add the MCP v2 suffix and tool-contract version to capabilities only when the
 S9b transport and all four S9c `*_v2` tools/output schemas passed one startup
 registration check. Missing transport/tool/schema registration keeps the
 legacy MCP capability document and fails direct v2 tool registration before
-the listener accepts requests.
+the listener accepts requests. The shared `CapabilityRegistration` owner
+publishes the complete MCP registration as one immutable replacement, and
+`argus/api/routes_health.py` renders that same snapshot. Neither side combines
+independently read transport/tool/schema flags.
 
 - [ ] **Step 5: Verify and commit**
 
@@ -1254,8 +1270,9 @@ uv run pytest tests/test_mcp_v2.py tests/test_mcp_transport.py \
   tests/test_http_authority.py -q
 uv run pytest -q
 git diff --check
-git add argus/mcp/v2_tools.py argus/mcp/http_adapter.py \
-  argus/mcp/tools.py argus/mcp/server.py tests/test_mcp_v2.py
+git add argus/capabilities.py argus/api/routes_health.py \
+  argus/mcp/v2_tools.py argus/mcp/http_adapter.py argus/mcp/tools.py \
+  argus/mcp/server.py tests/test_mcp_v2.py
 git commit -m "feat: add versioned MCP evidence tools"
 ```
 
