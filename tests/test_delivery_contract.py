@@ -62,7 +62,10 @@ def test_pull_request_ci_builds_the_production_image_without_pushing():
     ci = (REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
     assert "image-build:" in ci
-    assert "docker/build-push-action@v5" in ci
+    assert (
+        "docker/build-push-action@"
+        "ca052bb54ab0790a636c9b5f226502c73d547a25 # v5"
+    ) in ci
     assert "push: false" in ci
     assert "VCS_REF=${{ github.sha }}" in ci
 
