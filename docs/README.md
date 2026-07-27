@@ -23,6 +23,7 @@ Top-level entry points live at the repo root:
 - [adr/0005-structured-extraction-outcome-composition.md](adr/0005-structured-extraction-outcome-composition.md) — one-time extraction finalization, stable rejection composition, artifact eligibility, and retrieval linking
 - [adr/0006-http-mcp-compatibility-contract.md](adr/0006-http-mcp-compatibility-contract.md) — versioned HTTP envelopes, truthful statuses, Streamable HTTP sessions, structured MCP results, and Host/Origin security
 - [prototypes/retrieval-evidence-envelope/README.md](prototypes/retrieval-evidence-envelope/README.md) — throwaway canonical retrieval/evidence envelope with eight hermetic scenario vectors and fail-closed reference checks
+- [superpowers/plans/2026-07-27-retrieval-evidence-mechanical-port.md](superpowers/plans/2026-07-27-retrieval-evidence-mechanical-port.md) — dependency-ordered isolated implementation and operationally gated homelab port plan
 - [dashboard-design.md](dashboard-design.md) — dashboard UI design system reference
 - [scorecards/stability-competitive.md](scorecards/stability-competitive.md) — hard stability gates and automated competitive-evidence verdicts
 - [PUBLICITY-CHECKLIST.md](PUBLICITY-CHECKLIST.md) — project-internal launch / publicity checklist
