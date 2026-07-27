@@ -8,6 +8,7 @@ from typing import Any, List, Optional, Set
 
 from pydantic import BaseModel, Field, field_validator
 
+from argus.extraction.rejection import RejectionAction, RejectionCode
 from argus.models import ProviderName
 
 _VALID_MODES: Set[str] = {"recovery", "discovery", "grounding", "research"}
@@ -145,6 +146,17 @@ class ExtractRequest(BaseModel):
         return v
 
 
+class ExtractionRejectionSchema(BaseModel):
+    code: RejectionCode
+    provider: Optional[str] = None
+    quality_passed: Optional[bool] = None
+    is_complete: Optional[bool] = None
+    recommended_action: RejectionAction
+    attempt_count: int = Field(ge=0)
+    last_status: Optional[str] = None
+    total_latency_ms: int = Field(ge=0)
+
+
 class ExtractResponse(BaseModel):
     extraction_run_id: Optional[str] = None
     url: str
@@ -164,6 +176,7 @@ class ExtractResponse(BaseModel):
     truncation_type: Optional[str] = None
     completeness_signals: Optional[list[str]] = None
     recommended_action: Optional[str] = None
+    rejection: Optional[ExtractionRejectionSchema] = None
 
     # Provenance metadata
     source_type: Optional[str] = None

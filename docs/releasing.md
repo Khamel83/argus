@@ -88,26 +88,48 @@ If PyPI is behind the repo:
 4. Create a GitHub release or manually dispatch the publish workflow.
 5. Verify PyPI and MCP Registry after the workflow finishes.
 
-## Container image and homelab deploy
+## Immutable homelab promotion
 
-The homelab runs the **container image**, not the PyPI package. Build, publish,
-and deploy are handled by `.github/workflows/docker-publish.yml`, which on push
-to `main` (or a `v*` tag, or manual dispatch):
+The homelab runs the **container image**, not the PyPI package. A push to
+`main`, a `v*` tag, or a manual dispatch builds one
+`ghcr.io/khamel83/argus:sha-<commit>` image. Buildx publishes OCI provenance
+and SBOM attestations. The workflow records the returned manifest digest and
+passes that exact digest to the homelab promoter; the production candidate is
+never rebuilt or resolved through a mutable tag.
 
-1. builds the image and pushes it to GHCR as `ghcr.io/khamel83/argus:latest`
-   (plus a commit-SHA tag), then
-2. deploys to the homelab (`docker compose pull argus argus-mcp &&
-   docker compose up -d`).
+Only a `main`-branch run may enter the protected production environment. Tag
+runs build and retain immutable release evidence but do not deploy.
 
-Trigger a build + deploy manually:
+Configure a protected GitHub environment named `production` with required
+reviewer protection and these secrets:
+
+- `TS_OAUTH_CLIENT_ID`
+- `TS_OAUTH_SECRET`
+- `DEPLOY_SSH_PRIVATE_KEY`
+- `DEPLOY_KNOWN_HOSTS`
+
+The Tailscale OAuth client may create only `tag:argus-deployer` nodes. Tailnet
+ACLs allow that tag to reach only TCP/22 on `homelab-ts`. The SSH public key is
+installed with the forced command printed by the Homelab repository's
+`sudo scripts/install-argus-promoter.sh --public-key-file <path>` command.
+Actions verifies the pinned host key from `DEPLOY_KNOWN_HOSTS`; it does not use
+an OCI jump host or disable host-key verification.
+
+Trigger a build and promotion request manually:
 
 ```bash
 gh workflow run docker-publish.yml --ref main
 ```
 
+The request remains provisional until the isolated candidate gates, production
+digest and runtime-identity checks, and a 1,800-second soak pass. A blocking
+post-cutover failure restores the recorded previous compatible digest and
+reruns the production proof. Requested, current, previous, known-good, and
+timestamped receipts live outside Argus containers under
+`/mnt/fast-storage/appdata/hestia-repo-state/status/argus-promotion`.
+
 **Caution — `[skip ci]` skips deploys.** A commit whose message contains
 `[skip ci]` skips *all* workflows, including build/publish/deploy. Reserve it for
 non-deployable commits (e.g. docs-only). A stretch of deployable merges tagged
 `[skip ci]` silently leaves the homelab on a stale image (this happened for ~12
-commits before 2026-07-23). Issue #41 tracks the durable fix: immutable
-SHA-tagged releases with documented rollback (redeploy a previous SHA).
+commits before 2026-07-23).
