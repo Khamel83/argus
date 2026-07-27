@@ -262,11 +262,20 @@ half-open attempt. A health refresh never claims it.
 
 The claim is a durable compare-and-set lease, not only a process mutex. Its key
 is provider plus account/configuration scope, egress, and request class. The
-repository grants it using database transaction time, records an owner and
-bounded deadline, and rejects every concurrent process until the claim is
-settled or safely expires. The spend reservation and half-open lease are
-obtained transactionally before any adapter call. The process-local
-`HealthTracker` lock is only a migration optimization.
+repository grants it using database transaction time and records an owner,
+monotonically increasing fencing token, and authoritative execution deadline.
+The spend reservation and half-open lease are obtained transactionally before
+any adapter call. The process-local `HealthTracker` lock is only a migration
+optimization.
+
+Deadline expiry never authorizes a replacement by itself. The original owner
+must durably record response/error completion and release, or an authoritative
+provider request-status endpoint must prove termination. If the owner
+disappears or the call may still be running, the attempt becomes `unresolved`,
+its charge remains `uncertain`, and the provider stays blocked for
+reconciliation. A late owner with an old fencing token may append charge
+evidence to its attempt but cannot settle current readiness, release a newer
+claim, or clear cooldown.
 
 ### Spend
 
@@ -434,10 +443,19 @@ observations, timestamps, expiry, scope, and the derived execution decision.
 Overall status is not `ok` merely because one registered provider is enabled.
 
 The repository transactionally materializes one current snapshot per provider
-and policy generation whenever an observation or policy input changes. Render
-surfaces read that bounded snapshot rather than scanning or recomputing
-observation history. An in-process cache may key the immutable generation, but
-cache loss only causes a repository read and never changes the decision.
+and policy generation whenever an observation or policy input changes. The
+snapshot records `valid_until` as the earliest expiry of any observation that
+supports its decision. Every execution read compares `valid_until` with
+repository transaction time. At or after expiry, the repository atomically
+materializes a new generation with expired dimensions set to `unknown`, or
+fails closed to `unknown` while another writer does so; it never scans history
+on the request path.
+
+Render surfaces read the same bounded snapshot. An in-process rendering cache
+may reuse a generation for at most five monotonic seconds and never beyond the
+authority-provided remaining duration observed when it fetched the snapshot.
+Execution does not use that cache. Cache loss causes a repository read and
+never changes the decision.
 
 ### Admin smoke
 
@@ -529,10 +547,22 @@ charge, active cooldown/lease, and the observation that resolved each are
 retained under the durable attempt-ledger policy, not copied indefinitely into
 snapshots.
 
-Scopes are bounded inputs: provider is the fixed catalog, egress comes from the
-validated deployment manifest, request class comes from a versioned enum, and
-account/configuration identity permits one current plus one explicitly
-migrating generation. Unknown free-form scope values are rejected.
+Scopes are bounded inputs: provider is the fixed catalog, a deployment may
+declare at most eight egresses, and the executable request-class enum contains
+at most four classes. Exactly one account/configuration generation is
+executable; one migrating generation may remain diagnostic in the durable
+ledger but cannot expand the active Cartesian scope. A provider therefore has
+at most 32 executable scopes. A manifest or enum exceeding these limits is
+invalid and fails startup readiness.
+
+Receipt-reference retention is deterministic: active terminal/unresolved
+evidence first, then evidence supporting the current decision, then the
+observation that resolved each terminal state, then newest diagnostics. No
+terminal, unresolved, or decision-supporting receipt is silently discarded. If
+the protected set itself exceeds 32, the snapshot becomes
+`evidence_overflow/unavailable`, reports the protected count and a bounded
+ledger query reference, and blocks execution until compaction or repair. The
+full audit history remains in the durable ledger.
 
 ## Current evidence interpretation
 
@@ -594,9 +624,14 @@ The required negative tests include:
   same-account exhaustion;
 - expired compatibility and usability evidence;
 - concurrent half-open claims across separate processes;
+- lease deadline expiry while the original call remains unproved, including
+  rejection of late stale-fencing-token settlement;
 - authority/producer clock skew and implausible provider reset timestamps;
+- cached health expiring when repository time advances without any write;
 - bounded snapshot and receipt-reference compaction under repeated
   observations and scope injection;
+- scope/receipt overflow failing startup or provider readiness without silently
+  evicting protected evidence;
 - exhaustion without a refresh endpoint producing one deduplicated alert while
   remaining blocked;
 - every migration stage rejecting legacy status as an independent execution or

@@ -152,10 +152,13 @@ cannot escape exhaustion through cooldown expiry.
 
 The half-open claim is a database compare-and-set lease scoped to provider,
 account/configuration identity, egress, and versioned request class. Database
-transaction time governs the lease. Process-local locks may reduce contention
-but cannot authorize a call. If exhaustion has no authoritative refresh
-endpoint, the provider remains blocked and emits one deduplicated
-reconciliation alert; diagnostics never spend a search to clear it.
+transaction time governs the lease and each owner receives a monotonically
+increasing fencing token. Process-local locks may reduce contention but cannot
+authorize a call. Deadline expiry without proven invocation termination becomes
+unresolved and blocks replacement; a late stale token cannot settle readiness
+or clear cooldown. If exhaustion has no authoritative refresh endpoint, the
+provider remains blocked and emits one deduplicated reconciliation alert;
+diagnostics never spend a search to clear it.
 
 ## Current-gap mapping
 
@@ -192,7 +195,12 @@ proves:
 - fixture and live evidence expiry is deterministic under an injected clock;
 - repository time defeats producer clock skew and implausible reset times fail
   closed;
+- `valid_until` expires cached health without an intervening write;
+- lease expiry cannot overlap an unproved original invocation, and stale
+  fencing tokens cannot settle readiness;
 - repeated observations compact into bounded snapshots and receipt references;
+- more than eight egresses, four executable request classes, 32 active scopes,
+  or 32 protected receipt references fails closed with explicit overflow;
 - exhaustion without an account endpoint remains blocked and emits one
   deduplicated operator alert;
 - no migration stage permits legacy and readiness stores to authorize
