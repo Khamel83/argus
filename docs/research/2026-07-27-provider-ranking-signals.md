@@ -73,7 +73,8 @@ ResultEvidence
     value_utc?
     source_value               # bounded original string
     precision                  # instant | day | month | year | unknown
-    contract_confidence        # official | owned_library | fixture_only
+    contract_confidence        # official_contract | owned_library_contract
+                               # | fixture_backed | unverified
   source
     evidence_kind              # web_page | repository | computed_answer
                                 # | news | paper | proprietary | unknown
@@ -113,8 +114,8 @@ Rules:
 ```text
 ProviderAttemptEvidence
   provider
-  requested_query
-  provider_query?
+  effective_query_hash
+  provider_query_hash?
   query_relation              # exact | provider_rewrite | unknown
   request_id?
   provider_session_id?
@@ -137,6 +138,12 @@ change cache identity after execution, or receive a ranking bonus. A material
 rewrite with no typed relationship to the requested query is visible in the
 trace; a future policy may reject it, but version 1 does not guess semantic
 equivalence.
+
+The durable request ledger owns any caller-authorized plaintext query.
+Per-provider evidence stores hashes and the typed relation by default; a
+bounded plaintext provider interpretation is retained only when the caller's
+existing privacy policy explicitly permits it. This avoids multiplying a
+private query across traces.
 
 Provider-generated answers are separate evidence artifacts:
 

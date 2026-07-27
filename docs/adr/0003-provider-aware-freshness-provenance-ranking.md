@@ -193,6 +193,28 @@ by the authorized search call. Argus retains at most three ordered highlights
 of at most 500 characters each and does not concatenate unrelated fragments
 into purported source prose.
 
+Version 1 internal projection bounds are:
+
+| Evidence | Bound |
+|---|---|
+| normalized URL or citation URL | 8,192 characters |
+| title | 1,000 characters |
+| primary snippet/excerpt | 2,000 characters |
+| highlights | 3 entries, 500 characters each |
+| author | 256 characters |
+| provider/source/section label | 64 characters |
+| opaque request/result/session reference | 128 characters |
+| upstream engines | 16 entries, 64 characters each |
+| warnings or suggestions | 5 entries, 256 characters each |
+| citation source references | 20 entries |
+| raw date/age field | 128 characters |
+
+Truncated human-readable text records `truncated=true`. An overlong URL,
+identifier, enum/label, or date field is dropped with a normalization reason;
+it is never truncated into a false identity. Issue #65 may expose a smaller
+public projection, but cannot enlarge the persisted internal bounds without a
+`result_normalization_version` change.
+
 ### Publication evidence
 
 Publication evidence is:
@@ -202,7 +224,8 @@ published_at_utc?
 published_date?
 precision = timestamp | date | month | year | provider_age | unknown
 source = provider_field | provider_age | result_text | none
-contract_confidence = contracted | fixture_backed | unverified
+contract_confidence =
+  official_contract | owned_library_contract | fixture_backed | unverified
 raw_field_name?
 ```
 
@@ -263,6 +286,12 @@ are forbidden.
 Query rewrites and suggestions are evidence only. Version 1 does not execute a
 rewritten query, add a follow-up request, or replace the effective query from
 ADR 0002.
+
+The request ledger owns any caller-authorized plaintext query. Provider
+evidence stores the effective/provider query hashes and typed relation by
+default. A bounded plaintext interpretation is retained only when the existing
+caller privacy policy explicitly permits it; private queries are not copied
+into every provider trace.
 
 ## Answers and citations
 
