@@ -76,6 +76,7 @@ def test_incomplete_content_has_stable_retryable_rejection():
     assert rejection.is_complete is False
     assert rejection.recommended_action == "retry_later"
     assert rejection.attempt_count == 2
+    assert rejection.last_status == "success"
     assert rejection.total_latency_ms == 40
     assert "example.com" not in repr(rejection)
     assert "never-copy-this" not in repr(rejection)
@@ -89,6 +90,11 @@ def test_quality_gate_failure_is_terminal_and_explicit():
         extractor=ExtractorName.JINA,
         quality_passed=False,
         quality_reason="all_extractors_quality_failed",
+        completeness_result=CompletenessResult(
+            is_complete=False,
+            confidence=0.95,
+            truncation_type="ellipsis",
+        ),
         attempts=[
             ExtractionAttempt(
                 extractor="jina",
@@ -106,6 +112,46 @@ def test_quality_gate_failure_is_terminal_and_explicit():
     assert rejection.provider == "jina"
     assert rejection.recommended_action == "terminal"
     assert rejection.last_status == "quality_failed"
+
+
+def test_ssrf_rejection_is_terminal_unsupported_source():
+    result = ExtractedContent(
+        url="http://192.168.1.1/private",
+        error="ssrf_blocked: private IP address",
+    )
+
+    rejection = classify_extraction_rejection(result)
+
+    assert rejection is not None
+    assert rejection.code == "unsupported_source"
+    assert rejection.provider is None
+    assert rejection.recommended_action == "terminal"
+
+
+def test_errorless_empty_youtube_result_is_explicitly_retryable():
+    result = ExtractedContent(
+        url="https://www.youtube.com/watch?v=abcdefghijk",
+        title="Metadata still available",
+        extractor=ExtractorName.YOUTUBE,
+        quality_passed=True,
+        quality_reason="captions_unavailable",
+        extractors_tried=["youtube"],
+        attempts=[
+            ExtractionAttempt(
+                extractor="youtube",
+                status="success",
+                latency_ms=4,
+            )
+        ],
+    )
+
+    rejection = classify_extraction_rejection(result)
+
+    assert rejection is not None
+    assert rejection.code == "empty_result"
+    assert rejection.provider == "youtube"
+    assert rejection.quality_passed is None
+    assert rejection.recommended_action == "retry_later"
 
 
 def test_timeout_takes_precedence_over_generic_provider_failures():
@@ -325,3 +371,48 @@ def test_persisted_rejection_matches_api_shape_and_excludes_raw_evidence(tmp_pat
     assert secret not in json.dumps(rejection)
     assert "example.com" not in json.dumps(rejection)
     assert "persist-never" not in json.dumps(rejection)
+
+
+def test_success_fingerprint_omits_null_rejection_for_legacy_idempotency(
+    tmp_path,
+    monkeypatch,
+):
+    import argus.persistence.search_ledger as ledger
+
+    repository = ledger.create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'legacy-fingerprint.db'}",
+        create_schema=True,
+    )
+    result = ExtractedContent(
+        url="https://example.com/article",
+        text="complete content.",
+        word_count=2,
+        extractor=ExtractorName.TRAFILATURA,
+        attempts=[
+            ExtractionAttempt(
+                extractor="trafilatura",
+                status="success",
+                latency_ms=11,
+            )
+        ],
+    )
+    captured = {}
+    real_fingerprint = ledger.acceptance_fingerprint
+
+    def capture_fingerprint(state):
+        captured.update(state)
+        return real_fingerprint(state)
+
+    monkeypatch.setattr(ledger, "acceptance_fingerprint", capture_fingerprint)
+
+    repository.record_extraction(
+        url=result.url,
+        domain=None,
+        mode="default",
+        caller="atlas",
+        result=result,
+        latency_ms=12,
+        extraction_run_id="legacy-compatible-success",
+    )
+
+    assert "rejection" not in captured["artifact"]

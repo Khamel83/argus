@@ -49,7 +49,12 @@ class ExtractionRejection:
 
 _TIMEOUT_MARKERS = ("timeout", "timed out")
 _RATE_LIMIT_MARKERS = ("rate limit", "rate_limit", "too many requests", "http 429")
-_UNSUPPORTED_MARKERS = ("unsupported", "invalid video url", "invalid source")
+_UNSUPPORTED_MARKERS = (
+    "unsupported",
+    "invalid video url",
+    "invalid source",
+    "ssrf_blocked",
+)
 _UNAVAILABLE_MARKERS = (
     "unavailable",
     "not configured",
@@ -97,12 +102,19 @@ def _rejection(
 ) -> ExtractionRejection:
     attempts = list(result.attempts)
     selected = result.extractor.value if result.extractor else None
-    provider = attempt.extractor if attempt is not None else selected
-    if provider is None and attempts:
-        provider = attempts[-1].extractor
-    last_status = attempt.status if attempt is not None else (
-        attempts[-1].status if attempts else None
+    selected_attempt = next(
+        (
+            item
+            for item in reversed(attempts)
+            if selected is not None and item.extractor == selected
+        ),
+        None,
     )
+    relevant_attempt = attempt or selected_attempt
+    if relevant_attempt is None and selected is None and attempts:
+        relevant_attempt = attempts[-1]
+    provider = relevant_attempt.extractor if relevant_attempt is not None else selected
+    last_status = relevant_attempt.status if relevant_attempt is not None else None
     completeness = result.completeness_result
     quality_passed = bool(result.quality_passed) if result.text else None
     return ExtractionRejection(
@@ -124,14 +136,6 @@ def classify_extraction_rejection(
     result: ExtractedContent,
 ) -> ExtractionRejection | None:
     """Classify an unusable result without copying URL, content, or raw errors."""
-    completeness = result.completeness_result
-    if completeness is not None and not completeness.is_complete:
-        return _rejection(
-            result,
-            code=RejectionCode.INCOMPLETE_CONTENT,
-            action=RejectionAction.RETRY_LATER,
-        )
-
     if result.text and not result.quality_passed:
         quality_attempt = next(
             (
@@ -148,8 +152,22 @@ def classify_extraction_rejection(
             attempt=quality_attempt,
         )
 
+    completeness = result.completeness_result
+    if completeness is not None and not completeness.is_complete:
+        return _rejection(
+            result,
+            code=RejectionCode.INCOMPLETE_CONTENT,
+            action=RejectionAction.RETRY_LATER,
+        )
+
     if not result.error:
-        return None
+        if result.text:
+            return None
+        return _rejection(
+            result,
+            code=RejectionCode.EMPTY_RESULT,
+            action=RejectionAction.RETRY_LATER,
+        )
 
     classifications = (
         (RejectionCode.TIMEOUT, RejectionAction.RETRY_LATER, _TIMEOUT_MARKERS),
