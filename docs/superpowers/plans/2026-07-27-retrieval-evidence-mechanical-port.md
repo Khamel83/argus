@@ -1052,12 +1052,13 @@ MCP transport session ID.
 - [ ] **Step 5: Register additive routes/capabilities**
 
 All `/api/v2` routes call the same S7 accepted-operation service exactly once.
-`GET /api/capabilities` advertises HTTP contract 2 and the MCP v2 suffix only
-when `ARGUS_ACCEPTED_OPERATION_AUTHORITY=evidence` passed the complete startup
-registration check; otherwise it advertises only legacy capability. A direct
-v2 request while the evidence authority is disabled returns `unready` before
-provider, extractor, cache, persistence, or session work. Existing capability
-fields remain unchanged.
+At S8, `GET /api/capabilities` advertises HTTP contract 2 only when
+`ARGUS_ACCEPTED_OPERATION_AUTHORITY=evidence` passed the complete HTTP startup
+registration check; otherwise it advertises only legacy HTTP capability. It
+does not advertise an MCP v2 suffix before S9c registers and proves those
+tools. A direct HTTP v2 request while the evidence authority is disabled
+returns `unready` before provider, extractor, cache, persistence, or session
+work. Existing capability fields remain unchanged.
 
 - [ ] **Step 6: Verify and commit**
 
@@ -1238,7 +1239,15 @@ Use S9a discovery before the first execution. Once v2 is selected, a failure
 never falls back to v1. Presenters do not classify outcomes or parse Markdown
 for evidence.
 
-- [ ] **Step 4: Verify and commit**
+- [ ] **Step 4: Advertise MCP v2 only after complete registration**
+
+Add the MCP v2 suffix and tool-contract version to capabilities only when the
+S9b transport and all four S9c `*_v2` tools/output schemas passed one startup
+registration check. Missing transport/tool/schema registration keeps the
+legacy MCP capability document and fails direct v2 tool registration before
+the listener accepts requests.
+
+- [ ] **Step 5: Verify and commit**
 
 ```bash
 uv run pytest tests/test_mcp_v2.py tests/test_mcp_transport.py \
