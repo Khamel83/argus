@@ -12,6 +12,7 @@
     "plan",
     "cache",
     "readiness",
+    "origin_provider_attempts",
     "provider_attempts",
     "fusion",
     "extractions",
@@ -31,6 +32,11 @@
       "type": "array",
       "maxItems": 14,
       "items": {"$ref": "#/$defs/readiness"}
+    },
+    "origin_provider_attempts": {
+      "type": "array",
+      "maxItems": 14,
+      "items": {"$ref": "#/$defs/providerAttempt"}
     },
     "provider_attempts": {
       "type": "array",
@@ -323,6 +329,7 @@
       "additionalProperties": false,
       "required": [
         "attempt_id",
+        "run_ref",
         "provider",
         "ordinal",
         "outcome",
@@ -336,6 +343,7 @@
       ],
       "properties": {
         "attempt_id": {"$ref": "#/$defs/id"},
+        "run_ref": {"$ref": "#/$defs/id"},
         "provider": {"$ref": "#/$defs/shortLabel"},
         "ordinal": {"type": "integer", "minimum": 0, "maximum": 13},
         "outcome": {
@@ -415,6 +423,11 @@
         "site_key",
         "base_rank",
         "output_rank",
+        "cluster_sort_key",
+        "best_provider_rank",
+        "contributor_count",
+        "smallest_provider",
+        "exact_score",
         "contributions",
         "freshness",
         "provenance",
@@ -427,6 +440,23 @@
         "site_key": {"$ref": "#/$defs/shortLabel"},
         "base_rank": {"type": "integer", "minimum": 0},
         "output_rank": {"type": "integer", "minimum": 0},
+        "cluster_sort_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "best_provider_rank": {"type": "integer", "minimum": 0},
+        "contributor_count": {"type": "integer", "minimum": 1, "maximum": 14},
+        "smallest_provider": {"$ref": "#/$defs/shortLabel"},
+        "exact_score": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["numerator", "denominator"],
+          "properties": {
+            "numerator": {"type": "integer", "minimum": 1},
+            "denominator": {"type": "integer", "minimum": 1}
+          }
+        },
         "contributions": {
           "type": "array",
           "minItems": 1,
@@ -802,6 +832,7 @@
         "diagnostic_result_refs",
         "citations",
         "answer",
+        "caller_result",
         "synthesis_allowed",
         "delivery_allowed",
         "visible_labels"
@@ -824,6 +855,70 @@
           "items": {"$ref": "#/$defs/citation"}
         },
         "answer": {"type": "null"},
+        "caller_result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["results", "citation_refs", "answer"],
+          "properties": {
+            "results": {
+              "type": "array",
+              "maxItems": 50,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "cluster_ref",
+                  "url",
+                  "title",
+                  "rank",
+                  "visibility",
+                  "extraction"
+                ],
+                "properties": {
+                  "cluster_ref": {"$ref": "#/$defs/id"},
+                  "url": {"type": "string", "format": "uri", "maxLength": 8192},
+                  "title": {"type": "string", "minLength": 1, "maxLength": 1000},
+                  "rank": {"type": "integer", "minimum": 0},
+                  "visibility": {"enum": ["accepted", "diagnostic"]},
+                  "extraction": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "outcome",
+                          "artifact_disposition",
+                          "artifact_ref",
+                          "rejection_code"
+                        ],
+                        "properties": {
+                          "outcome": {"$ref": "#/$defs/outcome"},
+                          "artifact_disposition": {
+                            "enum": ["usable", "partial", "diagnostic_only", "none"]
+                          },
+                          "artifact_ref": {
+                            "oneOf": [{"$ref": "#/$defs/id"}, {"type": "null"}]
+                          },
+                          "rejection_code": {
+                            "type": ["string", "null"],
+                            "maxLength": 64
+                          }
+                        }
+                      },
+                      {"type": "null"}
+                    ]
+                  }
+                }
+              }
+            },
+            "citation_refs": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {"$ref": "#/$defs/id"}
+            },
+            "answer": {"type": "null"}
+          }
+        },
         "synthesis_allowed": {"type": "boolean"},
         "delivery_allowed": {"type": "boolean"},
         "visible_labels": {

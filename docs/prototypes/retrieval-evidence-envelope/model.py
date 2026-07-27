@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from fractions import Fraction
 from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
@@ -86,6 +87,7 @@ def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[
     plan = envelope["plan"]
     cache = envelope["cache"]
     readiness = envelope["readiness"]
+    origin_attempts = envelope["origin_provider_attempts"]
     attempts = envelope["provider_attempts"]
     fusion = envelope["fusion"]
     extractions = envelope["extractions"]
@@ -98,6 +100,8 @@ def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[
         violations.append("request.mode must equal plan.intent")
     if plan["artifact_requirement_ref"] != composition["artifact_requirement_ref"]:
         violations.append("plan and composition artifact requirement refs differ")
+    if fusion["ranking_policy"] != plan["versions"]["ranking_policy"]:
+        violations.append("fusion ranking policy differs from resolved plan")
     if cache["maximum_age_ms"] != plan["controls"]["freshness"]["maximum_cache_age_ms"]:
         violations.append("cache maximum age differs from the resolved plan")
 
@@ -106,11 +110,17 @@ def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[
     if readiness_providers != planned:
         violations.append("readiness must cover candidate providers once, in plan order")
 
-    attempt_ids = [item["attempt_id"] for item in attempts]
+    attempt_ids = [
+        item["attempt_id"] for item in [*origin_attempts, *attempts]
+    ]
     if duplicates := _duplicate(attempt_ids):
         violations.append(f"duplicate provider attempt ids: {sorted(duplicates)}")
     if [item["ordinal"] for item in attempts] != list(range(len(attempts))):
         violations.append("provider attempt ordinals must be contiguous from zero")
+    if [item["ordinal"] for item in origin_attempts] != list(
+        range(len(origin_attempts))
+    ):
+        violations.append("origin provider attempt ordinals must be contiguous")
     readiness_by_provider = {item["provider"]: item for item in readiness}
     request_time = _timestamp(request["received_at"])
     for item in readiness:
@@ -123,6 +133,8 @@ def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[
         ):
             violations.append(f"{item['provider']} readiness is not valid at request time")
     for attempt in attempts:
+        if attempt["run_ref"] != request["run_id"]:
+            violations.append(f"{attempt['attempt_id']} has wrong current run ref")
         provider = attempt["provider"]
         if provider not in readiness_by_provider:
             violations.append(f"{attempt['attempt_id']} provider is not in readiness")
@@ -143,14 +155,23 @@ def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[
             violations.append(f"{attempt['attempt_id']} omitted requested freshness")
         if not freshness_requested and translation != "not_requested":
             violations.append(f"{attempt['attempt_id']} invented freshness translation")
+    for attempt in origin_attempts:
+        if attempt["run_ref"] != cache["origin_run_ref"]:
+            violations.append(f"{attempt['attempt_id']} has wrong origin run ref")
+        if attempt["provider"] not in cache["origin_provider_refs"]:
+            violations.append(f"{attempt['attempt_id']} provider absent from cache lineage")
+        if attempt["outcome"] not in {"success", "empty"}:
+            violations.append(f"{attempt['attempt_id']} is not cacheable origin evidence")
 
     if cache["new_provider_calls"] != len(attempts):
         violations.append("cache new_provider_calls must equal invoked provider attempts")
     if accounting["provider_call_count"] != len(attempts):
         violations.append("accounting provider_call_count must equal attempts")
     if cache["decision"] == "hit":
-        if not cache["served"] or attempts:
-            violations.append("cache hit must be served with zero provider attempts")
+        if not cache["served"] or attempts or not origin_attempts:
+            violations.append(
+                "cache hit must be served from origin attempts with zero current calls"
+            )
     elif cache["served"]:
         violations.append("only a cache hit may be served")
     if (
@@ -163,10 +184,35 @@ def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[
     ):
         violations.append("stale cache rejection must exceed maximum age")
     if cache["origin_run_ref"] is None:
-        if cache["origin_provider_refs"] or cache["origin_spend"] is not None:
+        if (
+            cache["origin_provider_refs"]
+            or cache["origin_spend"] is not None
+            or origin_attempts
+        ):
             violations.append("cache without origin run has fabricated origin lineage")
-    elif not cache["origin_provider_refs"] or cache["origin_spend"] is None:
+    elif (
+        not cache["origin_provider_refs"]
+        or cache["origin_spend"] is None
+        or not origin_attempts
+    ):
         violations.append("cache origin run lacks provider/spend lineage")
+    elif set(cache["origin_provider_refs"]) != {
+        item["provider"] for item in origin_attempts
+    }:
+        violations.append("cache origin providers do not reconcile with origin attempts")
+    if cache["origin_spend"] is not None:
+        origin_actual_cost = sum(
+            Decimal(item["spend"]["actual_usd"]) for item in origin_attempts
+        )
+        origin_reserved_cost = sum(
+            Decimal(item["spend"]["reserved_usd"]) for item in origin_attempts
+        )
+        if (
+            Decimal(cache["origin_spend"]["actual_usd"]) != origin_actual_cost
+            or Decimal(cache["origin_spend"]["reserved_usd"])
+            != origin_reserved_cost
+        ):
+            violations.append("cache origin spend does not reconcile with origin attempts")
 
     provider_latency = sum(item["latency_ms"] for item in attempts)
     if accounting["provider_attempt_latency_ms"] != provider_latency:
@@ -174,7 +220,9 @@ def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[
     actual_cost = sum(Decimal(item["spend"]["actual_usd"]) for item in attempts)
     reserved_cost = sum(Decimal(item["spend"]["reserved_usd"]) for item in attempts)
 
-    attempt_by_id = {item["attempt_id"]: item for item in attempts}
+    attempt_by_id = {
+        item["attempt_id"]: item for item in [*origin_attempts, *attempts]
+    }
     clusters = fusion["clusters"]
     cluster_ids = [item["cluster_id"] for item in clusters]
     if duplicates := _duplicate(cluster_ids):
@@ -187,8 +235,10 @@ def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[
         range(len(clusters))
     ):
         violations.append("output ranks must be unique and contiguous")
+    exact_scores: dict[str, Fraction] = {}
     for cluster in clusters:
         contributors: set[str] = set()
+        score = Fraction(0, 1)
         for contribution in cluster["contributions"]:
             attempt = attempt_by_id.get(contribution["attempt_ref"])
             if attempt is None:
@@ -214,6 +264,48 @@ def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[
                 violations.append(
                     f"{cluster['cluster_id']} has incorrect exact RRF denominator"
                 )
+            score += Fraction(
+                contribution["numerator"], contribution["denominator"]
+            )
+        exact_scores[cluster["cluster_id"]] = score
+        stored_score = Fraction(
+            cluster["exact_score"]["numerator"],
+            cluster["exact_score"]["denominator"],
+        )
+        if stored_score != score:
+            violations.append(f"{cluster['cluster_id']} exact score does not reconcile")
+        expected_best = min(
+            contribution["provider_rank"]
+            for contribution in cluster["contributions"]
+        )
+        if cluster["best_provider_rank"] != expected_best:
+            violations.append(f"{cluster['cluster_id']} best rank does not reconcile")
+        if cluster["contributor_count"] != len(contributors):
+            violations.append(
+                f"{cluster['cluster_id']} contributor count does not reconcile"
+            )
+        if not contributors:
+            violations.append(f"{cluster['cluster_id']} has no valid contributors")
+        elif cluster["smallest_provider"] != min(contributors):
+            violations.append(
+                f"{cluster['cluster_id']} smallest provider does not reconcile"
+            )
+
+    expected_base_order = sorted(
+        clusters,
+        key=lambda cluster: (
+            -exact_scores[cluster["cluster_id"]],
+            cluster["best_provider_rank"],
+            -cluster["contributor_count"],
+            cluster["smallest_provider"],
+            cluster["cluster_sort_key"].encode("utf-8"),
+        ),
+    )
+    actual_base_order = sorted(clusters, key=lambda cluster: cluster["base_rank"])
+    if [item["cluster_id"] for item in actual_base_order] != [
+        item["cluster_id"] for item in expected_base_order
+    ]:
+        violations.append("base ranking does not follow exact RRF/tie-break policy")
 
     distinct_sites = {cluster["site_key"] for cluster in clusters}
     floor_should_pass = (
@@ -281,6 +373,21 @@ def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[
         artifact = extraction["artifact"]
         rejection = extraction["rejection"]
         if artifact is not None:
+            selected = extraction["selected_extractor"]
+            producers = {
+                step["extractor"]
+                for step in invoked
+                if step["attempt_outcome"] == "content"
+            }
+            if (
+                selected is None
+                or selected != artifact["provenance"]["producer"]
+                or selected not in producers
+            ):
+                violations.append(
+                    f"{extraction['extraction_run_id']} selected extractor "
+                    "does not produce retained artifact"
+                )
             artifact_id = artifact["artifact_id"]
             if artifact_id in artifact_by_id:
                 violations.append(f"duplicate artifact id: {artifact_id}")
@@ -311,6 +418,10 @@ def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[
                     violations.append(
                         f"{artifact_id} diagnostic/none artifact is citation eligible"
                     )
+        elif extraction["selected_extractor"] is not None:
+            violations.append(
+                f"{extraction['extraction_run_id']} selects extractor without artifact"
+            )
         if rejection is not None:
             rejection_id = rejection["rejection_id"]
             if rejection_id in rejection_by_id:
@@ -364,10 +475,18 @@ def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[
             artifact["artifact_id"] if artifact is not None else None
         ):
             violations.append(f"{link['link_id']} artifact ref differs from extraction")
+        if link["artifact_disposition"] != (
+            artifact["disposition"] if artifact is not None else "none"
+        ):
+            violations.append(
+                f"{link['link_id']} artifact disposition differs from extraction"
+            )
         if link["rejection_ref"] != (
             rejection["rejection_id"] if rejection is not None else None
         ):
             violations.append(f"{link['link_id']} rejection ref differs from extraction")
+    if {link["extraction_run_ref"] for link in links} != set(extraction_ids):
+        violations.append("composition links do not cover extraction runs exactly")
 
     accepted_refs = set(composition["accepted_artifact_refs"])
     degraded_refs = set(composition["degraded_artifact_refs"])
@@ -405,6 +524,8 @@ def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[
         else:
             if requirement["max_extractions"] < len(extractions):
                 violations.append("extraction count exceeds artifact requirement")
+            if requirement["aggregate_count"] > len(links):
+                violations.append("artifact aggregate floor exceeds selected links")
             disposition_value = {
                 "none": 0,
                 "diagnostic_only": 1,
@@ -422,6 +543,36 @@ def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[
                 and passing < requirement["aggregate_count"]
             ):
                 violations.append("successful composition does not meet artifact floor")
+            required_pass = all(
+                not link["required"]
+                or disposition_value[link["artifact_disposition"]] >= minimum
+                for link in links
+            )
+            aggregate_pass = passing >= requirement["aggregate_count"]
+            if required_pass and aggregate_pass:
+                expected_composite = composition["retrieval_outcome"]
+                if expected_composite == "success" and any(
+                    link["outcome"] != "success" for link in links
+                ):
+                    expected_composite = "degraded"
+            elif any(
+                link["required"] and link["outcome"] == "unready" for link in links
+            ):
+                expected_composite = "unready"
+            else:
+                expected_composite = "extraction_failed"
+            if (
+                composition["composite_outcome"] != "persistence_failed"
+                and composition["composite_outcome"] != expected_composite
+            ):
+                violations.append(
+                    "composite outcome does not follow artifact-floor precedence"
+                )
+    if requirement_ref is None and composition["composite_outcome"] not in {
+        composition["retrieval_outcome"],
+        "persistence_failed",
+    }:
+        violations.append("plain retrieval composition changed accepted outcome")
 
     if final["outcome"] != composition["composite_outcome"]:
         violations.append("final outcome differs from composite outcome")
@@ -433,12 +584,85 @@ def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[
         violations.append("result and diagnostic result refs overlap")
     if len(final["result_refs"]) > plan["result_limit"]:
         violations.append("final result count exceeds plan result limit")
+    citation_ids = [citation["citation_id"] for citation in final["citations"]]
+    if duplicates := _duplicate(citation_ids):
+        violations.append(f"duplicate citation ids: {sorted(duplicates)}")
     for citation in final["citations"]:
         artifact = artifact_by_id.get(citation["artifact_ref"])
-        if citation["cluster_ref"] not in known_result_refs:
+        cluster = next(
+            (
+                item
+                for item in clusters
+                if item["cluster_id"] == citation["cluster_ref"]
+            ),
+            None,
+        )
+        if cluster is None:
             violations.append(f"{citation['citation_id']} has dangling cluster")
         if artifact is None or not artifact["citation_eligible"]:
             violations.append(f"{citation['citation_id']} cites ineligible artifact")
+        if cluster is not None:
+            link = link_by_id.get(cluster["extraction_link"])
+            if (
+                link is None
+                or link["cluster_ref"] != citation["cluster_ref"]
+                or link["artifact_ref"] != citation["artifact_ref"]
+            ):
+                violations.append(
+                    f"{citation['citation_id']} artifact does not belong to cluster"
+                )
+
+    cluster_by_id = {cluster["cluster_id"]: cluster for cluster in clusters}
+    expected_visible_refs = sorted(
+        final["result_refs"],
+        key=lambda item: cluster_by_id.get(item, {"output_rank": 10**9})[
+            "output_rank"
+        ],
+    )
+    expected_diagnostic_refs = sorted(
+        final["diagnostic_result_refs"],
+        key=lambda item: cluster_by_id.get(item, {"output_rank": 10**9})[
+            "output_rank"
+        ],
+    )
+    expected_caller_results: list[dict[str, Any]] = []
+    for visibility, refs in (
+        ("accepted", expected_visible_refs),
+        ("diagnostic", expected_diagnostic_refs),
+    ):
+        for cluster_ref in refs:
+            cluster = cluster_by_id.get(cluster_ref)
+            if cluster is None:
+                continue
+            extraction_projection = None
+            link = link_by_id.get(cluster["extraction_link"])
+            if link is not None:
+                rejection = rejection_by_id.get(link["rejection_ref"])
+                extraction_projection = {
+                    "outcome": link["outcome"],
+                    "artifact_disposition": link["artifact_disposition"],
+                    "artifact_ref": link["artifact_ref"],
+                    "rejection_code": (
+                        rejection["code"] if rejection is not None else None
+                    ),
+                }
+            expected_caller_results.append(
+                {
+                    "cluster_ref": cluster_ref,
+                    "url": cluster["url"],
+                    "title": cluster["title"],
+                    "rank": cluster["output_rank"],
+                    "visibility": visibility,
+                    "extraction": extraction_projection,
+                }
+            )
+    caller_result = final["caller_result"]
+    if caller_result["results"] != expected_caller_results:
+        violations.append("caller result projection differs from accepted references")
+    if caller_result["citation_refs"] != citation_ids:
+        violations.append("caller citation projection differs from citations")
+    if caller_result["answer"] != final["answer"]:
+        violations.append("caller answer projection differs from final answer")
 
     outcome = final["outcome"]
     if outcome in {"success", "degraded"}:

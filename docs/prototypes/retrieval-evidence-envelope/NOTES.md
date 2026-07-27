@@ -18,6 +18,9 @@ facts, not a second execution model.
   `degraded`.
 - A stale entry is rejected and never served implicitly. Live execution may
   still succeed, but the rejected cache decision remains in the trace.
+- An eligible cache hit performs zero current provider calls and incurs zero
+  new spend while preserving and reconciling the origin provider attempt,
+  provenance, and spend.
 - No eligible provider is `unready`, not `empty` or `providers_failed`.
 - An extraction-floor failure may expose accepted search evidence and
   citation-eligible artifacts diagnostically, but cannot synthesize or deliver
@@ -26,6 +29,10 @@ facts, not a second execution model.
   delivery, or success-like outcome.
 - Wall-clock latency, summed attempt latency, and spend reconciliation are
   separate evidence; none affects ranking.
+- Ranked clusters retain the exact RRF fraction and deterministic tie-break
+  inputs. The accepted caller projection is validated against those clusters,
+  extraction links, artifacts, and citations rather than reconstructed by a
+  renderer.
 
 ## Physical nesting recommendation for #67
 

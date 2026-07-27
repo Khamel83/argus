@@ -27,6 +27,7 @@ def load_inputs() -> tuple[dict[str, Any], list[dict[str, Any]]]:
 
 def summary(vector: dict[str, Any]) -> str:
     attempts = vector["provider_attempts"]
+    origin_attempts = vector["origin_provider_attempts"]
     extraction_steps = sum(
         len(item["steps"]) for item in vector["extractions"]
     )
@@ -38,13 +39,16 @@ def summary(vector: dict[str, Any]) -> str:
         f"{BOLD}plan/cache{RESET}: {vector['plan']['plan_id']} / "
         f"{vector['cache']['decision']}:{vector['cache']['reason']}",
         f"{BOLD}providers{RESET}: planned={len(vector['readiness'])} "
-        f"attempted={len(attempts)} calls={vector['accounting']['provider_call_count']}",
+        f"current_attempts={len(attempts)} origin_attempts={len(origin_attempts)} "
+        f"new_calls={vector['accounting']['provider_call_count']}",
         f"{BOLD}results{RESET}: ranked={len(vector['fusion']['clusters'])} "
         f"visible={len(final['result_refs'])} "
         f"diagnostic={len(final['diagnostic_result_refs'])}",
         f"{BOLD}extraction{RESET}: runs={len(vector['extractions'])} "
         f"steps={extraction_steps} citations={len(final['citations'])}",
         f"{BOLD}spend{RESET}: actual_usd={vector['accounting']['actual_usd']} "
+        f"origin_actual_usd="
+        f"{(vector['cache']['origin_spend'] or {}).get('actual_usd', 'none')} "
         f"state={vector['accounting']['reconciliation']}",
         f"{BOLD}latency{RESET}: wall={vector['accounting']['operation_latency_ms']}ms "
         f"provider_sum={vector['accounting']['provider_attempt_latency_ms']}ms "
@@ -58,22 +62,26 @@ def summary(vector: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def corrupted_cases(vectors: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
+def corrupted_cases(
+    vectors: list[dict[str, Any]],
+) -> list[tuple[str, dict[str, Any], str]]:
     by_name = {vector["scenario"]: vector for vector in vectors}
-    cases: list[tuple[str, dict[str, Any]]] = []
+    cases: list[tuple[str, dict[str, Any], str]] = []
 
     dangling = copy.deepcopy(by_name["success"])
     dangling["final"]["result_refs"][0] = "cluster-missing"
-    cases.append(("dangling final result ref", dangling))
+    cases.append(("dangling final result ref", dangling, "dangling result ref"))
 
     stale = copy.deepcopy(by_name["stale_cache"])
     stale["cache"]["served"] = True
-    cases.append(("stale cache served", stale))
+    cases.append(("stale cache served", stale, "only a cache hit may be served"))
 
     no_provider = copy.deepcopy(by_name["no_provider"])
     no_provider["final"]["outcome"] = "empty"
     no_provider["composition"]["composite_outcome"] = "empty"
-    cases.append(("no-provider mislabeled empty", no_provider))
+    cases.append(
+        ("no-provider mislabeled empty", no_provider, "empty requires")
+    )
 
     citation = copy.deepcopy(by_name["success"])
     cited_id = citation["final"]["citations"][0]["artifact_ref"]
@@ -81,19 +89,25 @@ def corrupted_cases(vectors: list[dict[str, Any]]) -> list[tuple[str, dict[str, 
         artifact = extraction["artifact"]
         if artifact is not None and artifact["artifact_id"] == cited_id:
             artifact["citation_eligible"] = False
-    cases.append(("ineligible artifact cited", citation))
+    cases.append(("ineligible artifact cited", citation, "cites ineligible artifact"))
 
     cost = copy.deepcopy(by_name["success"])
     cost["accounting"]["actual_usd"] = "1.000000000"
-    cases.append(("spend mismatch", cost))
+    cases.append(("spend mismatch", cost, "spend does not reconcile"))
 
     persistence = copy.deepcopy(by_name["persistence_failure"])
     persistence["acceptance"]["receipt_ref"] = "receipt-fabricated"
-    cases.append(("fabricated persistence receipt", persistence))
+    cases.append(
+        (
+            "fabricated persistence receipt",
+            persistence,
+            "failed acceptance cannot fabricate",
+        )
+    )
 
     rrf = copy.deepcopy(by_name["success"])
     rrf["fusion"]["clusters"][0]["contributions"][0]["denominator"] += 1
-    cases.append(("incorrect exact RRF input", rrf))
+    cases.append(("incorrect exact RRF input", rrf, "incorrect exact RRF"))
 
     fallback = copy.deepcopy(by_name["fallback_success"])
     fallback["extractions"][0]["rejection"] = {
@@ -105,7 +119,94 @@ def corrupted_cases(vectors: list[dict[str, Any]]) -> list[tuple[str, dict[str, 
         "last_status": "content",
         "total_attempt_latency_ms": 82
     }
-    cases.append(("fallback success keeps final rejection", fallback))
+    cases.append(
+        (
+            "fallback success keeps final rejection",
+            fallback,
+            "success retains final rejection",
+        )
+    )
+
+    disposition = copy.deepcopy(by_name["partial_failure"])
+    disposition["composition"]["links"][0]["artifact_disposition"] = "usable"
+    cases.append(
+        (
+            "link lies about artifact disposition",
+            disposition,
+            "artifact disposition differs",
+        )
+    )
+
+    cross_cluster = copy.deepcopy(by_name["success"])
+    cross_cluster["final"]["citations"][0]["cluster_ref"] = "cluster-success-b"
+    cases.append(
+        (
+            "citation crosses cluster boundary",
+            cross_cluster,
+            "artifact does not belong to cluster",
+        )
+    )
+
+    selected = copy.deepcopy(by_name["success"])
+    selected["extractions"][0]["selected_extractor"] = "playwright"
+    cases.append(
+        (
+            "selected extractor did not produce artifact",
+            selected,
+            "selected extractor does not produce",
+        )
+    )
+
+    ranking_policy = copy.deepcopy(by_name["success"])
+    ranking_policy["fusion"]["ranking_policy"] = "ranking-v999"
+    cases.append(
+        (
+            "fusion uses wrong ranking policy",
+            ranking_policy,
+            "ranking policy differs",
+        )
+    )
+
+    reordered = copy.deepcopy(by_name["success"])
+    reordered["fusion"]["clusters"][0]["base_rank"] = 1
+    reordered["fusion"]["clusters"][1]["base_rank"] = 0
+    cases.append(
+        (
+            "exact RRF order is reversed",
+            reordered,
+            "base ranking does not follow",
+        )
+    )
+
+    caller_projection = copy.deepcopy(by_name["success"])
+    caller_projection["final"]["caller_result"]["results"][0]["title"] = "Wrong"
+    cases.append(
+        (
+            "caller output diverges from accepted cluster",
+            caller_projection,
+            "caller result projection differs",
+        )
+    )
+
+    hit = copy.deepcopy(by_name["eligible_cache_hit"])
+    hit["origin_provider_attempts"] = []
+    cases.append(
+        (
+            "cache hit drops origin attempts",
+            hit,
+            "cache hit must be served from origin attempts",
+        )
+    )
+
+    origin_spend = copy.deepcopy(by_name["eligible_cache_hit"])
+    origin_spend["cache"]["origin_spend"]["actual_usd"] = "0.002000000"
+    cases.append(
+        (
+            "cache hit misstates origin spend",
+            origin_spend,
+            "cache origin spend does not reconcile",
+        )
+    )
     return cases
 
 
@@ -126,13 +227,18 @@ def run_all(schema: dict[str, Any], vectors: list[dict[str, Any]]) -> int:
         else:
             print(f"PASS vector {name}: {vector['final']['outcome']}")
 
-    for name, corrupted in corrupted_cases(vectors):
+    for name, corrupted, expected in corrupted_cases(vectors):
         violations = validate_envelope(corrupted, schema)
-        if violations:
+        if any(expected in violation for violation in violations):
             print(f"PASS fail-closed {name}: rejected ({len(violations)} invariant(s))")
         else:
             failed = True
-            print(f"FAIL fail-closed {name}: corruption was accepted")
+            print(
+                f"FAIL fail-closed {name}: expected invariant not observed: "
+                f"{expected!r}"
+            )
+            for violation in violations:
+                print(f"  - {violation}")
 
     required = {
         "success",
@@ -142,6 +248,7 @@ def run_all(schema: dict[str, Any], vectors: list[dict[str, Any]]) -> int:
         "no_provider",
         "rejected_extraction",
         "persistence_failure",
+        "eligible_cache_hit",
     }
     missing = required - seen_scenarios
     if missing:

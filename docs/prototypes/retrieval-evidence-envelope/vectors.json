@@ -91,9 +91,11 @@
         "valid_until": "2026-07-27T05:10:00Z"
       }
     ],
+    "origin_provider_attempts": [],
     "provider_attempts": [
       {
         "attempt_id": "attempt-success-ddg",
+        "run_ref": "run-success",
         "provider": "duckduckgo",
         "ordinal": 0,
         "outcome": "success",
@@ -123,6 +125,7 @@
       },
       {
         "attempt_id": "attempt-success-github",
+        "run_ref": "run-success",
         "provider": "github",
         "ordinal": 1,
         "outcome": "success",
@@ -162,6 +165,11 @@
           "site_key": "example.org",
           "base_rank": 0,
           "output_rank": 0,
+          "cluster_sort_key": "https://docs.example.org/argus",
+          "best_provider_rank": 0,
+          "contributor_count": 2,
+          "smallest_provider": "duckduckgo",
+          "exact_score": {"numerator": 123, "denominator": 3782},
           "contributions": [
             {
               "provider": "duckduckgo",
@@ -202,6 +210,11 @@
           "site_key": "github.com",
           "base_rank": 1,
           "output_rank": 1,
+          "cluster_sort_key": "https://github.com/example/argus",
+          "best_provider_rank": 0,
+          "contributor_count": 1,
+          "smallest_provider": "github",
+          "exact_score": {"numerator": 1, "denominator": 61},
           "contributions": [
             {
               "provider": "github",
@@ -235,6 +248,11 @@
           "site_key": "example.net",
           "base_rank": 2,
           "output_rank": 2,
+          "cluster_sort_key": "https://research.example.net/retrieval",
+          "best_provider_rank": 1,
+          "contributor_count": 1,
+          "smallest_provider": "duckduckgo",
+          "exact_score": {"numerator": 1, "denominator": 62},
           "contributions": [
             {
               "provider": "duckduckgo",
@@ -391,6 +409,41 @@
         }
       ],
       "answer": null,
+      "caller_result": {
+        "results": [
+          {
+            "cluster_ref": "cluster-success-a",
+            "url": "https://docs.example.org/argus",
+            "title": "Argus primary documentation",
+            "rank": 0,
+            "visibility": "accepted",
+            "extraction": {
+              "outcome": "success",
+              "artifact_disposition": "usable",
+              "artifact_ref": "artifact-success-a",
+              "rejection_code": null
+            }
+          },
+          {
+            "cluster_ref": "cluster-success-b",
+            "url": "https://github.com/example/argus",
+            "title": "Argus source repository",
+            "rank": 1,
+            "visibility": "accepted",
+            "extraction": null
+          },
+          {
+            "cluster_ref": "cluster-success-c",
+            "url": "https://research.example.net/retrieval",
+            "title": "Evidence retrieval study",
+            "rank": 2,
+            "visibility": "accepted",
+            "extraction": null
+          }
+        ],
+        "citation_refs": ["citation-success-a"],
+        "answer": null
+      },
       "synthesis_allowed": true,
       "delivery_allowed": true,
       "visible_labels": ["SUCCESS", "fresh-acquisition", "durably-accepted"]
@@ -488,9 +541,11 @@
         "valid_until": "2026-07-27T05:11:00Z"
       }
     ],
+    "origin_provider_attempts": [],
     "provider_attempts": [
       {
         "attempt_id": "attempt-partial-ddg",
+        "run_ref": "run-partial",
         "provider": "duckduckgo",
         "ordinal": 0,
         "outcome": "success",
@@ -520,6 +575,7 @@
       },
       {
         "attempt_id": "attempt-partial-yahoo",
+        "run_ref": "run-partial",
         "provider": "yahoo",
         "ordinal": 1,
         "outcome": "parse_error",
@@ -559,6 +615,11 @@
           "site_key": "example.org",
           "base_rank": 0,
           "output_rank": 0,
+          "cluster_sort_key": "https://one.example.org/a",
+          "best_provider_rank": 0,
+          "contributor_count": 1,
+          "smallest_provider": "duckduckgo",
+          "exact_score": {"numerator": 1, "denominator": 61},
           "contributions": [
             {
               "provider": "duckduckgo",
@@ -592,6 +653,11 @@
           "site_key": "example.net",
           "base_rank": 1,
           "output_rank": 1,
+          "cluster_sort_key": "https://two.example.net/b",
+          "best_provider_rank": 1,
+          "contributor_count": 1,
+          "smallest_provider": "duckduckgo",
+          "exact_score": {"numerator": 1, "denominator": 62},
           "contributions": [
             {
               "provider": "duckduckgo",
@@ -756,6 +822,33 @@
         }
       ],
       "answer": null,
+      "caller_result": {
+        "results": [
+          {
+            "cluster_ref": "cluster-partial-a",
+            "url": "https://one.example.org/a",
+            "title": "Partial evidence A",
+            "rank": 0,
+            "visibility": "accepted",
+            "extraction": {
+              "outcome": "degraded",
+              "artifact_disposition": "partial",
+              "artifact_ref": "artifact-partial-a",
+              "rejection_code": "incomplete_content"
+            }
+          },
+          {
+            "cluster_ref": "cluster-partial-b",
+            "url": "https://two.example.net/b",
+            "title": "Partial evidence B",
+            "rank": 1,
+            "visibility": "accepted",
+            "extraction": null
+          }
+        ],
+        "citation_refs": ["citation-partial-a"],
+        "answer": null
+      },
       "synthesis_allowed": true,
       "delivery_allowed": true,
       "visible_labels": ["DEGRADED", "partial-provider", "partial-content"]
@@ -838,9 +931,11 @@
         "valid_until": "2026-07-27T05:12:00Z"
       }
     ],
+    "origin_provider_attempts": [],
     "provider_attempts": [
       {
         "attempt_id": "attempt-fallback-yahoo",
+        "run_ref": "run-fallback",
         "provider": "yahoo",
         "ordinal": 0,
         "outcome": "success",
@@ -880,6 +975,11 @@
           "site_key": "example.org",
           "base_rank": 0,
           "output_rank": 0,
+          "cluster_sort_key": "https://archive.example.org/recovered",
+          "best_provider_rank": 0,
+          "contributor_count": 1,
+          "smallest_provider": "yahoo",
+          "exact_score": {"numerator": 1, "denominator": 61},
           "contributions": [
             {
               "provider": "yahoo",
@@ -1058,6 +1158,25 @@
         }
       ],
       "answer": null,
+      "caller_result": {
+        "results": [
+          {
+            "cluster_ref": "cluster-fallback-a",
+            "url": "https://archive.example.org/recovered",
+            "title": "Recovered canonical page",
+            "rank": 0,
+            "visibility": "accepted",
+            "extraction": {
+              "outcome": "success",
+              "artifact_disposition": "usable",
+              "artifact_ref": "artifact-fallback-a",
+              "rejection_code": null
+            }
+          }
+        ],
+        "citation_refs": ["citation-fallback-a"],
+        "answer": null
+      },
       "synthesis_allowed": true,
       "delivery_allowed": true,
       "visible_labels": ["SUCCESS", "fallback-used", "durably-accepted"]
@@ -1145,9 +1264,42 @@
         "valid_until": "2026-07-27T05:13:00Z"
       }
     ],
+    "origin_provider_attempts": [
+      {
+        "attempt_id": "attempt-stale-origin-github",
+        "run_ref": "run-stale-origin",
+        "provider": "github",
+        "ordinal": 0,
+        "outcome": "success",
+        "reason": "origin_protocol_valid_results",
+        "result_count": 1,
+        "latency_ms": 36,
+        "applied_controls_ref": "controls-stale-origin-github",
+        "applied_controls": {
+          "safe_search": "applied",
+          "freshness_translation": "exact",
+          "domain_translation": "not_requested",
+          "request_class": "grounding"
+        },
+        "provenance": {
+          "producer": "github",
+          "egress": "residential",
+          "machine": "fixture-node",
+          "source_type": "repository-search",
+          "observed_at": "2026-07-27T04:51:20Z"
+        },
+        "spend": {
+          "reserved_usd": "0.000000000",
+          "actual_usd": "0.000000000",
+          "reconciliation": "not_applicable",
+          "source": "origin-tier-zero"
+        }
+      }
+    ],
     "provider_attempts": [
       {
         "attempt_id": "attempt-stale-github",
+        "run_ref": "run-stale",
         "provider": "github",
         "ordinal": 0,
         "outcome": "success",
@@ -1187,6 +1339,11 @@
           "site_key": "github.com",
           "base_rank": 0,
           "output_rank": 0,
+          "cluster_sort_key": "https://github.com/example/current",
+          "best_provider_rank": 0,
+          "contributor_count": 1,
+          "smallest_provider": "github",
+          "exact_score": {"numerator": 1, "denominator": 61},
           "contributions": [
             {
               "provider": "github",
@@ -1258,6 +1415,20 @@
       "diagnostic_result_refs": [],
       "citations": [],
       "answer": null,
+      "caller_result": {
+        "results": [
+          {
+            "cluster_ref": "cluster-stale-a",
+            "url": "https://github.com/example/current",
+            "title": "Current primary source",
+            "rank": 0,
+            "visibility": "accepted",
+            "extraction": null
+          }
+        ],
+        "citation_refs": [],
+        "answer": null
+      },
       "synthesis_allowed": true,
       "delivery_allowed": true,
       "visible_labels": ["SUCCESS", "stale-cache-rejected", "live-acquisition"]
@@ -1355,6 +1526,7 @@
         "valid_until": "2026-07-27T05:14:00Z"
       }
     ],
+    "origin_provider_attempts": [],
     "provider_attempts": [],
     "fusion": {
       "ranking_policy": "ranking-v1-rrf60",
@@ -1404,6 +1576,11 @@
       "diagnostic_result_refs": [],
       "citations": [],
       "answer": null,
+      "caller_result": {
+        "results": [],
+        "citation_refs": [],
+        "answer": null
+      },
       "synthesis_allowed": false,
       "delivery_allowed": false,
       "visible_labels": ["UNREADY", "no-eligible-provider", "zero-provider-calls"]
@@ -1486,9 +1663,11 @@
         "valid_until": "2026-07-27T05:15:00Z"
       }
     ],
+    "origin_provider_attempts": [],
     "provider_attempts": [
       {
         "attempt_id": "attempt-rejected-extraction-ddg",
+        "run_ref": "run-rejected-extraction",
         "provider": "duckduckgo",
         "ordinal": 0,
         "outcome": "success",
@@ -1528,6 +1707,11 @@
           "site_key": "example.org",
           "base_rank": 0,
           "output_rank": 0,
+          "cluster_sort_key": "https://blocked.example.org/article",
+          "best_provider_rank": 0,
+          "contributor_count": 1,
+          "smallest_provider": "duckduckgo",
+          "exact_score": {"numerator": 1, "denominator": 61},
           "contributions": [
             {
               "provider": "duckduckgo",
@@ -1605,7 +1789,7 @@
             }
           }
         ],
-        "selected_extractor": null,
+        "selected_extractor": "trafilatura",
         "artifact": {
           "artifact_id": "artifact-rejected-extraction-a",
           "disposition": "diagnostic_only",
@@ -1686,6 +1870,25 @@
       "diagnostic_result_refs": ["cluster-rejected-extraction-a"],
       "citations": [],
       "answer": null,
+      "caller_result": {
+        "results": [
+          {
+            "cluster_ref": "cluster-rejected-extraction-a",
+            "url": "https://blocked.example.org/article",
+            "title": "Low quality extraction target",
+            "rank": 0,
+            "visibility": "diagnostic",
+            "extraction": {
+              "outcome": "extraction_failed",
+              "artifact_disposition": "diagnostic_only",
+              "artifact_ref": "artifact-rejected-extraction-a",
+              "rejection_code": "quality_gate_failed"
+            }
+          }
+        ],
+        "citation_refs": [],
+        "answer": null
+      },
       "synthesis_allowed": false,
       "delivery_allowed": false,
       "visible_labels": ["EXTRACTION_FAILED", "search-evidence-only", "no-synthesis"]
@@ -1768,9 +1971,11 @@
         "valid_until": "2026-07-27T05:16:00Z"
       }
     ],
+    "origin_provider_attempts": [],
     "provider_attempts": [
       {
         "attempt_id": "attempt-persistence-ddg",
+        "run_ref": "run-persistence",
         "provider": "duckduckgo",
         "ordinal": 0,
         "outcome": "success",
@@ -1810,6 +2015,11 @@
           "site_key": "example.org",
           "base_rank": 0,
           "output_rank": 0,
+          "cluster_sort_key": "https://unaccepted.example.org/a",
+          "best_provider_rank": 0,
+          "contributor_count": 1,
+          "smallest_provider": "duckduckgo",
+          "exact_score": {"numerator": 1, "denominator": 61},
           "contributions": [
             {
               "provider": "duckduckgo",
@@ -1881,9 +2091,235 @@
       "diagnostic_result_refs": [],
       "citations": [],
       "answer": null,
+      "caller_result": {
+        "results": [],
+        "citation_refs": [],
+        "answer": null
+      },
       "synthesis_allowed": false,
       "delivery_allowed": false,
       "visible_labels": ["PERSISTENCE_FAILED", "no-receipt", "no-delivery"]
+    }
+  },
+  {
+    "prototype_schema": "argus.retrieval-evidence.prototype.v1",
+    "scenario": "eligible_cache_hit",
+    "contract_version": "2.0",
+    "request": {
+      "request_id": "request-cache-hit",
+      "run_id": "run-cache-hit",
+      "caller_ref": "caller-fixture",
+      "mode": "grounding",
+      "query_hash": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+      "raw_query_retained": false,
+      "deadline_ms": 120000,
+      "received_at": "2026-07-27T05:07:00Z"
+    },
+    "plan": {
+      "plan_id": "plan-cache-hit",
+      "cache_fingerprint": "cache-hit",
+      "schema_version": 1,
+      "profile": "free",
+      "intent": "grounding",
+      "result_limit": 1,
+      "candidate_providers": ["duckduckgo"],
+      "controls": {
+        "safe_search": true,
+        "country": null,
+        "language": "en",
+        "freshness": {
+          "start": null,
+          "end": null,
+          "maximum_cache_age_ms": 600000
+        },
+        "domains": {"include": [], "exclude": []},
+        "revalidation": "normal",
+        "egress_preference": "residential",
+        "effective_max_provider_tier": 0,
+        "include_attribution": true
+      },
+      "artifact_requirement_ref": null,
+      "versions": {
+        "query_normalization": "query-v1",
+        "routing_policy": "routing-v1",
+        "spend_policy": "spend-v1",
+        "freshness_policy": "freshness-v1",
+        "domain_policy": "domain-v1-psl-fixture",
+        "ranking_policy": "ranking-v1-rrf60",
+        "result_normalization": "result-v1",
+        "extraction_outcome_policy": "extraction-v1"
+      }
+    },
+    "cache": {
+      "decision": "hit",
+      "reason": "eligible_paid_origin_free_reuse",
+      "served": true,
+      "age_ms": 100000,
+      "maximum_age_ms": 600000,
+      "origin_run_ref": "run-cache-origin",
+      "origin_provider_refs": ["brave"],
+      "origin_spend": {
+        "reserved_usd": "0.001000000",
+        "actual_usd": "0.001000000",
+        "reconciliation": "confirmed",
+        "source": "origin-provider-ledger"
+      },
+      "new_provider_calls": 0
+    },
+    "readiness": [
+      {
+        "provider": "duckduckgo",
+        "tier": 0,
+        "decision": "unavailable",
+        "reason": "current_execution_path_unavailable",
+        "compatibility": "compatible",
+        "reachability": "unreachable",
+        "usability": "unknown",
+        "cooldown": "clear",
+        "spend": "not_applicable",
+        "snapshot_ref": "ready-cache-hit-ddg",
+        "scope_ref": "scope-residential-fixture",
+        "observed_at": "2026-07-27T05:06:00Z",
+        "valid_until": "2026-07-27T05:17:00Z"
+      }
+    ],
+    "origin_provider_attempts": [
+      {
+        "attempt_id": "attempt-cache-origin-brave",
+        "run_ref": "run-cache-origin",
+        "provider": "brave",
+        "ordinal": 0,
+        "outcome": "success",
+        "reason": "origin_protocol_valid_results",
+        "result_count": 1,
+        "latency_ms": 80,
+        "applied_controls_ref": "controls-cache-origin-brave",
+        "applied_controls": {
+          "safe_search": "applied",
+          "freshness_translation": "not_requested",
+          "domain_translation": "not_requested",
+          "request_class": "grounding"
+        },
+        "provenance": {
+          "producer": "brave",
+          "egress": "datacenter",
+          "machine": "fixture-origin-node",
+          "source_type": "web-search",
+          "observed_at": "2026-07-27T05:05:20Z"
+        },
+        "spend": {
+          "reserved_usd": "0.001000000",
+          "actual_usd": "0.001000000",
+          "reconciliation": "confirmed",
+          "source": "origin-provider-ledger"
+        }
+      }
+    ],
+    "provider_attempts": [],
+    "fusion": {
+      "ranking_policy": "ranking-v1-rrf60",
+      "rrf_k": 60,
+      "clusters": [
+        {
+          "cluster_id": "cluster-cache-hit-a",
+          "url": "https://cached.example.org/grounding",
+          "title": "Eligible cached grounding evidence",
+          "site_key": "example.org",
+          "base_rank": 0,
+          "output_rank": 0,
+          "cluster_sort_key": "https://cached.example.org/grounding",
+          "best_provider_rank": 0,
+          "contributor_count": 1,
+          "smallest_provider": "brave",
+          "exact_score": {"numerator": 1, "denominator": 61},
+          "contributions": [
+            {
+              "provider": "brave",
+              "attempt_ref": "attempt-cache-origin-brave",
+              "provider_rank": 0,
+              "numerator": 1,
+              "denominator": 61
+            }
+          ],
+          "freshness": {
+            "required": false,
+            "passed": null,
+            "published_at": null,
+            "observed_at": "2026-07-27T05:05:20Z",
+            "reason": "origin_evidence_preserved",
+            "proof": "not_required"
+          },
+          "provenance": {
+            "producer": "brave",
+            "egress": "datacenter",
+            "machine": "fixture-origin-node",
+            "source_type": "web-page",
+            "observed_at": "2026-07-27T05:05:20Z"
+          },
+          "extraction_link": null
+        }
+      ],
+      "filtered_observations": [],
+      "floor": {
+        "required_clusters": 1,
+        "required_sites": 1,
+        "passed": true,
+        "reason": "grounding_floor_passed"
+      }
+    },
+    "extractions": [],
+    "composition": {
+      "artifact_requirement_ref": null,
+      "artifact_requirement": null,
+      "retrieval_outcome": "success",
+      "artifact_outcome": null,
+      "composite_outcome": "success",
+      "links": [],
+      "accepted_artifact_refs": [],
+      "degraded_artifact_refs": [],
+      "rejected_extraction_refs": []
+    },
+    "accounting": {
+      "provider_call_count": 0,
+      "extractor_call_count": 0,
+      "reserved_usd": "0.000000000",
+      "actual_usd": "0.000000000",
+      "reconciliation": "not_applicable",
+      "source": "cache-reuse-zero-new-spend",
+      "operation_latency_ms": 12,
+      "provider_attempt_latency_ms": 0,
+      "extractor_attempt_latency_ms": 0
+    },
+    "acceptance": {
+      "status": "accepted",
+      "receipt_ref": "receipt-cache-hit",
+      "accepted_at": "2026-07-27T05:07:00.012Z",
+      "artifact_count": 0,
+      "cache_published": false
+    },
+    "final": {
+      "outcome": "success",
+      "result_refs": ["cluster-cache-hit-a"],
+      "diagnostic_result_refs": [],
+      "citations": [],
+      "answer": null,
+      "caller_result": {
+        "results": [
+          {
+            "cluster_ref": "cluster-cache-hit-a",
+            "url": "https://cached.example.org/grounding",
+            "title": "Eligible cached grounding evidence",
+            "rank": 0,
+            "visibility": "accepted",
+            "extraction": null
+          }
+        ],
+        "citation_refs": [],
+        "answer": null
+      },
+      "synthesis_allowed": true,
+      "delivery_allowed": true,
+      "visible_labels": ["SUCCESS", "cache-hit", "zero-new-spend"]
     }
   }
 ]
