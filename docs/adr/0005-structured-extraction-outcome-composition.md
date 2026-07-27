@@ -162,7 +162,7 @@ The target semantic projection contains these required facts. Issue #65 may
 choose a smaller/deeper physical nesting but cannot omit them:
 
 ```text
-contract_version
+extraction_outcome_policy_version
 outcome
 artifact_disposition
 extraction_run_id
@@ -170,7 +170,7 @@ plan_ref
 artifact?
 rejection?
 attempt_summary
-terminal_cause_ref?
+terminal_cause?
 trace_ref
 cache_evidence
 provenance
@@ -181,6 +181,9 @@ acceptance_receipt
 The projection is immutable after acceptance. A display renderer may hide
 optional detail, but cannot change `outcome`, `artifact_disposition`,
 rejection code/action, run identity, or acceptance state.
+This version identifies the internal semantic policy. Issue #66 decides
+whether and how a transport exposes it; it is not an HTTP or MCP schema
+version.
 
 ### Canonical outcomes
 
@@ -293,13 +296,65 @@ Classification order is explicit:
 An early timeout, empty result, or parse failure followed by a complete
 fallback is visible in the step trace but never becomes the final rejection.
 
-The orchestrator supplies `terminal_cause_ref`; the mapper never guesses it by
-searching all failures. Preflight policy and the operation deadline are
-intrinsic terminal causes. Otherwise the cause is the plan-stopping attempt
-after which no eligible bounded fallback remained. If the chain merely
-exhausted heterogeneous independent failures and no single attempt stopped it,
-the terminal fact is `chain_exhausted`, which maps to
-`provider_unavailable`; every individual category remains in the trace.
+The orchestrator supplies one discriminated terminal cause; the mapper never
+guesses it by scanning errors:
+
+```text
+TerminalCause =
+  preflight:
+    outcome = invalid_request | authentication_rejected |
+              policy_rejected | unready
+    authority_ref
+  operation_deadline:
+    deadline_ref
+  attempt_terminal:
+    ordinal
+    policy_rule_ref
+  chain_exhausted:
+    invoked_ordinals[]
+    distinct_attempt_outcomes[]
+```
+
+The selection rule is deterministic:
+
+1. an accepted artifact has no terminal cause;
+2. a pre-invocation rejection uses `preflight`;
+3. an authority deadline uses `operation_deadline`;
+4. `attempt_terminal` is valid only when a named plan policy rule stops the
+   whole operation before otherwise eligible candidates; and
+5. ordinary exhaustion after every bounded candidate was invoked or
+   policy-skipped always uses `chain_exhausted`.
+
+For `chain_exhausted`, one invoked attempt maps from that attempt. Multiple
+attempts with one distinct non-content outcome map from that homogeneous
+outcome but leave `rejection.provider=null` because no one extractor is
+causative. Heterogeneous outcomes map to `provider_unavailable`, also with a
+null provider. A chain containing `content` reaches this mapping only when no
+retained artifact already determined quality or completeness under rules 5
+and 6 above. Every individual outcome remains in the trace.
+
+References are integrity-checked before acceptance. `attempt_terminal.ordinal`
+must identify an invoked extractor decision. `chain_exhausted.invoked_ordinals`
+must equal the ordered set of invoked decisions, and
+`distinct_attempt_outcomes` must equal their deduplicated outcomes. Empty,
+dangling, duplicated, or contradictory references are a contract failure, not
+facts for the rejection mapper to repair.
+
+The terminal mapping is closed:
+
+| Terminal fact | Canonical outcome | #57 rejection |
+|---|---|---|
+| preflight `invalid_request` | `invalid_request` | absent; no run fabricated |
+| preflight `authentication_rejected` | `authentication_rejected` | absent; no run fabricated |
+| preflight `policy_rejected` | `policy_rejected` | `unsupported_source` only when a run exists; otherwise absent |
+| preflight `unready` | `unready` | `provider_unavailable` only when a run exists; otherwise absent |
+| operation deadline | `timeout` | `timeout` |
+| terminal/exhausted `invalid_request` | `invalid_request` | absent; canonical outcome is authoritative |
+| terminal/exhausted `authentication_rejected` | `authentication_rejected` | absent; canonical outcome is authoritative |
+| terminal/exhausted `policy_rejected` | `policy_rejected` | `unsupported_source` |
+| terminal/exhausted `balance_exhausted` | `unready` | `provider_unavailable` |
+| terminal/exhausted other homogeneous outcome | mapper rule for that outcome | corresponding #57 code |
+| heterogeneous exhaustion | `extraction_failed` | `provider_unavailable` |
 
 ### Recommended actions
 
@@ -340,31 +395,58 @@ The immutable extraction plan declares:
 - operation deadline; and
 - caller/profile/privacy identity.
 
-Each evaluated step records:
+The trace has two closed entry kinds:
 
 ```text
-ordinal
-extractor
-decision = invoked | policy_skipped | cache_hit
-status?
-latency_ms?
-normalized_failure_category?
-egress?
-machine?
-source_type?
-spend_attempt_ref?
+CacheDecision:
+  kind = cache
+  outcome = miss | hit_eligible | hit_ineligible
+  origin_run_ref?
+  age_seconds?
+
+ExtractorDecision:
+  kind = extractor
+  ordinal
+  extractor
+  decision = invoked | policy_skipped
+  attempt_outcome?
+  latency_ms?
+  egress?
+  machine?
+  source_type?
+  spend_attempt_ref?
+
+attempt_outcome =
+  content |
+  empty |
+  invalid_request |
+  authentication_rejected |
+  policy_rejected |
+  rate_limited |
+  balance_exhausted |
+  timeout |
+  provider_unavailable |
+  parse_error |
+  unknown_failure
 ```
 
 Steps after a terminal success are implicit in the versioned plan and are not
 materialized as `not_reached` rows. `policy_skipped` explains an evaluated
-ineligible candidate but is not counted as an invocation. A cache decision is
-not misrepresented as an extractor call.
+ineligible candidate and has no `attempt_outcome` or attempt latency. An
+invoked extractor has exactly one closed `attempt_outcome`; `content` means
+non-empty normalized text was returned, not that quality or completeness
+passed. Artifact quality and completeness are recorded only in the final
+artifact evaluation, never overloaded into execution status. Cache decisions
+are not extractor calls.
 
 The public rejection keeps only bounded `attempt_count`, causative provider,
 last status, and total attempt latency. The durable trace keeps the typed step
 facts. The target also distinguishes wall-clock operation latency from summed
 attempt latency; PR #74's `total_latency_ms` remains the compatibility field
-until issue #66 versions the richer projection.
+until issue #66 versions the richer projection. Target `attempt_count` is
+exactly the number of `ExtractorDecision` entries with `decision=invoked`;
+policy skips and cache decisions do not count. PR #74's existing count remains
+the version-1 compatibility meaning.
 
 ## Attribution and provenance
 
@@ -388,14 +470,30 @@ Extraction is opt-in. A retrieval plan that needs content declares:
 
 ```text
 ArtifactRequirement:
-  selected_result_cluster_refs[]
-  minimum_usable_artifacts
-  required_cluster_refs[]
-  allow_partial
+  selections[]:
+    result_cluster_ref
+    required
+    minimum_disposition = usable | partial
+  aggregate_floor:
+    count
+    minimum_disposition = usable | partial
   max_extractions
   deadline
   spend_policy_ref
 ```
+
+Disposition order is `usable > partial > diagnostic_only > none`. A required
+selection must meet its own minimum. Independently, at least
+`aggregate_floor.count` selections must meet the aggregate minimum. A partial
+artifact never counts toward a floor whose minimum is `usable`.
+Each distinct `result_cluster_ref` counts at most once even when clusters
+reuse an artifact.
+
+Requirement validation is fail-fast: selection refs are unique and non-empty;
+`aggregate_floor.count` is an integer from zero through the number of
+selections; and the operation deadline, `max_extractions`, and spend-policy
+reference are present and within the bounds below. An invalid requirement is
+`invalid_request`, not an extraction failure.
 
 Each selected result receives one stable link:
 
@@ -413,18 +511,17 @@ The link does not copy content or provider payloads into the search result.
 Duplicate result clusters may share one eligible artifact; the link records
 that reuse.
 
-The composite decision is:
+The composite decision uses this precedence:
 
 | Evidence | Composite result |
 |---|---|
 | no artifact requirement | accepted retrieval outcome unchanged |
 | retrieval is `empty` or a terminal retrieval failure before any result selection | retrieval outcome unchanged; no extraction failure is invented |
-| every selected extraction is usable and the required floor is met | retrieval outcome, unless it was already degraded |
-| floor met using allowed partial artifacts | `degraded` |
-| floor met but any selected candidate ended rejected | `degraded`, with every rejection link |
-| artifact floor not met after eligible attempts | `extraction_failed`; search results remain retrieval evidence |
-| no eligible extraction path | `unready` |
-| any required durable acceptance failed | `persistence_failed` |
+| a required selection has acceptance failure | `persistence_failed` |
+| a required selection has no eligible extraction path | `unready` |
+| any required-selection minimum or aggregate floor is unmet after eligible attempts | `extraction_failed`; search results remain retrieval evidence |
+| every selected extraction is usable and all floors are met | retrieval outcome, unless it was already degraded |
+| floors met but any counted/selected artifact is partial or any optional selection rejected | `degraded`, with every link |
 
 Internal fallback failures followed by one accepted final extraction do not
 degrade that extraction. Cross-result selected failures do degrade the
@@ -435,6 +532,14 @@ Rejected and diagnostic-only content cannot enter `StoredDocument`,
 must carry `artifact_disposition=partial` into its document, citation, report,
 and summary input. Current workflow `continue` paths that silently discard
 errors are migration targets; every planned selection gets a durable link.
+
+Artifact eligibility and composite delivery are separate gates. A durably
+accepted `usable` or plan-allowed `partial` artifact remains individually
+eligible for a source document and citation even if some other required
+selection leaves the aggregate floor unmet. In that case the operation still
+returns `extraction_failed`: accepted artifact and citation references may be
+shown as diagnostic caller evidence, but no synthesized answer, report,
+summary, or external delivery may be accepted from the failed composition.
 
 ## Cache semantics
 
@@ -527,6 +632,26 @@ private retention controls but is excluded from caller evidence and delivery.
 No part of this decision authorizes replaying historical Atlas failures,
 bulk-extracting old URLs, or creating a manual-review queue.
 
+### Bounds
+
+The semantic contract fixes these maxima; issue #65 may choose smaller
+physical bounds:
+
+| Field | Bound |
+|---|---|
+| evaluated extractor decisions | 16 |
+| selected result-cluster links in one composition | 200 |
+| completeness signals | 16 entries, 64 characters each |
+| extractor/outcome/category/policy label | 64 characters |
+| extraction run ID | 64 characters |
+| opaque plan, trace, policy, spend, artifact, or origin reference | 128 characters |
+| latency | finite non-negative integer, capped at signed 64-bit milliseconds |
+| cost | finite non-negative decimal under the spend ledger's precision |
+
+Over-bound labels and identifiers are rejected, not truncated into false
+identity. Human-readable diagnostic text is not part of the rejection or typed
+step interface.
+
 ## Surface compatibility
 
 All surfaces preserve the same semantic projection:
@@ -587,6 +712,10 @@ Hermetic fixtures must prove:
 - final rejection is classified exactly once and returned/persisted identically;
 - heterogeneous chain exhaustion uses the orchestrator's terminal cause rather
   than whichever error happens to be scanned first;
+- terminal-cause references reject dangling ordinals, mismatched invoked sets,
+  and inconsistent distinct-outcome sets;
+- the closed attempt taxonomy never mixes adapter execution with artifact
+  quality/completeness, and attempt count excludes skips/cache decisions;
 - complete fallback success has no final rejection while retaining failed
   earlier steps;
 - missing quality or completeness evidence fails visibly;
@@ -595,6 +724,8 @@ Hermetic fixtures must prove:
   input, delivery, or positive cache hit;
 - every selected search result has a durable extraction link, including
   rejection and exception paths;
+- mandatory per-result disposition and aggregate-count floors cannot mask one
+  another, and partial never satisfies a usable-only floor;
 - the artifact floor deterministically produces success, degraded,
   extraction-failed, unready, and persistence-failed compositions;
 - cache identity isolates auth/access and policy versions and preserves origin

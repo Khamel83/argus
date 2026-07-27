@@ -100,7 +100,7 @@ artifact. The typed step trace preserves it.
 | Event | Step trace | Final effect |
 |---|---|---|
 | cache miss | cache decision only | continue; no attempt increment |
-| eligible extractor invoked | `decision=invoked` plus typed status | contributes to attempt summary |
+| eligible extractor invoked | `decision=invoked` plus one closed `attempt_outcome` | contributes to attempt summary |
 | extractor skipped by policy/config | `decision=policy_skipped` | visible, not an invocation |
 | complete artifact on first extractor | one success step | `success` |
 | timeout then complete fallback | timeout step + success step | `success`, rejection null |
@@ -108,7 +108,9 @@ artifact. The typed step trace preserves it.
 | incomplete artifact then complete fallback | incomplete evidence retained + success step | `success` |
 | incomplete artifact, fallbacks exhausted, partial allowed | all steps retained | `degraded/incomplete_content` |
 | every path empty/failed | all evaluated steps retained | hard failure with causative rejection |
-| heterogeneous failures exhaust the chain without one plan-stopping attempt | all typed failures retained plus `terminal_cause=chain_exhausted` | `extraction_failed/provider_unavailable`; no marker-order guess |
+| one attempt is stopped by an explicit terminal policy rule | `terminal_cause=attempt_terminal` plus ordinal and policy ref | map that closed attempt outcome |
+| multiple homogeneous failures exhaust the chain | `terminal_cause=chain_exhausted`; all ordinals and one distinct outcome | map the homogeneous code with provider null |
+| heterogeneous failures exhaust the chain | `terminal_cause=chain_exhausted`; all ordinals and distinct outcomes | `extraction_failed/provider_unavailable` with provider null; no marker-order guess |
 | operation deadline before plan exhausted | evaluated steps retained; deadline fact | `timeout`; no hidden later fallback |
 | fallback hint but no eligible step remains | mapper cannot emit `fallback_provider` | terminal or bounded retry guidance |
 
@@ -138,12 +140,21 @@ Search evidence remains immutable.
 | search degraded, artifact floor met | `degraded` | unchanged | accepted, retrieval degradation visible |
 | artifact floor met with allowed partial | `degraded` | unchanged | partial labels required |
 | artifact floor met but a selected candidate rejected | `degraded` | unchanged, rejection link retained | only accepted artifacts |
-| artifact floor not met | `extraction_failed` | retained as retrieval evidence | none below floor |
+| artifact floor not met | `extraction_failed` | retained as retrieval evidence | accepted artifact/citation refs may remain diagnostic; no synthesized answer or delivery |
 | no eligible extraction path | `unready` | retained | none |
 | required artifact persistence failed | `persistence_failed` | retained | no unaccepted artifact |
 
 Rejected text never replaces a search snippet or ranking evidence. The
 composer links outcomes; it does not mutate provider fusion.
+
+Per-result requirements and the aggregate floor are independent. Every
+required cluster must meet its declared minimum disposition before the
+aggregate count is considered. `partial` can satisfy only a floor whose
+minimum is `partial`; it never counts as `usable`.
+Citation eligibility is evaluated per accepted artifact; aggregate-floor
+failure does not relabel a usable artifact as unsafe. Composite delivery is a
+separate gate: a below-floor operation cannot produce an accepted synthesized
+answer, report, summary, or external delivery.
 
 ## Cache matrix
 
