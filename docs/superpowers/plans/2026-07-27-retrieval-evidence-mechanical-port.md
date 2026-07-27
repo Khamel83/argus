@@ -51,6 +51,21 @@ The implementer must read these before changing code:
 If a named dependency has not merged, the next slice remains stacked on its
 review branch. It must not copy the dependency into a second PR.
 
+### Planning-time gate snapshot
+
+Verified on 2026-07-27:
+
+- #40 is closed with PostgreSQL/recovery evidence recorded.
+- #41, #42, and #44 remain open operational promotion gates.
+- Argus PRs #71 and #74 through #80 are open, mergeable, and form the accepted
+  design/prototype dependency stack.
+- The branch baseline passes `880` tests with `37` skips.
+
+This is sequencing evidence, not permission to deploy. Every implementation
+session refreshes its dependency PRs, and P1 refreshes all live operational
+evidence before mutation. A stale issue state or old green check never
+satisfies a production gate.
+
 ## Dependency Graph
 
 ```text
@@ -526,10 +541,14 @@ many-to-one link to hide a missing extraction.
 - [ ] **Step 5: Add the migration and repository tests**
 
 Migration 0007 creates additive plan/step/artifact/rejection/link/composition
-tables with foreign keys and uniqueness constraints. Test SQLite upgrade from
-0006, PostgreSQL upgrade/rollback in the disposable database fixture, atomic
-rollback on fault injection, idempotent retry by run ID, and no legacy row
-rewrite/replay.
+tables. Foreign keys close extraction-plan, step, artifact, rejection, and
+acceptance identities that exist in this slice; uniqueness closes one link per
+selected cluster. `result_cluster_ref` remains a bounded opaque accepted
+reference until S6 introduces the retrieval tables, and the composer validates
+it against `RetrievalEvidenceView` before acceptance rather than declaring a
+foreign key to a future table. Test SQLite upgrade from 0006, PostgreSQL
+upgrade/rollback in the disposable database fixture, atomic rollback on fault
+injection, idempotent retry by run ID, and no legacy row rewrite/replay.
 
 - [ ] **Step 6: Keep legacy extraction readable**
 
