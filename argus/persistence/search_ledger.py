@@ -897,8 +897,11 @@ class SqlAlchemySearchLedgerRepository:
         extraction_run_id: str | None = None,
     ) -> ExtractionReceipt:
         """Atomically store a normalized extraction and its attempt history."""
+        from argus.extraction.rejection import classify_extraction_rejection
+
         public_id = extraction_run_id or uuid.uuid4().hex
         selected = result.extractor.value if result.extractor else None
+        rejection = classify_extraction_rejection(result)
         content_hash = (
             hashlib.sha256(result.text.encode("utf-8")).hexdigest()
             if result.text
@@ -921,6 +924,17 @@ class SqlAlchemySearchLedgerRepository:
                 )
                 for name in result.extractors_tried
             ]
+        artifact_state = {
+            "canonical_url": _safe_persisted_url(result.url),
+            "content_hash": content_hash,
+            "source_type": result.source_type,
+            "egress": result.egress,
+            "machine": result.machine,
+            "auth_used": result.auth_used,
+            "cookies_used": result.cookies_used,
+            "archive_used": result.archive_used,
+            "cost": result.cost,
+        }
         state = {
             "request_url": _safe_persisted_url(url),
             "domain": domain,
@@ -946,17 +960,7 @@ class SqlAlchemySearchLedgerRepository:
                 }
                 for attempt in attempts
             ],
-            "artifact": {
-                "canonical_url": _safe_persisted_url(result.url),
-                "content_hash": content_hash,
-                "source_type": result.source_type,
-                "egress": result.egress,
-                "machine": result.machine,
-                "auth_used": result.auth_used,
-                "cookies_used": result.cookies_used,
-                "archive_used": result.archive_used,
-                "cost": result.cost,
-            },
+            "artifact": artifact_state,
         }
         fingerprint = acceptance_fingerprint(state)
 
@@ -1045,6 +1049,9 @@ class SqlAlchemySearchLedgerRepository:
                             "extractors_tried": list(result.extractors_tried),
                             "cache_hit": bool(result.cache_hit),
                             "source_extractor": result.cache_source_extractor,
+                            "rejection": (
+                                rejection.to_dict() if rejection is not None else None
+                            ),
                         }
                     ),
                 )
