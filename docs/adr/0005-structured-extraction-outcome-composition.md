@@ -360,7 +360,7 @@ The terminal mapping is closed:
 | operation deadline | `timeout` | `timeout` |
 | terminal/exhausted `adapter_request_rejected` | `extraction_failed` | `parse_error` |
 | terminal/exhausted `provider_authentication_rejected` | `unready` | `provider_unavailable` |
-| terminal/exhausted `provider_policy_rejected` | `extraction_failed` | `provider_unavailable` |
+| terminal/exhausted `provider_policy_rejected` | `policy_rejected` | `unsupported_source` |
 | terminal/exhausted `empty` | `extraction_failed` | `empty_result` |
 | terminal/exhausted `rate_limited` | `unready` | `rate_limited` |
 | terminal/exhausted `balance_exhausted` | `unready` | `provider_unavailable` |
@@ -458,6 +458,9 @@ The `adapter_*` and `provider_*` names are deliberate: they describe a failure
 after Argus began execution and cannot produce caller-facing
 `invalid_request` or `authentication_rejected`. Those canonical outcomes are
 reserved for the preflight caller boundary.
+The scorecard's `policy_rejected` outcome explicitly includes provider policy;
+its attribution must identify provider policy and must not claim the caller
+failed authentication or supplied an invalid request.
 
 The public rejection keeps only bounded `attempt_count`, causative provider,
 last status, and total attempt latency. The durable trace keeps the typed step

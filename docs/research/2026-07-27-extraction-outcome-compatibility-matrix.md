@@ -85,11 +85,11 @@ and add plan/composition/cache semantics.
 | quality false or missing with text | `extraction_failed` | `diagnostic_only` | `quality_gate_failed` | no |
 | valid empty attempt after chain | `extraction_failed` | `none` | `empty_result` | no |
 | parse normalization caused final failure | `extraction_failed` | `none` or `diagnostic_only` | `parse_error` | no |
-| provider/domain rate limit caused final failure | `extraction_failed` | `none` or `diagnostic_only` | `rate_limited` | no |
+| provider/domain rate limit leaves no currently eligible path | `unready` | `none` or `diagnostic_only` | `rate_limited` | no |
 | full operation deadline | `timeout` | `none` or `diagnostic_only` | `timeout` | no |
 | unsafe or unsupported preflight | `policy_rejected` | `none` | `unsupported_source` | no |
 | no eligible path before invocation | `unready` | `none` | `provider_unavailable` | no |
-| eligible paths attempted, none accepted | `extraction_failed` | `none` or `diagnostic_only` | causative stable code | no |
+| eligible paths attempted, none accepted, and no terminal readiness/policy condition applies | `extraction_failed` | `none` or `diagnostic_only` | causative stable code | no |
 | accepted projection could not persist | `persistence_failed` | not accepted | none fabricated | no |
 
 An early failed attempt never determines final rejection after a later accepted
@@ -142,7 +142,8 @@ Search evidence remains immutable.
 | artifact floor met but a selected candidate rejected | `degraded` | unchanged, rejection link retained | only accepted artifacts |
 | artifact floor not met | `extraction_failed` | retained as retrieval evidence | accepted artifact/citation refs may remain diagnostic; no synthesized answer or delivery |
 | no eligible extraction path | `unready` | retained | none |
-| required artifact persistence failed | `persistence_failed` | retained | no unaccepted artifact |
+| any selected link or outcome cannot be durably accepted | `persistence_failed` | retained | no unaccepted artifact |
+| required cluster has no eligible path, or aggregate floor is impossible after excluding unavailable selections | `unready` | retained | only already accepted diagnostic references |
 
 Rejected text never replaces a search snippet or ranking evidence. The
 composer links outcomes; it does not mutate provider fusion.
