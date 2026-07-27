@@ -124,6 +124,8 @@ lookup(plan, cache_policy_snapshot, utc_clock) -> CacheDecision
 
 execute(plan, runtime_health_and_budget_snapshot) -> RetrievalCandidate
 
+accept(plan, request_context, accepted_response) -> AcceptanceReceipt
+
 commit(plan, accepted_response, acceptance_receipt) -> CacheEntry
 ```
 
@@ -135,6 +137,11 @@ receive caller-native HTTP/MCP structures.
 receive the defaults below. Benchmark and corpus callers may populate the
 typed fields directly. Issue #66 may later map versioned public fields into
 this value without creating a second planning path.
+
+`request_context` owns evidence that must be durable but is not plan identity:
+the original query, session/refinement lineage, caller and delivery policy,
+and the secret-free request metadata allowlist. This keeps the original and
+effective queries explicit at the acceptance seam.
 
 `RetrievalPlan` version 1 contains:
 
@@ -163,7 +170,6 @@ execution:
   profile
   effective_max_provider_tier
   candidate_providers[]
-  routing_policy_version
   deadline_ms
   revalidation
   egress_preference
@@ -171,6 +177,9 @@ execution:
 versions:
   query_normalization_version
   routing_policy_version
+  spend_policy_version
+  freshness_policy_version
+  domain_policy_version
   ranking_policy_version
   result_normalization_version
 ```
@@ -214,18 +223,21 @@ Freshness is either:
 - one relative window: `day`, `week`, `month`, or `year`; or
 - inclusive `start_date`/`end_date` ISO dates.
 
-A relative window resolves against an injected UTC clock into explicit dates.
-Both the requested relative value and resolved dates enter the plan. The
-resolved dates enter the cache fingerprint, so a relative window naturally
-rolls forward without a background invalidator.
+A relative window resolves against an injected UTC clock into inclusive UTC
+dates. `day` is `[today, today]`, `week` is `[today - 6 days, today]`,
+`month` is `[today - 29 days, today]`, and `year` is
+`[today - 364 days, today]`. Both the requested relative value and resolved
+dates enter the plan. The resolved dates enter the cache fingerprint, so a
+relative window naturally rolls forward without a background invalidator.
 
 Invalid dates, `start_date > end_date`, or a relative window combined with
-explicit dates are `invalid_request`. Adapters translate supported controls.
-The broker always post-filters normalized publication dates when available and
-records whether the provider, broker, both, or neither could prove the
-constraint. A required freshness constraint with neither provider-applied
-evidence nor result-level publication evidence is ineligible, not silently
-accepted.
+explicit dates are `invalid_request`. Adapters translate supported controls,
+but a provider-applied filter is acquisition evidence, not proof about an
+individual result. The broker always post-filters on each result's normalized
+publication date. Every returned result must have a parseable date inside the
+inclusive resolved range. An undated or out-of-range result is removed and
+recorded. If no result remains and any candidate lacked per-result proof, the
+outcome is `freshness_unproven`, not a proven empty result.
 
 Default cache age:
 
@@ -248,9 +260,18 @@ Include and exclude domains are set semantics:
 - sorted for canonicalization;
 - overlap is invalid.
 
-The broker post-filters normalized result domains, so lack of a provider-native
-domain filter is not silent loss. Provider translation is an optimization and
-must be recorded in the trace.
+For both constraints and results, normalization uses the parsed URL
+`hostname`, not `netloc`: lowercase, remove the trailing root dot, then encode
+each DNS label with IDNA. Ports and user information therefore never enter the
+host. A constraint matches the exact host or a label-boundary descendant:
+`host == constraint` or `host.endswith("." + constraint)`. Thus
+`example.com` matches `www.example.com` but not `badexample.com`. The broker
+does not remove `www`; it follows from the descendant rule. IPv4 and IPv6
+literals are invalid domain constraints in version 1. The broker
+post-filters every normalized result host, so lack of a provider-native domain
+filter is not silent loss. An invalid or missing result host cannot satisfy an
+include constraint and is recorded. Provider translation is only an
+optimization and must be recorded in the trace.
 
 ### Provider and budget policy
 
@@ -260,8 +281,11 @@ must be recorded in the trace.
   reserve or initiate a billable attempt.
 - A budgeted cache miss uses registered providers within configured budget and
   caller caps.
-- An explicit provider list preserves caller order and remains subject to
-  profile, caller-cap, availability, and spend gates.
+- An explicit provider list is a restriction, not a priority override. The
+  planner removes duplicates, then applies the existing stable tier sort:
+  tier 0 before tier 1 before tier 3, preserving mode-policy order within a
+  tier. It remains subject to profile, caller-cap, availability, and spend
+  gates.
 - Current health, cooldown, balance, and reservation state are evaluated at
   execution time and recorded in evidence. They are not cache identity.
 
@@ -282,6 +306,16 @@ mode and surface. It starts before cache lookup and bounds single-flight wait,
 provider execution, normalization/ranking, durable persistence, and response
 assembly. A caller may request a shorter internal deadline once a typed
 control exists, but never a longer one.
+
+The executor enforces one monotonic outer cancellation scope. It reserves the
+last 5,000 milliseconds for normalization, durable acceptance, and response
+assembly; no provider starts after that reserve begins. Each async adapter must
+be cancellation-safe and accept the computed attempt timeout. A blocking
+adapter may run only behind a killable worker boundary or a provider-native
+timeout proven not to outlive cancellation. Otherwise it is `unready` and is
+skipped rather than allowed to escape the operation deadline. Persistence that
+cannot finish inside the reserve returns `persistence_failed`; no cache entry
+is published.
 
 Each provider receives:
 
@@ -308,9 +342,15 @@ There is no implicit `stale-if-error`, background refresh, or stale-while-
 revalidate. The accepted owner preference is visible failure rather than
 silently serving evidence that failed the declared freshness policy.
 
-One single-flight fill per cache fingerprint prevents concurrent misses from
-duplicating paid attempts. Followers wait only within their own remaining
-deadline. A failed leader does not publish an entry.
+Single-flight is keyed by `(cache_fingerprint, execution_cohort)`, not the
+cache fingerprint alone. `execution_cohort` hashes profile, effective tier
+cap, candidate providers, organization/spend-policy versions, and egress
+policy. Volatile health and balances remain excluded. This prevents a free or
+cap-0 caller from joining a paid cap-3 fill. Every follower waits only within
+its own remaining deadline and reruns cache admission under its own plan after
+the leader publishes. If admission rejects the entry, the follower may start
+or join its own policy-valid cohort while time remains. A failed leader does
+not publish an entry.
 
 ## Evidence trace
 
@@ -355,7 +395,8 @@ deadline permit; it is not itself a caller-level `policy_rejected` outcome.
 - Enum: lowercase declared value.
 - Date: `YYYY-MM-DD`.
 - Boolean and integer: JSON native value; no floats in identity.
-- Explicit providers: preserve caller order, remove later duplicates.
+- Explicit providers: remove duplicates, then stable-sort by effective tier
+  and mode-policy order.
 - Domain sets: normalize and sort.
 - Missing optional value: JSON `null`; never omit conditionally.
 - Unknown metadata: excluded.
@@ -395,7 +436,6 @@ sha256(
     result_limit,
     explicit_providers,
     freshness_resolved_dates,
-    freshness_max_cache_age_seconds,
     include_domains,
     exclude_domains,
     safe_search,
@@ -404,6 +444,8 @@ sha256(
     include_attribution,
     query_normalization_version,
     routing_policy_version,
+    freshness_policy_version,
+    domain_policy_version,
     ranking_policy_version,
     result_normalization_version
   })
@@ -415,6 +457,7 @@ It intentionally excludes:
 - `free` versus `budgeted`;
 - caller identity and caller label;
 - caller tier cap;
+- request-specific maximum cache age;
 - current provider health, configuration presence, and balance;
 - deadline and revalidation mode;
 - egress preference;
@@ -422,6 +465,11 @@ It intentionally excludes:
 
 Those fields control execution or admission but do not change the meaning of
 already-acquired evidence.
+
+`expires_at` uses the configured cache ceiling bounded by the resolved
+freshness policy, not a requesting caller's shorter age preference. Lookup
+then applies the caller's `max_cache_age_seconds`. This permits a young entry
+to satisfy both strict and ordinary callers without weakening either.
 
 ## Cache entry
 
@@ -439,6 +487,7 @@ original_profile
 original_result_limit
 original outcome
 normalized results and ranking evidence
+per-result contributing provider identities
 complete original provider traces
 provider tiers at acquisition
 spend provenance and reconciliation state
@@ -478,17 +527,22 @@ An entry is admitted only when all applicable checks pass:
 1. Fingerprint and schema/contract versions match.
 2. The entry is durably accepted and its acceptance identity is present.
 3. `now < expires_at` and age is within the plan's maximum cache age.
-4. Original provider, tier, spend, and provenance evidence is complete.
+4. Every result has complete contributing-provider, tier, spend, and
+   provenance evidence; full attempted/failed/skipped traces remain available
+   as run evidence but do not make those providers result contributors.
 5. Explicit provider restrictions match.
-6. Organization/provider deny policy and caller tier cap permit the original
-   provider evidence.
-7. Required freshness is proven by provider-applied controls or normalized
-   publication evidence evaluated against the current resolved dates.
+6. Organization/provider deny policy and caller tier cap permit every
+   contributing provider.
+7. Every result has a normalized publication date inside the current resolved
+   range when freshness is required.
 8. Every result satisfies include/exclude domain constraints.
 9. Requested attribution is present.
 10. The cached outcome is eligible for caching.
 
 Missing evidence rejects the hit. It never degrades into “probably eligible.”
+Contributor mappings are mandatory internal provenance even when outward
+attribution is not requested; `include_attribution` controls presentation, not
+whether Argus retains evidence.
 
 ### Free-profile rule
 
@@ -514,22 +568,25 @@ the distinction is ambiguous.
 
 ## Commit ordering and persistence
 
-An entry becomes readable only after PostgreSQL durable acceptance succeeds.
-The required order is:
+An entry becomes readable only after acceptance by the configured durable
+authority: PostgreSQL in production, or SQLite in standalone/dev/test mode.
+An in-memory or disabled persistence configuration may execute but does not
+publish reusable cache entries. The required order is:
 
 ```text
 resolve plan
 -> cache decision
 -> execute on miss
 -> normalize/rank
--> durable PostgreSQL acceptance
+-> durable authority acceptance
 -> atomically publish immutable cache entry
 -> acknowledge caller
 ```
 
-If persistence fails, no cache entry is published. A cache hit is a new logical
-retrieval and must itself be durably accepted with its new run ID and cache
-lineage before acknowledgment.
+If durable persistence is configured and fails, no cache entry is published
+and the retrieval fails visibly. A cache hit is a new logical retrieval and
+must itself be durably accepted with its new run ID and cache lineage before
+acknowledgment.
 
 This changes the current `SearchResultPipeline` ordering without changing the
 public transport interfaces.
@@ -583,13 +640,18 @@ Defaults preserve current public request shapes:
 ```text
 freshness = none
 domains = empty
-safe_search = provider_default
+safe_search = moderate
 country = null
 language = null
 deadline_ms = 120000
 revalidation = normal
 max_cache_age_seconds = 604800
 ```
+
+`moderate` is a canonical planner enum, not a provider default token. Every
+adapter must explicitly map it to a provider control and record that mapping;
+an adapter that cannot provide the declared behavior is ineligible for that
+plan.
 
 No new HTTP, MCP, or CLI field is promised here. [Issue
 #66](https://github.com/Khamel83/argus/issues/66) owns additive external
@@ -610,7 +672,9 @@ The implementation plan must include hermetic tests proving:
 | caller tier-cap difference | different | same, admission may differ |
 | provider health/balance difference | same | same |
 | result limit difference | different | different |
-| explicit provider order difference | different | different |
+| explicit provider order difference | same after tier/policy resolution | same |
+| cross-tier explicit providers | tier 0, then 1, then 3 | same resolved order |
+| same-tier explicit providers | mode-policy order | same resolved order |
 | domain input order difference | same | same |
 | freshness resolved date difference | different | different |
 | attribution difference | different | different |
@@ -631,7 +695,11 @@ Admission tests must additionally prove:
 - cached empty is short-lived and requires a successful-provider trace;
 - persistence failure publishes no entry;
 - a hit creates a new immutable response/run without mutating the entry;
-- concurrent misses produce at most one live fill per fingerprint;
+- same-cohort concurrent misses produce at most one live fill;
+- policy-divergent cohorts never share an in-flight execution and each
+  follower reruns admission;
+- hanging async, blocking, and slow-persistence fakes terminate with typed
+  evidence inside the operation deadline and publish no unsafe cache entry;
 - all callers receive timeout evidence within 120 seconds.
 
 ## Explicit limits
