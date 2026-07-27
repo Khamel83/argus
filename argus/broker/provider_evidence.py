@@ -1067,6 +1067,8 @@ def classify_http_failure(
         category = FailureCategory.AUTHENTICATION_REJECTED
     elif status == 402:
         category = FailureCategory.BALANCE_EXHAUSTED
+    elif provider is ProviderName.WOLFRAM and status == 403:
+        category = FailureCategory.AUTHENTICATION_REJECTED
     elif status == 403:
         category = FailureCategory.POLICY_REJECTED
     elif status in {408, 504}:

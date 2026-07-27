@@ -181,8 +181,8 @@
       "fixtures": {
         "success": "success.json",
         "empty": {
-          "reason": "Yahoo HTML has no authoritative valid-empty contract; a successful page with no parsed results is a parse failure.",
-          "source": "argus/providers/yahoo.py#YahooProvider.search"
+          "reason": "Yahoo primary documentation does not define a supported HTML search API or authoritative valid-empty response contract, so an unmatched page remains a parse failure.",
+          "source": "https://help.yahoo.com/kb/filter-refine-search-results-yahoo-sln2206.html"
         },
         "malformed": "malformed.json",
         "usage_rate": "usage_rate.json",
@@ -193,45 +193,46 @@
           "state": "not_documented",
           "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "primary_source": "argus/providers/yahoo.py#YahooProvider.search"
+          "primary_source": "https://help.yahoo.com/kb/filter-refine-search-results-yahoo-sln2206.html"
         },
         "402": {
           "state": "not_documented",
           "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "primary_source": "argus/providers/yahoo.py#YahooProvider.search"
+          "primary_source": "https://help.yahoo.com/kb/filter-refine-search-results-yahoo-sln2206.html"
         },
         "403": {
-          "fixture": "error-403.json",
-          "source": "argus/providers/yahoo.py#YahooProvider.search",
-          "shape_source": "argus/providers/yahoo.py#YahooProvider.search"
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://help.yahoo.com/kb/filter-refine-search-results-yahoo-sln2206.html"
         },
         "422": {
           "state": "not_documented",
           "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "primary_source": "argus/providers/yahoo.py#YahooProvider.search"
+          "primary_source": "https://help.yahoo.com/kb/filter-refine-search-results-yahoo-sln2206.html"
         },
         "429": {
           "state": "not_documented",
           "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
           "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "primary_source": "argus/providers/yahoo.py#YahooProvider.search"
+          "primary_source": "https://help.yahoo.com/kb/filter-refine-search-results-yahoo-sln2206.html"
         },
         "408_504": {
           "fixture": "error-408_504.json",
-          "source": "argus/providers/yahoo.py#YahooProvider.search",
-          "shape_source": "argus/providers/yahoo.py#YahooProvider.search"
+          "source": "https://www.rfc-editor.org/rfc/rfc9110.html#name-504-gateway-timeout",
+          "shape_source": "https://www.rfc-editor.org/rfc/rfc9110.html#name-504-gateway-timeout"
         },
         "5xx": {
           "fixture": "error-5xx.json",
-          "source": "argus/providers/yahoo.py#YahooProvider.search",
-          "shape_source": "argus/providers/yahoo.py#YahooProvider.search"
+          "source": "https://www.rfc-editor.org/rfc/rfc9110.html#name-503-service-unavailable",
+          "shape_source": "https://www.rfc-editor.org/rfc/rfc9110.html#name-503-service-unavailable"
         }
       },
       "signals": {
-        "reason": "The checked-in Yahoo HTML adapter contract does not document successful-response usage or rate metadata.",
-        "source": "argus/providers/yahoo.py#YahooProvider.search"
+        "reason": "Yahoo primary documentation does not document successful-response usage or rate metadata for an HTML search API.",
+        "source": "https://help.yahoo.com/kb/filter-refine-search-results-yahoo-sln2206.html"
       },
       "common_cases": {
         "rate_limit_with_metadata": {
@@ -349,9 +350,10 @@
       },
       "failures": {
         "401": {
-          "fixture": "error-401.json",
-          "source": "https://products.wolframalpha.com/llm-api/documentation#errors",
-          "shape_source": "https://products.wolframalpha.com/llm-api/documentation#errors"
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://products.wolframalpha.com/llm-api/documentation#errors"
         },
         "402": {
           "state": "not_documented",
@@ -360,10 +362,9 @@
           "primary_source": "https://products.wolframalpha.com/llm-api/documentation#errors"
         },
         "403": {
-          "state": "not_documented",
-          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
-          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
-          "primary_source": "https://products.wolframalpha.com/llm-api/documentation#errors"
+          "fixture": "error-403.json",
+          "source": "https://products.wolframalpha.com/llm-api/documentation#errors",
+          "shape_source": "https://products.wolframalpha.com/llm-api/documentation#errors"
         },
         "422": {
           "state": "not_documented",

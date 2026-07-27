@@ -10,6 +10,8 @@ import json
 import sys
 from collections.abc import Callable
 
+from ddgs.exceptions import RatelimitException, TimeoutException
+
 MAX_IPC_BYTES = 1_048_576
 MAX_QUERY_CHARS = 8_192
 MAX_RESULTS = 20
@@ -64,11 +66,11 @@ def execute_request(
         if len(encoded) > MAX_IPC_BYTES:
             return {"error": "response_too_large"}, 3
         return payload, 0
-    except Exception as error:
-        if type(error).__name__ == "RatelimitException":
-            return {"error": {"kind": "rate_limit"}}, 1
-        if type(error).__name__ == "TimeoutException":
-            return {"error": {"kind": "timeout"}}, 1
+    except RatelimitException:
+        return {"error": {"kind": "rate_limit"}}, 1
+    except TimeoutException:
+        return {"error": {"kind": "timeout"}}, 1
+    except Exception:
         return {"error": {"kind": "library_failure"}}, 1
 
 

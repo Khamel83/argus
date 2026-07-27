@@ -1,6 +1,6 @@
 {
   "transport": {
-    "status_code": 504,
+    "status_code": 408,
     "headers": {}
   },
   "body": {

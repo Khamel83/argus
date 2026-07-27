@@ -135,6 +135,28 @@ class TestSearXNGProvider:
 
 
 class TestDuckDuckGoProvider:
+    @pytest.mark.parametrize(
+        "exception_name", ["RatelimitException", "TimeoutException"]
+    )
+    def test_worker_does_not_trust_unrelated_same_named_exceptions(
+        self, exception_name
+    ):
+        from argus.providers import ddg_worker
+
+        unrelated_exception = type(exception_name, (Exception,), {})
+
+        class FakeDDGS:
+            def text(self, *_args, **_kwargs):
+                raise unrelated_exception("unrelated library failure")
+
+        payload, returncode = ddg_worker.execute_request(
+            {"query": "fixture", "max_results": 5, "timelimit": None},
+            ddgs_factory=FakeDDGS,
+        )
+
+        assert payload == {"error": {"kind": "library_failure"}}
+        assert returncode == 1
+
     @pytest.mark.asyncio
     async def test_disabled_provider_skips_without_calling_the_network(self):
         from argus.providers.duckduckgo import DuckDuckGoProvider

@@ -69,9 +69,9 @@ EXPECTED_MAX_RATE_RESET_AHEAD_SECONDS = 366 * 24 * 60 * 60
 EXPECTED_REQUIRED_FAILURES = {
     "searxng": {"403", "408_504", "5xx"},
     "duckduckgo": set(),
-    "yahoo": {"403", "408_504", "5xx"},
+    "yahoo": {"408_504", "5xx"},
     "github": {"401", "403", "429"},
-    "wolfram": {"401"},
+    "wolfram": {"403"},
     "brave": {"401", "403", "422", "429", "5xx"},
     "tavily": {"401", "422", "429", "5xx"},
     "exa": {"401", "402", "403", "408_504", "422", "429"},
@@ -81,6 +81,42 @@ EXPECTED_REQUIRED_FAILURES = {
     "you": {"401", "402", "403", "422", "429", "5xx"},
     "searchapi": {"401"},
     "valyu": {"401", "402"},
+}
+EXPECTED_FAILURE_HTTP_STATUSES = {
+    "searxng": {"403": 403, "408_504": 504, "5xx": 503},
+    "yahoo": {"408_504": 504, "5xx": 503},
+    "github": {"401": 401, "403": 403, "429": 429},
+    "wolfram": {"403": 403},
+    "brave": {"401": 401, "403": 403, "422": 422, "429": 429, "5xx": 503},
+    "tavily": {"401": 401, "422": 422, "429": 429, "5xx": 503},
+    "exa": {
+        "401": 401,
+        "402": 402,
+        "403": 403,
+        "408_504": 504,
+        "422": 422,
+        "429": 429,
+    },
+    "linkup": {"401": 401, "422": 422, "429": 429},
+    "parallel": {
+        "401": 401,
+        "402": 402,
+        "408_504": 408,
+        "422": 422,
+        "429": 429,
+        "5xx": 503,
+    },
+    "serper": {"401": 401, "402": 200, "429": 429, "5xx": 503},
+    "you": {
+        "401": 401,
+        "402": 402,
+        "403": 403,
+        "422": 422,
+        "429": 429,
+        "5xx": 503,
+    },
+    "searchapi": {"401": 401},
+    "valyu": {"401": 401, "402": 200},
 }
 
 
@@ -287,7 +323,8 @@ def test_manifest_covers_every_registered_provider_and_contract_case():
             else:
                 assert set(fixture) == {"reason", "source"}
                 assert fixture["source"].startswith(("https://", "argus/"))
-                assert "#" in fixture["source"]
+                if not fixture["source"].startswith("https://"):
+                    assert "#" in fixture["source"]
         assert set(entry["failures"]) == FAILURE_CLASSES
         for failure in entry["failures"].values():
             assert set(failure) in (
@@ -305,7 +342,8 @@ def test_manifest_covers_every_registered_provider_and_contract_case():
         assert set(entry["signals"]) in ({"typed"}, {"reason", "source"})
         if "reason" in entry["signals"]:
             assert entry["signals"]["source"].startswith(("https://", "argus/"))
-            assert "#" in entry["signals"]["source"]
+            if not entry["signals"]["source"].startswith("https://"):
+                assert "#" in entry["signals"]["source"]
         else:
             assert entry["signals"]["typed"]
 
@@ -350,6 +388,58 @@ def test_manifest_exactly_matches_required_and_not_documented_matrix():
                 )
                 assert "not documented" in declaration["reason"].lower()
                 assert "cannot emit" not in declaration["reason"].lower()
+
+
+def test_failure_fixtures_use_provider_specific_exact_documented_statuses():
+    manifest = _load(FIXTURE_ROOT / "manifest.json")
+    for provider_name, expected in EXPECTED_FAILURE_HTTP_STATUSES.items():
+        failures = manifest["providers"][provider_name]["failures"]
+        for failure_class, exact_status in expected.items():
+            fixture = _load(
+                FIXTURE_ROOT
+                / provider_name
+                / failures[failure_class]["fixture"]
+            )
+            assert fixture["transport"]["status_code"] == exact_status, (
+                provider_name,
+                failure_class,
+            )
+
+
+def test_failure_primary_and_shape_sources_never_self_cite_argus():
+    manifest = _load(FIXTURE_ROOT / "manifest.json")
+    for provider_name, entry in manifest["providers"].items():
+        for failure_class, declaration in entry["failures"].items():
+            authority = declaration.get(
+                "shape_source", declaration.get("primary_source")
+            )
+            assert isinstance(authority, str)
+            assert not authority.startswith("argus/"), (
+                provider_name,
+                failure_class,
+            )
+
+
+def test_yahoo_manifest_never_uses_implementation_as_contract_authority():
+    yahoo = _load(FIXTURE_ROOT / "manifest.json")["providers"]["yahoo"]
+    assert "argus/providers/yahoo.py" not in json.dumps(yahoo)
+
+
+def test_authoritative_matrix_names_corrected_exact_provider_statuses():
+    matrix = (
+        Path(__file__).parents[1]
+        / "docs/research/2026-07-27-provider-health-probe-matrix.md"
+    ).read_text(encoding="utf-8")
+    rows = {
+        line.split("|")[1].strip(): line
+        for line in matrix.splitlines()
+        if line.startswith("| ") and not line.startswith("| Provider")
+    }
+    assert "`504`/`503`" in rows["Yahoo"]
+    assert "`403` is not documented" in rows["Yahoo"]
+    assert "invalid or missing AppID `403`" in rows["WolframAlpha"]
+    assert "`408`" in rows["Parallel"]
+    assert "`504`" not in rows["Parallel"]
 
 
 def test_provider_failure_tree_contains_only_manifest_referenced_fixtures():
@@ -545,7 +635,12 @@ def test_manifest_native_failure_fixtures_cross_provider_classifiers(provider_na
         assert set(fixture) == {"transport", "body"}
         assert not {"status", "provider_code", "message"} & set(fixture)
         failure = classify_provider_failure_response(provider, fixture)
-        assert failure.category is expected[failure_class]
+        expected_category = (
+            FailureCategory.AUTHENTICATION_REJECTED
+            if provider_name == "wolfram" and failure_class == "403"
+            else expected[failure_class]
+        )
+        assert failure.category is expected_category
         assert "fixture rejection" not in failure.summary
 
 
@@ -612,7 +707,12 @@ async def test_every_applicable_failure_fixture_executes_real_adapter_search(
             client.post = AsyncMock(return_value=response)
             batch = await adapter.search(SearchQuery(query="fixture"))
         assert batch.failure is not None, (provider_name, failure_class)
-        assert batch.failure.category is expected[failure_class]
+        expected_category = (
+            FailureCategory.AUTHENTICATION_REJECTED
+            if provider_name == "wolfram" and failure_class == "403"
+            else expected[failure_class]
+        )
+        assert batch.failure.category is expected_category
         native_error = fixture["body"].get("error")
         if isinstance(native_error, dict):
             native_code = native_error.get("code") or native_error.get("type")
