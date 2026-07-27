@@ -73,8 +73,6 @@ class DomainConstraints:
                 source = tuple(source)
             elif not isinstance(source, tuple):
                 raise TypeError(f"{name} domains must be a list or tuple")
-            if not all(isinstance(value, str) for value in source):
-                raise TypeError(f"{name} domains must contain only strings")
             object.__setattr__(self, name, source)
 
 
@@ -112,8 +110,6 @@ class ExecutionPolicySnapshot:
             source = tuple(source)
         elif not isinstance(source, tuple):
             raise TypeError("allowed providers must be a list, tuple, or None")
-        if not all(isinstance(value, ProviderName) for value in source):
-            raise TypeError("allowed providers must contain only ProviderName values")
         object.__setattr__(self, "allowed_providers", source)
 
 

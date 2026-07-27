@@ -406,6 +406,36 @@ def test_collection_snapshots_reject_non_sequence_containers(
         constructor()
 
 
+def test_non_string_domain_element_reaches_invalid_request_path() -> None:
+    with pytest.raises(InvalidRetrievalPlan) as caught:
+        resolve_plan(
+            _input().query,
+            RetrievalControls(
+                domains=DomainConstraints(include=["example.com", 7])  # type: ignore[list-item]
+            ),
+            False,
+            ExecutionPolicySnapshot(),
+            UTC_NOW,
+        )
+
+    assert caught.value.outcome is CanonicalOutcome.INVALID_REQUEST
+
+
+def test_unknown_allowed_provider_reaches_invalid_request_path() -> None:
+    with pytest.raises(InvalidRetrievalPlan) as caught:
+        resolve_plan(
+            _input().query,
+            RetrievalControls(),
+            False,
+            ExecutionPolicySnapshot(
+                allowed_providers=[ProviderName.BRAVE, "future"]  # type: ignore[list-item]
+            ),
+            UTC_NOW,
+        )
+
+    assert caught.value.outcome is CanonicalOutcome.INVALID_REQUEST
+
+
 @pytest.mark.parametrize(
     "query",
     [
