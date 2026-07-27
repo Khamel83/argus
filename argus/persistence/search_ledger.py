@@ -897,8 +897,11 @@ class SqlAlchemySearchLedgerRepository:
         extraction_run_id: str | None = None,
     ) -> ExtractionReceipt:
         """Atomically store a normalized extraction and its attempt history."""
+        from argus.extraction.rejection import classify_extraction_rejection
+
         public_id = extraction_run_id or uuid.uuid4().hex
         selected = result.extractor.value if result.extractor else None
+        rejection = classify_extraction_rejection(result)
         content_hash = (
             hashlib.sha256(result.text.encode("utf-8")).hexdigest()
             if result.text
@@ -956,6 +959,7 @@ class SqlAlchemySearchLedgerRepository:
                 "cookies_used": result.cookies_used,
                 "archive_used": result.archive_used,
                 "cost": result.cost,
+                "rejection": rejection.to_dict() if rejection else None,
             },
         }
         fingerprint = acceptance_fingerprint(state)
@@ -1045,6 +1049,7 @@ class SqlAlchemySearchLedgerRepository:
                             "extractors_tried": list(result.extractors_tried),
                             "cache_hit": bool(result.cache_hit),
                             "source_extractor": result.cache_source_extractor,
+                            "rejection": artifact["rejection"],
                         }
                     ),
                 )

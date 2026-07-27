@@ -14,6 +14,7 @@ Top-level entry points live at the repo root:
 
 - [mcp-clients.md](mcp-clients.md) — per-client MCP setup, verification, troubleshooting (Claude Code, Codex, OpenCode, Cursor, Gemini CLI, Antigravity)
 - [providers.md](providers.md) — full reference for search providers and the 12-step content extraction chain
+- [extraction-rejections.md](extraction-rejections.md) — stable, privacy-safe rejection evidence returned by the extraction API
 - [releasing.md](releasing.md) — release process: version sync, preflight, publish, verify
 - [troubleshooting.md](troubleshooting.md) — common installation, MCP, search, and extraction issues
 - [operations-status.md](operations-status.md) — liveness, startup, readiness, authenticated status, and bounded telemetry semantics
