@@ -164,6 +164,24 @@ process-local `HealthTracker`, `ReachabilityMatrix`, `BudgetTracker`, and
 as migration inputs, but only `ProviderReadinessService` defines public
 semantics.
 
+### Migration ownership
+
+Migration has one decision owner at every stage:
+
+1. Introduce `ProviderReadinessService` as the only rendering and execution
+   decision authority. It may read frozen legacy snapshots, but HTTP, MCP, CLI,
+   dashboards, and the executor cannot independently compose legacy status.
+2. Write normalized observations and the materialized readiness snapshot in
+   the same transactions that record provider attempts, cooldown claims, and
+   spend. Legacy trackers remain private invocation primitives; their values
+   cannot bypass the service.
+3. Move profile construction and all 14 provider classifiers across the seam,
+   then delete legacy status composition and its compatibility projection.
+
+Each stage has a test that fails if a transport or executor reads a legacy
+tracker for semantics. There is no dual-write period in which two stores can
+independently authorize execution.
+
 ## Orthogonal observations
 
 ### Catalog and registration
@@ -241,6 +259,14 @@ Rate limits use documented `Retry-After` or reset evidence. Transient network
 and `5xx` failures use bounded exponential cooldown. Once cooldown expires,
 only one real caller request that is otherwise eligible may claim the
 half-open attempt. A health refresh never claims it.
+
+The claim is a durable compare-and-set lease, not only a process mutex. Its key
+is provider plus account/configuration scope, egress, and request class. The
+repository grants it using database transaction time, records an owner and
+bounded deadline, and rejects every concurrent process until the claim is
+settled or safely expires. The spend reservation and half-open lease are
+obtained transactionally before any adapter call. The process-local
+`HealthTracker` lock is only a migration optimization.
 
 ### Spend
 
@@ -354,6 +380,13 @@ settlement, terminal-state write, and evidence receipt share one durable
 attempt identity. If actual charge cannot be proven after a call, the attempt
 settles `uncertain`; Argus does not assume zero.
 
+If exhaustion has no authoritative refresh endpoint, Argus remains blocked and
+emits one deduplicated operator alert containing the provider, account
+fingerprint, observation age, and safe reconciliation action. It does not
+probe through search. Recovery requires operator-approved reconciliation or an
+explicit account-change workflow; silence and elapsed time never restore
+credit.
+
 ## Probe authorization
 
 Every probe declares one of:
@@ -399,6 +432,12 @@ These are read-only snapshots by default. They never create health records,
 claim cooldown, or invoke adapters. A provider row includes all orthogonal
 observations, timestamps, expiry, scope, and the derived execution decision.
 Overall status is not `ok` merely because one registered provider is enabled.
+
+The repository transactionally materializes one current snapshot per provider
+and policy generation whenever an observation or policy input changes. Render
+surfaces read that bounded snapshot rather than scanning or recomputing
+observation history. An in-process cache may key the immutable generation, but
+cache loss only causes a repository read and never changes the decision.
 
 ### Admin smoke
 
@@ -462,6 +501,11 @@ configuration event and does not silently reconcile prior exhaustion.
 
 ## Evidence lifetime and invalidation
 
+- Repository/database transaction time is the freshness authority. Producer
+  clocks are diagnostic only. Observations more than 30 seconds in the future
+  are rejected; TTLs start at the authority's ingestion time. Provider reset
+  timestamps remain evidence, but an implausible or backward deadline fails
+  closed instead of overriding the authority clock.
 - Fixture compatibility expires when adapter code, fixture manifest, request
   shape, response schema, or declared provider contract version changes.
 - Reachability and usability observations use provider-specific bounded TTLs;
@@ -475,6 +519,20 @@ configuration event and does not silently reconcile prior exhaustion.
   it remains exhausted.
 - Cooldown has its own deadline and does not erase the underlying failure.
 - Release promotion snapshots all evidence rather than extending TTLs.
+
+The materialized snapshot contains only the latest observation for each
+dimension and bounded scope plus at most 32 evidence receipt references per
+provider. A reference is an opaque identifier of at most 128 characters; raw
+receipts are never embedded. Superseded non-terminal observations are
+compacted after their audit-retention window. Terminal exhaustion, unresolved
+charge, active cooldown/lease, and the observation that resolved each are
+retained under the durable attempt-ledger policy, not copied indefinitely into
+snapshots.
+
+Scopes are bounded inputs: provider is the fixed catalog, egress comes from the
+validated deployment manifest, request class comes from a versioned enum, and
+account/configuration identity permits one current plus one explicitly
+migrating generation. Unknown free-form scope values are rejected.
 
 ## Current evidence interpretation
 
@@ -510,13 +568,16 @@ Implementation work must:
    secret-safe errors inside adapters;
 5. make terminal spend state durable and transactionally connected to the
    attempt ledger;
-6. enforce `free_only` at plan and invocation boundaries;
-7. make all routine diagnostic paths network-free or restricted to the
+6. use a durable compare-and-set lease for distributed half-open execution;
+7. materialize bounded snapshots with authority-clock expiry and compacted
+   receipt references;
+8. enforce `free_only` at plan and invocation boundaries;
+9. make all routine diagnostic paths network-free or restricted to the
    versioned no-spend allowlist;
-8. migrate HTTP first, then make CLI and MCP render the HTTP semantics;
-9. preserve `/api/live` and container checks as network-free process liveness;
+10. migrate HTTP first, then make CLI and MCP render the HTTP semantics;
+11. preserve `/api/live` and container checks as network-free process liveness;
    and
-10. add invariant tests proving diagnostics and free-only requests cannot call
+12. add invariant tests proving diagnostics and free-only requests cannot call
     or reserve a tier greater than zero.
 
 The required negative tests include:
@@ -532,7 +593,14 @@ The required negative tests include:
 - credential rotation clearing authentication rejection without clearing
   same-account exhaustion;
 - expired compatibility and usability evidence;
-- concurrent half-open claims;
+- concurrent half-open claims across separate processes;
+- authority/producer clock skew and implausible provider reset timestamps;
+- bounded snapshot and receipt-reference compaction under repeated
+  observations and scope injection;
+- exhaustion without a refresh endpoint producing one deduplicated alert while
+  remaining blocked;
+- every migration stage rejecting legacy status as an independent execution or
+  rendering authority;
 - MCP live validation naming exactly one tier-0 provider with no fallback and
   at most one invocation;
 - CLI, HTTP, MCP, and Python semantic equivalence; and

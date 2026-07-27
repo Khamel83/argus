@@ -150,6 +150,13 @@ balance_exhausted
 Background diagnostics do not traverse either half-open arrow. A provider
 cannot escape exhaustion through cooldown expiry.
 
+The half-open claim is a database compare-and-set lease scoped to provider,
+account/configuration identity, egress, and versioned request class. Database
+transaction time governs the lease. Process-local locks may reduce contention
+but cannot authorize a call. If exhaustion has no authoritative refresh
+endpoint, the provider remains blocked and emits one deduplicated
+reconciliation alert; diagnostics never spend a search to clear it.
+
 ## Current-gap mapping
 
 The target design deliberately names the present seams:
@@ -162,6 +169,7 @@ The target design deliberately names the present seams:
 | `BudgetTracker` | configured counters can look like provider balance | spend snapshot with explicit authority |
 | `ProviderSpendRepository` | durable attempts exist, but terminal provider exhaustion needs a first-class transition | transactional spend/exhaustion state |
 | `SearchBroker.refresh_provider_evidence()` | refresh probes free providers and promotes reachability into health | explicit probe authorizer; routine refresh cannot use a search, `billable_search`, or `no_money_quota` |
+| operational snapshot rendering | repeated composition can scan growing evidence and disagree across surfaces | transactionally materialized, generation-keyed snapshot with bounded receipt references |
 | `/api/provider-health` | effective status collapses dimensions | render readiness snapshot |
 | CLI `health`/`doctor` | local path reconstructs and summarizes state independently | canonical HTTP semantics and shared renderer |
 | admin smoke/provider smoke | search is easy to mistake for a harmless diagnostic | split fixture/tier-0 smoke from named paid validation workflow |
@@ -179,9 +187,16 @@ proves:
 - `free_only` cannot reserve or invoke tier greater than zero under explicit
   selection, fallback, cache reuse, concurrency, or restart;
 - exhaustion survives restart and blocks concurrent attempts;
-- cooldown permits at most one caller-owned half-open attempt;
+- cooldown permits at most one caller-owned half-open attempt across processes;
 - unknown charge cannot be rendered as zero;
 - fixture and live evidence expiry is deterministic under an injected clock;
+- repository time defeats producer clock skew and implausible reset times fail
+  closed;
+- repeated observations compact into bounded snapshots and receipt references;
+- exhaustion without an account endpoint remains blocked and emits one
+  deduplicated operator alert;
+- no migration stage permits legacy and readiness stores to authorize
+  independently;
 - malformed HTTP 200 responses cannot become valid empty/healthy;
 - error output contains no fixture secrets; and
 - the evidence bundle identifies release, policy, contract fixtures, and
