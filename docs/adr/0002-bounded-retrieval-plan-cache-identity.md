@@ -494,7 +494,7 @@ original_profile
 original_result_limit
 original outcome
 normalized results and ranking evidence
-per-result contributing provider identities
+per-result contributing provider identities, raw ranks, and canonical contributions
 complete original provider traces
 provider tiers at acquisition
 spend provenance and reconciliation state
@@ -534,9 +534,10 @@ An entry is admitted only when all applicable checks pass:
 1. Fingerprint and schema/contract versions match.
 2. The entry is durably accepted and its acceptance identity is present.
 3. `now < expires_at` and age is within the plan's maximum cache age.
-4. Every result has complete contributing-provider, tier, spend, and
-   provenance evidence; full attempted/failed/skipped traces remain available
-   as run evidence but do not make those providers result contributors.
+4. Every result has complete contributing-provider identities, raw ranks,
+   canonical contribution values, tier, spend, and provenance evidence; full
+   attempted/failed/skipped traces remain available as run evidence but do not
+   make those providers result contributors.
 5. Explicit provider restrictions match.
 6. Organization/provider deny policy and caller tier cap permit every
    contributing provider.
@@ -691,13 +692,15 @@ The implementation plan must include hermetic tests proving:
 | shorter deadline | different | same |
 | force revalidation | different | same, lookup bypassed |
 | routing/freshness/domain/ranking/normalization version bump | different | different |
-| spend-policy version bump | different execution cohort | same |
+| spend-policy version bump | different | same |
 | unknown metadata difference | same | same |
 
 Admission tests must additionally prove:
 
 - free miss never initiates a billable attempt;
 - free hit may reuse paid-origin evidence and reports zero new spend;
+- an entry created without outward attribution renders identical attribution
+  from stored contributor ranks/contributions on a later attributed hit;
 - caller/provider restrictions reject incompatible origin evidence;
 - missing provenance or acceptance identity rejects the hit;
 - freshness/domain failures reject the hit;
@@ -709,6 +712,7 @@ Admission tests must additionally prove:
 - same-cohort concurrent misses produce at most one live fill;
 - policy-divergent cohorts never share an in-flight execution and each
   follower reruns admission;
+- a spend-policy version bump changes the execution cohort;
 - hanging async, blocking, and slow-persistence fakes terminate with typed
   evidence inside the operation deadline and publish no unsafe cache entry;
 - all callers receive timeout evidence within 120 seconds.
