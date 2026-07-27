@@ -355,7 +355,8 @@
       "status_cases": {
         "authentication_rejected_401": "error-401.json",
         "policy_rejected_403": "error-403.json",
-        "rate_limited_429": "error-429.json"
+        "rate_limited_429": "error-429.json",
+        "rate_limited_403": "error-rate-limit-403.json"
       }
     },
     "wolfram": {
@@ -955,6 +956,7 @@
       },
       "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.serper",
       "status_cases": {
+        "success_200": "status-success-200.json",
         "balance_exhausted_200": "error-402.json",
         "authentication_rejected_401": "error-401.json",
         "rate_limited_429": "error-429.json",
@@ -1128,6 +1130,7 @@
       },
       "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.valyu",
       "status_cases": {
+        "success_200": "status-success-200.json",
         "balance_exhausted_200": "error-402.json",
         "authentication_rejected_401": "error-401.json"
       }

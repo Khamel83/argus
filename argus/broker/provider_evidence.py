@@ -934,6 +934,7 @@ class ProviderSearchBatch:
             status=status,
             results_count=len(self.observations),
             latency_ms=self.response_evidence.latency_ms,
+            http_status=self.response_evidence.http_status,
             error=(
                 self.failure.summary
                 if self.failure

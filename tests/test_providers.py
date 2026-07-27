@@ -15,6 +15,7 @@ from argus.models import ProviderName, ProviderStatus, SearchQuery
 def _make_mock_response(data):
     """Create a mock HTTP response with json() and raise_for_status."""
     mock_resp = MagicMock()
+    mock_resp.status_code = 200
     mock_resp.json.return_value = data
     mock_resp.raise_for_status = MagicMock()
     return mock_resp

@@ -287,6 +287,7 @@ def _response(
     data: Mapping[str, Any],
     count: int,
     *,
+    http_status: int | None,
     headers: Mapping[str, object],
     observed_at: datetime,
     egress: EgressType,
@@ -327,6 +328,7 @@ def _response(
     except (TypeError, ValueError, OverflowError):
         pass
     return ProviderResponseEvidence(
+        http_status=http_status,
         request_id=request_id,
         session_id=data.get("session_id"),
         transaction_id=data.get("tx_id"),
@@ -349,6 +351,7 @@ def normalize_provider_response(
     *,
     max_results: int,
     request_evidence: ProviderRequestEvidence | None = None,
+    http_status: int | None = None,
     response_headers: Mapping[str, object] | None = None,
     observed_at: datetime | None = None,
     egress: EgressType = EgressType.UNKNOWN,
@@ -417,6 +420,7 @@ def normalize_provider_response(
         provider,
         data,
         len(observations),
+        http_status=http_status,
         headers=response_headers or {},
         observed_at=observed,
         egress=egress,
@@ -426,11 +430,15 @@ def normalize_provider_response(
         failure = ProviderFailure(
             FailureCategory.PARSE_ERROR,
             provider,
+            http_status=http_status,
             summary="all provider result rows were structurally invalid",
         )
     elif not rows:
         failure = ProviderFailure(
-            FailureCategory.EMPTY, provider, summary="valid empty provider response"
+            FailureCategory.EMPTY,
+            provider,
+            http_status=http_status,
+            summary="valid empty provider response",
         )
     else:
         failure = None

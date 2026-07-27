@@ -196,6 +196,8 @@ class YahooProvider(BaseProvider):
                 query,
                 started_at=started_at,
                 request_evidence=request_evidence,
+                http_status=resp.status_code,
+                response_headers=self._response_headers(resp),
             )
 
         except Exception as e:

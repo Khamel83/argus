@@ -77,6 +77,7 @@ class WolframProvider(BaseProvider):
                     query,
                     started_at=start,
                     request_evidence=request_evidence,
+                    http_status=resp.status_code,
                     response_headers=self._response_headers(resp),
                 )
 
@@ -94,6 +95,7 @@ class WolframProvider(BaseProvider):
                     query,
                     started_at=start,
                     request_evidence=request_evidence,
+                    http_status=resp.status_code,
                     response_headers=self._response_headers(resp),
                 )
 
@@ -106,6 +108,7 @@ class WolframProvider(BaseProvider):
                 query,
                 started_at=start,
                 request_evidence=request_evidence,
+                http_status=resp.status_code,
                 response_headers=self._response_headers(resp),
             )
 

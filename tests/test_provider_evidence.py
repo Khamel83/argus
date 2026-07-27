@@ -436,7 +436,7 @@ def test_legacy_failure_expectations_are_derived_from_richer_status_schema():
     assert EXPECTED_FAILURE_HTTP_STATUSES == _legacy_failure_projection()
 
 
-def _human_required_native_statuses() -> dict[str, set[int]]:
+def _human_required_native_cases() -> dict[str, set[str]]:
     matrix = (
         Path(__file__).parents[1]
         / "docs/research/2026-07-27-provider-health-probe-matrix.md"
@@ -446,27 +446,23 @@ def _human_required_native_statuses() -> dict[str, set[int]]:
         "WolframAlpha": "wolfram",
         "You.com": "you",
     }
-    required: dict[str, set[int]] = {}
-    marker = "[required native statuses: "
+    required: dict[str, set[str]] = {}
+    marker = "[required native cases: "
     for line in matrix.splitlines():
         if not line.startswith("| ") or marker not in line:
             continue
         cells = [cell.strip() for cell in line.strip("|").split("|")]
         provider = display_to_key.get(cells[0], cells[0].lower())
         encoded = line.split(marker, 1)[1].split("]", 1)[0]
-        required[provider] = (
-            set()
-            if encoded == "none"
-            else {int(status.strip()) for status in encoded.split(",")}
-        )
+        required[provider] = set() if encoded == "none" else set(encoded.split(", "))
     return required
 
 
 def test_human_provider_requirements_independently_reconcile_with_status_schema():
-    human = _human_required_native_statuses()
+    human = _human_required_native_cases()
     schema = _status_schema()
     machine = {
-        provider: {case["status"] for case in entry["cases"]}
+        provider: {case["id"] for case in entry["cases"]}
         for provider, entry in schema["providers"].items()
     }
     assert set(human) == REGISTERED
@@ -493,26 +489,56 @@ def test_manifest_status_cases_are_derived_from_richer_canonical_schema():
 
 def test_richer_status_schema_is_closed_primary_sourced_and_unambiguous():
     schema = _status_schema()
-    allowed_outcomes = {category.value for category in FailureCategory} | {"empty"}
+    allowed_outcomes = {category.value for category in FailureCategory} | {
+        "empty",
+        "success",
+    }
     assert schema["schema_version"] == 1
     assert set(schema["providers"]) == REGISTERED
     for provider, contract in schema["providers"].items():
         cases = contract["cases"]
         assert len({case["id"] for case in cases}) == len(cases), provider
-        assert len({case["status"] for case in cases}) == len(cases), provider
+        assert len(
+            {
+                (case["status"], case["semantic_discriminator"])
+                for case in cases
+            }
+        ) == len(cases), provider
         for case in cases:
             assert set(case) == {
                 "id",
                 "status",
                 "normalized_outcome",
+                "semantic_discriminator",
                 "fixture",
                 "source",
             }
             assert type(case["status"]) is int
             assert 100 <= case["status"] <= 599
             assert case["normalized_outcome"] in allowed_outcomes
+            assert case["semantic_discriminator"]
             assert case["source"].startswith("https://")
             assert "#" in case["source"]
+
+
+def test_github_403_semantics_are_distinct_authoritative_cases():
+    github = _status_schema()["providers"]["github"]["cases"]
+    status_403 = [case for case in github if case["status"] == 403]
+    assert {case["id"] for case in status_403} == {
+        "policy_rejected_403",
+        "rate_limited_403",
+    }
+    assert {case["normalized_outcome"] for case in status_403} == {
+        "policy_rejected",
+        "rate_limited",
+    }
+    discriminators = {
+        case["id"]: case["semantic_discriminator"] for case in status_403
+    }
+    assert "retry-after absent" in discriminators["policy_rejected_403"]
+    assert "x-ratelimit-remaining != 0" in discriminators["policy_rejected_403"]
+    assert "retry-after present" in discriminators["rate_limited_403"]
+    assert "x-ratelimit-remaining == 0" in discriminators["rate_limited_403"]
 
 
 def test_richer_schema_preserves_multiple_native_statuses_per_normalized_class():
@@ -596,11 +622,31 @@ async def test_adjacent_new_native_statuses_cross_real_provider_adapter(
     if expected_outcome == "empty":
         assert batch.failure is not None
         assert batch.failure.category is FailureCategory.EMPTY
+        assert batch.failure.http_status == 501
+        assert batch.response_evidence.http_status == 501
         assert batch.trace.status == "empty"
+        assert batch.trace.http_status == 501
     else:
         assert batch.failure is not None
         assert batch.failure.category is expected_outcome
         assert batch.failure.http_status == fixture["transport"]["status_code"]
+
+
+@pytest.mark.parametrize(
+    "payload", [{"results": []}, {"results": [{"url": "https://example.test"}]}]
+)
+def test_non_error_normalization_preserves_observed_http_status(payload):
+    batch = normalize_provider_response(
+        ProviderName.SEARXNG,
+        payload,
+        max_results=5,
+        http_status=200,
+    )
+
+    assert batch.response_evidence.http_status == 200
+    assert batch.trace.http_status == 200
+    if batch.failure is not None:
+        assert batch.failure.http_status == 200
 
 
 def test_wolfram_quota_exhaustion_is_explicitly_incomplete_not_documented():

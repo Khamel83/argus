@@ -151,6 +151,7 @@ class BaseProvider(ABC):
         *,
         started_at: float,
         request_evidence: ProviderRequestEvidence | None = None,
+        http_status: int | None = None,
         response_headers: dict[str, object] | None = None,
         egress: EgressType | None = None,
         machine: str | None = None,
@@ -165,6 +166,7 @@ class BaseProvider(ABC):
             or self._request_evidence(
                 query, timeout_seconds=self._attempt_timeout(query)
             ),
+            http_status=http_status,
             response_headers=response_headers,
             observed_at=observed_at,
             egress=egress or configured_egress,

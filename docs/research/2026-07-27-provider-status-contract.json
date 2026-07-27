@@ -4,107 +4,497 @@
   "providers": {
     "searxng": {
       "cases": [
-        {"id": "policy_rejected_403", "status": 403, "normalized_outcome": "policy_rejected", "fixture": "error-403.json", "source": "https://docs.searxng.org/dev/search_api.html#parameters"},
-        {"id": "provider_unavailable_503", "status": 503, "normalized_outcome": "provider_unavailable", "fixture": "error-5xx.json", "source": "https://www.rfc-editor.org/rfc/rfc9110.html#name-503-service-unavailable"},
-        {"id": "timeout_504", "status": 504, "normalized_outcome": "timeout", "fixture": "error-408_504.json", "source": "https://www.rfc-editor.org/rfc/rfc9110.html#name-504-gateway-timeout"}
+        {
+          "id": "policy_rejected_403",
+          "status": 403,
+          "normalized_outcome": "policy_rejected",
+          "fixture": "error-403.json",
+          "source": "https://docs.searxng.org/dev/search_api.html#parameters",
+          "semantic_discriminator": "http_status == 403; native semantic case policy_rejected_403"
+        },
+        {
+          "id": "provider_unavailable_503",
+          "status": 503,
+          "normalized_outcome": "provider_unavailable",
+          "fixture": "error-5xx.json",
+          "source": "https://www.rfc-editor.org/rfc/rfc9110.html#name-503-service-unavailable",
+          "semantic_discriminator": "http_status == 503; native semantic case provider_unavailable_503"
+        },
+        {
+          "id": "timeout_504",
+          "status": 504,
+          "normalized_outcome": "timeout",
+          "fixture": "error-408_504.json",
+          "source": "https://www.rfc-editor.org/rfc/rfc9110.html#name-504-gateway-timeout",
+          "semantic_discriminator": "http_status == 504; native semantic case timeout_504"
+        }
       ]
     },
-    "duckduckgo": {"cases": []},
+    "duckduckgo": {
+      "cases": []
+    },
     "yahoo": {
       "cases": [
-        {"id": "provider_unavailable_503", "status": 503, "normalized_outcome": "provider_unavailable", "fixture": "error-5xx.json", "source": "https://www.rfc-editor.org/rfc/rfc9110.html#name-503-service-unavailable"},
-        {"id": "timeout_504", "status": 504, "normalized_outcome": "timeout", "fixture": "error-408_504.json", "source": "https://www.rfc-editor.org/rfc/rfc9110.html#name-504-gateway-timeout"}
+        {
+          "id": "provider_unavailable_503",
+          "status": 503,
+          "normalized_outcome": "provider_unavailable",
+          "fixture": "error-5xx.json",
+          "source": "https://www.rfc-editor.org/rfc/rfc9110.html#name-503-service-unavailable",
+          "semantic_discriminator": "http_status == 503; native semantic case provider_unavailable_503"
+        },
+        {
+          "id": "timeout_504",
+          "status": 504,
+          "normalized_outcome": "timeout",
+          "fixture": "error-408_504.json",
+          "source": "https://www.rfc-editor.org/rfc/rfc9110.html#name-504-gateway-timeout",
+          "semantic_discriminator": "http_status == 504; native semantic case timeout_504"
+        }
       ]
     },
     "github": {
       "cases": [
-        {"id": "authentication_rejected_401", "status": 401, "normalized_outcome": "authentication_rejected", "fixture": "error-401.json", "source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"},
-        {"id": "policy_rejected_403", "status": 403, "normalized_outcome": "policy_rejected", "fixture": "error-403.json", "source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"},
-        {"id": "rate_limited_429", "status": 429, "normalized_outcome": "rate_limited", "fixture": "error-429.json", "source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"}
+        {
+          "id": "authentication_rejected_401",
+          "status": 401,
+          "normalized_outcome": "authentication_rejected",
+          "fixture": "error-401.json",
+          "source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors",
+          "semantic_discriminator": "http_status == 401; native semantic case authentication_rejected_401"
+        },
+        {
+          "id": "policy_rejected_403",
+          "status": 403,
+          "normalized_outcome": "policy_rejected",
+          "fixture": "error-403.json",
+          "source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors",
+          "semantic_discriminator": "http_status == 403; retry-after absent and x-ratelimit-remaining != 0 or absent"
+        },
+        {
+          "id": "rate_limited_429",
+          "status": 429,
+          "normalized_outcome": "rate_limited",
+          "fixture": "error-429.json",
+          "source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors",
+          "semantic_discriminator": "http_status == 429; native semantic case rate_limited_429"
+        },
+        {
+          "id": "rate_limited_403",
+          "status": 403,
+          "normalized_outcome": "rate_limited",
+          "semantic_discriminator": "http_status == 403; retry-after present or x-ratelimit-remaining == 0",
+          "fixture": "error-rate-limit-403.json",
+          "source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"
+        }
       ]
     },
     "wolfram": {
       "cases": [
-        {"id": "invalid_request_400", "status": 400, "normalized_outcome": "invalid_request", "fixture": "error-400.json", "source": "https://products.wolframalpha.com/llm-api/documentation#errors"},
-        {"id": "authentication_rejected_403", "status": 403, "normalized_outcome": "authentication_rejected", "fixture": "error-403.json", "source": "https://products.wolframalpha.com/llm-api/documentation#errors"},
-        {"id": "empty_501", "status": 501, "normalized_outcome": "empty", "fixture": "status-501.json", "source": "https://products.wolframalpha.com/llm-api/documentation#errors"}
+        {
+          "id": "invalid_request_400",
+          "status": 400,
+          "normalized_outcome": "invalid_request",
+          "fixture": "error-400.json",
+          "source": "https://products.wolframalpha.com/llm-api/documentation#errors",
+          "semantic_discriminator": "http_status == 400; native semantic case invalid_request_400"
+        },
+        {
+          "id": "authentication_rejected_403",
+          "status": 403,
+          "normalized_outcome": "authentication_rejected",
+          "fixture": "error-403.json",
+          "source": "https://products.wolframalpha.com/llm-api/documentation#errors",
+          "semantic_discriminator": "http_status == 403; native semantic case authentication_rejected_403"
+        },
+        {
+          "id": "empty_501",
+          "status": 501,
+          "normalized_outcome": "empty",
+          "fixture": "status-501.json",
+          "source": "https://products.wolframalpha.com/llm-api/documentation#errors",
+          "semantic_discriminator": "http_status == 501; native semantic case empty_501"
+        }
       ]
     },
     "brave": {
       "cases": [
-        {"id": "invalid_request_400", "status": 400, "normalized_outcome": "invalid_request", "fixture": "error-400.json", "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"},
-        {"id": "authentication_rejected_401", "status": 401, "normalized_outcome": "authentication_rejected", "fixture": "error-401.json", "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"},
-        {"id": "policy_rejected_403", "status": 403, "normalized_outcome": "policy_rejected", "fixture": "error-403.json", "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"},
-        {"id": "invalid_request_422", "status": 422, "normalized_outcome": "invalid_request", "fixture": "error-422.json", "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"},
-        {"id": "rate_limited_429", "status": 429, "normalized_outcome": "rate_limited", "fixture": "error-429.json", "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"},
-        {"id": "provider_unavailable_503", "status": 503, "normalized_outcome": "provider_unavailable", "fixture": "error-5xx.json", "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"}
+        {
+          "id": "invalid_request_400",
+          "status": 400,
+          "normalized_outcome": "invalid_request",
+          "fixture": "error-400.json",
+          "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses",
+          "semantic_discriminator": "http_status == 400; native semantic case invalid_request_400"
+        },
+        {
+          "id": "authentication_rejected_401",
+          "status": 401,
+          "normalized_outcome": "authentication_rejected",
+          "fixture": "error-401.json",
+          "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses",
+          "semantic_discriminator": "http_status == 401; native semantic case authentication_rejected_401"
+        },
+        {
+          "id": "policy_rejected_403",
+          "status": 403,
+          "normalized_outcome": "policy_rejected",
+          "fixture": "error-403.json",
+          "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses",
+          "semantic_discriminator": "http_status == 403; native semantic case policy_rejected_403"
+        },
+        {
+          "id": "invalid_request_422",
+          "status": 422,
+          "normalized_outcome": "invalid_request",
+          "fixture": "error-422.json",
+          "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses",
+          "semantic_discriminator": "http_status == 422; native semantic case invalid_request_422"
+        },
+        {
+          "id": "rate_limited_429",
+          "status": 429,
+          "normalized_outcome": "rate_limited",
+          "fixture": "error-429.json",
+          "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses",
+          "semantic_discriminator": "http_status == 429; native semantic case rate_limited_429"
+        },
+        {
+          "id": "provider_unavailable_503",
+          "status": 503,
+          "normalized_outcome": "provider_unavailable",
+          "fixture": "error-5xx.json",
+          "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses",
+          "semantic_discriminator": "http_status == 503; native semantic case provider_unavailable_503"
+        }
       ]
     },
     "tavily": {
       "cases": [
-        {"id": "authentication_rejected_401", "status": 401, "normalized_outcome": "authentication_rejected", "fixture": "error-401.json", "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"},
-        {"id": "invalid_request_422", "status": 422, "normalized_outcome": "invalid_request", "fixture": "error-422.json", "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"},
-        {"id": "rate_limited_429", "status": 429, "normalized_outcome": "rate_limited", "fixture": "error-429.json", "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"},
-        {"id": "provider_unavailable_503", "status": 503, "normalized_outcome": "provider_unavailable", "fixture": "error-5xx.json", "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"}
+        {
+          "id": "authentication_rejected_401",
+          "status": 401,
+          "normalized_outcome": "authentication_rejected",
+          "fixture": "error-401.json",
+          "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes",
+          "semantic_discriminator": "http_status == 401; native semantic case authentication_rejected_401"
+        },
+        {
+          "id": "invalid_request_422",
+          "status": 422,
+          "normalized_outcome": "invalid_request",
+          "fixture": "error-422.json",
+          "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes",
+          "semantic_discriminator": "http_status == 422; native semantic case invalid_request_422"
+        },
+        {
+          "id": "rate_limited_429",
+          "status": 429,
+          "normalized_outcome": "rate_limited",
+          "fixture": "error-429.json",
+          "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes",
+          "semantic_discriminator": "http_status == 429; native semantic case rate_limited_429"
+        },
+        {
+          "id": "provider_unavailable_503",
+          "status": 503,
+          "normalized_outcome": "provider_unavailable",
+          "fixture": "error-5xx.json",
+          "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes",
+          "semantic_discriminator": "http_status == 503; native semantic case provider_unavailable_503"
+        }
       ]
     },
     "exa": {
       "cases": [
-        {"id": "invalid_request_400", "status": 400, "normalized_outcome": "invalid_request", "fixture": "error-400.json", "source": "https://exa.ai/docs/reference/error-codes#error-response-structure"},
-        {"id": "authentication_rejected_401", "status": 401, "normalized_outcome": "authentication_rejected", "fixture": "error-401.json", "source": "https://exa.ai/docs/reference/error-codes#error-response-structure"},
-        {"id": "balance_exhausted_402", "status": 402, "normalized_outcome": "balance_exhausted", "fixture": "error-402.json", "source": "https://exa.ai/docs/reference/error-codes#error-response-structure"},
-        {"id": "policy_rejected_403", "status": 403, "normalized_outcome": "policy_rejected", "fixture": "error-403.json", "source": "https://exa.ai/docs/reference/error-codes#error-response-structure"},
-        {"id": "invalid_request_422", "status": 422, "normalized_outcome": "invalid_request", "fixture": "error-422.json", "source": "https://exa.ai/docs/reference/error-codes#error-response-structure"},
-        {"id": "rate_limited_429", "status": 429, "normalized_outcome": "rate_limited", "fixture": "error-429.json", "source": "https://exa.ai/docs/reference/error-codes#error-response-structure"},
-        {"id": "timeout_504", "status": 504, "normalized_outcome": "timeout", "fixture": "error-408_504.json", "source": "https://exa.ai/docs/reference/error-codes#error-response-structure"}
+        {
+          "id": "invalid_request_400",
+          "status": 400,
+          "normalized_outcome": "invalid_request",
+          "fixture": "error-400.json",
+          "source": "https://exa.ai/docs/reference/error-codes#error-response-structure",
+          "semantic_discriminator": "http_status == 400; native semantic case invalid_request_400"
+        },
+        {
+          "id": "authentication_rejected_401",
+          "status": 401,
+          "normalized_outcome": "authentication_rejected",
+          "fixture": "error-401.json",
+          "source": "https://exa.ai/docs/reference/error-codes#error-response-structure",
+          "semantic_discriminator": "http_status == 401; native semantic case authentication_rejected_401"
+        },
+        {
+          "id": "balance_exhausted_402",
+          "status": 402,
+          "normalized_outcome": "balance_exhausted",
+          "fixture": "error-402.json",
+          "source": "https://exa.ai/docs/reference/error-codes#error-response-structure",
+          "semantic_discriminator": "http_status == 402; native semantic case balance_exhausted_402"
+        },
+        {
+          "id": "policy_rejected_403",
+          "status": 403,
+          "normalized_outcome": "policy_rejected",
+          "fixture": "error-403.json",
+          "source": "https://exa.ai/docs/reference/error-codes#error-response-structure",
+          "semantic_discriminator": "http_status == 403; native semantic case policy_rejected_403"
+        },
+        {
+          "id": "invalid_request_422",
+          "status": 422,
+          "normalized_outcome": "invalid_request",
+          "fixture": "error-422.json",
+          "source": "https://exa.ai/docs/reference/error-codes#error-response-structure",
+          "semantic_discriminator": "http_status == 422; native semantic case invalid_request_422"
+        },
+        {
+          "id": "rate_limited_429",
+          "status": 429,
+          "normalized_outcome": "rate_limited",
+          "fixture": "error-429.json",
+          "source": "https://exa.ai/docs/reference/error-codes#error-response-structure",
+          "semantic_discriminator": "http_status == 429; native semantic case rate_limited_429"
+        },
+        {
+          "id": "timeout_504",
+          "status": 504,
+          "normalized_outcome": "timeout",
+          "fixture": "error-408_504.json",
+          "source": "https://exa.ai/docs/reference/error-codes#error-response-structure",
+          "semantic_discriminator": "http_status == 504; native semantic case timeout_504"
+        }
       ]
     },
     "linkup": {
       "cases": [
-        {"id": "authentication_rejected_401", "status": 401, "normalized_outcome": "authentication_rejected", "fixture": "error-401.json", "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"},
-        {"id": "invalid_request_422", "status": 422, "normalized_outcome": "invalid_request", "fixture": "error-422.json", "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"},
-        {"id": "rate_limited_429", "status": 429, "normalized_outcome": "rate_limited", "fixture": "error-429.json", "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"}
+        {
+          "id": "authentication_rejected_401",
+          "status": 401,
+          "normalized_outcome": "authentication_rejected",
+          "fixture": "error-401.json",
+          "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses",
+          "semantic_discriminator": "http_status == 401; native semantic case authentication_rejected_401"
+        },
+        {
+          "id": "invalid_request_422",
+          "status": 422,
+          "normalized_outcome": "invalid_request",
+          "fixture": "error-422.json",
+          "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses",
+          "semantic_discriminator": "http_status == 422; native semantic case invalid_request_422"
+        },
+        {
+          "id": "rate_limited_429",
+          "status": 429,
+          "normalized_outcome": "rate_limited",
+          "fixture": "error-429.json",
+          "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses",
+          "semantic_discriminator": "http_status == 429; native semantic case rate_limited_429"
+        }
       ]
     },
     "parallel": {
       "cases": [
-        {"id": "authentication_rejected_401", "status": 401, "normalized_outcome": "authentication_rejected", "fixture": "error-401.json", "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"},
-        {"id": "balance_exhausted_402", "status": 402, "normalized_outcome": "balance_exhausted", "fixture": "error-402.json", "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"},
-        {"id": "timeout_408", "status": 408, "normalized_outcome": "timeout", "fixture": "error-408_504.json", "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"},
-        {"id": "invalid_request_422", "status": 422, "normalized_outcome": "invalid_request", "fixture": "error-422.json", "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"},
-        {"id": "rate_limited_429", "status": 429, "normalized_outcome": "rate_limited", "fixture": "error-429.json", "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"},
-        {"id": "provider_unavailable_500", "status": 500, "normalized_outcome": "provider_unavailable", "fixture": "error-500.json", "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"},
-        {"id": "provider_unavailable_502", "status": 502, "normalized_outcome": "provider_unavailable", "fixture": "error-502.json", "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"},
-        {"id": "provider_unavailable_503", "status": 503, "normalized_outcome": "provider_unavailable", "fixture": "error-5xx.json", "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"}
+        {
+          "id": "authentication_rejected_401",
+          "status": 401,
+          "normalized_outcome": "authentication_rejected",
+          "fixture": "error-401.json",
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "semantic_discriminator": "http_status == 401; native semantic case authentication_rejected_401"
+        },
+        {
+          "id": "balance_exhausted_402",
+          "status": 402,
+          "normalized_outcome": "balance_exhausted",
+          "fixture": "error-402.json",
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "semantic_discriminator": "http_status == 402; native semantic case balance_exhausted_402"
+        },
+        {
+          "id": "timeout_408",
+          "status": 408,
+          "normalized_outcome": "timeout",
+          "fixture": "error-408_504.json",
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "semantic_discriminator": "http_status == 408; native semantic case timeout_408"
+        },
+        {
+          "id": "invalid_request_422",
+          "status": 422,
+          "normalized_outcome": "invalid_request",
+          "fixture": "error-422.json",
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "semantic_discriminator": "http_status == 422; native semantic case invalid_request_422"
+        },
+        {
+          "id": "rate_limited_429",
+          "status": 429,
+          "normalized_outcome": "rate_limited",
+          "fixture": "error-429.json",
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "semantic_discriminator": "http_status == 429; native semantic case rate_limited_429"
+        },
+        {
+          "id": "provider_unavailable_500",
+          "status": 500,
+          "normalized_outcome": "provider_unavailable",
+          "fixture": "error-500.json",
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "semantic_discriminator": "http_status == 500; native semantic case provider_unavailable_500"
+        },
+        {
+          "id": "provider_unavailable_502",
+          "status": 502,
+          "normalized_outcome": "provider_unavailable",
+          "fixture": "error-502.json",
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "semantic_discriminator": "http_status == 502; native semantic case provider_unavailable_502"
+        },
+        {
+          "id": "provider_unavailable_503",
+          "status": 503,
+          "normalized_outcome": "provider_unavailable",
+          "fixture": "error-5xx.json",
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "semantic_discriminator": "http_status == 503; native semantic case provider_unavailable_503"
+        }
       ]
     },
     "serper": {
       "cases": [
-        {"id": "balance_exhausted_200", "status": 200, "normalized_outcome": "balance_exhausted", "fixture": "error-402.json", "source": "https://serper.dev/#api"},
-        {"id": "authentication_rejected_401", "status": 401, "normalized_outcome": "authentication_rejected", "fixture": "error-401.json", "source": "https://serper.dev/#api"},
-        {"id": "rate_limited_429", "status": 429, "normalized_outcome": "rate_limited", "fixture": "error-429.json", "source": "https://serper.dev/#api"},
-        {"id": "provider_unavailable_503", "status": 503, "normalized_outcome": "provider_unavailable", "fixture": "error-5xx.json", "source": "https://serper.dev/#api"}
+        {
+          "id": "success_200",
+          "status": 200,
+          "normalized_outcome": "success",
+          "semantic_discriminator": "http_status == 200; response contains the documented organic results shape",
+          "fixture": "status-success-200.json",
+          "source": "https://serper.dev/#api"
+        },
+        {
+          "id": "balance_exhausted_200",
+          "status": 200,
+          "normalized_outcome": "balance_exhausted",
+          "fixture": "error-402.json",
+          "source": "https://serper.dev/#api",
+          "semantic_discriminator": "http_status == 200; response message documents exhausted credits"
+        },
+        {
+          "id": "authentication_rejected_401",
+          "status": 401,
+          "normalized_outcome": "authentication_rejected",
+          "fixture": "error-401.json",
+          "source": "https://serper.dev/#api",
+          "semantic_discriminator": "http_status == 401; native semantic case authentication_rejected_401"
+        },
+        {
+          "id": "rate_limited_429",
+          "status": 429,
+          "normalized_outcome": "rate_limited",
+          "fixture": "error-429.json",
+          "source": "https://serper.dev/#api",
+          "semantic_discriminator": "http_status == 429; native semantic case rate_limited_429"
+        },
+        {
+          "id": "provider_unavailable_503",
+          "status": 503,
+          "normalized_outcome": "provider_unavailable",
+          "fixture": "error-5xx.json",
+          "source": "https://serper.dev/#api",
+          "semantic_discriminator": "http_status == 503; native semantic case provider_unavailable_503"
+        }
       ]
     },
     "you": {
       "cases": [
-        {"id": "authentication_rejected_401", "status": 401, "normalized_outcome": "authentication_rejected", "fixture": "error-401.json", "source": "https://you.com/docs/error-handling/error-code-reference#in-depth"},
-        {"id": "balance_exhausted_402", "status": 402, "normalized_outcome": "balance_exhausted", "fixture": "error-402.json", "source": "https://you.com/docs/error-handling/error-code-reference#in-depth"},
-        {"id": "policy_rejected_403", "status": 403, "normalized_outcome": "policy_rejected", "fixture": "error-403.json", "source": "https://you.com/docs/error-handling/error-code-reference#in-depth"},
-        {"id": "invalid_request_422", "status": 422, "normalized_outcome": "invalid_request", "fixture": "error-422.json", "source": "https://you.com/docs/error-handling/error-code-reference#in-depth"},
-        {"id": "rate_limited_429", "status": 429, "normalized_outcome": "rate_limited", "fixture": "error-429.json", "source": "https://you.com/docs/error-handling/error-code-reference#in-depth"},
-        {"id": "provider_unavailable_503", "status": 503, "normalized_outcome": "provider_unavailable", "fixture": "error-5xx.json", "source": "https://you.com/docs/error-handling/error-code-reference#in-depth"}
+        {
+          "id": "authentication_rejected_401",
+          "status": 401,
+          "normalized_outcome": "authentication_rejected",
+          "fixture": "error-401.json",
+          "source": "https://you.com/docs/error-handling/error-code-reference#in-depth",
+          "semantic_discriminator": "http_status == 401; native semantic case authentication_rejected_401"
+        },
+        {
+          "id": "balance_exhausted_402",
+          "status": 402,
+          "normalized_outcome": "balance_exhausted",
+          "fixture": "error-402.json",
+          "source": "https://you.com/docs/error-handling/error-code-reference#in-depth",
+          "semantic_discriminator": "http_status == 402; native semantic case balance_exhausted_402"
+        },
+        {
+          "id": "policy_rejected_403",
+          "status": 403,
+          "normalized_outcome": "policy_rejected",
+          "fixture": "error-403.json",
+          "source": "https://you.com/docs/error-handling/error-code-reference#in-depth",
+          "semantic_discriminator": "http_status == 403; native semantic case policy_rejected_403"
+        },
+        {
+          "id": "invalid_request_422",
+          "status": 422,
+          "normalized_outcome": "invalid_request",
+          "fixture": "error-422.json",
+          "source": "https://you.com/docs/error-handling/error-code-reference#in-depth",
+          "semantic_discriminator": "http_status == 422; native semantic case invalid_request_422"
+        },
+        {
+          "id": "rate_limited_429",
+          "status": 429,
+          "normalized_outcome": "rate_limited",
+          "fixture": "error-429.json",
+          "source": "https://you.com/docs/error-handling/error-code-reference#in-depth",
+          "semantic_discriminator": "http_status == 429; native semantic case rate_limited_429"
+        },
+        {
+          "id": "provider_unavailable_503",
+          "status": 503,
+          "normalized_outcome": "provider_unavailable",
+          "fixture": "error-5xx.json",
+          "source": "https://you.com/docs/error-handling/error-code-reference#in-depth",
+          "semantic_discriminator": "http_status == 503; native semantic case provider_unavailable_503"
+        }
       ]
     },
     "searchapi": {
       "cases": [
-        {"id": "authentication_rejected_401", "status": 401, "normalized_outcome": "authentication_rejected", "fixture": "error-401.json", "source": "https://www.searchapi.io/docs/google#api-errors"}
+        {
+          "id": "authentication_rejected_401",
+          "status": 401,
+          "normalized_outcome": "authentication_rejected",
+          "fixture": "error-401.json",
+          "source": "https://www.searchapi.io/docs/google#api-errors",
+          "semantic_discriminator": "http_status == 401; native semantic case authentication_rejected_401"
+        }
       ]
     },
     "valyu": {
       "cases": [
-        {"id": "balance_exhausted_200", "status": 200, "normalized_outcome": "balance_exhausted", "fixture": "error-402.json", "source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling"},
-        {"id": "authentication_rejected_401", "status": 401, "normalized_outcome": "authentication_rejected", "fixture": "error-401.json", "source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling"}
+        {
+          "id": "success_200",
+          "status": 200,
+          "normalized_outcome": "success",
+          "semantic_discriminator": "http_status == 200; success is true and response contains results",
+          "fixture": "status-success-200.json",
+          "source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling"
+        },
+        {
+          "id": "balance_exhausted_200",
+          "status": 200,
+          "normalized_outcome": "balance_exhausted",
+          "fixture": "error-402.json",
+          "source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling",
+          "semantic_discriminator": "http_status == 200; success is false and error documents insufficient credits"
+        },
+        {
+          "id": "authentication_rejected_401",
+          "status": 401,
+          "normalized_outcome": "authentication_rejected",
+          "fixture": "error-401.json",
+          "source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling",
+          "semantic_discriminator": "http_status == 401; native semantic case authentication_rejected_401"
+        }
       ]
     }
   }
