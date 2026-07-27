@@ -14,14 +14,15 @@ Top-level entry points live at the repo root:
 
 - [mcp-clients.md](mcp-clients.md) — per-client MCP setup, verification, troubleshooting (Claude Code, Codex, OpenCode, Cursor, Gemini CLI, Antigravity)
 - [providers.md](providers.md) — full reference for search providers and the 12-step content extraction chain
+- [extraction-rejections.md](extraction-rejections.md) — stable, privacy-safe rejection evidence returned by the extraction API
 - [releasing.md](releasing.md) — release process: version sync, preflight, publish, verify
 - [troubleshooting.md](troubleshooting.md) — common installation, MCP, search, and extraction issues
 - [operations-status.md](operations-status.md) — liveness, startup, readiness, authenticated status, and bounded telemetry semantics
 - [adr/0002-bounded-retrieval-plan-cache-identity.md](adr/0002-bounded-retrieval-plan-cache-identity.md) — deterministic internal planning, cache identity, eligibility, and invalidation
 - [adr/0003-provider-aware-freshness-provenance-ranking.md](adr/0003-provider-aware-freshness-provenance-ranking.md) — typed provider evidence, freshness proof, duplicate clustering, deterministic fusion, and research diversity
 - [adr/0004-no-spend-provider-readiness.md](adr/0004-no-spend-provider-readiness.md) — typed provider readiness, no-spend diagnostics, terminal exhaustion, and profile registration
-- [adr/0005-structured-extraction-outcome-composition.md](adr/0005-structured-extraction-outcome-composition.md) — one-time extraction finalization, stable rejection composition, artifact eligibility, and retrieval linking
-- [adr/0006-http-mcp-compatibility-contract.md](adr/0006-http-mcp-compatibility-contract.md) — versioned HTTP envelopes, truthful statuses, Streamable HTTP sessions, structured MCP results, and Host/Origin security
+- [adr/0005-structured-extraction-outcome-composition.md](adr/0005-structured-extraction-outcome-composition.md) — typed extraction finalization, terminal-cause mapping, and retrieval composition
+- [adr/0006-http-mcp-compatibility-contract.md](adr/0006-http-mcp-compatibility-contract.md) — legacy HTTP preservation, evidence-rich opt-in, MCP lifecycle, and transport parity
 - [prototypes/retrieval-evidence-envelope/README.md](prototypes/retrieval-evidence-envelope/README.md) — throwaway canonical retrieval/evidence envelope with eight hermetic scenario vectors and fail-closed reference checks
 - [dashboard-design.md](dashboard-design.md) — dashboard UI design system reference
 - [scorecards/stability-competitive.md](scorecards/stability-competitive.md) — hard stability gates and automated competitive-evidence verdicts
