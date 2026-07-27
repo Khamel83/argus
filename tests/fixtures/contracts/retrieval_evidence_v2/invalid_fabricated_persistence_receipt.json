@@ -1,0 +1,241 @@
+{
+  "contract_version": "2.0",
+  "error": {
+    "code": "persistence_failed",
+    "detail": "Persistence Failed",
+    "instance": "urn:argus:request:request-persistence",
+    "retry_after_seconds": null,
+    "retryable": false,
+    "status": 503,
+    "title": "Persistence Failed",
+    "type": "urn:argus:problem:persistence_failed"
+  },
+  "outcome": "persistence_failed",
+  "request_id": "request-persistence",
+  "result": {
+    "caller_result": {
+      "answer": null,
+      "citation_refs": [],
+      "results": []
+    },
+    "evidence": {
+      "acceptance": {
+        "accepted_at": null,
+        "artifact_count": 0,
+        "cache_published": false,
+        "receipt_ref": "receipt-fabricated",
+        "status": "failed"
+      },
+      "accounting": {
+        "actual_usd": "0.000000000",
+        "extractor_attempt_latency_ms": 0,
+        "extractor_call_count": 0,
+        "operation_latency_ms": 73,
+        "provider_attempt_latency_ms": 45,
+        "provider_call_count": 1,
+        "reconciliation": "not_applicable",
+        "reserved_usd": "0.000000000",
+        "source": "tier-zero-ledger"
+      },
+      "cache": {
+        "age_ms": null,
+        "decision": "miss",
+        "maximum_age_ms": 604800000,
+        "new_provider_calls": 1,
+        "origin_provider_refs": [],
+        "origin_run_ref": null,
+        "origin_spend": null,
+        "reason": "not_found",
+        "served": false
+      },
+      "composition": {
+        "accepted_artifact_refs": [],
+        "artifact_outcome": null,
+        "artifact_requirement": null,
+        "artifact_requirement_ref": null,
+        "composite_outcome": "persistence_failed",
+        "degraded_artifact_refs": [],
+        "links": [],
+        "rejected_extraction_refs": [],
+        "retrieval_outcome": "success"
+      },
+      "contract_version": "2.0",
+      "extractions": [],
+      "final": {
+        "answer": null,
+        "caller_result": {
+          "answer": null,
+          "citation_refs": [],
+          "results": []
+        },
+        "citations": [],
+        "delivery_allowed": false,
+        "diagnostic_result_refs": [],
+        "outcome": "persistence_failed",
+        "result_refs": [],
+        "synthesis_allowed": false,
+        "visible_labels": [
+          "PERSISTENCE_FAILED",
+          "no-receipt",
+          "no-delivery"
+        ]
+      },
+      "fusion": {
+        "clusters": [
+          {
+            "base_rank": 0,
+            "best_provider_rank": 0,
+            "cluster_id": "cluster-persistence-a",
+            "cluster_sort_key": "https://unaccepted.example.org/a",
+            "contributions": [
+              {
+                "attempt_ref": "attempt-persistence-ddg",
+                "denominator": 61,
+                "numerator": 1,
+                "provider": "duckduckgo",
+                "provider_rank": 0
+              }
+            ],
+            "contributor_count": 1,
+            "exact_score": {
+              "denominator": 61,
+              "numerator": 1
+            },
+            "extraction_link": null,
+            "freshness": {
+              "observed_at": "2026-07-27T05:06:00.045Z",
+              "passed": null,
+              "proof": "not_required",
+              "published_at": null,
+              "reason": "not_requested",
+              "required": false
+            },
+            "output_rank": 0,
+            "provenance": {
+              "egress": "residential",
+              "machine": "fixture-node",
+              "observed_at": "2026-07-27T05:06:00.045Z",
+              "producer": "duckduckgo",
+              "source_type": "web-page"
+            },
+            "site_key": "example.org",
+            "smallest_provider": "duckduckgo",
+            "title": "Evidence not durably accepted",
+            "url": "https://unaccepted.example.org/a"
+          }
+        ],
+        "filtered_observations": [],
+        "floor": {
+          "passed": true,
+          "reason": "discovery_floor_diagnostic",
+          "required_clusters": 0,
+          "required_sites": 0
+        },
+        "ranking_policy": "ranking-v1-rrf60",
+        "rrf_k": 60
+      },
+      "origin_provider_attempts": [],
+      "plan": {
+        "artifact_requirement_ref": null,
+        "cache_fingerprint": "cache-persistence",
+        "candidate_providers": [
+          "duckduckgo"
+        ],
+        "controls": {
+          "country": null,
+          "domains": {
+            "exclude": [],
+            "include": []
+          },
+          "effective_max_provider_tier": 0,
+          "egress_preference": "residential",
+          "freshness": {
+            "end": null,
+            "maximum_cache_age_ms": 604800000,
+            "start": null
+          },
+          "include_attribution": true,
+          "language": "en",
+          "revalidation": "normal",
+          "safe_search": true
+        },
+        "intent": "discovery",
+        "plan_id": "plan-persistence",
+        "profile": "free",
+        "result_limit": 1,
+        "schema_version": 1,
+        "versions": {
+          "domain_policy": "domain-v1-psl-fixture",
+          "extraction_outcome_policy": "extraction-v1",
+          "freshness_policy": "freshness-v1",
+          "query_normalization": "query-v1",
+          "ranking_policy": "ranking-v1-rrf60",
+          "result_normalization": "result-v1",
+          "routing_policy": "routing-v1",
+          "spend_policy": "spend-v1"
+        }
+      },
+      "prototype_schema": "argus.retrieval-evidence.prototype.v1",
+      "provider_attempts": [
+        {
+          "applied_controls": {
+            "domain_translation": "not_requested",
+            "freshness_translation": "not_requested",
+            "request_class": "discovery",
+            "safe_search": "applied"
+          },
+          "applied_controls_ref": "controls-persistence-ddg",
+          "attempt_id": "attempt-persistence-ddg",
+          "latency_ms": 45,
+          "ordinal": 0,
+          "outcome": "success",
+          "provenance": {
+            "egress": "residential",
+            "machine": "fixture-node",
+            "observed_at": "2026-07-27T05:06:00.045Z",
+            "producer": "duckduckgo",
+            "source_type": "web-search"
+          },
+          "provider": "duckduckgo",
+          "reason": "protocol_valid_results",
+          "result_count": 1,
+          "run_ref": "run-persistence",
+          "spend": {
+            "actual_usd": "0.000000000",
+            "reconciliation": "not_applicable",
+            "reserved_usd": "0.000000000",
+            "source": "tier-zero"
+          }
+        }
+      ],
+      "readiness": [
+        {
+          "compatibility": "compatible",
+          "cooldown": "clear",
+          "decision": "eligible",
+          "observed_at": "2026-07-27T05:05:00Z",
+          "provider": "duckduckgo",
+          "reachability": "reachable",
+          "reason": "ready_for_caller_attempt",
+          "scope_ref": "scope-residential-fixture",
+          "snapshot_ref": "ready-persistence-ddg",
+          "spend": "not_applicable",
+          "tier": 0,
+          "usability": "usable",
+          "valid_until": "2026-07-27T05:16:00Z"
+        }
+      ],
+      "request": {
+        "caller_ref": "caller-fixture",
+        "deadline_ms": 120000,
+        "mode": "discovery",
+        "query_hash": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+        "raw_query_retained": false,
+        "received_at": "2026-07-27T05:06:00Z",
+        "request_id": "request-persistence",
+        "run_id": "run-persistence"
+      },
+      "scenario": "persistence_failure"
+    }
+  }
+}

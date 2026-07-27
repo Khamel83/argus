@@ -1,0 +1,522 @@
+{
+  "contract_version": "2.0",
+  "error": null,
+  "outcome": "success",
+  "request_id": "request-success",
+  "result": {
+    "caller_result": {
+      "answer": null,
+      "citation_refs": [
+        "citation-success-a"
+      ],
+      "results": [
+        {
+          "cluster_ref": "cluster-success-a",
+          "extraction": {
+            "artifact_disposition": "usable",
+            "artifact_ref": "artifact-success-a",
+            "outcome": "success",
+            "rejection_code": null
+          },
+          "rank": 0,
+          "title": "Argus primary documentation",
+          "url": "https://docs.example.org/argus",
+          "visibility": "accepted"
+        },
+        {
+          "cluster_ref": "cluster-success-b",
+          "extraction": null,
+          "rank": 1,
+          "title": "Argus source repository",
+          "url": "https://github.com/example/argus",
+          "visibility": "accepted"
+        },
+        {
+          "cluster_ref": "cluster-success-c",
+          "extraction": null,
+          "rank": 2,
+          "title": "Evidence retrieval study",
+          "url": "https://research.example.net/retrieval",
+          "visibility": "accepted"
+        }
+      ]
+    },
+    "evidence": {
+      "acceptance": {
+        "accepted_at": "2026-07-27T05:00:00.190Z",
+        "artifact_count": 1,
+        "cache_published": true,
+        "receipt_ref": "receipt-success",
+        "status": "accepted"
+      },
+      "accounting": {
+        "actual_usd": "0.000000000",
+        "extractor_attempt_latency_ms": 25,
+        "extractor_call_count": 1,
+        "operation_latency_ms": 190,
+        "provider_attempt_latency_ms": 125,
+        "provider_call_count": 2,
+        "reconciliation": "not_applicable",
+        "reserved_usd": "0.000000000",
+        "source": "tier-zero-ledger"
+      },
+      "cache": {
+        "age_ms": null,
+        "decision": "miss",
+        "maximum_age_ms": 604800000,
+        "new_provider_calls": 2,
+        "origin_provider_refs": [],
+        "origin_run_ref": null,
+        "origin_spend": null,
+        "reason": "not_found",
+        "served": false
+      },
+      "composition": {
+        "accepted_artifact_refs": [
+          "artifact-success-a"
+        ],
+        "artifact_outcome": "success",
+        "artifact_requirement": {
+          "aggregate_count": 1,
+          "deadline_ms": 30000,
+          "max_extractions": 1,
+          "minimum_disposition": "usable",
+          "requirement_ref": "requirement-success",
+          "spend_policy_ref": "spend-v1"
+        },
+        "artifact_requirement_ref": "requirement-success",
+        "composite_outcome": "success",
+        "degraded_artifact_refs": [],
+        "links": [
+          {
+            "artifact_disposition": "usable",
+            "artifact_ref": "artifact-success-a",
+            "cluster_ref": "cluster-success-a",
+            "extraction_run_ref": "extract-success-a",
+            "link_id": "link-success-a",
+            "outcome": "success",
+            "rejection_ref": null,
+            "required": true
+          }
+        ],
+        "rejected_extraction_refs": [],
+        "retrieval_outcome": "success"
+      },
+      "contract_version": "2.0",
+      "extractions": [
+        {
+          "acceptance_receipt_ref": "receipt-extract-success-a",
+          "artifact": {
+            "artifact_id": "artifact-success-a",
+            "citation_eligible": true,
+            "content_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "disposition": "usable",
+            "is_complete": true,
+            "provenance": {
+              "egress": "local",
+              "machine": "fixture-node",
+              "observed_at": "2026-07-27T05:00:00.150Z",
+              "producer": "trafilatura",
+              "source_type": "normalized-text"
+            },
+            "quality_passed": true
+          },
+          "cluster_ref": "cluster-success-a",
+          "extraction_run_id": "extract-success-a",
+          "outcome": "success",
+          "partial_allowed": false,
+          "plan_ref": "plan-success",
+          "rejection": null,
+          "selected_extractor": "trafilatura",
+          "steps": [
+            {
+              "attempt_outcome": null,
+              "decision": "miss",
+              "extractor": null,
+              "kind": "cache",
+              "latency_ms": null,
+              "ordinal": 0,
+              "provenance": null,
+              "reason": "not_found",
+              "spend": null
+            },
+            {
+              "attempt_outcome": "content",
+              "decision": "invoked",
+              "extractor": "trafilatura",
+              "kind": "extractor",
+              "latency_ms": 25,
+              "ordinal": 1,
+              "provenance": {
+                "egress": "local",
+                "machine": "fixture-node",
+                "observed_at": "2026-07-27T05:00:00.150Z",
+                "producer": "trafilatura",
+                "source_type": "html-extraction"
+              },
+              "reason": "content_returned",
+              "spend": {
+                "actual_usd": "0.000000000",
+                "reconciliation": "not_applicable",
+                "reserved_usd": "0.000000000",
+                "source": "local-extractor"
+              }
+            }
+          ]
+        }
+      ],
+      "final": {
+        "answer": null,
+        "caller_result": {
+          "answer": null,
+          "citation_refs": [
+            "citation-success-a"
+          ],
+          "results": [
+            {
+              "cluster_ref": "cluster-success-a",
+              "extraction": {
+                "artifact_disposition": "usable",
+                "artifact_ref": "artifact-success-a",
+                "outcome": "success",
+                "rejection_code": null
+              },
+              "rank": 0,
+              "title": "Argus primary documentation",
+              "url": "https://docs.example.org/argus",
+              "visibility": "accepted"
+            },
+            {
+              "cluster_ref": "cluster-success-b",
+              "extraction": null,
+              "rank": 1,
+              "title": "Argus source repository",
+              "url": "https://github.com/example/argus",
+              "visibility": "accepted"
+            },
+            {
+              "cluster_ref": "cluster-success-c",
+              "extraction": null,
+              "rank": 2,
+              "title": "Evidence retrieval study",
+              "url": "https://research.example.net/retrieval",
+              "visibility": "accepted"
+            }
+          ]
+        },
+        "citations": [
+          {
+            "artifact_ref": "artifact-success-a",
+            "citation_id": "citation-success-a",
+            "cluster_ref": "cluster-success-a"
+          }
+        ],
+        "delivery_allowed": true,
+        "diagnostic_result_refs": [],
+        "outcome": "success",
+        "result_refs": [
+          "cluster-success-a",
+          "cluster-success-b",
+          "cluster-success-c"
+        ],
+        "synthesis_allowed": true,
+        "visible_labels": [
+          "SUCCESS",
+          "fresh-acquisition",
+          "durably-accepted"
+        ]
+      },
+      "fusion": {
+        "clusters": [
+          {
+            "base_rank": 0,
+            "best_provider_rank": 0,
+            "cluster_id": "cluster-success-a",
+            "cluster_sort_key": "https://docs.example.org/argus",
+            "contributions": [
+              {
+                "attempt_ref": "attempt-success-ddg",
+                "denominator": 61,
+                "numerator": 1,
+                "provider": "duckduckgo",
+                "provider_rank": 0
+              },
+              {
+                "attempt_ref": "attempt-success-github",
+                "denominator": 62,
+                "numerator": 1,
+                "provider": "github",
+                "provider_rank": 1
+              }
+            ],
+            "contributor_count": 2,
+            "exact_score": {
+              "denominator": 3782,
+              "numerator": 123
+            },
+            "extraction_link": "link-success-a",
+            "freshness": {
+              "observed_at": "2026-07-27T05:00:00.125Z",
+              "passed": null,
+              "proof": "not_required",
+              "published_at": null,
+              "reason": "not_requested",
+              "required": false
+            },
+            "output_rank": 0,
+            "provenance": {
+              "egress": "residential",
+              "machine": "fixture-node",
+              "observed_at": "2026-07-27T05:00:00.070Z",
+              "producer": "duckduckgo",
+              "source_type": "web-page"
+            },
+            "site_key": "example.org",
+            "smallest_provider": "duckduckgo",
+            "title": "Argus primary documentation",
+            "url": "https://docs.example.org/argus"
+          },
+          {
+            "base_rank": 1,
+            "best_provider_rank": 0,
+            "cluster_id": "cluster-success-b",
+            "cluster_sort_key": "https://github.com/example/argus",
+            "contributions": [
+              {
+                "attempt_ref": "attempt-success-github",
+                "denominator": 61,
+                "numerator": 1,
+                "provider": "github",
+                "provider_rank": 0
+              }
+            ],
+            "contributor_count": 1,
+            "exact_score": {
+              "denominator": 61,
+              "numerator": 1
+            },
+            "extraction_link": null,
+            "freshness": {
+              "observed_at": "2026-07-27T05:00:00.125Z",
+              "passed": null,
+              "proof": "not_required",
+              "published_at": null,
+              "reason": "not_requested",
+              "required": false
+            },
+            "output_rank": 1,
+            "provenance": {
+              "egress": "residential",
+              "machine": "fixture-node",
+              "observed_at": "2026-07-27T05:00:00.125Z",
+              "producer": "github",
+              "source_type": "repository"
+            },
+            "site_key": "github.com",
+            "smallest_provider": "github",
+            "title": "Argus source repository",
+            "url": "https://github.com/example/argus"
+          },
+          {
+            "base_rank": 2,
+            "best_provider_rank": 1,
+            "cluster_id": "cluster-success-c",
+            "cluster_sort_key": "https://research.example.net/retrieval",
+            "contributions": [
+              {
+                "attempt_ref": "attempt-success-ddg",
+                "denominator": 62,
+                "numerator": 1,
+                "provider": "duckduckgo",
+                "provider_rank": 1
+              }
+            ],
+            "contributor_count": 1,
+            "exact_score": {
+              "denominator": 62,
+              "numerator": 1
+            },
+            "extraction_link": null,
+            "freshness": {
+              "observed_at": "2026-07-27T05:00:00.070Z",
+              "passed": null,
+              "proof": "not_required",
+              "published_at": "2026-07-01T00:00:00Z",
+              "reason": "diagnostic_only",
+              "required": false
+            },
+            "output_rank": 2,
+            "provenance": {
+              "egress": "residential",
+              "machine": "fixture-node",
+              "observed_at": "2026-07-27T05:00:00.070Z",
+              "producer": "duckduckgo",
+              "source_type": "paper"
+            },
+            "site_key": "example.net",
+            "smallest_provider": "duckduckgo",
+            "title": "Evidence retrieval study",
+            "url": "https://research.example.net/retrieval"
+          }
+        ],
+        "filtered_observations": [],
+        "floor": {
+          "passed": true,
+          "reason": "research_structural_floor_passed",
+          "required_clusters": 3,
+          "required_sites": 2
+        },
+        "ranking_policy": "ranking-v999",
+        "rrf_k": 60
+      },
+      "origin_provider_attempts": [],
+      "plan": {
+        "artifact_requirement_ref": "requirement-success",
+        "cache_fingerprint": "cache-success",
+        "candidate_providers": [
+          "duckduckgo",
+          "github"
+        ],
+        "controls": {
+          "country": null,
+          "domains": {
+            "exclude": [],
+            "include": []
+          },
+          "effective_max_provider_tier": 0,
+          "egress_preference": "residential",
+          "freshness": {
+            "end": null,
+            "maximum_cache_age_ms": 604800000,
+            "start": null
+          },
+          "include_attribution": true,
+          "language": "en",
+          "revalidation": "normal",
+          "safe_search": true
+        },
+        "intent": "research",
+        "plan_id": "plan-success",
+        "profile": "free",
+        "result_limit": 3,
+        "schema_version": 1,
+        "versions": {
+          "domain_policy": "domain-v1-psl-fixture",
+          "extraction_outcome_policy": "extraction-v1",
+          "freshness_policy": "freshness-v1",
+          "query_normalization": "query-v1",
+          "ranking_policy": "ranking-v1-rrf60",
+          "result_normalization": "result-v1",
+          "routing_policy": "routing-v1",
+          "spend_policy": "spend-v1"
+        }
+      },
+      "prototype_schema": "argus.retrieval-evidence.prototype.v1",
+      "provider_attempts": [
+        {
+          "applied_controls": {
+            "domain_translation": "not_requested",
+            "freshness_translation": "not_requested",
+            "request_class": "research",
+            "safe_search": "applied"
+          },
+          "applied_controls_ref": "controls-success-ddg",
+          "attempt_id": "attempt-success-ddg",
+          "latency_ms": 70,
+          "ordinal": 0,
+          "outcome": "success",
+          "provenance": {
+            "egress": "residential",
+            "machine": "fixture-node",
+            "observed_at": "2026-07-27T05:00:00.070Z",
+            "producer": "duckduckgo",
+            "source_type": "web-search"
+          },
+          "provider": "duckduckgo",
+          "reason": "protocol_valid_results",
+          "result_count": 2,
+          "run_ref": "run-success",
+          "spend": {
+            "actual_usd": "0.000000000",
+            "reconciliation": "not_applicable",
+            "reserved_usd": "0.000000000",
+            "source": "tier-zero"
+          }
+        },
+        {
+          "applied_controls": {
+            "domain_translation": "not_requested",
+            "freshness_translation": "not_requested",
+            "request_class": "research",
+            "safe_search": "applied"
+          },
+          "applied_controls_ref": "controls-success-github",
+          "attempt_id": "attempt-success-github",
+          "latency_ms": 55,
+          "ordinal": 1,
+          "outcome": "success",
+          "provenance": {
+            "egress": "residential",
+            "machine": "fixture-node",
+            "observed_at": "2026-07-27T05:00:00.125Z",
+            "producer": "github",
+            "source_type": "repository-search"
+          },
+          "provider": "github",
+          "reason": "protocol_valid_results",
+          "result_count": 2,
+          "run_ref": "run-success",
+          "spend": {
+            "actual_usd": "0.000000000",
+            "reconciliation": "not_applicable",
+            "reserved_usd": "0.000000000",
+            "source": "tier-zero"
+          }
+        }
+      ],
+      "readiness": [
+        {
+          "compatibility": "compatible",
+          "cooldown": "clear",
+          "decision": "eligible",
+          "observed_at": "2026-07-27T04:59:00Z",
+          "provider": "duckduckgo",
+          "reachability": "reachable",
+          "reason": "ready_for_caller_attempt",
+          "scope_ref": "scope-residential-fixture",
+          "snapshot_ref": "ready-success-ddg",
+          "spend": "not_applicable",
+          "tier": 0,
+          "usability": "usable",
+          "valid_until": "2026-07-27T05:10:00Z"
+        },
+        {
+          "compatibility": "compatible",
+          "cooldown": "clear",
+          "decision": "eligible",
+          "observed_at": "2026-07-27T04:59:00Z",
+          "provider": "github",
+          "reachability": "reachable",
+          "reason": "ready_for_caller_attempt",
+          "scope_ref": "scope-residential-fixture",
+          "snapshot_ref": "ready-success-github",
+          "spend": "not_applicable",
+          "tier": 0,
+          "usability": "usable",
+          "valid_until": "2026-07-27T05:10:00Z"
+        }
+      ],
+      "request": {
+        "caller_ref": "caller-fixture",
+        "deadline_ms": 120000,
+        "mode": "research",
+        "query_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "raw_query_retained": false,
+        "received_at": "2026-07-27T05:00:00Z",
+        "request_id": "request-success",
+        "run_id": "run-success"
+      },
+      "scenario": "success"
+    }
+  }
+}

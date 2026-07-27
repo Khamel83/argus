@@ -1,0 +1,27 @@
+{
+  "input": {
+    "mode": "invalid_mode",
+    "query": "test"
+  },
+  "name": "POST /api/search",
+  "response_value": {
+    "detail": [
+      {
+        "ctx": {
+          "error": "Invalid mode: invalid_mode. Must be one of: discovery, grounding, recovery, research"
+        },
+        "input": "invalid_mode",
+        "loc": [
+          "body",
+          "mode"
+        ],
+        "msg": "Value error, Invalid mode: invalid_mode. Must be one of: discovery, grounding, recovery, research",
+        "type": "value_error"
+      }
+    ]
+  },
+  "status": {
+    "http_status": 422
+  },
+  "transport": "http"
+}

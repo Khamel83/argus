@@ -1,0 +1,259 @@
+{
+  "contract_version": "2.0",
+  "error": null,
+  "outcome": "success",
+  "request_id": "request-cache-hit",
+  "result": {
+    "caller_result": {
+      "answer": null,
+      "citation_refs": [],
+      "results": [
+        {
+          "cluster_ref": "cluster-cache-hit-a",
+          "extraction": null,
+          "rank": 0,
+          "title": "Eligible cached grounding evidence",
+          "url": "https://cached.example.org/grounding",
+          "visibility": "accepted"
+        }
+      ]
+    },
+    "evidence": {
+      "acceptance": {
+        "accepted_at": "2026-07-27T05:07:00.012Z",
+        "artifact_count": 0,
+        "cache_published": false,
+        "receipt_ref": "receipt-cache-hit",
+        "status": "accepted"
+      },
+      "accounting": {
+        "actual_usd": "0.000000000",
+        "extractor_attempt_latency_ms": 0,
+        "extractor_call_count": 0,
+        "operation_latency_ms": 12,
+        "provider_attempt_latency_ms": 0,
+        "provider_call_count": 0,
+        "reconciliation": "not_applicable",
+        "reserved_usd": "0.000000000",
+        "source": "cache-reuse-zero-new-spend"
+      },
+      "cache": {
+        "age_ms": 600001,
+        "decision": "hit",
+        "maximum_age_ms": 600000,
+        "new_provider_calls": 0,
+        "origin_provider_refs": [
+          "brave"
+        ],
+        "origin_run_ref": "run-cache-origin",
+        "origin_spend": {
+          "actual_usd": "0.001000000",
+          "reconciliation": "confirmed",
+          "reserved_usd": "0.001000000",
+          "source": "origin-provider-ledger"
+        },
+        "reason": "eligible_paid_origin_free_reuse",
+        "served": true
+      },
+      "composition": {
+        "accepted_artifact_refs": [],
+        "artifact_outcome": null,
+        "artifact_requirement": null,
+        "artifact_requirement_ref": null,
+        "composite_outcome": "success",
+        "degraded_artifact_refs": [],
+        "links": [],
+        "rejected_extraction_refs": [],
+        "retrieval_outcome": "success"
+      },
+      "contract_version": "2.0",
+      "extractions": [],
+      "final": {
+        "answer": null,
+        "caller_result": {
+          "answer": null,
+          "citation_refs": [],
+          "results": [
+            {
+              "cluster_ref": "cluster-cache-hit-a",
+              "extraction": null,
+              "rank": 0,
+              "title": "Eligible cached grounding evidence",
+              "url": "https://cached.example.org/grounding",
+              "visibility": "accepted"
+            }
+          ]
+        },
+        "citations": [],
+        "delivery_allowed": true,
+        "diagnostic_result_refs": [],
+        "outcome": "success",
+        "result_refs": [
+          "cluster-cache-hit-a"
+        ],
+        "synthesis_allowed": true,
+        "visible_labels": [
+          "SUCCESS",
+          "cache-hit",
+          "zero-new-spend"
+        ]
+      },
+      "fusion": {
+        "clusters": [
+          {
+            "base_rank": 0,
+            "best_provider_rank": 0,
+            "cluster_id": "cluster-cache-hit-a",
+            "cluster_sort_key": "https://cached.example.org/grounding",
+            "contributions": [
+              {
+                "attempt_ref": "attempt-cache-origin-brave",
+                "denominator": 61,
+                "numerator": 1,
+                "provider": "brave",
+                "provider_rank": 0
+              }
+            ],
+            "contributor_count": 1,
+            "exact_score": {
+              "denominator": 61,
+              "numerator": 1
+            },
+            "extraction_link": null,
+            "freshness": {
+              "observed_at": "2026-07-27T05:05:20Z",
+              "passed": null,
+              "proof": "not_required",
+              "published_at": null,
+              "reason": "origin_evidence_preserved",
+              "required": false
+            },
+            "output_rank": 0,
+            "provenance": {
+              "egress": "datacenter",
+              "machine": "fixture-origin-node",
+              "observed_at": "2026-07-27T05:05:20Z",
+              "producer": "brave",
+              "source_type": "web-page"
+            },
+            "site_key": "example.org",
+            "smallest_provider": "brave",
+            "title": "Eligible cached grounding evidence",
+            "url": "https://cached.example.org/grounding"
+          }
+        ],
+        "filtered_observations": [],
+        "floor": {
+          "passed": true,
+          "reason": "grounding_floor_passed",
+          "required_clusters": 1,
+          "required_sites": 1
+        },
+        "ranking_policy": "ranking-v1-rrf60",
+        "rrf_k": 60
+      },
+      "origin_provider_attempts": [
+        {
+          "applied_controls": {
+            "domain_translation": "not_requested",
+            "freshness_translation": "not_requested",
+            "request_class": "grounding",
+            "safe_search": "applied"
+          },
+          "applied_controls_ref": "controls-cache-origin-brave",
+          "attempt_id": "attempt-cache-origin-brave",
+          "latency_ms": 80,
+          "ordinal": 0,
+          "outcome": "success",
+          "provenance": {
+            "egress": "datacenter",
+            "machine": "fixture-origin-node",
+            "observed_at": "2026-07-27T05:05:20Z",
+            "producer": "brave",
+            "source_type": "web-search"
+          },
+          "provider": "brave",
+          "reason": "origin_protocol_valid_results",
+          "result_count": 1,
+          "run_ref": "run-cache-origin",
+          "spend": {
+            "actual_usd": "0.001000000",
+            "reconciliation": "confirmed",
+            "reserved_usd": "0.001000000",
+            "source": "origin-provider-ledger"
+          }
+        }
+      ],
+      "plan": {
+        "artifact_requirement_ref": null,
+        "cache_fingerprint": "cache-hit",
+        "candidate_providers": [
+          "duckduckgo"
+        ],
+        "controls": {
+          "country": null,
+          "domains": {
+            "exclude": [],
+            "include": []
+          },
+          "effective_max_provider_tier": 0,
+          "egress_preference": "residential",
+          "freshness": {
+            "end": null,
+            "maximum_cache_age_ms": 600000,
+            "start": null
+          },
+          "include_attribution": true,
+          "language": "en",
+          "revalidation": "normal",
+          "safe_search": true
+        },
+        "intent": "grounding",
+        "plan_id": "plan-cache-hit",
+        "profile": "free",
+        "result_limit": 1,
+        "schema_version": 1,
+        "versions": {
+          "domain_policy": "domain-v1-psl-fixture",
+          "extraction_outcome_policy": "extraction-v1",
+          "freshness_policy": "freshness-v1",
+          "query_normalization": "query-v1",
+          "ranking_policy": "ranking-v1-rrf60",
+          "result_normalization": "result-v1",
+          "routing_policy": "routing-v1",
+          "spend_policy": "spend-v1"
+        }
+      },
+      "prototype_schema": "argus.retrieval-evidence.prototype.v1",
+      "provider_attempts": [],
+      "readiness": [
+        {
+          "compatibility": "compatible",
+          "cooldown": "clear",
+          "decision": "unavailable",
+          "observed_at": "2026-07-27T05:06:00Z",
+          "provider": "duckduckgo",
+          "reachability": "unreachable",
+          "reason": "current_execution_path_unavailable",
+          "scope_ref": "scope-residential-fixture",
+          "snapshot_ref": "ready-cache-hit-ddg",
+          "spend": "not_applicable",
+          "tier": 0,
+          "usability": "unknown",
+          "valid_until": "2026-07-27T05:17:00Z"
+        }
+      ],
+      "request": {
+        "caller_ref": "caller-fixture",
+        "deadline_ms": 120000,
+        "mode": "grounding",
+        "query_hash": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+        "raw_query_retained": false,
+        "received_at": "2026-07-27T05:07:00Z",
+        "request_id": "request-cache-hit",
+        "run_id": "run-cache-hit"
+      },
+      "scenario": "eligible_cache_hit"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "input": {
+    "path": "/fixture/SUMMARY.md"
+  },
+  "name": "read_pack_file",
+  "response_value": {
+    "bytes_returned": 10,
+    "content": "hello pack",
+    "encoding": "utf-8",
+    "offset": 0,
+    "path": "/fixture/SUMMARY.md",
+    "size": 10,
+    "truncated": false
+  },
+  "status": {
+    "is_error": false
+  },
+  "transport": "mcp"
+}

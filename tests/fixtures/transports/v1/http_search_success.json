@@ -1,0 +1,34 @@
+{
+  "input": {
+    "mode": "discovery",
+    "query": "test"
+  },
+  "name": "POST /api/search",
+  "response_value": {
+    "budget_warnings": [],
+    "cached": true,
+    "mode": "discovery",
+    "query": "test",
+    "results": [
+      {
+        "domain": "",
+        "egress": null,
+        "machine": null,
+        "provider": null,
+        "score": 0.0,
+        "score_attribution": {},
+        "snippet": "A page",
+        "title": "Test",
+        "url": "https://example.com"
+      }
+    ],
+    "search_run_id": "abc123",
+    "session_id": null,
+    "total_results": 1,
+    "traces": []
+  },
+  "status": {
+    "http_status": 200
+  },
+  "transport": "http"
+}

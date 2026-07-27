@@ -1,0 +1,15 @@
+{
+  "input": {
+    "mode": "discovery",
+    "query": "test"
+  },
+  "name": "POST /api/search",
+  "response_value": {
+    "error": "Rate limit exceeded",
+    "retry_after": "60"
+  },
+  "status": {
+    "http_status": 429
+  },
+  "transport": "http"
+}

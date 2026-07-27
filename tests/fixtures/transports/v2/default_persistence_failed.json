@@ -1,0 +1,28 @@
+{
+  "input": {
+    "code": "persistence_failed",
+    "outcome": "persistence_failed"
+  },
+  "name": "accepted_operation:persistence_failed",
+  "response_value": {
+    "contract_version": "2.0",
+    "error": {
+      "code": "persistence_failed",
+      "detail": "persistence failed",
+      "instance": "urn:argus:request:fixture-persistence_failed",
+      "retry_after_seconds": null,
+      "retryable": false,
+      "status": 503,
+      "title": "Persistence Failed",
+      "type": "urn:argus:problem:persistence_failed"
+    },
+    "outcome": "persistence_failed",
+    "request_id": "fixture-persistence_failed",
+    "result": null
+  },
+  "status": {
+    "http_status": 503,
+    "mcp_is_error": true
+  },
+  "transport": "http+mcp"
+}

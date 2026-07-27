@@ -44,6 +44,15 @@ that proves current execution is distinct from preserved origin evidence:
 8. eligible cache reuse with zero current provider calls or spend while the
    paid origin attempt, provenance, and spend remain auditable.
 
-Delete the executable shell and fixture schema after #67 converts the learned
-invariants into production contracts. Preserve the decision in
-[NOTES.md](NOTES.md).
+## Frozen compatibility port
+
+S0 of the issue #82 mechanical port copies all eight vectors and all nineteen
+fail-closed mutations into
+`tests/fixtures/contracts/retrieval_evidence_v2/`. Its manifest hashes both
+these standalone fixtures and their prototype sources. S0 applies only the
+accepted-operation outcome, error, request-ID, and privacy invariants; S7 owns
+the complete production replay after the required deep modules exist.
+
+Keep this executable prototype green until S7 completes that replay. Delete
+the executable shell and fixture schema only after the production contracts
+cover every learned invariant. Preserve the decision in [NOTES.md](NOTES.md).

@@ -1,0 +1,28 @@
+{
+  "input": {
+    "code": "authentication_rejected",
+    "outcome": "authentication_rejected"
+  },
+  "name": "accepted_operation:authentication_rejected",
+  "response_value": {
+    "contract_version": "2.0",
+    "error": {
+      "code": "authentication_rejected",
+      "detail": "authentication rejected",
+      "instance": "urn:argus:request:fixture-authentication_rejected",
+      "retry_after_seconds": null,
+      "retryable": false,
+      "status": 401,
+      "title": "Authentication Rejected",
+      "type": "urn:argus:problem:authentication_rejected"
+    },
+    "outcome": "authentication_rejected",
+    "request_id": "fixture-authentication_rejected",
+    "result": null
+  },
+  "status": {
+    "http_status": 401,
+    "mcp_is_error": true
+  },
+  "transport": "http+mcp"
+}

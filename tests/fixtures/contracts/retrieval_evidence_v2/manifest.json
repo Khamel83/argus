@@ -1,0 +1,234 @@
+{
+  "fixtures": [
+    {
+      "kind": "valid",
+      "path": "valid_success.json",
+      "scenario": "success",
+      "sha256": "987908281145879c11a0d73d8aea1a23d3222493f1a31f563eb21048f40c97e4"
+    },
+    {
+      "kind": "valid",
+      "path": "valid_partial_failure.json",
+      "scenario": "partial_failure",
+      "sha256": "682f033fa85878894f9d8a628d83ff49fca5f6d4ac59cb7a55efb01b0f68b4ec"
+    },
+    {
+      "kind": "valid",
+      "path": "valid_fallback_success.json",
+      "scenario": "fallback_success",
+      "sha256": "b8b7bc93aa47c365734465dd502146c969e8cd3e337024794664417fb629950c"
+    },
+    {
+      "kind": "valid",
+      "path": "valid_stale_cache.json",
+      "scenario": "stale_cache",
+      "sha256": "02354d9a02cbbe2e68ce06cfca526f046d5453e2fb504b5e858887f0b1d15fb2"
+    },
+    {
+      "kind": "valid",
+      "path": "valid_no_provider.json",
+      "scenario": "no_provider",
+      "sha256": "4bf311d5c4bf5f8eb4ee6970577016cd8de63a40081de2c2cfe58727d81dd56a"
+    },
+    {
+      "kind": "valid",
+      "path": "valid_rejected_extraction.json",
+      "scenario": "rejected_extraction",
+      "sha256": "e875a499240f57b43248064487d2f13b2996dbe2d27977b32788d8d7268b2dab"
+    },
+    {
+      "kind": "valid",
+      "path": "valid_persistence_failure.json",
+      "scenario": "persistence_failure",
+      "sha256": "2fa81ffad40d750e82b305bf6c93a524fbb6d7046cb0f2af9661eb1b04e94ced"
+    },
+    {
+      "kind": "valid",
+      "path": "valid_eligible_cache_hit.json",
+      "scenario": "eligible_cache_hit",
+      "sha256": "9887e91e7d68a1262992507943e2df6a8ce20a73fa07886f2a77782249cad0d7"
+    },
+    {
+      "expected_invariant": "dangling result ref",
+      "kind": "invalid_mutation",
+      "mutation": "dangling final result ref",
+      "path": "invalid_dangling_final_result_ref.json",
+      "scenario": "success",
+      "sha256": "eaa921bafae87e56eb800c689b6fe19f3a7b6f86f3dc1039e902f7bcba2aac0a"
+    },
+    {
+      "expected_invariant": "only a cache hit may be served",
+      "kind": "invalid_mutation",
+      "mutation": "stale cache served",
+      "path": "invalid_stale_cache_served.json",
+      "scenario": "stale_cache",
+      "sha256": "082fd5d41fe7fade9c6b5b554f5794deb27918cb3b2da196b5fda79aa0bcf5af"
+    },
+    {
+      "expected_invariant": "empty requires",
+      "kind": "invalid_mutation",
+      "mutation": "no-provider mislabeled empty",
+      "path": "invalid_no_provider_mislabeled_empty.json",
+      "scenario": "no_provider",
+      "sha256": "6143dfaa23c0a0743d3b8568a225947912d8d141df57629b3bded6256b678d5a"
+    },
+    {
+      "expected_invariant": "cites ineligible artifact",
+      "kind": "invalid_mutation",
+      "mutation": "ineligible artifact cited",
+      "path": "invalid_ineligible_artifact_cited.json",
+      "scenario": "success",
+      "sha256": "4587b754b66b3398e3c4f407aa3e35bc34a40e0b3c053ecb0e52ff3e769692e6"
+    },
+    {
+      "expected_invariant": "spend does not reconcile",
+      "kind": "invalid_mutation",
+      "mutation": "spend mismatch",
+      "path": "invalid_spend_mismatch.json",
+      "scenario": "success",
+      "sha256": "6cd2f68c791f944ea425af62bc5d02c165e3f3ebf3a00b4bb47566eaf7128f32"
+    },
+    {
+      "expected_invariant": "failed acceptance cannot fabricate",
+      "kind": "invalid_mutation",
+      "mutation": "fabricated persistence receipt",
+      "path": "invalid_fabricated_persistence_receipt.json",
+      "scenario": "persistence_failure",
+      "sha256": "988d5c70b5e3199692d2dca34c0b9b514a589fb0c5dfe83701f97582ed7ce7d2"
+    },
+    {
+      "expected_invariant": "incorrect exact RRF",
+      "kind": "invalid_mutation",
+      "mutation": "incorrect exact RRF input",
+      "path": "invalid_incorrect_exact_rrf_input.json",
+      "scenario": "success",
+      "sha256": "212b81e2ea04ba6f07267f39f59621ba2f444cb608c98938b155cb866eb0d668"
+    },
+    {
+      "expected_invariant": "success retains final rejection",
+      "kind": "invalid_mutation",
+      "mutation": "fallback success keeps final rejection",
+      "path": "invalid_fallback_success_keeps_final_rejection.json",
+      "scenario": "fallback_success",
+      "sha256": "abe5b3c78638487b3498667d4dd6c04a50405f4890b0a397a54f895e2a68fc35"
+    },
+    {
+      "expected_invariant": "artifact disposition differs",
+      "kind": "invalid_mutation",
+      "mutation": "link lies about artifact disposition",
+      "path": "invalid_link_lies_about_artifact_disposition.json",
+      "scenario": "partial_failure",
+      "sha256": "f95cc45912a552f90c3104833808dba1d84e428ecabbae3e9cf1ec2bb24e9058"
+    },
+    {
+      "expected_invariant": "artifact does not belong to cluster",
+      "kind": "invalid_mutation",
+      "mutation": "citation crosses cluster boundary",
+      "path": "invalid_citation_crosses_cluster_boundary.json",
+      "scenario": "success",
+      "sha256": "f697c15c4ffb631e97d3d51781cac5708d433c0b1d7033b4ec19ff65b5c88ad0"
+    },
+    {
+      "expected_invariant": "selected extractor does not produce",
+      "kind": "invalid_mutation",
+      "mutation": "selected extractor did not produce artifact",
+      "path": "invalid_selected_extractor_did_not_produce_artifact.json",
+      "scenario": "success",
+      "sha256": "f38b54288ef99110baeec453a3cd4ec8c96244608b6446b622cbee34df67dce4"
+    },
+    {
+      "expected_invariant": "ranking policy differs",
+      "kind": "invalid_mutation",
+      "mutation": "fusion uses wrong ranking policy",
+      "path": "invalid_fusion_uses_wrong_ranking_policy.json",
+      "scenario": "success",
+      "sha256": "bf22a9e65d385b0e564bfddd24ed2e6835952f8f605c04e17490105e657d119e"
+    },
+    {
+      "expected_invariant": "base ranking does not follow",
+      "kind": "invalid_mutation",
+      "mutation": "exact RRF order is reversed",
+      "path": "invalid_exact_rrf_order_is_reversed.json",
+      "scenario": "success",
+      "sha256": "82c261342dfa911011b66838bb52e2b25d1a96a9fa5f83f4f79658b72e68040b"
+    },
+    {
+      "expected_invariant": "caller result projection differs",
+      "kind": "invalid_mutation",
+      "mutation": "caller output diverges from accepted cluster",
+      "path": "invalid_caller_output_diverges_from_accepted_cluster.json",
+      "scenario": "success",
+      "sha256": "60636ec96323e4176929f8a92639159377b2d26bcfcacafc31612b7a2a0f57da"
+    },
+    {
+      "expected_invariant": "cache hit must be served from origin attempts",
+      "kind": "invalid_mutation",
+      "mutation": "cache hit drops origin attempts",
+      "path": "invalid_cache_hit_drops_origin_attempts.json",
+      "scenario": "eligible_cache_hit",
+      "sha256": "8d95b8070ca3f08e056a75ea20ca2d2a38b80a63ebcbd3ffd3f7da178b7b27fd"
+    },
+    {
+      "expected_invariant": "cache origin spend does not reconcile",
+      "kind": "invalid_mutation",
+      "mutation": "cache hit misstates origin spend",
+      "path": "invalid_cache_hit_misstates_origin_spend.json",
+      "scenario": "eligible_cache_hit",
+      "sha256": "da81b0a474ad8b4f230c05d8f77ba7b88c8472a1bedbf03860b3e45ad720c8aa"
+    },
+    {
+      "expected_invariant": "cache hit age must be bounded and eligible",
+      "kind": "invalid_mutation",
+      "mutation": "cache hit is older than the accepted maximum",
+      "path": "invalid_cache_hit_is_older_than_the_accepted_maximum.json",
+      "scenario": "eligible_cache_hit",
+      "sha256": "9847b87afef0594f4a618c3ee2552c1f842c798b22516fc13c8a1ebd51446993"
+    },
+    {
+      "expected_invariant": "cluster declarations and composition links are not bijective",
+      "kind": "invalid_mutation",
+      "mutation": "cluster omits its composition link",
+      "path": "invalid_cluster_omits_its_composition_link.json",
+      "scenario": "success",
+      "sha256": "1e5c704174d9b4a72aa391abf3fd2a201ce69cf2feb4b0d40b91980ee52fc4a9"
+    },
+    {
+      "expected_invariant": "output ranking must equal base ranking",
+      "kind": "invalid_mutation",
+      "mutation": "output order changes without a selection policy",
+      "path": "invalid_output_order_changes_without_a_selection_policy.json",
+      "scenario": "success",
+      "sha256": "e4ebbc5d22184240973c2dd1a4619e9b502069ad9df3aa4e8ebaf6b8c884eda9"
+    }
+  ],
+  "invalid_mutation_count": 19,
+  "manifest_version": 1,
+  "source_issue": 65,
+  "sources": [
+    {
+      "path": "docs/prototypes/retrieval-evidence-envelope/README.md",
+      "sha256": "a6d109868caeeee6ae1d17b599059df6dc9f3484fb3628b2030088a904bf990c"
+    },
+    {
+      "path": "docs/prototypes/retrieval-evidence-envelope/NOTES.md",
+      "sha256": "215c63822e7f42a7b3fe95bf6f4e01fa0d4ad7644cdbb3923fc7da19669549e1"
+    },
+    {
+      "path": "docs/prototypes/retrieval-evidence-envelope/envelope.schema.json",
+      "sha256": "bfe785a674f29f15f3eac8614f5afc4d15e2bcb8dff8cf7b3f4188d58bc74fcd"
+    },
+    {
+      "path": "docs/prototypes/retrieval-evidence-envelope/model.py",
+      "sha256": "654bc13e2eaae3e8ed6244048926f2ec4214682be9ac6be61550b0931ab9a142"
+    },
+    {
+      "path": "docs/prototypes/retrieval-evidence-envelope/prototype.py",
+      "sha256": "7f1f3926f9ca40f97cce806611a417e37efc897d9d682e713fae948f2ec7dd34"
+    },
+    {
+      "path": "docs/prototypes/retrieval-evidence-envelope/vectors.json",
+      "sha256": "11471782112e6f9460630eaa9b3e681f423a693a5dfb692006a745f33437046a"
+    }
+  ],
+  "valid_vector_count": 8
+}

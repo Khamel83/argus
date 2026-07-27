@@ -1,0 +1,19 @@
+{
+  "input": {
+    "caller": "maya",
+    "hard_page_limit": 20,
+    "soft_page_limit": 10,
+    "url": "https://docs.example"
+  },
+  "name": "capture_site",
+  "response_value": {
+    "structured_content": {
+      "result": "## Capture Site\nStatus: running | Run: mcp-workflow-http\nTarget: https://docs.example"
+    },
+    "text": "## Capture Site\nStatus: running | Run: mcp-workflow-http\nTarget: https://docs.example"
+  },
+  "status": {
+    "is_error": false
+  },
+  "transport": "mcp"
+}

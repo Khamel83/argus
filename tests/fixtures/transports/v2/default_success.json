@@ -1,0 +1,21 @@
+{
+  "input": {
+    "code": "success",
+    "outcome": "success"
+  },
+  "name": "accepted_operation:success",
+  "response_value": {
+    "contract_version": "2.0",
+    "error": null,
+    "outcome": "success",
+    "request_id": "fixture-success",
+    "result": {
+      "fixture": true
+    }
+  },
+  "status": {
+    "http_status": 200,
+    "mcp_is_error": false
+  },
+  "transport": "http+mcp"
+}

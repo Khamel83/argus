@@ -1,0 +1,14 @@
+{
+  "input": {
+    "path": "/fixture/outside/secret.txt"
+  },
+  "name": "read_pack_file",
+  "response_value": {
+    "data_root": "/fixture/root",
+    "error": "path is outside the Argus data root"
+  },
+  "status": {
+    "is_error": false
+  },
+  "transport": "mcp"
+}

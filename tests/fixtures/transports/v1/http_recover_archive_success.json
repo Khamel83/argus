@@ -1,0 +1,33 @@
+{
+  "input": {
+    "url": "https://dead.example/article"
+  },
+  "name": "POST /api/recover-url",
+  "response_value": {
+    "budget_warnings": [],
+    "cached": false,
+    "mode": "recovery",
+    "query": "https://dead.example/article",
+    "results": [
+      {
+        "domain": "archive.ph",
+        "egress": null,
+        "machine": null,
+        "provider": null,
+        "score": 0.8,
+        "score_attribution": {},
+        "snippet": "Recovered content",
+        "title": "Archived article",
+        "url": "https://archive.ph/example"
+      }
+    ],
+    "search_run_id": null,
+    "session_id": null,
+    "total_results": 1,
+    "traces": []
+  },
+  "status": {
+    "http_status": 200
+  },
+  "transport": "http"
+}

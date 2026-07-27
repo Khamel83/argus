@@ -1,0 +1,21 @@
+{
+  "input": {
+    "caller": "maya-share",
+    "free_only": false,
+    "include_attribution": false,
+    "max_results": 5,
+    "mode": "discovery",
+    "query": "canonical"
+  },
+  "name": "search_web",
+  "response_value": {
+    "structured_content": {
+      "result": "## Search Results: 'canonical'\nMode: discovery | 1 results | via duckduckgo\n\n**Budget warnings:** brave nearing monthly limit\n\n1. **Canonical result**\n   URL: https://example.com/canonical\n   Egress: residential\n   From HTTP\n"
+    },
+    "text": "## Search Results: 'canonical'\nMode: discovery | 1 results | via duckduckgo\n\n**Budget warnings:** brave nearing monthly limit\n\n1. **Canonical result**\n   URL: https://example.com/canonical\n   Egress: residential\n   From HTTP\n"
+  },
+  "status": {
+    "is_error": false
+  },
+  "transport": "mcp"
+}
