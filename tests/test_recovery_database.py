@@ -789,6 +789,7 @@ def test_migrated_postgres_matches_checked_in_schema_contract(
     migrated_postgres_ledger,
 ):
     from argus.recovery.database import (
+        EXPECTED_SCHEMA_HEAD,
         build_argus_schema_contract,
         expected_argus_schema_manifest,
     )
@@ -800,7 +801,7 @@ def test_migrated_postgres_matches_checked_in_schema_contract(
     finally:
         connection.close()
 
-    assert actual == expected_argus_schema_manifest()
+    assert actual == expected_argus_schema_manifest(EXPECTED_SCHEMA_HEAD)
 
 
 def test_restore_verifier_rejects_production_target_before_connecting():

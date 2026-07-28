@@ -101,6 +101,13 @@ jobs:
             --schema-head 0009_retrieval_evidence \
             --check
 
+      - name: Upload PostgreSQL schema contract
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: argus-schema-0009
+          path: argus/recovery/argus_schema_0009.json
+          if-no-files-found: error
+
       - name: Run PostgreSQL ledger contract
         run: |
           uv run --python 3.12 pytest \
@@ -128,13 +135,6 @@ jobs:
         with:
           name: provider-readiness-postgres
           path: artifacts/provider-readiness-postgres.json
-          if-no-files-found: error
-
-      - name: Upload PostgreSQL schema contract
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: argus-schema-0009
-          path: argus/recovery/argus_schema_0009.json
           if-no-files-found: error
 
   production-config:

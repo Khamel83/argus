@@ -2300,7 +2300,7 @@ def test_postgresql_direct_overrun_settlement_is_idempotent(
     assert outcomes[0].reservation_overrun == 0.01
 
 
-def test_postgresql_parallel_monthly_rollover_preserves_history(
+def test_postgresql_parallel_spend_does_not_reset_without_authoritative_boundary(
     postgres_ledger_url,
 ):
     from alembic import command
@@ -2335,8 +2335,8 @@ def test_postgresql_parallel_monthly_rollover_preserves_history(
         ProviderName.PARALLEL,
         budget_limit=5000.0,
     )
-    assert summary["argus_estimated_charge"] == 0.0
-    assert summary["remaining"] == 5000.0
+    assert summary["argus_estimated_charge"] == 1.0
+    assert summary["remaining"] == 4999.0
     attempts = repository.list_attempts(provider=ProviderName.PARALLEL)
     assert [attempt.attempt_id for attempt in attempts] == [
         reservation.attempt_id
