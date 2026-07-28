@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import func, select
 
 from argus.models import ProviderName, ProviderTrace, SearchQuery
+from tests.planning_helpers import execute_with_plan, execution_context
 
 
 def _repository(tmp_path):
@@ -778,7 +779,8 @@ async def test_executor_reserves_before_provider_and_settles_known_charge(tmp_pa
         spend_repository=repository,
     )
 
-    await executor.execute(
+    await execute_with_plan(
+        executor,
         SearchQuery(
             query="paid",
             caller="maya",
@@ -826,7 +828,8 @@ async def test_executor_leaves_uncertain_charge_when_provider_acceptance_crashes
     )
 
     with pytest.raises(BaseException, match="process death"):
-        await executor.execute(
+        await execute_with_plan(
+            executor,
             SearchQuery(query="paid", caller="maya"),
             [ProviderName.BRAVE],
         )
@@ -866,7 +869,8 @@ async def test_executor_leaves_timeout_outcome_uncertain(tmp_path):
         spend_repository=repository,
     )
 
-    outcome = await executor.execute(
+    outcome = await execute_with_plan(
+        executor,
         SearchQuery(query="paid", caller="maya"),
         [ProviderName.BRAVE],
     )
@@ -914,7 +918,8 @@ async def test_valyu_reserves_capped_per_result_worst_case_before_call(tmp_path)
         spend_repository=repository,
     )
 
-    outcome = await executor.execute(
+    outcome = await execute_with_plan(
+        executor,
         SearchQuery(
             query="costly",
             max_results=20,
@@ -933,7 +938,7 @@ async def test_valyu_reserves_capped_per_result_worst_case_before_call(tmp_path)
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("max_results", "expected_reservation"),
-    [(1, 0.0015), (20, 0.03), (100, 0.03)],
+    [(1, 0.0015), (20, 0.03), (50, 0.03)],
 )
 async def test_valyu_reservation_estimate_respects_result_cap(
     tmp_path,
@@ -972,7 +977,8 @@ async def test_valyu_reservation_estimate_respects_result_cap(
         spend_repository=repository,
     )
 
-    await executor.execute(
+    await execute_with_plan(
+        executor,
         SearchQuery(
             query="bounded",
             max_results=max_results,
@@ -1029,7 +1035,8 @@ async def test_valyu_only_settles_when_charge_is_authoritatively_reported(
         spend_repository=repository,
     )
 
-    await executor.execute(
+    await execute_with_plan(
+        executor,
         SearchQuery(
             query="authoritative",
             max_results=20,
@@ -1077,7 +1084,8 @@ async def test_valyu_authoritative_overrun_preserves_estimate_and_records_delta(
         budget_tracker=budgets,
         spend_repository=repository,
     )
-    await executor.execute(
+    await execute_with_plan(
+        executor,
         SearchQuery(
             query="overrun",
             max_results=20,
@@ -1097,38 +1105,27 @@ async def test_valyu_authoritative_overrun_preserves_estimate_and_records_delta(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("max_results", [0, -1])
-async def test_invalid_valyu_result_count_fails_before_reservation_or_call(
+async def test_invalid_valyu_result_count_is_rejected_before_reservation_or_call(
     tmp_path,
     max_results,
 ):
-    from argus.broker.budgets import BudgetTracker
-    from argus.broker.execution import ProviderExecutor
-    from argus.broker.health import HealthTracker
+    from argus.broker.planning import InvalidRetrievalPlan
 
     repository = _repository(tmp_path)
     from unittest.mock import MagicMock
 
     provider = MagicMock()
     provider.is_available.return_value = True
-    executor = ProviderExecutor(
-        providers={ProviderName.VALYU: provider},
-        health_tracker=HealthTracker(),
-        budget_tracker=BudgetTracker(),
-        spend_repository=repository,
+    query = SearchQuery(
+        query="invalid",
+        max_results=max_results,
+        providers=[ProviderName.VALYU],
+        caller="maya",
     )
 
-    outcome = await executor.execute(
-        SearchQuery(
-            query="invalid",
-            max_results=max_results,
-            providers=[ProviderName.VALYU],
-            caller="maya",
-        ),
-        [ProviderName.VALYU],
-    )
+    with pytest.raises(InvalidRetrievalPlan):
+        execution_context(query)
 
-    assert outcome.traces[0].status == "skipped"
-    assert "invalid conservative charge estimate" in outcome.traces[0].error
     provider.search.assert_not_called()
     assert repository.list_attempts(provider=ProviderName.VALYU) == []
 
@@ -1159,7 +1156,8 @@ async def test_nonfinite_paid_estimate_fails_before_provider_call(
         spend_repository=repository,
     )
 
-    outcome = await executor.execute(
+    outcome = await execute_with_plan(
+        executor,
         SearchQuery(
             query="invalid estimate",
             providers=[ProviderName.BRAVE],
@@ -1283,7 +1281,8 @@ async def test_parallel_uses_monthly_credit_reservation_without_provider_network
         budget_tracker=budgets,
         spend_repository=repository,
     )
-    await executor.execute(
+    await execute_with_plan(
+        executor,
         SearchQuery(
             query="monthly parallel",
             caller="maya",
@@ -1333,7 +1332,8 @@ async def test_nonfinite_actual_charge_keeps_reservation_uncertain_without_legac
         spend_repository=repository,
     )
 
-    outcome = await executor.execute(
+    outcome = await execute_with_plan(
+        executor,
         SearchQuery(
             query="invalid actual",
             max_results=20,

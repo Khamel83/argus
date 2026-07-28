@@ -4,6 +4,7 @@ import uuid
 
 from argus.broker.cache import SearchCache
 from argus.broker.dedupe import dedupe_results
+from argus.broker.planning import RetrievalPlan
 from argus.broker.ranking import reciprocal_rank_fusion
 from argus.logging import get_logger
 from argus.models import SearchQuery, SearchResponse
@@ -26,8 +27,12 @@ class SearchResultPipeline:
         self,
         query: SearchQuery,
         run_id: str,
+        *,
+        plan: RetrievalPlan,
         compute_attribution: bool = False,
     ) -> SearchResponse | None:
+        if not isinstance(plan, RetrievalPlan):
+            raise TypeError("validated retrieval plan is required")
         cached = self._cache.get(
             query.query,
             query.mode,
@@ -44,10 +49,14 @@ class SearchResultPipeline:
         query: SearchQuery,
         provider_results: dict,
         traces: list,
+        *,
+        plan: RetrievalPlan,
         budget_warnings: list | None = None,
         compute_attribution: bool = False,
         persist_legacy: bool = True,
     ) -> SearchResponse:
+        if not isinstance(plan, RetrievalPlan):
+            raise TypeError("validated retrieval plan is required")
         merged = reciprocal_rank_fusion(provider_results, compute_attribution=compute_attribution)
         final_results = dedupe_results(merged)[: query.max_results]
         response = SearchResponse(

@@ -8,6 +8,7 @@ from typing import Dict, List, Mapping, Sequence
 
 from argus.broker.budgets import BudgetTracker, PROVIDER_TIERS
 from argus.broker.health import HealthExecutionClaim, HealthTracker
+from argus.broker.planning import RetrievalPlan
 from argus.broker.reachability import ReachabilityClaim, ReachabilityMatrix
 from argus.config import EgressNode
 from argus.logging import get_logger
@@ -125,7 +126,19 @@ class ProviderExecutor:
         self,
         query: SearchQuery,
         provider_order: Sequence[ProviderName],
+        *,
+        plan: RetrievalPlan,
+        operation_deadline: float | None = None,
+        provider_phase_deadline: float | None = None,
     ) -> ProviderExecutionOutcome:
+        if not isinstance(plan, RetrievalPlan):
+            raise TypeError("validated retrieval plan is required")
+        if (
+            not isinstance(operation_deadline, (int, float))
+            or not isinstance(provider_phase_deadline, (int, float))
+            or provider_phase_deadline > operation_deadline
+        ):
+            raise ValueError("validated operation deadlines are required")
         traces: List[ProviderTrace] = []
         provider_results: Dict[str, List[SearchResult]] = {}
         live_providers_used = 0

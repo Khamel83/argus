@@ -13,6 +13,7 @@ from argus.models import (
     SearchResult,
 )
 from argus.providers.base import ProbeCapability
+from tests.planning_helpers import execute_with_plan
 
 
 @dataclass
@@ -349,8 +350,8 @@ async def test_paid_provider_recovers_after_bounded_reachability_half_open(monke
         caller="test",
     )
 
-    first = await executor.execute(query, [ProviderName.BRAVE])
-    immediate = await executor.execute(query, [ProviderName.BRAVE])
+    first = await execute_with_plan(executor, query, [ProviderName.BRAVE])
+    immediate = await execute_with_plan(executor, query, [ProviderName.BRAVE])
 
     assert first.traces[0].status == "error"
     assert immediate.traces[0].error == ("health: temporarily_disabled_after_failures")
@@ -364,7 +365,7 @@ async def test_paid_provider_recovers_after_bounded_reachability_half_open(monke
         latency_ms=25,
     )
 
-    recovered = await executor.execute(query, [ProviderName.BRAVE])
+    recovered = await execute_with_plan(executor, query, [ProviderName.BRAVE])
 
     assert recovered.traces[0].status == "success"
     assert provider.calls == 2
@@ -406,7 +407,7 @@ async def test_paid_pre_call_gates_do_not_consume_half_open_claim(monkeypatch, g
             "over pace, conserving monthly credits",
         )
 
-    await executor.execute(query, order)
+    await execute_with_plan(executor, query, order)
 
     assert health.get_health(ProviderName.BRAVE).half_open_claimed is False
     assert matrix.peek_best_egress(ProviderName.BRAVE) == "local"
@@ -421,7 +422,8 @@ async def test_reservation_skip_does_not_consume_half_open_claim(monkeypatch):
     executor, health, matrix, spend, _ = _half_open_paid_executor(monkeypatch, provider)
     spend.reserve.side_effect = BudgetExhaustedError("exhausted")
 
-    await executor.execute(
+    await execute_with_plan(
+        executor,
         SearchQuery(query="reservation", caller="test"),
         [ProviderName.BRAVE],
     )
@@ -439,7 +441,8 @@ async def test_second_claim_failure_rolls_back_health_and_no_call_reservation(
     executor, health, matrix, spend, _ = _half_open_paid_executor(monkeypatch, provider)
     matrix.claim_egress = lambda provider, egress: None
 
-    outcome = await executor.execute(
+    outcome = await execute_with_plan(
+        executor,
         SearchQuery(query="claim race", caller="test"),
         [ProviderName.BRAVE],
     )
@@ -471,7 +474,8 @@ async def test_cancelled_paid_invocation_releases_half_open_claims(monkeypatch):
     provider = GateProvider(name=ProviderName.BRAVE)
     executor, health, matrix, _, _ = _half_open_paid_executor(monkeypatch, provider)
     first = asyncio.create_task(
-        executor.execute(
+        execute_with_plan(
+            executor,
             SearchQuery(query="cancel", caller="test"),
             [ProviderName.BRAVE],
         )
@@ -482,7 +486,8 @@ async def test_cancelled_paid_invocation_releases_half_open_claims(monkeypatch):
         await first
 
     release.set()
-    recovered = await executor.execute(
+    recovered = await execute_with_plan(
+        executor,
         SearchQuery(query="recover", caller="test"),
         [ProviderName.BRAVE],
     )
@@ -509,13 +514,15 @@ async def test_exactly_one_concurrent_paid_caller_claims_half_open(monkeypatch):
     provider = GateProvider(name=ProviderName.BRAVE)
     executor, _, _, _, _ = _half_open_paid_executor(monkeypatch, provider)
     first = asyncio.create_task(
-        executor.execute(
+        execute_with_plan(
+            executor,
             SearchQuery(query="first", caller="test"),
             [ProviderName.BRAVE],
         )
     )
     await entered.wait()
-    second = await executor.execute(
+    second = await execute_with_plan(
+        executor,
         SearchQuery(query="second", caller="test"),
         [ProviderName.BRAVE],
     )
@@ -1154,7 +1161,8 @@ class TestBudgets:
             budget_tracker=budget,
         )
 
-        outcome = await executor.execute(
+        outcome = await execute_with_plan(
+            executor,
             SearchQuery(query="cost", providers=[ProviderName.VALYU]),
             [ProviderName.VALYU],
         )
@@ -1689,7 +1697,8 @@ class TestFreeOnly:
         )
 
         q = SearchQuery(query="test", free_only=True, max_results=10)
-        outcome = await executor.execute(
+        outcome = await execute_with_plan(
+            executor,
             q,
             [ProviderName.DUCKDUCKGO, ProviderName.BRAVE],
         )
@@ -1741,7 +1750,9 @@ class TestFreeOnly:
         )
 
         q = SearchQuery(query="test", free_only=False, max_results=10)
-        await executor.execute(q, [ProviderName.DUCKDUCKGO, ProviderName.BRAVE])
+        await execute_with_plan(
+            executor, q, [ProviderName.DUCKDUCKGO, ProviderName.BRAVE]
+        )
 
         assert free_provider.calls == 1
         assert paid_provider.calls == 1
@@ -1821,7 +1832,7 @@ async def test_executor_routes_to_remote_when_local_blocked():
     rp_module.RemoteProviderClient = FakeRemote
     try:
         query = SearchQuery(query="test", mode=SearchMode.DISCOVERY, max_results=5)
-        outcome = await executor.execute(query, [ProviderName.YAHOO])
+        outcome = await execute_with_plan(executor, query, [ProviderName.YAHOO])
     finally:
         rp_module.RemoteProviderClient = original
 
@@ -1863,7 +1874,8 @@ async def test_executor_does_not_delegate_paid_provider_to_egress_worker():
     )
 
     with patch("argus.broker.remote_provider.RemoteProviderClient") as remote:
-        outcome = await executor.execute(
+        outcome = await execute_with_plan(
+            executor,
             SearchQuery(query="paid", caller="maya"),
             [ProviderName.BRAVE],
         )
@@ -1885,7 +1897,7 @@ async def test_executor_skips_when_no_egress_available():
     executor, local_provider = _make_executor(reachability=matrix, egress_nodes={})
 
     query = SearchQuery(query="test", mode=SearchMode.DISCOVERY, max_results=5)
-    outcome = await executor.execute(query, [ProviderName.YAHOO])
+    outcome = await execute_with_plan(executor, query, [ProviderName.YAHOO])
 
     assert outcome.live_providers_used == 0
     skipped = [t for t in outcome.traces if t.status == "skipped"]
@@ -1915,6 +1927,6 @@ async def test_executor_uses_local_when_reachable():
     local_provider.search = patched_search
 
     query = SearchQuery(query="test", mode=SearchMode.DISCOVERY, max_results=5)
-    await executor.execute(query, [ProviderName.YAHOO])
+    await execute_with_plan(executor, query, [ProviderName.YAHOO])
 
     assert local_provider.calls == 1

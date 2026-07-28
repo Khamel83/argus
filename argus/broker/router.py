@@ -1,12 +1,21 @@
 """Search broker router."""
 
 import os
+import time
+from datetime import datetime, timezone
+from collections.abc import Callable
 from typing import Optional
 
 from argus.broker.budgets import BudgetTracker
 from argus.broker.cache import SearchCache
-from argus.broker.execution import ProviderExecutor
+from argus.broker.execution import ProviderExecutor, caller_tier_cap
 from argus.broker.health import HealthTracker
+from argus.broker.planning import (
+    EgressPreference,
+    ExecutionPolicySnapshot,
+    RetrievalControls,
+    resolve_plan,
+)
 from argus.broker.pipeline import SearchResultPipeline
 from argus.broker.policies import resolve_routing
 from argus.broker.reachability import ReachabilityMatrix
@@ -35,11 +44,15 @@ class SearchBroker:
         egress_nodes: dict[str, EgressNode] | None = None,
         spend_repository=None,
         authority_capability: object | None = None,
+        utc_clock: Callable[[], datetime] | None = None,
+        monotonic_clock: Callable[[], float] | None = None,
     ):
         from argus.authority import broker_construction_allowed
 
         broker_construction_allowed(authority_capability=authority_capability)
         self._config = get_config()
+        self._utc_clock = utc_clock or (lambda: datetime.now(timezone.utc))
+        self._monotonic_clock = monotonic_clock or time.monotonic
         self._providers = providers
         self._cache = cache or SearchCache()
         self._health = health_tracker or HealthTracker()
@@ -117,15 +130,7 @@ class SearchBroker:
         compute_attribution: bool = False,
         persist_legacy: bool = True,
     ) -> SearchResponse:
-        cache_run_id = os.urandom(8).hex()
-        cached = self._pipeline.get_cached(
-            query,
-            cache_run_id,
-            compute_attribution=compute_attribution,
-        )
-        if cached is not None:
-            logger.debug("Cache hit (mode=%s)", query.mode)
-            return cached
+        monotonic_started_at = self._monotonic_clock()
 
         # Phase 4/5: Residential Search Policy
         res_policy = self._config.residential.policy
@@ -138,12 +143,52 @@ class SearchBroker:
             ):
                 query.metadata["prefer_residential"] = True
 
+        cap = caller_tier_cap(query.caller, self._config.caller_tier_caps)
+        egress_preference = (
+            EgressPreference.PREFER_RESIDENTIAL
+            if query.metadata.get("prefer_residential") is True
+            else EgressPreference.DEFAULT
+        )
+        plan = resolve_plan(
+            query,
+            RetrievalControls(),
+            compute_attribution,
+            ExecutionPolicySnapshot(
+                effective_max_provider_tier=3 if cap is None else cap,
+                egress_preference=egress_preference,
+            ),
+            self._utc_clock,
+        )
+        operation_deadline = monotonic_started_at + (plan.deadline_ms / 1_000)
+        provider_phase_deadline = max(
+            monotonic_started_at,
+            operation_deadline - 5.0,
+        )
+
+        cache_run_id = os.urandom(8).hex()
+        cached = self._pipeline.get_cached(
+            query,
+            cache_run_id,
+            plan=plan,
+            compute_attribution=compute_attribution,
+        )
+        if cached is not None:
+            logger.debug("Cache hit (mode=%s)", query.mode)
+            return cached
+
         provider_order = resolve_routing(query.mode, query.providers)
-        outcome = await self._executor.execute(query, provider_order)
+        outcome = await self._executor.execute(
+            query,
+            provider_order,
+            plan=plan,
+            operation_deadline=operation_deadline,
+            provider_phase_deadline=provider_phase_deadline,
+        )
         response = self._pipeline.build_response(
             query,
             outcome.provider_results,
             outcome.traces,
+            plan=plan,
             budget_warnings=outcome.budget_pace_warnings,
             compute_attribution=compute_attribution,
             persist_legacy=persist_legacy,
