@@ -41,6 +41,10 @@ from argus.operations.status import (
     create_operational_status,
     safe_correlation_id,
 )
+from argus.operations.accepted import (
+    AcceptedOperationRegistration,
+    AcceptedOperationService,
+)
 from argus.persistence.search_ledger import (
     SearchLedgerRepository,
     create_search_ledger_repository,
@@ -121,6 +125,8 @@ def create_app(
     search_repository: Optional[SearchLedgerRepository] = None,
     spend_repository=None,
     operational_status: OperationalStatusService | None = None,
+    accepted_operation_service: AcceptedOperationService | None = None,
+    accepted_operation_registration: AcceptedOperationRegistration | None = None,
 ) -> FastAPI:
     auth_config = AuthConfig.from_env()
     production_mode = (
@@ -129,6 +135,10 @@ def create_app(
     from argus.config import get_config
 
     startup_config = get_config()
+    registration = accepted_operation_registration or AcceptedOperationRegistration()
+    registration.validate(
+        getattr(startup_config, "accepted_operation_authority", "legacy")
+    )
     production_postgresql = production_mode and startup_config.db_url.startswith(
         ("postgresql:", "postgresql+")
     )
@@ -590,6 +600,23 @@ def create_app(
         lifespan=lifespan_with_probes,
     )
     app.state.operational_status = operational_status or create_operational_status()
+    app.state.evidence_authority_enabled = (
+        getattr(startup_config, "accepted_operation_authority", "legacy")
+        == "evidence"
+    )
+    from argus.capabilities import http_capability_manifest
+
+    app.state.capability_manifest = http_capability_manifest(
+        evidence_enabled=app.state.evidence_authority_enabled
+    )
+    from argus.api.security import TransportSecurityGuard
+
+    app.state.transport_security_guard = TransportSecurityGuard.from_environment()
+    app.state.transport_security_guard.validate_startup(
+        production=production_mode,
+        bind_host=getattr(startup_config, "host", "127.0.0.1"),
+        has_bearer_auth=auth_config.has_caller_key(),
+    )
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request: Request, exc: RequestValidationError):
@@ -623,6 +650,21 @@ def create_app(
         return ledger_repository
 
     app.state.get_search_repository = get_search_repository
+    current_accepted_operation_service = accepted_operation_service
+
+    def get_accepted_operation_service() -> AcceptedOperationService:
+        nonlocal current_accepted_operation_service
+        if current_accepted_operation_service is None:
+            from argus.api.security import RetrievalSessionAuthority
+
+            current_accepted_operation_service = AcceptedOperationService(
+                broker_provider=app.state.get_broker,
+                repository_provider=app.state.get_search_repository,
+                session_authority=RetrievalSessionAuthority.from_environment(),
+            )
+        return current_accepted_operation_service
+
+    app.state.get_accepted_operation_service = get_accepted_operation_service
     current_spend_repository = spend_repository
 
     def get_spend_repository():
@@ -644,18 +686,25 @@ def create_app(
     app.state.rate_limiter = rate_limiter or _build_rate_limiter()
     app.state.auth_config = auth_config
 
-    if auth_config.cors_origins:
+    if app.state.transport_security_guard.allowed_origins:
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=list(auth_config.cors_origins),
+            allow_origins=list(app.state.transport_security_guard.allowed_origins),
             allow_methods=["GET", "POST", "OPTIONS"],
             allow_headers=[
                 "Authorization",
                 "Content-Type",
-                "X-API-Key",
-                "X-Admin-API-Key",
-                "X-Provider-Reconciliation-Key",
+                "MCP-Protocol-Version",
+                "Mcp-Session-Id",
+                "Last-Event-ID",
                 "X-Request-Id",
+            ],
+            expose_headers=[
+                "Mcp-Session-Id",
+                "X-Request-ID",
+                "X-Argus-Deployment-ID",
+                "Argus-Contract-Version",
+                "Retry-After",
             ],
         )
 
@@ -773,6 +822,15 @@ def create_app(
                 request.method,
                 f"{max(1, min(status_code // 100, 5))}xx",
             )
+
+    @app.middleware("http")
+    async def transport_security_middleware(request: Request, call_next):
+        rejection = await request.app.state.transport_security_guard.rejection(
+            request
+        )
+        if rejection is not None:
+            return rejection
+        return await call_next(request)
 
     app.include_router(search_router, prefix="/api")
     app.include_router(health_router, prefix="/api")

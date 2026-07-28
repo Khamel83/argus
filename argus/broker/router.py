@@ -268,6 +268,10 @@ class SearchBroker:
             session_id=session_id,
         )
 
+    def session_exists(self, session_id: str) -> bool:
+        """Check a durable retrieval session without creating it."""
+        return self._session_service.session_exists(session_id)
+
     def get_provider_status(self, provider: ProviderName) -> dict:
         """Explicit compatibility projection of the readiness snapshot."""
         readiness = getattr(self, "_readiness", None)
