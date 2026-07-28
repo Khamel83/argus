@@ -7,11 +7,13 @@ import json
 import os
 import uuid
 from argparse import ArgumentParser
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Barrier, Event, Thread, current_thread
 from urllib.parse import urlparse
+
+from sqlalchemy import select
 
 from argus.broker.readiness import (
     ExecutionContext,
@@ -22,7 +24,10 @@ from argus.broker.readiness import (
     ReadinessScope,
 )
 from argus.models import ProviderName
-from argus.persistence.readiness import create_readiness_repository
+from argus.persistence.readiness import (
+    ProviderReadinessObservationRow,
+    create_readiness_repository,
+)
 from argus.persistence.provider_spend import (
     BudgetExhaustedError,
     ProviderSpendRepository,
@@ -390,6 +395,69 @@ def main() -> None:
         probe_idempotency_key=probe_key,
     )
 
+    recurring_ref = f"recurring-terminal-{suffix}"
+    first.repository.record_terminal_exhaustion(
+        provider=ProviderName.SEARCHAPI,
+        account_fingerprint=scope.account_fingerprint,
+        recurring=True,
+        reset_at=first.repository.authority_now() + timedelta(hours=1),
+        evidence_ref=recurring_ref,
+    )
+    try:
+        legacy_spend.reserve(
+            provider=ProviderName.SEARCHAPI,
+            conservative_charge=0.01,
+            budget_limit=1.5,
+            caller_identity="postgres-ci-legacy",
+            caller_label="recurring-terminal-boundary",
+            idempotency_key=f"pg-recurring-terminal-denied-{suffix}",
+        )
+    except BudgetExhaustedError:
+        pass
+    else:
+        raise RuntimeError("unexpired recurring exhaustion allowed a reservation")
+    with first.repository._write_transaction() as session:
+        reset_boundary = first.repository.authority_now(session)
+        recurring_rows = list(session.scalars(
+            select(ProviderReadinessObservationRow)
+            .where(
+                ProviderReadinessObservationRow.provider
+                == ProviderName.SEARCHAPI.value,
+                ProviderReadinessObservationRow.dimension == "spend",
+                ProviderReadinessObservationRow.state == "exhausted",
+                ProviderReadinessObservationRow.evidence_ref == recurring_ref,
+            )
+            .with_for_update()
+        ))
+        if len(recurring_rows) != 4:
+            raise RuntimeError("recurring exhaustion did not cover all modes")
+        for row in recurring_rows:
+            row.expires_at = reset_boundary.replace(tzinfo=None)
+    reset_reservation = legacy_spend.reserve(
+        provider=ProviderName.SEARCHAPI,
+        conservative_charge=0.01,
+        budget_limit=1.5,
+        caller_identity="postgres-ci-legacy",
+        caller_label="recurring-terminal-boundary",
+        idempotency_key=f"pg-recurring-terminal-reset-{suffix}",
+    )
+    recurring_reset_modes = [
+        first.snapshot(
+            ProviderName.SEARCHAPI,
+            request_class=mode,
+        ).spend
+        for mode in ("discovery", "research", "recovery", "grounding")
+    ]
+    if recurring_reset_modes != ["uncertain"] * 4:
+        raise RuntimeError(
+            "reset reservation did not atomically materialize account uncertainty"
+        )
+    legacy_spend.settle(
+        reset_reservation.attempt_id,
+        actual_charge=0.0,
+        outcome="success",
+    )
+
     pre_terminal_reservation = legacy_spend.reserve(
         provider=ProviderName.SEARCHAPI,
         conservative_charge=0.1,
@@ -478,6 +546,7 @@ def main() -> None:
             "attested_fixture_probe_authorized": fixture_probe.allowed,
             "billable_probe_consumed": True,
             "direct_settlement_modes": direct_settlement_modes,
+            "recurring_reset_modes": recurring_reset_modes,
             "settle_authorize_race_blocked": settle_race_blocked,
             "terminal_precedence_modes": terminal_precedence_modes,
             "matched_uncertainty_modes": matched_modes,

@@ -197,6 +197,101 @@ def test_terminal_exhaustion_denies_reserve_and_survives_ordinary_settlement(
     ] == ["exhausted"] * 4
 
 
+def test_recurring_terminal_expiry_allows_atomic_account_wide_reserve(
+    tmp_path,
+):
+    from argus.broker.readiness import (
+        ProviderReadinessService,
+        ProviderRegistrationSpec,
+    )
+    from argus.persistence.provider_spend import (
+        BudgetExhaustedError,
+        ProviderSpendRepository,
+    )
+    from argus.persistence.readiness import (
+        ProviderReadinessObservationRow,
+        create_readiness_repository,
+    )
+    from argus.providers.fixture_attestation import build_fixture_attestation
+
+    readiness = create_readiness_repository(
+        f"sqlite:///{tmp_path / 'recurring-terminal-boundary.db'}"
+    )
+    service = ProviderReadinessService(repository=readiness)
+    fixture_ref, attestation = build_fixture_attestation(
+        ProviderName.BRAVE,
+        release="argus-1.6.2",
+        provider_contract="2026-07-27-v1",
+    )
+    service.register_provider(ProviderRegistrationSpec(
+        provider=ProviderName.BRAVE,
+        enabled=True,
+        configuration_fingerprint="recurring-boundary-config",
+        credential_version_fingerprint="recurring-boundary-credential",
+        account_fingerprint="recurring-boundary-account",
+        budget_limit=10.0,
+        durable_spend_repository=True,
+        release_revision="argus-1.6.2",
+        contract_version="2026-07-27-v1",
+        fixture_evidence_ref=fixture_ref,
+        fixture_attestation=attestation,
+    ))
+    spend = ProviderSpendRepository(readiness.session_factory)
+    reset_at = readiness.authority_now() + timedelta(hours=1)
+    readiness.record_terminal_exhaustion(
+        provider=ProviderName.BRAVE,
+        account_fingerprint="recurring-boundary-account",
+        recurring=True,
+        reset_at=reset_at,
+        evidence_ref="recurring-boundary:exhausted",
+    )
+
+    with pytest.raises(BudgetExhaustedError, match="terminal"):
+        spend.reserve(
+            provider=ProviderName.BRAVE,
+            conservative_charge=0.1,
+            budget_limit=10.0,
+            caller_identity="legacy-direct",
+            caller_label="recurring-boundary",
+            idempotency_key="recurring-boundary:before",
+        )
+    assert readiness.paid_attempt_count(ProviderName.BRAVE) == 0
+    assert [
+        service.snapshot(ProviderName.BRAVE, request_class=mode).spend
+        for mode in ("discovery", "research", "recovery", "grounding")
+    ] == ["exhausted"] * 4
+
+    with readiness._write_transaction() as session:
+        boundary = readiness.authority_now(session)
+        rows = list(session.scalars(
+            select(ProviderReadinessObservationRow).where(
+                ProviderReadinessObservationRow.provider
+                == ProviderName.BRAVE.value,
+                ProviderReadinessObservationRow.dimension == "spend",
+                ProviderReadinessObservationRow.state == "exhausted",
+            )
+        ))
+        assert len(rows) == 4
+        for row in rows:
+            row.expires_at = boundary.replace(tzinfo=None)
+
+    reservation = spend.reserve(
+        provider=ProviderName.BRAVE,
+        conservative_charge=0.1,
+        budget_limit=10.0,
+        caller_identity="legacy-direct",
+        caller_label="recurring-boundary",
+        idempotency_key="recurring-boundary:at",
+    )
+
+    assert reservation.status == "uncertain"
+    assert readiness.paid_attempt_count(ProviderName.BRAVE) == 1
+    assert [
+        service.snapshot(ProviderName.BRAVE, request_class=mode).spend
+        for mode in ("discovery", "research", "recovery", "grounding")
+    ] == ["uncertain"] * 4
+
+
 def test_unknown_outcome_never_expires_or_refunds_automatically(tmp_path):
     repository = _repository(tmp_path)
     reservation = repository.reserve(

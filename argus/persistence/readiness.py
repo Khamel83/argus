@@ -1429,9 +1429,14 @@ class ProviderReadinessRepository:
                 .with_for_update()
             )
             if current is not None:
+                current_is_active = (
+                    current.expires_at is None
+                    or now < _aware(current.expires_at)
+                )
                 if (
                     current.protected
                     and current.state == "exhausted"
+                    and current_is_active
                     and state != "exhausted"
                     and not replace_protected_exhausted
                 ):
