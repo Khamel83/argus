@@ -1,0 +1,1224 @@
+{
+  "schema_version": 1,
+  "migration_aliases": {
+    "exa": [
+      "published_date"
+    ],
+    "parallel": [
+      "excerpt",
+      "snippet"
+    ],
+    "searchapi": [
+      "organic"
+    ]
+  },
+  "providers": {
+    "searxng": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.searxng.org/dev/search_api.html#parameters"
+        },
+        "402": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.searxng.org/dev/search_api.html#parameters"
+        },
+        "403": {
+          "fixture": "error-403.json",
+          "source": "https://docs.searxng.org/dev/search_api.html#parameters",
+          "shape_source": "https://docs.searxng.org/dev/search_api.html#parameters"
+        },
+        "422": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.searxng.org/dev/search_api.html#parameters"
+        },
+        "429": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.searxng.org/dev/search_api.html#parameters"
+        },
+        "408_504": {
+          "fixture": "error-408_504.json",
+          "source": "https://docs.searxng.org/dev/search_api.html#parameters",
+          "shape_source": "https://docs.searxng.org/dev/search_api.html#parameters"
+        },
+        "5xx": {
+          "fixture": "error-5xx.json",
+          "source": "https://docs.searxng.org/dev/search_api.html#parameters",
+          "shape_source": "https://docs.searxng.org/dev/search_api.html#parameters"
+        }
+      },
+      "signals": {
+        "typed": [
+          "warnings"
+        ]
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.searxng",
+      "status_cases": {
+        "policy_rejected_403": "error-403.json",
+        "provider_unavailable_503": "error-5xx.json",
+        "timeout_504": "error-408_504.json"
+      }
+    },
+    "duckduckgo": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
+        },
+        "402": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
+        },
+        "403": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
+        },
+        "422": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
+        },
+        "429": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
+        },
+        "408_504": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
+        },
+        "5xx": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
+        }
+      },
+      "signals": {
+        "reason": "The public DDGS result and exception contracts do not expose successful-response usage or rate metadata.",
+        "source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
+      },
+      "native_boundary": {
+        "success": "native-success.json",
+        "empty": "native-empty.json",
+        "unexpected": "native-unexpected.json",
+        "library_failure": "native-library-failure.json",
+        "rate_limit": "native-rate-limit.json",
+        "timeout": "native-timeout.json"
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "state": "not_documented",
+          "reason": "DDGS RatelimitException exposes no retry or reset metadata; no metadata semantics are inferred.",
+          "kind": "library_exception",
+          "source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "library_exception",
+          "exception": "RatelimitException",
+          "source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
+        },
+        "transport_timeout": {
+          "kind": "library_exception",
+          "exception": "TimeoutException",
+          "source": "https://github.com/deedy5/ddgs/blob/main/src/ddgs/exceptions.py#L1-L13"
+        }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.duckduckgo",
+      "status_cases": {}
+    },
+    "yahoo": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": {
+          "reason": "Yahoo primary documentation does not define a supported HTML search API or authoritative valid-empty response contract, so an unmatched page remains a parse failure.",
+          "source": "https://help.yahoo.com/kb/filter-refine-search-results-yahoo-sln2206.html"
+        },
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://help.yahoo.com/kb/filter-refine-search-results-yahoo-sln2206.html"
+        },
+        "402": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://help.yahoo.com/kb/filter-refine-search-results-yahoo-sln2206.html"
+        },
+        "403": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://help.yahoo.com/kb/filter-refine-search-results-yahoo-sln2206.html"
+        },
+        "422": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://help.yahoo.com/kb/filter-refine-search-results-yahoo-sln2206.html"
+        },
+        "429": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://help.yahoo.com/kb/filter-refine-search-results-yahoo-sln2206.html"
+        },
+        "408_504": {
+          "fixture": "error-408_504.json",
+          "source": "https://www.rfc-editor.org/rfc/rfc9110.html#name-504-gateway-timeout",
+          "shape_source": "https://www.rfc-editor.org/rfc/rfc9110.html#name-504-gateway-timeout"
+        },
+        "5xx": {
+          "fixture": "error-5xx.json",
+          "source": "https://www.rfc-editor.org/rfc/rfc9110.html#name-503-service-unavailable",
+          "shape_source": "https://www.rfc-editor.org/rfc/rfc9110.html#name-503-service-unavailable"
+        }
+      },
+      "signals": {
+        "reason": "Yahoo primary documentation does not document successful-response usage or rate metadata for an HTML search API.",
+        "source": "https://help.yahoo.com/kb/filter-refine-search-results-yahoo-sln2206.html"
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.yahoo",
+      "status_cases": {
+        "provider_unavailable_503": "error-5xx.json",
+        "timeout_504": "error-408_504.json"
+      }
+    },
+    "github": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "fixture": "error-401.json",
+          "source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors",
+          "shape_source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"
+        },
+        "402": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"
+        },
+        "403": {
+          "fixture": "error-403.json",
+          "source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors",
+          "shape_source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"
+        },
+        "422": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"
+        },
+        "429": {
+          "fixture": "error-429.json",
+          "source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors",
+          "shape_source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"
+        },
+        "408_504": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"
+        },
+        "5xx": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#rate-limit-errors"
+        }
+      },
+      "signals": {
+        "typed": [
+          "request_id",
+          "rate_limit.remaining",
+          "rate_limit.reset_at"
+        ]
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.github",
+      "status_cases": {
+        "authentication_rejected_401": "error-401.json",
+        "policy_rejected_403": "error-403.json",
+        "rate_limited_429": "error-429.json",
+        "rate_limited_403": "error-rate-limit-403.json"
+      }
+    },
+    "wolfram": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://products.wolframalpha.com/llm-api/documentation#errors"
+        },
+        "402": {
+          "state": "not_documented",
+          "reason": "Wolfram quota exhaustion evidence is incomplete and not documented: the primary LLM API error reference documents 400, 403, and 501 but does not document a quota exhaustion status, native response shape, provider code, request metadata, or reset signal.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#exact-hermetic-failure-fixtures",
+          "primary_source": "https://products.wolframalpha.com/llm-api/documentation#errors"
+        },
+        "403": {
+          "fixture": "error-403.json",
+          "source": "https://products.wolframalpha.com/llm-api/documentation#errors",
+          "shape_source": "https://products.wolframalpha.com/llm-api/documentation#errors"
+        },
+        "422": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://products.wolframalpha.com/llm-api/documentation#errors"
+        },
+        "429": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://products.wolframalpha.com/llm-api/documentation#errors"
+        },
+        "408_504": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://products.wolframalpha.com/llm-api/documentation#errors"
+        },
+        "5xx": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://products.wolframalpha.com/llm-api/documentation#errors"
+        }
+      },
+      "signals": {
+        "typed": [
+          "suggestions"
+        ]
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.wolfram",
+      "status_cases": {
+        "invalid_request_400": "error-400.json",
+        "authentication_rejected_403": "error-403.json",
+        "empty_501": "status-501.json"
+      }
+    },
+    "brave": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "fixture": "error-401.json",
+          "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses",
+          "shape_source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"
+        },
+        "402": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"
+        },
+        "403": {
+          "fixture": "error-403.json",
+          "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses",
+          "shape_source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"
+        },
+        "422": {
+          "fixture": "error-422.json",
+          "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses",
+          "shape_source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"
+        },
+        "429": {
+          "fixture": "error-429.json",
+          "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses",
+          "shape_source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"
+        },
+        "408_504": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"
+        },
+        "5xx": {
+          "fixture": "error-5xx.json",
+          "source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses",
+          "shape_source": "https://api-dashboard.search.brave.com/api-reference/web/search#responses"
+        }
+      },
+      "signals": {
+        "typed": [
+          "rate_limit.remaining",
+          "rate_limit.reset_at"
+        ]
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.brave",
+      "status_cases": {
+        "invalid_request_400": "error-400.json",
+        "authentication_rejected_401": "error-401.json",
+        "policy_rejected_403": "error-403.json",
+        "invalid_request_422": "error-422.json",
+        "rate_limited_429": "error-429.json",
+        "provider_unavailable_503": "error-5xx.json"
+      }
+    },
+    "tavily": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "fixture": "error-401.json",
+          "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes",
+          "shape_source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"
+        },
+        "402": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"
+        },
+        "403": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"
+        },
+        "422": {
+          "fixture": "error-422.json",
+          "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes",
+          "shape_source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"
+        },
+        "429": {
+          "fixture": "error-429.json",
+          "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes",
+          "shape_source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"
+        },
+        "408_504": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"
+        },
+        "5xx": {
+          "fixture": "error-5xx.json",
+          "source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes",
+          "shape_source": "https://docs.tavily.com/documentation/api-reference/introduction#error-codes"
+        }
+      },
+      "signals": {
+        "typed": [
+          "request_id",
+          "usage.count"
+        ]
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.tavily",
+      "status_cases": {
+        "authentication_rejected_401": "error-401.json",
+        "invalid_request_422": "error-422.json",
+        "rate_limited_429": "error-429.json",
+        "provider_unavailable_503": "error-5xx.json"
+      }
+    },
+    "exa": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "fixture": "error-401.json",
+          "source": "https://exa.ai/docs/reference/error-codes#error-response-structure",
+          "shape_source": "https://exa.ai/docs/reference/error-codes#error-response-structure"
+        },
+        "402": {
+          "fixture": "error-402.json",
+          "source": "https://exa.ai/docs/reference/error-codes#error-response-structure",
+          "shape_source": "https://exa.ai/docs/reference/error-codes#error-response-structure"
+        },
+        "403": {
+          "fixture": "error-403.json",
+          "source": "https://exa.ai/docs/reference/error-codes#error-response-structure",
+          "shape_source": "https://exa.ai/docs/reference/error-codes#error-response-structure"
+        },
+        "422": {
+          "fixture": "error-422.json",
+          "source": "https://exa.ai/docs/reference/error-codes#error-response-structure",
+          "shape_source": "https://exa.ai/docs/reference/error-codes#error-response-structure"
+        },
+        "429": {
+          "fixture": "error-429.json",
+          "source": "https://exa.ai/docs/reference/error-codes#error-response-structure",
+          "shape_source": "https://exa.ai/docs/reference/error-codes#error-response-structure"
+        },
+        "408_504": {
+          "fixture": "error-408_504.json",
+          "source": "https://exa.ai/docs/reference/error-codes#error-response-structure",
+          "shape_source": "https://exa.ai/docs/reference/error-codes#error-response-structure"
+        },
+        "5xx": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://exa.ai/docs/reference/error-codes#error-response-structure"
+        }
+      },
+      "signals": {
+        "typed": [
+          "request_id",
+          "usage.cost_usd"
+        ]
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.exa",
+      "status_cases": {
+        "invalid_request_400": "error-400.json",
+        "authentication_rejected_401": "error-401.json",
+        "balance_exhausted_402": "error-402.json",
+        "policy_rejected_403": "error-403.json",
+        "invalid_request_422": "error-422.json",
+        "rate_limited_429": "error-429.json",
+        "timeout_504": "error-408_504.json"
+      }
+    },
+    "linkup": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "fixture": "error-401.json",
+          "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses",
+          "shape_source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"
+        },
+        "402": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"
+        },
+        "403": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"
+        },
+        "422": {
+          "fixture": "error-422.json",
+          "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses",
+          "shape_source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"
+        },
+        "429": {
+          "fixture": "error-429.json",
+          "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses",
+          "shape_source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"
+        },
+        "408_504": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"
+        },
+        "5xx": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"
+        }
+      },
+      "signals": {
+        "reason": "The primary Linkup search response schema does not expose successful-response usage or rate metadata.",
+        "source": "https://docs.linkup.so/pages/documentation/endpoints/search/reference#responses"
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.linkup",
+      "status_cases": {
+        "authentication_rejected_401": "error-401.json",
+        "invalid_request_422": "error-422.json",
+        "rate_limited_429": "error-429.json"
+      }
+    },
+    "parallel": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "fixture": "error-401.json",
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"
+        },
+        "402": {
+          "fixture": "error-402.json",
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"
+        },
+        "403": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"
+        },
+        "422": {
+          "fixture": "error-422.json",
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"
+        },
+        "429": {
+          "fixture": "error-429.json",
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"
+        },
+        "408_504": {
+          "fixture": "error-408_504.json",
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"
+        },
+        "5xx": {
+          "fixture": "error-5xx.json",
+          "source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format",
+          "shape_source": "https://docs.parallel.ai/resources/warnings-and-errors#error-response-format"
+        }
+      },
+      "signals": {
+        "typed": [
+          "request_id",
+          "usage.count"
+        ]
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.parallel",
+      "status_cases": {
+        "authentication_rejected_401": "error-401.json",
+        "balance_exhausted_402": "error-402.json",
+        "timeout_408": "error-408_504.json",
+        "invalid_request_422": "error-422.json",
+        "rate_limited_429": "error-429.json",
+        "provider_unavailable_500": "error-500.json",
+        "provider_unavailable_502": "error-502.json",
+        "provider_unavailable_503": "error-5xx.json"
+      }
+    },
+    "serper": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "fixture": "error-401.json",
+          "source": "https://serper.dev/#api",
+          "shape_source": "https://serper.dev/#api"
+        },
+        "402": {
+          "fixture": "error-402.json",
+          "source": "https://serper.dev/#api",
+          "shape_source": "https://serper.dev/#api"
+        },
+        "403": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://serper.dev/#api"
+        },
+        "422": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://serper.dev/#api"
+        },
+        "429": {
+          "fixture": "error-429.json",
+          "source": "https://serper.dev/#api",
+          "shape_source": "https://serper.dev/#api"
+        },
+        "408_504": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://serper.dev/#api"
+        },
+        "5xx": {
+          "fixture": "error-5xx.json",
+          "source": "https://serper.dev/#api",
+          "shape_source": "https://serper.dev/#api"
+        }
+      },
+      "signals": {
+        "reason": "The public Serper API contract does not expose a verifiable successful-response usage or rate field.",
+        "source": "https://serper.dev/#api"
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.serper",
+      "status_cases": {
+        "success_200": "status-success-200.json",
+        "balance_exhausted_200": "error-402.json",
+        "authentication_rejected_401": "error-401.json",
+        "rate_limited_429": "error-429.json",
+        "provider_unavailable_503": "error-5xx.json"
+      }
+    },
+    "you": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "fixture": "error-401.json",
+          "source": "https://you.com/docs/error-handling/error-code-reference#in-depth",
+          "shape_source": "https://you.com/docs/error-handling/error-code-reference#in-depth"
+        },
+        "402": {
+          "fixture": "error-402.json",
+          "source": "https://you.com/docs/error-handling/error-code-reference#in-depth",
+          "shape_source": "https://you.com/docs/error-handling/error-code-reference#in-depth"
+        },
+        "403": {
+          "fixture": "error-403.json",
+          "source": "https://you.com/docs/error-handling/error-code-reference#in-depth",
+          "shape_source": "https://you.com/docs/error-handling/error-code-reference#in-depth"
+        },
+        "422": {
+          "fixture": "error-422.json",
+          "source": "https://you.com/docs/error-handling/error-code-reference#in-depth",
+          "shape_source": "https://you.com/docs/error-handling/error-code-reference#in-depth"
+        },
+        "429": {
+          "fixture": "error-429.json",
+          "source": "https://you.com/docs/error-handling/error-code-reference#in-depth",
+          "shape_source": "https://you.com/docs/error-handling/error-code-reference#in-depth"
+        },
+        "408_504": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://you.com/docs/error-handling/error-code-reference#in-depth"
+        },
+        "5xx": {
+          "fixture": "error-5xx.json",
+          "source": "https://you.com/docs/error-handling/error-code-reference#in-depth",
+          "shape_source": "https://you.com/docs/error-handling/error-code-reference#in-depth"
+        }
+      },
+      "signals": {
+        "typed": [
+          "request_id"
+        ]
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.you",
+      "status_cases": {
+        "authentication_rejected_401": "error-401.json",
+        "balance_exhausted_402": "error-402.json",
+        "policy_rejected_403": "error-403.json",
+        "invalid_request_422": "error-422.json",
+        "rate_limited_429": "error-429.json",
+        "provider_unavailable_503": "error-5xx.json"
+      }
+    },
+    "valyu": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "fixture": "error-401.json",
+          "source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling",
+          "shape_source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling"
+        },
+        "402": {
+          "fixture": "error-402.json",
+          "source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling",
+          "shape_source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling"
+        },
+        "403": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling"
+        },
+        "422": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling"
+        },
+        "429": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling"
+        },
+        "408_504": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling"
+        },
+        "5xx": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://docs.valyu.ai/sdk/python-sdk/search#error-handling"
+        }
+      },
+      "signals": {
+        "typed": [
+          "transaction_id",
+          "usage.cost_usd"
+        ]
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.valyu",
+      "status_cases": {
+        "success_200": "status-success-200.json",
+        "balance_exhausted_200": "error-402.json",
+        "authentication_rejected_401": "error-401.json"
+      }
+    },
+    "searchapi": {
+      "contract_version": "2026-07-27-v1",
+      "fixtures": {
+        "success": "success.json",
+        "empty": "empty.json",
+        "malformed": "malformed.json",
+        "usage_rate": "usage_rate.json",
+        "freshness": "freshness.json"
+      },
+      "failures": {
+        "401": {
+          "fixture": "error-401.json",
+          "source": "https://www.searchapi.io/docs/google#api-errors",
+          "shape_source": "https://www.searchapi.io/docs/google#api-errors"
+        },
+        "402": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://www.searchapi.io/docs/google#api-errors"
+        },
+        "403": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://www.searchapi.io/docs/google#api-errors"
+        },
+        "422": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://www.searchapi.io/docs/google#api-errors"
+        },
+        "429": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://www.searchapi.io/docs/google#api-errors"
+        },
+        "408_504": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://www.searchapi.io/docs/google#api-errors"
+        },
+        "5xx": {
+          "state": "not_documented",
+          "reason": "Provider-native evidence for this failure class is not documented in the checked primary contract; no semantics are inferred.",
+          "source": "docs/research/2026-07-27-provider-health-probe-matrix.md#search-provider-matrix",
+          "primary_source": "https://www.searchapi.io/docs/google#api-errors"
+        }
+      },
+      "signals": {
+        "typed": [
+          "request_id"
+        ]
+      },
+      "common_cases": {
+        "rate_limit_with_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {
+            "retry-after": "60"
+          },
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "rate_limit_without_metadata": {
+          "kind": "http_response",
+          "status_code": 429,
+          "headers": {},
+          "body": {},
+          "source": "https://www.rfc-editor.org/rfc/rfc6585.html#section-4"
+        },
+        "transport_timeout": {
+          "kind": "transport_exception",
+          "exception": "ReadTimeout",
+          "source": "https://www.python-httpx.org/exceptions/#the-exception-hierarchy"
+        }
+      },
+      "status_schema": "docs/research/2026-07-27-provider-status-contract.json#providers.searchapi",
+      "status_cases": {
+        "authentication_rejected_401": "error-401.json"
+      }
+    }
+  }
+}

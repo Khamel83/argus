@@ -1,0 +1,12 @@
+{
+  "transport": {
+    "status_code": 422,
+    "headers": {}
+  },
+  "body": {
+    "error": {
+      "message": "Request validation failed",
+      "detail": {}
+    }
+  }
+}

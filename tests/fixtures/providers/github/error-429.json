@@ -1,0 +1,13 @@
+{
+  "transport": {
+    "status_code": 429,
+    "headers": {
+      "retry-after": "60"
+    }
+  },
+  "body": {
+    "message": "API rate limit exceeded",
+    "documentation_url": "https://docs.github.com/rest/using-the-rest-api/troubleshooting-the-rest-api",
+    "status": "429"
+  }
+}

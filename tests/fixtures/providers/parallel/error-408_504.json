@@ -1,0 +1,11 @@
+{
+  "transport": {
+    "status_code": 408,
+    "headers": {}
+  },
+  "body": {
+    "error": {
+      "detail": {}
+    }
+  }
+}

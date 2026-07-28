@@ -1,0 +1,12 @@
+{
+  "transport": {
+    "status_code": 401,
+    "headers": {}
+  },
+  "body": {
+    "error": {
+      "message": "Invalid or missing credentials",
+      "detail": {}
+    }
+  }
+}

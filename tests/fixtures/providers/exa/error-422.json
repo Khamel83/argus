@@ -1,0 +1,10 @@
+{
+  "transport": {
+    "status_code": 422,
+    "headers": {}
+  },
+  "body": {
+    "error": "Request validation failed",
+    "requestId": "exa-422-request"
+  }
+}

@@ -87,6 +87,7 @@ class ProviderTrace:
     budget_remaining: Optional[float] = None
     credit_info: Optional[dict] = None  # raw credit/rate-limit data from provider
     egress: str = "local"  # "local" | egress node name e.g. "oci-dev"
+    http_status: Optional[int] = None
 
 
 @dataclass

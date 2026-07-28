@@ -4,7 +4,7 @@ API: https://www.searchapi.io/api/v1/search?engine=google
 """
 
 import time
-from typing import List, Tuple
+from typing import List
 from urllib.parse import urlparse
 
 import httpx
@@ -14,11 +14,11 @@ from argus.logging import get_logger
 from argus.models import (
     ProviderName,
     ProviderStatus,
-    ProviderTrace,
     SearchResult,
     SearchQuery,
 )
 from argus.providers.base import BaseProvider
+from argus.broker.provider_evidence import ProviderSearchBatch
 
 logger = get_logger("providers.searchapi")
 
@@ -43,49 +43,51 @@ class SearchApiProvider(BaseProvider):
             return ProviderStatus.UNAVAILABLE_MISSING_KEY
         return ProviderStatus.ENABLED
 
-    async def search(self, query: SearchQuery) -> Tuple[List[SearchResult], ProviderTrace]:
+    async def search(self, query: SearchQuery) -> ProviderSearchBatch:
         start = time.monotonic()
         params = {
             "engine": "google",
             "q": query.query,
-            "num": min(query.max_results, 100),
+            "num": min(query.max_results, 10),
             "api_key": self._config.api_key,
         }
+        params.update(self._freshness_params(query))
+        request_evidence = self._request_evidence(
+            query,
+            timeout_seconds=self._attempt_timeout(query),
+            provider_request_material=self._canonical_request_material(
+                {key: value for key, value in params.items() if key != "api_key"}
+            ),
+        )
 
+        resp = None
         try:
-            async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as client:
+            async with httpx.AsyncClient(
+                timeout=self._attempt_timeout(query)
+            ) as client:
                 resp = await client.get(SEARCHAPI_ENDPOINT, params=params)
-                resp.raise_for_status()
+                native_failure = self._response_failure_batch(
+                    resp, started_at=start, request_evidence=request_evidence
+                )
+                if native_failure is not None:
+                    return native_failure
                 data = resp.json()
 
-            results = self._normalize(data, query.max_results)
-            latency_ms = int((time.monotonic() - start) * 1000)
-            credit_info = {}
-            for hdr in ("X-RateLimit-Remaining", "X-Rate-Limit-Remaining"):
-                if hdr in resp.headers:
-                    credit_info[hdr] = resp.headers[hdr]
-            if "search_metadata" in data:
-                metadata = data["search_metadata"]
-                if isinstance(metadata, dict):
-                    for key in ("id", "status", "created_at", "processed_at"):
-                        if key in metadata:
-                            credit_info[f"search_metadata.{key}"] = metadata[key]
-
-            return results, ProviderTrace(
-                provider=self.name,
-                status="success",
-                results_count=len(results),
-                latency_ms=latency_ms,
-                credit_info=credit_info or None,
+            return self._normalized_batch(
+                data,
+                query,
+                started_at=start,
+                request_evidence=request_evidence,
+                http_status=resp.status_code,
+                response_headers=self._response_headers(resp),
             )
         except Exception as exc:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("SearchApi search failed: %s", exc)
-            return [], ProviderTrace(
-                provider=self.name,
-                status="error",
-                latency_ms=latency_ms,
-                error=str(exc),
+            logger.warning("SearchApi search failed: %s", type(exc).__name__)
+            return self._failure_batch(
+                exc,
+                started_at=start,
+                request_evidence=request_evidence,
+                observed_status=self._response_status(resp),
             )
 
     def _normalize(self, data: dict, max_results: int) -> List[SearchResult]:
@@ -95,18 +97,20 @@ class SearchApiProvider(BaseProvider):
             url = item.get("link") or item.get("url") or ""
             if not url:
                 continue
-            results.append(SearchResult(
-                url=url,
-                title=item.get("title", ""),
-                snippet=item.get("snippet") or item.get("description", ""),
-                domain=urlparse(url).netloc,
-                provider=self.name,
-                score=0.0,
-                raw_rank=item.get("position", i),
-                metadata={
-                    "position": item.get("position", i),
-                    "displayed_link": item.get("displayed_link", ""),
-                    "date": item.get("date", ""),
-                },
-            ))
+            results.append(
+                SearchResult(
+                    url=url,
+                    title=item.get("title", ""),
+                    snippet=item.get("snippet") or item.get("description", ""),
+                    domain=urlparse(url).netloc,
+                    provider=self.name,
+                    score=0.0,
+                    raw_rank=item.get("position", i),
+                    metadata={
+                        "position": item.get("position", i),
+                        "displayed_link": item.get("displayed_link", ""),
+                        "date": item.get("date", ""),
+                    },
+                )
+            )
         return results

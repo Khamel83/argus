@@ -1,0 +1,10 @@
+{
+  "headers": {
+    "X-RateLimit-Remaining": "9",
+    "X-RateLimit-Reset": "1785200000",
+    "X-GitHub-Request-Id": "github-usage"
+  },
+  "body": {
+    "items": []
+  }
+}

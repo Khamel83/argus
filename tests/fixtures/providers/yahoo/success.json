@@ -1,0 +1,9 @@
+{
+  "results": [
+    {
+      "url": "https://example.test/yahoo",
+      "title": "Yahoo result",
+      "snippet": "fixture snippet"
+    }
+  ]
+}

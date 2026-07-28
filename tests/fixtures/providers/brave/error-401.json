@@ -1,0 +1,10 @@
+{
+  "transport": {
+    "status_code": 401,
+    "headers": {}
+  },
+  "body": {
+    "type": "ErrorResponse",
+    "error": {}
+  }
+}

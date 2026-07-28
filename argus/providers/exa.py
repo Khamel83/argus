@@ -5,7 +5,7 @@ API: https://api.exa.ai/search
 """
 
 import time
-from typing import List, Tuple
+from typing import List
 
 import httpx
 
@@ -14,11 +14,11 @@ from argus.logging import get_logger
 from argus.models import (
     ProviderName,
     ProviderStatus,
-    ProviderTrace,
     SearchResult,
     SearchQuery,
 )
 from argus.providers.base import BaseProvider
+from argus.broker.provider_evidence import ProviderSearchBatch
 
 logger = get_logger("providers.exa")
 
@@ -43,7 +43,7 @@ class ExaProvider(BaseProvider):
             return ProviderStatus.UNAVAILABLE_MISSING_KEY
         return ProviderStatus.ENABLED
 
-    async def search(self, query: SearchQuery) -> Tuple[List[SearchResult], ProviderTrace]:
+    async def search(self, query: SearchQuery) -> ProviderSearchBatch:
         start = time.monotonic()
 
         headers = {
@@ -52,38 +52,51 @@ class ExaProvider(BaseProvider):
         }
         payload = {
             "query": query.query,
-            "num_results": min(query.max_results, 10),
+            "numResults": min(query.max_results, 10),
             "type": "auto",
+            "contents": {
+                "highlights": {
+                    "maxCharacters": 500,
+                },
+            },
         }
+        payload.update(self._freshness_params(query))
+        request_evidence = self._request_evidence(
+            query,
+            timeout_seconds=self._attempt_timeout(query),
+            provider_request_material=self._canonical_request_material(payload),
+        )
 
+        resp = None
         try:
-            async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as client:
+            async with httpx.AsyncClient(
+                timeout=self._attempt_timeout(query)
+            ) as client:
                 resp = await client.post(EXA_API_BASE, json=payload, headers=headers)
-                resp.raise_for_status()
+                native_failure = self._response_failure_batch(
+                    resp, started_at=start, request_evidence=request_evidence
+                )
+                if native_failure is not None:
+                    return native_failure
                 data = resp.json()
 
-            raw_results = data.get("results", [])
-            results = self._normalize(raw_results)
-            latency_ms = int((time.monotonic() - start) * 1000)
-
-            trace = ProviderTrace(
-                provider=self.name,
-                status="success",
-                results_count=len(results),
-                latency_ms=latency_ms,
+            return self._normalized_batch(
+                data,
+                query,
+                started_at=start,
+                request_evidence=request_evidence,
+                http_status=resp.status_code,
+                response_headers=self._response_headers(resp),
             )
-            return results, trace
 
         except Exception as e:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("Exa search failed: %s", e)
-            trace = ProviderTrace(
-                provider=self.name,
-                status="error",
-                latency_ms=latency_ms,
-                error=str(e),
+            logger.warning("Exa search failed: %s", type(e).__name__)
+            return self._failure_batch(
+                e,
+                started_at=start,
+                request_evidence=request_evidence,
+                observed_status=self._response_status(resp),
             )
-            return [], trace
 
     def _normalize(self, raw_results: list) -> List[SearchResult]:
         results = []
@@ -91,26 +104,29 @@ class ExaProvider(BaseProvider):
             url = item.get("url") or ""
             if not url:
                 continue
-            results.append(SearchResult(
-                url=url,
-                title=item.get("title", ""),
-                snippet=item.get("text", ""),
-                domain=self._extract_domain(url),
-                provider=self.name,
-                score=item.get("score", 0.0),
-                raw_rank=i,
-                metadata={
-                    "id": item.get("id", ""),
-                    "published_date": item.get("published_date", ""),
-                    "author": item.get("author", ""),
-                },
-            ))
+            results.append(
+                SearchResult(
+                    url=url,
+                    title=item.get("title", ""),
+                    snippet=item.get("text", ""),
+                    domain=self._extract_domain(url),
+                    provider=self.name,
+                    score=item.get("score", 0.0),
+                    raw_rank=i,
+                    metadata={
+                        "id": item.get("id", ""),
+                        "published_date": item.get("published_date", ""),
+                        "author": item.get("author", ""),
+                    },
+                )
+            )
         return results
 
     @staticmethod
     def _extract_domain(url: str) -> str:
         try:
             from urllib.parse import urlparse
+
             return urlparse(url).netloc
         except Exception:
             return ""

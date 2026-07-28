@@ -1,0 +1,16 @@
+{
+  "transport": {
+    "status_code": 200,
+    "headers": {}
+  },
+  "body": {
+    "organic": [
+      {
+        "link": "https://example.test/serper",
+        "title": "Serper result",
+        "snippet": "fixture snippet",
+        "position": 1
+      }
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "results": [
+    {
+      "url": "https://example.test/parallel",
+      "title": "Parallel result",
+      "excerpts": [
+        "fixture excerpt"
+      ],
+      "publish_date": "2026-07-27"
+    }
+  ],
+  "search_id": "parallel-search-1",
+  "session_id": "parallel-session-1",
+  "warnings": [],
+  "usage": {
+    "total_tokens": 12
+  }
+}

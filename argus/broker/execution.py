@@ -2,15 +2,25 @@
 
 import fnmatch
 import math
+import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Mapping, Sequence
 
 from argus.broker.budgets import BudgetTracker, PROVIDER_TIERS
 from argus.broker.health import HealthExecutionClaim, HealthTracker
 from argus.broker.planning import RetrievalPlan
+from argus.broker.provider_evidence import (
+    LegacyProviderBatchAdapter,
+    ProviderSearchBatch,
+    EgressType,
+    attempt_timeout_seconds,
+    failure_batch,
+    run_with_attempt_deadline,
+    with_trusted_provenance,
+)
 from argus.broker.reachability import ReachabilityClaim, ReachabilityMatrix
-from argus.config import EgressNode
+from argus.config import EgressNode, NodeConfig
 from argus.logging import get_logger
 from argus.models import ProviderName, ProviderTrace, SearchQuery, SearchResult
 from argus.providers.base import BaseProvider
@@ -85,6 +95,14 @@ class ProviderExecutionOutcome:
     provider_results: Dict[str, List[SearchResult]]
     live_providers_used: int
     budget_pace_warnings: List[str] = field(default_factory=list)
+    provider_batches: Dict[str, ProviderSearchBatch] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ProviderInvocationOutcome:
+    batch: ProviderSearchBatch
+    uncertain_charge: bool
+    compatibility_trace: ProviderTrace
 
 
 class ProviderExecutor:
@@ -98,6 +116,8 @@ class ProviderExecutor:
         egress_nodes: dict[str, EgressNode] | None = None,
         caller_tier_caps: Mapping[str, int] | None = None,
         spend_repository=None,
+        monotonic=time.monotonic,
+        node_config: NodeConfig | None = None,
     ):
         self._providers = providers
         self._health = health_tracker
@@ -106,6 +126,8 @@ class ProviderExecutor:
         self._egress_nodes = egress_nodes or {}
         self._caller_tier_caps = dict(caller_tier_caps or {})
         self._spend = spend_repository
+        self._monotonic = monotonic
+        self._node_config = node_config or NodeConfig()
 
     def _should_query_paid(self, provider: ProviderName, tier: int) -> tuple[bool, str]:
         """Decide whether to query a paid provider based on budget pace.
@@ -141,6 +163,7 @@ class ProviderExecutor:
             raise ValueError("validated operation deadlines are required")
         traces: List[ProviderTrace] = []
         provider_results: Dict[str, List[SearchResult]] = {}
+        provider_batches: Dict[str, ProviderSearchBatch] = {}
         live_providers_used = 0
         pace_warnings: List[str] = []
         attempt_scope = str(query.metadata.get("attempt_scope") or uuid.uuid4().hex)
@@ -264,7 +287,10 @@ class ProviderExecutor:
                     continue
                 try:
                     try:
-                        results, trace = await remote.search(query)
+                        legacy = await remote.search(query)
+                        batch = LegacyProviderBatchAdapter.from_legacy(legacy)
+                        results, trace = batch.results, batch.trace
+                        provider_batches[pname.value] = batch
                         uncertain = not self._trace_charge_known(pname, trace)
                     except Exception as exc:
                         # Network failures can occur after the provider accepted
@@ -273,7 +299,9 @@ class ProviderExecutor:
                         trace = ProviderTrace(
                             provider=pname,
                             status="error",
-                            error=str(exc),
+                            error=(
+                                f"remote provider request failed ({type(exc).__name__})"
+                            ),
                             egress=best_egress,
                         )
                         uncertain = True
@@ -395,9 +423,17 @@ class ProviderExecutor:
                 continue
 
             try:
-                results, trace, uncertain = await self._execute_provider(
-                    query, provider, pname
+                invocation = await self._execute_provider(
+                    query,
+                    provider,
+                    pname,
+                    plan=plan,
+                    provider_phase_deadline=provider_phase_deadline,
                 )
+                batch = invocation.batch
+                results, trace = batch.results, invocation.compatibility_trace
+                provider_batches[pname.value] = batch
+                uncertain = invocation.uncertain_charge
             finally:
                 self._release_invocation_claims(claims)
             if not uncertain or tier <= 0:
@@ -421,6 +457,7 @@ class ProviderExecutor:
             provider_results=provider_results,
             live_providers_used=live_providers_used,
             budget_pace_warnings=pace_warnings,
+            provider_batches=provider_batches,
         )
 
     def _claim_invocation(
@@ -444,9 +481,62 @@ class ProviderExecutor:
         query: SearchQuery,
         provider: BaseProvider,
         provider_name: ProviderName,
-    ) -> tuple[List[SearchResult], ProviderTrace, bool]:
+        *,
+        plan: RetrievalPlan | None = None,
+        provider_phase_deadline: float | None = None,
+    ) -> ProviderInvocationOutcome:
+        metadata = dict(query.metadata)
+        if plan is not None:
+            metadata["_retrieval_plan"] = plan
+            metadata["_freshness_window"] = plan.freshness
+        if provider_phase_deadline is not None:
+            metadata["_provider_phase_deadline"] = provider_phase_deadline
+            metadata["_monotonic"] = self._monotonic
+        adapter_query = replace(
+            query,
+            metadata=metadata,
+        )
         try:
-            results, trace = await provider.search(query)
+            if provider_phase_deadline is None:
+                raw_output = await provider.search(adapter_query)
+            else:
+                configured_timeout = float(
+                    getattr(getattr(provider, "_config", None), "timeout_seconds", 15)
+                )
+                # Refuse before constructing the provider coroutine, then enforce
+                # the same absolute deadline around the real adapter execution.
+                attempt_timeout_seconds(
+                    configured_timeout=configured_timeout,
+                    provider_phase_deadline=provider_phase_deadline,
+                    monotonic=self._monotonic,
+                )
+                raw_output = await run_with_attempt_deadline(
+                    provider.search(adapter_query),
+                    configured_timeout=configured_timeout,
+                    provider_phase_deadline=provider_phase_deadline,
+                    monotonic=self._monotonic,
+                )
+            if isinstance(raw_output, ProviderSearchBatch):
+                batch = raw_output
+            elif (
+                isinstance(raw_output, tuple)
+                and len(raw_output) == 2
+                and isinstance(raw_output[1], ProviderTrace)
+            ):
+                batch = LegacyProviderBatchAdapter.from_legacy(raw_output)
+            else:
+                raise TypeError("provider returned an invalid batch contract")
+            try:
+                trusted_egress = EgressType(self._node_config.egress_type)
+            except ValueError:
+                trusted_egress = EgressType.UNKNOWN
+            batch = with_trusted_provenance(
+                batch,
+                egress=trusted_egress,
+                machine=self._node_config.machine_name or None,
+            )
+            results = batch.results
+            trace = batch.trace
             if trace.status == "success":
                 self._health.record_success(provider_name)
                 self._reachability.update_probe(
@@ -478,16 +568,6 @@ class ProviderExecutor:
                             "reservation left uncertain"
                         )
 
-                # Inject provenance metadata if not already set by the provider
-                from argus.config import get_config
-
-                cfg = get_config()
-                for r in results:
-                    if "egress" not in r.metadata:
-                        r.metadata["egress"] = cfg.node.egress_type
-                    if "machine" not in r.metadata and cfg.node.machine_name:
-                        r.metadata["machine"] = cfg.node.machine_name
-
             elif trace.status == "error":
                 self._health.record_failure(provider_name)
                 self._reachability.update_probe(
@@ -497,12 +577,16 @@ class ProviderExecutor:
                     latency_ms=trace.latency_ms,
                     source="provider_execution",
                 )
-            return results, trace, not self._trace_charge_known(provider_name, trace)
-        except Exception as exc:
+            return ProviderInvocationOutcome(
+                batch=batch,
+                uncertain_charge=not self._trace_charge_known(provider_name, trace),
+                compatibility_trace=trace,
+            )
+        except Exception as error:
             logger.warning(
                 "Provider %s raised unhandled: %s",
                 provider_name,
-                type(exc).__name__,
+                type(error).__name__,
             )
             self._health.record_failure(provider_name)
             self._reachability.update_probe(
@@ -512,11 +596,8 @@ class ProviderExecutor:
                 latency_ms=0,
                 source="provider_execution",
             )
-            return (
-                [],
-                ProviderTrace(provider=provider_name, status="error", error=str(exc)),
-                True,
-            )
+            failure = failure_batch(provider_name, error)
+            return ProviderInvocationOutcome(failure, True, failure.trace)
 
     def _reserve_paid_attempt(
         self,

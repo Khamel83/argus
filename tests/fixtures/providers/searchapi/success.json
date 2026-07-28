@@ -1,0 +1,15 @@
+{
+  "organic_results": [
+    {
+      "link": "https://example.test/searchapi",
+      "title": "SearchAPI result",
+      "snippet": "fixture snippet",
+      "position": 1,
+      "date": "Jul 27, 2026"
+    }
+  ],
+  "search_metadata": {
+    "id": "searchapi-request-1",
+    "status": "Success"
+  }
+}

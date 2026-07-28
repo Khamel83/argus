@@ -1,0 +1,10 @@
+{
+  "transport": {
+    "status_code": 200,
+    "headers": {}
+  },
+  "body": {
+    "success": false,
+    "error": "Insufficient credits"
+  }
+}

@@ -16,6 +16,10 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 from argus.models import ProviderName, SearchMode, SearchQuery
+from argus.broker.provider_evidence import (
+    LegacyProviderBatchAdapter,
+    ProviderSearchBatch,
+)
 from argus.providers.base import BaseProvider
 
 
@@ -30,35 +34,45 @@ class ExecRequest(BaseModel):
 def _get_provider(provider_name: str) -> BaseProvider:
     """Instantiate the requested provider. Raises KeyError if unknown."""
     from argus.config import get_config
+
     cfg = get_config()
     name = ProviderName(provider_name)  # raises ValueError if unknown
 
     if name == ProviderName.YAHOO:
         from argus.providers.yahoo import YahooProvider
+
         return YahooProvider(cfg.yahoo)
     if name == ProviderName.DUCKDUCKGO:
         from argus.providers.duckduckgo import DuckDuckGoProvider
+
         return DuckDuckGoProvider(cfg.duckduckgo)
     if name == ProviderName.SEARXNG:
         from argus.providers.searxng import SearXNGProvider
+
         return SearXNGProvider(cfg.searxng)
     if name == ProviderName.GITHUB:
         from argus.providers.github import GitHubProvider
+
         return GitHubProvider(cfg.github)
     if name == ProviderName.WOLFRAM:
         from argus.providers.wolfram import WolframProvider
+
         return WolframProvider(cfg.wolfram)
     if name == ProviderName.BRAVE:
         from argus.providers.brave import BraveProvider
+
         return BraveProvider(cfg.brave)
     if name == ProviderName.TAVILY:
         from argus.providers.tavily import TavilyProvider
+
         return TavilyProvider(cfg.tavily)
     if name == ProviderName.EXA:
         from argus.providers.exa import ExaProvider
+
         return ExaProvider(cfg.exa)
     if name == ProviderName.SERPER:
         from argus.providers.serper import SerperProvider
+
         return SerperProvider(cfg.serper)
     raise ValueError(f"Provider {provider_name!r} not supported by worker")
 
@@ -92,7 +106,9 @@ def create_worker_app() -> FastAPI:
         try:
             provider_name = ProviderName(req.provider)
         except ValueError:
-            raise HTTPException(status_code=400, detail=f"Unknown provider: {req.provider!r}")
+            raise HTTPException(
+                status_code=400, detail=f"Unknown provider: {req.provider!r}"
+            )
         from argus.broker.budgets import PROVIDER_TIERS
 
         if PROVIDER_TIERS.get(provider_name, 99) > 0:
@@ -109,7 +125,13 @@ def create_worker_app() -> FastAPI:
             caller=req.caller,
         )
 
-        results, trace = await provider.search(query)
+        output = await provider.search(query)
+        batch = (
+            output
+            if isinstance(output, ProviderSearchBatch)
+            else LegacyProviderBatchAdapter.from_legacy(output)
+        )
+        results, trace = batch.results, batch.trace
 
         return {
             "results": [

@@ -1,0 +1,14 @@
+{
+  "results": [
+    {
+      "url": "https://example.test/searxng",
+      "title": "SearXNG result",
+      "content": "fixture snippet",
+      "score": 1.25,
+      "engines": [
+        "google"
+      ],
+      "publishedDate": "2026-07-27"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "transport": {
+    "status_code": 403,
+    "headers": {
+      "retry-after": "60",
+      "x-ratelimit-remaining": "0"
+    }
+  },
+  "body": {
+    "message": "API rate limit exceeded",
+    "documentation_url": "https://docs.github.com/rest/using-the-rest-api/rate-limits-for-the-rest-api",
+    "status": "403"
+  }
+}

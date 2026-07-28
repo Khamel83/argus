@@ -14,7 +14,43 @@ from argus.logging import get_logger
 
 logger = get_logger("extraction.firecrawl")
 
-FIRECRAWL_API_URL = "https://api.firecrawl.dev/v1/scrape"
+FIRECRAWL_API_URL = "https://api.firecrawl.dev/v2/scrape"
+
+
+def parse_firecrawl_v2_response(url: str, payload: object) -> ExtractedContent:
+    """Normalize the dormant v2 response without exposing native bodies."""
+    if not isinstance(payload, dict):
+        return ExtractedContent(url=url, error="firecrawl: malformed response")
+    if payload.get("success") is not True:
+        return ExtractedContent(url=url, error="firecrawl: extraction failed")
+    result = payload.get("data")
+    if not isinstance(result, dict):
+        return ExtractedContent(url=url, error="firecrawl: malformed response")
+    markdown = result.get("markdown")
+    if not isinstance(markdown, str) or len(markdown.strip()) < 50:
+        return ExtractedContent(url=url, error="firecrawl: content too short")
+    metadata = result.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    status = metadata.get("statusCode")
+    if (type(status) is int and status >= 400) or metadata.get("error"):
+        return ExtractedContent(url=url, error="firecrawl: extraction failed")
+    text = markdown.strip()
+    title = metadata.get("title") or result.get("title") or ""
+    author = metadata.get("author") or ""
+    if not isinstance(title, str):
+        title = ""
+    if not isinstance(author, str):
+        author = ""
+    return ExtractedContent(
+        url=url,
+        title=title[:1_000],
+        text=text,
+        author=author[:256],
+        date=None,
+        word_count=len(text.split()),
+        extractor=ExtractorName.FIRECRAWL,
+    )
 
 
 async def extract_firecrawl(url: str) -> ExtractedContent:
@@ -34,34 +70,21 @@ async def extract_firecrawl(url: str) -> ExtractedContent:
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    body = {"url": url}
+    body = {"url": url, "formats": ["markdown"]}
 
     try:
-        async with httpx.AsyncClient(timeout=config.firecrawl.timeout_seconds) as client:
+        async with httpx.AsyncClient(
+            timeout=config.firecrawl.timeout_seconds
+        ) as client:
             resp = await client.post(FIRECRAWL_API_URL, json=body, headers=headers)
             resp.raise_for_status()
             data = resp.json()
 
-        if not data.get("success"):
-            return ExtractedContent(url=url, error=f"firecrawl: {data.get('error', 'extraction failed')}")
-
-        result = data.get("data", {})
-        markdown = result.get("markdown", "")
-        if not markdown or len(markdown.strip()) < 50:
-            return ExtractedContent(url=url, error="firecrawl: content too short")
-
-        metadata = result.get("metadata", {})
-        title = metadata.get("title", "") or result.get("title", "")
-
-        return ExtractedContent(
-            url=url,
-            title=title,
-            text=markdown.strip(),
-            author=metadata.get("author", ""),
-            date=None,
-            word_count=len(markdown.split()),
-            extractor=ExtractorName.FIRECRAWL,
-        )
+        return parse_firecrawl_v2_response(url, data)
     except Exception as e:
-        logger.warning("Firecrawl extraction failed for %s: %s", url[:60], e)
-        return ExtractedContent(url=url, error=f"firecrawl: {e}")
+        logger.warning(
+            "Firecrawl extraction failed for %s: %s",
+            url[:60],
+            type(e).__name__,
+        )
+        return ExtractedContent(url=url, error="firecrawl: extraction failed")

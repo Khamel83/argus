@@ -6,7 +6,7 @@ AI-native search with high factual accuracy.
 """
 
 import time
-from typing import List, Tuple
+from typing import List
 
 import httpx
 
@@ -15,11 +15,11 @@ from argus.logging import get_logger
 from argus.models import (
     ProviderName,
     ProviderStatus,
-    ProviderTrace,
     SearchResult,
     SearchQuery,
 )
 from argus.providers.base import BaseProvider
+from argus.broker.provider_evidence import ProviderSearchBatch
 
 logger = get_logger("providers.linkup")
 
@@ -44,7 +44,7 @@ class LinkupProvider(BaseProvider):
             return ProviderStatus.UNAVAILABLE_MISSING_KEY
         return ProviderStatus.ENABLED
 
-    async def search(self, query: SearchQuery) -> Tuple[List[SearchResult], ProviderTrace]:
+    async def search(self, query: SearchQuery) -> ProviderSearchBatch:
         start = time.monotonic()
 
         headers = {
@@ -53,44 +53,47 @@ class LinkupProvider(BaseProvider):
         }
         body = {
             "q": query.query,
-            "depth": "standard",
+            "depth": "fast",
             "outputType": "searchResults",
+            "maxResults": min(query.max_results, 20),
         }
+        body.update(self._freshness_params(query))
+        request_evidence = self._request_evidence(
+            query,
+            timeout_seconds=self._attempt_timeout(query),
+            provider_request_material=self._canonical_request_material(body),
+        )
 
+        resp = None
         try:
-            async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as client:
+            async with httpx.AsyncClient(
+                timeout=self._attempt_timeout(query)
+            ) as client:
                 resp = await client.post(LINKUP_API_BASE, json=body, headers=headers)
-                resp.raise_for_status()
+                native_failure = self._response_failure_batch(
+                    resp, started_at=start, request_evidence=request_evidence
+                )
+                if native_failure is not None:
+                    return native_failure
                 data = resp.json()
 
-            raw_results = data.get("results", [])
-            results = self._normalize(raw_results)
-            latency_ms = int((time.monotonic() - start) * 1000)
-
-            credit_info = {}
-            for hdr in ("X-RateLimit-Remaining", "X-RateLimit-Limit", "X-Credits-Remaining"):
-                if hdr in resp.headers:
-                    credit_info[hdr] = resp.headers[hdr]
-
-            trace = ProviderTrace(
-                provider=self.name,
-                status="success",
-                results_count=len(results),
-                latency_ms=latency_ms,
-                credit_info=credit_info or None,
+            return self._normalized_batch(
+                data,
+                query,
+                started_at=start,
+                request_evidence=request_evidence,
+                http_status=resp.status_code,
+                response_headers=self._response_headers(resp),
             )
-            return results, trace
 
         except Exception as e:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("Linkup search failed: %s", e)
-            trace = ProviderTrace(
-                provider=self.name,
-                status="error",
-                latency_ms=latency_ms,
-                error=str(e),
+            logger.warning("Linkup search failed: %s", type(e).__name__)
+            return self._failure_batch(
+                e,
+                started_at=start,
+                request_evidence=request_evidence,
+                observed_status=self._response_status(resp),
             )
-            return [], trace
 
     def _normalize(self, raw_results: list) -> List[SearchResult]:
         results = []
@@ -98,21 +101,24 @@ class LinkupProvider(BaseProvider):
             url = item.get("url") or ""
             if not url:
                 continue
-            results.append(SearchResult(
-                url=url,
-                title=item.get("name", ""),
-                snippet=item.get("content", "") or item.get("snippet", ""),
-                domain=self._extract_domain(url),
-                provider=self.name,
-                score=0.0,
-                raw_rank=i,
-            ))
+            results.append(
+                SearchResult(
+                    url=url,
+                    title=item.get("name", ""),
+                    snippet=item.get("content", "") or item.get("snippet", ""),
+                    domain=self._extract_domain(url),
+                    provider=self.name,
+                    score=0.0,
+                    raw_rank=i,
+                )
+            )
         return results
 
     @staticmethod
     def _extract_domain(url: str) -> str:
         try:
             from urllib.parse import urlparse
+
             return urlparse(url).netloc
         except Exception:
             return ""

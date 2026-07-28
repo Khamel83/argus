@@ -10,7 +10,6 @@ Get a key at https://developer.wolframalpha.com/
 
 import time
 from urllib.parse import quote_plus, urlparse
-from typing import List, Tuple
 
 import httpx
 
@@ -19,11 +18,10 @@ from argus.logging import get_logger
 from argus.models import (
     ProviderName,
     ProviderStatus,
-    ProviderTrace,
-    SearchResult,
     SearchQuery,
 )
 from argus.providers.base import BaseProvider
+from argus.broker.provider_evidence import ProviderSearchBatch
 
 logger = get_logger("providers.wolfram")
 
@@ -49,7 +47,7 @@ class WolframProvider(BaseProvider):
             return ProviderStatus.UNAVAILABLE_MISSING_KEY
         return ProviderStatus.ENABLED
 
-    async def search(self, query: SearchQuery) -> Tuple[List[SearchResult], ProviderTrace]:
+    async def search(self, query: SearchQuery) -> ProviderSearchBatch:
         start = time.monotonic()
 
         params = {
@@ -57,58 +55,71 @@ class WolframProvider(BaseProvider):
             "input": query.query,
             "maxchars": 1000,
         }
+        self._freshness_params(query)
+        request_evidence = self._request_evidence(
+            query,
+            timeout_seconds=self._attempt_timeout(query),
+            provider_request_material=self._canonical_request_material(
+                {key: value for key, value in params.items() if key != "appid"}
+            ),
+        )
 
+        resp = None
         try:
-            async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as client:
+            async with httpx.AsyncClient(
+                timeout=self._attempt_timeout(query)
+            ) as client:
                 resp = await client.get(WOLFRAM_LLM_API, params=params)
-
-            latency_ms = int((time.monotonic() - start) * 1000)
 
             # 501 = Wolfram can't compute this query. Not a provider failure.
             if resp.status_code == 501:
-                return [], ProviderTrace(
-                    provider=self.name,
-                    status="empty",
-                    latency_ms=latency_ms,
+                return self._normalized_batch(
+                    {"empty": True},
+                    query,
+                    started_at=start,
+                    request_evidence=request_evidence,
+                    http_status=resp.status_code,
+                    response_headers=self._response_headers(resp),
                 )
 
-            resp.raise_for_status()
+            native_failure = self._response_failure_batch(
+                resp, started_at=start, request_evidence=request_evidence
+            )
+
+            if native_failure is not None:
+                return native_failure
             text = resp.text.strip()
 
             if not text:
-                return [], ProviderTrace(
-                    provider=self.name,
-                    status="empty",
-                    latency_ms=latency_ms,
+                return self._normalized_batch(
+                    {"empty": True},
+                    query,
+                    started_at=start,
+                    request_evidence=request_evidence,
+                    http_status=resp.status_code,
+                    response_headers=self._response_headers(resp),
                 )
 
-            query_url = WOLFRAM_QUERY_URL.format(quote_plus(query.query))
-            result = SearchResult(
-                url=query_url,
-                title=f"Wolfram|Alpha: {query.query}",
-                snippet=text[:600],
-                domain="wolframalpha.com",
-                provider=self.name,
-                score=1.0,
-                raw_rank=0,
-                metadata={"computed_answer": text, "wolfram_query": query.query},
-            )
-
-            return [result], ProviderTrace(
-                provider=self.name,
-                status="success",
-                results_count=1,
-                latency_ms=latency_ms,
+            return self._normalized_batch(
+                {
+                    "answer": text,
+                    "query_url": WOLFRAM_QUERY_URL.format(quote_plus(query.query)),
+                    "title": f"Wolfram|Alpha: {query.query}",
+                },
+                query,
+                started_at=start,
+                request_evidence=request_evidence,
+                http_status=resp.status_code,
+                response_headers=self._response_headers(resp),
             )
 
         except Exception as e:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("Wolfram search failed: %s", e)
-            return [], ProviderTrace(
-                provider=self.name,
-                status="error",
-                latency_ms=latency_ms,
-                error=str(e),
+            logger.warning("Wolfram search failed: %s", type(e).__name__)
+            return self._failure_batch(
+                e,
+                started_at=start,
+                request_evidence=request_evidence,
+                observed_status=self._response_status(resp),
             )
 
     @staticmethod

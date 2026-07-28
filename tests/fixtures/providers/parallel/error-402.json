@@ -1,0 +1,12 @@
+{
+  "transport": {
+    "status_code": 402,
+    "headers": {}
+  },
+  "body": {
+    "error": {
+      "message": "Insufficient credits",
+      "detail": {}
+    }
+  }
+}

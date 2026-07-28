@@ -168,6 +168,265 @@ async def test_successful_paid_execution_records_public_reachability_evidence():
 
 
 @pytest.mark.asyncio
+async def test_executor_refuses_to_start_provider_after_absolute_phase_deadline():
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+
+    provider = StubProvider(name=ProviderName.BRAVE)
+    executor = ProviderExecutor(
+        providers={ProviderName.BRAVE: provider},
+        health_tracker=HealthTracker(),
+        budget_tracker=BudgetTracker(),
+        monotonic=lambda: 10.0,
+    )
+
+    outcome = await executor._execute_provider(
+        SearchQuery(query="expired"),
+        provider,
+        ProviderName.BRAVE,
+        provider_phase_deadline=10.0,
+    )
+
+    assert provider.calls == 0
+    assert outcome.batch.failure is not None
+    assert outcome.batch.failure.category.value == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_executor_outer_deadline_terminates_and_reaps_ddg_child(monkeypatch):
+    import asyncio
+    import sys
+
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.config import ProviderConfig
+    from argus.providers.duckduckgo import DuckDuckGoProvider
+
+    native_create = asyncio.create_subprocess_exec
+    child = None
+
+    async def spawn_blocked_worker(*_args, **_kwargs):
+        nonlocal child
+        child = await native_create(
+            sys.executable,
+            "-c",
+            "import time; time.sleep(60)",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        return child
+
+    monkeypatch.setattr(
+        "argus.providers.duckduckgo.asyncio.create_subprocess_exec",
+        spawn_blocked_worker,
+    )
+    provider = DuckDuckGoProvider(
+        ProviderConfig(enabled=True, timeout_seconds=10)
+    )
+    provider._available = True
+    executor = ProviderExecutor(
+        providers={ProviderName.DUCKDUCKGO: provider},
+        health_tracker=HealthTracker(),
+        budget_tracker=BudgetTracker(),
+    )
+    loop = asyncio.get_running_loop()
+    outcome = await executor._execute_provider(
+        SearchQuery(query="outer deadline"),
+        provider,
+        ProviderName.DUCKDUCKGO,
+        provider_phase_deadline=loop.time() + 0.05,
+    )
+
+    assert outcome.batch.failure is not None
+    assert outcome.batch.failure.category.value == "timeout"
+    assert child is not None
+    assert child.returncode is not None
+
+
+@pytest.mark.asyncio
+async def test_ddg_communicate_error_terminates_and_reaps_real_child(monkeypatch):
+    import asyncio
+    import sys
+
+    from argus.config import ProviderConfig
+    from argus.providers.duckduckgo import DuckDuckGoProvider
+
+    native_create = asyncio.create_subprocess_exec
+    child = None
+
+    class BrokenCommunication:
+        def __init__(self, process):
+            self._process = process
+
+        @property
+        def returncode(self):
+            return self._process.returncode
+
+        async def communicate(self, _input):
+            raise OSError("fixture IPC failure")
+
+        def terminate(self):
+            self._process.terminate()
+
+        def kill(self):
+            self._process.kill()
+
+        async def wait(self):
+            return await self._process.wait()
+
+    async def spawn_broken_worker(*_args, **_kwargs):
+        nonlocal child
+        child = await native_create(
+            sys.executable,
+            "-c",
+            "import time; time.sleep(60)",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        return BrokenCommunication(child)
+
+    monkeypatch.setattr(
+        "argus.providers.duckduckgo.asyncio.create_subprocess_exec",
+        spawn_broken_worker,
+    )
+    provider = DuckDuckGoProvider(ProviderConfig(enabled=True))
+    provider._available = True
+    batch = await provider.search(SearchQuery(query="broken child IPC"))
+
+    assert batch.failure is not None
+    assert child is not None
+    assert child.returncode is not None
+
+
+@pytest.mark.asyncio
+async def test_executor_preserves_normalized_batch_and_projects_only_at_compatibility_boundary():
+    from datetime import datetime, timezone
+
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.broker.provider_evidence import (
+        ProviderResponseEvidence,
+        ProviderSearchBatch,
+    )
+    from argus.broker.reachability import ReachabilityMatrix
+
+    batch = ProviderSearchBatch(
+        provider=ProviderName.YAHOO,
+        provider_contract_version="fixture-v1",
+        response_evidence=ProviderResponseEvidence(
+            request_id="native-request-1",
+            observed_at=datetime(2026, 7, 27, tzinfo=timezone.utc),
+        ),
+    )
+
+    class BatchProvider:
+        name = ProviderName.YAHOO
+        probe_capability = ProbeCapability.ASYNC_NATIVE
+
+        def is_available(self):
+            return True
+
+        def status(self):
+            return ProviderStatus.ENABLED
+
+        async def search(self, query):
+            return batch
+
+    provider = BatchProvider()
+    executor = ProviderExecutor(
+        providers={ProviderName.YAHOO: provider},
+        health_tracker=HealthTracker(),
+        budget_tracker=BudgetTracker(),
+        reachability=ReachabilityMatrix(),
+    )
+
+    outcome = await execute_with_plan(
+        executor,
+        SearchQuery(query="batch evidence", providers=[ProviderName.YAHOO]),
+        [ProviderName.YAHOO],
+    )
+
+    assert outcome.provider_batches["yahoo"] is batch
+    assert (
+        outcome.provider_batches["yahoo"].response_evidence.request_id
+        == "native-request-1"
+    )
+    assert outcome.provider_results["yahoo"] == []
+    assert outcome.traces[0].status == "success"
+
+
+@pytest.mark.asyncio
+async def test_executor_stamps_trusted_node_provenance_on_ordinary_provider_batch():
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.broker.provider_evidence import ProviderSearchBatch
+    from argus.config import NodeConfig
+
+    native = ProviderSearchBatch(
+        provider=ProviderName.YAHOO,
+        provider_contract_version="fixture-v1",
+    )
+
+    class Provider:
+        name = ProviderName.YAHOO
+        probe_capability = ProbeCapability.ASYNC_NATIVE
+
+        def is_available(self):
+            return True
+
+        async def search(self, query):
+            return native
+
+    executor = ProviderExecutor(
+        providers={ProviderName.YAHOO: Provider()},
+        health_tracker=HealthTracker(),
+        budget_tracker=BudgetTracker(),
+        node_config=NodeConfig(egress_type="datacenter", machine_name="argus-primary"),
+    )
+    outcome = await execute_with_plan(
+        executor,
+        SearchQuery(
+            query="provenance",
+            providers=[ProviderName.YAHOO],
+            metadata={"egress": "residential", "machine": "caller-forgery"},
+        ),
+        [ProviderName.YAHOO],
+    )
+    response = outcome.provider_batches["yahoo"].response_evidence
+    assert response.egress.value == "datacenter"
+    assert response.machine == "argus-primary"
+
+
+@pytest.mark.asyncio
+async def test_executor_adapts_only_genuinely_legacy_provider_tuples():
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.broker.reachability import ReachabilityMatrix
+
+    provider = StubProvider(name=ProviderName.YAHOO)
+    executor = ProviderExecutor(
+        providers={ProviderName.YAHOO: provider},
+        health_tracker=HealthTracker(),
+        budget_tracker=BudgetTracker(),
+        reachability=ReachabilityMatrix(),
+    )
+    outcome = await execute_with_plan(
+        executor,
+        SearchQuery(query="legacy evidence", providers=[ProviderName.YAHOO]),
+        [ProviderName.YAHOO],
+    )
+
+    assert outcome.provider_batches["yahoo"].response_evidence.evidence_missing is True
+
+
+@pytest.mark.asyncio
 async def test_background_probe_refresh_establishes_health_evidence():
     from unittest.mock import AsyncMock, MagicMock
 
@@ -1568,7 +1827,8 @@ class TestRouter:
         )
 
         assert response.traces[0].status == "error"
-        assert "boom" in response.traces[0].error
+        assert "boom" not in response.traces[0].error
+        assert "RuntimeError" in response.traces[0].error
         assert backup.calls == 1
 
     @pytest.mark.asyncio

@@ -1,0 +1,9 @@
+{
+  "transport": {
+    "status_code": 503,
+    "headers": {}
+  },
+  "body": {
+    "detail": "Provider unavailable"
+  }
+}

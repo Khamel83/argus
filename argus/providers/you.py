@@ -6,7 +6,7 @@ Independent index with vertical search (News, Healthcare, Legal).
 """
 
 import time
-from typing import List, Tuple
+from typing import List
 
 import httpx
 
@@ -15,11 +15,11 @@ from argus.logging import get_logger
 from argus.models import (
     ProviderName,
     ProviderStatus,
-    ProviderTrace,
     SearchResult,
     SearchQuery,
 )
 from argus.providers.base import BaseProvider
+from argus.broker.provider_evidence import ProviderSearchBatch
 
 logger = get_logger("providers.you")
 
@@ -44,15 +44,11 @@ class YouProvider(BaseProvider):
             return ProviderStatus.UNAVAILABLE_MISSING_KEY
         return ProviderStatus.ENABLED
 
-    async def search(self, query: SearchQuery) -> Tuple[List[SearchResult], ProviderTrace]:
+    async def search(self, query: SearchQuery) -> ProviderSearchBatch:
         start = time.monotonic()
 
         if not self.is_available():
-            return [], ProviderTrace(
-                provider=self.name,
-                status="skipped",
-                error="You.com provider not configured",
-            )
+            return self._skipped_batch("You.com provider not configured")
 
         headers = {
             "X-API-Key": self._config.api_key,
@@ -60,37 +56,45 @@ class YouProvider(BaseProvider):
         params = {
             "query": query.query,
             "count": query.max_results,
-            "safesearch": "off",
+            "safesearch": "moderate",
         }
+        params.update(self._freshness_params(query))
+        request_evidence = self._request_evidence(
+            query,
+            timeout_seconds=self._attempt_timeout(query),
+            provider_request_material=self._canonical_request_material(params),
+        )
 
+        resp = None
         try:
-            async with httpx.AsyncClient(timeout=self._config.timeout_seconds) as client:
+            async with httpx.AsyncClient(
+                timeout=self._attempt_timeout(query)
+            ) as client:
                 resp = await client.get(YOU_API_BASE, params=params, headers=headers)
-                resp.raise_for_status()
+                native_failure = self._response_failure_batch(
+                    resp, started_at=start, request_evidence=request_evidence
+                )
+                if native_failure is not None:
+                    return native_failure
                 data = resp.json()
 
-            web_results = data.get("results", {}).get("web", [])
-            results = self._normalize(web_results)
-            latency_ms = int((time.monotonic() - start) * 1000)
-
-            trace = ProviderTrace(
-                provider=self.name,
-                status="success",
-                results_count=len(results),
-                latency_ms=latency_ms,
+            return self._normalized_batch(
+                data,
+                query,
+                started_at=start,
+                request_evidence=request_evidence,
+                http_status=resp.status_code,
+                response_headers=self._response_headers(resp),
             )
-            return results, trace
 
         except Exception as e:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("You.com search failed: %s", e)
-            trace = ProviderTrace(
-                provider=self.name,
-                status="error",
-                latency_ms=latency_ms,
-                error=str(e),
+            logger.warning("You.com search failed: %s", type(e).__name__)
+            return self._failure_batch(
+                e,
+                started_at=start,
+                request_evidence=request_evidence,
+                observed_status=self._response_status(resp),
             )
-            return [], trace
 
     def _normalize(self, raw_results: list) -> List[SearchResult]:
         results = []
@@ -101,21 +105,24 @@ class YouProvider(BaseProvider):
             # You.com returns snippets as a list; join the first one
             snippets = item.get("snippets", [])
             snippet = snippets[0] if snippets else item.get("description", "")
-            results.append(SearchResult(
-                url=url,
-                title=item.get("title", ""),
-                snippet=snippet,
-                domain=self._extract_domain(url),
-                provider=self.name,
-                score=0.0,
-                raw_rank=i,
-            ))
+            results.append(
+                SearchResult(
+                    url=url,
+                    title=item.get("title", ""),
+                    snippet=snippet,
+                    domain=self._extract_domain(url),
+                    provider=self.name,
+                    score=0.0,
+                    raw_rank=i,
+                )
+            )
         return results
 
     @staticmethod
     def _extract_domain(url: str) -> str:
         try:
             from urllib.parse import urlparse
+
             return urlparse(url).netloc
         except Exception:
             return ""

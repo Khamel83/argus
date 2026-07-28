@@ -1,0 +1,9 @@
+{
+  "transport": {
+    "status_code": 200,
+    "headers": {}
+  },
+  "body": {
+    "message": "Not enough credits"
+  }
+}

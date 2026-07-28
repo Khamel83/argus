@@ -10,21 +10,23 @@ lxml is available as a transitive dependency via trafilatura.
 
 import re
 import time
-from typing import List, Tuple
-from urllib.parse import unquote, urlparse
+from typing import List
+from urllib.parse import unquote, urljoin, urlparse
 
 import httpx
 
 from argus.config import ProviderConfig
 from argus.logging import get_logger
-from argus.models import (
-    ProviderName,
-    ProviderStatus,
-    ProviderTrace,
-    SearchResult,
-    SearchQuery,
-)
+from argus.models import ProviderName, ProviderStatus, SearchResult, SearchQuery
 from argus.providers.base import BaseProvider
+from argus.broker.provider_evidence import (
+    FailureCategory,
+    ProviderFailure,
+    ProviderSearchBatch,
+    QueryRelation,
+    RedirectChildEvidence,
+    safe_redirect_request,
+)
 
 logger = get_logger("providers.yahoo")
 
@@ -74,50 +76,153 @@ class YahooProvider(BaseProvider):
             return ProviderStatus.DISABLED_BY_CONFIG
         return ProviderStatus.ENABLED
 
-    async def search(self, query: SearchQuery) -> Tuple[List[SearchResult], ProviderTrace]:
-        start = time.monotonic()
+    async def _get_bounded(
+        self,
+        client,
+        params,
+        query: SearchQuery,
+    ) -> tuple[
+        object | None, tuple[RedirectChildEvidence, ...], ProviderFailure | None
+    ]:
+        response = await client.get(
+            YAHOO_SEARCH_URL,
+            params=params,
+            timeout=self._attempt_timeout(query),
+        )
+        source_url = YAHOO_SEARCH_URL
+        children: list[RedirectChildEvidence] = []
+        for redirect_count in range(1, 5):
+            if response.status_code not in {301, 302, 303, 307, 308}:
+                return response, tuple(children), None
+            location = response.headers.get("location")
+            if not isinstance(location, str):
+                return response, tuple(children), None
+            timeout = self._attempt_timeout(query)
+            try:
+                request = safe_redirect_request(
+                    source_url=source_url,
+                    destination_url=urljoin(source_url, location),
+                    headers=_HEADERS,
+                    redirect_count=redirect_count,
+                    parent_attempt_id=str(
+                        query.metadata.get("_provider_attempt_id")
+                        or f"{self.name.value}-attempt"
+                    ),
+                    timeout_seconds=timeout,
+                    max_redirects=3,
+                )
+            except ProviderFailure as failure:
+                return response, tuple(children), failure
+            children.append(request.child_evidence)
+            source_url = request.url
+            response = await client.get(
+                request.url,
+                headers=request.headers,
+                timeout=timeout,
+            )
+        raise AssertionError("bounded redirect loop is exhaustive")
 
+    async def search(self, query: SearchQuery) -> ProviderSearchBatch:
+        started_at = time.monotonic()
+        provider_query = query.query
+        children: tuple[RedirectChildEvidence, ...] = ()
+        relation = QueryRelation.EXACT
+
+        resp = None
         try:
-            params = {"p": query.query, "n": min(query.max_results, 10), "ei": "UTF-8"}
+            freshness = self._freshness_params(query)
+            qualifier = freshness.get("query_qualifier")
+            if qualifier:
+                start_date, _, end_date = str(qualifier).partition("..")
+                if start_date:
+                    provider_query += f" after:{start_date}"
+                if end_date:
+                    provider_query += f" before:{end_date}"
+                relation = QueryRelation.PROVIDER_REWRITE
+            params = {
+                "p": provider_query,
+                "n": min(query.max_results, 10),
+                "ei": "UTF-8",
+            }
             async with httpx.AsyncClient(
-                timeout=self._config.timeout_seconds,
+                timeout=self._attempt_timeout(query),
                 headers=_HEADERS,
-                follow_redirects=True,
+                follow_redirects=False,
             ) as client:
-                resp = await client.get(YAHOO_SEARCH_URL, params=params)
-                resp.raise_for_status()
+                resp, children, redirect_failure = await self._get_bounded(
+                    client, params, query
+                )
+                request_evidence = self._request_evidence(
+                    query,
+                    timeout_seconds=self._attempt_timeout(query),
+                    provider_request_material=provider_query,
+                    query_relation=relation,
+                    redirect_children=children,
+                )
+                if redirect_failure is not None:
+                    return self._typed_failure_batch(
+                        redirect_failure.category,
+                        redirect_failure.summary,
+                        started_at=started_at,
+                        request_evidence=request_evidence,
+                        observed_status=self._response_status(resp),
+                    )
+                assert resp is not None
+                native_failure = self._response_failure_batch(
+                    resp, started_at=started_at, request_evidence=request_evidence
+                )
+                if native_failure is not None:
+                    return native_failure
 
             results = self._parse(resp.text, query.max_results)
-            latency_ms = int((time.monotonic() - start) * 1000)
 
             if not results:
-                return [], ProviderTrace(
-                    provider=self.name,
-                    status="empty",
-                    latency_ms=latency_ms,
-                    error="no results parsed — Yahoo HTML may have changed",
+                return self._typed_failure_batch(
+                    FailureCategory.PARSE_ERROR,
+                    "Yahoo success page did not match the parser contract",
+                    started_at=started_at,
+                    request_evidence=request_evidence,
+                    observed_status=self._response_status(resp),
                 )
 
-            return results, ProviderTrace(
-                provider=self.name,
-                status="success",
-                results_count=len(results),
-                latency_ms=latency_ms,
+            return self._normalized_batch(
+                {
+                    "results": [
+                        {
+                            "url": item.url,
+                            "title": item.title,
+                            "snippet": item.snippet,
+                        }
+                        for item in results
+                    ]
+                },
+                query,
+                started_at=started_at,
+                request_evidence=request_evidence,
+                http_status=resp.status_code,
+                response_headers=self._response_headers(resp),
             )
 
         except Exception as e:
-            latency_ms = int((time.monotonic() - start) * 1000)
-            logger.warning("Yahoo search failed: %s", e)
-            return [], ProviderTrace(
-                provider=self.name,
-                status="error",
-                latency_ms=latency_ms,
-                error=str(e),
+            logger.warning("Yahoo search failed: %s", type(e).__name__)
+            request_evidence = self._request_evidence(
+                query,
+                timeout_seconds=max(0.001, self._config.timeout_seconds),
+                provider_request_material=provider_query,
+                query_relation=relation,
+                redirect_children=children,
+            )
+            return self._failure_batch(
+                e,
+                started_at=started_at,
+                request_evidence=request_evidence,
+                observed_status=self._response_status(resp),
             )
 
     def _parse(self, html_text: str, max_results: int) -> List[SearchResult]:
         try:
             from lxml import html as lxml_html
+
             return self._parse_lxml(lxml_html.fromstring(html_text), max_results)
         except ImportError:
             logger.debug("lxml not available, using regex fallback")
@@ -140,7 +245,7 @@ class YahooProvider(BaseProvider):
                 continue
 
             # Title is in the <h3> inside that same <a>
-            h3 = a.xpath('.//h3')
+            h3 = a.xpath(".//h3")
             title = h3[0].text_content().strip() if h3 else a.text_content().strip()
 
             # Description is in compText sibling
@@ -152,15 +257,17 @@ class YahooProvider(BaseProvider):
             except Exception:
                 domain = ""
 
-            results.append(SearchResult(
-                url=href,
-                title=title,
-                snippet=snippet[:300],
-                domain=domain,
-                provider=self.name,
-                score=0.0,
-                raw_rank=i,
-            ))
+            results.append(
+                SearchResult(
+                    url=href,
+                    title=title,
+                    snippet=snippet[:300],
+                    domain=domain,
+                    provider=self.name,
+                    score=0.0,
+                    raw_rank=i,
+                )
+            )
 
         return results
 
@@ -182,13 +289,15 @@ class YahooProvider(BaseProvider):
                 domain = urlparse(href).netloc
             except Exception:
                 domain = ""
-            results.append(SearchResult(
-                url=href,
-                title=title,
-                snippet="",
-                domain=domain,
-                provider=self.name,
-                score=0.0,
-                raw_rank=i,
-            ))
+            results.append(
+                SearchResult(
+                    url=href,
+                    title=title,
+                    snippet="",
+                    domain=domain,
+                    provider=self.name,
+                    score=0.0,
+                    raw_rank=i,
+                )
+            )
         return results

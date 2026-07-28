@@ -1,0 +1,5 @@
+{
+  "success": false,
+  "error": "provider rejected extraction",
+  "data": {"metadata": {"statusCode": 402, "error": "raw body sentinel"}}
+}
