@@ -22,23 +22,29 @@ class ExtractionCacheIdentity:
     mode: str
     access_scope: str
     authentication_scope_fingerprint: str
+    cache_policy_version: str
     extraction_plan_version: str
     quality_policy_version: str
     completeness_policy_version: str
+    outcome_policy_version: str
+    privacy_scope: str
     partial_allowed: bool
 
     def canonical_bytes(self) -> bytes:
         return json.dumps(
             {
-                "normalized_url": self.normalized_url.strip().rstrip("/"),
+                "normalized_url": self.normalized_url,
                 "mode": self.mode,
                 "access_scope": self.access_scope,
                 "authentication_scope_fingerprint": (
                     self.authentication_scope_fingerprint
                 ),
+                "cache_policy_version": self.cache_policy_version,
                 "extraction_plan_version": self.extraction_plan_version,
                 "quality_policy_version": self.quality_policy_version,
                 "completeness_policy_version": self.completeness_policy_version,
+                "outcome_policy_version": self.outcome_policy_version,
+                "privacy_scope": self.privacy_scope,
                 "partial_allowed": self.partial_allowed,
             },
             sort_keys=True,
@@ -48,7 +54,7 @@ class ExtractionCacheIdentity:
 
 class ExtractionCache:
     def __init__(self, ttl_hours: int = 168):
-        self._store: dict[str, tuple[ExtractedContent, float]] = {}
+        self._store: dict[str, tuple[object, float]] = {}
         self._ttl = ttl_hours * 3600
 
     @staticmethod
@@ -63,7 +69,7 @@ class ExtractionCache:
     def get(
         self,
         url: str | ExtractionCacheIdentity,
-    ) -> Optional[ExtractedContent]:
+    ) -> Optional[object]:
         key = self._key(url)
         if key in self._store:
             content, ts = self._store[key]
@@ -75,8 +81,41 @@ class ExtractionCache:
     def put(
         self,
         url: str | ExtractionCacheIdentity,
-        content: ExtractedContent,
+        content: object,
     ) -> None:
+        if isinstance(url, ExtractionCacheIdentity):
+            from argus.contracts import CanonicalOutcome
+            from argus.extraction.outcomes import (
+                AcceptedExtractionOutcome,
+                ArtifactDisposition,
+                ExtractionAcceptanceReceipt,
+            )
+
+            if (
+                not isinstance(content, AcceptedExtractionOutcome)
+                or not isinstance(
+                    content.acceptance_receipt,
+                    ExtractionAcceptanceReceipt,
+                )
+                or content.artifact is None
+                or content.outcome
+                not in {CanonicalOutcome.SUCCESS, CanonicalOutcome.DEGRADED}
+                or content.artifact_disposition
+                not in {
+                    ArtifactDisposition.USABLE,
+                    ArtifactDisposition.PARTIAL,
+                }
+                or (
+                    content.artifact_disposition
+                    is ArtifactDisposition.PARTIAL
+                    and not url.partial_allowed
+                )
+            ):
+                return
+            self._store[self._key(url)] = (content, time.time())
+            return
+        if not isinstance(content, ExtractedContent):
+            return
         if content.error or not content.text or content.quality_passed is not True:
             return
         disposition = getattr(content, "artifact_disposition", None)

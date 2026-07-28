@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from argus.contracts import CanonicalOutcome
-from argus.extraction.outcomes import ArtifactDisposition
+from argus.extraction.outcomes import (
+    AcceptedExtractionOutcome,
+    ArtifactDisposition,
+    ExtractionAcceptanceReceipt,
+)
 
 _SAFE_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _MAX_LINKS = 200
@@ -83,6 +87,7 @@ class ResultExtractionLink:
     access_scope: str | None = None
     policy_versions: tuple[str, ...] = ()
     reuse_origin: str | None = None
+    accepted_outcome: AcceptedExtractionOutcome | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.policy_versions, list):
@@ -91,6 +96,52 @@ class ResultExtractionLink:
                 "policy_versions",
                 tuple(self.policy_versions),
             )
+
+    @classmethod
+    def from_accepted(
+        cls,
+        *,
+        link_ref: str,
+        result_cluster_ref: str,
+        accepted_outcome: AcceptedExtractionOutcome,
+        required: bool,
+        eligible_path: bool,
+        attempted: bool,
+        reuse_origin: str | None = None,
+    ) -> "ResultExtractionLink":
+        if not isinstance(accepted_outcome, AcceptedExtractionOutcome):
+            raise InvalidArtifactRequirement(
+                "extraction link requires a typed accepted outcome"
+            )
+        artifact = accepted_outcome.artifact
+        rejection = accepted_outcome.rejection
+        return cls(
+            link_ref=link_ref,
+            result_cluster_ref=result_cluster_ref,
+            extraction_run_id=accepted_outcome.extraction_run_id,
+            extraction_outcome=accepted_outcome.outcome,
+            artifact_disposition=accepted_outcome.artifact_disposition,
+            artifact_ref=artifact.artifact_ref if artifact is not None else None,
+            rejection_ref=(
+                rejection.rejection_ref if rejection is not None else None
+            ),
+            acceptance_receipt=accepted_outcome.acceptance_receipt,
+            required=required,
+            eligible_path=eligible_path,
+            attempted=attempted,
+            artifact_identity=(
+                artifact.content_identity if artifact is not None else None
+            ),
+            access_scope=accepted_outcome.plan.access_scope,
+            policy_versions=(
+                accepted_outcome.plan.extraction_plan_version,
+                accepted_outcome.plan.quality_policy_version,
+                accepted_outcome.plan.completeness_policy_version,
+                accepted_outcome.extraction_outcome_policy_version,
+            ),
+            reuse_origin=reuse_origin,
+            accepted_outcome=accepted_outcome,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,11 +178,7 @@ def _invalid(message: str) -> InvalidArtifactRequirement:
     return InvalidArtifactRequirement(message)
 
 
-def _validate_requirement(
-    retrieval: RetrievalEvidenceView,
-    links: tuple[ResultExtractionLink, ...],
-    requirement: ArtifactRequirement,
-) -> None:
+def _validate_requirement_shape(requirement: ArtifactRequirement) -> None:
     if not isinstance(requirement, ArtifactRequirement):
         raise _invalid("artifact requirement must be typed")
     if (
@@ -153,11 +200,6 @@ def _validate_requirement(
         or any(not _safe_ref(reference) for reference in selection_refs)
     ):
         raise _invalid("artifact selection references must be unique and bounded")
-    retrieval_refs = tuple(retrieval.result_cluster_refs)
-    if len(set(retrieval_refs)) != len(retrieval_refs):
-        raise _invalid("accepted retrieval contains duplicate cluster references")
-    if not set(selection_refs).issubset(retrieval_refs):
-        raise _invalid("artifact selection is not in the accepted retrieval")
     for selection in selections:
         if (
             type(selection.required) is not bool
@@ -173,6 +215,21 @@ def _validate_requirement(
         not in {ArtifactDisposition.USABLE, ArtifactDisposition.PARTIAL}
     ):
         raise _invalid("aggregate artifact floor is invalid")
+
+
+def _validate_requirement(
+    retrieval: RetrievalEvidenceView,
+    links: tuple[ResultExtractionLink, ...],
+    requirement: ArtifactRequirement,
+) -> None:
+    _validate_requirement_shape(requirement)
+    selections = requirement.selections
+    selection_refs = [selection.result_cluster_ref for selection in selections]
+    retrieval_refs = tuple(retrieval.result_cluster_refs)
+    if len(set(retrieval_refs)) != len(retrieval_refs):
+        raise _invalid("accepted retrieval contains duplicate cluster references")
+    if not set(selection_refs).issubset(retrieval_refs):
+        raise _invalid("artifact selection is not in the accepted retrieval")
     if not isinstance(links, tuple) or len(links) > _MAX_LINKS:
         raise _invalid("result extraction links exceed the bounded maximum")
     link_refs = [link.link_ref for link in links]
@@ -205,6 +262,43 @@ def _validate_requirement(
             raise _invalid("result extraction link has inconsistent typed facts")
         if link.attempted and link.extraction_run_id is None:
             raise _invalid("attempted extraction link requires a run identity")
+        if link.extraction_run_id is None:
+            if (
+                link.accepted_outcome is not None
+                or link.acceptance_receipt is not None
+                or link.artifact_ref is not None
+                or link.rejection_ref is not None
+                or link.artifact_disposition is not ArtifactDisposition.NONE
+                or link.attempted
+            ):
+                raise _invalid(
+                    "no-run extraction link contains fabricated durable facts"
+                )
+        else:
+            accepted = link.accepted_outcome
+            if (
+                not isinstance(accepted, AcceptedExtractionOutcome)
+                or not isinstance(
+                    link.acceptance_receipt,
+                    ExtractionAcceptanceReceipt,
+                )
+            ):
+                raise _invalid(
+                    "run-bearing link requires its typed accepted outcome"
+                )
+            expected = ResultExtractionLink.from_accepted(
+                link_ref=link.link_ref,
+                result_cluster_ref=link.result_cluster_ref,
+                accepted_outcome=accepted,
+                required=link.required,
+                eligible_path=link.eligible_path,
+                attempted=link.attempted,
+                reuse_origin=link.reuse_origin,
+            )
+            if link != expected:
+                raise _invalid(
+                    "link facts do not match their accepted extraction outcome"
+                )
         for reference in (
             link.artifact_ref,
             link.rejection_ref,
@@ -322,6 +416,7 @@ def compose_retrieval_evidence(
             composition_trace=("no_artifact_requirement",),
         )
 
+    _validate_requirement_shape(artifact_requirement)
     if retrieval_outcome in _TERMINAL_RETRIEVAL:
         if links:
             raise _invalid("terminal retrieval cannot carry extraction links")
@@ -363,7 +458,8 @@ def compose_retrieval_evidence(
     )
 
     if accepted_retrieval.acceptance_receipt is None or any(
-        link.acceptance_receipt is None for link in links
+        link.extraction_run_id is not None and link.acceptance_receipt is None
+        for link in links
     ):
         artifact_outcome = CanonicalOutcome.PERSISTENCE_FAILED
         composite = CanonicalOutcome.PERSISTENCE_FAILED

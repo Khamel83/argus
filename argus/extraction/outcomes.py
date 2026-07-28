@@ -54,6 +54,15 @@ class TerminalCauseKind(str, Enum):
     CHAIN_EXHAUSTED = "chain_exhausted"
 
 
+class RejectionSourceKind(str, Enum):
+    ARTIFACT_QUALITY = "artifact_quality"
+    ARTIFACT_INCOMPLETE = "artifact_incomplete"
+    PREFLIGHT = "preflight"
+    OPERATION_DEADLINE = "operation_deadline"
+    ATTEMPT_TERMINAL = "attempt_terminal"
+    CHAIN_EXHAUSTED = "chain_exhausted"
+
+
 @dataclass(frozen=True, slots=True)
 class ExtractionCandidate:
     extractor: str
@@ -96,10 +105,51 @@ class ExtractionPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class CacheOriginEvidence:
+    extraction_run_id: str
+    outcome: CanonicalOutcome
+    artifact_disposition: ArtifactDisposition
+    artifact: ArtifactEvaluation | None
+    rejection: ExtractionRejection | None
+    steps: tuple[ExtractorDecision, ...]
+    acceptance_receipt: ExtractionAcceptanceReceipt
+    extraction_outcome_policy_version: str
+    extraction_plan_version: str
+    quality_policy_version: str
+    completeness_policy_version: str
+    accepted_at: str
+
+    @classmethod
+    def from_accepted(
+        cls,
+        accepted: "AcceptedExtractionOutcome",
+    ) -> "CacheOriginEvidence":
+        return cls(
+            extraction_run_id=accepted.extraction_run_id,
+            outcome=accepted.outcome,
+            artifact_disposition=accepted.artifact_disposition,
+            artifact=accepted.artifact,
+            rejection=accepted.rejection,
+            steps=accepted.steps,
+            acceptance_receipt=accepted.acceptance_receipt,
+            extraction_outcome_policy_version=(
+                accepted.extraction_outcome_policy_version
+            ),
+            extraction_plan_version=accepted.plan.extraction_plan_version,
+            quality_policy_version=accepted.plan.quality_policy_version,
+            completeness_policy_version=(
+                accepted.plan.completeness_policy_version
+            ),
+            accepted_at=accepted.acceptance_receipt.accepted_at,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class CacheDecision:
     outcome: CacheOutcome
     origin_run_ref: str | None = None
     age_seconds: int | None = None
+    origin_evidence: CacheOriginEvidence | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,7 +249,9 @@ class RawExtractionResult:
 
 @dataclass(frozen=True, slots=True)
 class RejectionFacts:
-    code: RejectionCode
+    source_kind: RejectionSourceKind
+    terminal_outcome: CanonicalOutcome | None
+    attempt_outcomes: tuple[AttemptOutcome, ...]
     provider: str | None
     quality_passed: bool | None
     is_complete: bool | None
@@ -213,18 +265,37 @@ class RejectionFacts:
 RejectionMapper = Callable[[RejectionFacts], ExtractionRejection]
 
 
+@dataclass(frozen=True, slots=True)
+class ExtractionFinalizationClaim:
+    extraction_outcome_policy_version: str
+    extraction_run_id: str
+    request_id: str
+    plan: ExtractionPlan
+    artifact: ArtifactEvaluation | None
+    steps: tuple[ExtractorDecision, ...]
+    terminal_cause: TerminalCause | None
+    selected_extractor: str | None
+    cache_decision: CacheDecision
+    operation_latency_ms: int
+
+
 class ExtractionOutcomeRepository(Protocol):
     def accept_extraction_outcome(
         self,
         projection: "FinalizedExtractionProjection",
     ) -> "ExtractionAcceptanceReceipt": ...
 
+    def finalize_extraction_once(
+        self,
+        claim: ExtractionFinalizationClaim,
+        build_projection: Callable[[], "FinalizedExtractionProjection"],
+    ) -> "AcceptedExtractionOutcome": ...
+
 
 @dataclass(frozen=True, slots=True)
 class OutcomePolicy:
     version: str
     autonomous: bool = True
-    eligible_fallback_remains: bool = False
     repository: ExtractionOutcomeRepository | None = field(
         default=None,
         compare=False,

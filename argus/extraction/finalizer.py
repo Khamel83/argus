@@ -13,10 +13,12 @@ from argus.extraction.outcomes import (
     ArtifactDisposition,
     AttemptOutcome,
     CacheDecision,
+    CacheOriginEvidence,
     CacheOutcome,
     ExtractionAcceptanceReceipt,
     ExtractionAcceptanceConflict,
     ExtractionContractRejected,
+    ExtractionFinalizationClaim,
     ExtractionOutcomeRepository,
     ExtractionPersistenceFailed,
     ExtractionPlan,
@@ -29,14 +31,14 @@ from argus.extraction.outcomes import (
     RawExtractionResult,
     RejectionFacts,
     RejectionMapper,
+    RejectionSourceKind,
     TerminalCause,
     TerminalCauseKind,
 )
 from argus.extraction.rejection import (
     ExtractionRejection,
-    RejectionAction,
-    RejectionCode,
     classify_typed_extraction_rejection,
+    validate_typed_extraction_rejection,
 )
 
 _SAFE_LABEL = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -49,55 +51,22 @@ _MAX_NANODOLLARS = 2**63 - 1
 class _Decision:
     outcome: CanonicalOutcome
     disposition: ArtifactDisposition
-    code: RejectionCode | None
+    rejection_source: RejectionSourceKind | None
     provider: str | None
 
 
 _TERMINAL_ATTEMPT_MAPPING = {
-    AttemptOutcome.ADAPTER_REQUEST_REJECTED: (
-        CanonicalOutcome.EXTRACTION_FAILED,
-        RejectionCode.PARSE_ERROR,
-    ),
-    AttemptOutcome.PROVIDER_AUTHENTICATION_REJECTED: (
-        CanonicalOutcome.UNREADY,
-        RejectionCode.PROVIDER_UNAVAILABLE,
-    ),
-    AttemptOutcome.PROVIDER_POLICY_REJECTED: (
-        CanonicalOutcome.POLICY_REJECTED,
-        RejectionCode.UNSUPPORTED_SOURCE,
-    ),
-    AttemptOutcome.EMPTY: (
-        CanonicalOutcome.EXTRACTION_FAILED,
-        RejectionCode.EMPTY_RESULT,
-    ),
-    AttemptOutcome.RATE_LIMITED: (
-        CanonicalOutcome.UNREADY,
-        RejectionCode.RATE_LIMITED,
-    ),
-    AttemptOutcome.BALANCE_EXHAUSTED: (
-        CanonicalOutcome.UNREADY,
-        RejectionCode.PROVIDER_UNAVAILABLE,
-    ),
-    AttemptOutcome.TIMEOUT: (
-        CanonicalOutcome.EXTRACTION_FAILED,
-        RejectionCode.TIMEOUT,
-    ),
-    AttemptOutcome.PROVIDER_UNAVAILABLE: (
-        CanonicalOutcome.EXTRACTION_FAILED,
-        RejectionCode.PROVIDER_UNAVAILABLE,
-    ),
-    AttemptOutcome.PARSE_ERROR: (
-        CanonicalOutcome.EXTRACTION_FAILED,
-        RejectionCode.PARSE_ERROR,
-    ),
-    AttemptOutcome.UNKNOWN_FAILURE: (
-        CanonicalOutcome.EXTRACTION_FAILED,
-        RejectionCode.PROVIDER_UNAVAILABLE,
-    ),
-    AttemptOutcome.CONTENT: (
-        CanonicalOutcome.EXTRACTION_FAILED,
-        RejectionCode.PROVIDER_UNAVAILABLE,
-    ),
+    AttemptOutcome.ADAPTER_REQUEST_REJECTED: CanonicalOutcome.EXTRACTION_FAILED,
+    AttemptOutcome.PROVIDER_AUTHENTICATION_REJECTED: CanonicalOutcome.UNREADY,
+    AttemptOutcome.PROVIDER_POLICY_REJECTED: CanonicalOutcome.POLICY_REJECTED,
+    AttemptOutcome.EMPTY: CanonicalOutcome.EXTRACTION_FAILED,
+    AttemptOutcome.RATE_LIMITED: CanonicalOutcome.UNREADY,
+    AttemptOutcome.BALANCE_EXHAUSTED: CanonicalOutcome.UNREADY,
+    AttemptOutcome.TIMEOUT: CanonicalOutcome.EXTRACTION_FAILED,
+    AttemptOutcome.PROVIDER_UNAVAILABLE: CanonicalOutcome.EXTRACTION_FAILED,
+    AttemptOutcome.PARSE_ERROR: CanonicalOutcome.EXTRACTION_FAILED,
+    AttemptOutcome.UNKNOWN_FAILURE: CanonicalOutcome.EXTRACTION_FAILED,
+    AttemptOutcome.CONTENT: CanonicalOutcome.EXTRACTION_FAILED,
 }
 
 
@@ -204,6 +173,8 @@ def _validate_trace(raw: RawExtractionResult) -> tuple[ExtractorDecision, ...]:
 def _validate_terminal(
     terminal: TerminalCause | None,
     invoked: tuple[ExtractorDecision, ...],
+    plan: ExtractionPlan,
+    steps: tuple[ExtractorDecision, ...],
 ) -> None:
     if terminal is None:
         return
@@ -221,17 +192,44 @@ def _validate_terminal(
             }
             or not _safe_ref(terminal.authority_ref)
             or invoked
+            or terminal.deadline_ref is not None
+            or terminal.ordinal is not None
+            or terminal.policy_rule_ref is not None
+            or terminal.invoked_ordinals
+            or terminal.distinct_attempt_outcomes
         ):
             raise ExtractionContractRejected()
     elif terminal.kind is TerminalCauseKind.OPERATION_DEADLINE:
-        if not _safe_ref(terminal.deadline_ref):
+        if (
+            not _safe_ref(terminal.deadline_ref)
+            or terminal.preflight_outcome is not None
+            or terminal.authority_ref is not None
+            or terminal.ordinal is not None
+            or terminal.policy_rule_ref is not None
+            or terminal.invoked_ordinals
+            or terminal.distinct_attempt_outcomes
+        ):
             raise ExtractionContractRejected()
     elif terminal.kind is TerminalCauseKind.ATTEMPT_TERMINAL:
         step = invoked_by_ordinal.get(terminal.ordinal)
+        candidate = (
+            plan.candidates[terminal.ordinal]
+            if type(terminal.ordinal) is int
+            and 0 <= terminal.ordinal < len(plan.candidates)
+            else None
+        )
         if (
             step is None
             or not _safe_ref(terminal.policy_rule_ref)
             or step.policy_rule_ref != terminal.policy_rule_ref
+            or candidate is None
+            or candidate.policy_rule_ref != terminal.policy_rule_ref
+            or len(steps) != terminal.ordinal + 1
+            or terminal.preflight_outcome is not None
+            or terminal.authority_ref is not None
+            or terminal.deadline_ref is not None
+            or terminal.invoked_ordinals
+            or terminal.distinct_attempt_outcomes
         ):
             raise ExtractionContractRejected()
     elif terminal.kind is TerminalCauseKind.CHAIN_EXHAUSTED:
@@ -243,6 +241,12 @@ def _validate_terminal(
             not actual_ordinals
             or terminal.invoked_ordinals != actual_ordinals
             or terminal.distinct_attempt_outcomes != distinct
+            or len(steps) != len(plan.candidates)
+            or terminal.preflight_outcome is not None
+            or terminal.authority_ref is not None
+            or terminal.deadline_ref is not None
+            or terminal.ordinal is not None
+            or terminal.policy_rule_ref is not None
         ):
             raise ExtractionContractRejected()
     else:
@@ -323,6 +327,7 @@ def _validate_inputs(
         candidate = plan.candidates[step.ordinal]
         if (
             step.extractor != candidate.extractor
+            or step.policy_rule_ref != candidate.policy_rule_ref
             or (
                 step.decision is ExtractorExecutionDecision.INVOKED
                 and not candidate.eligible
@@ -340,18 +345,54 @@ def _validate_inputs(
     ):
         raise ExtractionContractRejected()
     if cache.outcome is CacheOutcome.MISS:
-        if cache.origin_run_ref is not None or cache.age_seconds is not None:
+        if (
+            cache.origin_run_ref is not None
+            or cache.age_seconds is not None
+            or cache.origin_evidence is not None
+        ):
             raise ExtractionContractRejected()
     elif (
         not _safe_ref(cache.origin_run_ref, maximum=64)
         or not _plain_int(cache.age_seconds, 0, _MAX_LATENCY_MS)
+        or not isinstance(cache.origin_evidence, CacheOriginEvidence)
+        or cache.origin_evidence.extraction_run_id != cache.origin_run_ref
     ):
         raise ExtractionContractRejected()
+    if cache.origin_evidence is not None:
+        origin = cache.origin_evidence
+        if (
+            not isinstance(origin.outcome, CanonicalOutcome)
+            or not isinstance(origin.artifact_disposition, ArtifactDisposition)
+            or not isinstance(
+                origin.acceptance_receipt,
+                ExtractionAcceptanceReceipt,
+            )
+            or not _safe_ref(origin.acceptance_receipt.receipt_ref)
+            or not _safe_label(origin.acceptance_receipt.scope)
+            or not isinstance(origin.accepted_at, str)
+            or not origin.accepted_at
+            or origin.accepted_at != origin.acceptance_receipt.accepted_at
+            or not _safe_ref(origin.extraction_outcome_policy_version)
+            or not _safe_ref(origin.extraction_plan_version)
+            or not _safe_ref(origin.quality_policy_version)
+            or not _safe_ref(origin.completeness_policy_version)
+            or not isinstance(origin.steps, tuple)
+            or len(origin.steps) > 16
+        ):
+            raise ExtractionContractRejected()
+        for origin_step in origin.steps:
+            _validate_step(origin_step)
     if cache.outcome is CacheOutcome.HIT_ELIGIBLE and (
-        raw.artifact is None or invoked
+        raw.artifact is None
+        or invoked
+        or cache.origin_evidence.artifact != raw.artifact
+        or cache.origin_evidence.artifact_disposition
+        not in {ArtifactDisposition.USABLE, ArtifactDisposition.PARTIAL}
+        or cache.origin_evidence.outcome
+        not in {CanonicalOutcome.SUCCESS, CanonicalOutcome.DEGRADED}
     ):
         raise ExtractionContractRejected()
-    _validate_terminal(raw.terminal_cause, invoked)
+    _validate_terminal(raw.terminal_cause, invoked, plan, raw.steps)
     artifact = raw.artifact
     if artifact is not None:
         if (
@@ -424,7 +465,7 @@ def _artifact_decision(
         return _Decision(
             CanonicalOutcome.EXTRACTION_FAILED,
             ArtifactDisposition.DIAGNOSTIC_ONLY,
-            RejectionCode.QUALITY_GATE_FAILED,
+            RejectionSourceKind.ARTIFACT_QUALITY,
             raw.selected_extractor,
         )
     if artifact.is_complete is True:
@@ -438,13 +479,13 @@ def _artifact_decision(
         return _Decision(
             CanonicalOutcome.DEGRADED,
             ArtifactDisposition.PARTIAL,
-            RejectionCode.INCOMPLETE_CONTENT,
+            RejectionSourceKind.ARTIFACT_INCOMPLETE,
             raw.selected_extractor,
         )
     return _Decision(
         CanonicalOutcome.EXTRACTION_FAILED,
         ArtifactDisposition.DIAGNOSTIC_ONLY,
-        RejectionCode.INCOMPLETE_CONTENT,
+        RejectionSourceKind.ARTIFACT_INCOMPLETE,
         raw.selected_extractor,
     )
 
@@ -455,36 +496,48 @@ def _terminal_decision(
 ) -> _Decision:
     if terminal.kind is TerminalCauseKind.PREFLIGHT:
         outcome = terminal.preflight_outcome
-        code = {
-            CanonicalOutcome.POLICY_REJECTED: RejectionCode.UNSUPPORTED_SOURCE,
-            CanonicalOutcome.UNREADY: RejectionCode.PROVIDER_UNAVAILABLE,
-        }.get(outcome)
-        return _Decision(outcome, ArtifactDisposition.NONE, code, None)
+        source = (
+            RejectionSourceKind.PREFLIGHT
+            if outcome
+            in {CanonicalOutcome.POLICY_REJECTED, CanonicalOutcome.UNREADY}
+            else None
+        )
+        return _Decision(outcome, ArtifactDisposition.NONE, source, None)
     if terminal.kind is TerminalCauseKind.OPERATION_DEADLINE:
         return _Decision(
             CanonicalOutcome.TIMEOUT,
             ArtifactDisposition.NONE,
-            RejectionCode.TIMEOUT,
+            RejectionSourceKind.OPERATION_DEADLINE,
             None,
         )
     if terminal.kind is TerminalCauseKind.ATTEMPT_TERMINAL:
         step = next(step for step in invoked if step.ordinal == terminal.ordinal)
-        outcome, code = _TERMINAL_ATTEMPT_MAPPING[step.attempt_outcome]
-        return _Decision(outcome, ArtifactDisposition.NONE, code, step.extractor)
+        outcome = _TERMINAL_ATTEMPT_MAPPING[step.attempt_outcome]
+        return _Decision(
+            outcome,
+            ArtifactDisposition.NONE,
+            RejectionSourceKind.ATTEMPT_TERMINAL,
+            step.extractor,
+        )
 
     distinct = terminal.distinct_attempt_outcomes
     if len(distinct) != 1:
         return _Decision(
             CanonicalOutcome.EXTRACTION_FAILED,
             ArtifactDisposition.NONE,
-            RejectionCode.PROVIDER_UNAVAILABLE,
+            RejectionSourceKind.CHAIN_EXHAUSTED,
             None,
         )
-    outcome, code = _TERMINAL_ATTEMPT_MAPPING[distinct[0]]
+    outcome = _TERMINAL_ATTEMPT_MAPPING[distinct[0]]
     provider = invoked[0].extractor if len(invoked) == 1 else None
     if distinct[0] is AttemptOutcome.CONTENT:
         provider = None
-    return _Decision(outcome, ArtifactDisposition.NONE, code, provider)
+    return _Decision(
+        outcome,
+        ArtifactDisposition.NONE,
+        RejectionSourceKind.CHAIN_EXHAUSTED,
+        provider,
+    )
 
 
 class ExtractionFinalizer:
@@ -528,6 +581,39 @@ class ExtractionFinalizer:
             raise ExtractionPreflightRejected(
                 raw_extractor_result.terminal_cause.preflight_outcome
             )
+        claim = ExtractionFinalizationClaim(
+            extraction_outcome_policy_version=outcome_policy.version,
+            extraction_run_id=extraction_request.extraction_run_id,
+            request_id=extraction_request.request_id,
+            plan=extraction_plan,
+            artifact=raw_extractor_result.artifact,
+            steps=raw_extractor_result.steps,
+            terminal_cause=raw_extractor_result.terminal_cause,
+            selected_extractor=raw_extractor_result.selected_extractor,
+            cache_decision=raw_extractor_result.cache_decision,
+            operation_latency_ms=raw_extractor_result.operation_latency_ms,
+        )
+        finalize_once = getattr(
+            self.repository,
+            "finalize_extraction_once",
+            None,
+        )
+        if callable(finalize_once):
+            try:
+                return finalize_once(
+                    claim,
+                    lambda: self._build_projection(
+                        extraction_request,
+                        extraction_plan,
+                        raw_extractor_result,
+                        outcome_policy,
+                        invoked,
+                    ),
+                )
+            except (ExtractionAcceptanceConflict, ExtractionContractRejected):
+                raise
+            except Exception as error:
+                raise ExtractionPersistenceFailed() from error
         load_existing = getattr(self.repository, "load_extraction_outcome", None)
         if callable(load_existing):
             existing = load_existing(extraction_request.extraction_run_id)
@@ -559,6 +645,30 @@ class ExtractionFinalizer:
                 if current_source != durable_source:
                     raise ExtractionAcceptanceConflict()
                 return existing
+        projection = self._build_projection(
+            extraction_request,
+            extraction_plan,
+            raw_extractor_result,
+            outcome_policy,
+            invoked,
+        )
+        try:
+            receipt = self.repository.accept_extraction_outcome(projection)
+        except ExtractionAcceptanceConflict:
+            raise
+        except Exception as error:
+            raise ExtractionPersistenceFailed() from error
+        self._validate_receipt(receipt)
+        return AcceptedExtractionOutcome.accepted(projection, receipt)
+
+    def _build_projection(
+        self,
+        extraction_request: ExtractionRequest,
+        extraction_plan: ExtractionPlan,
+        raw_extractor_result: RawExtractionResult,
+        outcome_policy: OutcomePolicy,
+        invoked: tuple[ExtractorDecision, ...],
+    ) -> FinalizedExtractionProjection:
         if (
             raw_extractor_result.terminal_cause is not None
             and raw_extractor_result.terminal_cause.kind
@@ -572,7 +682,7 @@ class ExtractionFinalizer:
                 decision = _Decision(
                     outcome=decision.outcome,
                     disposition=ArtifactDisposition.DIAGNOSTIC_ONLY,
-                    code=decision.code,
+                    rejection_source=decision.rejection_source,
                     provider=decision.provider,
                 )
         else:
@@ -586,11 +696,32 @@ class ExtractionFinalizer:
             )
 
         rejection = None
-        if decision.code is not None:
+        if decision.rejection_source is not None:
             last = invoked[-1] if invoked else None
             artifact = raw_extractor_result.artifact
+            total_latency_ms = 0
+            for step in invoked:
+                total_latency_ms += step.latency_ms or 0
+                if total_latency_ms > _MAX_LATENCY_MS:
+                    raise ExtractionContractRejected()
+            eligible_fallback_remains = any(
+                candidate.eligible
+                for candidate in extraction_plan.candidates[
+                    len(raw_extractor_result.steps) :
+                ]
+            )
             facts = RejectionFacts(
-                code=decision.code,
+                source_kind=decision.rejection_source,
+                terminal_outcome=(
+                    decision.outcome
+                    if decision.rejection_source is RejectionSourceKind.PREFLIGHT
+                    else None
+                ),
+                attempt_outcomes=tuple(
+                    step.attempt_outcome
+                    for step in invoked
+                    if step.attempt_outcome is not None
+                ),
                 provider=decision.provider,
                 quality_passed=(
                     artifact.quality_passed if artifact is not None else None
@@ -602,10 +733,8 @@ class ExtractionFinalizer:
                     if last is not None and last.attempt_outcome is not None
                     else None
                 ),
-                total_latency_ms=sum(step.latency_ms or 0 for step in invoked),
-                eligible_fallback_remains=(
-                    outcome_policy.eligible_fallback_remains
-                ),
+                total_latency_ms=total_latency_ms,
+                eligible_fallback_remains=eligible_fallback_remains,
                 autonomous=outcome_policy.autonomous,
             )
             try:
@@ -614,16 +743,9 @@ class ExtractionFinalizer:
                 raise
             except Exception as error:
                 raise ExtractionContractRejected() from error
-            if (
-                not isinstance(rejection, ExtractionRejection)
-                or (
-                    outcome_policy.autonomous
-                    and rejection.recommended_action is RejectionAction.MANUAL_REVIEW
-                )
-            ):
-                raise ExtractionContractRejected()
+            validate_typed_extraction_rejection(facts, rejection)
 
-        projection = FinalizedExtractionProjection(
+        return FinalizedExtractionProjection(
             extraction_outcome_policy_version=outcome_policy.version,
             outcome=decision.outcome,
             artifact_disposition=decision.disposition,
@@ -639,12 +761,8 @@ class ExtractionFinalizer:
             cache_decision=raw_extractor_result.cache_decision,
             operation_latency_ms=raw_extractor_result.operation_latency_ms,
         )
-        try:
-            receipt = self.repository.accept_extraction_outcome(projection)
-        except ExtractionAcceptanceConflict:
-            raise
-        except Exception as error:
-            raise ExtractionPersistenceFailed() from error
+    @staticmethod
+    def _validate_receipt(receipt: ExtractionAcceptanceReceipt) -> None:
         if (
             not isinstance(receipt, ExtractionAcceptanceReceipt)
             or not _safe_ref(receipt.receipt_ref)
@@ -653,7 +771,6 @@ class ExtractionFinalizer:
             or not _safe_label(receipt.scope)
         ):
             raise ExtractionPersistenceFailed()
-        return AcceptedExtractionOutcome.accepted(projection, receipt)
 
 
 def finalize_extraction(

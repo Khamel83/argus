@@ -1650,6 +1650,7 @@ def test_private_sentinels_are_scrubbed_and_all_projection_values_are_bounded():
         ),
         usage_count=7,
         cost_usd=0.25,
+        observed_at=datetime(2026, 7, 27, tzinfo=timezone.utc),
         rate_limit_reset=datetime(2026, 7, 28, tzinfo=timezone.utc),
     )
     observation = ResultObservation(

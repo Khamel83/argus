@@ -272,7 +272,8 @@ def test_closed_terminal_attempt_mapping(attempt_outcome, expected):
             selected=None,
             steps=(_step(0, attempt_outcome),),
             terminal_cause=terminal,
-        )
+        ),
+        plan=_plan(candidates=("trafilatura",)),
     )
 
     assert (accepted.outcome, accepted.rejection.code) == expected
@@ -415,12 +416,19 @@ def test_fallback_success_retains_failed_steps_without_final_rejection():
 
 
 def test_eligible_cache_hit_is_a_decision_not_an_extractor_attempt():
+    from argus.extraction.outcomes import CacheOriginEvidence
+
+    origin = _finalize(_raw(artifact=_artifact()))
     accepted = _finalize(
         RawExtractionResult(
             cache_decision=CacheDecision(
                 outcome=CacheOutcome.HIT_ELIGIBLE,
                 origin_run_ref="extract-origin-1",
                 age_seconds=60,
+                origin_evidence=replace(
+                    CacheOriginEvidence.from_accepted(origin),
+                    extraction_run_id="extract-origin-1",
+                ),
             ),
             steps=(),
             artifact=_artifact(),
@@ -589,6 +597,7 @@ def test_rejection_mapper_is_called_exactly_once_and_persisted_identically():
         ),
         mapper=mapper,
         repository=repository,
+        plan=_plan(candidates=("trafilatura",)),
     )
 
     assert len(calls) == 1
@@ -634,9 +643,12 @@ def test_cache_identity_isolates_access_and_policy_and_rejects_diagnostic_conten
         mode="default",
         access_scope="public",
         authentication_scope_fingerprint="anonymous",
+        cache_policy_version="cache-v1",
         extraction_plan_version="1",
         quality_policy_version="quality-v1",
         completeness_policy_version="complete-v1",
+        outcome_policy_version="outcome-v1",
+        privacy_scope="public",
         partial_allowed=False,
     )
     private = replace(
@@ -644,15 +656,19 @@ def test_cache_identity_isolates_access_and_policy_and_rejects_diagnostic_conten
         access_scope="private",
         authentication_scope_fingerprint="account-a",
     )
-    usable = _finalize(_raw(artifact=_artifact())).to_legacy_extracted_content()
-    usable.artifact_disposition = ArtifactDisposition.USABLE
+    usable = _finalize(_raw(artifact=_artifact()))
     cache.put(public, usable)
 
     assert cache.get(public) is usable
     assert cache.get(private) is None
+    assert cache.get(
+        replace(public, outcome_policy_version="outcome-v2")
+    ) is None
 
-    diagnostic = replace(usable)
-    diagnostic.artifact_disposition = ArtifactDisposition.DIAGNOSTIC_ONLY
+    diagnostic = replace(
+        usable,
+        artifact_disposition=ArtifactDisposition.DIAGNOSTIC_ONLY,
+    )
     cache.put(replace(public, extraction_plan_version="2"), diagnostic)
     assert cache.get(replace(public, extraction_plan_version="2")) is None
 
@@ -686,6 +702,22 @@ async def test_archive_creation_requires_distinct_one_use_authorization(monkeypa
         return "https://archive.ph/bounded/example"
 
     monkeypatch.setattr(archive, "_submit_authorized", submitted)
+    class Authority:
+        def verify(self, authorization):
+            return True
+
+    class Store:
+        def __init__(self):
+            self.used = set()
+
+        def consume(self, *, receipt, idempotency_key, target):
+            identity = (receipt, idempotency_key, target)
+            if identity in self.used:
+                return False
+            self.used.add(identity)
+            return True
+
+    store = Store()
     authorization = archive.ArchiveCreationAuthorization(
         caller_policy_ref="archive-policy-v1",
         authority_receipt="authority-receipt-1",
@@ -697,11 +729,15 @@ async def test_archive_creation_requires_distinct_one_use_authorization(monkeypa
     created = await archive.create_archive(
         "https://example.com/article",
         authorization=authorization,
+        authority=Authority(),
+        authorization_store=store,
     )
     with pytest.raises(archive.ArchiveCreationPolicyRejected):
         await archive.create_archive(
             "https://example.com/article",
             authorization=authorization,
+            authority=Authority(),
+            authorization_store=store,
         )
 
     assert created == "https://archive.ph/bounded/example"
@@ -808,10 +844,16 @@ def test_idempotent_rejected_retry_does_not_reinvoke_mapper_and_conflicts_on_sou
     )
 
     first = finalizer.finalize_extraction(
-        _request(), _plan(), raw, OutcomePolicy(version="outcome-v1")
+        _request(),
+        _plan(candidates=("trafilatura",)),
+        raw,
+        OutcomePolicy(version="outcome-v1"),
     )
     second = finalizer.finalize_extraction(
-        _request(), _plan(), raw, OutcomePolicy(version="outcome-v1")
+        _request(),
+        _plan(candidates=("trafilatura",)),
+        raw,
+        OutcomePolicy(version="outcome-v1"),
     )
 
     assert second == first
@@ -819,7 +861,10 @@ def test_idempotent_rejected_retry_does_not_reinvoke_mapper_and_conflicts_on_sou
     with pytest.raises(ExtractionAcceptanceConflict):
         finalizer.finalize_extraction(
             _request(),
-            replace(_plan(), quality_policy_version="quality-v2"),
+            replace(
+                _plan(candidates=("trafilatura",)),
+                quality_policy_version="quality-v2",
+            ),
             raw,
             OutcomePolicy(version="outcome-v1"),
         )
@@ -853,7 +898,7 @@ def test_sql_repository_rolls_back_projection_on_artifact_fault(tmp_path):
             clock=lambda: "2026-07-27T12:00:00Z",
         ).finalize_extraction(
             _request(),
-            _plan(),
+            _plan(candidates=("trafilatura",)),
             _raw(artifact=_artifact()),
             OutcomePolicy(version="outcome-v1"),
         )
@@ -933,3 +978,537 @@ def test_0007_postgresql_upgrade_and_pre_activation_rollback(
     assert "extraction_outcome_plans" in inspect(engine).get_table_names()
     command.downgrade(config, "0006_maya_outbox")
     assert "extraction_outcome_plans" not in inspect(engine).get_table_names()
+
+
+def test_issue57_mapper_is_sole_rejection_code_classifier():
+    seen = []
+
+    def mapper(facts):
+        from argus.extraction.rejection import classify_typed_extraction_rejection
+
+        seen.append(facts)
+        assert not hasattr(facts, "code")
+        return classify_typed_extraction_rejection(facts)
+
+    accepted = _finalize(
+        _raw(artifact=_artifact(quality=False, complete=None)),
+        mapper=mapper,
+    )
+
+    assert accepted.rejection.code is RejectionCode.QUALITY_GATE_FAILED
+    assert len(seen) == 1
+
+
+def test_chain_exhaustion_must_close_every_eligible_plan_candidate():
+    from argus.extraction.outcomes import ExtractionContractRejected
+
+    raw = _raw(
+        artifact=None,
+        steps=(_step(0, AttemptOutcome.EMPTY),),
+        terminal_cause=TerminalCause(
+            kind=TerminalCauseKind.CHAIN_EXHAUSTED,
+            invoked_ordinals=(0,),
+            distinct_attempt_outcomes=(AttemptOutcome.EMPTY,),
+        ),
+        selected=None,
+    )
+
+    with pytest.raises(ExtractionContractRejected):
+        _finalize(raw, plan=_plan(candidates=("trafilatura", "jina")))
+
+
+def test_attempt_terminal_rule_is_bound_to_plan_and_closes_variant_fields():
+    from argus.extraction.outcomes import ExtractionContractRejected
+
+    plan = replace(
+        _plan(candidates=("trafilatura",)),
+        candidates=(
+            ExtractionCandidate(
+                extractor="trafilatura",
+                eligible=True,
+                spend_class="free",
+                policy_rule_ref="stop-rule-1",
+            ),
+        ),
+    )
+    step = replace(_step(0, AttemptOutcome.PARSE_ERROR), policy_rule_ref="invented")
+    terminal = TerminalCause(
+        kind=TerminalCauseKind.ATTEMPT_TERMINAL,
+        ordinal=0,
+        policy_rule_ref="invented",
+        deadline_ref="contradictory-deadline",
+    )
+
+    with pytest.raises(ExtractionContractRejected):
+        _finalize(
+            _raw(
+                artifact=None,
+                steps=(step,),
+                terminal_cause=terminal,
+                selected=None,
+            ),
+            plan=plan,
+        )
+
+
+def test_fallback_eligibility_is_derived_from_unvisited_immutable_plan():
+    plan = replace(
+        _plan(candidates=("trafilatura", "jina")),
+        candidates=(
+            ExtractionCandidate(
+                extractor="trafilatura",
+                eligible=True,
+                spend_class="free",
+                policy_rule_ref="stop-rule-1",
+            ),
+            ExtractionCandidate(
+                extractor="jina",
+                eligible=True,
+                spend_class="monthly",
+            ),
+        ),
+    )
+    step = replace(
+        _step(0, AttemptOutcome.PARSE_ERROR),
+        policy_rule_ref="stop-rule-1",
+    )
+    terminal = TerminalCause(
+        kind=TerminalCauseKind.ATTEMPT_TERMINAL,
+        ordinal=0,
+        policy_rule_ref="stop-rule-1",
+    )
+
+    accepted = _finalize(
+        _raw(
+            artifact=None,
+            steps=(step,),
+            terminal_cause=terminal,
+            selected=None,
+        ),
+        plan=plan,
+    )
+
+    assert (
+        accepted.rejection.recommended_action
+        is RejectionAction.FALLBACK_PROVIDER
+    )
+
+
+def test_mapper_output_must_exactly_match_bounded_source_facts():
+    from argus.extraction.outcomes import ExtractionContractRejected
+    from argus.extraction.rejection import ExtractionRejection
+
+    def unsafe_mapper(facts):
+        from argus.extraction.rejection import classify_typed_extraction_rejection
+
+        safe = classify_typed_extraction_rejection(facts)
+        return ExtractionRejection(
+            code=safe.code,
+            provider="https://user:secret@example.test/?token=raw",
+            quality_passed=safe.quality_passed,
+            is_complete=safe.is_complete,
+            recommended_action=safe.recommended_action,
+            attempt_count=safe.attempt_count + 1,
+            last_status="raw bearer credential",
+            total_latency_ms=safe.total_latency_ms,
+        )
+
+    with pytest.raises(ExtractionContractRejected):
+        _finalize(
+            _raw(artifact=_artifact(quality=False, complete=None)),
+            mapper=unsafe_mapper,
+        )
+
+
+def test_aggregate_latency_over_signed_64_is_rejected_before_mapper():
+    from argus.extraction.outcomes import ExtractionContractRejected
+
+    calls = []
+    steps = (
+        replace(_step(0, AttemptOutcome.EMPTY), latency_ms=2**63 - 1),
+        replace(
+            _step(1, AttemptOutcome.EMPTY, extractor="jina"),
+            latency_ms=1,
+        ),
+    )
+    terminal = TerminalCause(
+        kind=TerminalCauseKind.CHAIN_EXHAUSTED,
+        invoked_ordinals=(0, 1),
+        distinct_attempt_outcomes=(AttemptOutcome.EMPTY,),
+    )
+
+    with pytest.raises(ExtractionContractRejected):
+        _finalize(
+            _raw(
+                artifact=None,
+                steps=steps,
+                terminal_cause=terminal,
+                selected=None,
+            ),
+            mapper=lambda facts: calls.append(facts),
+        )
+
+    assert calls == []
+
+
+def test_concurrent_same_run_classifies_once_and_reloads_committed_outcome(
+    tmp_path,
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Lock
+
+    from argus.extraction.finalizer import (
+        ExtractionFinalizer,
+        map_extraction_rejection,
+    )
+    from argus.persistence.search_ledger import create_search_ledger_repository
+
+    repository = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'concurrent-outcome.db'}"
+    )
+    calls = 0
+    calls_lock = Lock()
+
+    def mapper(facts):
+        nonlocal calls
+        with calls_lock:
+            calls += 1
+        return map_extraction_rejection(facts)
+
+    finalizer = ExtractionFinalizer(
+        repository=repository,
+        rejection_mapper=mapper,
+        clock=lambda: "2026-07-27T12:00:00Z",
+    )
+    raw = _raw(artifact=_artifact(quality=False, complete=None))
+
+    def run():
+        return finalizer.finalize_extraction(
+            _request(),
+            _plan(),
+            raw,
+            OutcomePolicy(version="outcome-v1", autonomous=True),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(lambda _: run(), range(2)))
+
+    assert calls == 1
+    assert outcomes[0] == outcomes[1]
+
+
+def test_distinct_runs_can_reuse_identical_artifact_and_rejection_refs(tmp_path):
+    from argus.extraction.finalizer import ExtractionFinalizer
+    from argus.persistence.search_ledger import create_search_ledger_repository
+
+    repository = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'reuse.db'}"
+    )
+    finalizer = ExtractionFinalizer(
+        repository=repository,
+        clock=lambda: "2026-07-27T12:00:00Z",
+    )
+    policy = OutcomePolicy(version="outcome-v1", autonomous=True)
+
+    successes = [
+        finalizer.finalize_extraction(
+            _request(f"extract-{ordinal}"),
+            _plan(),
+            _raw(artifact=_artifact()),
+            policy,
+        )
+        for ordinal in (1, 2)
+    ]
+
+    exhausted = _raw(
+        artifact=None,
+        steps=(_step(0, AttemptOutcome.EMPTY),),
+        terminal_cause=TerminalCause(
+            kind=TerminalCauseKind.CHAIN_EXHAUSTED,
+            invoked_ordinals=(0,),
+            distinct_attempt_outcomes=(AttemptOutcome.EMPTY,),
+        ),
+        selected=None,
+    )
+    rejected = [
+        finalizer.finalize_extraction(
+            _request(f"reject-{ordinal}"),
+            _plan(candidates=("trafilatura",)),
+            exhausted,
+            policy,
+        )
+        for ordinal in (1, 2)
+    ]
+
+    assert successes[0].artifact.artifact_ref == successes[1].artifact.artifact_ref
+    assert rejected[0].rejection == rejected[1].rejection
+
+
+def test_reused_artifact_ref_with_conflicting_identity_fails_closed(tmp_path):
+    from argus.extraction.finalizer import ExtractionFinalizer
+    from argus.extraction.outcomes import ExtractionAcceptanceConflict
+    from argus.persistence.search_ledger import create_search_ledger_repository
+
+    repository = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'reuse-conflict.db'}"
+    )
+    finalizer = ExtractionFinalizer(
+        repository=repository,
+        clock=lambda: "2026-07-27T12:00:00Z",
+    )
+    policy = OutcomePolicy(version="outcome-v1")
+    finalizer.finalize_extraction(
+        _request("extract-a"),
+        _plan(),
+        _raw(artifact=_artifact()),
+        policy,
+    )
+    conflicting = replace(
+        _artifact(),
+        content_identity="sha256:" + ("b" * 64),
+        text="different governed content",
+    )
+
+    with pytest.raises(ExtractionAcceptanceConflict):
+        finalizer.finalize_extraction(
+            _request("extract-b"),
+            _plan(),
+            _raw(artifact=conflicting),
+            policy,
+        )
+
+
+def test_policy_complete_cache_preserves_exact_accepted_origin_lineage():
+    from argus.extraction.cache import ExtractionCache, ExtractionCacheIdentity
+
+    cache = ExtractionCache()
+    identity = ExtractionCacheIdentity(
+        normalized_url="https://example.com/article/",
+        mode="default",
+        access_scope="public",
+        authentication_scope_fingerprint="anonymous",
+        cache_policy_version="cache-v1",
+        extraction_plan_version="1",
+        quality_policy_version="quality-v1",
+        completeness_policy_version="complete-v1",
+        outcome_policy_version="outcome-v1",
+        privacy_scope="public",
+        partial_allowed=False,
+    )
+    accepted = _finalize(_raw(artifact=_artifact()))
+    legacy = accepted.to_legacy_extracted_content()
+
+    cache.put(identity, legacy)
+    assert cache.get(identity) is None
+
+    cache.put(identity, accepted)
+    assert cache.get(identity) is accepted
+    assert cache.get(
+        replace(identity, normalized_url="https://example.com/article")
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_archive_creation_requires_verified_durable_authority_before_post(
+    monkeypatch,
+):
+    import argus.extraction.archive_extractor as archive
+
+    posts = []
+
+    async def submitted(url):
+        posts.append(url)
+        return "https://archive.ph/bounded/example"
+
+    class Authority:
+        def verify(self, authorization):
+            return authorization.authority_receipt == "authority-receipt-verified"
+
+    class DurableStore:
+        def __init__(self):
+            self.claims = set()
+
+        def consume(self, *, receipt, idempotency_key, target):
+            identity = (receipt, idempotency_key, target)
+            if identity in self.claims:
+                return False
+            self.claims.add(identity)
+            return True
+
+    monkeypatch.setattr(archive, "_submit_authorized", submitted)
+    authorization = archive.ArchiveCreationAuthorization(
+        caller_policy_ref="archive-policy-v1",
+        authority_receipt="authority-receipt-verified",
+        idempotency_key="archive-create-durable-1",
+        bounded_target="https://example.com/article",
+        profile="operator",
+    )
+    store = DurableStore()
+
+    created = await archive.create_archive(
+        "https://example.com/article",
+        authorization=authorization,
+        authority=Authority(),
+        authorization_store=store,
+    )
+    with pytest.raises(archive.ArchiveCreationPolicyRejected):
+        await archive.create_archive(
+            "https://example.com/article",
+            authorization=authorization,
+            authority=Authority(),
+            authorization_store=store,
+        )
+    with pytest.raises(archive.ArchiveCreationPolicyRejected):
+        await archive.create_archive(
+            "https://example.com/article",
+            authorization=replace(
+                authorization,
+                authority_receipt="self-attested",
+                idempotency_key="archive-create-durable-2",
+            ),
+            authority=Authority(),
+            authorization_store=store,
+        )
+
+    assert created == "https://archive.ph/bounded/example"
+    assert posts == ["https://example.com/article"]
+
+
+@pytest.mark.asyncio
+async def test_archive_authority_failure_is_typed_and_never_posts(monkeypatch):
+    import argus.extraction.archive_extractor as archive
+
+    posts = []
+
+    async def submitted(url):
+        posts.append(url)
+
+    class FailingAuthority:
+        def verify(self, authorization):
+            raise RuntimeError("authority backend secret=do-not-publish")
+
+    class Store:
+        def consume(self, **kwargs):
+            raise AssertionError("store must not consume after failed verification")
+
+    monkeypatch.setattr(archive, "_submit_authorized", submitted)
+    authorization = archive.ArchiveCreationAuthorization(
+        caller_policy_ref="archive-policy-v1",
+        authority_receipt="authority-receipt-failure",
+        idempotency_key="archive-create-failure",
+        bounded_target="https://example.com/article",
+        profile="operator",
+    )
+
+    with pytest.raises(archive.ArchiveCreationPolicyRejected) as raised:
+        await archive.create_archive(
+            "https://example.com/article",
+            authorization=authorization,
+            authority=FailingAuthority(),
+            authorization_store=Store(),
+        )
+
+    assert "secret" not in str(raised.value)
+    assert posts == []
+
+
+def test_all_durable_projection_json_redacts_credential_bearing_url(tmp_path):
+    from sqlalchemy import select
+
+    from argus.extraction.finalizer import ExtractionFinalizer
+    from argus.persistence.search_ledger import (
+        ExtractionOutcomeAcceptanceRow,
+        ExtractionOutcomePlanRow,
+        create_search_ledger_repository,
+    )
+
+    raw_url = (
+        "https://user:password@example.com/article"
+        "?token=super-secret&safe=value#auth=fragment-secret"
+    )
+    request = replace(_request("extract-secret-url"), normalized_url=raw_url)
+    plan = replace(_plan(), normalized_url=raw_url)
+    repository = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'redacted-url.db'}"
+    )
+    ExtractionFinalizer(
+        repository=repository,
+        clock=lambda: "2026-07-27T12:00:00Z",
+    ).finalize_extraction(
+        request,
+        plan,
+        _raw(artifact=_artifact()),
+        OutcomePolicy(version="outcome-v1"),
+    )
+
+    with repository.session_factory() as session:
+        durable_plan = session.scalar(select(ExtractionOutcomePlanRow))
+        acceptance = session.scalar(select(ExtractionOutcomeAcceptanceRow))
+    persisted = " ".join(
+        (
+            durable_plan.normalized_url,
+            durable_plan.plan_json,
+            acceptance.projection_json,
+        )
+    )
+    assert "password" not in persisted
+    assert "super-secret" not in persisted
+    assert "fragment-secret" not in persisted
+    assert "redacted" in persisted
+
+
+def test_0007_latency_column_is_bigint_and_links_bind_plan_rows(tmp_path):
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine, inspect
+
+    url = f"sqlite:///{tmp_path / 'migration-shape.db'}"
+    config = Config()
+    config.set_main_option("script_location", "migrations")
+    config.set_main_option("sqlalchemy.url", url)
+    command.upgrade(config, "head")
+    inspector = inspect(create_engine(url))
+    step_columns = {
+        column["name"]: str(column["type"]).upper()
+        for column in inspector.get_columns("extraction_outcome_steps")
+    }
+    link_fks = {
+        tuple(foreign_key["constrained_columns"])
+        for foreign_key in inspector.get_foreign_keys(
+            "result_extraction_links"
+        )
+    }
+
+    assert "BIGINT" in step_columns["latency_ms"]
+    assert (
+        "extraction_acceptance_ref",
+        "extraction_plan_id",
+    ) in link_fks
+    assert ("artifact_row_id", "extraction_plan_id") in link_fks
+    assert ("rejection_row_id", "extraction_plan_id") in link_fks
+
+
+def test_recovery_contract_covers_every_0007_table_and_relationship():
+    from argus.recovery.database import REQUIRED_TABLES, _ORPHAN_CHECKS
+
+    s3_tables = {
+        "extraction_outcome_plans",
+        "extraction_outcome_steps",
+        "extraction_outcome_artifacts",
+        "extraction_outcome_rejections",
+        "extraction_outcome_acceptances",
+        "retrieval_compositions",
+        "result_extraction_links",
+        "extraction_outcome_activations",
+    }
+    joined_checks = "\n".join(_ORPHAN_CHECKS)
+
+    assert s3_tables <= REQUIRED_TABLES
+    for child in (
+        "extraction_outcome_steps",
+        "extraction_outcome_artifacts",
+        "extraction_outcome_rejections",
+        "extraction_outcome_acceptances",
+        "result_extraction_links",
+    ):
+        assert child in joined_checks

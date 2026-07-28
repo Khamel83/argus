@@ -18,6 +18,14 @@ REQUIRED_TABLES = {
     "provider_spend_attempts",
     "provider_balance_snapshots",
     "provider_spend_audit",
+    "extraction_outcome_plans",
+    "extraction_outcome_steps",
+    "extraction_outcome_artifacts",
+    "extraction_outcome_rejections",
+    "extraction_outcome_acceptances",
+    "retrieval_compositions",
+    "result_extraction_links",
+    "extraction_outcome_activations",
     "alembic_version",
 }
 
@@ -48,9 +56,14 @@ class FakeCursor:
 
     def fetchall(self):
         if "information_schema.columns" in self.query:
+            from argus.recovery.database import REQUIRED_S3_COLUMNS
+
             return [
-                (table, "id", "text", "NO", None)
+                (table, column, "text", "NO", None)
                 for table in sorted(self.tables)
+                for column in sorted(
+                    REQUIRED_S3_COLUMNS.get(table, {"id"})
+                )
             ]
         return [(table,) for table in self.tables]
 

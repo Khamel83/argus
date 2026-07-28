@@ -2,6 +2,8 @@
 
 from dataclasses import asdict, dataclass
 from enum import Enum
+import hashlib
+import json
 import re
 from typing import Iterable
 
@@ -45,6 +47,15 @@ class ExtractionRejection:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    @property
+    def rejection_ref(self) -> str:
+        payload = json.dumps(
+            self.to_dict(),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return "rejection:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 _TIMEOUT_MARKERS = ("timeout", "timed out")
@@ -216,13 +227,53 @@ def classify_extraction_rejection(
 def classify_typed_extraction_rejection(facts) -> ExtractionRejection:
     """Issue #57 mapper for the normalized S3 fact seam."""
     from argus.extraction.outcomes import (
+        AttemptOutcome,
         ExtractionContractRejected,
+        RejectionSourceKind,
         RejectionFacts,
     )
 
     if not isinstance(facts, RejectionFacts):
         raise ExtractionContractRejected()
-    if facts.autonomous and facts.code in {
+    if facts.source_kind is RejectionSourceKind.ARTIFACT_QUALITY:
+        code = RejectionCode.QUALITY_GATE_FAILED
+    elif facts.source_kind is RejectionSourceKind.ARTIFACT_INCOMPLETE:
+        code = RejectionCode.INCOMPLETE_CONTENT
+    elif facts.source_kind is RejectionSourceKind.OPERATION_DEADLINE:
+        code = RejectionCode.TIMEOUT
+    elif facts.source_kind is RejectionSourceKind.PREFLIGHT:
+        code = (
+            RejectionCode.UNSUPPORTED_SOURCE
+            if facts.terminal_outcome.value == "policy_rejected"
+            else RejectionCode.PROVIDER_UNAVAILABLE
+        )
+    else:
+        attempt_codes = {
+            AttemptOutcome.ADAPTER_REQUEST_REJECTED: RejectionCode.PARSE_ERROR,
+            AttemptOutcome.PROVIDER_AUTHENTICATION_REJECTED: (
+                RejectionCode.PROVIDER_UNAVAILABLE
+            ),
+            AttemptOutcome.PROVIDER_POLICY_REJECTED: (
+                RejectionCode.UNSUPPORTED_SOURCE
+            ),
+            AttemptOutcome.EMPTY: RejectionCode.EMPTY_RESULT,
+            AttemptOutcome.RATE_LIMITED: RejectionCode.RATE_LIMITED,
+            AttemptOutcome.BALANCE_EXHAUSTED: RejectionCode.PROVIDER_UNAVAILABLE,
+            AttemptOutcome.TIMEOUT: RejectionCode.TIMEOUT,
+            AttemptOutcome.PROVIDER_UNAVAILABLE: (
+                RejectionCode.PROVIDER_UNAVAILABLE
+            ),
+            AttemptOutcome.PARSE_ERROR: RejectionCode.PARSE_ERROR,
+            AttemptOutcome.UNKNOWN_FAILURE: RejectionCode.PROVIDER_UNAVAILABLE,
+            AttemptOutcome.CONTENT: RejectionCode.PROVIDER_UNAVAILABLE,
+        }
+        codes = {attempt_codes[outcome] for outcome in facts.attempt_outcomes}
+        code = (
+            codes.pop()
+            if len(codes) == 1
+            else RejectionCode.PROVIDER_UNAVAILABLE
+        )
+    if facts.autonomous and code in {
         RejectionCode.QUALITY_GATE_FAILED,
         RejectionCode.UNSUPPORTED_SOURCE,
         RejectionCode.PROVIDER_UNAVAILABLE,
@@ -230,7 +281,7 @@ def classify_typed_extraction_rejection(facts) -> ExtractionRejection:
         action = RejectionAction.TERMINAL
     elif (
         facts.eligible_fallback_remains
-        and facts.code
+        and code
         in {
             RejectionCode.PARSE_ERROR,
             RejectionCode.EMPTY_RESULT,
@@ -238,7 +289,7 @@ def classify_typed_extraction_rejection(facts) -> ExtractionRejection:
         }
     ):
         action = RejectionAction.FALLBACK_PROVIDER
-    elif facts.code in {
+    elif code in {
         RejectionCode.TIMEOUT,
         RejectionCode.RATE_LIMITED,
         RejectionCode.INCOMPLETE_CONTENT,
@@ -248,7 +299,7 @@ def classify_typed_extraction_rejection(facts) -> ExtractionRejection:
     else:
         action = RejectionAction.TERMINAL
     return ExtractionRejection(
-        code=facts.code,
+        code=code,
         provider=facts.provider,
         quality_passed=facts.quality_passed,
         is_complete=facts.is_complete,
@@ -257,3 +308,20 @@ def classify_typed_extraction_rejection(facts) -> ExtractionRejection:
         last_status=facts.last_status,
         total_latency_ms=facts.total_latency_ms,
     )
+
+
+def validate_typed_extraction_rejection(facts, rejection) -> None:
+    """Validate one mapper result against its complete typed source facts."""
+    from argus.extraction.outcomes import (
+        ExtractionContractRejected,
+        RejectionFacts,
+    )
+
+    if not isinstance(facts, RejectionFacts) or not isinstance(
+        rejection,
+        ExtractionRejection,
+    ):
+        raise ExtractionContractRejected()
+    expected = classify_typed_extraction_rejection(facts)
+    if rejection != expected:
+        raise ExtractionContractRejected()

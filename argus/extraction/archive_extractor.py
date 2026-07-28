@@ -11,7 +11,7 @@ import asyncio
 from dataclasses import dataclass
 import re
 import time
-from typing import Optional
+from typing import Optional, Protocol
 from urllib.parse import urlsplit
 
 import httpx
@@ -31,7 +31,6 @@ ARCHIVE_NEWEST_URL = "https://archive.ph/newest/"
 _min_interval = 5.0
 _last_request_time = 0.0
 _lock = None
-_used_creation_authorizations: set[tuple[str, str]] = set()
 _SAFE_AUTHORITY_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
@@ -51,6 +50,24 @@ class ArchiveCreationPolicyRejected(RuntimeError):
 
     def __init__(self):
         super().__init__("external archive creation is not authorized")
+
+
+class ArchiveCreationAuthority(Protocol):
+    """Verify a receipt against the external authority that issued it."""
+
+    def verify(self, authorization: ArchiveCreationAuthorization) -> bool: ...
+
+
+class ArchiveCreationAuthorizationStore(Protocol):
+    """Durable atomic consume; the tuple must remain spent across restarts."""
+
+    def consume(
+        self,
+        *,
+        receipt: str,
+        idempotency_key: str,
+        target: str,
+    ) -> bool: ...
 
 
 def _get_lock():
@@ -141,7 +158,7 @@ async def _submit_and_fetch(
 def _validate_creation_authorization(
     url: str,
     authorization: ArchiveCreationAuthorization | None,
-) -> tuple[str, str]:
+) -> None:
     if not isinstance(authorization, ArchiveCreationAuthorization):
         raise ArchiveCreationPolicyRejected()
     values = (
@@ -167,21 +184,34 @@ def _validate_creation_authorization(
         or parts.password is not None
     ):
         raise ArchiveCreationPolicyRejected()
-    identity = (authorization.authority_receipt, authorization.idempotency_key)
-    if identity in _used_creation_authorizations:
-        raise ArchiveCreationPolicyRejected()
-    return identity
 
 
 async def create_archive(
     url: str,
     *,
     authorization: ArchiveCreationAuthorization | None = None,
+    authority: ArchiveCreationAuthority | None = None,
+    authorization_store: ArchiveCreationAuthorizationStore | None = None,
 ) -> Optional[str]:
     """Create an external archive only under a fresh, bounded authority receipt."""
-    identity = _validate_creation_authorization(url, authorization)
-    # Claim before the first await so concurrent reuse cannot race into network.
-    _used_creation_authorizations.add(identity)
+    _validate_creation_authorization(url, authorization)
+    if authority is None or authorization_store is None:
+        raise ArchiveCreationPolicyRejected()
+    try:
+        verified = authority.verify(authorization) is True
+        consumed = (
+            verified
+            and authorization_store.consume(
+                receipt=authorization.authority_receipt,
+                idempotency_key=authorization.idempotency_key,
+                target=url,
+            )
+            is True
+        )
+    except Exception as error:
+        raise ArchiveCreationPolicyRejected() from error
+    if not verified or not consumed:
+        raise ArchiveCreationPolicyRejected()
     return await _submit_authorized(url)
 
 

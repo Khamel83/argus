@@ -31,9 +31,96 @@ REQUIRED_TABLES = {
     "provider_spend_attempts",
     "provider_balance_snapshots",
     "provider_spend_audit",
+    "extraction_outcome_plans",
+    "extraction_outcome_steps",
+    "extraction_outcome_artifacts",
+    "extraction_outcome_rejections",
+    "extraction_outcome_acceptances",
+    "retrieval_compositions",
+    "result_extraction_links",
+    "extraction_outcome_activations",
     "alembic_version",
 }
 COUNTED_TABLES = sorted(REQUIRED_TABLES - {"alembic_version"})
+REQUIRED_S3_COLUMNS = {
+    "extraction_outcome_plans": {
+        "id",
+        "plan_ref",
+        "extraction_run_id",
+        "request_id",
+        "normalized_url",
+        "access_scope",
+        "mode",
+        "plan_json",
+        "source_fingerprint",
+        "created_at",
+    },
+    "extraction_outcome_steps": {
+        "id",
+        "plan_id",
+        "ordinal",
+        "extractor",
+        "decision",
+        "attempt_outcome",
+        "latency_ms",
+        "provenance_json",
+        "spend_json",
+        "policy_rule_ref",
+    },
+    "extraction_outcome_artifacts": {
+        "id",
+        "plan_id",
+        "artifact_ref",
+        "content_identity",
+        "content_text",
+        "disposition",
+        "quality_passed",
+        "is_complete",
+        "evaluation_json",
+    },
+    "extraction_outcome_rejections": {
+        "id",
+        "plan_id",
+        "rejection_ref",
+        "code",
+        "provider",
+        "recommended_action",
+        "projection_json",
+    },
+    "extraction_outcome_acceptances": {
+        "receipt_ref",
+        "plan_id",
+        "outcome",
+        "artifact_disposition",
+        "outcome_policy_version",
+        "projection_json",
+        "acceptance_fingerprint",
+        "accepted_at",
+        "scope",
+    },
+    "retrieval_compositions": {
+        "receipt_ref",
+        "retrieval_acceptance_ref",
+        "requirement_ref",
+        "retrieval_outcome",
+        "artifact_outcome",
+        "composite_outcome",
+        "projection_json",
+        "source_fingerprint",
+        "accepted_at",
+    },
+    "result_extraction_links": {
+        "id",
+        "composition_ref",
+        "result_cluster_ref",
+        "extraction_acceptance_ref",
+        "extraction_plan_id",
+        "artifact_row_id",
+        "rejection_row_id",
+        "reuse_origin",
+    },
+    "extraction_outcome_activations": {"receipt_ref", "activated_at"},
+}
 _ORPHAN_CHECKS = (
     "SELECT count(*) FROM retrieval_runs child "
     "LEFT JOIN retrieval_requests parent ON parent.id = child.request_id "
@@ -56,6 +143,42 @@ _ORPHAN_CHECKS = (
     "SELECT count(*) FROM session_extracted_urls child "
     "LEFT JOIN session_queries parent ON parent.id = child.query_id "
     "WHERE parent.id IS NULL",
+    "SELECT count(*) FROM extraction_outcome_steps child "
+    "LEFT JOIN extraction_outcome_plans parent ON parent.id = child.plan_id "
+    "WHERE parent.id IS NULL",
+    "SELECT count(*) FROM extraction_outcome_artifacts child "
+    "LEFT JOIN extraction_outcome_plans parent ON parent.id = child.plan_id "
+    "WHERE parent.id IS NULL",
+    "SELECT count(*) FROM extraction_outcome_rejections child "
+    "LEFT JOIN extraction_outcome_plans parent ON parent.id = child.plan_id "
+    "WHERE parent.id IS NULL",
+    "SELECT count(*) FROM extraction_outcome_acceptances child "
+    "LEFT JOIN extraction_outcome_plans parent ON parent.id = child.plan_id "
+    "WHERE parent.id IS NULL",
+    "SELECT count(*) FROM result_extraction_links child "
+    "LEFT JOIN retrieval_compositions parent "
+    "ON parent.receipt_ref = child.composition_ref "
+    "WHERE parent.receipt_ref IS NULL",
+    "SELECT count(*) FROM result_extraction_links child "
+    "LEFT JOIN extraction_outcome_plans parent "
+    "ON parent.id = child.extraction_plan_id "
+    "WHERE child.extraction_plan_id IS NOT NULL AND parent.id IS NULL",
+    "SELECT count(*) FROM result_extraction_links child "
+    "LEFT JOIN extraction_outcome_acceptances acceptance "
+    "ON acceptance.receipt_ref = child.extraction_acceptance_ref "
+    "WHERE child.extraction_acceptance_ref IS NOT NULL "
+    "AND (acceptance.receipt_ref IS NULL "
+    "OR acceptance.plan_id <> child.extraction_plan_id)",
+    "SELECT count(*) FROM result_extraction_links child "
+    "LEFT JOIN extraction_outcome_artifacts artifact "
+    "ON artifact.id = child.artifact_row_id "
+    "WHERE child.artifact_row_id IS NOT NULL "
+    "AND (artifact.id IS NULL OR artifact.plan_id <> child.extraction_plan_id)",
+    "SELECT count(*) FROM result_extraction_links child "
+    "LEFT JOIN extraction_outcome_rejections rejection "
+    "ON rejection.id = child.rejection_row_id "
+    "WHERE child.rejection_row_id IS NOT NULL "
+    "AND (rejection.id IS NULL OR rejection.plan_id <> child.extraction_plan_id)",
 )
 
 
@@ -89,6 +212,24 @@ def verify_argus_database(
             if missing:
                 raise RuntimeError(
                     "missing required tables: " + ", ".join(missing)
+                )
+            cursor.execute(
+                "SELECT table_name, column_name "
+                "FROM information_schema.columns "
+                "WHERE table_schema = 'public'"
+            )
+            columns_by_table: dict[str, set[str]] = {}
+            for table_name, column_name, *_ in cursor.fetchall():
+                columns_by_table.setdefault(table_name, set()).add(column_name)
+            missing_columns = {
+                table: sorted(required - columns_by_table.get(table, set()))
+                for table, required in REQUIRED_S3_COLUMNS.items()
+                if required - columns_by_table.get(table, set())
+            }
+            if missing_columns:
+                raise RuntimeError(
+                    "missing required S3 columns: "
+                    + json.dumps(missing_columns, sort_keys=True)
                 )
 
             cursor.execute("SELECT version_num FROM alembic_version")

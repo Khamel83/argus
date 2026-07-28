@@ -42,7 +42,7 @@ def upgrade() -> None:
         sa.Column("extractor", sa.String(64), nullable=False),
         sa.Column("decision", sa.String(32), nullable=False),
         sa.Column("attempt_outcome", sa.String(64), nullable=True),
-        sa.Column("latency_ms", sa.Integer(), nullable=True),
+        sa.Column("latency_ms", sa.BigInteger(), nullable=True),
         sa.Column("provenance_json", sa.Text(), nullable=True),
         sa.Column("spend_json", sa.Text(), nullable=True),
         sa.Column("policy_rule_ref", sa.String(128), nullable=True),
@@ -62,13 +62,14 @@ def upgrade() -> None:
             nullable=False,
             unique=True,
         ),
-        sa.Column("artifact_ref", sa.String(128), nullable=False, unique=True),
+        sa.Column("artifact_ref", sa.String(128), nullable=False),
         sa.Column("content_identity", sa.String(128), nullable=False),
         sa.Column("content_text", sa.Text(), nullable=False),
         sa.Column("disposition", sa.String(32), nullable=False),
         sa.Column("quality_passed", sa.Boolean(), nullable=True),
         sa.Column("is_complete", sa.Boolean(), nullable=True),
         sa.Column("evaluation_json", sa.Text(), nullable=False),
+        sa.UniqueConstraint("id", "plan_id"),
     )
     op.create_table(
         "extraction_outcome_rejections",
@@ -80,11 +81,12 @@ def upgrade() -> None:
             nullable=False,
             unique=True,
         ),
-        sa.Column("rejection_ref", sa.String(128), nullable=False, unique=True),
+        sa.Column("rejection_ref", sa.String(128), nullable=False),
         sa.Column("code", sa.String(64), nullable=False),
         sa.Column("provider", sa.String(64), nullable=True),
         sa.Column("recommended_action", sa.String(64), nullable=False),
         sa.Column("projection_json", sa.Text(), nullable=False),
+        sa.UniqueConstraint("id", "plan_id"),
     )
     op.create_table(
         "extraction_outcome_acceptances",
@@ -103,6 +105,7 @@ def upgrade() -> None:
         sa.Column("acceptance_fingerprint", sa.String(64), nullable=False),
         sa.Column("accepted_at", sa.DateTime(), nullable=False),
         sa.Column("scope", sa.String(64), nullable=False),
+        sa.UniqueConstraint("receipt_ref", "plan_id"),
     )
     op.create_table(
         "retrieval_compositions",
@@ -129,22 +132,45 @@ def upgrade() -> None:
         sa.Column(
             "extraction_acceptance_ref",
             sa.String(128),
-            sa.ForeignKey("extraction_outcome_acceptances.receipt_ref"),
             nullable=True,
         ),
         sa.Column(
-            "artifact_ref",
-            sa.String(128),
-            sa.ForeignKey("extraction_outcome_artifacts.artifact_ref"),
+            "extraction_plan_id",
+            sa.String(32),
             nullable=True,
         ),
         sa.Column(
-            "rejection_ref",
-            sa.String(128),
-            sa.ForeignKey("extraction_outcome_rejections.rejection_ref"),
+            "artifact_row_id",
+            sa.String(32),
+            nullable=True,
+        ),
+        sa.Column(
+            "rejection_row_id",
+            sa.String(32),
             nullable=True,
         ),
         sa.Column("reuse_origin", sa.String(128), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["extraction_acceptance_ref", "extraction_plan_id"],
+            [
+                "extraction_outcome_acceptances.receipt_ref",
+                "extraction_outcome_acceptances.plan_id",
+            ],
+        ),
+        sa.ForeignKeyConstraint(
+            ["artifact_row_id", "extraction_plan_id"],
+            [
+                "extraction_outcome_artifacts.id",
+                "extraction_outcome_artifacts.plan_id",
+            ],
+        ),
+        sa.ForeignKeyConstraint(
+            ["rejection_row_id", "extraction_plan_id"],
+            [
+                "extraction_outcome_rejections.id",
+                "extraction_outcome_rejections.plan_id",
+            ],
+        ),
         sa.UniqueConstraint(
             "composition_ref",
             "result_cluster_ref",
