@@ -442,7 +442,13 @@ class ExecutableProviderRegistry:
             credential_ref = (
                 "not-applicable-credential"
                 if provider in keyless
-                else os.environ.get(f"ARGUS_{prefix}_CREDENTIAL_VERSION_FINGERPRINT")
+                else (
+                    os.environ.get(
+                        f"ARGUS_{prefix}_CREDENTIAL_VERSION_FINGERPRINT"
+                    )
+                    if provider_config.api_key.strip()
+                    else None
+                )
             )
             account_ref = (
                 "not-applicable-account"

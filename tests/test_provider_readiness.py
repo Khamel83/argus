@@ -934,6 +934,78 @@ def test_registration_persists_all_issues_and_never_calls_adapter_availability(
     assert restarted.registration(ProviderName.BRAVE).issues == decision.issues
 
 
+def test_runtime_registry_requires_paid_key_in_addition_to_credential_fingerprint(
+    tmp_path,
+    monkeypatch,
+):
+    from argus.broker.readiness import (
+        ExecutableProviderRegistry,
+        ProviderReadinessService,
+    )
+    from argus.config import ArgusConfig, ProviderConfig
+    from argus.persistence.readiness import create_readiness_repository
+    from argus.providers.brave import BraveProvider
+    from argus.providers.duckduckgo import DuckDuckGoProvider
+
+    monkeypatch.setenv(
+        "ARGUS_BRAVE_CREDENTIAL_VERSION_FINGERPRINT", "brave-key-version:v1"
+    )
+    monkeypatch.setenv("ARGUS_BRAVE_ACCOUNT_FINGERPRINT", "brave-account:v1")
+    monkeypatch.setenv("ARGUS_RELEASE_REVISION", "argus-1.6.2")
+    brave_config = ProviderConfig(
+        enabled=True,
+        api_key="",
+        monthly_budget_usd=10.0,
+    )
+    duckduckgo_config = ProviderConfig(enabled=True)
+    config = ArgusConfig(
+        brave=brave_config,
+        duckduckgo=duckduckgo_config,
+    )
+    adapters = {
+        ProviderName.BRAVE: BraveProvider(brave_config),
+        ProviderName.DUCKDUCKGO: DuckDuckGoProvider(duckduckgo_config),
+    }
+
+    registry = ExecutableProviderRegistry.from_runtime(
+        config=config,
+        providers=adapters,
+        durable_spend_repository=True,
+    )
+    specs = {spec.provider: spec for spec in registry.specs}
+    assert specs[ProviderName.BRAVE].credential_version_fingerprint is None
+    assert (
+        specs[ProviderName.DUCKDUCKGO].credential_version_fingerprint
+        == "not-applicable-credential"
+    )
+    configured_brave = ProviderConfig(
+        enabled=True,
+        api_key="fixture-key",
+        monthly_budget_usd=10.0,
+    )
+    configured_registry = ExecutableProviderRegistry.from_runtime(
+        config=ArgusConfig(brave=configured_brave),
+        providers={ProviderName.BRAVE: BraveProvider(configured_brave)},
+        durable_spend_repository=True,
+    )
+    assert (
+        configured_registry.specs[0].credential_version_fingerprint
+        == "brave-key-version:v1"
+    )
+
+    service = ProviderReadinessService(
+        repository=create_readiness_repository(
+            f"sqlite:///{tmp_path / 'runtime-registry.db'}"
+        )
+    )
+    registry.persist(service, adapters)
+
+    brave = service.registration(ProviderName.BRAVE)
+    assert brave.registered is False
+    assert "missing_credential" in brave.issues
+    assert service.registration(ProviderName.DUCKDUCKGO).registered is True
+
+
 def test_reregistration_preserves_protected_terminal_spend(tmp_path):
     service, _ = _service(tmp_path)
     spec = _registration(provider=ProviderName.SERPER)

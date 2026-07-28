@@ -1493,6 +1493,26 @@ class ProviderReadinessRepository:
                     and not replace_protected_uncertain
                 ):
                     continue
+                if (
+                    current.evidence_ref
+                    and (
+                        not current.protected
+                        or (
+                            current.state == "uncertain"
+                            and replace_protected_uncertain
+                        )
+                    )
+                ):
+                    superseded_evidence = session.scalar(
+                        select(ProviderReadinessEvidenceRefRow).where(
+                            ProviderReadinessEvidenceRefRow.provider
+                            == provider.value,
+                            ProviderReadinessEvidenceRefRow.evidence_ref
+                            == current.evidence_ref,
+                        )
+                    )
+                    if superseded_evidence is not None:
+                        superseded_evidence.protected = False
                 session.delete(current)
                 session.flush()
             observation_id = uuid.uuid4().hex

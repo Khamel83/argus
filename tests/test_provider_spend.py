@@ -155,6 +155,57 @@ def test_direct_reserve_settle_reconciles_protected_readiness_account_wide(
         assert snapshot.execution_decision.code == "eligible"
 
 
+def test_repeated_direct_success_does_not_protect_superseded_spend_receipts(
+    tmp_path,
+):
+    from argus.persistence.provider_spend import ProviderSpendRepository
+    from argus.persistence.readiness import ProviderReadinessEvidenceRefRow
+
+    service, readiness = _registered_readiness(
+        tmp_path, "direct-success-receipts.db"
+    )
+    spend = ProviderSpendRepository(readiness.session_factory)
+
+    for index in range(40):
+        reservation = spend.reserve(
+            provider=ProviderName.BRAVE,
+            conservative_charge=0.01,
+            budget_limit=10.0,
+            caller_identity="legacy-direct",
+            caller_label="receipt-regression",
+            idempotency_key=f"receipt-regression:{index}",
+        )
+        spend.settle(
+            reservation.attempt_id,
+            actual_charge=0.0,
+            outcome="success",
+        )
+
+    snapshot = service.snapshot(
+        ProviderName.BRAVE, request_class="discovery"
+    )
+    current_receipts = {
+        row.evidence_ref
+        for row in readiness.observations(ProviderName.BRAVE)
+        if row.evidence_ref is not None
+    }
+    with readiness.session_factory() as session:
+        stale_protected = list(session.scalars(
+            select(ProviderReadinessEvidenceRefRow).where(
+                ProviderReadinessEvidenceRefRow.provider == "brave",
+                ProviderReadinessEvidenceRefRow.protected.is_(True),
+                ProviderReadinessEvidenceRefRow.evidence_ref.not_in(
+                    current_receipts
+                ),
+            )
+        ))
+
+    assert snapshot.configuration.issues == ()
+    assert snapshot.execution_decision.code == "eligible"
+    assert readiness.evidence_ref_count(ProviderName.BRAVE) <= 32
+    assert stale_protected == []
+
+
 def test_terminal_exhaustion_denies_reserve_and_survives_ordinary_settlement(
     tmp_path,
 ):
