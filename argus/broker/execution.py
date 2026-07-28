@@ -93,7 +93,7 @@ class ProviderExecutionOutcome:
     provider_batches: Dict[str, ProviderSearchBatch] = field(default_factory=dict)
 
     def contributor_attempt_refs(self) -> tuple[str, ...]:
-        """Expose bounded provider attempt lineage for the inactive S6 seam."""
+        """Expose bounded provider attempt lineage for durable acceptance."""
         refs: list[str] = []
         for _provider, batch in sorted(self.provider_batches.items()):
             attempt_id = batch.request_evidence.attempt_id
@@ -110,6 +110,23 @@ class ProviderInvocationOutcome:
     batch: ProviderSearchBatch
     uncertain_charge: bool
     compatibility_trace: ProviderTrace
+
+
+def _bind_attempt_identity(
+    batch: ProviderSearchBatch,
+    attempt_id: str,
+) -> ProviderSearchBatch:
+    if batch.request_evidence.attempt_id == attempt_id:
+        return batch
+    if batch.request_evidence.attempt_id is not None:
+        raise ValueError("provider batch attempt identity does not match authority")
+    return replace(
+        batch,
+        request_evidence=replace(
+            batch.request_evidence,
+            attempt_id=attempt_id,
+        ),
+    )
 
 
 class ProviderExecutor:
@@ -298,6 +315,10 @@ class ProviderExecutor:
                     try:
                         legacy = await remote.search(query)
                         batch = LegacyProviderBatchAdapter.from_legacy(legacy)
+                        batch = _bind_attempt_identity(
+                            batch,
+                            authorization.attempt_id,
+                        )
                         results, trace = batch.results, batch.trace
                         provider_batches[pname.value] = batch
                         uncertain = not self._trace_charge_known(pname, trace)
@@ -429,6 +450,10 @@ class ProviderExecutor:
                     provider_phase_deadline=provider_phase_deadline,
                 )
                 batch = invocation.batch
+                batch = _bind_attempt_identity(
+                    batch,
+                    authorization.attempt_id,
+                )
                 results, trace = batch.results, invocation.compatibility_trace
                 provider_batches[pname.value] = batch
                 uncertain = invocation.uncertain_charge

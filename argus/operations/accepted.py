@@ -46,6 +46,18 @@ class AcceptedOperationRegistration:
                 "evidence authority registration is missing: " + ", ".join(missing)
             )
 
+    def capability_registrations(self) -> frozenset[str]:
+        self.validate("evidence")
+        return frozenset(
+            {
+                "accepted_service",
+                "legacy_presenter",
+                "v2_presenter",
+                "v2_routes",
+                "transport_security",
+            }
+        )
+
 
 def _operation_error(
     outcome: CanonicalOutcome,
@@ -191,12 +203,88 @@ class AcceptedOperationService:
         extractor: Callable[..., Awaitable[object]] | None = None,
         archive_lookup: Callable[..., Awaitable[object]] | None = None,
         session_authority=None,
+        registration: AcceptedOperationRegistration | None = None,
     ):
         self._broker_provider = broker_provider
         self._repository_provider = repository_provider
         self._extractor = extractor
         self._archive_lookup = archive_lookup
         self._session_authority = session_authority
+        self._registration = registration or AcceptedOperationRegistration()
+        self._evidence_repository = None
+
+    def validate_registration(self, authority: str) -> None:
+        """Validate the concrete service's atomic authority registration."""
+        self._registration.validate(authority)
+
+    @property
+    def registration(self) -> AcceptedOperationRegistration:
+        return self._registration
+
+    def capability_registrations(self) -> frozenset[str]:
+        return self._registration.capability_registrations()
+
+    def _get_evidence_repository(self):
+        if self._evidence_repository is None:
+            from argus.persistence.evidence import SqlAlchemyEvidenceRepository
+
+            repository = self._repository_provider()
+            session_factory = getattr(repository, "session_factory", None)
+            if session_factory is None:
+                raise AcceptedAuthorityConfigurationError(
+                    "evidence authority repository has no transactional session"
+                )
+            self._evidence_repository = SqlAlchemyEvidenceRepository(session_factory)
+        return self._evidence_repository
+
+    def _accepted_search_operation(
+        self,
+        execution,
+        *,
+        request_id: str,
+        include_attribution: bool,
+        session_id: str | None,
+    ) -> AcceptedOperation:
+        outcome = execution.outcome
+        if execution.response is None or execution.receipt is None:
+            return AcceptedOperation(
+                outcome=outcome,
+                request_id=request_id,
+                result=None,
+                error=_operation_error(
+                    outcome,
+                    request_id=request_id,
+                    detail="Search could not be durably accepted",
+                ),
+            )
+        result = _search_projection(
+            execution.response,
+            include_attribution=include_attribution,
+        )
+        result["session_id"] = session_id
+        result["acceptance_receipt"] = {
+            "run_id": execution.response.search_run_id,
+            "delivery_intent_id": execution.receipt.receipt_ref,
+        }
+        return AcceptedOperation(
+            outcome=outcome,
+            request_id=request_id,
+            result=result,
+            error=(
+                None
+                if outcome
+                in {
+                    CanonicalOutcome.SUCCESS,
+                    CanonicalOutcome.DEGRADED,
+                    CanonicalOutcome.EMPTY,
+                }
+                else _operation_error(
+                    outcome,
+                    request_id=request_id,
+                    detail="Search providers did not produce accepted evidence",
+                )
+            ),
+        )
 
     async def search(
         self,
@@ -272,6 +360,28 @@ class AcceptedOperationService:
                     operation_began=False,
                 ),
                 operation_began=False,
+            )
+        if self._registration == AcceptedOperationRegistration.complete():
+            evidence_repository = self._get_evidence_repository()
+            if session_id:
+                execution, session_id = await broker.search_with_session_accepted(
+                    query,
+                    evidence_repository=evidence_repository,
+                    session_id=session_id,
+                    compute_attribution=request.include_attribution,
+                )
+            else:
+                execution = await broker.search_accepted(
+                    query,
+                    evidence_repository=evidence_repository,
+                    compute_attribution=request.include_attribution,
+                )
+                session_id = None
+            return self._accepted_search_operation(
+                execution,
+                request_id=request_id,
+                include_attribution=request.include_attribution,
+                session_id=session_id,
             )
         if session_id:
             response, session_id = await broker.search_with_session(
@@ -376,6 +486,17 @@ class AcceptedOperationService:
             max_results=10,
             caller=principal,
         )
+        if self._registration == AcceptedOperationRegistration.complete():
+            execution = await self._broker_provider().search_accepted(
+                query,
+                evidence_repository=self._get_evidence_repository(),
+            )
+            return self._accepted_search_operation(
+                execution,
+                request_id=request_id,
+                include_attribution=False,
+                session_id=None,
+            )
         response = await self._broker_provider().search(query, persist_legacy=False)
         if not response.results:
             try:
@@ -420,6 +541,17 @@ class AcceptedOperationService:
             max_results=15,
             caller=principal,
         )
+        if self._registration == AcceptedOperationRegistration.complete():
+            execution = await self._broker_provider().search_accepted(
+                query,
+                evidence_repository=self._get_evidence_repository(),
+            )
+            return self._accepted_search_operation(
+                execution,
+                request_id=request_id,
+                include_attribution=False,
+                session_id=None,
+            )
         response = await self._broker_provider().search(query, persist_legacy=False)
         return self._accept_search(
             query,
@@ -441,14 +573,22 @@ class AcceptedOperationService:
         try:
             from argus.api.main import _HTTP_API_AUTHORITY_CAPABILITY
 
-            result = await extractor(
-                request.url,
-                domain=request.domain,
-                mode=request.mode,
-                caller=principal,
-                repository=self._repository_provider(),
-                authority_capability=_HTTP_API_AUTHORITY_CAPABILITY,
-            )
+            kwargs = {
+                "domain": request.domain,
+                "mode": request.mode,
+                "caller": principal,
+                "repository": self._repository_provider(),
+                "authority_capability": _HTTP_API_AUTHORITY_CAPABILITY,
+            }
+            if (
+                self._registration == AcceptedOperationRegistration.complete()
+                and extractor is extract_url
+            ):
+                kwargs.update(
+                    use_evidence_authority=True,
+                    request_id=request_id,
+                )
+            result = await extractor(request.url, **kwargs)
         except Exception:
             outcome = CanonicalOutcome.PERSISTENCE_FAILED
             return AcceptedOperation(

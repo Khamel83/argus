@@ -29,6 +29,24 @@ def test_invalid_host_rejects_before_accepted_service(monkeypatch):
     service.search.assert_not_called()
 
 
+def test_explicit_host_policy_does_not_trust_loopback_header(monkeypatch):
+    monkeypatch.setenv("ARGUS_ALLOWED_HOSTS", "argus.internal")
+    client, service = _client(monkeypatch)
+
+    response = client.post(
+        "/api/v2/search",
+        json={"query": "never executes"},
+        headers={
+            "host": "localhost",
+            "origin": "https://maya.example",
+        },
+    )
+
+    assert response.status_code == 421
+    assert response.headers["access-control-allow-origin"] == "https://maya.example"
+    service.search.assert_not_called()
+
+
 def test_invalid_origin_rejects_before_accepted_service(monkeypatch):
     client, service = _client(monkeypatch)
 
@@ -169,3 +187,38 @@ def test_v2_authentication_and_rate_limit_failures_use_the_v2_envelope(monkeypat
     assert limited.json()["error"]["code"] == "rate_limited"
     assert limited.json()["error"]["retry_after_seconds"] == 7
     assert limited.headers["retry-after"] == "7"
+
+
+def test_unexpected_v2_failure_is_safe_enveloped_and_cors_wrapped(monkeypatch):
+    from argus.api.main import create_app
+    from argus.config import reset_config
+    from argus.operations.accepted import (
+        AcceptedOperationRegistration,
+        AcceptedOperationService,
+    )
+
+    monkeypatch.setenv("ARGUS_ACCEPTED_OPERATION_AUTHORITY", "evidence")
+    monkeypatch.setenv("ARGUS_ALLOWED_ORIGINS", "https://maya.example")
+    reset_config()
+    service = AcceptedOperationService(
+        broker_provider=MagicMock(),
+        repository_provider=MagicMock(),
+        registration=AcceptedOperationRegistration.complete(),
+    )
+    service.search = AsyncMock(side_effect=RuntimeError("secret failure"))
+    try:
+        response = TestClient(
+            create_app(accepted_operation_service=service)
+        ).post(
+            "/api/v2/search",
+            json={"query": "safe failure"},
+            headers={"origin": "https://maya.example"},
+        )
+    finally:
+        reset_config()
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "internal_failure"
+    assert "secret" not in response.text
+    assert response.headers["argus-contract-version"] == "2.0"
+    assert response.headers["access-control-allow-origin"] == "https://maya.example"

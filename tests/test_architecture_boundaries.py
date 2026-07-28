@@ -21,6 +21,23 @@ PORTED_HTTP_MODULES = {
         "argus.extraction.cookies",
     },
 }
+LEGACY_ADAPTER_EXCEPTIONS = {
+    ROOT / "argus/api/routes_admin.py",
+    ROOT / "argus/api/routes_dashboard.py",
+    ROOT / "argus/api/routes_health.py",
+    ROOT / "argus/mcp/http_adapter.py",
+    ROOT / "argus/mcp/local_adapter.py",
+    ROOT / "argus/mcp/resources.py",
+    ROOT / "argus/mcp/server.py",
+    ROOT / "argus/mcp/tools.py",
+    ROOT / "argus/cli/main.py",
+    ROOT / "argus/workflows/service.py",
+}
+EXPECTED_ADAPTERS = {
+    *PORTED_HTTP_MODULES,
+    *LEGACY_ADAPTER_EXCEPTIONS,
+    ROOT / "argus/api/routes_workflows.py",
+}
 FORBIDDEN = {
     "argus.providers",
     "argus.extraction",
@@ -98,6 +115,46 @@ def test_ported_http_modules_have_no_secondary_semantic_authority(
     }
     assert not violations
     assert "argus.operations.accepted" in imported
+
+
+def test_transport_adapter_inventory_has_only_closed_legacy_exceptions():
+    discovered = {
+        *ROOT.glob("argus/api/routes_*.py"),
+        *ROOT.glob("argus/mcp/*.py"),
+        *ROOT.glob("argus/cli/*.py"),
+        *ROOT.glob("argus/workflows/*.py"),
+    }
+    non_adapters = {
+        ROOT / "argus/mcp/__init__.py",
+        ROOT / "argus/cli/__init__.py",
+        ROOT / "argus/workflows/__init__.py",
+        ROOT / "argus/workflows/models.py",
+        ROOT / "argus/workflows/summarizer.py",
+    }
+    assert discovered - non_adapters == EXPECTED_ADAPTERS
+
+    for path in EXPECTED_ADAPTERS - LEGACY_ADAPTER_EXCEPTIONS:
+        imported = _imports(path)
+        violations = {
+            module
+            for module in imported
+            if any(
+                module == forbidden or module.startswith(f"{forbidden}.")
+                for forbidden in FORBIDDEN
+            )
+        }
+        if path == ROOT / "argus/api/routes_extract.py":
+            violations = {
+                module
+                for module in violations
+                if not module.startswith(
+                    (
+                        "argus.extraction.completeness",
+                        "argus.extraction.cookies",
+                    )
+                )
+            }
+        assert not violations, f"{path.relative_to(ROOT)}: {sorted(violations)}"
 
 
 def test_contract_kernel_does_not_import_the_throwaway_prototype():

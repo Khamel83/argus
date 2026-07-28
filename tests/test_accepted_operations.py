@@ -85,6 +85,52 @@ async def test_search_executes_and_accepts_once_then_presenter_is_pure():
 
 
 @pytest.mark.asyncio
+async def test_evidence_authority_never_calls_legacy_search_or_accept():
+    from datetime import datetime, timezone
+
+    from argus.broker.accepted import AcceptanceReceipt, AcceptedSearchExecution
+    from argus.operations.accepted import (
+        AcceptedOperationRegistration,
+        AcceptedOperationService,
+    )
+
+    broker = MagicMock()
+    broker.search = AsyncMock()
+    receipt = AcceptanceReceipt(
+        receipt_ref="receipt:evidence",
+        accepted_at=datetime(2026, 7, 28, tzinfo=timezone.utc),
+        acceptance_fingerprint="a" * 64,
+    )
+    broker.search_accepted = AsyncMock(
+        return_value=AcceptedSearchExecution(
+            outcome=CanonicalOutcome.SUCCESS,
+            reason="accepted",
+            response=_search_response(),
+            receipt=receipt,
+        )
+    )
+    legacy_repository = MagicMock()
+    service = AcceptedOperationService(
+        broker_provider=lambda: broker,
+        repository_provider=lambda: legacy_repository,
+        registration=AcceptedOperationRegistration.complete(),
+    )
+    evidence_repository = MagicMock()
+    service._evidence_repository = evidence_repository
+
+    operation = await service.search(
+        SearchRequest(query="accepted operation"),
+        principal="maya",
+        request_id="request-evidence",
+    )
+
+    assert operation.outcome is CanonicalOutcome.SUCCESS
+    broker.search_accepted.assert_awaited_once()
+    broker.search.assert_not_awaited()
+    legacy_repository.accept.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_empty_search_is_an_accepted_empty_outcome():
     from argus.operations.accepted import AcceptedOperationService
 
@@ -295,13 +341,22 @@ def test_http_search_route_calls_only_the_accepted_operation_service(monkeypatch
 def test_app_rejects_partial_evidence_authority_registration(monkeypatch):
     from argus.api.main import create_app
     from argus.config import reset_config
-    from argus.operations.accepted import AcceptedAuthorityConfigurationError
+    from argus.operations.accepted import (
+        AcceptedAuthorityConfigurationError,
+        AcceptedOperationRegistration,
+        AcceptedOperationService,
+    )
 
     monkeypatch.setenv("ARGUS_ACCEPTED_OPERATION_AUTHORITY", "evidence")
     reset_config()
     try:
+        partial = AcceptedOperationService(
+            broker_provider=MagicMock(),
+            repository_provider=MagicMock(),
+            registration=AcceptedOperationRegistration(planner=True),
+        )
         with pytest.raises(AcceptedAuthorityConfigurationError, match="missing"):
-            create_app()
+            create_app(accepted_operation_service=partial)
     finally:
         reset_config()
 

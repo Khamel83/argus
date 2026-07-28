@@ -128,7 +128,6 @@ def create_app(
     spend_repository=None,
     operational_status: OperationalStatusService | None = None,
     accepted_operation_service: AcceptedOperationService | None = None,
-    accepted_operation_registration: AcceptedOperationRegistration | None = None,
 ) -> FastAPI:
     auth_config = AuthConfig.from_env()
     production_mode = (
@@ -137,10 +136,27 @@ def create_app(
     from argus.config import get_config
 
     startup_config = get_config()
-    registration = accepted_operation_registration or AcceptedOperationRegistration()
-    registration.validate(
-        getattr(startup_config, "accepted_operation_authority", "legacy")
+    accepted_authority = getattr(
+        startup_config,
+        "accepted_operation_authority",
+        "legacy",
     )
+    if accepted_authority == "evidence":
+        registration = AcceptedOperationRegistration.complete()
+        if accepted_operation_service is not None:
+            if not isinstance(accepted_operation_service, AcceptedOperationService):
+                from argus.operations.accepted import (
+                    AcceptedAuthorityConfigurationError,
+                )
+
+                raise AcceptedAuthorityConfigurationError(
+                    "evidence authority requires a concrete AcceptedOperationService"
+                )
+            accepted_operation_service.validate_registration("evidence")
+            registration = accepted_operation_service.registration
+        registration.validate("evidence")
+    elif accepted_authority != "legacy":
+        AcceptedOperationRegistration().validate(accepted_authority)
     production_postgresql = production_mode and startup_config.db_url.startswith(
         ("postgresql:", "postgresql+")
     )
@@ -602,14 +618,20 @@ def create_app(
         lifespan=lifespan_with_probes,
     )
     app.state.operational_status = operational_status or create_operational_status()
-    app.state.evidence_authority_enabled = (
-        getattr(startup_config, "accepted_operation_authority", "legacy")
-        == "evidence"
-    )
+    app.state.evidence_authority_enabled = accepted_authority == "evidence"
     from argus.capabilities import http_capability_manifest
 
     app.state.capability_manifest = http_capability_manifest(
-        evidence_enabled=app.state.evidence_authority_enabled
+        evidence_enabled=app.state.evidence_authority_enabled,
+        registrations=(
+            (
+                accepted_operation_service.capability_registrations()
+                if accepted_operation_service is not None
+                else registration.capability_registrations()
+            )
+            if app.state.evidence_authority_enabled
+            else frozenset()
+        ),
     )
     from argus.api.security import TransportSecurityGuard
 
@@ -720,6 +742,11 @@ def create_app(
                 broker_provider=app.state.get_broker,
                 repository_provider=app.state.get_search_repository,
                 session_authority=RetrievalSessionAuthority.from_environment(),
+                registration=(
+                    AcceptedOperationRegistration.complete()
+                    if app.state.evidence_authority_enabled
+                    else AcceptedOperationRegistration()
+                ),
             )
         return current_accepted_operation_service
 
@@ -744,28 +771,6 @@ def create_app(
     app.state.get_workflows = _build_workflow_provider(app.state.get_broker)
     app.state.rate_limiter = rate_limiter or _build_rate_limiter()
     app.state.auth_config = auth_config
-
-    if app.state.transport_security_guard.allowed_origins:
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=list(app.state.transport_security_guard.allowed_origins),
-            allow_methods=["GET", "POST", "OPTIONS"],
-            allow_headers=[
-                "Authorization",
-                "Content-Type",
-                "MCP-Protocol-Version",
-                "Mcp-Session-Id",
-                "Last-Event-ID",
-                "X-Request-Id",
-            ],
-            expose_headers=[
-                "Mcp-Session-Id",
-                "X-Request-ID",
-                "X-Argus-Deployment-ID",
-                "Argus-Contract-Version",
-                "Retry-After",
-            ],
-        )
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
@@ -956,7 +961,52 @@ def create_app(
         )
         if rejection is not None:
             return rejection
-        return await call_next(request)
+        try:
+            return await call_next(request)
+        except Exception:
+            if not request.url.path.startswith("/api/v2"):
+                raise
+            from argus.api.contracts_v2 import (
+                EvidenceHttpPresenter,
+                admission_operation,
+            )
+            from argus.contracts import CanonicalOutcome
+
+            return EvidenceHttpPresenter().response(
+                admission_operation(
+                    outcome=CanonicalOutcome.UNREADY,
+                    request_id=getattr(
+                        request.state,
+                        "request_id",
+                        safe_correlation_id(request.headers.get("x-request-id")),
+                    ),
+                    detail="Request could not be completed safely",
+                    code="internal_failure",
+                )
+            )
+
+    # Install CORS last so it wraps admission and safe-error responses.
+    if app.state.transport_security_guard.allowed_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(app.state.transport_security_guard.allowed_origins),
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=[
+                "Authorization",
+                "Content-Type",
+                "MCP-Protocol-Version",
+                "Mcp-Session-Id",
+                "Last-Event-ID",
+                "X-Request-Id",
+            ],
+            expose_headers=[
+                "Mcp-Session-Id",
+                "X-Request-ID",
+                "X-Argus-Deployment-ID",
+                "Argus-Contract-Version",
+                "Retry-After",
+            ],
+        )
 
     app.include_router(search_router, prefix="/api")
     app.include_router(health_router, prefix="/api")

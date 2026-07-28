@@ -99,7 +99,10 @@ def test_v2_is_unready_without_atomic_evidence_authority(monkeypatch):
 def test_v2_search_calls_the_same_accepted_service_once_when_registered(monkeypatch):
     from argus.api.main import create_app
     from argus.config import reset_config
-    from argus.operations.accepted import AcceptedOperationRegistration
+    from argus.operations.accepted import (
+        AcceptedOperationRegistration,
+        AcceptedOperationService,
+    )
 
     monkeypatch.setenv("ARGUS_ACCEPTED_OPERATION_AUTHORITY", "evidence")
     reset_config()
@@ -109,15 +112,14 @@ def test_v2_search_calls_the_same_accepted_service_once_when_registered(monkeypa
         result={"accepted": True},
         error=None,
     )
-    service = MagicMock()
+    service = AcceptedOperationService(
+        broker_provider=MagicMock(),
+        repository_provider=MagicMock(),
+        registration=AcceptedOperationRegistration.complete(),
+    )
     service.search = AsyncMock(return_value=operation)
     try:
-        client = TestClient(
-            create_app(
-                accepted_operation_service=service,
-                accepted_operation_registration=AcceptedOperationRegistration.complete(),
-            )
-        )
+        client = TestClient(create_app(accepted_operation_service=service))
         response = client.post(
             "/api/v2/search",
             json={"query": "v2"},
@@ -168,7 +170,10 @@ def test_v2_framework_errors_are_enveloped_without_rejected_value_echo(monkeypat
 def test_capabilities_advertise_v2_only_after_complete_registration(monkeypatch):
     from argus.api.main import create_app
     from argus.config import reset_config
-    from argus.operations.accepted import AcceptedOperationRegistration
+    from argus.operations.accepted import (
+        AcceptedOperationRegistration,
+        AcceptedOperationService,
+    )
 
     monkeypatch.setenv("ARGUS_ACCEPTED_OPERATION_AUTHORITY", "legacy")
     reset_config()
@@ -177,11 +182,14 @@ def test_capabilities_advertise_v2_only_after_complete_registration(monkeypatch)
 
     monkeypatch.setenv("ARGUS_ACCEPTED_OPERATION_AUTHORITY", "evidence")
     reset_config()
+    service = AcceptedOperationService(
+        broker_provider=MagicMock(),
+        repository_provider=MagicMock(),
+        registration=AcceptedOperationRegistration.complete(),
+    )
     try:
         evidence = TestClient(
-            create_app(
-                accepted_operation_registration=AcceptedOperationRegistration.complete()
-            )
+            create_app(accepted_operation_service=service)
         ).get("/api/capabilities").json()
     finally:
         reset_config()
@@ -200,7 +208,17 @@ def test_capabilities_advertise_v2_only_after_complete_registration(monkeypatch)
 def test_release_capability_manifest_is_immutable_and_fail_closed():
     from argus.capabilities import CapabilityManifestError, http_capability_manifest
 
-    manifest = http_capability_manifest(evidence_enabled=True)
+    registrations = {
+        "accepted_service",
+        "legacy_presenter",
+        "v2_presenter",
+        "v2_routes",
+        "transport_security",
+    }
+    manifest = http_capability_manifest(
+        evidence_enabled=True,
+        registrations=registrations,
+    )
     assert manifest.snapshot["http_contracts"][1]["version"] == "2.0"
     with pytest.raises(TypeError):
         manifest.snapshot["http_contracts"] = ()

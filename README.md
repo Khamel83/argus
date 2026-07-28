@@ -693,7 +693,7 @@ When running from the repo, Argus now auto-loads `.env` and `.env.local` (withou
 | `ARGUS_AUTOLOAD_DOTENV` | `true` | Auto-load `.env` / `.env.local` from cwd and repo root for CLI/API/MCP processes |
 | `ARGUS_API_KEY` | — | Required for non-local HTTP API and remote MCP callers |
 | `ARGUS_ADMIN_API_KEY` | — | Enables dashboard login and admin API authentication |
-| `ARGUS_ACCEPTED_OPERATION_AUTHORITY` | `legacy` | Atomic authority selection. `evidence` fails startup unless every required authority is registered |
+| `ARGUS_ACCEPTED_OPERATION_AUTHORITY` | `legacy` | Atomic authority selection. `evidence` activates the registered planner, readiness, evidence repository, extraction finalizer, and HTTP presenters as one unit |
 | `ARGUS_ALLOWED_HOSTS` | — | Exact comma-separated HTTP Host allowlist; required for a remote production listener |
 | `ARGUS_ALLOWED_ORIGINS` | — | Exact comma-separated browser Origin allowlist. Set explicitly, including an empty value, for remote production |
 | `ARGUS_RETRIEVAL_SESSION_SECRET` | — | Stable random secret of at least 32 characters used to bind v2 retrieval sessions to authenticated principals |

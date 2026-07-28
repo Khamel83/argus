@@ -51,7 +51,7 @@ def http_capability_manifest(
     evidence_enabled: bool,
     registrations: set[str] | frozenset[str] | None = None,
 ) -> ReleaseCapabilityManifest:
-    active = _HTTP_V2_REGISTRATIONS if registrations is None else frozenset(registrations)
+    active = frozenset() if registrations is None else frozenset(registrations)
     if evidence_enabled:
         missing = sorted(_HTTP_V2_REGISTRATIONS - active)
         if missing:

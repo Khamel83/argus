@@ -22,8 +22,12 @@ Obscura (https://github.com/h4ckf0r0day/obscura): optional Rust headless browser
 
 import asyncio
 import copy
+import hashlib
 import os
 import time
+import uuid
+from datetime import datetime, timezone
+from decimal import Decimal
 
 import httpx
 
@@ -213,7 +217,11 @@ def project_accepted_extraction(accepted_outcome) -> ExtractedContent:
 
 
 async def _extract_url_unpersisted(
-    url: str, domain: str = None, mode: str = "default"
+    url: str,
+    domain: str = None,
+    mode: str = "default",
+    *,
+    allow_legacy_cache: bool = True,
 ) -> ExtractedContent:
     """Extract clean content from a URL using the integrated fallback chain.
 
@@ -237,7 +245,7 @@ async def _extract_url_unpersisted(
         return ExtractedContent(url=url, error=f"ssrf_blocked: {reason}")
 
     # Cache check
-    cached = _cache.get(url)
+    cached = _cache.get(url) if allow_legacy_cache else None
     if cached is not None:
         logger.debug("Extraction cache hit for %s", url[:60])
         result = copy.deepcopy(cached)
@@ -634,19 +642,36 @@ async def extract_url(
     caller: str = "",
     repository=None,
     authority_capability: object | None = None,
+    use_evidence_authority: bool = False,
+    request_id: str | None = None,
 ) -> ExtractedContent:
     """Extract and durably record one logical operation before returning."""
     from argus.authority import extraction_execution_allowed
 
     extraction_execution_allowed(authority_capability=authority_capability)
     started = time.perf_counter()
-    result = await _extract_url_unpersisted(url, domain=domain, mode=mode)
+    result = await _extract_url_unpersisted(
+        url,
+        domain=domain,
+        mode=mode,
+        allow_legacy_cache=not use_evidence_authority,
+    )
     if repository is None:
         from argus.persistence.search_ledger import (
             create_search_ledger_repository,
         )
 
         repository = create_search_ledger_repository()
+    if use_evidence_authority:
+        return _finalize_accepted_extraction(
+            result,
+            url=url,
+            mode=mode,
+            caller=caller,
+            request_id=request_id or uuid.uuid4().hex,
+            latency_ms=round((time.perf_counter() - started) * 1000),
+            repository=repository,
+        )
     receipt = repository.record_extraction(
         url=url,
         domain=domain,
@@ -657,6 +682,180 @@ async def extract_url(
     )
     result.extraction_run_id = receipt.extraction_run_id
     return result
+
+
+def _finalize_accepted_extraction(
+    result: ExtractedContent,
+    *,
+    url: str,
+    mode: str,
+    caller: str,
+    request_id: str,
+    latency_ms: int,
+    repository,
+) -> ExtractedContent:
+    """Adapt bounded chain evidence into the canonical extraction finalizer."""
+    from argus.extraction.finalizer import finalize_extraction
+    from argus.extraction.outcomes import (
+        ArtifactEvaluation,
+        AttemptOutcome,
+        CacheDecision,
+        CacheOutcome,
+        ExtractionCandidate,
+        ExtractionPlan,
+        ExtractionProvenance,
+        ExtractionRequest,
+        ExtractorDecision,
+        ExtractorExecutionDecision,
+        OutcomePolicy,
+        RawExtractionResult,
+        SpendEvidence,
+        TerminalCause,
+        TerminalCauseKind,
+    )
+
+    run_id = uuid.uuid4().hex
+    selected = result.extractor.value if result.extractor else None
+    candidate_names = tuple(
+        dict.fromkeys(
+            [
+                *(attempt.extractor for attempt in result.attempts),
+                *([selected] if selected else []),
+            ]
+        )
+    )
+    provenance = ExtractionProvenance(
+        source_type=result.source_type or "normalized_text",
+        egress=result.egress or "unknown",
+        machine=result.machine or "unknown",
+    )
+    decisions = []
+    for ordinal, attempt in enumerate(result.attempts):
+        decisions.append(
+            ExtractorDecision(
+                ordinal=ordinal,
+                extractor=attempt.extractor,
+                decision=ExtractorExecutionDecision.INVOKED,
+                attempt_outcome=(
+                    AttemptOutcome.CONTENT
+                    if selected == attempt.extractor and bool(result.text)
+                    else AttemptOutcome.EMPTY
+                    if attempt.status == "success"
+                    else AttemptOutcome.PARSE_ERROR
+                    if attempt.status == "quality_failed"
+                    else AttemptOutcome.UNKNOWN_FAILURE
+                ),
+                latency_ms=max(0, attempt.latency_ms),
+                provenance=provenance,
+                spend=SpendEvidence(
+                    actual_usd=Decimal(str(max(0.0, result.cost))),
+                    reserved_usd=Decimal(str(max(0.0, result.cost))),
+                    spend_attempt_ref=f"extract-spend-{run_id}-{ordinal}",
+                ),
+            )
+        )
+    if selected and not any(
+        step.extractor == selected and step.attempt_outcome is AttemptOutcome.CONTENT
+        for step in decisions
+    ):
+        decisions.append(
+            ExtractorDecision(
+                ordinal=len(decisions),
+                extractor=selected,
+                decision=ExtractorExecutionDecision.INVOKED,
+                attempt_outcome=AttemptOutcome.CONTENT,
+                latency_ms=0,
+                provenance=provenance,
+                spend=SpendEvidence(
+                    actual_usd=Decimal(str(max(0.0, result.cost))),
+                    reserved_usd=Decimal(str(max(0.0, result.cost))),
+                    spend_attempt_ref=f"extract-spend-{run_id}-{len(decisions)}",
+                ),
+            )
+        )
+    artifact = None
+    if result.text:
+        completeness = result.completeness_result or assess_completeness(
+            result.text, url
+        )
+        artifact = ArtifactEvaluation(
+            artifact_ref=f"artifact-{run_id}",
+            content_identity="sha256:"
+            + hashlib.sha256(result.text.encode("utf-8")).hexdigest(),
+            text=result.text,
+            title=result.title,
+            author=result.author,
+            published_date=result.date,
+            word_count=result.word_count,
+            quality_passed=result.quality_passed,
+            is_complete=completeness.is_complete,
+            completeness_confidence=Decimal(str(completeness.confidence)),
+            completeness_signals=tuple(completeness.signals[:16]),
+            completeness_assessment_version="completeness-v1",
+            completeness_recommended_action=completeness.recommended_action,
+            provenance=provenance,
+        )
+    terminal = None
+    if artifact is None:
+        outcomes = tuple(
+            dict.fromkeys(
+                step.attempt_outcome
+                for step in decisions
+                if step.attempt_outcome is not None
+            )
+        ) or (AttemptOutcome.UNKNOWN_FAILURE,)
+        terminal = TerminalCause(
+            kind=TerminalCauseKind.CHAIN_EXHAUSTED,
+            invoked_ordinals=tuple(step.ordinal for step in decisions),
+            distinct_attempt_outcomes=outcomes,
+        )
+    plan = ExtractionPlan(
+        plan_ref=f"extract-plan-{run_id}",
+        normalized_url=url,
+        access_scope="public",
+        mode=mode,
+        candidates=tuple(
+            ExtractionCandidate(
+                extractor=name,
+                eligible=True,
+                spend_class="metered" if result.cost else "free",
+            )
+            for name in candidate_names
+        ),
+        cache_policy_ref="accepted-extraction-cache-v1",
+        extraction_plan_version="1",
+        quality_policy_version="quality-v1",
+        completeness_policy_version="completeness-v1",
+        partial_allowed=True,
+        deadline_ms=120_000,
+        caller=caller,
+        profile="autonomous",
+        privacy_scope="public",
+    )
+    accepted = finalize_extraction(
+        ExtractionRequest(
+            request_id=request_id,
+            extraction_run_id=run_id,
+            normalized_url=url,
+            access_scope="public",
+            caller=caller,
+            profile="autonomous",
+            privacy_scope="public",
+        ),
+        plan,
+        RawExtractionResult(
+            cache_decision=CacheDecision(outcome=CacheOutcome.MISS),
+            steps=tuple(decisions),
+            artifact=artifact,
+            selected_extractor=selected if artifact is not None else None,
+            terminal_cause=terminal,
+            operation_latency_ms=latency_ms,
+        ),
+        OutcomePolicy(version="extraction-outcome-v1"),
+        repository=repository,
+        clock=lambda: datetime.now(timezone.utc).isoformat(),
+    )
+    return accepted.to_legacy_extracted_content()
 
 
 def _track_jina_usage(word_count: int) -> None:

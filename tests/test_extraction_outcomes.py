@@ -172,6 +172,57 @@ def _finalize(raw, *, plan=None, mapper=None, repository=None):
     )
 
 
+def test_production_extraction_adapter_uses_canonical_finalizer():
+    from argus.extraction.completeness import CompletenessResult
+    from argus.extraction.extractor import _finalize_accepted_extraction
+    from argus.extraction.models import (
+        ExtractedContent,
+        ExtractionAttempt,
+        ExtractorName,
+    )
+
+    repository = MemoryOutcomeRepository()
+    result = ExtractedContent(
+        url="https://example.com/article",
+        title="Article",
+        text="Complete normalized content.",
+        author="Ada",
+        word_count=3,
+        extractor=ExtractorName.TRAFILATURA,
+        attempts=[
+            ExtractionAttempt(
+                extractor="trafilatura",
+                status="success",
+                latency_ms=12,
+            )
+        ],
+        completeness_result=CompletenessResult(
+            is_complete=True,
+            confidence=1.0,
+            truncation_type="clean",
+            signals=["ending_punctuation"],
+            word_count=3,
+        ),
+        source_type="normalized_text",
+        egress="local",
+        machine="test_node",
+    )
+
+    projected = _finalize_accepted_extraction(
+        result,
+        url=result.url,
+        mode="default",
+        caller="maya",
+        request_id="request-production-adapter",
+        latency_ms=12,
+        repository=repository,
+    )
+
+    assert projected.extraction_run_id
+    assert projected.acceptance_receipt is repository.receipt
+    assert projected.text == result.text
+
+
 @pytest.mark.parametrize(
     ("quality", "complete", "partial_allowed", "outcome", "disposition", "code"),
     [

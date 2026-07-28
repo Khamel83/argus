@@ -1,9 +1,4 @@
-"""Accepted retrieval facts and the inactive S6 immutable cache seam.
-
-The new cache intentionally has no router integration yet.  S7/P1 owns its
-activation; this module makes the acceptance and publication boundary
-independently testable without changing production search behaviour.
-"""
+"""Accepted retrieval facts and the immutable accepted-evidence cache."""
 
 from __future__ import annotations
 
@@ -11,6 +6,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+import hashlib
+import json
 from threading import RLock
 from typing import Callable, Mapping, Protocol
 
@@ -46,7 +43,7 @@ def canonical_cache_outcome(
     if outcome is CanonicalOutcome.DEGRADED:
         return CacheOutcome.DEGRADED
     if outcome is CanonicalOutcome.EMPTY:
-        if reason == "strict_empty":
+        if reason in {"strict_empty", "empty"}:
             return CacheOutcome.PROVEN_EMPTY
         if reason == "freshness_unproven":
             return CacheOutcome.FRESHNESS_UNPROVEN
@@ -82,6 +79,12 @@ class AcceptedRetrieval:
     contributor_attempt_refs: tuple[str, ...]
     origin_spend_usd: str
     acceptance_receipt: AcceptanceReceipt
+    plan_id: str = ""
+    reason: str = ""
+    query: str = ""
+    mode: str = "discovery"
+    traces: tuple[Mapping[str, object], ...] = ()
+    budget_warnings: tuple[str, ...] = ()
 
     def copy_for_receipt(
         self,
@@ -100,6 +103,12 @@ class AcceptedRetrieval:
             acceptance_receipt=self.acceptance_receipt,
             current_spend_usd=current_spend_usd,
             current_provider_calls=current_provider_calls,
+            plan_id=self.plan_id,
+            reason=self.reason,
+            query=self.query,
+            mode=self.mode,
+            traces=deepcopy(list(self.traces)),
+            budget_warnings=tuple(self.budget_warnings),
         )
 
 
@@ -117,6 +126,22 @@ class AcceptedRetrievalView:
     acceptance_receipt: AcceptanceReceipt
     current_spend_usd: str
     current_provider_calls: int
+    plan_id: str
+    reason: str
+    query: str
+    mode: str
+    traces: list[dict[str, object]]
+    budget_warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptedSearchExecution:
+    """Broker-owned accepted search fact for transport-neutral projection."""
+
+    outcome: CanonicalOutcome
+    reason: str
+    response: object | None
+    receipt: AcceptanceReceipt | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +185,51 @@ class AcceptancePersister(Protocol):
     def __call__(self, accepted: AcceptedRetrieval) -> AcceptanceReceipt: ...
 
 
+def execution_cohort(plan) -> str:
+    """Hash exact execution-policy facts that may share one leader."""
+    payload = {
+        "profile": plan.profile,
+        "effective_max_provider_tier": plan.effective_max_provider_tier,
+        "candidate_providers": [provider.value for provider in plan.candidate_providers],
+        "egress_preference": plan.egress_preference.value,
+        "revalidation": plan.revalidation.value,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(b"argus-execution-cohort-v1\0" + encoded).hexdigest()
+
+
+def acceptance_fingerprint(
+    *,
+    operation_id: str,
+    plan_id: str,
+    cache_fingerprint: str,
+    execution_cohort_id: str,
+    outcome: CacheOutcome,
+    reason: str,
+    results: tuple[Mapping[str, object], ...],
+    contributor_attempt_refs: tuple[str, ...],
+    origin_spend_usd: str,
+) -> str:
+    payload = {
+        "operation_id": operation_id,
+        "plan_id": plan_id,
+        "cache_fingerprint": cache_fingerprint,
+        "execution_cohort": execution_cohort_id,
+        "outcome": outcome.value,
+        "reason": reason,
+        "results": results,
+        "contributor_attempt_refs": contributor_attempt_refs,
+        "origin_spend_usd": origin_spend_usd,
+    }
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
 class RetrievalCache:
     """Fingerprint and cohort keyed cache of accepted immutable facts.
 
@@ -183,7 +253,8 @@ class RetrievalCache:
     def publish(self, entry: CacheEntry) -> None:
         key = (entry.cache_fingerprint, entry.execution_cohort)
         with self._lock:
-            if key in self._entries:
+            existing = self._entries.get(key)
+            if existing is not None and existing.accepted_at >= entry.accepted_at:
                 return
             self._entries[key] = entry
             if self._on_publish is not None:
@@ -200,7 +271,7 @@ class RetrievalCache:
         with self._lock:
             entry = self._entries.get(key)
             if entry is None:
-                return CacheDecision(CacheDecisionOutcome.HIT_INELIGIBLE)
+                return CacheDecision(CacheDecisionOutcome.MISS)
             age_seconds = (self._clock() - entry.accepted_at).total_seconds()
             if age_seconds < 0 or age_seconds > max_age_seconds:
                 return CacheDecision(CacheDecisionOutcome.HIT_INELIGIBLE)

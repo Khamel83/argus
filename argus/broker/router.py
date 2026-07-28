@@ -1,14 +1,33 @@
 """Search broker router."""
 
+import asyncio
 import os
 import time
+import uuid
+from decimal import Decimal
 from datetime import datetime, timezone
 from collections.abc import Callable
 from typing import Optional
 
-from argus.broker.budgets import BudgetTracker
+from argus.broker.budgets import PROVIDER_TIERS, BudgetTracker
+from argus.broker.accepted import (
+    AcceptanceReceipt,
+    AcceptedRetrieval,
+    AcceptedSearchExecution,
+    CacheDecisionOutcome,
+    CacheEntry,
+    RetrievalCache,
+    acceptance_fingerprint,
+    canonical_cache_outcome,
+    execution_cohort,
+)
 from argus.broker.cache import SearchCache
-from argus.broker.execution import ProviderExecutor, caller_tier_cap
+from argus.broker.execution import (
+    ProviderExecutor,
+    caller_tier_cap,
+    conservative_charge_estimate,
+)
+from argus.broker.fusion import PSL_DOMAIN_POLICY_VERSION, fuse_evidence, project_search_results
 from argus.broker.health import HealthTracker
 from argus.broker.planning import (
     EgressPreference,
@@ -25,9 +44,11 @@ from argus.broker.readiness import (
 )
 from argus.broker.session_flow import SessionSearchService
 from argus.config import EgressNode, get_config
+from argus.contracts import CanonicalOutcome
 from argus.logging import get_logger
-from argus.models import ProviderName, SearchQuery, SearchResponse
+from argus.models import FusionPolicy, ProviderName, SearchQuery, SearchResponse
 from argus.persistence.db import SearchPersistenceGateway
+from argus.persistence.evidence import RetrievalEvidence
 from argus.providers.base import BaseProvider
 
 logger = get_logger("broker.router")
@@ -62,9 +83,10 @@ class SearchBroker:
         self._monotonic_clock = monotonic_clock or time.monotonic
         self._providers = providers
         self._cache = cache or SearchCache()
-        # S6 may be supplied for inspection in tests, but remains deliberately
-        # inactive until the S7/P1 activation gate wires it into ``search``.
-        self._accepted_retrieval_cache = accepted_retrieval_cache
+        self._accepted_retrieval_cache = accepted_retrieval_cache or RetrievalCache(
+            clock=self._utc_clock
+        )
+        self._accepted_locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._health = health_tracker or HealthTracker()
         self._budgets = budget_tracker or BudgetTracker(
             persist_path=(
@@ -250,6 +272,370 @@ class SearchBroker:
                 logger.warning("Budget pace: %s", w)
 
         return response
+
+    def _accepted_plan(
+        self,
+        query: SearchQuery,
+        *,
+        compute_attribution: bool,
+    ):
+        if self._config.residential.policy == "always" or (
+            self._config.residential.policy == "prefer_on_datacenter"
+            and self._config.node.egress_type != "residential"
+        ):
+            query.metadata["prefer_residential"] = True
+        cap = caller_tier_cap(query.caller, self._config.caller_tier_caps)
+        egress_preference = (
+            EgressPreference.PREFER_RESIDENTIAL
+            if query.metadata.get("prefer_residential") is True
+            else EgressPreference.DEFAULT
+        )
+        return resolve_plan(
+            query,
+            RetrievalControls(),
+            compute_attribution,
+            ExecutionPolicySnapshot(
+                effective_max_provider_tier=3 if cap is None else cap,
+                egress_preference=egress_preference,
+                domain_policy_version=PSL_DOMAIN_POLICY_VERSION,
+            ),
+            self._utc_clock,
+        )
+
+    @staticmethod
+    def _trace_projection(trace) -> dict[str, object]:
+        return {
+            "provider": trace.provider.value,
+            "status": trace.status,
+            "results_count": trace.results_count,
+            "latency_ms": trace.latency_ms,
+            "error": trace.error,
+            "budget_remaining": trace.budget_remaining,
+        }
+
+    @staticmethod
+    def _result_projection(result) -> dict[str, object]:
+        return {
+            "url": result.url,
+            "title": result.title,
+            "snippet": result.snippet,
+            "domain": result.domain,
+            "provider": result.provider.value if result.provider else None,
+            "score": result.score,
+            "egress": result.metadata.get("egress") if result.metadata else None,
+            "machine": result.metadata.get("machine") if result.metadata else None,
+            "score_attribution": dict(result.score_attribution),
+        }
+
+    @staticmethod
+    def _origin_spend(traces, query: SearchQuery) -> str:
+        total = Decimal("0")
+        for trace in traces:
+            if trace.credit_info and "cost_usd" in trace.credit_info:
+                total += Decimal(str(trace.credit_info["cost_usd"]))
+            elif (
+                trace.status == "success"
+                and PROVIDER_TIERS[trace.provider] > 0
+            ):
+                total += Decimal(
+                    str(conservative_charge_estimate(trace.provider, query))
+                )
+        return format(total, "f")
+
+    def _accepted_response(
+        self,
+        accepted: AcceptedRetrieval,
+        *,
+        cached: bool,
+        include_attribution: bool,
+    ) -> SearchResponse:
+        from argus.models import ProviderTrace, SearchMode, SearchResult
+
+        results = [
+            SearchResult(
+                url=str(item["url"]),
+                title=str(item["title"]),
+                snippet=str(item["snippet"]),
+                domain=str(item["domain"]),
+                provider=(
+                    ProviderName(str(item["provider"]))
+                    if item.get("provider")
+                    else None
+                ),
+                score=float(item["score"]),
+                metadata={
+                    key: item[key]
+                    for key in ("egress", "machine")
+                    if item.get(key) is not None
+                },
+                score_attribution=(
+                    dict(item.get("score_attribution") or {})
+                    if include_attribution
+                    else {}
+                ),
+            )
+            for item in accepted.results
+        ]
+        traces = [
+            ProviderTrace(
+                provider=ProviderName(str(item["provider"])),
+                status="cache" if cached else str(item["status"]),
+                results_count=int(item.get("results_count") or 0),
+                latency_ms=0 if cached else int(item.get("latency_ms") or 0),
+                error=None if cached else item.get("error"),
+                budget_remaining=item.get("budget_remaining"),
+            )
+            for item in accepted.traces
+        ]
+        return SearchResponse(
+            query=accepted.query,
+            mode=SearchMode(accepted.mode),
+            results=results,
+            traces=traces,
+            total_results=len(results),
+            cached=cached,
+            search_run_id=accepted.operation_id,
+            budget_warnings=list(accepted.budget_warnings),
+        )
+
+    async def search_accepted(
+        self,
+        query: SearchQuery,
+        *,
+        evidence_repository,
+        compute_attribution: bool = False,
+    ) -> AcceptedSearchExecution:
+        """Execute, durably accept, then publish one canonical retrieval fact."""
+        plan = self._accepted_plan(query, compute_attribution=compute_attribution)
+        cohort = execution_cohort(plan)
+        key = (plan.cache_fingerprint, cohort)
+        lock = self._accepted_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            decision = self._accepted_retrieval_cache.decide(
+                cache_fingerprint=plan.cache_fingerprint,
+                execution_cohort=cohort,
+                max_age_seconds=plan.freshness.max_cache_age_seconds or 0,
+            )
+            if decision.outcome is CacheDecisionOutcome.HIT_ELIGIBLE:
+                origin = decision.accepted
+                assert origin is not None
+                operation_id = uuid.uuid4().hex
+                cache_outcome = origin.outcome
+                results = tuple(origin.results)
+                fingerprint = acceptance_fingerprint(
+                    operation_id=operation_id,
+                    plan_id=plan.plan_id,
+                    cache_fingerprint=plan.cache_fingerprint,
+                    execution_cohort_id=cohort,
+                    outcome=cache_outcome,
+                    reason=origin.reason,
+                    results=results,
+                    contributor_attempt_refs=origin.contributor_attempt_refs,
+                    origin_spend_usd=origin.origin_spend_usd,
+                )
+                receipt = AcceptanceReceipt(
+                    receipt_ref=f"receipt:{operation_id}",
+                    accepted_at=self._utc_clock(),
+                    acceptance_fingerprint=fingerprint,
+                )
+                accepted = AcceptedRetrieval(
+                    operation_id=operation_id,
+                    plan_id=plan.plan_id,
+                    cache_fingerprint=plan.cache_fingerprint,
+                    execution_cohort=cohort,
+                    outcome=cache_outcome,
+                    reason=origin.reason,
+                    query=query.query,
+                    mode=query.mode.value,
+                    results=results,
+                    contributor_attempt_refs=origin.contributor_attempt_refs,
+                    origin_spend_usd=origin.origin_spend_usd,
+                    traces=tuple(origin.traces),
+                    budget_warnings=tuple(origin.budget_warnings),
+                    acceptance_receipt=receipt,
+                )
+                try:
+                    evidence_repository.accept(
+                        RetrievalEvidence(
+                            accepted=accepted,
+                            plan=plan,
+                            cache_decision="hit_eligible",
+                            origin_receipt_ref=decision.origin_receipt_ref,
+                        )
+                    )
+                except Exception:
+                    return AcceptedSearchExecution(
+                        CanonicalOutcome.PERSISTENCE_FAILED,
+                        "write_failed",
+                        None,
+                        None,
+                    )
+                return AcceptedSearchExecution(
+                    {
+                        "success": CanonicalOutcome.SUCCESS,
+                        "degraded": CanonicalOutcome.DEGRADED,
+                        "proven_empty": CanonicalOutcome.EMPTY,
+                    }[cache_outcome.value],
+                    origin.reason,
+                    self._accepted_response(
+                        accepted,
+                        cached=True,
+                        include_attribution=compute_attribution,
+                    ),
+                    receipt,
+                )
+
+            started = self._monotonic_clock()
+            operation_deadline = started + plan.deadline_ms / 1_000
+            provider_deadline = max(started, operation_deadline - 5.0)
+            execution = await self._executor.execute(
+                query,
+                plan.candidate_providers,
+                plan=plan,
+                operation_deadline=operation_deadline,
+                provider_phase_deadline=provider_deadline,
+            )
+            batches = tuple(
+                execution.provider_batches[name]
+                for name in sorted(execution.provider_batches)
+            )
+            if not batches:
+                failed = any(trace.status == "error" for trace in execution.traces)
+                outcome = (
+                    CanonicalOutcome.PROVIDERS_FAILED
+                    if failed
+                    else CanonicalOutcome.UNREADY
+                )
+                reason = "providers_failed" if failed else "no_reachable_provider"
+                fusion = None
+            else:
+                fusion = fuse_evidence(
+                    plan,
+                    batches,
+                    FusionPolicy(
+                        operation_deadline=operation_deadline,
+                        monotonic=self._monotonic_clock,
+                        activatable=True,
+                        publication_reserve_seconds=1.0,
+                    ),
+                    self._utc_clock,
+                )
+                outcome, reason = fusion.outcome, fusion.reason
+            cache_outcome = canonical_cache_outcome(outcome, reason=reason)
+            rendered = (
+                project_search_results(
+                    fusion,
+                    include_attribution=compute_attribution,
+                )
+                if fusion is not None
+                else []
+            )
+            results = tuple(self._result_projection(item) for item in rendered)
+            traces = tuple(self._trace_projection(item) for item in execution.traces)
+            contributor_refs = execution.contributor_attempt_refs()
+            operation_id = uuid.uuid4().hex
+            origin_spend = self._origin_spend(execution.traces, query)
+            fingerprint = acceptance_fingerprint(
+                operation_id=operation_id,
+                plan_id=plan.plan_id,
+                cache_fingerprint=plan.cache_fingerprint,
+                execution_cohort_id=cohort,
+                outcome=cache_outcome,
+                reason=reason,
+                results=results,
+                contributor_attempt_refs=contributor_refs,
+                origin_spend_usd=origin_spend,
+            )
+            receipt = AcceptanceReceipt(
+                receipt_ref=f"receipt:{operation_id}",
+                accepted_at=self._utc_clock(),
+                acceptance_fingerprint=fingerprint,
+            )
+            accepted = AcceptedRetrieval(
+                operation_id=operation_id,
+                plan_id=plan.plan_id,
+                cache_fingerprint=plan.cache_fingerprint,
+                execution_cohort=cohort,
+                outcome=cache_outcome,
+                reason=reason,
+                query=query.query,
+                mode=query.mode.value,
+                results=results,
+                contributor_attempt_refs=contributor_refs,
+                origin_spend_usd=origin_spend,
+                traces=traces,
+                budget_warnings=tuple(execution.budget_pace_warnings),
+                acceptance_receipt=receipt,
+            )
+            cacheable = cache_outcome.value in {
+                "success",
+                "degraded",
+                "proven_empty",
+            } and bool(contributor_refs)
+            readiness = tuple(
+                {
+                    "provider": provider.value,
+                    **self._readiness.render_snapshot(provider).as_legacy_status(),
+                }
+                for provider in plan.candidate_providers
+                if provider in self._providers
+            )
+            try:
+                evidence_repository.accept(
+                    RetrievalEvidence(
+                        accepted=accepted,
+                        plan=plan,
+                        provider_batches=batches,
+                        fusion=fusion,
+                        readiness=readiness,
+                        traces=traces,
+                        cache_decision=decision.outcome.value,
+                        cache_published=cacheable,
+                    )
+                )
+            except Exception:
+                return AcceptedSearchExecution(
+                    CanonicalOutcome.PERSISTENCE_FAILED,
+                    "write_failed",
+                    None,
+                    None,
+                )
+            if cacheable:
+                self._accepted_retrieval_cache.publish(CacheEntry.from_accepted(accepted))
+            response = self._accepted_response(
+                accepted,
+                cached=False,
+                include_attribution=compute_attribution,
+            )
+            return AcceptedSearchExecution(outcome, reason, response, receipt)
+
+    async def search_with_session_accepted(
+        self,
+        query: SearchQuery,
+        *,
+        evidence_repository,
+        session_id: str | None = None,
+        compute_attribution: bool = False,
+    ):
+        holder = {}
+
+        async def execute(effective_query):
+            result = await self.search_accepted(
+                effective_query,
+                evidence_repository=evidence_repository,
+                compute_attribution=compute_attribution,
+            )
+            holder["result"] = result
+            if result.response is None:
+                raise RuntimeError(result.reason)
+            return result.response
+
+        _response, resolved_session_id = await self._session_service.search_with_session(
+            query,
+            execute,
+            session_id=session_id,
+        )
+        return holder["result"], resolved_session_id
 
     async def search_with_session(
         self,

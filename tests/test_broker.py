@@ -91,6 +91,119 @@ def test_production_broker_never_opens_legacy_sqlite_budget_store(
     assert broker.budget_tracker._store is None
 
 
+@pytest.mark.asyncio
+async def test_accepted_search_cache_hit_gets_fresh_durable_receipt(tmp_path):
+    from unittest.mock import MagicMock
+
+    from argus.broker.router import SearchBroker
+    from argus.persistence.evidence import SqlAlchemyEvidenceRepository
+    from argus.persistence.search_ledger import create_search_ledger_repository
+
+    provider = StubProvider(
+        name=ProviderName.DUCKDUCKGO,
+        results=[
+            SearchResult(
+                url="https://example.test/result",
+                title="Result",
+                snippet="Accepted evidence",
+                domain="example.test",
+                provider=ProviderName.DUCKDUCKGO,
+            )
+        ],
+    )
+    broker = SearchBroker(
+        providers={ProviderName.DUCKDUCKGO: provider},
+        spend_repository=MagicMock(),
+    )
+    ledger = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'accepted-search.db'}",
+        create_schema=True,
+    )
+    evidence = SqlAlchemyEvidenceRepository(ledger.session_factory)
+    query = SearchQuery(
+        query="accepted cache",
+        providers=[ProviderName.DUCKDUCKGO],
+    )
+
+    first = await broker.search_accepted(query, evidence_repository=evidence)
+    second = await broker.search_accepted(query, evidence_repository=evidence)
+
+    assert first.outcome.value == "success"
+    assert second.outcome.value == "success"
+    assert first.receipt != second.receipt
+    assert first.response.cached is False
+    assert second.response.cached is True
+    assert provider.calls == 1
+    assert evidence.accepted_count() == 2
+    assert evidence.publication_count() == 1
+
+
+@pytest.mark.asyncio
+async def test_accepted_search_persistence_failure_publishes_nothing():
+    from unittest.mock import MagicMock
+
+    from argus.broker.router import SearchBroker
+
+    provider = StubProvider(
+        name=ProviderName.DUCKDUCKGO,
+        results=[
+            SearchResult(
+                url="https://example.test/result",
+                title="Result",
+                snippet="Accepted evidence",
+                provider=ProviderName.DUCKDUCKGO,
+            )
+        ],
+    )
+    broker = SearchBroker(
+        providers={ProviderName.DUCKDUCKGO: provider},
+        spend_repository=MagicMock(),
+    )
+    evidence = MagicMock()
+    evidence.accept.side_effect = RuntimeError("write failed")
+
+    execution = await broker.search_accepted(
+        SearchQuery(
+            query="persistence failure",
+            providers=[ProviderName.DUCKDUCKGO],
+        ),
+        evidence_repository=evidence,
+    )
+
+    assert execution.outcome.value == "persistence_failed"
+    assert execution.response is None
+    assert broker._accepted_retrieval_cache.size() == 0
+
+
+@pytest.mark.asyncio
+async def test_accepted_search_with_no_executable_batch_is_unready_not_empty(tmp_path):
+    from unittest.mock import MagicMock
+
+    from argus.broker.router import SearchBroker
+    from argus.persistence.evidence import SqlAlchemyEvidenceRepository
+    from argus.persistence.search_ledger import create_search_ledger_repository
+
+    broker = SearchBroker(providers={}, spend_repository=MagicMock())
+    ledger = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'unready-search.db'}",
+        create_schema=True,
+    )
+    evidence = SqlAlchemyEvidenceRepository(ledger.session_factory)
+
+    execution = await broker.search_accepted(
+        SearchQuery(
+            query="no executable provider",
+            providers=[ProviderName.DUCKDUCKGO],
+        ),
+        evidence_repository=evidence,
+    )
+
+    assert execution.outcome.value == "unready"
+    assert execution.response is not None
+    assert execution.response.results == []
+    assert evidence.publication_count() == 0
+
+
 def _ready_paid_executor(monkeypatch, provider, *, caller_caps=None):
     from unittest.mock import MagicMock
 
@@ -353,7 +466,10 @@ async def test_executor_preserves_normalized_batch_and_projects_only_at_compatib
         [ProviderName.YAHOO],
     )
 
-    assert outcome.provider_batches["yahoo"] is batch
+    accepted_batch = outcome.provider_batches["yahoo"]
+    assert accepted_batch.provider is batch.provider
+    assert accepted_batch.response_evidence is batch.response_evidence
+    assert accepted_batch.request_evidence.attempt_id
     assert (
         outcome.provider_batches["yahoo"].response_evidence.request_id
         == "native-request-1"

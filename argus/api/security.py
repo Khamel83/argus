@@ -122,12 +122,16 @@ class TransportSecurityGuard:
 
     def _host_allowed(self, request: Request) -> bool:
         raw_host = request.headers.get("host", "")
-        if raw_host in self.allowed_hosts:
-            return True
+        if self.host_policy_explicit:
+            return raw_host in self.allowed_hosts
         hostname = request.url.hostname or ""
-        if request.client and request.client.host == "testclient":
+        peer = request.client.host if request.client else ""
+        if peer == "testclient":
             return hostname == "testserver"
-        return hostname in {"localhost", "127.0.0.1", "::1"}
+        return (
+            peer in {"127.0.0.1", "::1"}
+            and hostname in {"localhost", "127.0.0.1", "::1"}
+        )
 
     def _origin_allowed(self, request: Request) -> bool:
         origin = request.headers.get("origin")
