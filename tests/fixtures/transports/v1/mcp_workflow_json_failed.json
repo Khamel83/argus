@@ -1,0 +1,32 @@
+{
+  "input": {
+    "response_format": "json",
+    "topic": "fastapi"
+  },
+  "name": "build_research_pack",
+  "response_value": {
+    "error": "boom",
+    "files": [
+      {
+        "bytes": 10,
+        "path": "/fixture/SUMMARY.md"
+      },
+      {
+        "bytes": 7,
+        "path": "/fixture/doc1.md"
+      }
+    ],
+    "kind": "build_research_pack",
+    "manifest_path": "/fixture/manifest.json",
+    "pack_dir": null,
+    "report_path": "/fixture/SUMMARY.md",
+    "run_id": "run-123",
+    "snapshot_dir": "/fixture",
+    "status": "failed",
+    "target": "fastapi"
+  },
+  "status": {
+    "is_error": false
+  },
+  "transport": "mcp"
+}

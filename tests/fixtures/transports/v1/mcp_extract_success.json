@@ -1,0 +1,17 @@
+{
+  "input": {
+    "domain": "example.com",
+    "url": "https://example.com/article"
+  },
+  "name": "extract_content",
+  "response_value": {
+    "structured_content": {
+      "result": "# Article\nURL: https://example.com/article\nWords: 1 | Extractor: trafilatura\n\nExtracted"
+    },
+    "text": "# Article\nURL: https://example.com/article\nWords: 1 | Extractor: trafilatura\n\nExtracted"
+  },
+  "status": {
+    "is_error": false
+  },
+  "transport": "mcp"
+}

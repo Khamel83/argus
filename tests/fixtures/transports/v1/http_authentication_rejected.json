@@ -1,0 +1,14 @@
+{
+  "input": {
+    "mode": "discovery",
+    "query": "test"
+  },
+  "name": "POST /api/search",
+  "response_value": {
+    "error": "Authentication required"
+  },
+  "status": {
+    "http_status": 401
+  },
+  "transport": "http"
+}

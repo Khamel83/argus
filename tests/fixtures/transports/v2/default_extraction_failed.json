@@ -1,0 +1,28 @@
+{
+  "input": {
+    "code": "extraction_failed",
+    "outcome": "extraction_failed"
+  },
+  "name": "accepted_operation:extraction_failed",
+  "response_value": {
+    "contract_version": "2.0",
+    "error": {
+      "code": "extraction_failed",
+      "detail": "extraction failed",
+      "instance": "urn:argus:request:fixture-extraction_failed",
+      "retry_after_seconds": null,
+      "retryable": false,
+      "status": 502,
+      "title": "Extraction Failed",
+      "type": "urn:argus:problem:extraction_failed"
+    },
+    "outcome": "extraction_failed",
+    "request_id": "fixture-extraction_failed",
+    "result": null
+  },
+  "status": {
+    "http_status": 502,
+    "mcp_is_error": true
+  },
+  "transport": "http+mcp"
+}

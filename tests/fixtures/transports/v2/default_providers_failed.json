@@ -1,0 +1,28 @@
+{
+  "input": {
+    "code": "providers_failed",
+    "outcome": "providers_failed"
+  },
+  "name": "accepted_operation:providers_failed",
+  "response_value": {
+    "contract_version": "2.0",
+    "error": {
+      "code": "providers_failed",
+      "detail": "providers failed",
+      "instance": "urn:argus:request:fixture-providers_failed",
+      "retry_after_seconds": null,
+      "retryable": false,
+      "status": 502,
+      "title": "Providers Failed",
+      "type": "urn:argus:problem:providers_failed"
+    },
+    "outcome": "providers_failed",
+    "request_id": "fixture-providers_failed",
+    "result": null
+  },
+  "status": {
+    "http_status": 502,
+    "mcp_is_error": true
+  },
+  "transport": "http+mcp"
+}

@@ -1,0 +1,28 @@
+{
+  "input": {
+    "code": "policy_rejected",
+    "outcome": "policy_rejected"
+  },
+  "name": "accepted_operation:policy_rejected",
+  "response_value": {
+    "contract_version": "2.0",
+    "error": {
+      "code": "policy_rejected",
+      "detail": "policy rejected",
+      "instance": "urn:argus:request:fixture-policy_rejected",
+      "retry_after_seconds": null,
+      "retryable": false,
+      "status": 403,
+      "title": "Policy Rejected",
+      "type": "urn:argus:problem:policy_rejected"
+    },
+    "outcome": "policy_rejected",
+    "request_id": "fixture-policy_rejected",
+    "result": null
+  },
+  "status": {
+    "http_status": 403,
+    "mcp_is_error": true
+  },
+  "transport": "http+mcp"
+}

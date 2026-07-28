@@ -1,0 +1,21 @@
+{
+  "input": {
+    "code": "empty",
+    "outcome": "empty"
+  },
+  "name": "accepted_operation:empty",
+  "response_value": {
+    "contract_version": "2.0",
+    "error": null,
+    "outcome": "empty",
+    "request_id": "fixture-empty",
+    "result": {
+      "fixture": true
+    }
+  },
+  "status": {
+    "http_status": 200,
+    "mcp_is_error": false
+  },
+  "transport": "http+mcp"
+}

@@ -1,0 +1,175 @@
+{
+  "contract_version": "2.0",
+  "error": null,
+  "outcome": "empty",
+  "request_id": "request-no-provider",
+  "result": {
+    "caller_result": {
+      "answer": null,
+      "citation_refs": [],
+      "results": []
+    },
+    "evidence": {
+      "acceptance": {
+        "accepted_at": "2026-07-27T05:04:00.009Z",
+        "artifact_count": 0,
+        "cache_published": false,
+        "receipt_ref": "receipt-no-provider",
+        "status": "accepted"
+      },
+      "accounting": {
+        "actual_usd": "0.000000000",
+        "extractor_attempt_latency_ms": 0,
+        "extractor_call_count": 0,
+        "operation_latency_ms": 9,
+        "provider_attempt_latency_ms": 0,
+        "provider_call_count": 0,
+        "reconciliation": "not_applicable",
+        "reserved_usd": "0.000000000",
+        "source": "no-attempt"
+      },
+      "cache": {
+        "age_ms": null,
+        "decision": "miss",
+        "maximum_age_ms": 604800000,
+        "new_provider_calls": 0,
+        "origin_provider_refs": [],
+        "origin_run_ref": null,
+        "origin_spend": null,
+        "reason": "not_found",
+        "served": false
+      },
+      "composition": {
+        "accepted_artifact_refs": [],
+        "artifact_outcome": null,
+        "artifact_requirement": null,
+        "artifact_requirement_ref": null,
+        "composite_outcome": "empty",
+        "degraded_artifact_refs": [],
+        "links": [],
+        "rejected_extraction_refs": [],
+        "retrieval_outcome": "unready"
+      },
+      "contract_version": "2.0",
+      "extractions": [],
+      "final": {
+        "answer": null,
+        "caller_result": {
+          "answer": null,
+          "citation_refs": [],
+          "results": []
+        },
+        "citations": [],
+        "delivery_allowed": false,
+        "diagnostic_result_refs": [],
+        "outcome": "empty",
+        "result_refs": [],
+        "synthesis_allowed": false,
+        "visible_labels": [
+          "UNREADY",
+          "no-eligible-provider",
+          "zero-provider-calls"
+        ]
+      },
+      "fusion": {
+        "clusters": [],
+        "filtered_observations": [],
+        "floor": {
+          "passed": true,
+          "reason": "not_evaluated_without_provider",
+          "required_clusters": 0,
+          "required_sites": 0
+        },
+        "ranking_policy": "ranking-v1-rrf60",
+        "rrf_k": 60
+      },
+      "origin_provider_attempts": [],
+      "plan": {
+        "artifact_requirement_ref": null,
+        "cache_fingerprint": "cache-no-provider",
+        "candidate_providers": [
+          "searxng",
+          "duckduckgo"
+        ],
+        "controls": {
+          "country": null,
+          "domains": {
+            "exclude": [],
+            "include": []
+          },
+          "effective_max_provider_tier": 0,
+          "egress_preference": "residential",
+          "freshness": {
+            "end": null,
+            "maximum_cache_age_ms": 604800000,
+            "start": null
+          },
+          "include_attribution": true,
+          "language": "en",
+          "revalidation": "normal",
+          "safe_search": true
+        },
+        "intent": "discovery",
+        "plan_id": "plan-no-provider",
+        "profile": "free",
+        "result_limit": 10,
+        "schema_version": 1,
+        "versions": {
+          "domain_policy": "domain-v1-psl-fixture",
+          "extraction_outcome_policy": "extraction-v1",
+          "freshness_policy": "freshness-v1",
+          "query_normalization": "query-v1",
+          "ranking_policy": "ranking-v1-rrf60",
+          "result_normalization": "result-v1",
+          "routing_policy": "routing-v1",
+          "spend_policy": "spend-v1"
+        }
+      },
+      "prototype_schema": "argus.retrieval-evidence.prototype.v1",
+      "provider_attempts": [],
+      "readiness": [
+        {
+          "compatibility": "compatible",
+          "cooldown": "clear",
+          "decision": "unavailable",
+          "observed_at": "2026-07-27T05:03:00Z",
+          "provider": "searxng",
+          "reachability": "unreachable",
+          "reason": "egress_unreachable",
+          "scope_ref": "scope-residential-fixture",
+          "snapshot_ref": "ready-no-provider-searxng",
+          "spend": "not_applicable",
+          "tier": 0,
+          "usability": "unknown",
+          "valid_until": "2026-07-27T05:14:00Z"
+        },
+        {
+          "compatibility": "unknown",
+          "cooldown": "clear",
+          "decision": "compatibility_unproven",
+          "observed_at": "2026-07-27T05:03:00Z",
+          "provider": "duckduckgo",
+          "reachability": "unknown",
+          "reason": "fixture_contract_expired",
+          "scope_ref": "scope-residential-fixture",
+          "snapshot_ref": "ready-no-provider-ddg",
+          "spend": "not_applicable",
+          "tier": 0,
+          "usability": "unknown",
+          "valid_until": "2026-07-27T05:14:00Z"
+        }
+      ],
+      "request": {
+        "caller_ref": "caller-fixture",
+        "deadline_ms": 120000,
+        "mode": "discovery",
+        "query_hash": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+        "raw_query_retained": false,
+        "received_at": "2026-07-27T05:04:00Z",
+        "request_id": "request-no-provider",
+        "run_id": "run-no-provider"
+      },
+      "scenario": "no_provider"
+    }
+  }
+}

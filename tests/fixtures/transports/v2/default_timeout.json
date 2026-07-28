@@ -1,0 +1,28 @@
+{
+  "input": {
+    "code": "timeout",
+    "outcome": "timeout"
+  },
+  "name": "accepted_operation:timeout",
+  "response_value": {
+    "contract_version": "2.0",
+    "error": {
+      "code": "timeout",
+      "detail": "timeout",
+      "instance": "urn:argus:request:fixture-timeout",
+      "retry_after_seconds": null,
+      "retryable": false,
+      "status": 504,
+      "title": "Timeout",
+      "type": "urn:argus:problem:timeout"
+    },
+    "outcome": "timeout",
+    "request_id": "fixture-timeout",
+    "result": null
+  },
+  "status": {
+    "http_status": 504,
+    "mcp_is_error": true
+  },
+  "transport": "http+mcp"
+}

@@ -1,0 +1,383 @@
+{
+  "contract_version": "2.0",
+  "error": null,
+  "outcome": "success",
+  "request_id": "request-fallback",
+  "result": {
+    "caller_result": {
+      "answer": null,
+      "citation_refs": [
+        "citation-fallback-a"
+      ],
+      "results": [
+        {
+          "cluster_ref": "cluster-fallback-a",
+          "extraction": {
+            "artifact_disposition": "usable",
+            "artifact_ref": "artifact-fallback-a",
+            "outcome": "success",
+            "rejection_code": null
+          },
+          "rank": 0,
+          "title": "Recovered canonical page",
+          "url": "https://archive.example.org/recovered",
+          "visibility": "accepted"
+        }
+      ]
+    },
+    "evidence": {
+      "acceptance": {
+        "accepted_at": "2026-07-27T05:02:00.150Z",
+        "artifact_count": 1,
+        "cache_published": true,
+        "receipt_ref": "receipt-fallback",
+        "status": "accepted"
+      },
+      "accounting": {
+        "actual_usd": "0.000000000",
+        "extractor_attempt_latency_ms": 82,
+        "extractor_call_count": 2,
+        "operation_latency_ms": 150,
+        "provider_attempt_latency_ms": 44,
+        "provider_call_count": 1,
+        "reconciliation": "not_applicable",
+        "reserved_usd": "0.000000000",
+        "source": "tier-zero-ledger"
+      },
+      "cache": {
+        "age_ms": null,
+        "decision": "miss",
+        "maximum_age_ms": 604800000,
+        "new_provider_calls": 1,
+        "origin_provider_refs": [],
+        "origin_run_ref": null,
+        "origin_spend": null,
+        "reason": "not_found",
+        "served": false
+      },
+      "composition": {
+        "accepted_artifact_refs": [
+          "artifact-fallback-a"
+        ],
+        "artifact_outcome": "success",
+        "artifact_requirement": {
+          "aggregate_count": 1,
+          "deadline_ms": 30000,
+          "max_extractions": 1,
+          "minimum_disposition": "usable",
+          "requirement_ref": "requirement-fallback",
+          "spend_policy_ref": "spend-v1"
+        },
+        "artifact_requirement_ref": "requirement-fallback",
+        "composite_outcome": "success",
+        "degraded_artifact_refs": [],
+        "links": [
+          {
+            "artifact_disposition": "usable",
+            "artifact_ref": "artifact-fallback-a",
+            "cluster_ref": "cluster-fallback-a",
+            "extraction_run_ref": "extract-fallback-a",
+            "link_id": "link-fallback-a",
+            "outcome": "success",
+            "rejection_ref": null,
+            "required": true
+          }
+        ],
+        "rejected_extraction_refs": [],
+        "retrieval_outcome": "success"
+      },
+      "contract_version": "2.0",
+      "extractions": [
+        {
+          "acceptance_receipt_ref": "receipt-extract-fallback-a",
+          "artifact": {
+            "artifact_id": "artifact-fallback-a",
+            "citation_eligible": true,
+            "content_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "disposition": "usable",
+            "is_complete": true,
+            "provenance": {
+              "egress": "datacenter",
+              "machine": "fixture-worker",
+              "observed_at": "2026-07-27T05:02:00.126Z",
+              "producer": "jina",
+              "source_type": "normalized-text"
+            },
+            "quality_passed": true
+          },
+          "cluster_ref": "cluster-fallback-a",
+          "extraction_run_id": "extract-fallback-a",
+          "outcome": "success",
+          "partial_allowed": false,
+          "plan_ref": "plan-fallback",
+          "rejection": {
+            "attempt_count": 2,
+            "code": "parse_error",
+            "last_status": "content",
+            "provider": "trafilatura",
+            "recommended_action": "terminal",
+            "rejection_id": "reject-fabricated",
+            "total_attempt_latency_ms": 82
+          },
+          "selected_extractor": "jina",
+          "steps": [
+            {
+              "attempt_outcome": null,
+              "decision": "miss",
+              "extractor": null,
+              "kind": "cache",
+              "latency_ms": null,
+              "ordinal": 0,
+              "provenance": null,
+              "reason": "not_found",
+              "spend": null
+            },
+            {
+              "attempt_outcome": "parse_error",
+              "decision": "invoked",
+              "extractor": "trafilatura",
+              "kind": "extractor",
+              "latency_ms": 12,
+              "ordinal": 1,
+              "provenance": {
+                "egress": "local",
+                "machine": "fixture-node",
+                "observed_at": "2026-07-27T05:02:00.056Z",
+                "producer": "trafilatura",
+                "source_type": "html-extraction"
+              },
+              "reason": "malformed_content",
+              "spend": {
+                "actual_usd": "0.000000000",
+                "reconciliation": "not_applicable",
+                "reserved_usd": "0.000000000",
+                "source": "local-extractor"
+              }
+            },
+            {
+              "attempt_outcome": "content",
+              "decision": "invoked",
+              "extractor": "jina",
+              "kind": "extractor",
+              "latency_ms": 70,
+              "ordinal": 2,
+              "provenance": {
+                "egress": "datacenter",
+                "machine": "fixture-worker",
+                "observed_at": "2026-07-27T05:02:00.126Z",
+                "producer": "jina",
+                "source_type": "reader-api"
+              },
+              "reason": "complete_content_returned",
+              "spend": {
+                "actual_usd": "0.000000000",
+                "reconciliation": "confirmed",
+                "reserved_usd": "0.000000000",
+                "source": "fixture-zero-charge"
+              }
+            }
+          ]
+        }
+      ],
+      "final": {
+        "answer": null,
+        "caller_result": {
+          "answer": null,
+          "citation_refs": [
+            "citation-fallback-a"
+          ],
+          "results": [
+            {
+              "cluster_ref": "cluster-fallback-a",
+              "extraction": {
+                "artifact_disposition": "usable",
+                "artifact_ref": "artifact-fallback-a",
+                "outcome": "success",
+                "rejection_code": null
+              },
+              "rank": 0,
+              "title": "Recovered canonical page",
+              "url": "https://archive.example.org/recovered",
+              "visibility": "accepted"
+            }
+          ]
+        },
+        "citations": [
+          {
+            "artifact_ref": "artifact-fallback-a",
+            "citation_id": "citation-fallback-a",
+            "cluster_ref": "cluster-fallback-a"
+          }
+        ],
+        "delivery_allowed": true,
+        "diagnostic_result_refs": [],
+        "outcome": "success",
+        "result_refs": [
+          "cluster-fallback-a"
+        ],
+        "synthesis_allowed": true,
+        "visible_labels": [
+          "SUCCESS",
+          "fallback-used",
+          "durably-accepted"
+        ]
+      },
+      "fusion": {
+        "clusters": [
+          {
+            "base_rank": 0,
+            "best_provider_rank": 0,
+            "cluster_id": "cluster-fallback-a",
+            "cluster_sort_key": "https://archive.example.org/recovered",
+            "contributions": [
+              {
+                "attempt_ref": "attempt-fallback-yahoo",
+                "denominator": 61,
+                "numerator": 1,
+                "provider": "yahoo",
+                "provider_rank": 0
+              }
+            ],
+            "contributor_count": 1,
+            "exact_score": {
+              "denominator": 61,
+              "numerator": 1
+            },
+            "extraction_link": "link-fallback-a",
+            "freshness": {
+              "observed_at": "2026-07-27T05:02:00.044Z",
+              "passed": null,
+              "proof": "not_required",
+              "published_at": null,
+              "reason": "not_requested",
+              "required": false
+            },
+            "output_rank": 0,
+            "provenance": {
+              "egress": "residential",
+              "machine": "fixture-node",
+              "observed_at": "2026-07-27T05:02:00.044Z",
+              "producer": "yahoo",
+              "source_type": "archive"
+            },
+            "site_key": "example.org",
+            "smallest_provider": "yahoo",
+            "title": "Recovered canonical page",
+            "url": "https://archive.example.org/recovered"
+          }
+        ],
+        "filtered_observations": [],
+        "floor": {
+          "passed": true,
+          "reason": "recovery_floor_passed",
+          "required_clusters": 1,
+          "required_sites": 1
+        },
+        "ranking_policy": "ranking-v1-rrf60",
+        "rrf_k": 60
+      },
+      "origin_provider_attempts": [],
+      "plan": {
+        "artifact_requirement_ref": "requirement-fallback",
+        "cache_fingerprint": "cache-fallback",
+        "candidate_providers": [
+          "yahoo"
+        ],
+        "controls": {
+          "country": null,
+          "domains": {
+            "exclude": [],
+            "include": []
+          },
+          "effective_max_provider_tier": 0,
+          "egress_preference": "residential",
+          "freshness": {
+            "end": null,
+            "maximum_cache_age_ms": 604800000,
+            "start": null
+          },
+          "include_attribution": true,
+          "language": "en",
+          "revalidation": "normal",
+          "safe_search": true
+        },
+        "intent": "recovery",
+        "plan_id": "plan-fallback",
+        "profile": "free",
+        "result_limit": 1,
+        "schema_version": 1,
+        "versions": {
+          "domain_policy": "domain-v1-psl-fixture",
+          "extraction_outcome_policy": "extraction-v1",
+          "freshness_policy": "freshness-v1",
+          "query_normalization": "query-v1",
+          "ranking_policy": "ranking-v1-rrf60",
+          "result_normalization": "result-v1",
+          "routing_policy": "routing-v1",
+          "spend_policy": "spend-v1"
+        }
+      },
+      "prototype_schema": "argus.retrieval-evidence.prototype.v1",
+      "provider_attempts": [
+        {
+          "applied_controls": {
+            "domain_translation": "not_requested",
+            "freshness_translation": "not_requested",
+            "request_class": "recovery",
+            "safe_search": "applied"
+          },
+          "applied_controls_ref": "controls-fallback-yahoo",
+          "attempt_id": "attempt-fallback-yahoo",
+          "latency_ms": 44,
+          "ordinal": 0,
+          "outcome": "success",
+          "provenance": {
+            "egress": "residential",
+            "machine": "fixture-node",
+            "observed_at": "2026-07-27T05:02:00.044Z",
+            "producer": "yahoo",
+            "source_type": "html-search"
+          },
+          "provider": "yahoo",
+          "reason": "protocol_valid_results",
+          "result_count": 1,
+          "run_ref": "run-fallback",
+          "spend": {
+            "actual_usd": "0.000000000",
+            "reconciliation": "not_applicable",
+            "reserved_usd": "0.000000000",
+            "source": "tier-zero"
+          }
+        }
+      ],
+      "readiness": [
+        {
+          "compatibility": "compatible",
+          "cooldown": "clear",
+          "decision": "eligible",
+          "observed_at": "2026-07-27T05:01:00Z",
+          "provider": "yahoo",
+          "reachability": "reachable",
+          "reason": "ready_for_caller_attempt",
+          "scope_ref": "scope-residential-fixture",
+          "snapshot_ref": "ready-fallback-yahoo",
+          "spend": "not_applicable",
+          "tier": 0,
+          "usability": "usable",
+          "valid_until": "2026-07-27T05:12:00Z"
+        }
+      ],
+      "request": {
+        "caller_ref": "caller-fixture",
+        "deadline_ms": 120000,
+        "mode": "recovery",
+        "query_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "raw_query_retained": false,
+        "received_at": "2026-07-27T05:02:00Z",
+        "request_id": "request-fallback",
+        "run_id": "run-fallback"
+      },
+      "scenario": "fallback_success"
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "input": {
+    "code": "invalid_request",
+    "outcome": "invalid_request"
+  },
+  "name": "accepted_operation:invalid_request",
+  "response_value": {
+    "contract_version": "2.0",
+    "error": {
+      "code": "invalid_request",
+      "detail": "invalid request",
+      "instance": "urn:argus:request:fixture-invalid_request",
+      "retry_after_seconds": null,
+      "retryable": false,
+      "status": 422,
+      "title": "Invalid Request",
+      "type": "urn:argus:problem:invalid_request"
+    },
+    "outcome": "invalid_request",
+    "request_id": "fixture-invalid_request",
+    "result": null
+  },
+  "status": {
+    "http_status": 422,
+    "mcp_is_error": true
+  },
+  "transport": "http+mcp"
+}

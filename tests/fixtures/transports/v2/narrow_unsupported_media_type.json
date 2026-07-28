@@ -1,0 +1,28 @@
+{
+  "input": {
+    "code": "unsupported_media_type",
+    "outcome": "invalid_request"
+  },
+  "name": "accepted_operation:unsupported_media_type",
+  "response_value": {
+    "contract_version": "2.0",
+    "error": {
+      "code": "unsupported_media_type",
+      "detail": "unsupported media type",
+      "instance": "urn:argus:request:fixture-unsupported_media_type",
+      "retry_after_seconds": null,
+      "retryable": false,
+      "status": 415,
+      "title": "Unsupported Media Type",
+      "type": "urn:argus:problem:unsupported_media_type"
+    },
+    "outcome": "invalid_request",
+    "request_id": "fixture-unsupported_media_type",
+    "result": null
+  },
+  "status": {
+    "http_status": 415,
+    "mcp_is_error": true
+  },
+  "transport": "http+mcp"
+}

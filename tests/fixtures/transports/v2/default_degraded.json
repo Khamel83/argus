@@ -1,0 +1,21 @@
+{
+  "input": {
+    "code": "degraded",
+    "outcome": "degraded"
+  },
+  "name": "accepted_operation:degraded",
+  "response_value": {
+    "contract_version": "2.0",
+    "error": null,
+    "outcome": "degraded",
+    "request_id": "fixture-degraded",
+    "result": {
+      "fixture": true
+    }
+  },
+  "status": {
+    "http_status": 200,
+    "mcp_is_error": false
+  },
+  "transport": "http+mcp"
+}

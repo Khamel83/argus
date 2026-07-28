@@ -1,0 +1,28 @@
+{
+  "input": {
+    "code": "session_not_found",
+    "outcome": "unready"
+  },
+  "name": "accepted_operation:session_not_found",
+  "response_value": {
+    "contract_version": "2.0",
+    "error": {
+      "code": "session_not_found",
+      "detail": "session not found",
+      "instance": "urn:argus:request:fixture-session_not_found",
+      "retry_after_seconds": null,
+      "retryable": false,
+      "status": 404,
+      "title": "Session Not Found",
+      "type": "urn:argus:problem:session_not_found"
+    },
+    "outcome": "unready",
+    "request_id": "fixture-session_not_found",
+    "result": null
+  },
+  "status": {
+    "http_status": 404,
+    "mcp_is_error": true
+  },
+  "transport": "http+mcp"
+}

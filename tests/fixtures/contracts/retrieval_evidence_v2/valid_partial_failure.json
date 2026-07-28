@@ -1,0 +1,467 @@
+{
+  "contract_version": "2.0",
+  "error": null,
+  "outcome": "degraded",
+  "request_id": "request-partial",
+  "result": {
+    "caller_result": {
+      "answer": null,
+      "citation_refs": [
+        "citation-partial-a"
+      ],
+      "results": [
+        {
+          "cluster_ref": "cluster-partial-a",
+          "extraction": {
+            "artifact_disposition": "partial",
+            "artifact_ref": "artifact-partial-a",
+            "outcome": "degraded",
+            "rejection_code": "incomplete_content"
+          },
+          "rank": 0,
+          "title": "Partial evidence A",
+          "url": "https://one.example.org/a",
+          "visibility": "accepted"
+        },
+        {
+          "cluster_ref": "cluster-partial-b",
+          "extraction": null,
+          "rank": 1,
+          "title": "Partial evidence B",
+          "url": "https://two.example.net/b",
+          "visibility": "accepted"
+        }
+      ]
+    },
+    "evidence": {
+      "acceptance": {
+        "accepted_at": "2026-07-27T05:01:00.168Z",
+        "artifact_count": 1,
+        "cache_published": true,
+        "receipt_ref": "receipt-partial",
+        "status": "accepted"
+      },
+      "accounting": {
+        "actual_usd": "0.000000000",
+        "extractor_attempt_latency_ms": 28,
+        "extractor_call_count": 1,
+        "operation_latency_ms": 168,
+        "provider_attempt_latency_ms": 108,
+        "provider_call_count": 2,
+        "reconciliation": "not_applicable",
+        "reserved_usd": "0.000000000",
+        "source": "tier-zero-ledger"
+      },
+      "cache": {
+        "age_ms": null,
+        "decision": "miss",
+        "maximum_age_ms": 604800000,
+        "new_provider_calls": 2,
+        "origin_provider_refs": [],
+        "origin_run_ref": null,
+        "origin_spend": null,
+        "reason": "not_found",
+        "served": false
+      },
+      "composition": {
+        "accepted_artifact_refs": [
+          "artifact-partial-a"
+        ],
+        "artifact_outcome": "degraded",
+        "artifact_requirement": {
+          "aggregate_count": 1,
+          "deadline_ms": 30000,
+          "max_extractions": 1,
+          "minimum_disposition": "partial",
+          "requirement_ref": "requirement-partial",
+          "spend_policy_ref": "spend-v1"
+        },
+        "artifact_requirement_ref": "requirement-partial",
+        "composite_outcome": "degraded",
+        "degraded_artifact_refs": [
+          "artifact-partial-a"
+        ],
+        "links": [
+          {
+            "artifact_disposition": "partial",
+            "artifact_ref": "artifact-partial-a",
+            "cluster_ref": "cluster-partial-a",
+            "extraction_run_ref": "extract-partial-a",
+            "link_id": "link-partial-a",
+            "outcome": "degraded",
+            "rejection_ref": "reject-partial-a",
+            "required": true
+          }
+        ],
+        "rejected_extraction_refs": [],
+        "retrieval_outcome": "degraded"
+      },
+      "contract_version": "2.0",
+      "extractions": [
+        {
+          "acceptance_receipt_ref": "receipt-extract-partial-a",
+          "artifact": {
+            "artifact_id": "artifact-partial-a",
+            "citation_eligible": true,
+            "content_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "disposition": "partial",
+            "is_complete": false,
+            "provenance": {
+              "egress": "local",
+              "machine": "fixture-node",
+              "observed_at": "2026-07-27T05:01:00.136Z",
+              "producer": "trafilatura",
+              "source_type": "normalized-text"
+            },
+            "quality_passed": true
+          },
+          "cluster_ref": "cluster-partial-a",
+          "extraction_run_id": "extract-partial-a",
+          "outcome": "degraded",
+          "partial_allowed": true,
+          "plan_ref": "plan-partial",
+          "rejection": {
+            "attempt_count": 1,
+            "code": "incomplete_content",
+            "last_status": "content",
+            "provider": "trafilatura",
+            "recommended_action": "terminal",
+            "rejection_id": "reject-partial-a",
+            "total_attempt_latency_ms": 28
+          },
+          "selected_extractor": "trafilatura",
+          "steps": [
+            {
+              "attempt_outcome": null,
+              "decision": "miss",
+              "extractor": null,
+              "kind": "cache",
+              "latency_ms": null,
+              "ordinal": 0,
+              "provenance": null,
+              "reason": "not_found",
+              "spend": null
+            },
+            {
+              "attempt_outcome": "content",
+              "decision": "invoked",
+              "extractor": "trafilatura",
+              "kind": "extractor",
+              "latency_ms": 28,
+              "ordinal": 1,
+              "provenance": {
+                "egress": "local",
+                "machine": "fixture-node",
+                "observed_at": "2026-07-27T05:01:00.136Z",
+                "producer": "trafilatura",
+                "source_type": "html-extraction"
+              },
+              "reason": "quality_passed_incomplete",
+              "spend": {
+                "actual_usd": "0.000000000",
+                "reconciliation": "not_applicable",
+                "reserved_usd": "0.000000000",
+                "source": "local-extractor"
+              }
+            }
+          ]
+        }
+      ],
+      "final": {
+        "answer": null,
+        "caller_result": {
+          "answer": null,
+          "citation_refs": [
+            "citation-partial-a"
+          ],
+          "results": [
+            {
+              "cluster_ref": "cluster-partial-a",
+              "extraction": {
+                "artifact_disposition": "partial",
+                "artifact_ref": "artifact-partial-a",
+                "outcome": "degraded",
+                "rejection_code": "incomplete_content"
+              },
+              "rank": 0,
+              "title": "Partial evidence A",
+              "url": "https://one.example.org/a",
+              "visibility": "accepted"
+            },
+            {
+              "cluster_ref": "cluster-partial-b",
+              "extraction": null,
+              "rank": 1,
+              "title": "Partial evidence B",
+              "url": "https://two.example.net/b",
+              "visibility": "accepted"
+            }
+          ]
+        },
+        "citations": [
+          {
+            "artifact_ref": "artifact-partial-a",
+            "citation_id": "citation-partial-a",
+            "cluster_ref": "cluster-partial-a"
+          }
+        ],
+        "delivery_allowed": true,
+        "diagnostic_result_refs": [],
+        "outcome": "degraded",
+        "result_refs": [
+          "cluster-partial-a",
+          "cluster-partial-b"
+        ],
+        "synthesis_allowed": true,
+        "visible_labels": [
+          "DEGRADED",
+          "partial-provider",
+          "partial-content"
+        ]
+      },
+      "fusion": {
+        "clusters": [
+          {
+            "base_rank": 0,
+            "best_provider_rank": 0,
+            "cluster_id": "cluster-partial-a",
+            "cluster_sort_key": "https://one.example.org/a",
+            "contributions": [
+              {
+                "attempt_ref": "attempt-partial-ddg",
+                "denominator": 61,
+                "numerator": 1,
+                "provider": "duckduckgo",
+                "provider_rank": 0
+              }
+            ],
+            "contributor_count": 1,
+            "exact_score": {
+              "denominator": 61,
+              "numerator": 1
+            },
+            "extraction_link": "link-partial-a",
+            "freshness": {
+              "observed_at": "2026-07-27T05:01:00.060Z",
+              "passed": null,
+              "proof": "not_required",
+              "published_at": null,
+              "reason": "not_requested",
+              "required": false
+            },
+            "output_rank": 0,
+            "provenance": {
+              "egress": "residential",
+              "machine": "fixture-node",
+              "observed_at": "2026-07-27T05:01:00.060Z",
+              "producer": "duckduckgo",
+              "source_type": "web-page"
+            },
+            "site_key": "example.org",
+            "smallest_provider": "duckduckgo",
+            "title": "Partial evidence A",
+            "url": "https://one.example.org/a"
+          },
+          {
+            "base_rank": 1,
+            "best_provider_rank": 1,
+            "cluster_id": "cluster-partial-b",
+            "cluster_sort_key": "https://two.example.net/b",
+            "contributions": [
+              {
+                "attempt_ref": "attempt-partial-ddg",
+                "denominator": 62,
+                "numerator": 1,
+                "provider": "duckduckgo",
+                "provider_rank": 1
+              }
+            ],
+            "contributor_count": 1,
+            "exact_score": {
+              "denominator": 62,
+              "numerator": 1
+            },
+            "extraction_link": null,
+            "freshness": {
+              "observed_at": "2026-07-27T05:01:00.060Z",
+              "passed": null,
+              "proof": "not_required",
+              "published_at": null,
+              "reason": "not_requested",
+              "required": false
+            },
+            "output_rank": 1,
+            "provenance": {
+              "egress": "residential",
+              "machine": "fixture-node",
+              "observed_at": "2026-07-27T05:01:00.060Z",
+              "producer": "duckduckgo",
+              "source_type": "web-page"
+            },
+            "site_key": "example.net",
+            "smallest_provider": "duckduckgo",
+            "title": "Partial evidence B",
+            "url": "https://two.example.net/b"
+          }
+        ],
+        "filtered_observations": [],
+        "floor": {
+          "passed": true,
+          "reason": "discovery_floor_diagnostic",
+          "required_clusters": 0,
+          "required_sites": 0
+        },
+        "ranking_policy": "ranking-v1-rrf60",
+        "rrf_k": 60
+      },
+      "origin_provider_attempts": [],
+      "plan": {
+        "artifact_requirement_ref": "requirement-partial",
+        "cache_fingerprint": "cache-partial",
+        "candidate_providers": [
+          "duckduckgo",
+          "yahoo"
+        ],
+        "controls": {
+          "country": null,
+          "domains": {
+            "exclude": [],
+            "include": []
+          },
+          "effective_max_provider_tier": 0,
+          "egress_preference": "residential",
+          "freshness": {
+            "end": null,
+            "maximum_cache_age_ms": 604800000,
+            "start": null
+          },
+          "include_attribution": true,
+          "language": "en",
+          "revalidation": "normal",
+          "safe_search": true
+        },
+        "intent": "discovery",
+        "plan_id": "plan-partial",
+        "profile": "free",
+        "result_limit": 2,
+        "schema_version": 1,
+        "versions": {
+          "domain_policy": "domain-v1-psl-fixture",
+          "extraction_outcome_policy": "extraction-v1",
+          "freshness_policy": "freshness-v1",
+          "query_normalization": "query-v1",
+          "ranking_policy": "ranking-v1-rrf60",
+          "result_normalization": "result-v1",
+          "routing_policy": "routing-v1",
+          "spend_policy": "spend-v1"
+        }
+      },
+      "prototype_schema": "argus.retrieval-evidence.prototype.v1",
+      "provider_attempts": [
+        {
+          "applied_controls": {
+            "domain_translation": "not_requested",
+            "freshness_translation": "not_requested",
+            "request_class": "discovery",
+            "safe_search": "applied"
+          },
+          "applied_controls_ref": "controls-partial-ddg",
+          "attempt_id": "attempt-partial-ddg",
+          "latency_ms": 60,
+          "ordinal": 0,
+          "outcome": "success",
+          "provenance": {
+            "egress": "residential",
+            "machine": "fixture-node",
+            "observed_at": "2026-07-27T05:01:00.060Z",
+            "producer": "duckduckgo",
+            "source_type": "web-search"
+          },
+          "provider": "duckduckgo",
+          "reason": "protocol_valid_results",
+          "result_count": 2,
+          "run_ref": "run-partial",
+          "spend": {
+            "actual_usd": "0.000000000",
+            "reconciliation": "not_applicable",
+            "reserved_usd": "0.000000000",
+            "source": "tier-zero"
+          }
+        },
+        {
+          "applied_controls": {
+            "domain_translation": "not_requested",
+            "freshness_translation": "not_requested",
+            "request_class": "discovery",
+            "safe_search": "applied"
+          },
+          "applied_controls_ref": "controls-partial-yahoo",
+          "attempt_id": "attempt-partial-yahoo",
+          "latency_ms": 48,
+          "ordinal": 1,
+          "outcome": "parse_error",
+          "provenance": {
+            "egress": "residential",
+            "machine": "fixture-node",
+            "observed_at": "2026-07-27T05:01:00.108Z",
+            "producer": "yahoo",
+            "source_type": "html-search"
+          },
+          "provider": "yahoo",
+          "reason": "unrecognized_markup",
+          "result_count": 0,
+          "run_ref": "run-partial",
+          "spend": {
+            "actual_usd": "0.000000000",
+            "reconciliation": "not_applicable",
+            "reserved_usd": "0.000000000",
+            "source": "tier-zero"
+          }
+        }
+      ],
+      "readiness": [
+        {
+          "compatibility": "compatible",
+          "cooldown": "clear",
+          "decision": "eligible",
+          "observed_at": "2026-07-27T05:00:00Z",
+          "provider": "duckduckgo",
+          "reachability": "reachable",
+          "reason": "ready_for_caller_attempt",
+          "scope_ref": "scope-residential-fixture",
+          "snapshot_ref": "ready-partial-ddg",
+          "spend": "not_applicable",
+          "tier": 0,
+          "usability": "usable",
+          "valid_until": "2026-07-27T05:11:00Z"
+        },
+        {
+          "compatibility": "compatible",
+          "cooldown": "clear",
+          "decision": "eligible",
+          "observed_at": "2026-07-27T05:00:00Z",
+          "provider": "yahoo",
+          "reachability": "reachable",
+          "reason": "caller_attempt_may_refresh_usability",
+          "scope_ref": "scope-residential-fixture",
+          "snapshot_ref": "ready-partial-yahoo",
+          "spend": "not_applicable",
+          "tier": 0,
+          "usability": "unknown",
+          "valid_until": "2026-07-27T05:11:00Z"
+        }
+      ],
+      "request": {
+        "caller_ref": "caller-fixture",
+        "deadline_ms": 120000,
+        "mode": "discovery",
+        "query_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "raw_query_retained": false,
+        "received_at": "2026-07-27T05:01:00Z",
+        "request_id": "request-partial",
+        "run_id": "run-partial"
+      },
+      "scenario": "partial_failure"
+    }
+  }
+}

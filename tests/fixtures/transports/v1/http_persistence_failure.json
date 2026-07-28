@@ -1,0 +1,14 @@
+{
+  "input": {
+    "mode": "discovery",
+    "query": "test"
+  },
+  "name": "POST /api/search",
+  "response_value": {
+    "detail": "Search could not be durably accepted"
+  },
+  "status": {
+    "http_status": 503
+  },
+  "transport": "http"
+}

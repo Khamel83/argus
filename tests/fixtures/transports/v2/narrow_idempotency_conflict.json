@@ -1,0 +1,28 @@
+{
+  "input": {
+    "code": "idempotency_conflict",
+    "outcome": "invalid_request"
+  },
+  "name": "accepted_operation:idempotency_conflict",
+  "response_value": {
+    "contract_version": "2.0",
+    "error": {
+      "code": "idempotency_conflict",
+      "detail": "idempotency conflict",
+      "instance": "urn:argus:request:fixture-idempotency_conflict",
+      "retry_after_seconds": null,
+      "retryable": false,
+      "status": 409,
+      "title": "Idempotency Conflict",
+      "type": "urn:argus:problem:idempotency_conflict"
+    },
+    "outcome": "invalid_request",
+    "request_id": "fixture-idempotency_conflict",
+    "result": null
+  },
+  "status": {
+    "http_status": 409,
+    "mcp_is_error": true
+  },
+  "transport": "http+mcp"
+}

@@ -1,0 +1,28 @@
+{
+  "input": {
+    "code": "payload_too_large",
+    "outcome": "invalid_request"
+  },
+  "name": "accepted_operation:payload_too_large",
+  "response_value": {
+    "contract_version": "2.0",
+    "error": {
+      "code": "payload_too_large",
+      "detail": "payload too large",
+      "instance": "urn:argus:request:fixture-payload_too_large",
+      "retry_after_seconds": null,
+      "retryable": false,
+      "status": 413,
+      "title": "Payload Too Large",
+      "type": "urn:argus:problem:payload_too_large"
+    },
+    "outcome": "invalid_request",
+    "request_id": "fixture-payload_too_large",
+    "result": null
+  },
+  "status": {
+    "http_status": 413,
+    "mcp_is_error": true
+  },
+  "transport": "http+mcp"
+}
