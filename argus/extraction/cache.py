@@ -29,6 +29,7 @@ class ExtractionCacheIdentity:
     outcome_policy_version: str
     privacy_scope: str
     partial_allowed: bool
+    cache_max_age_seconds: int = 604_800
 
     @classmethod
     def from_plan(
@@ -43,7 +44,7 @@ class ExtractionCacheIdentity:
             mode=plan.mode,
             access_scope=plan.access_scope,
             authentication_scope_fingerprint=(
-                plan.authentication_scope_fingerprint
+                plan.authentication_scope.fingerprint
             ),
             cache_policy_version=plan.cache_policy_ref,
             extraction_plan_version=plan.extraction_plan_version,
@@ -52,6 +53,7 @@ class ExtractionCacheIdentity:
             outcome_policy_version=outcome_policy_version,
             privacy_scope=plan.privacy_scope,
             partial_allowed=plan.partial_allowed,
+            cache_max_age_seconds=plan.cache_max_age_seconds,
         )
 
     @classmethod
@@ -86,6 +88,7 @@ class ExtractionCacheIdentity:
                 "outcome_policy_version": self.outcome_policy_version,
                 "privacy_scope": self.privacy_scope,
                 "partial_allowed": self.partial_allowed,
+                "cache_max_age_seconds": self.cache_max_age_seconds,
             },
             sort_keys=True,
             separators=(",", ":"),

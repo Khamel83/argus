@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import Enum
@@ -63,6 +64,73 @@ class RejectionSourceKind(str, Enum):
     CHAIN_EXHAUSTED = "chain_exhausted"
 
 
+_AUTHORITY_SCOPE_DOMAIN = "argus-auth-scope-v1"
+
+
+@dataclass(frozen=True, slots=True)
+class AuthenticationScope:
+    fingerprint: str
+    authority_receipt_ref: str
+    authority_proof: str
+
+
+def verified_authentication_scope(
+    scope_ref: str | None,
+    *,
+    authority_receipt_ref: str,
+) -> AuthenticationScope:
+    """Bind a scope reference to an authority receipt without persisting it."""
+    fingerprint = (
+        "anonymous"
+        if scope_ref is None
+        else "sha256:" + hashlib.sha256(scope_ref.encode("utf-8")).hexdigest()
+    )
+    proof = hashlib.sha256(
+        (
+            _AUTHORITY_SCOPE_DOMAIN
+            + "\0"
+            + fingerprint
+            + "\0"
+            + authority_receipt_ref
+        ).encode("utf-8")
+    ).hexdigest()
+    return AuthenticationScope(
+        fingerprint=fingerprint,
+        authority_receipt_ref=authority_receipt_ref,
+        authority_proof=proof,
+    )
+
+
+def is_verified_authentication_scope(value: object) -> bool:
+    if not isinstance(value, AuthenticationScope):
+        return False
+    expected = verified_authentication_scope(
+        None,
+        authority_receipt_ref=value.authority_receipt_ref,
+    )
+    if value.fingerprint != "anonymous":
+        expected = AuthenticationScope(
+            fingerprint=value.fingerprint,
+            authority_receipt_ref=value.authority_receipt_ref,
+            authority_proof=hashlib.sha256(
+                (
+                    _AUTHORITY_SCOPE_DOMAIN
+                    + "\0"
+                    + value.fingerprint
+                    + "\0"
+                    + value.authority_receipt_ref
+                ).encode("utf-8")
+            ).hexdigest(),
+        )
+    return value == expected
+
+
+ANONYMOUS_AUTHENTICATION_SCOPE = verified_authentication_scope(
+    None,
+    authority_receipt_ref="auth-public-anonymous-v1",
+)
+
+
 @dataclass(frozen=True, slots=True)
 class ExtractionCandidate:
     extractor: str
@@ -80,6 +148,9 @@ class ExtractionRequest:
     caller: str
     profile: str
     privacy_scope: str
+    authentication_scope: AuthenticationScope = (
+        ANONYMOUS_AUTHENTICATION_SCOPE
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,7 +169,10 @@ class ExtractionPlan:
     caller: str
     profile: str
     privacy_scope: str
-    authentication_scope_fingerprint: str = "anonymous"
+    authentication_scope: AuthenticationScope = (
+        ANONYMOUS_AUTHENTICATION_SCOPE
+    )
+    cache_max_age_seconds: int = 604_800
 
     def __post_init__(self) -> None:
         if isinstance(self.candidates, list):
@@ -127,6 +201,7 @@ class CacheOriginEvidence:
     privacy_scope: str
     partial_allowed: bool
     cache_created_at: str
+    cache_max_age_seconds: int = 604_800
 
     @classmethod
     def from_accepted(
@@ -170,6 +245,7 @@ class CacheOriginEvidence:
             privacy_scope=identity.privacy_scope,
             partial_allowed=identity.partial_allowed,
             cache_created_at=durable.acceptance_receipt.accepted_at,
+            cache_max_age_seconds=identity.cache_max_age_seconds,
         )
 
 

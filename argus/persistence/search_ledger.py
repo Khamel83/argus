@@ -429,6 +429,22 @@ class ResultExtractionLinkRow(LedgerBase):
             "rejection_plan_id = extraction_plan_id",
             name="ck_result_extraction_links_rejection_same_plan",
         ),
+        CheckConstraint(
+            "artifact_row_id IS NULL OR "
+            "(artifact_plan_id IS NOT NULL AND "
+            "extraction_plan_id IS NOT NULL AND "
+            "extraction_acceptance_ref IS NOT NULL AND "
+            "artifact_plan_id = extraction_plan_id)",
+            name="ck_result_extraction_links_artifact_requires_acceptance",
+        ),
+        CheckConstraint(
+            "rejection_row_id IS NULL OR "
+            "(rejection_plan_id IS NOT NULL AND "
+            "extraction_plan_id IS NOT NULL AND "
+            "extraction_acceptance_ref IS NOT NULL AND "
+            "rejection_plan_id = extraction_plan_id)",
+            name="ck_result_extraction_links_rejection_requires_acceptance",
+        ),
         ForeignKeyConstraint(
             ["extraction_acceptance_ref", "extraction_plan_id"],
             [
@@ -773,6 +789,7 @@ def _deserialize_extraction_projection(state: dict):
     from argus.extraction.outcomes import (
         ArtifactDisposition,
         ArtifactEvaluation,
+        AuthenticationScope,
         AttemptOutcome,
         CacheDecision,
         CacheOriginEvidence,
@@ -870,9 +887,15 @@ def _deserialize_extraction_projection(state: dict):
         )
 
     plan_state = state["plan"]
+    authentication_scope_state = plan_state.get("authentication_scope")
     plan = ExtractionPlan(
         **{
             **plan_state,
+            "authentication_scope": (
+                AuthenticationScope(**authentication_scope_state)
+                if isinstance(authentication_scope_state, dict)
+                else authentication_scope_state
+            ),
             "candidates": tuple(
                 ExtractionCandidate(**candidate)
                 for candidate in plan_state["candidates"]

@@ -126,6 +126,54 @@ PostgreSQL fixture is unavailable. No migration was run against production;
 no network retrieval, archive creation, historical replay, deployment, push,
 PR, or merge was performed.
 
+## Fourth reviewer correction
+
+The fourth strict review is closed by a separate correction:
+
+- `HIT_INELIGIBLE` is a cache-routing result, not a contract failure. An
+  origin/current identity mismatch now bypasses reuse and continues through
+  the ordinary extraction path; strict origin publication checks remain
+  mandatory for `HIT_ELIGIBLE`.
+- Cache maximum age is immutable input carried by the extraction plan, cache
+  identity, canonical identity fingerprint, and origin evidence. Eligible
+  reuse derives age from the durable acceptance timestamp and authority
+  clock, accepts the exact boundary, and rejects one second beyond it or an
+  arbitrarily stale entry.
+- Authentication scope is an authority-receipted, opaque fingerprint bound
+  from request to plan, invoked-step provenance, artifact provenance, and
+  cache identity. Authenticated/cookie provenance must hash to that exact
+  scope. Private or otherwise non-public work cannot silently use the
+  anonymous scope.
+- A populated artifact or rejection link now explicitly requires a
+  non-null extraction plan and acceptance receipt for that same plan.
+  Migration and ORM checks reject both orphan shapes in SQLite; recovery
+  queries use null-safe `IS DISTINCT FROM` comparisons.
+- The trusted 0007 recovery schema manifest now covers every required table
+  and column with normalized type/nullability, required constraint and index
+  definitions, and a contract SHA-256. The verifier compares the actual
+  restored schema to the supplied manifest rather than comparing a supplied
+  expectation with a second local expectation.
+
+Fourth-correction TDD and verification:
+
+- RED: focused regressions initially failed for ineligible-cache fallback,
+  missing max-age identity, missing authority authentication scope, missing
+  acceptance-bound branch checks, and the name-only/local manifest trust
+  check.
+- GREEN focused extraction/composition/recovery command:
+  `127 passed, 4 skipped`.
+- Full repository run: `1449 passed, 40 skipped`, with five failures limited
+  to unchanged Brave/GitHub rate-reset fixtures whose hard-coded
+  `2026-07-28T00:53:20Z` reset is now behind the wall clock, plus the same four
+  Starlette cookie deprecation warnings.
+- Full remainder excluding the two stale parameterized provider-fixture test
+  functions: `1427 passed, 40 skipped, 27 deselected`.
+- Ruff over every changed Python path: all checks passed.
+- `git diff --check`: passed.
+
+Fourth correction commit message:
+`fix: enforce cache authority and schema contracts`
+
 ## Commit
 
 Commit message: `feat: finalize and compose extraction outcomes`

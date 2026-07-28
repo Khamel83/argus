@@ -29,8 +29,9 @@ from argus.extraction.rejection import RejectionAction, RejectionCode
 
 
 class MemoryOutcomeRepository:
-    def __init__(self):
+    def __init__(self, accepted_at="2026-07-27T12:00:00Z"):
         self.projections = []
+        self.accepted_at = accepted_at
 
     def accept_extraction_outcome(self, projection):
         from argus.extraction.outcomes import ExtractionAcceptanceReceipt
@@ -38,7 +39,7 @@ class MemoryOutcomeRepository:
         self.projections.append(projection)
         self.receipt = ExtractionAcceptanceReceipt(
             receipt_ref=f"receipt-{projection.extraction_run_id}",
-            accepted_at="2026-07-27T12:00:00Z",
+            accepted_at=self.accepted_at,
             scope="test",
         )
         return self.receipt
@@ -1882,11 +1883,10 @@ def test_cache_hit_age_is_derived_from_durable_cache_creation_time():
         _finalize(raw, repository=repository)
 
 
-def test_ineligible_cache_hit_still_requires_exact_current_identity():
+def test_ineligible_cache_hit_policy_mismatch_skips_cache_and_executes():
     from argus.extraction.cache import ExtractionCacheIdentity
     from argus.extraction.outcomes import (
         CacheOriginEvidence,
-        ExtractionContractRejected,
     )
 
     repository = MemoryOutcomeRepository()
@@ -1906,8 +1906,174 @@ def test_ineligible_cache_hit_still_requires_exact_current_identity():
         ),
     )
 
-    with pytest.raises(ExtractionContractRejected):
-        _finalize(raw, repository=repository)
+    accepted = _finalize(raw, repository=repository)
+
+    assert accepted.outcome is CanonicalOutcome.SUCCESS
+    assert accepted.steps[0].attempt_outcome is AttemptOutcome.CONTENT
+
+
+@pytest.mark.parametrize(
+    ("age_seconds", "accepted"),
+    [(59, True), (60, True), (61, False), (10**12, False)],
+)
+def test_eligible_cache_hit_enforces_immutable_max_age(age_seconds, accepted):
+    from argus.extraction.cache import ExtractionCacheIdentity
+    from argus.extraction.outcomes import (
+        CacheOriginEvidence,
+        ExtractionContractRejected,
+    )
+
+    repository = MemoryOutcomeRepository(
+        accepted_at="2026-07-27T11:59:00Z"
+    )
+    plan = replace(_plan(), cache_max_age_seconds=60)
+    origin = _finalize(
+        _raw(artifact=_artifact()),
+        repository=repository,
+        plan=plan,
+    )
+    identity = ExtractionCacheIdentity.from_plan(
+        plan,
+        outcome_policy_version="outcome-v1",
+        normalized_url_identity=origin.normalized_url_identity,
+    )
+    evidence = CacheOriginEvidence.from_accepted(
+        origin,
+        acceptance_repository=repository,
+    )
+    raw = RawExtractionResult(
+        cache_decision=CacheDecision(
+            outcome=CacheOutcome.HIT_ELIGIBLE,
+            origin_run_ref=origin.extraction_run_id,
+            age_seconds=age_seconds,
+            origin_evidence=evidence,
+            current_identity=identity,
+        ),
+        steps=(),
+        artifact=_artifact(),
+        selected_extractor="trafilatura",
+        terminal_cause=None,
+        operation_latency_ms=1,
+    )
+    finalizer = __import__(
+        "argus.extraction.finalizer",
+        fromlist=["ExtractionFinalizer"],
+    ).ExtractionFinalizer(
+        repository=repository,
+        clock=lambda: (
+            "2026-07-27T11:59:59Z"
+            if age_seconds == 59
+            else "2026-07-27T12:00:00Z"
+            if age_seconds == 60
+            else "2026-07-27T12:00:01Z"
+            if age_seconds == 61
+            else "2057-03-05T13:45:40Z"
+        ),
+    )
+    def action():
+        return finalizer.finalize_extraction(
+            _request(),
+            plan,
+            raw,
+            OutcomePolicy(version="outcome-v1"),
+        )
+
+    if accepted:
+        assert action().outcome is CanonicalOutcome.SUCCESS
+    else:
+        with pytest.raises(ExtractionContractRejected):
+            action()
+
+
+@pytest.mark.parametrize("provenance_field", ["authentication_scope_ref", "cookie_scope_ref"])
+def test_authority_auth_scope_binds_request_plan_and_provenance(
+    provenance_field,
+):
+    from argus.extraction.outcomes import verified_authentication_scope
+
+    authority_scope = verified_authentication_scope(
+        "account-a",
+        authority_receipt_ref="auth-authority-receipt-a",
+    )
+    provenance = replace(
+        _artifact().provenance,
+        **{provenance_field: "account-a"},
+    )
+    artifact = replace(_artifact(), provenance=provenance)
+    step = replace(_step(0, AttemptOutcome.CONTENT), provenance=provenance)
+    request = replace(
+        _request(),
+        access_scope="private",
+        privacy_scope="private",
+        authentication_scope=authority_scope,
+    )
+    plan = replace(
+        _plan(),
+        access_scope="private",
+        privacy_scope="private",
+        authentication_scope=authority_scope,
+    )
+    finalizer = __import__(
+        "argus.extraction.finalizer",
+        fromlist=["ExtractionFinalizer"],
+    ).ExtractionFinalizer(
+        repository=MemoryOutcomeRepository(),
+        clock=lambda: "2026-07-27T12:00:00Z",
+    )
+
+    accepted = finalizer.finalize_extraction(
+        request,
+        plan,
+        _raw(artifact=artifact, steps=(step,)),
+        OutcomePolicy(version="outcome-v1"),
+    )
+
+    assert accepted.outcome is CanonicalOutcome.SUCCESS
+
+
+def test_private_evidence_cannot_default_anonymous_or_mismatch_authority():
+    from argus.extraction.outcomes import (
+        ExtractionContractRejected,
+        verified_authentication_scope,
+    )
+    from argus.extraction.finalizer import ExtractionFinalizer
+
+    account_a = verified_authentication_scope(
+        "account-a",
+        authority_receipt_ref="auth-authority-receipt-a",
+    )
+    account_b = verified_authentication_scope(
+        "account-b",
+        authority_receipt_ref="auth-authority-receipt-b",
+    )
+    finalizer = ExtractionFinalizer(
+        repository=MemoryOutcomeRepository(),
+        clock=lambda: "2026-07-27T12:00:00Z",
+    )
+    private_request = replace(
+        _request(),
+        access_scope="private",
+        privacy_scope="private",
+        authentication_scope=account_a,
+    )
+    anonymous_plan = replace(
+        _plan(),
+        access_scope="private",
+        privacy_scope="private",
+    )
+    mismatched_plan = replace(
+        anonymous_plan,
+        authentication_scope=account_b,
+    )
+
+    for plan in (anonymous_plan, mismatched_plan):
+        with pytest.raises(ExtractionContractRejected):
+            finalizer.finalize_extraction(
+                private_request,
+                plan,
+                _raw(artifact=_artifact()),
+                OutcomePolicy(version="outcome-v1"),
+            )
 
 
 def test_cache_creation_time_comes_from_durable_acceptance():

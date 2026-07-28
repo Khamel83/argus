@@ -159,6 +159,95 @@ def test_restore_verifier_rejects_stamped_schema_missing_required_constraints():
         )
 
 
+def test_expected_schema_manifest_describes_types_nullability_and_definitions():
+    from argus.recovery.database import expected_argus_schema_manifest
+
+    manifest = expected_argus_schema_manifest()
+
+    assert manifest["columns"]["extraction_outcome_steps"]["latency_ms"] == {
+        "type": "bigint",
+        "nullable": True,
+    }
+    assert "MATCH FULL" in manifest["constraints"][
+        "fk_result_extraction_links_acceptance_plan"
+    ]
+    assert "artifact_ref" in manifest["indexes"][
+        "ix_extraction_outcome_artifacts_artifact_ref"
+    ]
+
+
+def test_restore_compares_database_to_supplied_schema_manifest():
+    import hashlib
+    import json
+
+    from argus.recovery.database import (
+        expected_argus_schema_manifest,
+        verify_argus_database,
+    )
+
+    trusted = expected_argus_schema_manifest()
+
+    class ManifestCursor(FakeCursor):
+        def fetchall(self):
+            if "information_schema.columns" in self.query:
+                return [
+                    (
+                        table,
+                        column,
+                        definition["type"],
+                        "YES" if definition["nullable"] else "NO",
+                        None,
+                    )
+                    for table, columns in trusted["columns"].items()
+                    for column, definition in columns.items()
+                ]
+            if "pg_get_constraintdef" in self.query:
+                return list(trusted["constraints"].items())
+            if "pg_indexes" in self.query:
+                return list(trusted["indexes"].items())
+            return super().fetchall()
+
+    connection = FakeConnection(REQUIRED_TABLES)
+    connection.cursor_instance = ManifestCursor(REQUIRED_TABLES)
+    report = verify_argus_database(
+        "argus_restore_issue40_test",
+        connect=lambda **kwargs: connection,
+        repository_factory=lambda database: type(
+            "Repository",
+            (),
+            {"list_session_ids": lambda self: []},
+        )(),
+        expected_schema_manifest=trusted,
+    )
+    assert report["checks"]["schema"] is True
+
+    corrupted = expected_argus_schema_manifest()
+    corrupted["columns"]["extraction_outcome_steps"]["latency_ms"][
+        "type"
+    ] = "integer"
+    corrupted["contract_sha256"] = hashlib.sha256(
+        json.dumps(
+            {
+                key: value
+                for key, value in corrupted.items()
+                if key != "contract_sha256"
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    connection = FakeConnection(REQUIRED_TABLES)
+    connection.cursor_instance = ManifestCursor(REQUIRED_TABLES)
+
+    with pytest.raises(RuntimeError, match="database schema manifest"):
+        verify_argus_database(
+            "argus_restore_issue40_test",
+            connect=lambda **kwargs: connection,
+            repository_factory=lambda database: None,
+            expected_schema_manifest=corrupted,
+        )
+
+
 def test_restore_verifier_rejects_production_target_before_connecting():
     from argus.recovery.database import verify_argus_database
 

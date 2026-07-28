@@ -1117,6 +1117,58 @@ def test_postgresql_concurrent_identical_composition_acceptance(
     assert receipts[0] == receipts[1]
 
 
+def test_populated_branch_checks_are_explicitly_acceptance_bound(tmp_path):
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine, inspect, text
+    from sqlalchemy.exc import IntegrityError
+
+    url = f"sqlite:///{tmp_path / 'branch-acceptance-checks.db'}"
+    config = Config()
+    config.set_main_option("script_location", "migrations")
+    config.set_main_option("sqlalchemy.url", url)
+    command.upgrade(config, "head")
+    engine = create_engine(url)
+    checks = {
+        check["name"]: check["sqltext"].upper()
+        for check in inspect(engine).get_check_constraints(
+            "result_extraction_links"
+        )
+    }
+
+    for branch in ("artifact", "rejection"):
+        definition = checks[
+            f"ck_result_extraction_links_{branch}_requires_acceptance"
+        ]
+        assert "EXTRACTION_PLAN_ID IS NOT NULL" in definition
+        assert "EXTRACTION_ACCEPTANCE_REF IS NOT NULL" in definition
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO retrieval_compositions "
+                "(receipt_ref, retrieval_acceptance_ref, retrieval_outcome, "
+                "composite_outcome, projection_json, source_fingerprint, "
+                "accepted_at) VALUES ('composition-orphan', 'retrieval-ref', "
+                "'success', 'success', '{}', :fingerprint, "
+                "'2026-07-27 12:00:00')"
+            ),
+            {"fingerprint": "a" * 64},
+        )
+    for branch in ("artifact", "rejection"):
+        with pytest.raises(IntegrityError):
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "INSERT INTO result_extraction_links "
+                        "(id, composition_ref, result_cluster_ref, "
+                        f"{branch}_row_id, {branch}_plan_id) VALUES "
+                        f"('link-{branch}', 'composition-orphan', "
+                        f"'cluster-{branch}', 'row-{branch}', 'plan-{branch}')"
+                    )
+                )
+
+
 def test_repository_rejects_forged_typed_outcome_with_real_receipt(tmp_path):
     from argus.extraction.finalizer import ExtractionFinalizer
     from argus.extraction.outcomes import OutcomePolicy

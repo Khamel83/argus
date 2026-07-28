@@ -13,6 +13,7 @@ from argus.contracts import CanonicalOutcome
 from argus.extraction.cache import ExtractionCacheIdentity
 from argus.extraction.outcomes import (
     AcceptedExtractionOutcome,
+    AuthenticationScope,
     ArtifactDisposition,
     AttemptOutcome,
     CacheDecision,
@@ -37,6 +38,7 @@ from argus.extraction.outcomes import (
     RejectionSourceKind,
     TerminalCause,
     TerminalCauseKind,
+    is_verified_authentication_scope,
 )
 from argus.extraction.rejection import (
     map_validated_extraction_rejection,
@@ -110,6 +112,32 @@ def _validate_provenance(provenance) -> None:
     ):
         if not _safe_label(label):
             raise ExtractionContractRejected()
+
+
+def _validate_provenance_scope(
+    provenance,
+    authentication_scope: AuthenticationScope,
+) -> None:
+    references = {
+        reference
+        for reference in (
+            provenance.authentication_scope_ref,
+            provenance.cookie_scope_ref,
+        )
+        if reference is not None
+    }
+    if authentication_scope.fingerprint == "anonymous":
+        if references:
+            raise ExtractionContractRejected()
+        return
+    if not references:
+        raise ExtractionContractRejected()
+    fingerprints = {
+        "sha256:" + hashlib.sha256(reference.encode("utf-8")).hexdigest()
+        for reference in references
+    }
+    if fingerprints != {authentication_scope.fingerprint}:
+        raise ExtractionContractRejected()
     for reference in (
         provenance.authentication_scope_ref,
         provenance.cookie_scope_ref,
@@ -290,11 +318,23 @@ def _validate_inputs(
         or request.caller != plan.caller
         or request.profile != plan.profile
         or request.privacy_scope != plan.privacy_scope
+        or request.authentication_scope != plan.authentication_scope
         or not _safe_ref(plan.access_scope)
         or not _safe_ref(plan.caller, maximum=64)
         or not _safe_ref(plan.profile, maximum=64)
         or not _safe_ref(plan.privacy_scope, maximum=64)
-        or not _safe_ref(plan.authentication_scope_fingerprint)
+        or not is_verified_authentication_scope(plan.authentication_scope)
+        or not _safe_ref(
+            plan.authentication_scope.authority_receipt_ref
+        )
+        or not _safe_ref(plan.authentication_scope.fingerprint)
+        or (
+            (
+                plan.access_scope != "public"
+                or plan.privacy_scope != "public"
+            )
+            and plan.authentication_scope.fingerprint == "anonymous"
+        )
         or not isinstance(plan.normalized_url, str)
         or len(plan.normalized_url.encode("utf-8")) > 2048
         or not plan.normalized_url.startswith(("http://", "https://"))
@@ -305,6 +345,11 @@ def _validate_inputs(
         or not _safe_ref(plan.completeness_policy_version)
         or not _safe_ref(policy.version)
         or type(plan.partial_allowed) is not bool
+        or not _plain_int(
+            plan.cache_max_age_seconds,
+            0,
+            31_536_000,
+        )
         or not _plain_int(plan.deadline_ms, 1, 120_000)
         or not _plain_int(raw.operation_latency_ms, 0, _MAX_LATENCY_MS)
     ):
@@ -341,6 +386,11 @@ def _validate_inputs(
             )
         ):
             raise ExtractionContractRejected()
+        if step.provenance is not None:
+            _validate_provenance_scope(
+                step.provenance,
+                plan.authentication_scope,
+            )
     cache = raw.cache_decision
     if not isinstance(cache, CacheDecision) or not isinstance(
         cache.outcome,
@@ -388,6 +438,11 @@ def _validate_inputs(
             or not _safe_ref(origin.cache_policy_version)
             or not _safe_ref(origin.privacy_scope)
             or type(origin.partial_allowed) is not bool
+            or not _plain_int(
+                origin.cache_max_age_seconds,
+                0,
+                31_536_000,
+            )
             or not isinstance(origin.cache_created_at, str)
             or not origin.cache_created_at
             or not isinstance(origin.steps, tuple)
@@ -420,8 +475,9 @@ def _validate_inputs(
             outcome_policy_version=origin.extraction_outcome_policy_version,
             privacy_scope=origin.privacy_scope,
             partial_allowed=origin.partial_allowed,
+            cache_max_age_seconds=origin.cache_max_age_seconds,
         )
-        if (
+        if cache.outcome is CacheOutcome.HIT_ELIGIBLE and (
             cache.current_identity != expected_current_identity
             or cache.current_identity != origin_identity
         ):
@@ -470,6 +526,10 @@ def _validate_inputs(
         ):
             raise ExtractionContractRejected()
         _validate_provenance(artifact.provenance)
+        _validate_provenance_scope(
+            artifact.provenance,
+            plan.authentication_scope,
+        )
         producers = {
             step.extractor
             for step in invoked
@@ -618,8 +678,12 @@ class ExtractionFinalizer:
             raw_extractor_result,
             outcome_policy,
         )
-        origin = raw_extractor_result.cache_decision.origin_evidence
-        if origin is not None:
+        cache_decision = raw_extractor_result.cache_decision
+        origin = cache_decision.origin_evidence
+        if (
+            origin is not None
+            and cache_decision.outcome is CacheOutcome.HIT_ELIGIBLE
+        ):
             loader = getattr(
                 self.repository,
                 "load_extraction_outcome_by_receipt",
@@ -652,8 +716,8 @@ class ExtractionFinalizer:
                 raise ExtractionContractRejected() from None
             if (
                 derived_age < 0
-                or raw_extractor_result.cache_decision.age_seconds
-                != derived_age
+                or cache_decision.age_seconds != derived_age
+                or derived_age > cache_decision.current_identity.cache_max_age_seconds
             ):
                 raise ExtractionContractRejected()
         if (
