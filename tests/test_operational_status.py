@@ -1256,7 +1256,7 @@ def test_extract_application_logs_do_not_include_target_url_or_query(
     target = "https://private.example/report?token=must-not-leak"
     caplog.set_level(logging.INFO)
     monkeypatch.setattr(
-        "argus.api.routes_extract.extract_url",
+        "argus.operations.accepted.extract_url",
         AsyncMock(
             return_value=ExtractedContent(
                 url=target,

@@ -1,181 +1,64 @@
-"""Search endpoints."""
+"""Legacy search routes projected from the accepted-operation authority."""
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 
-from argus.api.schemas import (
-    ExpandRequest,
-    RecoverUrlRequest,
-    SearchRequest,
-    SearchResponse,
-    SearchResultSchema,
-    ProviderTraceSchema,
-)
-from argus.broker.router import SearchBroker
-from argus.models import ProviderName, SearchMode, SearchQuery, SearchResult
-from argus.recovery.archive_ph import try_archive_ph
-from argus.persistence.search_ledger import SearchLedgerRepository
+from argus.api.presenters import LegacyHttpPresenter
+from argus.api.schemas import ExpandRequest, RecoverUrlRequest, SearchRequest, SearchResponse
+from argus.operations.accepted import AcceptedOperationService
 
 router = APIRouter()
+_presenter = LegacyHttpPresenter()
 
 
-def get_broker(request: Request) -> SearchBroker:
-    return request.app.state.get_broker()
+def get_accepted_operation_service(request: Request) -> AcceptedOperationService:
+    return request.app.state.get_accepted_operation_service()
 
 
-def get_search_repository(request: Request) -> SearchLedgerRepository:
-    return request.app.state.get_search_repository()
+def _principal(request: Request) -> str:
+    return getattr(request.state, "caller_identity", "") or "unknown"
 
 
-def _accept_or_503(
-    repository: SearchLedgerRepository,
-    query: SearchQuery,
-    response,
-) -> None:
-    try:
-        repository.accept(query, response)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="Search could not be durably accepted",
-        ) from exc
-
-
-def _to_response(resp, include_attribution: bool = False) -> SearchResponse:
-    return SearchResponse(
-        query=resp.query,
-        mode=resp.mode.value,
-        results=[
-            SearchResultSchema(
-                url=r.url,
-                title=r.title,
-                snippet=r.snippet,
-                domain=r.domain,
-                provider=r.provider.value if r.provider else None,
-                score=r.score,
-                egress=r.metadata.get("egress") if r.metadata else None,
-                machine=r.metadata.get("machine") if r.metadata else None,
-                score_attribution=r.score_attribution if include_attribution else {},
-            )
-            for r in resp.results
-        ],
-        traces=[
-            ProviderTraceSchema(
-                provider=t.provider.value,
-                status=t.status,
-                results_count=t.results_count,
-                latency_ms=t.latency_ms,
-                error=t.error,
-                budget_remaining=t.budget_remaining,
-            )
-            for t in resp.traces
-        ],
-        total_results=resp.total_results,
-        cached=resp.cached,
-        budget_warnings=resp.budget_warnings,
-        search_run_id=resp.search_run_id,
-    )
+def _request_id(request: Request) -> str:
+    return getattr(request.state, "request_id", "unknown")
 
 
 @router.post("/search", response_model=SearchResponse)
 async def search(
     req: SearchRequest,
     request: Request,
-    broker: SearchBroker = Depends(get_broker),
-    repository: SearchLedgerRepository = Depends(get_search_repository),
+    service: AcceptedOperationService = Depends(get_accepted_operation_service),
 ):
-    query = SearchQuery(
-        query=req.query,
-        mode=SearchMode(req.mode),
-        max_results=req.max_results,
-        providers=[ProviderName(provider) for provider in req.providers]
-        if req.providers
-        else None,
-        free_only=req.free_only,
-        caller=getattr(request.state, "caller_identity", "") or "unknown",
-        metadata={"caller_label": req.caller},
+    operation = await service.search(
+        req,
+        principal=_principal(request),
+        request_id=_request_id(request),
     )
-
-    if req.session_id:
-        resp, session_id = await broker.search_with_session(
-            query,
-            session_id=req.session_id,
-            compute_attribution=req.include_attribution,
-            persist_legacy=False,
-        )
-        response = _to_response(resp, include_attribution=req.include_attribution)
-        response.session_id = session_id
-        _accept_or_503(repository, query, resp)
-        return response
-
-    resp = await broker.search(
-        query,
-        compute_attribution=req.include_attribution,
-        persist_legacy=False,
-    )
-    _accept_or_503(repository, query, resp)
-    return _to_response(resp, include_attribution=req.include_attribution)
+    return _presenter.search(operation)
 
 
 @router.post("/recover-url", response_model=SearchResponse)
 async def recover_url(
     req: RecoverUrlRequest,
     request: Request,
-    broker: SearchBroker = Depends(get_broker),
-    repository: SearchLedgerRepository = Depends(get_search_repository),
+    service: AcceptedOperationService = Depends(get_accepted_operation_service),
 ):
-    query_parts = [req.url]
-    if req.title:
-        query_parts.append(req.title)
-    if req.domain:
-        query_parts.append(req.domain)
-
-    search_query = SearchQuery(
-        query=" ".join(query_parts),
-        mode=SearchMode.RECOVERY,
-        max_results=10,
-        caller=getattr(request.state, "caller_identity", "") or "unknown",
+    operation = await service.recover(
+        req,
+        principal=_principal(request),
+        request_id=_request_id(request),
     )
-
-    resp = await broker.search(search_query, persist_legacy=False)
-    if not resp.results:
-        try:
-            archived = await try_archive_ph(req.url)
-        except Exception:
-            archived = None
-        if archived:
-            resp.results.append(
-                SearchResult(
-                    url=archived["url"],
-                    title=archived["title"],
-                    snippet=archived["snippet"],
-                    domain=archived["domain"],
-                    score=archived["score"],
-                    metadata={"source_type": "archive_ph"},
-                )
-            )
-            resp.total_results = len(resp.results)
-    _accept_or_503(repository, search_query, resp)
-    return _to_response(resp)
+    return _presenter.search(operation)
 
 
 @router.post("/expand", response_model=SearchResponse)
 async def expand(
     req: ExpandRequest,
     request: Request,
-    broker: SearchBroker = Depends(get_broker),
-    repository: SearchLedgerRepository = Depends(get_search_repository),
+    service: AcceptedOperationService = Depends(get_accepted_operation_service),
 ):
-    query_text = req.query
-    if req.context:
-        query_text = f"{req.query} {req.context}"
-
-    search_query = SearchQuery(
-        query=query_text,
-        mode=SearchMode.DISCOVERY,
-        max_results=15,
-        caller=getattr(request.state, "caller_identity", "") or "unknown",
+    operation = await service.expand(
+        req,
+        principal=_principal(request),
+        request_id=_request_id(request),
     )
-
-    resp = await broker.search(search_query, persist_legacy=False)
-    _accept_or_503(repository, search_query, resp)
-    return _to_response(resp)
+    return _presenter.search(operation)

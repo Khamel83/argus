@@ -1,4 +1,4 @@
-"""Pure invariant checker for the throwaway issue #65 envelope prototype."""
+"""Complete fail-closed validator for accepted retrieval evidence."""
 
 from __future__ import annotations
 
@@ -6,9 +6,6 @@ from datetime import datetime
 from decimal import Decimal
 from fractions import Fraction
 from typing import Any
-
-from jsonschema import Draft202012Validator, FormatChecker
-
 
 SUCCESS_OUTCOMES = {"success", "degraded", "empty"}
 FAILURE_OUTCOMES = {
@@ -69,19 +66,10 @@ def _timestamp(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[str]:
-    """Return every schema/reference/semantic violation without mutating input."""
+def validate_retrieval_evidence(envelope: dict[str, Any]) -> list[str]:
+    """Return every closed reference/semantic violation without mutation."""
 
     violations: list[str] = []
-    validator = Draft202012Validator(schema, format_checker=FormatChecker())
-    for error in sorted(validator.iter_errors(envelope), key=lambda item: list(item.path)):
-        location = "$" + "".join(
-            f"[{part}]" if isinstance(part, int) else f".{part}"
-            for part in error.absolute_path
-        )
-        violations.append(f"{location}: {error.message}")
-    if violations:
-        return violations
 
     request = envelope["request"]
     plan = envelope["plan"]

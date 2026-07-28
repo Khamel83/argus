@@ -253,7 +253,7 @@ def test_extract_api_exposes_structured_rejection_without_raw_failure(
         ],
     )
     monkeypatch.setattr(
-        "argus.api.routes_extract.extract_url",
+        "argus.operations.accepted.extract_url",
         AsyncMock(return_value=result),
     )
     broker = MagicMock()
@@ -292,7 +292,7 @@ def test_successful_extract_api_reports_no_rejection(tmp_path, monkeypatch):
     from argus.persistence.search_ledger import create_search_ledger_repository
 
     monkeypatch.setattr(
-        "argus.api.routes_extract.extract_url",
+        "argus.operations.accepted.extract_url",
         AsyncMock(
             return_value=ExtractedContent(
                 url="https://example.com/article",

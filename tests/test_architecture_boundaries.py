@@ -11,11 +11,23 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 PRESENTER = ROOT / "argus/api/presenters.py"
+PORTED_HTTP_MODULES = {
+    ROOT / "argus/api/routes_search.py": set(),
+    ROOT / "argus/api/routes_v2.py": set(),
+    # The same module still owns the pure assess-content and cookie-health
+    # compatibility routes. Those exact imports are the closed exception.
+    ROOT / "argus/api/routes_extract.py": {
+        "argus.extraction.completeness",
+        "argus.extraction.cookies",
+    },
+}
 FORBIDDEN = {
     "argus.providers",
     "argus.extraction",
     "argus.persistence",
     "argus.broker.cache",
+    "argus.broker.ranking",
+    "argus.broker.dedupe",
 }
 
 
@@ -61,6 +73,31 @@ def test_presenter_does_not_import_execution_or_persistence_authority():
         )
     }
     assert not violations
+
+
+@pytest.mark.parametrize(
+    ("path", "allowed_exceptions"),
+    tuple(PORTED_HTTP_MODULES.items()),
+)
+def test_ported_http_modules_have_no_secondary_semantic_authority(
+    path,
+    allowed_exceptions,
+):
+    imported = _imports(path)
+    violations = {
+        module
+        for module in imported
+        if any(
+            module == forbidden or module.startswith(f"{forbidden}.")
+            for forbidden in FORBIDDEN
+        )
+        and not any(
+            module == allowed or module.startswith(f"{allowed}.")
+            for allowed in allowed_exceptions
+        )
+    }
+    assert not violations
+    assert "argus.operations.accepted" in imported
 
 
 def test_contract_kernel_does_not_import_the_throwaway_prototype():

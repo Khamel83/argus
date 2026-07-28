@@ -1,0 +1,322 @@
+from types import MappingProxyType
+from unittest.mock import AsyncMock, MagicMock
+import json
+from pathlib import Path
+
+import pytest
+from fastapi import HTTPException
+
+from argus.api.schemas import ExtractRequest, SearchRequest
+from argus.contracts import CanonicalOutcome
+from argus.models import (
+    ProviderName,
+    ProviderTrace,
+    SearchMode,
+    SearchResponse,
+    SearchResult,
+)
+
+EVIDENCE_FIXTURES = (
+    Path(__file__).parent / "fixtures/contracts/retrieval_evidence_v2"
+)
+
+
+def _search_response(*, results: bool = True) -> SearchResponse:
+    return SearchResponse(
+        query="accepted operation",
+        mode=SearchMode.DISCOVERY,
+        results=(
+            [
+                SearchResult(
+                    url="https://example.test/accepted",
+                    title="Accepted",
+                    snippet="One durable result",
+                    domain="example.test",
+                    provider=ProviderName.DUCKDUCKGO,
+                )
+            ]
+            if results
+            else []
+        ),
+        traces=[
+            ProviderTrace(
+                provider=ProviderName.DUCKDUCKGO,
+                status="success",
+                results_count=1 if results else 0,
+            )
+        ],
+        total_results=1 if results else 0,
+        search_run_id="run-accepted",
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_executes_and_accepts_once_then_presenter_is_pure():
+    from argus.api.presenters import LegacyHttpPresenter
+    from argus.operations.accepted import AcceptedOperationService
+
+    broker = MagicMock()
+    broker.search = AsyncMock(return_value=_search_response())
+    repository = MagicMock()
+    repository.accept.return_value.run_id = "run-accepted"
+    service = AcceptedOperationService(
+        broker_provider=lambda: broker,
+        repository_provider=lambda: repository,
+    )
+
+    operation = await service.search(
+        SearchRequest(query="accepted operation"),
+        principal="maya",
+        request_id="request-accepted",
+    )
+
+    assert operation.outcome is CanonicalOutcome.SUCCESS
+    assert isinstance(operation.result, MappingProxyType)
+    broker.search.assert_awaited_once()
+    repository.accept.assert_called_once()
+
+    presenter = LegacyHttpPresenter()
+    first = presenter.search(operation)
+    second = presenter.search(operation)
+    assert first == second
+    assert first.search_run_id == "run-accepted"
+    broker.search.assert_awaited_once()
+    repository.accept.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_empty_search_is_an_accepted_empty_outcome():
+    from argus.operations.accepted import AcceptedOperationService
+
+    broker = MagicMock()
+    broker.search = AsyncMock(return_value=_search_response(results=False))
+    repository = MagicMock()
+    service = AcceptedOperationService(
+        broker_provider=lambda: broker,
+        repository_provider=lambda: repository,
+    )
+
+    operation = await service.search(
+        SearchRequest(query="accepted operation"),
+        principal="maya",
+        request_id="request-empty",
+    )
+
+    assert operation.outcome is CanonicalOutcome.EMPTY
+    repository.accept.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_persistence_failure_is_visible_and_never_reexecutes():
+    from argus.api.presenters import LegacyHttpPresenter
+    from argus.operations.accepted import AcceptedOperationService
+
+    broker = MagicMock()
+    broker.search = AsyncMock(return_value=_search_response())
+    repository = MagicMock()
+    repository.accept.side_effect = RuntimeError("database password must not leak")
+    service = AcceptedOperationService(
+        broker_provider=lambda: broker,
+        repository_provider=lambda: repository,
+    )
+
+    operation = await service.search(
+        SearchRequest(query="accepted operation"),
+        principal="maya",
+        request_id="request-persistence",
+    )
+
+    assert operation.outcome is CanonicalOutcome.PERSISTENCE_FAILED
+    assert operation.error.detail == "Search could not be durably accepted"
+    with pytest.raises(HTTPException) as raised:
+        LegacyHttpPresenter().search(operation)
+    assert raised.value.status_code == 503
+    assert raised.value.detail == "Search could not be durably accepted"
+    broker.search.assert_awaited_once()
+    repository.accept.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_v2_retrieval_session_is_opaque_principal_bound_and_durable():
+    from argus.api.security import RetrievalSessionAuthority
+    from argus.operations.accepted import AcceptedOperationService
+
+    authority = RetrievalSessionAuthority(b"s" * 32)
+    broker = MagicMock()
+    broker.search_with_session = AsyncMock(
+        side_effect=lambda query, *, session_id, **kwargs: (
+            _search_response(),
+            session_id,
+        )
+    )
+    repository = MagicMock()
+    service = AcceptedOperationService(
+        broker_provider=lambda: broker,
+        repository_provider=lambda: repository,
+        session_authority=authority,
+    )
+
+    operation = await service.search(
+        SearchRequest(query="new owned session"),
+        principal="maya",
+        request_id="request-owned-session",
+        require_owned_session=True,
+    )
+
+    session_id = operation.result["session_id"]
+    assert authority.owns(session_id, "maya")
+    assert not authority.owns(session_id, "hermes")
+    broker.search_with_session.assert_awaited_once()
+    repository.accept.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_wrong_principal_session_rejects_before_broker_or_persistence():
+    from argus.api.security import RetrievalSessionAuthority
+    from argus.operations.accepted import AcceptedOperationService
+
+    authority = RetrievalSessionAuthority(b"s" * 32)
+    broker_provider = MagicMock()
+    repository_provider = MagicMock()
+    service = AcceptedOperationService(
+        broker_provider=broker_provider,
+        repository_provider=repository_provider,
+        session_authority=authority,
+    )
+
+    operation = await service.search(
+        SearchRequest(
+            query="stolen session",
+            session_id=authority.issue("maya"),
+        ),
+        principal="hermes",
+        request_id="request-wrong-principal",
+        require_owned_session=True,
+    )
+
+    assert operation.outcome is CanonicalOutcome.UNREADY
+    assert operation.error.status == 404
+    assert operation.error.code == "session_not_found"
+    broker_provider.assert_not_called()
+    repository_provider.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_extraction_executes_once_and_projects_without_reclassification():
+    from argus.api.presenters import LegacyHttpPresenter
+    from argus.extraction.models import ExtractedContent, ExtractorName
+    from argus.operations.accepted import AcceptedOperationService
+
+    accepted = ExtractedContent(
+        extraction_run_id="extract-accepted",
+        url="https://example.test/article",
+        title="Article",
+        text="accepted text",
+        word_count=2,
+        extractor=ExtractorName.TRAFILATURA,
+        quality_passed=True,
+    )
+    extract = AsyncMock(return_value=accepted)
+    service = AcceptedOperationService(
+        broker_provider=MagicMock(),
+        repository_provider=lambda: MagicMock(),
+        extractor=extract,
+    )
+
+    operation = await service.extract(
+        ExtractRequest(url="https://example.test/article"),
+        principal="maya",
+        request_id="request-extract",
+    )
+
+    response = LegacyHttpPresenter().extract(operation)
+    assert response.extraction_run_id == "extract-accepted"
+    assert response.text == "accepted text"
+    extract.assert_awaited_once()
+
+
+def test_evidence_authority_requires_one_complete_registration():
+    from argus.operations.accepted import (
+        AcceptedAuthorityConfigurationError,
+        AcceptedOperationRegistration,
+    )
+
+    with pytest.raises(AcceptedAuthorityConfigurationError, match="missing"):
+        AcceptedOperationRegistration(
+            planner=True,
+            readiness=True,
+            evidence_repository=True,
+            extraction_finalizer=True,
+            legacy_presenters=False,
+        ).validate("evidence")
+
+    AcceptedOperationRegistration.complete().validate("evidence")
+    AcceptedOperationRegistration().validate("legacy")
+
+
+def test_http_search_route_calls_only_the_accepted_operation_service(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from argus.api.main import create_app
+    from argus.contracts import AcceptedOperation
+
+    service = MagicMock()
+    service.search = AsyncMock(
+        return_value=AcceptedOperation(
+            outcome=CanonicalOutcome.SUCCESS,
+            request_id="request-route",
+            result={
+                "query": "route",
+                "mode": "discovery",
+                "results": [],
+                "traces": [],
+                "total_results": 0,
+                "cached": False,
+                "budget_warnings": [],
+                "search_run_id": "run-route",
+                "session_id": None,
+                "acceptance_receipt": {
+                    "run_id": "run-route",
+                    "delivery_intent_id": None,
+                },
+            },
+            error=None,
+        )
+    )
+    client = TestClient(create_app(accepted_operation_service=service))
+
+    response = client.post("/api/search", json={"query": "route"})
+
+    assert response.status_code == 200
+    assert response.json()["search_run_id"] == "run-route"
+    service.search.assert_awaited_once()
+
+
+def test_app_rejects_partial_evidence_authority_registration(monkeypatch):
+    from argus.api.main import create_app
+    from argus.config import reset_config
+    from argus.operations.accepted import AcceptedAuthorityConfigurationError
+
+    monkeypatch.setenv("ARGUS_ACCEPTED_OPERATION_AUTHORITY", "evidence")
+    reset_config()
+    try:
+        with pytest.raises(AcceptedAuthorityConfigurationError, match="missing"):
+            create_app()
+    finally:
+        reset_config()
+
+
+def test_production_evidence_validator_replays_all_frozen_scenarios_and_mutations():
+    from argus.contracts.evidence import validate_retrieval_evidence
+
+    manifest = json.loads((EVIDENCE_FIXTURES / "manifest.json").read_text())
+    for entry in manifest["fixtures"]:
+        envelope = json.loads((EVIDENCE_FIXTURES / entry["path"]).read_text())
+        violations = validate_retrieval_evidence(envelope["result"]["evidence"])
+        if entry["kind"] == "valid":
+            assert violations == [], entry["path"]
+        else:
+            assert any(
+                entry["expected_invariant"] in violation
+                for violation in violations
+            ), (entry["path"], violations)
