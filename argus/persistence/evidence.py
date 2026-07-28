@@ -14,7 +14,15 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, select
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    select,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column, sessionmaker
 
@@ -36,62 +44,94 @@ class RetrievalEvidencePlanRow(LedgerBase):
 class RetrievalEvidenceBatchRow(LedgerBase):
     __tablename__ = "retrieval_evidence_provider_batches"
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    plan_id: Mapped[str] = mapped_column(ForeignKey("retrieval_evidence_plans.id"), nullable=False)
+    plan_id: Mapped[str] = mapped_column(
+        ForeignKey("retrieval_evidence_plans.id"), nullable=False
+    )
     provider: Mapped[str] = mapped_column(String(64), nullable=False)
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
     batch_json: Mapped[str] = mapped_column(Text, nullable=False)
-    __table_args__ = (UniqueConstraint("plan_id", "provider", "ordinal", name="uq_retrieval_evidence_batch"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "plan_id", "provider", "ordinal", name="uq_retrieval_evidence_batch"
+        ),
+    )
 
 
 class RetrievalEvidenceAttemptRow(LedgerBase):
     __tablename__ = "retrieval_evidence_provider_attempts"
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    batch_id: Mapped[str] = mapped_column(ForeignKey("retrieval_evidence_provider_batches.id"), nullable=False)
+    batch_id: Mapped[str] = mapped_column(
+        ForeignKey("retrieval_evidence_provider_batches.id"), nullable=False
+    )
     attempt_ref: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
     attempt_json: Mapped[str] = mapped_column(Text, nullable=False)
-    __table_args__ = (UniqueConstraint("batch_id", "ordinal", name="uq_retrieval_evidence_attempt"),)
+    __table_args__ = (
+        UniqueConstraint("batch_id", "ordinal", name="uq_retrieval_evidence_attempt"),
+    )
 
 
 class RetrievalEvidenceObservationRow(LedgerBase):
     __tablename__ = "retrieval_evidence_observations"
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    plan_id: Mapped[str] = mapped_column(ForeignKey("retrieval_evidence_plans.id"), nullable=False)
-    observation_ref: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    plan_id: Mapped[str] = mapped_column(
+        ForeignKey("retrieval_evidence_plans.id"), nullable=False
+    )
+    observation_ref: Mapped[str] = mapped_column(
+        String(128), nullable=False, unique=True
+    )
     observation_json: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class RetrievalEvidenceClusterRow(LedgerBase):
     __tablename__ = "retrieval_evidence_clusters"
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    plan_id: Mapped[str] = mapped_column(ForeignKey("retrieval_evidence_plans.id"), nullable=False)
+    plan_id: Mapped[str] = mapped_column(
+        ForeignKey("retrieval_evidence_plans.id"), nullable=False
+    )
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
     cluster_json: Mapped[str] = mapped_column(Text, nullable=False)
-    __table_args__ = (UniqueConstraint("plan_id", "ordinal", name="uq_retrieval_evidence_cluster"),)
+    __table_args__ = (
+        UniqueConstraint("plan_id", "ordinal", name="uq_retrieval_evidence_cluster"),
+    )
 
 
 class RetrievalEvidenceContributionRow(LedgerBase):
     __tablename__ = "retrieval_evidence_contributions"
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    cluster_id: Mapped[str] = mapped_column(ForeignKey("retrieval_evidence_clusters.id"), nullable=False)
-    attempt_id: Mapped[str] = mapped_column(ForeignKey("retrieval_evidence_provider_attempts.id"), nullable=False)
+    cluster_id: Mapped[str] = mapped_column(
+        ForeignKey("retrieval_evidence_clusters.id"), nullable=False
+    )
+    attempt_id: Mapped[str] = mapped_column(
+        ForeignKey("retrieval_evidence_provider_attempts.id"), nullable=False
+    )
     contribution_json: Mapped[str] = mapped_column(Text, nullable=False)
-    __table_args__ = (UniqueConstraint("cluster_id", "attempt_id", name="uq_retrieval_evidence_contribution"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "cluster_id", "attempt_id", name="uq_retrieval_evidence_contribution"
+        ),
+    )
 
 
 class RetrievalEvidenceReadinessRow(LedgerBase):
     __tablename__ = "retrieval_evidence_readiness_decisions"
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    plan_id: Mapped[str] = mapped_column(ForeignKey("retrieval_evidence_plans.id"), nullable=False)
+    plan_id: Mapped[str] = mapped_column(
+        ForeignKey("retrieval_evidence_plans.id"), nullable=False
+    )
     provider: Mapped[str] = mapped_column(String(64), nullable=False)
     decision_json: Mapped[str] = mapped_column(Text, nullable=False)
-    __table_args__ = (UniqueConstraint("plan_id", "provider", name="uq_retrieval_evidence_readiness"),)
+    __table_args__ = (
+        UniqueConstraint("plan_id", "provider", name="uq_retrieval_evidence_readiness"),
+    )
 
 
 class RetrievalEvidenceCacheLineageRow(LedgerBase):
     __tablename__ = "retrieval_evidence_cache_lineage"
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    plan_id: Mapped[str] = mapped_column(ForeignKey("retrieval_evidence_plans.id"), nullable=False, unique=True)
+    plan_id: Mapped[str] = mapped_column(
+        ForeignKey("retrieval_evidence_plans.id"), nullable=False, unique=True
+    )
     cache_fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
     execution_cohort: Mapped[str] = mapped_column(String(128), nullable=False)
     lineage_json: Mapped[str] = mapped_column(Text, nullable=False)
@@ -100,38 +140,60 @@ class RetrievalEvidenceCacheLineageRow(LedgerBase):
 class RetrievalEvidenceAccountingRow(LedgerBase):
     __tablename__ = "retrieval_evidence_accounting"
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    plan_id: Mapped[str] = mapped_column(ForeignKey("retrieval_evidence_plans.id"), nullable=False, unique=True)
+    plan_id: Mapped[str] = mapped_column(
+        ForeignKey("retrieval_evidence_plans.id"), nullable=False, unique=True
+    )
     accounting_json: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class RetrievalEvidenceTraceRow(LedgerBase):
     __tablename__ = "retrieval_evidence_trace_refs"
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    attempt_id: Mapped[str] = mapped_column(ForeignKey("retrieval_evidence_provider_attempts.id"), nullable=False)
+    attempt_id: Mapped[str] = mapped_column(
+        ForeignKey("retrieval_evidence_provider_attempts.id"), nullable=False
+    )
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
     trace_ref: Mapped[str] = mapped_column(String(256), nullable=False)
-    __table_args__ = (UniqueConstraint("attempt_id", "ordinal", name="uq_retrieval_evidence_trace"),)
+    __table_args__ = (
+        UniqueConstraint("attempt_id", "ordinal", name="uq_retrieval_evidence_trace"),
+    )
 
 
 class AcceptedOperationRow(LedgerBase):
     __tablename__ = "accepted_retrieval_operations"
     receipt_ref: Mapped[str] = mapped_column(String(128), primary_key=True)
-    plan_id: Mapped[str] = mapped_column(ForeignKey("retrieval_evidence_plans.id"), nullable=False, unique=True)
+    plan_id: Mapped[str] = mapped_column(
+        ForeignKey("retrieval_evidence_plans.id"), nullable=False, unique=True
+    )
     operation_id: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     acceptance_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     outcome: Mapped[str] = mapped_column(String(64), nullable=False)
     accepted_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    __table_args__ = (UniqueConstraint("receipt_ref", "plan_id", name="uq_accepted_retrieval_receipt_plan"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "receipt_ref", "plan_id", name="uq_accepted_retrieval_receipt_plan"
+        ),
+    )
 
 
 class RetrievalCachePublicationRow(LedgerBase):
     __tablename__ = "retrieval_cache_publications"
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    receipt_ref: Mapped[str] = mapped_column(ForeignKey("accepted_retrieval_operations.receipt_ref"), nullable=False, unique=True)
+    receipt_ref: Mapped[str] = mapped_column(
+        ForeignKey("accepted_retrieval_operations.receipt_ref"),
+        nullable=False,
+        unique=True,
+    )
     cache_fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
     execution_cohort: Mapped[str] = mapped_column(String(128), nullable=False)
     published_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    __table_args__ = (UniqueConstraint("cache_fingerprint", "execution_cohort", name="uq_retrieval_cache_publication"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "cache_fingerprint",
+            "execution_cohort",
+            name="uq_retrieval_cache_publication",
+        ),
+    )
 
 
 def _canonical(value: object) -> str:
@@ -164,7 +226,12 @@ class RetrievalEvidence:
 class SqlAlchemyEvidenceRepository:
     """Commit complete evidence, its receipt, and its publication identity atomically."""
 
-    def __init__(self, session_factory: sessionmaker, *, clock: Callable[[], datetime] = _system_now):
+    def __init__(
+        self,
+        session_factory: sessionmaker,
+        *,
+        clock: Callable[[], datetime] = _system_now,
+    ):
         self.session_factory = session_factory
         self.clock = clock
 
@@ -172,44 +239,110 @@ class SqlAlchemyEvidenceRepository:
         accepted = evidence.accepted
         try:
             with self.session_factory.begin() as session:
-                existing = session.scalar(select(AcceptedOperationRow).where(AcceptedOperationRow.operation_id == accepted.operation_id))
+                existing = session.scalar(
+                    select(AcceptedOperationRow).where(
+                        AcceptedOperationRow.operation_id == accepted.operation_id
+                    )
+                )
                 if existing is not None:
-                    if existing.acceptance_fingerprint != accepted.acceptance_receipt.acceptance_fingerprint:
-                        raise ValueError("operation already accepted with different evidence")
+                    if (
+                        existing.acceptance_fingerprint
+                        != accepted.acceptance_receipt.acceptance_fingerprint
+                    ):
+                        raise ValueError(
+                            "operation already accepted with different evidence"
+                        )
                     return accepted.acceptance_receipt
 
                 plan_id = uuid.uuid4().hex
-                session.add(RetrievalEvidencePlanRow(
-                    id=plan_id, operation_id=accepted.operation_id,
-                    cache_fingerprint=accepted.cache_fingerprint, execution_cohort=accepted.execution_cohort,
-                    plan_json=_canonical({"results": accepted.results}), source_fingerprint=evidence.source_fingerprint,
-                    created_at=self.clock(),
-                ))
+                session.add(
+                    RetrievalEvidencePlanRow(
+                        id=plan_id,
+                        operation_id=accepted.operation_id,
+                        cache_fingerprint=accepted.cache_fingerprint,
+                        execution_cohort=accepted.execution_cohort,
+                        plan_json=_canonical({"results": accepted.results}),
+                        source_fingerprint=evidence.source_fingerprint,
+                        created_at=self.clock(),
+                    )
+                )
+                session.flush()
                 batch_id = uuid.uuid4().hex
-                session.add(RetrievalEvidenceBatchRow(id=batch_id, plan_id=plan_id, provider="accepted", ordinal=0, batch_json="{}"))
-                for ordinal, attempt_ref in enumerate(accepted.contributor_attempt_refs):
-                    session.add(RetrievalEvidenceAttemptRow(id=uuid.uuid4().hex, batch_id=batch_id, attempt_ref=attempt_ref, ordinal=ordinal, attempt_json="{}"))
-                session.add(RetrievalEvidenceCacheLineageRow(
-                    id=uuid.uuid4().hex, plan_id=plan_id, cache_fingerprint=accepted.cache_fingerprint,
-                    execution_cohort=accepted.execution_cohort, lineage_json=_canonical({"origin_receipt": accepted.acceptance_receipt.receipt_ref}),
-                ))
-                session.add(RetrievalEvidenceAccountingRow(id=uuid.uuid4().hex, plan_id=plan_id, accounting_json=_canonical({"origin_spend_usd": accepted.origin_spend_usd})))
-                session.add(AcceptedOperationRow(
-                    receipt_ref=accepted.acceptance_receipt.receipt_ref, plan_id=plan_id,
-                    operation_id=accepted.operation_id,
-                    acceptance_fingerprint=accepted.acceptance_receipt.acceptance_fingerprint,
-                    outcome=accepted.outcome.value, accepted_at=accepted.acceptance_receipt.accepted_at,
-                ))
-                session.add(RetrievalCachePublicationRow(
-                    id=uuid.uuid4().hex, receipt_ref=accepted.acceptance_receipt.receipt_ref,
-                    cache_fingerprint=accepted.cache_fingerprint, execution_cohort=accepted.execution_cohort,
-                    published_at=accepted.acceptance_receipt.accepted_at,
-                ))
+                session.add(
+                    RetrievalEvidenceBatchRow(
+                        id=batch_id,
+                        plan_id=plan_id,
+                        provider="accepted",
+                        ordinal=0,
+                        batch_json="{}",
+                    )
+                )
+                session.flush()
+                for ordinal, attempt_ref in enumerate(
+                    accepted.contributor_attempt_refs
+                ):
+                    session.add(
+                        RetrievalEvidenceAttemptRow(
+                            id=uuid.uuid4().hex,
+                            batch_id=batch_id,
+                            attempt_ref=attempt_ref,
+                            ordinal=ordinal,
+                            attempt_json="{}",
+                        )
+                    )
+                session.add(
+                    RetrievalEvidenceCacheLineageRow(
+                        id=uuid.uuid4().hex,
+                        plan_id=plan_id,
+                        cache_fingerprint=accepted.cache_fingerprint,
+                        execution_cohort=accepted.execution_cohort,
+                        lineage_json=_canonical(
+                            {"origin_receipt": accepted.acceptance_receipt.receipt_ref}
+                        ),
+                    )
+                )
+                session.add(
+                    RetrievalEvidenceAccountingRow(
+                        id=uuid.uuid4().hex,
+                        plan_id=plan_id,
+                        accounting_json=_canonical(
+                            {"origin_spend_usd": accepted.origin_spend_usd}
+                        ),
+                    )
+                )
+                session.add(
+                    AcceptedOperationRow(
+                        receipt_ref=accepted.acceptance_receipt.receipt_ref,
+                        plan_id=plan_id,
+                        operation_id=accepted.operation_id,
+                        acceptance_fingerprint=accepted.acceptance_receipt.acceptance_fingerprint,
+                        outcome=accepted.outcome.value,
+                        accepted_at=accepted.acceptance_receipt.accepted_at,
+                    )
+                )
+                session.flush()
+                session.add(
+                    RetrievalCachePublicationRow(
+                        id=uuid.uuid4().hex,
+                        receipt_ref=accepted.acceptance_receipt.receipt_ref,
+                        cache_fingerprint=accepted.cache_fingerprint,
+                        execution_cohort=accepted.execution_cohort,
+                        published_at=accepted.acceptance_receipt.accepted_at,
+                    )
+                )
             return accepted.acceptance_receipt
         except IntegrityError:
             with self.session_factory() as session:
-                existing = session.scalar(select(AcceptedOperationRow).where(AcceptedOperationRow.operation_id == accepted.operation_id))
-                if existing is not None and existing.acceptance_fingerprint == accepted.acceptance_receipt.acceptance_fingerprint:
+                existing = session.scalar(
+                    select(AcceptedOperationRow).where(
+                        AcceptedOperationRow.operation_id == accepted.operation_id
+                    )
+                )
+                if (
+                    existing is not None
+                    and existing.acceptance_fingerprint
+                    == accepted.acceptance_receipt.acceptance_fingerprint
+                ):
                     return accepted.acceptance_receipt
             raise
 

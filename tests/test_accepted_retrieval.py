@@ -162,7 +162,9 @@ def test_cache_publication_happens_only_after_durable_acceptance():
     with pytest.raises(RuntimeError, match="persistence failed"):
         cache.accept_and_publish(
             _accepted(),
-            persist=lambda accepted: (_ for _ in ()).throw(RuntimeError("persistence failed")),
+            persist=lambda accepted: (_ for _ in ()).throw(
+                RuntimeError("persistence failed")
+            ),
         )
 
     assert events == []
@@ -170,7 +172,9 @@ def test_cache_publication_happens_only_after_durable_acceptance():
 
     receipt = cache.accept_and_publish(
         _accepted(),
-        persist=lambda accepted: events.append("durable") or accepted.acceptance_receipt,
+        persist=lambda accepted: (
+            events.append("durable") or accepted.acceptance_receipt
+        ),
     )
     assert receipt.receipt_ref == "receipt-origin"
     assert events == ["durable", "cache"]
@@ -183,14 +187,28 @@ def test_cache_publication_happens_only_after_durable_acceptance():
         (CanonicalOutcome.DEGRADED, "partial_provider_failure", CacheOutcome.DEGRADED),
         (CanonicalOutcome.EMPTY, "strict_empty", CacheOutcome.PROVEN_EMPTY),
         (CanonicalOutcome.EMPTY, "freshness_unproven", CacheOutcome.FRESHNESS_UNPROVEN),
-        (CanonicalOutcome.EMPTY, "research_structural_floor_unmet", CacheOutcome.STRUCTURAL_FLOOR_FAILURE),
-        (CanonicalOutcome.PROVIDERS_FAILED, "providers_failed", CacheOutcome.EVERY_PROVIDER_FAILURE),
+        (
+            CanonicalOutcome.EMPTY,
+            "research_structural_floor_unmet",
+            CacheOutcome.STRUCTURAL_FLOOR_FAILURE,
+        ),
+        (
+            CanonicalOutcome.PROVIDERS_FAILED,
+            "providers_failed",
+            CacheOutcome.EVERY_PROVIDER_FAILURE,
+        ),
         (CanonicalOutcome.TIMEOUT, "operation_deadline", CacheOutcome.TIMEOUT),
         (CanonicalOutcome.UNREADY, "no_reachable_provider", CacheOutcome.UNREADY),
-        (CanonicalOutcome.PERSISTENCE_FAILED, "write_failed", CacheOutcome.PERSISTENCE_FAILURE),
+        (
+            CanonicalOutcome.PERSISTENCE_FAILED,
+            "write_failed",
+            CacheOutcome.PERSISTENCE_FAILURE,
+        ),
     ],
 )
-def test_outcome_selection_uses_complete_fusion_trace_not_result_count(outcome, reason, expected):
+def test_outcome_selection_uses_complete_fusion_trace_not_result_count(
+    outcome, reason, expected
+):
     """Classifying zero results alone would turn failures into fabricated empties."""
     assert canonical_cache_outcome(outcome, reason=reason) is expected
 
@@ -313,9 +331,7 @@ def test_postgresql_concurrent_acceptance_is_single_publish_and_atomic(
         collision_operations = set(
             session.scalars(
                 select(RetrievalEvidencePlanRow.operation_id).where(
-                    RetrievalEvidencePlanRow.operation_id.like(
-                        "concurrent-collision-%"
-                    )
+                    RetrievalEvidencePlanRow.operation_id.like("concurrent-collision-%")
                 )
             )
         )
