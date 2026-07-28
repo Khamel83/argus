@@ -142,6 +142,7 @@ class AcceptedSearchExecution:
     reason: str
     response: object | None
     receipt: AcceptanceReceipt | None
+    session_update_failed: bool = False
 
 
 @dataclass(frozen=True, slots=True)

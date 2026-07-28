@@ -227,12 +227,19 @@ def test_production_extraction_adapter_uses_canonical_finalizer():
 
 def test_production_extraction_adapter_accepts_visible_terminal_failure():
     from argus.extraction.extractor import _finalize_accepted_extraction
-    from argus.extraction.models import ExtractedContent
+    from argus.extraction.models import ExtractedContent, ExtractionAttempt
 
     projected = _finalize_accepted_extraction(
         ExtractedContent(
             url="https://example.com/article",
             error="all extractors failed",
+            attempts=[
+                ExtractionAttempt(
+                    extractor="trafilatura",
+                    status="failed",
+                    latency_ms=12,
+                )
+            ],
         ),
         url="https://example.com/article",
         mode="default",
@@ -244,6 +251,59 @@ def test_production_extraction_adapter_accepts_visible_terminal_failure():
 
     assert projected.error == "extraction_failed"
     assert projected.extraction_run_id
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        ("ssrf_blocked: loopback address", CanonicalOutcome.POLICY_REJECTED),
+        (
+            "domain rate limit exceeded, retry after 5s",
+            CanonicalOutcome.UNREADY,
+        ),
+    ],
+)
+def test_production_extraction_adapter_preserves_preflight_outcome(
+    error,
+    expected,
+):
+    from argus.extraction.extractor import _finalize_accepted_extraction
+    from argus.extraction.models import ExtractedContent
+
+    repository = MemoryOutcomeRepository()
+    projected = _finalize_accepted_extraction(
+        ExtractedContent(url="https://example.com/article", error=error),
+        url="https://example.com/article",
+        mode="default",
+        caller="maya",
+        request_id="request-preflight",
+        latency_ms=1,
+        repository=repository,
+    )
+
+    assert projected.accepted_outcome is expected
+    assert projected.attempts == []
+    assert projected.acceptance_receipt is repository.receipt
+
+
+def test_production_extraction_adapter_rejects_unsafe_evidence_labels():
+    from argus.extraction.extractor import _finalize_accepted_extraction
+    from argus.extraction.models import ExtractedContent
+
+    with pytest.raises(ValueError, match="invalid extraction evidence label"):
+        _finalize_accepted_extraction(
+            ExtractedContent(
+                url="https://example.com/article",
+                error="all extractors failed",
+                machine="unsafe machine label",
+            ),
+            url="https://example.com/article",
+            mode="default",
+            caller="maya",
+            request_id="request-unsafe-provenance",
+            latency_ms=1,
+            repository=MemoryOutcomeRepository(),
+        )
 
 
 @pytest.mark.parametrize(

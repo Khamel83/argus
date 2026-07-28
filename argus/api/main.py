@@ -995,6 +995,9 @@ def create_app(
                 "MCP-Protocol-Version",
                 "Mcp-Session-Id",
                 "Last-Event-ID",
+                "X-API-Key",
+                "X-Admin-API-Key",
+                "X-Provider-Reconciliation-Key",
                 "X-Request-Id",
             ],
             expose_headers=[

@@ -176,6 +176,73 @@ async def test_evidence_session_persistence_failure_stays_canonical():
     assert operation.error.code == "persistence_failed"
 
 
+def test_session_update_failure_is_separate_from_receipt_bound_outcome():
+    from datetime import datetime, timezone
+
+    from argus.broker.accepted import (
+        AcceptanceReceipt,
+        AcceptedSearchExecution,
+    )
+    from argus.operations.accepted import AcceptedOperationService
+
+    service = AcceptedOperationService(
+        broker_provider=MagicMock(),
+        repository_provider=MagicMock(),
+    )
+    operation = service._accepted_search_operation(
+        AcceptedSearchExecution(
+            outcome=CanonicalOutcome.SUCCESS,
+            reason="accepted",
+            response=_search_response(),
+            receipt=AcceptanceReceipt(
+                receipt_ref="receipt:session-warning",
+                accepted_at=datetime(2026, 7, 28, tzinfo=timezone.utc),
+                acceptance_fingerprint="a" * 64,
+            ),
+            session_update_failed=True,
+        ),
+        request_id="request-session-warning",
+        include_attribution=False,
+        session_id="owned-session",
+    )
+
+    assert operation.outcome is CanonicalOutcome.SUCCESS
+    assert operation.result["session_update"] == {
+        "status": "failed",
+        "reason": "session_update_failed",
+    }
+    assert operation.result["acceptance_receipt"]["acceptance_fingerprint"] == (
+        "a" * 64
+    )
+
+
+@pytest.mark.asyncio
+async def test_extraction_presenter_preserves_accepted_preflight_outcome():
+    from argus.extraction.models import ExtractedContent
+    from argus.operations.accepted import AcceptedOperationService
+
+    async def rejected_extractor(*_args, **_kwargs):
+        return ExtractedContent(
+            url="https://blocked.example",
+            error="policy_rejected",
+            accepted_outcome=CanonicalOutcome.POLICY_REJECTED,
+        )
+
+    service = AcceptedOperationService(
+        broker_provider=MagicMock(),
+        repository_provider=MagicMock(),
+        extractor=rejected_extractor,
+    )
+    operation = await service.extract(
+        ExtractRequest(url="https://blocked.example"),
+        principal="maya",
+        request_id="request-extraction-preflight",
+    )
+
+    assert operation.outcome is CanonicalOutcome.POLICY_REJECTED
+    assert operation.error.status == 403
+
+
 @pytest.mark.asyncio
 async def test_evidence_recovery_accepts_archive_fallback_before_persistence(
     tmp_path,
@@ -272,15 +339,24 @@ async def test_archive_fallback_is_cancelled_at_operation_deadline(tmp_path):
             cancelled = True
             raise
 
+    captured = None
+
+    class CapturingRepository:
+        def accept(self, item):
+            nonlocal captured
+            captured = item
+            return evidence.accept(item)
+
     execution = await broker.search_accepted(
         query,
-        evidence_repository=evidence,
+        evidence_repository=CapturingRepository(),
         empty_fallback=blocked_archive_lookup,
     )
 
     assert execution.outcome is CanonicalOutcome.TIMEOUT
     assert execution.reason == "operation_deadline"
     assert cancelled is True
+    assert captured.fusion is None
     assert evidence.accepted_count() == 1
 
 
@@ -802,7 +878,7 @@ def _replay_valid_fixture_through_production(evidence, database_path):
                 else None
             ),
         )
-        _finalize_accepted_extraction(
+        projected = _finalize_accepted_extraction(
             extracted,
             url=extracted.url,
             mode="default",
@@ -810,6 +886,9 @@ def _replay_valid_fixture_through_production(evidence, database_path):
             request_id=f"extract-{operation_id}",
             latency_ms=1,
             repository=ledger,
+        )
+        assert projected.accepted_outcome is CanonicalOutcome(
+            extraction["outcome"]
         )
 
     response = EvidenceHttpPresenter().response(
@@ -834,6 +913,230 @@ def _replay_valid_fixture_through_production(evidence, database_path):
         )
     )
     assert response.status_code in {200, 502, 503, 504}
+
+
+async def _replay_fixture_through_accepted_authority(
+    envelope,
+    database_path,
+):
+    from dataclasses import replace
+    from datetime import datetime, timezone
+
+    from argus.api.contracts_v2 import EvidenceHttpPresenter
+    from argus.broker.accepted import (
+        AcceptanceReceipt,
+        AcceptedRetrieval,
+        CacheEntry,
+        CacheOutcome,
+        acceptance_fingerprint,
+        execution_cohort,
+    )
+    from argus.broker.execution import ProviderExecutionOutcome
+    from argus.broker.provider_evidence import LegacyProviderBatchAdapter
+    from argus.broker.router import SearchBroker
+    from argus.models import SearchQuery
+    from argus.operations.accepted import (
+        AcceptedOperationRegistration,
+        AcceptedOperationService,
+    )
+    from argus.persistence.evidence import SqlAlchemyEvidenceRepository
+    from argus.persistence.search_ledger import create_search_ledger_repository
+
+    evidence = envelope["result"]["evidence"]
+    provider_names = tuple(
+        ProviderName(value) for value in evidence["plan"]["candidate_providers"]
+    )
+    batches = {}
+    traces = []
+    provider_results = {}
+    for attempt in evidence["provider_attempts"]:
+        provider = ProviderName(attempt["provider"])
+        results = []
+        for cluster in evidence["fusion"]["clusters"]:
+            contribution = next(
+                (
+                    item
+                    for item in cluster["contributions"]
+                    if item["attempt_ref"] == attempt["attempt_id"]
+                ),
+                None,
+            )
+            if contribution is not None:
+                results.append(
+                    SearchResult(
+                        url=cluster["url"],
+                        title=cluster["title"],
+                        snippet="fixture evidence",
+                        provider=provider,
+                        raw_rank=contribution["provider_rank"],
+                    )
+                )
+        trace = ProviderTrace(
+            provider=provider,
+            status="success" if attempt["outcome"] == "success" else "error",
+            results_count=len(results),
+            error=(
+                None
+                if attempt["outcome"] == "success"
+                else attempt["outcome"]
+            ),
+        )
+        batch = LegacyProviderBatchAdapter.from_legacy((results, trace))
+        batches[provider.value] = replace(
+            batch,
+            request_evidence=replace(
+                batch.request_evidence,
+                attempt_id=attempt["attempt_id"],
+            ),
+        )
+        traces.append(trace)
+        provider_results[provider.value] = results
+
+    class FixtureExecutor:
+        async def execute(self, *_args, **_kwargs):
+            return ProviderExecutionOutcome(
+                traces=list(traces),
+                provider_results=dict(provider_results),
+                live_providers_used=len(batches),
+                provider_batches=dict(batches),
+            )
+
+    ledger = create_search_ledger_repository(
+        f"sqlite:///{database_path}",
+        create_schema=True,
+    )
+    repository = SqlAlchemyEvidenceRepository(ledger.session_factory)
+    broker = SearchBroker(
+        providers={},
+        spend_repository=MagicMock(),
+        executor=FixtureExecutor(),
+    )
+    request = SearchRequest(
+        query=f"fixture {evidence['request']['request_id']}",
+        mode=evidence["request"]["mode"],
+        max_results=max(1, evidence["plan"]["result_limit"]),
+        providers=[provider.value for provider in provider_names],
+    )
+    query = SearchQuery(
+        query=request.query,
+        mode=SearchMode(request.mode),
+        max_results=request.max_results,
+        providers=list(provider_names),
+        caller=evidence["request"]["caller_ref"],
+        metadata={"caller_label": request.caller},
+    )
+
+    if evidence["cache"]["decision"] in {"hit", "rejected"}:
+        plan = broker._accepted_plan(query, compute_attribution=True)
+        cohort = execution_cohort(
+            plan,
+            policy_identity=evidence["request"]["caller_ref"],
+        )
+        origin_results = tuple(
+            {
+                "url": cluster["url"],
+                "title": cluster["title"],
+                "snippet": "fixture cached evidence",
+                "domain": cluster["site_key"],
+                "provider": cluster["contributions"][0]["provider"],
+                "score": 1.0,
+            }
+            for cluster in evidence["fusion"]["clusters"]
+        )
+        origin_refs = tuple(
+            attempt["attempt_id"]
+            for attempt in evidence["origin_provider_attempts"]
+        ) or ("fixture-cache-origin",)
+        operation_id = f"origin-{evidence['request']['run_id']}"
+        fingerprint = acceptance_fingerprint(
+            operation_id=operation_id,
+            plan_id=plan.plan_id,
+            cache_fingerprint=plan.cache_fingerprint,
+            execution_cohort_id=cohort,
+            outcome=CacheOutcome.SUCCESS,
+            reason="accepted",
+            results=origin_results,
+            contributor_attempt_refs=origin_refs,
+            origin_spend_usd="0",
+        )
+        accepted_at = (
+            datetime(2000, 1, 1, tzinfo=timezone.utc)
+            if evidence["cache"]["decision"] == "rejected"
+            else datetime.now(timezone.utc)
+        )
+        origin = AcceptedRetrieval(
+            operation_id=operation_id,
+            plan_id=plan.plan_id,
+            cache_fingerprint=plan.cache_fingerprint,
+            execution_cohort=cohort,
+            outcome=CacheOutcome.SUCCESS,
+            reason="accepted",
+            query=query.query,
+            mode=query.mode.value,
+            results=origin_results,
+            contributor_attempt_refs=origin_refs,
+            origin_spend_usd="0",
+            acceptance_receipt=AcceptanceReceipt(
+                receipt_ref=f"receipt:{operation_id}",
+                accepted_at=accepted_at,
+                acceptance_fingerprint=fingerprint,
+            ),
+        )
+        broker._accepted_retrieval_cache.publish(
+            CacheEntry.from_accepted(origin, accepted_at=accepted_at)
+        )
+
+    evidence_repository = repository
+    if envelope["outcome"] == CanonicalOutcome.PERSISTENCE_FAILED.value:
+        class FailingEvidenceRepository:
+            def accept(self, _evidence):
+                raise RuntimeError("fixture persistence failure")
+
+        evidence_repository = FailingEvidenceRepository()
+
+    service = AcceptedOperationService(
+        broker_provider=lambda: broker,
+        repository_provider=lambda: ledger,
+        session_authority=MagicMock(),
+        registration=AcceptedOperationRegistration.complete(),
+    )
+    service._evidence_repository = evidence_repository
+    operation = await service.search(
+        request,
+        principal=evidence["request"]["caller_ref"],
+        request_id=evidence["request"]["request_id"],
+    )
+    expected = (
+        CanonicalOutcome.SUCCESS
+        if envelope["outcome"] == CanonicalOutcome.EXTRACTION_FAILED.value
+        else CanonicalOutcome(envelope["outcome"])
+    )
+    assert operation.outcome is expected
+    response = EvidenceHttpPresenter().response(operation)
+    rendered = json.loads(response.body)
+    assert rendered["outcome"] == expected.value
+    assert rendered["request_id"] == evidence["request"]["request_id"]
+    if expected in {CanonicalOutcome.SUCCESS, CanonicalOutcome.DEGRADED}:
+        assert {
+            item["url"] for item in rendered["result"]["results"]
+        } == {
+            cluster["url"] for cluster in evidence["fusion"]["clusters"]
+        }
+
+
+@pytest.mark.asyncio
+async def test_frozen_valid_fixtures_cross_the_complete_accepted_authority(
+    tmp_path,
+):
+    manifest = json.loads((EVIDENCE_FIXTURES / "manifest.json").read_text())
+    for entry in manifest["fixtures"]:
+        if entry["kind"] != "valid":
+            continue
+        envelope = json.loads((EVIDENCE_FIXTURES / entry["path"]).read_text())
+        await _replay_fixture_through_accepted_authority(
+            envelope,
+            tmp_path / f"authority-{entry['path']}.db",
+        )
 
 
 def test_production_evidence_validator_replays_all_frozen_scenarios_and_mutations(

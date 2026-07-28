@@ -10,6 +10,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
+    from argus.contracts import CanonicalOutcome
     from argus.extraction.completeness import CompletenessResult
     from argus.extraction.outcomes import (
         ArtifactDisposition,
@@ -69,6 +70,7 @@ class ExtractedContent:
     rejection: ExtractionRejection | None = None
     artifact_disposition: ArtifactDisposition | None = None
     acceptance_receipt: ExtractionAcceptanceReceipt | None = None
+    accepted_outcome: CanonicalOutcome | None = None
 
     # Provenance metadata
     source_type: Optional[str] = None  # live|authenticated|residential|wayback|archive|paid_api|search_recovery

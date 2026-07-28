@@ -79,6 +79,28 @@ def test_ambiguous_v2_credentials_reject_before_execution(monkeypatch):
     service.search.assert_not_called()
 
 
+def test_legacy_api_key_headers_remain_cors_preflight_compatible(monkeypatch):
+    client, service = _client(monkeypatch)
+
+    response = client.options(
+        "/api/search",
+        headers={
+            "origin": "https://maya.example",
+            "access-control-request-method": "POST",
+            "access-control-request-headers": (
+                "x-api-key,x-admin-api-key,x-provider-reconciliation-key"
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+    allowed = response.headers["access-control-allow-headers"].lower()
+    assert "x-api-key" in allowed
+    assert "x-admin-api-key" in allowed
+    assert "x-provider-reconciliation-key" in allowed
+    service.search.assert_not_called()
+
+
 def test_v2_rejects_unsupported_media_and_oversized_body_before_execution(
     monkeypatch,
 ):

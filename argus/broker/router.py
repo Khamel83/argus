@@ -582,6 +582,8 @@ class SearchBroker:
                         )
                         outcome = CanonicalOutcome.TIMEOUT
                         reason = "operation_deadline"
+                if outcome is CanonicalOutcome.TIMEOUT:
+                    fusion = None
                 if fallback_result is not None:
                     fallback_result.provider = ProviderName.ARCHIVE
                     fallback_trace = ProviderTrace(
@@ -755,16 +757,13 @@ class SearchBroker:
                 "Accepted search %s committed but session update failed",
                 accepted.receipt.receipt_ref,
             )
-            if accepted.response is not None:
-                accepted.response.budget_warnings.append(
-                    "session history update failed"
-                )
             return (
                 AcceptedSearchExecution(
-                    outcome=CanonicalOutcome.DEGRADED,
-                    reason="session_update_failed",
+                    outcome=accepted.outcome,
+                    reason=accepted.reason,
                     response=accepted.response,
                     receipt=accepted.receipt,
+                    session_update_failed=True,
                 ),
                 session_id,
             )

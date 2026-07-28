@@ -5,7 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 from typing import Awaitable, Callable
 
-from argus.contracts import AcceptedOperation, CanonicalOutcome, OperationError
+from argus.contracts import (
+    AcceptedOperation,
+    CanonicalOutcome,
+    OperationError,
+    http_status_for,
+)
 from argus.extraction import extract_url
 from argus.models import ProviderName, SearchMode, SearchQuery, SearchResult
 from argus.recovery.archive_ph import try_archive_ph
@@ -75,13 +80,7 @@ def _operation_error(
         outcome=outcome,
         type=f"urn:argus:problem:{code}",
         title=code.replace("_", " ").title(),
-        status=status or {
-            CanonicalOutcome.PERSISTENCE_FAILED: 503,
-            CanonicalOutcome.PROVIDERS_FAILED: 502,
-            CanonicalOutcome.EXTRACTION_FAILED: 502,
-            CanonicalOutcome.TIMEOUT: 504,
-            CanonicalOutcome.UNREADY: 503,
-        }.get(outcome, 503),
+        status=status or http_status_for(outcome, code),
         detail=detail,
         instance=f"urn:argus:request:{request_id}",
         code=code,
@@ -288,6 +287,11 @@ class AcceptedOperationService:
                 execution.receipt.acceptance_fingerprint
             ),
         }
+        if getattr(execution, "session_update_failed", False):
+            result["session_update"] = {
+                "status": "failed",
+                "reason": "session_update_failed",
+            }
         return AcceptedOperation(
             outcome=outcome,
             request_id=request_id,
@@ -644,7 +648,10 @@ class AcceptedOperationService:
         projection = _extract_projection(result)
         disposition = getattr(result, "artifact_disposition", None)
         disposition_value = getattr(disposition, "value", disposition)
-        if result.error:
+        accepted_outcome = getattr(result, "accepted_outcome", None)
+        if isinstance(accepted_outcome, CanonicalOutcome):
+            outcome = accepted_outcome
+        elif result.error:
             outcome = CanonicalOutcome.EXTRACTION_FAILED
         elif disposition_value == "partial":
             outcome = CanonicalOutcome.DEGRADED

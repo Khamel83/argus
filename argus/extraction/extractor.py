@@ -33,6 +33,7 @@ from decimal import Decimal
 import httpx
 
 from argus.config import get_config
+from argus.contracts import CanonicalOutcome
 from argus.extraction.cache import ExtractionCache
 from argus.extraction.completeness import assess_completeness
 from argus.extraction.models import ExtractedContent, ExtractionAttempt, ExtractorName
@@ -738,14 +739,10 @@ def _finalize_accepted_extraction(
         )
     )
     def evidence_label(value: object, fallback: str) -> str:
-        normalized = re.sub(
-            r"[^a-z0-9_:-]+",
-            "_",
-            str(value or fallback).strip().lower(),
-        ).strip("_")[:64]
-        if not normalized or not normalized[0].isalpha():
-            normalized = f"e_{normalized}"[:64]
-        return normalized or fallback
+        label = fallback if value in {None, ""} else str(value)
+        if re.fullmatch(r"[a-z][a-z0-9_:-]{0,63}", label) is None:
+            raise ValueError("invalid extraction evidence label")
+        return label
 
     provenance = ExtractionProvenance(
         source_type=evidence_label(result.source_type, "normalized_text"),
@@ -808,23 +805,19 @@ def _finalize_accepted_extraction(
                 ),
             )
         )
-    if not decisions:
-        candidate_names.append("preflight")
-        decisions.append(
-            ExtractorDecision(
-                ordinal=0,
-                extractor="preflight",
-                decision=ExtractorExecutionDecision.INVOKED,
-                attempt_outcome=AttemptOutcome.UNKNOWN_FAILURE,
-                latency_ms=latency_ms,
-                provenance=provenance,
-                spend=SpendEvidence(
-                    actual_usd=Decimal("0"),
-                    reserved_usd=Decimal("0"),
-                    spend_attempt_ref=f"extract-spend-{run_id}-0",
-                ),
-            )
-        )
+    preflight_outcome = None
+    preflight_authority_ref = None
+    if not decisions and not result.text:
+        error = (result.error or "").lower()
+        if error.startswith("ssrf_blocked"):
+            preflight_outcome = CanonicalOutcome.POLICY_REJECTED
+            preflight_authority_ref = "extraction-ssrf-policy-v1"
+        elif "domain rate limit" in error:
+            preflight_outcome = CanonicalOutcome.UNREADY
+            preflight_authority_ref = "extraction-domain-rate-limit-v1"
+        else:
+            preflight_outcome = CanonicalOutcome.UNREADY
+            preflight_authority_ref = "extraction-preflight-unclassified-v1"
     artifact = None
     if result.text:
         completeness = result.completeness_result or assess_completeness(
@@ -854,18 +847,25 @@ def _finalize_accepted_extraction(
         )
     terminal = None
     if artifact is None:
-        outcomes = tuple(
-            dict.fromkeys(
-                step.attempt_outcome
-                for step in decisions
-                if step.attempt_outcome is not None
+        if preflight_outcome is not None:
+            terminal = TerminalCause(
+                kind=TerminalCauseKind.PREFLIGHT,
+                preflight_outcome=preflight_outcome,
+                authority_ref=preflight_authority_ref,
             )
-        ) or (AttemptOutcome.UNKNOWN_FAILURE,)
-        terminal = TerminalCause(
-            kind=TerminalCauseKind.CHAIN_EXHAUSTED,
-            invoked_ordinals=tuple(step.ordinal for step in decisions),
-            distinct_attempt_outcomes=outcomes,
-        )
+        else:
+            outcomes = tuple(
+                dict.fromkeys(
+                    step.attempt_outcome
+                    for step in decisions
+                    if step.attempt_outcome is not None
+                )
+            ) or (AttemptOutcome.UNKNOWN_FAILURE,)
+            terminal = TerminalCause(
+                kind=TerminalCauseKind.CHAIN_EXHAUSTED,
+                invoked_ordinals=tuple(step.ordinal for step in decisions),
+                distinct_attempt_outcomes=outcomes,
+            )
     plan = ExtractionPlan(
         plan_ref=f"extract-plan-{run_id}",
         normalized_url=url,

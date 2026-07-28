@@ -508,6 +508,7 @@ class AcceptedExtractionOutcome:
         legacy.rejection = self.rejection
         legacy.artifact_disposition = self.artifact_disposition
         legacy.acceptance_receipt = self.acceptance_receipt
+        legacy.accepted_outcome = self.outcome
         return legacy
 
 
