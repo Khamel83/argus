@@ -204,116 +204,6 @@ def _normalize_pg_definition(definition: str) -> str:
     return " ".join(normalized)
 
 
-def _numeric_semantics(column_type: Any) -> tuple[int | None, int | None]:
-    from sqlalchemy import BigInteger, Float, Integer, Numeric
-
-    if isinstance(column_type, BigInteger):
-        return 64, 0
-    if isinstance(column_type, Integer):
-        return 32, 0
-    if isinstance(column_type, Float):
-        return column_type.precision or 53, None
-    if isinstance(column_type, Numeric):
-        return column_type.precision, column_type.scale
-    return None, None
-
-
-def _column_semantics(column: Any) -> dict[str, Any]:
-    from sqlalchemy import DateTime, String, Text
-
-    numeric_precision, numeric_scale = _numeric_semantics(column.type)
-    server_default = column.server_default
-    default = (
-        _normalize_pg_definition(str(server_default.arg))
-        if server_default is not None
-        else None
-    )
-    identity = column.identity
-    computed = column.computed
-    return {
-        "type": _postgresql_type_name(column.type),
-        "character_maximum_length": (
-            column.type.length
-            if isinstance(column.type, String)
-            and not isinstance(column.type, Text)
-            else None
-        ),
-        "numeric_precision": numeric_precision,
-        "numeric_scale": numeric_scale,
-        "datetime_precision": (
-            6 if isinstance(column.type, DateTime) else None
-        ),
-        "default": default,
-        "identity": {
-            "is_identity": identity is not None,
-            "generation": (
-                str(identity.always and "ALWAYS" or "BY DEFAULT")
-                if identity is not None
-                else None
-            ),
-        },
-        "generated": {
-            "is_generated": computed is not None,
-            "expression": (
-                _normalize_pg_definition(str(computed.sqltext))
-                if computed is not None
-                else None
-            ),
-        },
-        "nullable": bool(column.nullable),
-    }
-
-
-def _constraint_name(table_name: str, constraint: Any) -> str:
-    from sqlalchemy import (
-        CheckConstraint,
-        ForeignKeyConstraint,
-        PrimaryKeyConstraint,
-        UniqueConstraint,
-    )
-
-    if constraint.name:
-        return str(constraint.name)
-    columns = [column.name for column in constraint.columns]
-    if isinstance(constraint, PrimaryKeyConstraint):
-        return f"{table_name}_pkey"
-    if isinstance(constraint, UniqueConstraint):
-        return f"{table_name}_{'_'.join(columns)}_key"
-    if isinstance(constraint, ForeignKeyConstraint):
-        return f"{table_name}_{columns[0]}_fkey"
-    if isinstance(constraint, CheckConstraint):
-        raise RuntimeError(f"check constraint on {table_name} must be named")
-    raise RuntimeError(f"unsupported constraint on {table_name}")
-
-
-def _constraint_definition(constraint: Any) -> str:
-    from sqlalchemy import (
-        CheckConstraint,
-        ForeignKeyConstraint,
-        PrimaryKeyConstraint,
-        UniqueConstraint,
-    )
-
-    columns = ", ".join(column.name for column in constraint.columns)
-    if isinstance(constraint, PrimaryKeyConstraint):
-        return f"PRIMARY KEY ({columns})"
-    if isinstance(constraint, UniqueConstraint):
-        return f"UNIQUE ({columns})"
-    if isinstance(constraint, ForeignKeyConstraint):
-        target_table = constraint.elements[0].column.table.name
-        target_columns = ", ".join(
-            element.column.name for element in constraint.elements
-        )
-        match = f" MATCH {constraint.match}" if constraint.match else ""
-        return (
-            f"FOREIGN KEY ({columns}) REFERENCES {target_table} "
-            f"({target_columns}){match}"
-        )
-    if isinstance(constraint, CheckConstraint):
-        return f"CHECK ({constraint.sqltext})"
-    raise RuntimeError("unsupported schema constraint")
-
-
 def _manifest_sha256(manifest: dict[str, Any]) -> str:
     contract = {
         key: value
@@ -329,139 +219,47 @@ def _manifest_sha256(manifest: dict[str, Any]) -> str:
     ).hexdigest()
 
 
-def build_argus_schema_contract() -> dict[str, Any]:
-    """Generate the complete normalized PostgreSQL contract from metadata."""
-    from sqlalchemy import PrimaryKeyConstraint, UniqueConstraint
-
-    from argus.persistence.provider_spend import SpendBase
-    from argus.persistence.search_ledger import LedgerBase
-
-    tables = {
-        **LedgerBase.metadata.tables,
-        **SpendBase.metadata.tables,
-    }
-    columns = {
-        table_name: {
-            column.name: _column_semantics(column)
-            for column in table.columns
-        }
-        for table_name, table in sorted(tables.items())
-        if table_name in REQUIRED_TABLES
-    }
-    columns["alembic_version"] = {
-        "version_num": {
-            "type": "character varying",
-            "character_maximum_length": 32,
-            "numeric_precision": None,
-            "numeric_scale": None,
-            "datetime_precision": None,
-            "default": None,
-            "identity": {
-                "is_identity": False,
-                "generation": None,
-            },
-            "generated": {
-                "is_generated": False,
-                "expression": None,
-            },
-            "nullable": False,
-        }
-    }
-    constraints: dict[str, dict[str, str]] = {}
-    indexes: dict[str, dict[str, str]] = {}
-    for table_name, table in sorted(tables.items()):
-        if table_name not in REQUIRED_TABLES:
-            continue
-        for constraint in table.constraints:
-            name = _constraint_name(table_name, constraint)
-            constraints[name] = {
-                "table": table_name,
-                "definition": _normalize_pg_definition(
-                    _constraint_definition(constraint)
-                ),
-            }
-            if isinstance(
-                constraint,
-                (PrimaryKeyConstraint, UniqueConstraint),
-            ):
-                columns_sql = ", ".join(
-                    column.name for column in constraint.columns
-                )
-                indexes[name] = {
-                    "table": table_name,
-                    "definition": _normalize_pg_definition(
-                        f"CREATE UNIQUE INDEX {name} ON public.{table_name} "
-                        f"USING btree ({columns_sql})"
-                    ),
-                }
-        for index in table.indexes:
-            unique = "UNIQUE " if index.unique else ""
-            columns_sql = ", ".join(column.name for column in index.columns)
-            indexes[str(index.name)] = {
-                "table": table_name,
-                "definition": _normalize_pg_definition(
-                    f"CREATE {unique}INDEX {index.name} ON "
-                    f"public.{table_name} USING btree ({columns_sql})"
-                ),
-            }
-    constraints["alembic_version_pkc"] = {
-        "table": "alembic_version",
-        "definition": _normalize_pg_definition(
-            "PRIMARY KEY (version_num)"
-        ),
-    }
-    indexes["alembic_version_pkc"] = {
-        "table": "alembic_version",
-        "definition": _normalize_pg_definition(
-            "CREATE UNIQUE INDEX alembic_version_pkc ON "
-            "public.alembic_version USING btree (version_num)"
-        ),
-    }
-    manifest = {
-        "format_version": 1,
-        "schema_head": EXPECTED_SCHEMA_HEAD,
-        "tables": sorted(REQUIRED_TABLES),
-        "columns": columns,
-        "constraints": dict(sorted(constraints.items())),
-        "indexes": dict(sorted(indexes.items())),
-    }
-    manifest["contract_sha256"] = _manifest_sha256(manifest)
-    return manifest
+_SCHEMA_COLUMN_QUERY = (
+    "SELECT table_name, column_name, data_type, is_nullable, "
+    "column_default, character_maximum_length, "
+    "numeric_precision, numeric_scale, datetime_precision, "
+    "is_identity, identity_generation, is_generated, "
+    "generation_expression "
+    "FROM information_schema.columns "
+    "WHERE table_schema = 'public' "
+    "ORDER BY table_name, ordinal_position"
+)
+_SCHEMA_CONSTRAINT_QUERY = (
+    "SELECT constraint_row.conname, relation.relname, "
+    "pg_get_constraintdef(constraint_row.oid) "
+    "FROM pg_constraint constraint_row "
+    "JOIN pg_namespace namespace "
+    "ON namespace.oid = constraint_row.connamespace "
+    "JOIN pg_class relation "
+    "ON relation.oid = constraint_row.conrelid "
+    "WHERE namespace.nspname = 'public' "
+    "ORDER BY constraint_row.conname"
+)
+_SCHEMA_INDEX_QUERY = (
+    "SELECT index_relation.relname, table_relation.relname, "
+    "pg_get_indexdef(index_relation.oid) "
+    "FROM pg_index index_row "
+    "JOIN pg_class index_relation "
+    "ON index_relation.oid = index_row.indexrelid "
+    "JOIN pg_class table_relation "
+    "ON table_relation.oid = index_row.indrelid "
+    "JOIN pg_namespace namespace "
+    "ON namespace.oid = table_relation.relnamespace "
+    "WHERE namespace.nspname = 'public' "
+    "ORDER BY index_relation.relname"
+)
 
 
-def expected_argus_schema_manifest() -> dict[str, Any]:
-    """Load the checked-in complete PostgreSQL schema contract."""
-    try:
-        manifest = json.loads(SCHEMA_CONTRACT_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise RuntimeError("checked-in Argus schema contract is invalid") from error
-    if manifest.get("contract_sha256") != _manifest_sha256(manifest):
-        raise RuntimeError("checked-in Argus schema contract hash is invalid")
-    return manifest
-
-
-_GENERATED_SCHEMA_OBJECTS = build_argus_schema_contract()
-REQUIRED_S3_CONSTRAINTS = set(_GENERATED_SCHEMA_OBJECTS["constraints"])
-REQUIRED_S3_INDEXES = set(_GENERATED_SCHEMA_OBJECTS["indexes"])
-
-
-def _verify_schema_manifest(
-    *,
-    expected: dict[str, Any],
-    schema_head: str,
+def _column_manifest(
     tables: set[str],
-    columns: list[tuple[Any, ...]],
-    constraints: list[list[Any]],
-    indexes: list[list[Any]],
-) -> None:
-    if (
-        expected.get("contract_sha256") != _manifest_sha256(expected)
-        or expected.get("schema_head") != schema_head
-        or expected.get("tables") != sorted(tables)
-    ):
-        raise RuntimeError("database schema manifest does not match")
-
-    actual_columns = {
+    rows: list[tuple[Any, ...]],
+) -> dict[str, dict[str, dict[str, Any]]]:
+    return {
         table: {
             str(row[1]): {
                 "type": str(row[2]).lower(),
@@ -488,28 +286,102 @@ def _verify_schema_manifest(
                 },
                 "nullable": str(row[3]).upper() == "YES",
             }
-            for row in columns
+            for row in rows
             if str(row[0]) == table
         }
         for table in sorted(tables)
     }
+
+
+def _definition_manifest(
+    rows: list[tuple[Any, ...]] | list[list[Any]],
+) -> dict[str, dict[str, str]]:
+    return {
+        str(name): {
+            "table": str(table),
+            "definition": _normalize_pg_definition(str(definition)),
+        }
+        for name, table, definition in rows
+    }
+
+
+def build_argus_schema_contract(
+    *,
+    connection: Any | None = None,
+) -> dict[str, Any]:
+    """Capture the exact contract from an Alembic-migrated PostgreSQL schema."""
+    if connection is None:
+        raise RuntimeError(
+            "PostgreSQL source is required to regenerate the schema contract"
+        )
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'public'"
+        )
+        tables = {str(row[0]) for row in cursor.fetchall()}
+        cursor.execute("SELECT version_num FROM alembic_version")
+        schema_head = str(cursor.fetchone()[0])
+        cursor.execute(_SCHEMA_COLUMN_QUERY)
+        column_rows = cursor.fetchall()
+        cursor.execute(_SCHEMA_CONSTRAINT_QUERY)
+        constraint_rows = cursor.fetchall()
+        cursor.execute(_SCHEMA_INDEX_QUERY)
+        index_rows = cursor.fetchall()
+
+    if tables != REQUIRED_TABLES:
+        raise RuntimeError("PostgreSQL source does not have the exact Argus tables")
+    if schema_head != EXPECTED_SCHEMA_HEAD:
+        raise RuntimeError(
+            "PostgreSQL source is not migrated to the expected schema head"
+        )
+    manifest = {
+        "format_version": 1,
+        "schema_head": schema_head,
+        "tables": sorted(tables),
+        "columns": _column_manifest(tables, column_rows),
+        "constraints": dict(
+            sorted(_definition_manifest(constraint_rows).items())
+        ),
+        "indexes": dict(sorted(_definition_manifest(index_rows).items())),
+    }
+    manifest["contract_sha256"] = _manifest_sha256(manifest)
+    return manifest
+
+
+def expected_argus_schema_manifest() -> dict[str, Any]:
+    """Load the checked-in complete PostgreSQL schema contract."""
+    try:
+        manifest = json.loads(SCHEMA_CONTRACT_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("checked-in Argus schema contract is invalid") from error
+    if manifest.get("contract_sha256") != _manifest_sha256(manifest):
+        raise RuntimeError("checked-in Argus schema contract hash is invalid")
+    return manifest
+
+
+def _verify_schema_manifest(
+    *,
+    expected: dict[str, Any],
+    schema_head: str,
+    tables: set[str],
+    columns: list[tuple[Any, ...]],
+    constraints: list[list[Any]],
+    indexes: list[list[Any]],
+) -> None:
+    if (
+        expected.get("contract_sha256") != _manifest_sha256(expected)
+        or expected.get("schema_head") != schema_head
+        or expected.get("tables") != sorted(tables)
+    ):
+        raise RuntimeError("database schema manifest does not match")
+
+    actual_columns = _column_manifest(tables, columns)
     if expected.get("columns") != actual_columns:
         raise RuntimeError("database schema manifest columns do not match")
 
-    actual_constraints = {
-        str(name): {
-            "table": str(table),
-            "definition": _normalize_pg_definition(str(definition)),
-        }
-        for name, table, definition in constraints
-    }
-    actual_indexes = {
-        str(name): {
-            "table": str(table),
-            "definition": _normalize_pg_definition(str(definition)),
-        }
-        for name, table, definition in indexes
-    }
+    actual_constraints = _definition_manifest(constraints)
+    actual_indexes = _definition_manifest(indexes)
     if expected.get("constraints") != actual_constraints:
         raise RuntimeError("database schema manifest constraints do not match")
     if expected.get("indexes") != actual_indexes:
@@ -629,15 +501,7 @@ def verify_argus_database(
                 raise RuntimeError(
                     "missing required tables: " + ", ".join(missing)
                 )
-            cursor.execute(
-                "SELECT table_name, column_name, data_type, is_nullable, "
-                "column_default, character_maximum_length, "
-                "numeric_precision, numeric_scale, datetime_precision, "
-                "is_identity, identity_generation, is_generated, "
-                "generation_expression "
-                "FROM information_schema.columns "
-                "WHERE table_schema = 'public'"
-            )
+            cursor.execute(_SCHEMA_COLUMN_QUERY)
             columns_by_table: dict[str, set[str]] = {}
             schema_columns = cursor.fetchall()
             for table_name, column_name, *_ in schema_columns:
@@ -864,19 +728,9 @@ def _inventory(cursor, tables: set[str], row_counts: dict[str, int]) -> dict[str
     )
     if int(cursor.fetchone()[0]) != 0:
         raise RuntimeError("database contains unvalidated foreign-key constraints")
-    cursor.execute(
-        "SELECT constraint_row.conname, relation.relname, "
-        "pg_get_constraintdef(constraint_row.oid) "
-        "FROM pg_constraint constraint_row "
-        "JOIN pg_namespace namespace ON namespace.oid = constraint_row.connamespace "
-        "JOIN pg_class relation ON relation.oid = constraint_row.conrelid "
-        "WHERE namespace.nspname = 'public' ORDER BY constraint_row.conname"
-    )
+    cursor.execute(_SCHEMA_CONSTRAINT_QUERY)
     constraints = [list(row) for row in cursor.fetchall()]
-    cursor.execute(
-        "SELECT indexname, tablename, indexdef FROM pg_indexes "
-        "WHERE schemaname = 'public' ORDER BY indexname"
-    )
+    cursor.execute(_SCHEMA_INDEX_QUERY)
     indexes = [list(row) for row in cursor.fetchall()]
     schema_state = {
         "tables": sorted(tables),

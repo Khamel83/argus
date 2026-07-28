@@ -102,7 +102,7 @@ class FakeCursor:
                     "constraints"
                 ].items()
             ]
-        if "pg_indexes" in self.query:
+        if "pg_get_indexdef" in self.query:
             from argus.recovery.database import expected_argus_schema_manifest
 
             return [
@@ -177,7 +177,10 @@ def test_restore_verifier_rejects_stamped_schema_missing_required_constraints():
 
     class MissingConstraintCursor(FakeCursor):
         def fetchall(self):
-            if "pg_constraint" in self.query or "pg_indexes" in self.query:
+            if (
+                "pg_constraint" in self.query
+                or "pg_get_indexdef" in self.query
+            ):
                 return []
             return super().fetchall()
 
@@ -205,7 +208,8 @@ def test_expected_schema_manifest_describes_types_nullability_and_definitions():
     manifest = expected_argus_schema_manifest()
 
     assert SCHEMA_CONTRACT_PATH.is_file()
-    assert manifest == build_argus_schema_contract()
+    with pytest.raises(RuntimeError, match="PostgreSQL source"):
+        build_argus_schema_contract()
     assert len(manifest["constraints"]) == 83
     assert len(manifest["indexes"]) == 57
     latency = manifest["columns"]["extraction_outcome_steps"]["latency_ms"]
@@ -221,6 +225,31 @@ def test_expected_schema_manifest_describes_types_nullability_and_definitions():
     ]["definition"]
     assert "artifact_ref" in manifest["indexes"][
         "ix_extraction_outcome_artifacts_artifact_ref"
+    ]["definition"]
+
+
+def test_checked_contract_retains_migrated_server_defaults_and_deparser_output():
+    from argus.recovery.database import expected_argus_schema_manifest
+
+    manifest = expected_argus_schema_manifest()
+
+    assert manifest["columns"]["retrieval_requests"]["free_only"][
+        "default"
+    ] == "false"
+    assert manifest["columns"]["provider_spend_attempts"][
+        "estimator_violation"
+    ]["default"] == "false"
+    assert manifest["columns"]["provider_spend_attempts"][
+        "reservation_overrun"
+    ]["default"] == "'0' :: double precision"
+    assert manifest["columns"]["delivery_intents"]["attempt_count"][
+        "default"
+    ] == "0"
+    assert manifest["columns"]["delivery_intents"]["max_attempts"][
+        "default"
+    ] == "8"
+    assert ":: text" in manifest["constraints"][
+        "ck_result_extraction_links_artifact_same_plan"
     ]["definition"]
 
 
@@ -244,7 +273,7 @@ def test_restore_compares_database_to_supplied_schema_manifest():
                     (name, value["table"], value["definition"])
                     for name, value in trusted["constraints"].items()
                 ]
-            if "pg_indexes" in self.query:
+            if "pg_get_indexdef" in self.query:
                 return [
                     (name, value["table"], value["definition"])
                     for name, value in trusted["indexes"].items()
@@ -326,7 +355,7 @@ def test_self_hashed_caller_manifest_cannot_replace_checked_in_trust():
                     (name, value["table"], value["definition"])
                     for name, value in untrusted["constraints"].items()
                 ]
-            if "pg_indexes" in self.query:
+            if "pg_get_indexdef" in self.query:
                 return [
                     (name, value["table"], value["definition"])
                     for name, value in untrusted["indexes"].items()
@@ -485,7 +514,7 @@ def test_restore_rejects_each_column_semantic_drift(attribute, replacement):
                     (name, value["table"], value["definition"])
                     for name, value in trusted["constraints"].items()
                 ]
-            if "pg_indexes" in self.query:
+            if "pg_get_indexdef" in self.query:
                 return [
                     (name, value["table"], value["definition"])
                     for name, value in trusted["indexes"].items()
@@ -547,7 +576,7 @@ def test_restore_requires_exact_schema_object_sets_and_definitions(mutation):
                     ),
                     *constraints[1:],
                 ]
-            if "pg_indexes" in self.query:
+            if "pg_get_indexdef" in self.query:
                 return [
                     (name, value["table"], value["definition"])
                     for name, value in trusted["indexes"].items()
@@ -589,59 +618,18 @@ def test_migrated_postgres_matches_checked_in_schema_contract(
     migrated_postgres_ledger,
 ):
     from argus.recovery.database import (
-        _verify_schema_manifest,
+        build_argus_schema_contract,
         expected_argus_schema_manifest,
     )
 
     engine = migrated_postgres_ledger.session_factory.kw["bind"]
     connection = engine.raw_connection()
     try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT table_name FROM information_schema.tables "
-                "WHERE table_schema = 'public'"
-            )
-            tables = {row[0] for row in cursor.fetchall()}
-            cursor.execute(
-                "SELECT table_name, column_name, data_type, is_nullable, "
-                "column_default, character_maximum_length, "
-                "numeric_precision, numeric_scale, datetime_precision, "
-                "is_identity, identity_generation, is_generated, "
-                "generation_expression "
-                "FROM information_schema.columns "
-                "WHERE table_schema = 'public'"
-            )
-            columns = cursor.fetchall()
-            cursor.execute(
-                "SELECT constraint_row.conname, relation.relname, "
-                "pg_get_constraintdef(constraint_row.oid) "
-                "FROM pg_constraint constraint_row "
-                "JOIN pg_namespace namespace "
-                "ON namespace.oid = constraint_row.connamespace "
-                "JOIN pg_class relation "
-                "ON relation.oid = constraint_row.conrelid "
-                "WHERE namespace.nspname = 'public' "
-                "ORDER BY constraint_row.conname"
-            )
-            constraints = cursor.fetchall()
-            cursor.execute(
-                "SELECT indexname, tablename, indexdef FROM pg_indexes "
-                "WHERE schemaname = 'public' ORDER BY indexname"
-            )
-            indexes = cursor.fetchall()
-            cursor.execute("SELECT version_num FROM alembic_version")
-            schema_head = cursor.fetchone()[0]
+        actual = build_argus_schema_contract(connection=connection)
     finally:
         connection.close()
 
-    _verify_schema_manifest(
-        expected=expected_argus_schema_manifest(),
-        schema_head=schema_head,
-        tables=tables,
-        columns=columns,
-        constraints=constraints,
-        indexes=indexes,
-    )
+    assert actual == expected_argus_schema_manifest()
 
 
 def test_restore_verifier_rejects_production_target_before_connecting():

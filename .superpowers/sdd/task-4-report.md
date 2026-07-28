@@ -292,6 +292,53 @@ Sixth-correction TDD and verification:
 Sixth correction commit message:
 `fix: pin complete recovery schema semantics`
 
+## Seventh reviewer correction
+
+The seventh strict PostgreSQL-contract review is closed by a separate
+correction:
+
+- Contract regeneration now requires an explicit PostgreSQL connection and
+  fails when no PostgreSQL source is supplied. It no longer synthesizes the
+  checked artifact from ORM metadata.
+- A uniquely named disposable PostgreSQL 16 container and volume on
+  `homelab-ts` were migrated from base through Alembic head
+  `0007_extraction_outcomes`. The generator captured the resulting
+  `information_schema` and PostgreSQL catalog state through an SSH
+  loopback-only tunnel.
+- The checked contract now retains the actual migrated server defaults,
+  including booleans, retry counters, and PostgreSQL's
+  `'0'::double precision` expression.
+- Constraints are captured with `pg_get_constraintdef`; indexes are captured
+  with `pg_get_indexdef`. Verification uses the same catalog queries and
+  normalization path as generation, preserving PostgreSQL's casts and boolean
+  grouping instead of comparing ORM renderings with deparser output.
+- The regenerated contract SHA-256 is
+  `cf14673cb03d25ac9eecac8a50470ecdb50430d7e6e12bc1564ff170e1d1ec90`.
+- The SSH tunnel, disposable container
+  `argus-s3-schema-e50f2e7b`, and disposable volume
+  `argus-s3-schema-data-e50f2e7b` were removed after verification. Exact-name
+  checks returned no remaining resources; existing Argus and Atlas services
+  were not changed.
+
+Seventh-correction TDD and verification:
+
+- RED contract slice: `2 failed`, covering absent PostgreSQL regeneration
+  source enforcement and missing migrated defaults/deparser output.
+- GREEN focused recovery verifier: `28 passed, 4 skipped`.
+- Real PostgreSQL catalog, restore, and concurrency slice:
+  `5 passed, 62 deselected`.
+- Real PostgreSQL 0007 upgrade/pre-activation rollback: passed. That test
+  intentionally leaves the disposable schema below head; after an explicit
+  Alembic upgrade back to 0007, the real PostgreSQL concurrent composition
+  test passed.
+- Adjacent recovery suite: `55 passed, 20 skipped`.
+- One fresh full repository suite: `1482 passed, 42 skipped`, with the same
+  four Starlette cookie deprecation warnings and zero failures.
+- Ruff over every changed Python path and `git diff --check`: passed.
+
+Seventh correction commit message:
+`fix: derive recovery contract from postgres`
+
 ## Commit
 
 Commit message: `feat: finalize and compose extraction outcomes`

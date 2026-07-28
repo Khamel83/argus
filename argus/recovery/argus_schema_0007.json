@@ -180,7 +180,7 @@
       "attempt_count": {
         "character_maximum_length": null,
         "datetime_precision": null,
-        "default": null,
+        "default": "0",
         "generated": {
           "expression": null,
           "is_generated": false
@@ -384,7 +384,7 @@
       "max_attempts": {
         "character_maximum_length": null,
         "datetime_precision": null,
-        "default": null,
+        "default": "8",
         "generated": {
           "expression": null,
           "is_generated": false
@@ -2690,7 +2690,7 @@
       "estimator_violation": {
         "character_maximum_length": null,
         "datetime_precision": null,
-        "default": null,
+        "default": "false",
         "generated": {
           "expression": null,
           "is_generated": false
@@ -2809,7 +2809,7 @@
       "reservation_overrun": {
         "character_maximum_length": null,
         "datetime_precision": null,
-        "default": null,
+        "default": "'0' :: double precision",
         "generated": {
           "expression": null,
           "is_generated": false
@@ -3601,7 +3601,7 @@
       "free_only": {
         "character_maximum_length": null,
         "datetime_precision": null,
-        "default": null,
+        "default": "false",
         "generated": {
           "expression": null,
           "is_generated": false
@@ -4077,35 +4077,35 @@
       "table": "authentication_scope_authority_receipts"
     },
     "ck_delivery_intents_one_parent": {
-      "definition": "check ( ( run_id is not null and extraction_run_id is null ) or ( run_id is null and extraction_run_id is not null ) )",
+      "definition": "check ( ( ( ( run_id is not null ) and ( extraction_run_id is null ) ) or ( ( run_id is null ) and ( extraction_run_id is not null ) ) ) )",
       "table": "delivery_intents"
     },
     "ck_result_extraction_links_acceptance_pair": {
-      "definition": "check ( ( extraction_acceptance_ref is null ) = ( extraction_plan_id is null ) )",
+      "definition": "check ( ( ( extraction_acceptance_ref is null ) = ( extraction_plan_id is null ) ) )",
       "table": "result_extraction_links"
     },
     "ck_result_extraction_links_artifact_pair": {
-      "definition": "check ( ( artifact_row_id is null ) = ( artifact_plan_id is null ) )",
+      "definition": "check ( ( ( artifact_row_id is null ) = ( artifact_plan_id is null ) ) )",
       "table": "result_extraction_links"
     },
     "ck_result_extraction_links_artifact_requires_acceptance": {
-      "definition": "check ( artifact_row_id is null or ( artifact_plan_id is not null and extraction_plan_id is not null and extraction_acceptance_ref is not null and artifact_plan_id = extraction_plan_id ) )",
+      "definition": "check ( ( ( artifact_row_id is null ) or ( ( artifact_plan_id is not null ) and ( extraction_plan_id is not null ) and ( extraction_acceptance_ref is not null ) and ( ( artifact_plan_id ) :: text = ( extraction_plan_id ) :: text ) ) ) )",
       "table": "result_extraction_links"
     },
     "ck_result_extraction_links_artifact_same_plan": {
-      "definition": "check ( artifact_plan_id is null or artifact_plan_id = extraction_plan_id )",
+      "definition": "check ( ( ( artifact_plan_id is null ) or ( ( artifact_plan_id ) :: text = ( extraction_plan_id ) :: text ) ) )",
       "table": "result_extraction_links"
     },
     "ck_result_extraction_links_rejection_pair": {
-      "definition": "check ( ( rejection_row_id is null ) = ( rejection_plan_id is null ) )",
+      "definition": "check ( ( ( rejection_row_id is null ) = ( rejection_plan_id is null ) ) )",
       "table": "result_extraction_links"
     },
     "ck_result_extraction_links_rejection_requires_acceptance": {
-      "definition": "check ( rejection_row_id is null or ( rejection_plan_id is not null and extraction_plan_id is not null and extraction_acceptance_ref is not null and rejection_plan_id = extraction_plan_id ) )",
+      "definition": "check ( ( ( rejection_row_id is null ) or ( ( rejection_plan_id is not null ) and ( extraction_plan_id is not null ) and ( extraction_acceptance_ref is not null ) and ( ( rejection_plan_id ) :: text = ( extraction_plan_id ) :: text ) ) ) )",
       "table": "result_extraction_links"
     },
     "ck_result_extraction_links_rejection_same_plan": {
-      "definition": "check ( rejection_plan_id is null or rejection_plan_id = extraction_plan_id )",
+      "definition": "check ( ( ( rejection_plan_id is null ) or ( ( rejection_plan_id ) :: text = ( extraction_plan_id ) :: text ) ) )",
       "table": "result_extraction_links"
     },
     "content_identities_pkey": {
@@ -4401,7 +4401,7 @@
       "table": "provider_spend_audit"
     }
   },
-  "contract_sha256": "df54a62bbe62877d27d2187534824ccd8880aa7ecbebb00dee10dac507f2552c",
+  "contract_sha256": "cf14673cb03d25ac9eecac8a50470ecdb50430d7e6e12bc1564ff170e1d1ec90",
   "format_version": 1,
   "indexes": {
     "alembic_version_pkc": {
