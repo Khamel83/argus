@@ -291,6 +291,166 @@ def test_generic_observation_path_rejects_semantic_exact_expiry(tmp_path):
         service.record_observation(terminal)
 
 
+def test_persistence_rejects_forged_exact_expiry_before_mutating_sqlite_state(
+    tmp_path,
+):
+    from argus.broker.readiness import ProviderObservation, ReadinessScope
+
+    service, repository = _service(tmp_path)
+    service.record_observation(
+        _observation(
+            ProviderName.BRAVE,
+            "spend",
+            "available",
+            receipt="existing-spend",
+        )
+    )
+    scope = ReadinessScope(
+        egress="local",
+        machine="test-machine",
+        request_class="discovery",
+        release_revision=ATTESTED_RELEASE,
+        contract_version=ATTESTED_CONTRACT,
+        configuration_fingerprint="config:v1",
+        credential_version_fingerprint="secret-version:v1",
+        account_fingerprint="account:v1",
+    )
+    database_now = repository.authority_now()
+    observation = ProviderObservation(
+        provider=ProviderName.BRAVE,
+        dimension="spend",
+        state="exhausted",
+        source="provider_authoritative",
+        scope=scope,
+        observed_at=database_now - timedelta(days=1),
+        ttl_seconds=None,
+        evidence_ref="forged-terminal",
+        protected=True,
+        expires_at=database_now + timedelta(days=1),
+    )
+    before_observations = repository.observations(ProviderName.BRAVE)
+    before_snapshot = repository.read_snapshot(
+        ProviderName.BRAVE, scope.fingerprint()
+    )
+
+    object.__setattr__(
+        observation, "observed_at", observation.observed_at.replace(tzinfo=None)
+    )
+    with pytest.raises(ValueError, match="observed_at.*timezone aware"):
+        repository.record_and_materialize(
+            observation,
+            lambda *_args: {"forged": True},
+            _allow_exact_expiry=True,
+        )
+
+    assert repository.observations(ProviderName.BRAVE) == before_observations
+    assert repository.read_snapshot(ProviderName.BRAVE, scope.fingerprint()) == before_snapshot
+
+
+@pytest.mark.parametrize(
+    ("producer_offset", "mutation", "message"),
+    [
+        (
+            timedelta(seconds=20),
+            lambda observation: object.__setattr__(
+                observation,
+                "expires_at",
+                observation.expires_at.replace(tzinfo=None),
+            ),
+            "expires_at.*timezone aware",
+        ),
+        (
+            timedelta(seconds=20),
+            lambda observation: object.__setattr__(observation, "ttl_seconds", 1),
+            "TTL or expires_at",
+        ),
+        (
+            timedelta(seconds=20),
+            lambda observation: object.__setattr__(
+                observation, "expires_at", observation.observed_at
+            ),
+            "after observed_at",
+        ),
+        (
+            timedelta(seconds=20),
+            lambda observation: object.__setattr__(
+                observation,
+                "expires_at",
+                observation.observed_at - timedelta(microseconds=1),
+            ),
+            "after observed_at",
+        ),
+        (
+            -timedelta(days=1),
+            lambda observation: object.__setattr__(
+                observation,
+                "expires_at",
+                observation.observed_at + timedelta(days=365, microseconds=1),
+            ),
+            "one-year",
+        ),
+    ],
+)
+def test_persistence_rejects_forged_exact_expiry_invariants(
+    tmp_path, producer_offset, mutation, message,
+):
+    from argus.broker.readiness import ProviderObservation, ReadinessScope
+
+    _, repository = _service(tmp_path)
+    database_now = repository.authority_now()
+    producer = database_now + producer_offset
+    observation = ProviderObservation(
+        provider=ProviderName.BRAVE,
+        dimension="spend",
+        state="exhausted",
+        source="provider_authoritative",
+        scope=ReadinessScope(account_fingerprint="account:v1"),
+        observed_at=producer,
+        ttl_seconds=None,
+        evidence_ref="forged-terminal",
+        protected=True,
+        expires_at=producer + timedelta(days=364),
+    )
+    mutation(observation)
+
+    with pytest.raises(ValueError, match=message):
+        repository.record_and_materialize(
+            observation,
+            lambda *_args: {"forged": True},
+            _allow_exact_expiry=True,
+        )
+
+
+def test_persistence_allows_exact_expiry_at_producer_one_year_boundary(tmp_path):
+    from argus.broker.readiness import ProviderObservation, ReadinessScope
+
+    _, repository = _service(tmp_path)
+    producer = repository.authority_now() - timedelta(days=1)
+    observation = ProviderObservation(
+        provider=ProviderName.BRAVE,
+        dimension="spend",
+        state="exhausted",
+        source="provider_authoritative",
+        scope=ReadinessScope(account_fingerprint="account:v1"),
+        observed_at=producer,
+        ttl_seconds=None,
+        evidence_ref="exact-one-year",
+        protected=True,
+        expires_at=producer + timedelta(days=365),
+    )
+
+    repository.record_and_materialize(
+        observation,
+        lambda *_args: {"exact_boundary": True},
+        _allow_exact_expiry=True,
+    )
+
+    assert [
+        row for row in repository.observations(ProviderName.BRAVE)
+        if row.evidence_ref == "exact-one-year"
+    ]
+
+
 def test_valid_until_uses_earliest_expiry_and_renderer_cache_never_outlives_it(
     tmp_path,
 ):
@@ -1844,6 +2004,20 @@ def test_postgres_verifier_rejects_any_worker_exception():
             ),
             contexts,
         )
+
+
+def test_postgres_verifier_checks_exact_expiry_rejections_without_writes(tmp_path):
+    from argus.broker.readiness import ReadinessScope
+    from scripts.verify_provider_readiness_postgres import (
+        verify_exact_expiry_boundary_rejections,
+    )
+
+    _, repository = _service(tmp_path)
+    scope = ReadinessScope(account_fingerprint="account:v1")
+
+    assert verify_exact_expiry_boundary_rejections(
+        repository, scope, "sqlite-test"
+    )
 
 
 def test_authoritative_zero_reconciliation_clears_terminal_account_all_modes(

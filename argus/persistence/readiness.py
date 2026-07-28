@@ -251,9 +251,45 @@ class ProviderReadinessRepository:
         scope_key = observation.scope.fingerprint()
 
         def persist(session, now):
-            producer = _aware(observation.observed_at)
+            producer_observed_at = observation.observed_at
+            if producer_observed_at.tzinfo is None:
+                raise ValueError("observed_at must be timezone aware")
+            producer = _aware(producer_observed_at)
+            exact_expires = getattr(observation, "expires_at", None)
+            expires = None
+            if exact_expires is not None:
+                if exact_expires.tzinfo is None:
+                    raise ValueError("expires_at must be timezone aware")
+                if observation.ttl_seconds is not None:
+                    raise ValueError("observation expiry must use TTL or expires_at")
+                expires = _aware(exact_expires)
+                if expires <= producer:
+                    raise ValueError(
+                        "observation expires_at must be after observed_at"
+                    )
+                if expires > producer + timedelta(seconds=MAX_EXACT_EXPIRY_SECONDS):
+                    raise ValueError(
+                        "exact expiry exceeds one-year producer bound"
+                    )
             if producer > now + timedelta(seconds=30):
                 raise ValueError("producer observed_at is too far in the future")
+            if exact_expires is not None:
+                if expires <= now:
+                    raise ValueError("observation expires_at must be after database time")
+                exact_shape = (
+                    observation.dimension == "spend"
+                    and observation.state == "exhausted"
+                    and observation.source in EXACT_EXPIRY_SOURCES
+                    and observation.protected is True
+                )
+                if not _allow_exact_expiry or not exact_shape:
+                    raise ValueError("exact expiry write is not authorized")
+                if expires > now + timedelta(seconds=MAX_EXACT_EXPIRY_SECONDS):
+                    raise ValueError(
+                        "observation expires_at exceeds one-year database bound"
+                    )
+            elif observation.ttl_seconds is not None:
+                expires = now + timedelta(seconds=observation.ttl_seconds)
             old = session.scalar(
                 select(ProviderReadinessObservationRow)
                 .where(
@@ -289,31 +325,6 @@ class ProviderReadinessRepository:
                         old_evidence.protected = False
                 session.delete(old)
                 session.flush()
-            exact_expires = getattr(observation, "expires_at", None)
-            expires = (
-                _aware(exact_expires)
-                if exact_expires is not None
-                else (
-                    None
-                    if observation.ttl_seconds is None
-                    else now + timedelta(seconds=observation.ttl_seconds)
-                )
-            )
-            if exact_expires is not None and expires <= now:
-                raise ValueError("observation expires_at must be after database time")
-            if exact_expires is not None:
-                exact_shape = (
-                    observation.dimension == "spend"
-                    and observation.state == "exhausted"
-                    and observation.source in EXACT_EXPIRY_SOURCES
-                    and observation.protected is True
-                )
-                if not _allow_exact_expiry or not exact_shape:
-                    raise ValueError("exact expiry write is not authorized")
-                if expires > now + timedelta(seconds=MAX_EXACT_EXPIRY_SECONDS):
-                    raise ValueError(
-                        "observation expires_at exceeds one-year database bound"
-                    )
             row = ProviderReadinessObservationRow(
                 id=uuid.uuid4().hex,
                 provider=observation.provider.value,

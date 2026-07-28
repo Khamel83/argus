@@ -200,6 +200,103 @@ def verify_settle_authorize_race(first, second, contexts, suffix):
     return True
 
 
+def verify_exact_expiry_boundary_rejections(repository, scope, suffix):
+    """Prove forged exact-expiry writes are rejected without durable changes."""
+    database_now = repository.authority_now()
+
+    def terminal(producer, expires_at):
+        return ProviderObservation(
+            provider=ProviderName.SEARCHAPI,
+            dimension="spend",
+            state="exhausted",
+            source="provider_authoritative",
+            scope=scope,
+            observed_at=producer,
+            ttl_seconds=None,
+            evidence_ref=f"pg-forged-terminal-{suffix}",
+            protected=True,
+            expires_at=expires_at,
+        )
+
+    future_producer = database_now + timedelta(seconds=20)
+    cases = []
+
+    naive_producer = terminal(
+        database_now - timedelta(days=1), database_now + timedelta(days=1)
+    )
+    object.__setattr__(
+        naive_producer,
+        "observed_at",
+        naive_producer.observed_at.replace(tzinfo=None),
+    )
+    cases.append(naive_producer)
+
+    naive_expiry = terminal(future_producer, future_producer + timedelta(days=1))
+    object.__setattr__(
+        naive_expiry,
+        "expires_at",
+        naive_expiry.expires_at.replace(tzinfo=None),
+    )
+    cases.append(naive_expiry)
+
+    ttl_and_expiry = terminal(
+        future_producer, future_producer + timedelta(days=1)
+    )
+    object.__setattr__(ttl_and_expiry, "ttl_seconds", 1)
+    cases.append(ttl_and_expiry)
+
+    equal_expiry = terminal(
+        future_producer, future_producer + timedelta(days=1)
+    )
+    object.__setattr__(equal_expiry, "expires_at", future_producer)
+    cases.append(equal_expiry)
+
+    earlier_expiry = terminal(
+        future_producer, future_producer + timedelta(days=1)
+    )
+    object.__setattr__(
+        earlier_expiry,
+        "expires_at",
+        future_producer - timedelta(microseconds=1),
+    )
+    cases.append(earlier_expiry)
+
+    oversized_producer = database_now - timedelta(days=1)
+    too_long = terminal(
+        oversized_producer, oversized_producer + timedelta(days=364)
+    )
+    object.__setattr__(
+        too_long,
+        "expires_at",
+        oversized_producer + timedelta(days=365, microseconds=1),
+    )
+    cases.append(too_long)
+
+    before_observations = repository.observations(ProviderName.SEARCHAPI)
+    before_snapshot = repository.read_snapshot(
+        ProviderName.SEARCHAPI, scope.fingerprint()
+    )
+    for observation in cases:
+        try:
+            repository.record_and_materialize(
+                observation,
+                lambda *_args: {"forged": True},
+                _allow_exact_expiry=True,
+            )
+        except ValueError:
+            pass
+        else:
+            raise RuntimeError("forged exact expiry write was accepted")
+        if repository.observations(ProviderName.SEARCHAPI) != before_observations:
+            raise RuntimeError("forged exact expiry write changed observations")
+        if (
+            repository.read_snapshot(ProviderName.SEARCHAPI, scope.fingerprint())
+            != before_snapshot
+        ):
+            raise RuntimeError("forged exact expiry write changed snapshot")
+    return True
+
+
 def main() -> None:
     parser = ArgumentParser()
     parser.add_argument("--output", type=Path)
@@ -260,6 +357,9 @@ def main() -> None:
             ttl_seconds=300,
             evidence_ref=f"{dimension}-{suffix}",
         ))
+    exact_expiry_zero_writes = verify_exact_expiry_boundary_rejections(
+        first.repository, scope, suffix
+    )
     second = ProviderReadinessService(
         repository=create_readiness_repository(url, create_schema=False)
     )
@@ -636,6 +736,7 @@ def main() -> None:
             "attested_fixture_probe_authorized": fixture_probe.allowed,
             "billable_probe_consumed": True,
             "direct_settlement_modes": direct_settlement_modes,
+            "exact_expiry_zero_writes": exact_expiry_zero_writes,
             "recurring_atomic_rollback": True,
             "recurring_reset_modes": recurring_reset_modes,
             "recurring_single_db_now_calls": recurring_clock.call_count,
