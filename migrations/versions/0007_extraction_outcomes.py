@@ -17,6 +17,19 @@ depends_on = None
 
 def upgrade() -> None:
     op.create_table(
+        "authentication_scope_authority_receipts",
+        sa.Column("receipt_ref", sa.String(64), primary_key=True),
+        sa.Column("scope", sa.String(32), nullable=False),
+        sa.Column("access_scope", sa.String(128), nullable=False),
+        sa.Column("privacy_scope", sa.String(128), nullable=False),
+        sa.Column(
+            "authentication_scope_fingerprint",
+            sa.String(71),
+            nullable=False,
+        ),
+        sa.Column("issued_at", sa.DateTime(), nullable=False),
+    )
+    op.create_table(
         "extraction_outcome_plans",
         sa.Column("id", sa.String(32), primary_key=True),
         sa.Column("plan_ref", sa.String(128), nullable=False),
@@ -274,3 +287,4 @@ def downgrade() -> None:
     op.drop_table("extraction_artifact_identities")
     op.drop_table("extraction_outcome_steps")
     op.drop_table("extraction_outcome_plans")
+    op.drop_table("authentication_scope_authority_receipts")

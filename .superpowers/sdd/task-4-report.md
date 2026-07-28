@@ -202,6 +202,56 @@ Clock-correction TDD and verification:
 Provider fixture correction commit message:
 `test: pin provider fixture observation clock`
 
+## Fifth reviewer correction
+
+The fifth strict review is closed by a separate correction:
+
+- Every cache hit now binds `current_identity` exactly to the current plan.
+  Eligible hits additionally require origin-identity equality. Both eligible
+  and ineligible hits reload and exactly rebind their complete origin evidence
+  and claimed age to the durable acceptance; a valid ineligible origin then
+  proceeds through normal extraction.
+- Authentication scopes are no longer caller-verifiable unkeyed hashes.
+  A concrete authority repository issues an opaque durable receipt mapped to
+  the extraction scope, access scope, privacy scope, and authentication
+  fingerprint. Finalization requires an exact durable lookup. SQLite
+  restart, replay, forged-receipt, and same-receipt fingerprint-tamper tests
+  fail closed as required.
+- The complete normalized PostgreSQL 0007 schema contract is checked in at
+  `argus/recovery/argus_schema_0007.json` and reproducibly generated from
+  metadata. It contains all 27 tables and columns, 83 constraints, 57 indexes,
+  exact normalized definitions, and an aggregate SHA-256. Restore
+  verification requires exact actual sets and exact table/definition equality;
+  missing, extra, and altered objects all fail.
+- PostgreSQL type normalization distinguishes SQLAlchemy `Float` as
+  `double precision` from `Numeric` as `numeric`. Static contract/type tests
+  cover both; the migrated disposable-PostgreSQL assertion is present and
+  skips only when `ARGUS_TEST_POSTGRES_URL` is unavailable.
+- Provenance reference bounds are validated before the anonymous
+  authentication branch. Oversized authentication, cookie, and archive
+  references all reject, including the reported 19,000-byte archive case.
+
+Fifth-correction TDD and verification:
+
+- RED cache/auth/provenance slice: `6 failed, 3 passed`; failures directly
+  covered current-plan identity, missing durable authority, forgery, and the
+  anonymous provenance bypass.
+- RED static schema slice: `4 failed`.
+- GREEN focused extraction/composition/recovery command:
+  `140 passed, 5 skipped`.
+- Adjacent recovery, search-ledger, provider-spend, and operational-status
+  command: `206 passed, 30 skipped`.
+- Dedicated PostgreSQL checks: `2 skipped` because the disposable PostgreSQL
+  fixture was unavailable; static exact-contract and type checks passed in the
+  focused command.
+- Fresh full repository suite: `1467 passed, 41 skipped`, with the same four
+  Starlette cookie deprecation warnings and zero failures.
+- Ruff over every changed Python path: all checks passed.
+- `git diff --check`: passed.
+
+Fifth correction commit message:
+`fix: require durable authority and exact schema`
+
 ## Commit
 
 Commit message: `feat: finalize and compose extraction outcomes`

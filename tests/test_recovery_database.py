@@ -18,6 +18,7 @@ REQUIRED_TABLES = {
     "provider_spend_attempts",
     "provider_balance_snapshots",
     "provider_spend_audit",
+    "authentication_scope_authority_receipts",
     "extraction_outcome_plans",
     "extraction_outcome_steps",
     "extraction_artifact_identities",
@@ -57,27 +58,40 @@ class FakeCursor:
 
     def fetchall(self):
         if "information_schema.columns" in self.query:
-            from argus.recovery.database import REQUIRED_S3_COLUMNS
+            from argus.recovery.database import expected_argus_schema_manifest
 
             return [
-                (table, column, "text", "NO", None)
-                for table in sorted(self.tables)
-                for column in sorted(
-                    REQUIRED_S3_COLUMNS.get(table, {"id"})
+                (
+                    table,
+                    column,
+                    definition["type"],
+                    "YES" if definition["nullable"] else "NO",
+                    None,
                 )
+                for table, columns in expected_argus_schema_manifest()[
+                    "columns"
+                ].items()
+                if table in self.tables
+                for column, definition in columns.items()
             ]
         if "pg_get_constraintdef" in self.query:
-            from argus.recovery.database import REQUIRED_S3_CONSTRAINTS
+            from argus.recovery.database import expected_argus_schema_manifest
 
-            return [(name, f"definition for {name}") for name in sorted(
-                REQUIRED_S3_CONSTRAINTS
-            )]
+            return [
+                (name, value["table"], value["definition"])
+                for name, value in expected_argus_schema_manifest()[
+                    "constraints"
+                ].items()
+            ]
         if "pg_indexes" in self.query:
-            from argus.recovery.database import REQUIRED_S3_INDEXES
+            from argus.recovery.database import expected_argus_schema_manifest
 
-            return [(name, f"definition for {name}") for name in sorted(
-                REQUIRED_S3_INDEXES
-            )]
+            return [
+                (name, value["table"], value["definition"])
+                for name, value in expected_argus_schema_manifest()[
+                    "indexes"
+                ].items()
+            ]
         return [(table,) for table in self.tables]
 
 
@@ -151,7 +165,7 @@ def test_restore_verifier_rejects_stamped_schema_missing_required_constraints():
     connection = FakeConnection(REQUIRED_TABLES)
     connection.cursor_instance = MissingConstraintCursor(REQUIRED_TABLES)
 
-    with pytest.raises(RuntimeError, match="missing required S3 schema objects"):
+    with pytest.raises(RuntimeError, match="database schema manifest"):
         verify_argus_database(
             "argus_restore_issue40_test",
             connect=lambda **kwargs: connection,
@@ -160,20 +174,36 @@ def test_restore_verifier_rejects_stamped_schema_missing_required_constraints():
 
 
 def test_expected_schema_manifest_describes_types_nullability_and_definitions():
-    from argus.recovery.database import expected_argus_schema_manifest
+    from sqlalchemy import Float, Numeric
+
+    from argus.recovery.database import (
+        SCHEMA_CONTRACT_PATH,
+        _postgresql_type_name,
+        build_argus_schema_contract,
+        expected_argus_schema_manifest,
+    )
 
     manifest = expected_argus_schema_manifest()
 
+    assert SCHEMA_CONTRACT_PATH.is_file()
+    assert manifest == build_argus_schema_contract()
+    assert len(manifest["constraints"]) == 83
+    assert len(manifest["indexes"]) == 57
     assert manifest["columns"]["extraction_outcome_steps"]["latency_ms"] == {
         "type": "bigint",
         "nullable": True,
     }
-    assert "MATCH FULL" in manifest["constraints"][
+    assert manifest["columns"]["provider_attempts"]["budget_remaining"][
+        "type"
+    ] == "double precision"
+    assert _postgresql_type_name(Float()) == "double precision"
+    assert _postgresql_type_name(Numeric()) == "numeric"
+    assert "match full" in manifest["constraints"][
         "fk_result_extraction_links_acceptance_plan"
-    ]
+    ]["definition"]
     assert "artifact_ref" in manifest["indexes"][
         "ix_extraction_outcome_artifacts_artifact_ref"
-    ]
+    ]["definition"]
 
 
 def test_restore_compares_database_to_supplied_schema_manifest():
@@ -202,9 +232,15 @@ def test_restore_compares_database_to_supplied_schema_manifest():
                     for column, definition in columns.items()
                 ]
             if "pg_get_constraintdef" in self.query:
-                return list(trusted["constraints"].items())
+                return [
+                    (name, value["table"], value["definition"])
+                    for name, value in trusted["constraints"].items()
+                ]
             if "pg_indexes" in self.query:
-                return list(trusted["indexes"].items())
+                return [
+                    (name, value["table"], value["definition"])
+                    for name, value in trusted["indexes"].items()
+                ]
             return super().fetchall()
 
     connection = FakeConnection(REQUIRED_TABLES)
@@ -246,6 +282,93 @@ def test_restore_compares_database_to_supplied_schema_manifest():
             repository_factory=lambda database: None,
             expected_schema_manifest=corrupted,
         )
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra", "altered"])
+def test_restore_requires_exact_schema_object_sets_and_definitions(mutation):
+    from argus.recovery.database import (
+        expected_argus_schema_manifest,
+        verify_argus_database,
+    )
+
+    trusted = expected_argus_schema_manifest()
+
+    class ExactManifestCursor(FakeCursor):
+        def fetchall(self):
+            if "information_schema.columns" in self.query:
+                return [
+                    (
+                        table,
+                        column,
+                        definition["type"],
+                        "YES" if definition["nullable"] else "NO",
+                        None,
+                    )
+                    for table, columns in trusted["columns"].items()
+                    for column, definition in columns.items()
+                ]
+            if "pg_get_constraintdef" in self.query:
+                constraints = [
+                    (name, value["table"], value["definition"])
+                    for name, value in trusted["constraints"].items()
+                ]
+                if mutation == "missing":
+                    return constraints[1:]
+                if mutation == "extra":
+                    return constraints + [
+                        (
+                            "unexpected_constraint",
+                            "retrieval_requests",
+                            "check id is not null",
+                        )
+                    ]
+                name, table, definition = constraints[0]
+                return [
+                    (
+                        name,
+                        table,
+                        definition.replace("=", "<>")
+                        if "=" in definition
+                        else definition + " DEFERRABLE",
+                    ),
+                    *constraints[1:],
+                ]
+            if "pg_indexes" in self.query:
+                return [
+                    (name, value["table"], value["definition"])
+                    for name, value in trusted["indexes"].items()
+                ]
+            return super().fetchall()
+
+    connection = FakeConnection(set(trusted["tables"]))
+    connection.cursor_instance = ExactManifestCursor(set(trusted["tables"]))
+
+    with pytest.raises(RuntimeError, match="database schema manifest"):
+        verify_argus_database(
+            "argus_restore_issue40_test",
+            connect=lambda **kwargs: connection,
+            repository_factory=lambda database: None,
+            expected_schema_manifest=trusted,
+        )
+
+
+def test_migrated_postgres_uses_double_precision_for_float_columns(
+    migrated_postgres_ledger,
+):
+    from sqlalchemy import text
+
+    engine = migrated_postgres_ledger.session_factory.kw["bind"]
+    with engine.connect() as connection:
+        data_type = connection.execute(
+            text(
+                "SELECT data_type FROM information_schema.columns "
+                "WHERE table_schema = 'public' "
+                "AND table_name = 'provider_attempts' "
+                "AND column_name = 'budget_remaining'"
+            )
+        ).scalar_one()
+
+    assert data_type == "double precision"
 
 
 def test_restore_verifier_rejects_production_target_before_connecting():

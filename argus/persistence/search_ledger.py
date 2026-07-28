@@ -175,6 +175,10 @@ class DeliveryIntentRow(LedgerBase):
             "(run_id IS NULL AND extraction_run_id IS NOT NULL)",
             name="ck_delivery_intents_one_parent",
         ),
+        UniqueConstraint(
+            "extraction_run_id",
+            name="uq_delivery_intents_extraction_run_id",
+        ),
         Index(
             "ix_delivery_intents_dispatch",
             "destination",
@@ -188,7 +192,11 @@ class DeliveryIntentRow(LedgerBase):
         ForeignKey("retrieval_runs.id"), nullable=True, unique=True
     )
     extraction_run_id: Mapped[str | None] = mapped_column(
-        ForeignKey("extraction_runs.id"), nullable=True, unique=True
+        ForeignKey(
+            "extraction_runs.id",
+            name="fk_delivery_intents_extraction_run_id",
+        ),
+        nullable=True,
     )
     destination: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -294,9 +302,29 @@ class ExtractionOutcomePlanRow(LedgerBase):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
+class AuthenticationScopeAuthorityReceiptRow(LedgerBase):
+    __tablename__ = "authentication_scope_authority_receipts"
+
+    receipt_ref: Mapped[str] = mapped_column(String(64), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    access_scope: Mapped[str] = mapped_column(String(128), nullable=False)
+    privacy_scope: Mapped[str] = mapped_column(String(128), nullable=False)
+    authentication_scope_fingerprint: Mapped[str] = mapped_column(
+        String(71),
+        nullable=False,
+    )
+    issued_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 class ExtractionOutcomeStepRow(LedgerBase):
     __tablename__ = "extraction_outcome_steps"
-    __table_args__ = (UniqueConstraint("plan_id", "ordinal"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "plan_id",
+            "ordinal",
+            name="uq_extraction_outcome_steps_plan_ordinal",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     plan_id: Mapped[str] = mapped_column(
@@ -1209,6 +1237,77 @@ class SqlAlchemySearchLedgerRepository:
         self.clock = clock
         self._extraction_finalization_locks: dict[str, threading.Lock] = {}
         self._extraction_finalization_locks_guard = threading.Lock()
+
+    def issue_authentication_scope(
+        self,
+        *,
+        scope_ref: str,
+        access_scope: str,
+        privacy_scope: str,
+    ):
+        """Issue a durable opaque authority receipt for one auth scope."""
+        from argus.extraction.outcomes import (
+            AuthenticationScope,
+            AuthenticationScopeAuthorityReceipt,
+        )
+
+        for value in (scope_ref, access_scope, privacy_scope):
+            if (
+                not isinstance(value, str)
+                or not 1 <= len(value.encode("utf-8")) <= 128
+            ):
+                raise ValueError("authentication authority scope is invalid")
+        fingerprint = (
+            "sha256:" + hashlib.sha256(scope_ref.encode("utf-8")).hexdigest()
+        )
+        receipt_ref = "auth-" + uuid.uuid4().hex
+        issued_at = self.clock()
+        with self.session_factory.begin() as session:
+            session.add(
+                AuthenticationScopeAuthorityReceiptRow(
+                    receipt_ref=receipt_ref,
+                    scope="extraction",
+                    access_scope=access_scope,
+                    privacy_scope=privacy_scope,
+                    authentication_scope_fingerprint=fingerprint,
+                    issued_at=issued_at,
+                )
+            )
+        receipt = AuthenticationScopeAuthorityReceipt(
+            receipt_ref=receipt_ref,
+            scope="extraction",
+            access_scope=access_scope,
+            privacy_scope=privacy_scope,
+            authentication_scope_fingerprint=fingerprint,
+            issued_at=issued_at.isoformat(),
+        )
+        return AuthenticationScope(
+            fingerprint=receipt.authentication_scope_fingerprint,
+            authority_receipt_ref=receipt.receipt_ref,
+        )
+
+    def load_authentication_scope_authority_receipt(self, receipt_ref: str):
+        from argus.extraction.outcomes import (
+            AuthenticationScopeAuthorityReceipt,
+        )
+
+        with self.session_factory() as session:
+            row = session.get(
+                AuthenticationScopeAuthorityReceiptRow,
+                receipt_ref,
+            )
+            if row is None:
+                return None
+            return AuthenticationScopeAuthorityReceipt(
+                receipt_ref=row.receipt_ref,
+                scope=row.scope,
+                access_scope=row.access_scope,
+                privacy_scope=row.privacy_scope,
+                authentication_scope_fingerprint=(
+                    row.authentication_scope_fingerprint
+                ),
+                issued_at=row.issued_at.isoformat(),
+            )
 
     def accept(self, query: SearchQuery, response: SearchResponse) -> AcceptanceReceipt:
         serialized = serialize_acceptance(query, response)

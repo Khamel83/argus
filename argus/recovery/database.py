@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from collections.abc import Callable
-from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 from argus.recovery.operator import (
@@ -33,6 +33,7 @@ REQUIRED_TABLES = {
     "provider_spend_attempts",
     "provider_balance_snapshots",
     "provider_spend_audit",
+    "authentication_scope_authority_receipts",
     "extraction_outcome_plans",
     "extraction_outcome_steps",
     "extraction_artifact_identities",
@@ -46,6 +47,14 @@ REQUIRED_TABLES = {
 }
 COUNTED_TABLES = sorted(REQUIRED_TABLES - {"alembic_version"})
 REQUIRED_S3_COLUMNS = {
+    "authentication_scope_authority_receipts": {
+        "receipt_ref",
+        "scope",
+        "access_scope",
+        "privacy_scope",
+        "authentication_scope_fingerprint",
+        "issued_at",
+    },
     "extraction_artifact_identities": {
         "artifact_ref",
         "content_identity",
@@ -132,81 +141,10 @@ REQUIRED_S3_COLUMNS = {
     },
     "extraction_outcome_activations": {"receipt_ref", "activated_at"},
 }
-REQUIRED_S3_CONSTRAINTS = {
-    "fk_extraction_outcome_artifacts_identity",
-    "fk_result_extraction_links_acceptance_plan",
-    "fk_result_extraction_links_artifact_plan",
-    "fk_result_extraction_links_rejection_plan",
-    "ck_result_extraction_links_acceptance_pair",
-    "ck_result_extraction_links_artifact_pair",
-    "ck_result_extraction_links_rejection_pair",
-    "ck_result_extraction_links_artifact_same_plan",
-    "ck_result_extraction_links_rejection_same_plan",
-    "ck_result_extraction_links_artifact_requires_acceptance",
-    "ck_result_extraction_links_rejection_requires_acceptance",
-    "uq_result_extraction_links_composition_cluster",
-}
-REQUIRED_S3_INDEXES = {
-    "ix_extraction_outcome_artifacts_artifact_ref",
-}
-
-_REQUIRED_S3_CONSTRAINT_DEFINITIONS = {
-    "fk_extraction_outcome_artifacts_identity": (
-        "FOREIGN KEY (artifact_ref) REFERENCES "
-        "extraction_artifact_identities(artifact_ref)"
-    ),
-    "fk_result_extraction_links_acceptance_plan": (
-        "FOREIGN KEY (extraction_acceptance_ref, extraction_plan_id) "
-        "REFERENCES extraction_outcome_acceptances(receipt_ref, plan_id) "
-        "MATCH FULL"
-    ),
-    "fk_result_extraction_links_artifact_plan": (
-        "FOREIGN KEY (artifact_row_id, artifact_plan_id) REFERENCES "
-        "extraction_outcome_artifacts(id, plan_id) MATCH FULL"
-    ),
-    "fk_result_extraction_links_rejection_plan": (
-        "FOREIGN KEY (rejection_row_id, rejection_plan_id) REFERENCES "
-        "extraction_outcome_rejections(id, plan_id) MATCH FULL"
-    ),
-    "ck_result_extraction_links_acceptance_pair": (
-        "(extraction_acceptance_ref IS NULL) = (extraction_plan_id IS NULL)"
-    ),
-    "ck_result_extraction_links_artifact_pair": (
-        "(artifact_row_id IS NULL) = (artifact_plan_id IS NULL)"
-    ),
-    "ck_result_extraction_links_rejection_pair": (
-        "(rejection_row_id IS NULL) = (rejection_plan_id IS NULL)"
-    ),
-    "ck_result_extraction_links_artifact_same_plan": (
-        "artifact_plan_id IS NULL OR artifact_plan_id = extraction_plan_id"
-    ),
-    "ck_result_extraction_links_rejection_same_plan": (
-        "rejection_plan_id IS NULL OR rejection_plan_id = extraction_plan_id"
-    ),
-    "ck_result_extraction_links_artifact_requires_acceptance": (
-        "artifact_row_id IS NULL OR (artifact_plan_id IS NOT NULL AND "
-        "extraction_plan_id IS NOT NULL AND extraction_acceptance_ref IS NOT "
-        "NULL AND artifact_plan_id = extraction_plan_id)"
-    ),
-    "ck_result_extraction_links_rejection_requires_acceptance": (
-        "rejection_row_id IS NULL OR (rejection_plan_id IS NOT NULL AND "
-        "extraction_plan_id IS NOT NULL AND extraction_acceptance_ref IS NOT "
-        "NULL AND rejection_plan_id = extraction_plan_id)"
-    ),
-    "uq_result_extraction_links_composition_cluster": (
-        "UNIQUE (composition_ref, result_cluster_ref)"
-    ),
-}
-_REQUIRED_S3_INDEX_DEFINITIONS = {
-    "ix_extraction_outcome_artifacts_artifact_ref": (
-        "CREATE INDEX ix_extraction_outcome_artifacts_artifact_ref ON "
-        "public.extraction_outcome_artifacts USING btree (artifact_ref)"
-    ),
-}
+SCHEMA_CONTRACT_PATH = Path(__file__).with_name("argus_schema_0007.json")
 
 
-def expected_argus_schema_manifest() -> dict[str, Any]:
-    """Trusted complete schema contract required after the 0007 migration."""
+def _postgresql_type_name(column_type: Any) -> str:
     from sqlalchemy import (
         BigInteger,
         Boolean,
@@ -218,56 +156,87 @@ def expected_argus_schema_manifest() -> dict[str, Any]:
         Text,
     )
 
-    from argus.persistence.provider_spend import SpendBase
-    from argus.persistence.search_ledger import LedgerBase
+    if isinstance(column_type, BigInteger):
+        return "bigint"
+    if isinstance(column_type, Integer):
+        return "integer"
+    if isinstance(column_type, Boolean):
+        return "boolean"
+    if isinstance(column_type, DateTime):
+        return "timestamp without time zone"
+    if isinstance(column_type, Text):
+        return "text"
+    if isinstance(column_type, String):
+        return "character varying"
+    if isinstance(column_type, Float):
+        return "double precision"
+    if isinstance(column_type, Numeric):
+        return "numeric"
+    raise RuntimeError(f"unrecognized schema contract type: {column_type!r}")
 
-    def normalized_type(column_type: Any) -> str:
-        if isinstance(column_type, BigInteger):
-            return "bigint"
-        if isinstance(column_type, Integer):
-            return "integer"
-        if isinstance(column_type, Boolean):
-            return "boolean"
-        if isinstance(column_type, DateTime):
-            return "timestamp without time zone"
-        if isinstance(column_type, Text):
-            return "text"
-        if isinstance(column_type, String):
-            return "character varying"
-        if isinstance(column_type, (Numeric, Float)):
-            return "numeric"
-        raise RuntimeError(f"unrecognized schema contract type: {column_type!r}")
 
-    tables = {
-        **LedgerBase.metadata.tables,
-        **SpendBase.metadata.tables,
-    }
-    columns = {
-        table_name: {
-            column.name: {
-                "type": normalized_type(column.type),
-                "nullable": bool(column.nullable),
-            }
-            for column in table.columns
-        }
-        for table_name, table in sorted(tables.items())
-        if table_name in REQUIRED_TABLES
-    }
-    columns["alembic_version"] = {
-        "version_num": {
-            "type": "character varying",
-            "nullable": False,
-        }
-    }
-    manifest = {
-        "schema_head": EXPECTED_SCHEMA_HEAD,
-        "tables": sorted(REQUIRED_TABLES),
-        "columns": columns,
-        "constraints": deepcopy(_REQUIRED_S3_CONSTRAINT_DEFINITIONS),
-        "indexes": deepcopy(_REQUIRED_S3_INDEX_DEFINITIONS),
-    }
-    manifest["contract_sha256"] = _manifest_sha256(manifest)
-    return manifest
+def _normalize_pg_definition(definition: str) -> str:
+    without_casts = re.sub(
+        r"::(?:character varying|text|double precision|numeric|bigint|integer)",
+        "",
+        definition.lower(),
+    )
+    return " ".join(
+        re.findall(
+            r"<>|<=|>=|=|<|>|[a-z_][a-z0-9_]*|[0-9]+",
+            without_casts,
+        )
+    )
+
+
+def _constraint_name(table_name: str, constraint: Any) -> str:
+    from sqlalchemy import (
+        CheckConstraint,
+        ForeignKeyConstraint,
+        PrimaryKeyConstraint,
+        UniqueConstraint,
+    )
+
+    if constraint.name:
+        return str(constraint.name)
+    columns = [column.name for column in constraint.columns]
+    if isinstance(constraint, PrimaryKeyConstraint):
+        return f"{table_name}_pkey"
+    if isinstance(constraint, UniqueConstraint):
+        return f"{table_name}_{'_'.join(columns)}_key"
+    if isinstance(constraint, ForeignKeyConstraint):
+        return f"{table_name}_{columns[0]}_fkey"
+    if isinstance(constraint, CheckConstraint):
+        raise RuntimeError(f"check constraint on {table_name} must be named")
+    raise RuntimeError(f"unsupported constraint on {table_name}")
+
+
+def _constraint_definition(constraint: Any) -> str:
+    from sqlalchemy import (
+        CheckConstraint,
+        ForeignKeyConstraint,
+        PrimaryKeyConstraint,
+        UniqueConstraint,
+    )
+
+    columns = ", ".join(column.name for column in constraint.columns)
+    if isinstance(constraint, PrimaryKeyConstraint):
+        return f"PRIMARY KEY ({columns})"
+    if isinstance(constraint, UniqueConstraint):
+        return f"UNIQUE ({columns})"
+    if isinstance(constraint, ForeignKeyConstraint):
+        target_table = constraint.elements[0].column.table.name
+        target_columns = ", ".join(
+            element.column.name for element in constraint.elements
+        )
+        match = f" MATCH {constraint.match}" if constraint.match else ""
+        return (
+            f"FOREIGN KEY ({columns}) REFERENCES {target_table} "
+            f"({target_columns}){match}"
+        )
+    if isinstance(constraint, CheckConstraint):
+        return f"CHECK ({constraint.sqltext})"
+    raise RuntimeError("unsupported schema constraint")
 
 
 def _manifest_sha256(manifest: dict[str, Any]) -> str:
@@ -285,21 +254,110 @@ def _manifest_sha256(manifest: dict[str, Any]) -> str:
     ).hexdigest()
 
 
-def _definition_tokens(definition: str) -> tuple[str, ...]:
-    return tuple(
-        re.findall(r"[A-Za-z_][A-Za-z0-9_]*", definition.upper())
-    )
+def build_argus_schema_contract() -> dict[str, Any]:
+    """Generate the complete normalized PostgreSQL contract from metadata."""
+    from sqlalchemy import PrimaryKeyConstraint, UniqueConstraint
+
+    from argus.persistence.provider_spend import SpendBase
+    from argus.persistence.search_ledger import LedgerBase
+
+    tables = {
+        **LedgerBase.metadata.tables,
+        **SpendBase.metadata.tables,
+    }
+    columns = {
+        table_name: {
+            column.name: {
+                "type": _postgresql_type_name(column.type),
+                "nullable": bool(column.nullable),
+            }
+            for column in table.columns
+        }
+        for table_name, table in sorted(tables.items())
+        if table_name in REQUIRED_TABLES
+    }
+    columns["alembic_version"] = {
+        "version_num": {
+            "type": "character varying",
+            "nullable": False,
+        }
+    }
+    constraints: dict[str, dict[str, str]] = {}
+    indexes: dict[str, dict[str, str]] = {}
+    for table_name, table in sorted(tables.items()):
+        if table_name not in REQUIRED_TABLES:
+            continue
+        for constraint in table.constraints:
+            name = _constraint_name(table_name, constraint)
+            constraints[name] = {
+                "table": table_name,
+                "definition": _normalize_pg_definition(
+                    _constraint_definition(constraint)
+                ),
+            }
+            if isinstance(
+                constraint,
+                (PrimaryKeyConstraint, UniqueConstraint),
+            ):
+                columns_sql = ", ".join(
+                    column.name for column in constraint.columns
+                )
+                indexes[name] = {
+                    "table": table_name,
+                    "definition": _normalize_pg_definition(
+                        f"CREATE UNIQUE INDEX {name} ON public.{table_name} "
+                        f"USING btree ({columns_sql})"
+                    ),
+                }
+        for index in table.indexes:
+            unique = "UNIQUE " if index.unique else ""
+            columns_sql = ", ".join(column.name for column in index.columns)
+            indexes[str(index.name)] = {
+                "table": table_name,
+                "definition": _normalize_pg_definition(
+                    f"CREATE {unique}INDEX {index.name} ON "
+                    f"public.{table_name} USING btree ({columns_sql})"
+                ),
+            }
+    constraints["alembic_version_pkc"] = {
+        "table": "alembic_version",
+        "definition": _normalize_pg_definition(
+            "PRIMARY KEY (version_num)"
+        ),
+    }
+    indexes["alembic_version_pkc"] = {
+        "table": "alembic_version",
+        "definition": _normalize_pg_definition(
+            "CREATE UNIQUE INDEX alembic_version_pkc ON "
+            "public.alembic_version USING btree (version_num)"
+        ),
+    }
+    manifest = {
+        "format_version": 1,
+        "schema_head": EXPECTED_SCHEMA_HEAD,
+        "tables": sorted(REQUIRED_TABLES),
+        "columns": columns,
+        "constraints": dict(sorted(constraints.items())),
+        "indexes": dict(sorted(indexes.items())),
+    }
+    manifest["contract_sha256"] = _manifest_sha256(manifest)
+    return manifest
 
 
-def _is_token_subsequence(
-    expected: tuple[str, ...],
-    actual: tuple[str, ...],
-) -> bool:
-    expected_index = 0
-    for token in actual:
-        if expected_index < len(expected) and token == expected[expected_index]:
-            expected_index += 1
-    return expected_index == len(expected)
+def expected_argus_schema_manifest() -> dict[str, Any]:
+    """Load the checked-in complete PostgreSQL schema contract."""
+    try:
+        manifest = json.loads(SCHEMA_CONTRACT_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("checked-in Argus schema contract is invalid") from error
+    if manifest.get("contract_sha256") != _manifest_sha256(manifest):
+        raise RuntimeError("checked-in Argus schema contract hash is invalid")
+    return manifest
+
+
+_GENERATED_SCHEMA_OBJECTS = build_argus_schema_contract()
+REQUIRED_S3_CONSTRAINTS = set(_GENERATED_SCHEMA_OBJECTS["constraints"])
+REQUIRED_S3_INDEXES = set(_GENERATED_SCHEMA_OBJECTS["indexes"])
 
 
 def _verify_schema_manifest(
@@ -333,26 +391,23 @@ def _verify_schema_manifest(
         raise RuntimeError("database schema manifest columns do not match")
 
     actual_constraints = {
-        str(name): str(definition) for name, definition in constraints
+        str(name): {
+            "table": str(table),
+            "definition": _normalize_pg_definition(str(definition)),
+        }
+        for name, table, definition in constraints
     }
-    actual_indexes = {str(name): str(definition) for name, definition in indexes}
-    for kind, expected_definitions, actual_definitions in (
-        ("constraint", expected.get("constraints"), actual_constraints),
-        ("index", expected.get("indexes"), actual_indexes),
-    ):
-        if not isinstance(expected_definitions, dict):
-            raise RuntimeError(f"database schema manifest {kind}s are invalid")
-        for name, definition in expected_definitions.items():
-            if (
-                name not in actual_definitions
-                or not _is_token_subsequence(
-                    _definition_tokens(str(definition)),
-                    _definition_tokens(actual_definitions[name]),
-                )
-            ):
-                raise RuntimeError(
-                    f"database schema manifest {kind} {name!r} does not match"
-                )
+    actual_indexes = {
+        str(name): {
+            "table": str(table),
+            "definition": _normalize_pg_definition(str(definition)),
+        }
+        for name, table, definition in indexes
+    }
+    if expected.get("constraints") != actual_constraints:
+        raise RuntimeError("database schema manifest constraints do not match")
+    if expected.get("indexes") != actual_indexes:
+        raise RuntimeError("database schema manifest indexes do not match")
 _ORPHAN_CHECKS = (
     "SELECT count(*) FROM retrieval_runs child "
     "LEFT JOIN retrieval_requests parent ON parent.id = child.request_id "
@@ -438,6 +493,11 @@ def verify_argus_database(
 ) -> dict[str, Any]:
     """Verify schema, row accounting, relationships, and a basic Argus read path."""
     validated = validate_scratch_database(database)
+    schema_manifest = (
+        expected_schema_manifest
+        if expected_schema_manifest is not None
+        else expected_argus_schema_manifest()
+    )
     if connect is None:
         import psycopg2
 
@@ -493,35 +553,14 @@ def verify_argus_database(
                 cursor.execute(f'SELECT count(*) FROM "{table}"')
                 row_counts[table] = int(cursor.fetchone()[0])
             inventory = _inventory(cursor, tables, row_counts)
-            missing_schema_objects = {
-                "constraints": sorted(
-                    REQUIRED_S3_CONSTRAINTS
-                    - {item[0] for item in inventory["constraints"]}
-                ),
-                "indexes": sorted(
-                    REQUIRED_S3_INDEXES
-                    - {item[0] for item in inventory["indexes"]}
-                ),
-            }
-            missing_schema_objects = {
-                kind: names
-                for kind, names in missing_schema_objects.items()
-                if names
-            }
-            if missing_schema_objects:
-                raise RuntimeError(
-                    "missing required S3 schema objects: "
-                    + json.dumps(missing_schema_objects, sort_keys=True)
-                )
-            if expected_schema_manifest is not None:
-                _verify_schema_manifest(
-                    expected=expected_schema_manifest,
-                    schema_head=schema_head,
-                    tables=tables,
-                    columns=schema_columns,
-                    constraints=inventory["constraints"],
-                    indexes=inventory["indexes"],
-                )
+            _verify_schema_manifest(
+                expected=schema_manifest,
+                schema_head=schema_head,
+                tables=tables,
+                columns=schema_columns,
+                constraints=inventory["constraints"],
+                indexes=inventory["indexes"],
+            )
             _compare_inventory(inventory, expected_inventory)
 
             for query in _ORPHAN_CHECKS:
@@ -714,15 +753,16 @@ def _inventory(cursor, tables: set[str], row_counts: dict[str, int]) -> dict[str
     if int(cursor.fetchone()[0]) != 0:
         raise RuntimeError("database contains unvalidated foreign-key constraints")
     cursor.execute(
-        "SELECT constraint_row.conname, "
+        "SELECT constraint_row.conname, relation.relname, "
         "pg_get_constraintdef(constraint_row.oid) "
         "FROM pg_constraint constraint_row "
         "JOIN pg_namespace namespace ON namespace.oid = constraint_row.connamespace "
+        "JOIN pg_class relation ON relation.oid = constraint_row.conrelid "
         "WHERE namespace.nspname = 'public' ORDER BY constraint_row.conname"
     )
     constraints = [list(row) for row in cursor.fetchall()]
     cursor.execute(
-        "SELECT indexname, indexdef FROM pg_indexes "
+        "SELECT indexname, tablename, indexdef FROM pg_indexes "
         "WHERE schemaname = 'public' ORDER BY indexname"
     )
     indexes = [list(row) for row in cursor.fetchall()]

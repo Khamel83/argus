@@ -13,7 +13,9 @@ from argus.contracts import CanonicalOutcome
 from argus.extraction.cache import ExtractionCacheIdentity
 from argus.extraction.outcomes import (
     AcceptedExtractionOutcome,
+    ANONYMOUS_AUTHENTICATION_SCOPE,
     AuthenticationScope,
+    AuthenticationScopeAuthorityReceipt,
     ArtifactDisposition,
     AttemptOutcome,
     CacheDecision,
@@ -38,7 +40,6 @@ from argus.extraction.outcomes import (
     RejectionSourceKind,
     TerminalCause,
     TerminalCauseKind,
-    is_verified_authentication_scope,
 )
 from argus.extraction.rejection import (
     map_validated_extraction_rejection,
@@ -118,6 +119,13 @@ def _validate_provenance_scope(
     provenance,
     authentication_scope: AuthenticationScope,
 ) -> None:
+    for reference in (
+        provenance.authentication_scope_ref,
+        provenance.cookie_scope_ref,
+        provenance.archive_ref,
+    ):
+        if reference is not None and not _safe_ref(reference):
+            raise ExtractionContractRejected()
     references = {
         reference
         for reference in (
@@ -138,13 +146,6 @@ def _validate_provenance_scope(
     }
     if fingerprints != {authentication_scope.fingerprint}:
         raise ExtractionContractRejected()
-    for reference in (
-        provenance.authentication_scope_ref,
-        provenance.cookie_scope_ref,
-        provenance.archive_ref,
-    ):
-        if reference is not None and not _safe_ref(reference):
-            raise ExtractionContractRejected()
 
 
 def _validate_step(step: ExtractorDecision) -> None:
@@ -323,7 +324,7 @@ def _validate_inputs(
         or not _safe_ref(plan.caller, maximum=64)
         or not _safe_ref(plan.profile, maximum=64)
         or not _safe_ref(plan.privacy_scope, maximum=64)
-        or not is_verified_authentication_scope(plan.authentication_scope)
+        or not isinstance(plan.authentication_scope, AuthenticationScope)
         or not _safe_ref(
             plan.authentication_scope.authority_receipt_ref
         )
@@ -477,9 +478,11 @@ def _validate_inputs(
             partial_allowed=origin.partial_allowed,
             cache_max_age_seconds=origin.cache_max_age_seconds,
         )
-        if cache.outcome is CacheOutcome.HIT_ELIGIBLE and (
-            cache.current_identity != expected_current_identity
-            or cache.current_identity != origin_identity
+        if cache.current_identity != expected_current_identity:
+            raise ExtractionContractRejected()
+        if (
+            cache.outcome is CacheOutcome.HIT_ELIGIBLE
+            and cache.current_identity != origin_identity
         ):
             raise ExtractionContractRejected()
     if cache.outcome is CacheOutcome.HIT_ELIGIBLE and (
@@ -672,6 +675,10 @@ class ExtractionFinalizer:
         raw_extractor_result: RawExtractionResult,
         outcome_policy: OutcomePolicy,
     ) -> AcceptedExtractionOutcome:
+        self._validate_authentication_authority(
+            extraction_request,
+            extraction_plan,
+        )
         invoked = _validate_inputs(
             extraction_request,
             extraction_plan,
@@ -680,10 +687,7 @@ class ExtractionFinalizer:
         )
         cache_decision = raw_extractor_result.cache_decision
         origin = cache_decision.origin_evidence
-        if (
-            origin is not None
-            and cache_decision.outcome is CacheOutcome.HIT_ELIGIBLE
-        ):
+        if origin is not None:
             loader = getattr(
                 self.repository,
                 "load_extraction_outcome_by_receipt",
@@ -717,7 +721,11 @@ class ExtractionFinalizer:
             if (
                 derived_age < 0
                 or cache_decision.age_seconds != derived_age
-                or derived_age > cache_decision.current_identity.cache_max_age_seconds
+                or (
+                    cache_decision.outcome is CacheOutcome.HIT_ELIGIBLE
+                    and derived_age
+                    > cache_decision.current_identity.cache_max_age_seconds
+                )
             ):
                 raise ExtractionContractRejected()
         if (
@@ -813,6 +821,38 @@ class ExtractionFinalizer:
             raise ExtractionPersistenceFailed() from error
         self._validate_receipt(receipt)
         return AcceptedExtractionOutcome.accepted(projection, receipt)
+
+    def _validate_authentication_authority(
+        self,
+        request: ExtractionRequest,
+        plan: ExtractionPlan,
+    ) -> None:
+        scope = plan.authentication_scope
+        if (
+            not isinstance(scope, AuthenticationScope)
+            or request.authentication_scope != scope
+        ):
+            raise ExtractionContractRejected()
+        if scope == ANONYMOUS_AUTHENTICATION_SCOPE:
+            return
+        loader = getattr(
+            self.repository,
+            "load_authentication_scope_authority_receipt",
+            None,
+        )
+        if not callable(loader):
+            raise ExtractionContractRejected()
+        receipt = loader(scope.authority_receipt_ref)
+        if (
+            not isinstance(receipt, AuthenticationScopeAuthorityReceipt)
+            or receipt.receipt_ref != scope.authority_receipt_ref
+            or receipt.scope != "extraction"
+            or receipt.access_scope != plan.access_scope
+            or receipt.privacy_scope != plan.privacy_scope
+            or receipt.authentication_scope_fingerprint
+            != scope.fingerprint
+        ):
+            raise ExtractionContractRejected()
 
     def _build_projection(
         self,

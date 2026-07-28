@@ -1883,10 +1883,11 @@ def test_cache_hit_age_is_derived_from_durable_cache_creation_time():
         _finalize(raw, repository=repository)
 
 
-def test_ineligible_cache_hit_policy_mismatch_skips_cache_and_executes():
+def test_ineligible_cache_hit_rejects_current_identity_not_bound_to_plan():
     from argus.extraction.cache import ExtractionCacheIdentity
     from argus.extraction.outcomes import (
         CacheOriginEvidence,
+        ExtractionContractRejected,
     )
 
     repository = MemoryOutcomeRepository()
@@ -1906,10 +1907,75 @@ def test_ineligible_cache_hit_policy_mismatch_skips_cache_and_executes():
         ),
     )
 
-    accepted = _finalize(raw, repository=repository)
+    with pytest.raises(ExtractionContractRejected):
+        _finalize(raw, repository=repository)
+
+
+def test_ineligible_cache_hit_rebinds_origin_then_executes_current_plan():
+    from argus.extraction.cache import ExtractionCacheIdentity
+    from argus.extraction.outcomes import CacheOriginEvidence
+
+    repository = MemoryOutcomeRepository()
+    origin = _finalize(_raw(artifact=_artifact()), repository=repository)
+    plan = replace(_plan(), mode="research")
+    raw = replace(
+        _raw(artifact=_artifact()),
+        cache_decision=CacheDecision(
+            outcome=CacheOutcome.HIT_INELIGIBLE,
+            origin_run_ref=origin.extraction_run_id,
+            age_seconds=0,
+            origin_evidence=CacheOriginEvidence.from_accepted(
+                origin,
+                acceptance_repository=repository,
+            ),
+            current_identity=ExtractionCacheIdentity.from_plan(
+                plan,
+                outcome_policy_version="outcome-v1",
+                normalized_url_identity=origin.normalized_url_identity,
+            ),
+        ),
+    )
+
+    accepted = _finalize(raw, repository=repository, plan=plan)
 
     assert accepted.outcome is CanonicalOutcome.SUCCESS
     assert accepted.steps[0].attempt_outcome is AttemptOutcome.CONTENT
+
+
+def test_ineligible_cache_hit_rejects_origin_not_bound_to_durable_receipt():
+    from argus.extraction.cache import ExtractionCacheIdentity
+    from argus.extraction.outcomes import (
+        CacheOriginEvidence,
+        ExtractionContractRejected,
+    )
+
+    repository = MemoryOutcomeRepository()
+    origin = _finalize(_raw(artifact=_artifact()), repository=repository)
+    plan = replace(_plan(), mode="research")
+    evidence = replace(
+        CacheOriginEvidence.from_accepted(
+            origin,
+            acceptance_repository=repository,
+        ),
+        artifact=replace(origin.artifact, text="forged origin text"),
+    )
+    raw = replace(
+        _raw(artifact=_artifact()),
+        cache_decision=CacheDecision(
+            outcome=CacheOutcome.HIT_INELIGIBLE,
+            origin_run_ref=origin.extraction_run_id,
+            age_seconds=0,
+            origin_evidence=evidence,
+            current_identity=ExtractionCacheIdentity.from_plan(
+                plan,
+                outcome_policy_version="outcome-v1",
+                normalized_url_identity=origin.normalized_url_identity,
+            ),
+        ),
+    )
+
+    with pytest.raises(ExtractionContractRejected):
+        _finalize(raw, repository=repository, plan=plan)
 
 
 @pytest.mark.parametrize(
@@ -1986,14 +2052,18 @@ def test_eligible_cache_hit_enforces_immutable_max_age(age_seconds, accepted):
 
 
 @pytest.mark.parametrize("provenance_field", ["authentication_scope_ref", "cookie_scope_ref"])
-def test_authority_auth_scope_binds_request_plan_and_provenance(
-    provenance_field,
+def test_durable_authority_auth_scope_binds_request_plan_and_provenance(
+    provenance_field, tmp_path,
 ):
-    from argus.extraction.outcomes import verified_authentication_scope
+    from argus.persistence.search_ledger import create_search_ledger_repository
 
-    authority_scope = verified_authentication_scope(
-        "account-a",
-        authority_receipt_ref="auth-authority-receipt-a",
+    repository = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'auth-authority.db'}"
+    )
+    authority_scope = repository.issue_authentication_scope(
+        scope_ref="account-a",
+        access_scope="private",
+        privacy_scope="private",
     )
     provenance = replace(
         _artifact().provenance,
@@ -2017,7 +2087,7 @@ def test_authority_auth_scope_binds_request_plan_and_provenance(
         "argus.extraction.finalizer",
         fromlist=["ExtractionFinalizer"],
     ).ExtractionFinalizer(
-        repository=MemoryOutcomeRepository(),
+        repository=repository,
         clock=lambda: "2026-07-27T12:00:00Z",
     )
 
@@ -2031,23 +2101,32 @@ def test_authority_auth_scope_binds_request_plan_and_provenance(
     assert accepted.outcome is CanonicalOutcome.SUCCESS
 
 
-def test_private_evidence_cannot_default_anonymous_or_mismatch_authority():
+def test_private_evidence_cannot_default_anonymous_or_forge_authority(tmp_path):
+    import hashlib
+
     from argus.extraction.outcomes import (
+        AuthenticationScope,
         ExtractionContractRejected,
-        verified_authentication_scope,
     )
     from argus.extraction.finalizer import ExtractionFinalizer
+    from argus.persistence.search_ledger import create_search_ledger_repository
 
-    account_a = verified_authentication_scope(
-        "account-a",
-        authority_receipt_ref="auth-authority-receipt-a",
+    repository = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'auth-forgery.db'}"
     )
-    account_b = verified_authentication_scope(
-        "account-b",
-        authority_receipt_ref="auth-authority-receipt-b",
+    account_a = repository.issue_authentication_scope(
+        scope_ref="account-a",
+        access_scope="private",
+        privacy_scope="private",
+    )
+    forged = AuthenticationScope(
+        fingerprint=(
+            "sha256:" + hashlib.sha256(b"account-b").hexdigest()
+        ),
+        authority_receipt_ref="auth-forged-receipt",
     )
     finalizer = ExtractionFinalizer(
-        repository=MemoryOutcomeRepository(),
+        repository=repository,
         clock=lambda: "2026-07-27T12:00:00Z",
     )
     private_request = replace(
@@ -2063,7 +2142,7 @@ def test_private_evidence_cannot_default_anonymous_or_mismatch_authority():
     )
     mismatched_plan = replace(
         anonymous_plan,
-        authentication_scope=account_b,
+        authentication_scope=forged,
     )
 
     for plan in (anonymous_plan, mismatched_plan):
@@ -2074,6 +2153,177 @@ def test_private_evidence_cannot_default_anonymous_or_mismatch_authority():
                 _raw(artifact=_artifact()),
                 OutcomePolicy(version="outcome-v1"),
             )
+
+
+def test_authentication_authority_receipt_survives_restart_and_rejects_tamper(
+    tmp_path,
+):
+    import hashlib
+
+    from argus.extraction.finalizer import ExtractionFinalizer
+    from argus.extraction.outcomes import (
+        AuthenticationScope,
+        ExtractionContractRejected,
+    )
+    from argus.persistence.search_ledger import create_search_ledger_repository
+
+    database_url = f"sqlite:///{tmp_path / 'auth-restart.db'}"
+    issuing_repository = create_search_ledger_repository(database_url)
+    authority_scope = issuing_repository.issue_authentication_scope(
+        scope_ref="account-a",
+        access_scope="private",
+        privacy_scope="private",
+    )
+    issuing_repository.close()
+
+    repository = create_search_ledger_repository(database_url)
+    request = replace(
+        _request("auth-restart-run"),
+        request_id="auth-restart-request",
+        access_scope="private",
+        privacy_scope="private",
+        authentication_scope=authority_scope,
+    )
+    plan = replace(
+        _plan(),
+        access_scope="private",
+        privacy_scope="private",
+        authentication_scope=authority_scope,
+    )
+    provenance = replace(
+        _artifact().provenance,
+        authentication_scope_ref="account-a",
+    )
+    raw = _raw(
+        artifact=replace(_artifact(), provenance=provenance),
+        steps=(
+            replace(
+                _step(0, AttemptOutcome.CONTENT),
+                provenance=provenance,
+            ),
+        ),
+    )
+    finalizer = ExtractionFinalizer(
+        repository=repository,
+        clock=lambda: "2026-07-27T12:00:00Z",
+    )
+
+    first = finalizer.finalize_extraction(
+        request,
+        plan,
+        raw,
+        OutcomePolicy(version="outcome-v1"),
+    )
+    replay = finalizer.finalize_extraction(
+        request,
+        plan,
+        raw,
+        OutcomePolicy(version="outcome-v1"),
+    )
+    assert replay == first
+
+    tampered_scope = AuthenticationScope(
+        fingerprint="sha256:" + hashlib.sha256(b"account-b").hexdigest(),
+        authority_receipt_ref=authority_scope.authority_receipt_ref,
+    )
+    with pytest.raises(ExtractionContractRejected):
+        finalizer.finalize_extraction(
+            replace(
+                request,
+                extraction_run_id="auth-tamper-run",
+                request_id="auth-tamper-request",
+                authentication_scope=tampered_scope,
+            ),
+            replace(plan, authentication_scope=tampered_scope),
+            raw,
+            OutcomePolicy(version="outcome-v1"),
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("scope", "other"),
+        ("access_scope", "public"),
+        ("privacy_scope", "public"),
+        ("authentication_scope_fingerprint", "sha256:" + ("f" * 64)),
+    ],
+)
+def test_authentication_authority_rejects_durable_semantic_tamper(
+    tmp_path,
+    field,
+    value,
+):
+    from sqlalchemy import update
+
+    from argus.extraction.finalizer import ExtractionFinalizer
+    from argus.extraction.outcomes import ExtractionContractRejected
+    from argus.persistence.search_ledger import (
+        AuthenticationScopeAuthorityReceiptRow,
+        create_search_ledger_repository,
+    )
+
+    repository = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / f'auth-semantic-{field}.db'}"
+    )
+    authority_scope = repository.issue_authentication_scope(
+        scope_ref="account-a",
+        access_scope="private",
+        privacy_scope="private",
+    )
+    with repository.session_factory.begin() as session:
+        session.execute(
+            update(AuthenticationScopeAuthorityReceiptRow)
+            .where(
+                AuthenticationScopeAuthorityReceiptRow.receipt_ref
+                == authority_scope.authority_receipt_ref
+            )
+            .values(**{field: value})
+        )
+    request = replace(
+        _request("auth-semantic-run"),
+        request_id="auth-semantic-request",
+        access_scope="private",
+        privacy_scope="private",
+        authentication_scope=authority_scope,
+    )
+    plan = replace(
+        _plan(),
+        access_scope="private",
+        privacy_scope="private",
+        authentication_scope=authority_scope,
+    )
+
+    with pytest.raises(ExtractionContractRejected):
+        ExtractionFinalizer(
+            repository=repository,
+            clock=lambda: "2026-07-27T12:00:00Z",
+        ).finalize_extraction(
+            request,
+            plan,
+            _raw(artifact=_artifact()),
+            OutcomePolicy(version="outcome-v1"),
+        )
+
+
+@pytest.mark.parametrize(
+    "reference_field",
+    ["authentication_scope_ref", "cookie_scope_ref", "archive_ref"],
+)
+def test_anonymous_provenance_validates_every_reference_bound(
+    reference_field,
+):
+    from argus.extraction.outcomes import ExtractionContractRejected
+
+    provenance = replace(
+        _artifact().provenance,
+        **{reference_field: "a" * 19_000},
+    )
+    artifact = replace(_artifact(), provenance=provenance)
+    step = replace(_step(0, AttemptOutcome.CONTENT), provenance=provenance)
+
+    with pytest.raises(ExtractionContractRejected):
+        _finalize(_raw(artifact=artifact, steps=(step,)))
 
 
 def test_cache_creation_time_comes_from_durable_acceptance():
