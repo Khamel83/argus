@@ -11,9 +11,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Barrier, Event, Thread, current_thread
+from unittest.mock import patch
 from urllib.parse import urlparse
-
-from sqlalchemy import select
 
 from argus.broker.readiness import (
     ExecutionContext,
@@ -25,7 +24,7 @@ from argus.broker.readiness import (
 )
 from argus.models import ProviderName
 from argus.persistence.readiness import (
-    ProviderReadinessObservationRow,
+    ProviderReadinessRepository,
     create_readiness_repository,
 )
 from argus.persistence.provider_spend import (
@@ -396,51 +395,61 @@ def main() -> None:
     )
 
     recurring_ref = f"recurring-terminal-{suffix}"
+    recurring_reset_at = (
+        first.repository.authority_now() + timedelta(hours=1)
+    ).replace(microsecond=654321)
     first.repository.record_terminal_exhaustion(
         provider=ProviderName.SEARCHAPI,
         account_fingerprint=scope.account_fingerprint,
         recurring=True,
-        reset_at=first.repository.authority_now() + timedelta(hours=1),
+        reset_at=recurring_reset_at,
         evidence_ref=recurring_ref,
     )
-    try:
-        legacy_spend.reserve(
+    recurring_rows = [
+        row for row in first.repository.observations(ProviderName.SEARCHAPI)
+        if (
+            row.dimension == "spend"
+            and row.evidence_ref == recurring_ref
+        )
+    ]
+    if (
+        len(recurring_rows) != 4
+        or {row.expires_at for row in recurring_rows} != {recurring_reset_at}
+    ):
+        raise RuntimeError("recurring exhaustion lost exact reset precision")
+    with patch.object(
+        ProviderReadinessRepository,
+        "authority_now",
+        return_value=recurring_reset_at - timedelta(microseconds=1),
+    ):
+        try:
+            legacy_spend.reserve(
+                provider=ProviderName.SEARCHAPI,
+                conservative_charge=0.01,
+                budget_limit=1.5,
+                caller_identity="postgres-ci-legacy",
+                caller_label="recurring-terminal-boundary",
+                idempotency_key=f"pg-recurring-terminal-denied-{suffix}",
+            )
+        except BudgetExhaustedError:
+            pass
+        else:
+            raise RuntimeError(
+                "recurring exhaustion allowed a reserve before exact reset"
+            )
+    with patch.object(
+        ProviderReadinessRepository,
+        "authority_now",
+        return_value=recurring_reset_at,
+    ):
+        reset_reservation = legacy_spend.reserve(
             provider=ProviderName.SEARCHAPI,
             conservative_charge=0.01,
             budget_limit=1.5,
             caller_identity="postgres-ci-legacy",
             caller_label="recurring-terminal-boundary",
-            idempotency_key=f"pg-recurring-terminal-denied-{suffix}",
+            idempotency_key=f"pg-recurring-terminal-reset-{suffix}",
         )
-    except BudgetExhaustedError:
-        pass
-    else:
-        raise RuntimeError("unexpired recurring exhaustion allowed a reservation")
-    with first.repository._write_transaction() as session:
-        reset_boundary = first.repository.authority_now(session)
-        recurring_rows = list(session.scalars(
-            select(ProviderReadinessObservationRow)
-            .where(
-                ProviderReadinessObservationRow.provider
-                == ProviderName.SEARCHAPI.value,
-                ProviderReadinessObservationRow.dimension == "spend",
-                ProviderReadinessObservationRow.state == "exhausted",
-                ProviderReadinessObservationRow.evidence_ref == recurring_ref,
-            )
-            .with_for_update()
-        ))
-        if len(recurring_rows) != 4:
-            raise RuntimeError("recurring exhaustion did not cover all modes")
-        for row in recurring_rows:
-            row.expires_at = reset_boundary.replace(tzinfo=None)
-    reset_reservation = legacy_spend.reserve(
-        provider=ProviderName.SEARCHAPI,
-        conservative_charge=0.01,
-        budget_limit=1.5,
-        caller_identity="postgres-ci-legacy",
-        caller_label="recurring-terminal-boundary",
-        idempotency_key=f"pg-recurring-terminal-reset-{suffix}",
-    )
     recurring_reset_modes = [
         first.snapshot(
             ProviderName.SEARCHAPI,

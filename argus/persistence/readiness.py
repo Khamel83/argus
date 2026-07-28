@@ -281,11 +281,18 @@ class ProviderReadinessRepository:
                         old_evidence.protected = False
                 session.delete(old)
                 session.flush()
+            exact_expires = getattr(observation, "expires_at", None)
             expires = (
-                None
-                if observation.ttl_seconds is None
-                else now + timedelta(seconds=observation.ttl_seconds)
+                _aware(exact_expires)
+                if exact_expires is not None
+                else (
+                    None
+                    if observation.ttl_seconds is None
+                    else now + timedelta(seconds=observation.ttl_seconds)
+                )
             )
+            if exact_expires is not None and expires <= now:
+                raise ValueError("observation expires_at must be after database time")
             row = ProviderReadinessObservationRow(
                 id=uuid.uuid4().hex,
                 provider=observation.provider.value,
@@ -1678,11 +1685,11 @@ class ProviderReadinessRepository:
                 ).as_dict()
             ]
         now = self.authority_now()
-        ttl = None
+        exact_reset = None
         if recurring:
             if reset_at is None or _aware(reset_at) <= now:
                 raise ValueError("recurring exhaustion requires a future reset")
-            ttl = max(1, int((_aware(reset_at) - now).total_seconds()))
+            exact_reset = _aware(reset_at)
         elif reset_at is not None:
             raise ValueError("one-time exhaustion cannot have an automatic reset")
         for value in scope_values:
@@ -1692,9 +1699,10 @@ class ProviderReadinessRepository:
                 provider=provider, dimension="spend", state="exhausted",
                 source="provider_authoritative",
                 scope=ReadinessScope(**scope_data), observed_at=now,
-                ttl_seconds=ttl, evidence_ref=evidence_ref, protected=True,
+                ttl_seconds=None, evidence_ref=evidence_ref, protected=True,
                 safe_reason="recurring_quota_exhausted" if recurring
                 else "one_time_credit_exhausted",
+                expires_at=exact_reset,
             ))
 
     def spend_state(self, provider: ProviderName, *, account_fingerprint: str) -> str:

@@ -112,6 +112,7 @@ class ProviderObservation:
     evidence_ref: str | None = None
     safe_reason: str | None = None
     protected: bool = False
+    expires_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if self.provider is ProviderName.CACHE:
@@ -125,6 +126,16 @@ class ProviderObservation:
             raise ValueError("observation TTL must be a bounded positive integer")
         if self.observed_at.tzinfo is None:
             raise ValueError("observed_at must be timezone aware")
+        if self.expires_at is not None:
+            if self.expires_at.tzinfo is None:
+                raise ValueError("expires_at must be timezone aware")
+            if self.ttl_seconds is not None:
+                raise ValueError("observation expiry must use TTL or expires_at")
+            object.__setattr__(
+                self,
+                "expires_at",
+                self.expires_at.astimezone(timezone.utc),
+            )
         _identifier(self.source, "source")
         if self.evidence_ref is not None:
             _identifier(self.evidence_ref, "evidence_ref")

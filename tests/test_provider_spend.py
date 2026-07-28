@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
+from unittest.mock import patch
 import json
 
 import pytest
@@ -188,6 +189,11 @@ def test_terminal_exhaustion_denies_reserve_and_survives_ordinary_settlement(
         service.snapshot(ProviderName.SERPER, request_class=mode).spend
         for mode in ("discovery", "research", "recovery", "grounding")
     ] == ["exhausted"] * 4
+    assert {
+        row.expires_at
+        for row in readiness.observations(ProviderName.SERPER)
+        if row.dimension == "spend"
+    } == {None}
 
     spend.settle(existing.attempt_id, actual_charge=0.25, outcome="success")
 
@@ -209,7 +215,7 @@ def test_recurring_terminal_expiry_allows_atomic_account_wide_reserve(
         ProviderSpendRepository,
     )
     from argus.persistence.readiness import (
-        ProviderReadinessObservationRow,
+        ProviderReadinessRepository,
         create_readiness_repository,
     )
     from argus.providers.fixture_attestation import build_fixture_attestation
@@ -237,7 +243,26 @@ def test_recurring_terminal_expiry_allows_atomic_account_wide_reserve(
         fixture_attestation=attestation,
     ))
     spend = ProviderSpendRepository(readiness.session_factory)
-    reset_at = readiness.authority_now() + timedelta(hours=1)
+    database_boundary = readiness.authority_now().replace(microsecond=321987)
+    with patch.object(
+        ProviderReadinessRepository,
+        "authority_now",
+        return_value=database_boundary,
+    ):
+        with pytest.raises(
+            ValueError,
+            match="recurring exhaustion requires a future reset",
+        ):
+            readiness.record_terminal_exhaustion(
+                provider=ProviderName.BRAVE,
+                account_fingerprint="recurring-boundary-account",
+                recurring=True,
+                reset_at=database_boundary,
+                evidence_ref="recurring-boundary:not-future",
+            )
+    reset_at = (
+        readiness.authority_now() + timedelta(hours=1)
+    ).replace(microsecond=654321)
     readiness.record_terminal_exhaustion(
         provider=ProviderName.BRAVE,
         account_fingerprint="recurring-boundary-account",
@@ -245,44 +270,46 @@ def test_recurring_terminal_expiry_allows_atomic_account_wide_reserve(
         reset_at=reset_at,
         evidence_ref="recurring-boundary:exhausted",
     )
+    terminal_rows = [
+        row for row in readiness.observations(ProviderName.BRAVE)
+        if row.dimension == "spend"
+    ]
+    assert len(terminal_rows) == 4
+    assert {row.expires_at for row in terminal_rows} == {reset_at}
 
-    with pytest.raises(BudgetExhaustedError, match="terminal"):
-        spend.reserve(
-            provider=ProviderName.BRAVE,
-            conservative_charge=0.1,
-            budget_limit=10.0,
-            caller_identity="legacy-direct",
-            caller_label="recurring-boundary",
-            idempotency_key="recurring-boundary:before",
-        )
+    with patch.object(
+        ProviderReadinessRepository,
+        "authority_now",
+        return_value=reset_at - timedelta(microseconds=1),
+    ):
+        with pytest.raises(BudgetExhaustedError, match="terminal"):
+            spend.reserve(
+                provider=ProviderName.BRAVE,
+                conservative_charge=0.1,
+                budget_limit=10.0,
+                caller_identity="legacy-direct",
+                caller_label="recurring-boundary",
+                idempotency_key="recurring-boundary:before",
+            )
     assert readiness.paid_attempt_count(ProviderName.BRAVE) == 0
     assert [
         service.snapshot(ProviderName.BRAVE, request_class=mode).spend
         for mode in ("discovery", "research", "recovery", "grounding")
     ] == ["exhausted"] * 4
 
-    with readiness._write_transaction() as session:
-        boundary = readiness.authority_now(session)
-        rows = list(session.scalars(
-            select(ProviderReadinessObservationRow).where(
-                ProviderReadinessObservationRow.provider
-                == ProviderName.BRAVE.value,
-                ProviderReadinessObservationRow.dimension == "spend",
-                ProviderReadinessObservationRow.state == "exhausted",
-            )
-        ))
-        assert len(rows) == 4
-        for row in rows:
-            row.expires_at = boundary.replace(tzinfo=None)
-
-    reservation = spend.reserve(
-        provider=ProviderName.BRAVE,
-        conservative_charge=0.1,
-        budget_limit=10.0,
-        caller_identity="legacy-direct",
-        caller_label="recurring-boundary",
-        idempotency_key="recurring-boundary:at",
-    )
+    with patch.object(
+        ProviderReadinessRepository,
+        "authority_now",
+        return_value=reset_at,
+    ):
+        reservation = spend.reserve(
+            provider=ProviderName.BRAVE,
+            conservative_charge=0.1,
+            budget_limit=10.0,
+            caller_identity="legacy-direct",
+            caller_label="recurring-boundary",
+            idempotency_key="recurring-boundary:at",
+        )
 
     assert reservation.status == "uncertain"
     assert readiness.paid_attempt_count(ProviderName.BRAVE) == 1
