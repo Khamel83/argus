@@ -97,6 +97,7 @@ class ExecutionPolicySnapshot:
     query_normalization_version: str = "1"
     routing_policy_version: str = "1"
     spend_policy_version: str = "1"
+    organization_policy_version: str = "1"
     freshness_policy_version: str = "1"
     domain_policy_version: str = "1"
     ranking_policy_version: str = "1"
@@ -142,6 +143,7 @@ class RetrievalPlan:
     result_normalization_version: str
     plan_id: str
     cache_fingerprint: str
+    organization_policy_version: str = "1"
 
     @property
     def provider_phase_budget_ms(self) -> int:
@@ -199,6 +201,7 @@ def _validate_raw_bounds(
         "query_normalization_version",
         "routing_policy_version",
         "spend_policy_version",
+        "organization_policy_version",
         "freshness_policy_version",
         "domain_policy_version",
         "ranking_policy_version",
@@ -561,6 +564,7 @@ def resolve_plan(
         "query_normalization_version": policy.query_normalization_version,
         "routing_policy_version": policy.routing_policy_version,
         "spend_policy_version": policy.spend_policy_version,
+        "organization_policy_version": policy.organization_policy_version,
         "freshness_policy_version": policy.freshness_policy_version,
         "domain_policy_version": policy.domain_policy_version,
         "ranking_policy_version": policy.ranking_policy_version,
@@ -637,6 +641,7 @@ def resolve_plan(
         query_normalization_version=policy.query_normalization_version,
         routing_policy_version=policy.routing_policy_version,
         spend_policy_version=policy.spend_policy_version,
+        organization_policy_version=policy.organization_policy_version,
         freshness_policy_version=policy.freshness_policy_version,
         domain_policy_version=policy.domain_policy_version,
         ranking_policy_version=policy.ranking_policy_version,

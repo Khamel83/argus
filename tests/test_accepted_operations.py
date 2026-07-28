@@ -230,6 +230,60 @@ async def test_evidence_recovery_accepts_archive_fallback_before_persistence(
     archive_lookup.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_archive_fallback_is_cancelled_at_operation_deadline(tmp_path):
+    import asyncio
+    from datetime import datetime, timezone
+
+    from argus.broker.planning import (
+        ExecutionPolicySnapshot,
+        RetrievalControls,
+        resolve_plan,
+    )
+    from argus.broker.router import SearchBroker
+    from argus.models import SearchQuery
+    from argus.persistence.evidence import SqlAlchemyEvidenceRepository
+    from argus.persistence.search_ledger import create_search_ledger_repository
+
+    ledger = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'archive-deadline.db'}",
+        create_schema=True,
+    )
+    evidence = SqlAlchemyEvidenceRepository(ledger.session_factory)
+    broker = SearchBroker(providers={}, spend_repository=MagicMock())
+    query = SearchQuery(
+        query="https://dead.example/article",
+        mode=SearchMode.RECOVERY,
+    )
+    broker._accepted_plan = lambda _query, *, compute_attribution: resolve_plan(
+        _query,
+        RetrievalControls(deadline_ms=1_050),
+        compute_attribution,
+        ExecutionPolicySnapshot(),
+        lambda: datetime(2026, 7, 28, tzinfo=timezone.utc),
+    )
+    cancelled = False
+
+    async def blocked_archive_lookup():
+        nonlocal cancelled
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+
+    execution = await broker.search_accepted(
+        query,
+        evidence_repository=evidence,
+        empty_fallback=blocked_archive_lookup,
+    )
+
+    assert execution.outcome is CanonicalOutcome.TIMEOUT
+    assert execution.reason == "operation_deadline"
+    assert cancelled is True
+    assert evidence.accepted_count() == 1
+
+
 def test_legacy_search_presenter_preserves_failure_trace_response():
     from argus.api.presenters import LegacyHttpPresenter
     from argus.contracts import AcceptedOperation, OperationError
@@ -507,7 +561,284 @@ def test_app_rejects_partial_evidence_authority_registration(monkeypatch):
         reset_config()
 
 
-def test_production_evidence_validator_replays_all_frozen_scenarios_and_mutations():
+def _replay_valid_fixture_through_production(evidence, database_path):
+    from dataclasses import replace
+    from datetime import datetime, timezone
+
+    from argus.api.contracts_v2 import EvidenceHttpPresenter
+    from argus.broker.accepted import (
+        AcceptanceReceipt,
+        AcceptedRetrieval,
+        acceptance_fingerprint,
+        canonical_cache_outcome,
+        execution_cohort,
+    )
+    from argus.broker.budgets import PROVIDER_TIERS
+    from argus.broker.fusion import (
+        PSL_DOMAIN_POLICY_VERSION,
+        fuse_evidence,
+        project_search_results,
+    )
+    from argus.broker.planning import (
+        ExecutionPolicySnapshot,
+        RetrievalControls,
+        resolve_plan,
+    )
+    from argus.broker.provider_evidence import LegacyProviderBatchAdapter
+    from argus.contracts import AcceptedOperation
+    from argus.extraction.completeness import CompletenessResult
+    from argus.extraction.extractor import _finalize_accepted_extraction
+    from argus.extraction.models import (
+        ExtractedContent,
+        ExtractionAttempt,
+        ExtractorName,
+    )
+    from argus.models import (
+        FusionPolicy,
+        ProviderName,
+        ProviderTrace,
+        SearchMode,
+        SearchQuery,
+        SearchResult,
+    )
+    from argus.operations.accepted import _operation_error
+    from argus.persistence.evidence import (
+        RetrievalEvidence,
+        SqlAlchemyEvidenceRepository,
+    )
+    from argus.persistence.search_ledger import create_search_ledger_repository
+
+    all_attempts = [
+        *evidence["origin_provider_attempts"],
+        *evidence["provider_attempts"],
+    ]
+    provider_names = tuple(
+        ProviderName(value)
+        for value in dict.fromkeys(
+            [
+                *evidence["plan"]["candidate_providers"],
+                *(item["provider"] for item in all_attempts),
+            ]
+        )
+    )
+    query = SearchQuery(
+        query=f"fixture {evidence['request']['request_id']}",
+        mode=SearchMode(evidence["request"]["mode"]),
+        max_results=max(1, evidence["plan"]["result_limit"]),
+        providers=list(provider_names) or None,
+        free_only=False,
+        caller=evidence["request"]["caller_ref"],
+    )
+    plan = resolve_plan(
+        query,
+        RetrievalControls(),
+        evidence["plan"]["controls"]["include_attribution"],
+        ExecutionPolicySnapshot(
+            effective_max_provider_tier=max(
+                (PROVIDER_TIERS[provider] for provider in provider_names),
+                default=0,
+            ),
+            allowed_providers=provider_names or None,
+            domain_policy_version=PSL_DOMAIN_POLICY_VERSION,
+        ),
+        lambda: datetime(2026, 7, 27, 5, tzinfo=timezone.utc),
+    )
+    attempts = {
+        item["provider"]: item
+        for item in all_attempts
+    }
+    batches = []
+    for provider_name, attempt in attempts.items():
+        provider = ProviderName(provider_name)
+        results = []
+        for cluster in evidence["fusion"]["clusters"]:
+            contribution = next(
+                (
+                    item
+                    for item in cluster["contributions"]
+                    if item["provider"] == provider_name
+                ),
+                None,
+            )
+            if contribution is not None:
+                results.append(
+                    SearchResult(
+                        url=cluster["url"],
+                        title=cluster["title"],
+                        snippet="fixture evidence",
+                        provider=provider,
+                        raw_rank=contribution["provider_rank"],
+                    )
+                )
+        trace = ProviderTrace(
+            provider=provider,
+            status="success" if results else "error",
+            results_count=len(results),
+            error=None if results else attempt["outcome"],
+        )
+        batch = LegacyProviderBatchAdapter.from_legacy((results, trace))
+        batches.append(
+            replace(
+                batch,
+                request_evidence=replace(
+                    batch.request_evidence,
+                    attempt_id=attempt["attempt_id"],
+                ),
+            )
+        )
+    fusion = (
+        fuse_evidence(
+            plan,
+            tuple(batches),
+            FusionPolicy(),
+            lambda: datetime(2026, 7, 27, 5, tzinfo=timezone.utc),
+        )
+        if batches
+        else None
+    )
+    outcome = fusion.outcome if fusion is not None else CanonicalOutcome.UNREADY
+    reason = fusion.reason if fusion is not None else "no_reachable_provider"
+    cache_outcome = canonical_cache_outcome(outcome, reason=reason)
+    results = (
+        project_search_results(fusion)
+        if fusion is not None
+        else []
+    )
+    projected_results = tuple(
+        {
+            "url": item.url,
+            "title": item.title,
+            "snippet": item.snippet,
+            "domain": item.domain,
+            "provider": item.provider.value if item.provider else None,
+            "score": item.score,
+        }
+        for item in results
+    )
+    contributor_refs = tuple(
+        batch.request_evidence.attempt_id
+        for batch in batches
+        if batch.request_evidence.attempt_id
+    )
+    operation_id = f"replay-{evidence['request']['run_id']}"
+    cohort = execution_cohort(
+        plan,
+        policy_identity=evidence["request"]["caller_ref"],
+    )
+    fingerprint = acceptance_fingerprint(
+        operation_id=operation_id,
+        plan_id=plan.plan_id,
+        cache_fingerprint=plan.cache_fingerprint,
+        execution_cohort_id=cohort,
+        outcome=cache_outcome,
+        reason=reason,
+        results=projected_results,
+        contributor_attempt_refs=contributor_refs,
+        origin_spend_usd="0",
+    )
+    receipt = AcceptanceReceipt(
+        receipt_ref=f"receipt:{operation_id}",
+        accepted_at=datetime(2026, 7, 27, 5, tzinfo=timezone.utc),
+        acceptance_fingerprint=fingerprint,
+    )
+    accepted = AcceptedRetrieval(
+        operation_id=operation_id,
+        plan_id=plan.plan_id,
+        cache_fingerprint=plan.cache_fingerprint,
+        execution_cohort=cohort,
+        outcome=cache_outcome,
+        reason=reason,
+        query=query.query,
+        mode=query.mode.value,
+        results=projected_results,
+        contributor_attempt_refs=contributor_refs,
+        origin_spend_usd="0",
+        acceptance_receipt=receipt,
+    )
+    ledger = create_search_ledger_repository(
+        f"sqlite:///{database_path}",
+        create_schema=True,
+    )
+    repository = SqlAlchemyEvidenceRepository(ledger.session_factory)
+    repository.accept(
+        RetrievalEvidence(
+            accepted=accepted,
+            plan=plan,
+            provider_batches=tuple(batches),
+            fusion=fusion,
+        )
+    )
+    assert repository.accepted_count() == 1
+
+    for extraction in evidence["extractions"]:
+        artifact = extraction["artifact"]
+        selected = extraction["selected_extractor"]
+        extracted = ExtractedContent(
+            url=f"https://fixture.invalid/{extraction['cluster_ref']}",
+            text="fixture artifact" if artifact else "",
+            title="Fixture",
+            word_count=2 if artifact else 0,
+            extractor=ExtractorName(selected) if selected else None,
+            error=None if artifact else "fixture extraction failed",
+            quality_passed=(
+                artifact["quality_passed"] if artifact else False
+            ),
+            attempts=[
+                ExtractionAttempt(
+                    extractor=selected or "trafilatura",
+                    status="success" if artifact else "failed",
+                    latency_ms=1,
+                )
+            ],
+            completeness_result=(
+                CompletenessResult(
+                    is_complete=artifact["is_complete"],
+                    confidence=1.0,
+                    truncation_type="clean",
+                    signals=["fixture"],
+                    word_count=2,
+                )
+                if artifact
+                else None
+            ),
+        )
+        _finalize_accepted_extraction(
+            extracted,
+            url=extracted.url,
+            mode="default",
+            caller=query.caller,
+            request_id=f"extract-{operation_id}",
+            latency_ms=1,
+            repository=ledger,
+        )
+
+    response = EvidenceHttpPresenter().response(
+        AcceptedOperation(
+            outcome=outcome,
+            request_id=evidence["request"]["request_id"],
+            result={"accepted": True},
+            error=(
+                None
+                if outcome
+                in {
+                    CanonicalOutcome.SUCCESS,
+                    CanonicalOutcome.DEGRADED,
+                    CanonicalOutcome.EMPTY,
+                }
+                else _operation_error(
+                    outcome,
+                    request_id=evidence["request"]["request_id"],
+                    detail="Frozen production replay",
+                )
+            ),
+        )
+    )
+    assert response.status_code in {200, 502, 503, 504}
+
+
+def test_production_evidence_validator_replays_all_frozen_scenarios_and_mutations(
+    tmp_path,
+):
     from argus.contracts.evidence import (
         AcceptedEvidenceEnvelope,
         RetrievalEvidenceContractViolation,
@@ -521,6 +852,10 @@ def test_production_evidence_validator_replays_all_frozen_scenarios_and_mutation
                 envelope["result"]["evidence"]
             )
             assert accepted.evidence["request"]["request_id"]
+            _replay_valid_fixture_through_production(
+                envelope["result"]["evidence"],
+                tmp_path / f"{entry['path']}.db",
+            )
         else:
             with pytest.raises(RetrievalEvidenceContractViolation) as rejected:
                 AcceptedEvidenceEnvelope.from_mapping(

@@ -200,12 +200,12 @@ def test_production_extraction_adapter_uses_canonical_finalizer():
             is_complete=True,
             confidence=1.0,
             truncation_type="clean",
-            signals=["ending_punctuation"],
+            signals=["word_cap:500"],
             word_count=3,
         ),
         source_type="normalized_text",
         egress="local",
-        machine="test_node",
+        machine="homelab-ts",
     )
 
     projected = _finalize_accepted_extraction(
@@ -221,6 +221,8 @@ def test_production_extraction_adapter_uses_canonical_finalizer():
     assert projected.extraction_run_id
     assert projected.acceptance_receipt is repository.receipt
     assert projected.text == result.text
+    assert projected.machine == "homelab-ts"
+    assert projected.completeness_result.signals == ["word_cap:500"]
 
 
 def test_production_extraction_adapter_accepts_visible_terminal_failure():

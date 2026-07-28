@@ -308,6 +308,10 @@ class SearchBroker:
                 effective_max_provider_tier=3 if cap is None else cap,
                 egress_preference=egress_preference,
                 domain_policy_version=PSL_DOMAIN_POLICY_VERSION,
+                organization_policy_version=os.environ.get(
+                    "ARGUS_ORGANIZATION_POLICY_VERSION",
+                    "1",
+                ),
             ),
             self._utc_clock,
         )
@@ -501,16 +505,83 @@ class SearchBroker:
             provider_deadline = max(started, operation_deadline - 5.0)
             execution = await self._executor.execute(
                 query,
-                plan.candidate_providers,
+                tuple(
+                    provider
+                    for provider in plan.candidate_providers
+                    if provider is not ProviderName.ARCHIVE
+                ),
                 plan=plan,
                 operation_deadline=operation_deadline,
                 provider_phase_deadline=provider_deadline,
             )
             provider_batches = dict(execution.provider_batches)
-            if empty_fallback is not None and not any(
-                batch.results for batch in provider_batches.values()
-            ):
-                fallback_result = await empty_fallback()
+
+            def current_fusion():
+                current_batches = tuple(
+                    provider_batches[name] for name in sorted(provider_batches)
+                )
+                if not current_batches:
+                    failed = any(
+                        trace.status == "error" for trace in execution.traces
+                    )
+                    return (
+                        current_batches,
+                        None,
+                        (
+                            CanonicalOutcome.PROVIDERS_FAILED
+                            if failed
+                            else CanonicalOutcome.UNREADY
+                        ),
+                        "providers_failed" if failed else "no_reachable_provider",
+                    )
+                fused = fuse_evidence(
+                    plan,
+                    current_batches,
+                    FusionPolicy(
+                        operation_deadline=operation_deadline,
+                        monotonic=self._monotonic_clock,
+                        activatable=True,
+                        publication_reserve_seconds=1.0,
+                    ),
+                    self._utc_clock,
+                )
+                return current_batches, fused, fused.outcome, fused.reason
+
+            batches, fusion, outcome, reason = current_fusion()
+            if empty_fallback is not None and outcome in {
+                CanonicalOutcome.EMPTY,
+                CanonicalOutcome.PROVIDERS_FAILED,
+                CanonicalOutcome.UNREADY,
+            }:
+                remaining = operation_deadline - self._monotonic_clock() - 1.0
+                fallback_result = None
+                if remaining <= 0:
+                    fallback_result = None
+                    execution.traces.append(
+                        ProviderTrace(
+                            provider=ProviderName.ARCHIVE,
+                            status="error",
+                            error="operation deadline",
+                        )
+                    )
+                    outcome = CanonicalOutcome.TIMEOUT
+                    reason = "operation_deadline"
+                else:
+                    try:
+                        fallback_result = await asyncio.wait_for(
+                            empty_fallback(),
+                            timeout=remaining,
+                        )
+                    except TimeoutError:
+                        execution.traces.append(
+                            ProviderTrace(
+                                provider=ProviderName.ARCHIVE,
+                                status="error",
+                                error="operation deadline",
+                            )
+                        )
+                        outcome = CanonicalOutcome.TIMEOUT
+                        reason = "operation_deadline"
                 if fallback_result is not None:
                     fallback_result.provider = ProviderName.ARCHIVE
                     fallback_trace = ProviderTrace(
@@ -535,31 +606,7 @@ class SearchBroker:
                         if trace.provider is not ProviderName.ARCHIVE
                     ]
                     execution.traces.append(fallback_trace)
-            batches = tuple(
-                provider_batches[name] for name in sorted(provider_batches)
-            )
-            if not batches:
-                failed = any(trace.status == "error" for trace in execution.traces)
-                outcome = (
-                    CanonicalOutcome.PROVIDERS_FAILED
-                    if failed
-                    else CanonicalOutcome.UNREADY
-                )
-                reason = "providers_failed" if failed else "no_reachable_provider"
-                fusion = None
-            else:
-                fusion = fuse_evidence(
-                    plan,
-                    batches,
-                    FusionPolicy(
-                        operation_deadline=operation_deadline,
-                        monotonic=self._monotonic_clock,
-                        activatable=True,
-                        publication_reserve_seconds=1.0,
-                    ),
-                    self._utc_clock,
-                )
-                outcome, reason = fusion.outcome, fusion.reason
+                    batches, fusion, outcome, reason = current_fusion()
             cache_outcome = canonical_cache_outcome(outcome, reason=reason)
             rendered = (
                 project_search_results(
@@ -633,6 +680,8 @@ class SearchBroker:
                     }
                 )
                 for provider in plan.candidate_providers
+                if provider is not ProviderName.ARCHIVE
+                or provider.value in provider_batches
             )
             try:
                 evidence_repository.accept(
@@ -706,7 +755,19 @@ class SearchBroker:
                 "Accepted search %s committed but session update failed",
                 accepted.receipt.receipt_ref,
             )
-            return accepted, session_id
+            if accepted.response is not None:
+                accepted.response.budget_warnings.append(
+                    "session history update failed"
+                )
+            return (
+                AcceptedSearchExecution(
+                    outcome=CanonicalOutcome.DEGRADED,
+                    reason="session_update_failed",
+                    response=accepted.response,
+                    receipt=accepted.receipt,
+                ),
+                session_id,
+            )
         return holder["result"], resolved_session_id
 
     async def search_with_session(

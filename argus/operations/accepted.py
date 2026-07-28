@@ -229,9 +229,9 @@ class AcceptedOperationService:
             raise AcceptedAuthorityConfigurationError(
                 "evidence authority requires ARGUS_RETRIEVAL_SESSION_SECRET"
             )
-        if not callable(self._extractor or extract_url):
+        if self._extractor is not None and self._extractor is not extract_url:
             raise AcceptedAuthorityConfigurationError(
-                "evidence authority extraction finalizer is unavailable"
+                "evidence authority requires the canonical extraction finalizer"
             )
         evidence_repository = self._get_evidence_repository()
         evidence_repository.accepted_count()

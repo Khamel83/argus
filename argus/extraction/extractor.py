@@ -24,6 +24,7 @@ import asyncio
 import copy
 import hashlib
 import os
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -736,10 +737,20 @@ def _finalize_accepted_extraction(
             ]
         )
     )
+    def evidence_label(value: object, fallback: str) -> str:
+        normalized = re.sub(
+            r"[^a-z0-9_:-]+",
+            "_",
+            str(value or fallback).strip().lower(),
+        ).strip("_")[:64]
+        if not normalized or not normalized[0].isalpha():
+            normalized = f"e_{normalized}"[:64]
+        return normalized or fallback
+
     provenance = ExtractionProvenance(
-        source_type=result.source_type or "normalized_text",
-        egress=result.egress or "unknown",
-        machine=result.machine or "unknown",
+        source_type=evidence_label(result.source_type, "normalized_text"),
+        egress=evidence_label(result.egress, "unknown"),
+        machine=evidence_label(result.machine, "unknown"),
     )
     decisions = []
     for ordinal, attempt in enumerate(result.attempts):
@@ -831,7 +842,12 @@ def _finalize_accepted_extraction(
             quality_passed=result.quality_passed,
             is_complete=completeness.is_complete,
             completeness_confidence=Decimal(str(completeness.confidence)),
-            completeness_signals=tuple(completeness.signals[:16]),
+            completeness_signals=tuple(
+                dict.fromkeys(
+                    evidence_label(signal, "unknown_signal")
+                    for signal in completeness.signals[:16]
+                )
+            ),
             completeness_assessment_version="completeness-v1",
             completeness_recommended_action=completeness.recommended_action,
             provenance=provenance,

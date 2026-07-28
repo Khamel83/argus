@@ -16,7 +16,7 @@
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "279f603ae43e79929a72e3f26fd6f596ea5133906ac1c975e91fccefa67699ea",
+        "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -32,7 +32,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:26c6c64b9a17ce7f0d0f7cabf454d4a4149a75ca1fbeb706"
+      "evidence_ref": "attestation:6ad261c1e0bf1c9f80459c69c4f2777186e63c4a21e706b8"
     },
     "duckduckgo": {
       "attestation": {
@@ -48,7 +48,7 @@
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "279f603ae43e79929a72e3f26fd6f596ea5133906ac1c975e91fccefa67699ea",
+        "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -64,7 +64,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:3ec807cf7fe74d9f74f6fd430a0959c2e58b9b08a26a6d89"
+      "evidence_ref": "attestation:4320f4003682dd9443821d3f4713cdb98a44dd44bec8d373"
     },
     "exa": {
       "attestation": {
@@ -80,7 +80,7 @@
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "279f603ae43e79929a72e3f26fd6f596ea5133906ac1c975e91fccefa67699ea",
+        "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -96,7 +96,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:1b2bb05a15ba02ed085af74e900dbdf2fee5f7626b189a4c"
+      "evidence_ref": "attestation:47a8b9d7f83b2e5152af80af0b7a9da43d7e450dbd6766ab"
     },
     "github": {
       "attestation": {
@@ -112,7 +112,7 @@
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "279f603ae43e79929a72e3f26fd6f596ea5133906ac1c975e91fccefa67699ea",
+        "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -128,7 +128,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:4a71b66ff8b28c9e20082b9e7b3d55418ab0f1ec569c375f"
+      "evidence_ref": "attestation:d879ed89521713a9a60a01ac6fa14a8331baf2b3714c1a7a"
     },
     "linkup": {
       "attestation": {
@@ -144,7 +144,7 @@
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "279f603ae43e79929a72e3f26fd6f596ea5133906ac1c975e91fccefa67699ea",
+        "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -160,7 +160,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:947198cc32b595a493e0c5b77b3f30cf1085f1e625cd8b57"
+      "evidence_ref": "attestation:c2aab5b1f73f6099cc6fe9f7e792be187f52a04d6b81ab22"
     },
     "parallel": {
       "attestation": {
@@ -176,7 +176,7 @@
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "279f603ae43e79929a72e3f26fd6f596ea5133906ac1c975e91fccefa67699ea",
+        "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -192,7 +192,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:9814ce86f705175300b535ed611bc5705cddce15031ae761"
+      "evidence_ref": "attestation:50c288f4001e8615d2cffd5abd7620a707141b6e8254a559"
     },
     "searchapi": {
       "attestation": {
@@ -208,7 +208,7 @@
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "279f603ae43e79929a72e3f26fd6f596ea5133906ac1c975e91fccefa67699ea",
+        "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -224,7 +224,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:7b3a080e2de559a8e2e9dc22bbc4f0ba4bf1de2a0e0007a5"
+      "evidence_ref": "attestation:bf5d9eaf319c582fbc5f783823d035221e433c6e7882badc"
     },
     "searxng": {
       "attestation": {
@@ -240,7 +240,7 @@
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "279f603ae43e79929a72e3f26fd6f596ea5133906ac1c975e91fccefa67699ea",
+        "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -256,7 +256,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:317cdbba9efc3d7f4b565fa2acac63f5d4122f56f9bb8986"
+      "evidence_ref": "attestation:648ff3342dba4233be3008183037f57ceb9e4f7d011108cd"
     },
     "serper": {
       "attestation": {
@@ -272,7 +272,7 @@
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "279f603ae43e79929a72e3f26fd6f596ea5133906ac1c975e91fccefa67699ea",
+        "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -288,7 +288,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:8c1a72d6b6dd34f00b154f84117d5c8480b98c6a9905370f"
+      "evidence_ref": "attestation:ff42c0009bbc34dde9ff993774133761569bd76492b47f58"
     },
     "tavily": {
       "attestation": {
@@ -304,7 +304,7 @@
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "279f603ae43e79929a72e3f26fd6f596ea5133906ac1c975e91fccefa67699ea",
+        "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -320,7 +320,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:841103c12085f9fbc4ee96a76fe2423ad5c5052eb2e084d9"
+      "evidence_ref": "attestation:e422ef79a8b3b943d6a93b5e88282707f5a8e2ac5eb2a0b6"
     },
     "valyu": {
       "attestation": {
@@ -336,7 +336,7 @@
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "279f603ae43e79929a72e3f26fd6f596ea5133906ac1c975e91fccefa67699ea",
+        "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -352,7 +352,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:7695c6e6e314ab0444f6438068ef80b3ecec3d1aa10f62e8"
+      "evidence_ref": "attestation:1c685a393a15cb090ffcdd89ec7dab907a9120519932b5fb"
     },
     "wolfram": {
       "attestation": {
@@ -368,7 +368,7 @@
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "279f603ae43e79929a72e3f26fd6f596ea5133906ac1c975e91fccefa67699ea",
+        "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -384,7 +384,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:7b711a944a255ff5247c619ffa591876ab25140485942c72"
+      "evidence_ref": "attestation:68f5968a3337c1a5aa3229448b23f373ee13786cfaef0015"
     },
     "yahoo": {
       "attestation": {
@@ -400,7 +400,7 @@
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "279f603ae43e79929a72e3f26fd6f596ea5133906ac1c975e91fccefa67699ea",
+        "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -416,7 +416,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:62734fa9c723011f94545c90641c11621fbfef8f89116873"
+      "evidence_ref": "attestation:141744ab271ab9291873fc6459d6c801f4421453caa3e0c4"
     },
     "you": {
       "attestation": {
@@ -432,7 +432,7 @@
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "279f603ae43e79929a72e3f26fd6f596ea5133906ac1c975e91fccefa67699ea",
+        "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -448,7 +448,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:c4259d2c1a45f5cc7a4306b48c21928f8a5050676c10003b"
+      "evidence_ref": "attestation:cb2c8f93ca642026cb2ad51ed14a33583f6eb0056a5589c8"
     }
   },
   "release_revision": "argus-1.6.2",

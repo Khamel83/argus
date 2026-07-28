@@ -697,6 +697,7 @@ When running from the repo, Argus now auto-loads `.env` and `.env.local` (withou
 | `ARGUS_ALLOWED_HOSTS` | — | Exact comma-separated HTTP Host allowlist; required for a remote production listener |
 | `ARGUS_ALLOWED_ORIGINS` | — | Exact comma-separated browser Origin allowlist. Set explicitly, including an empty value, for remote production |
 | `ARGUS_RETRIEVAL_SESSION_SECRET` | — | Stable random secret of at least 32 characters used to bind v2 retrieval sessions to authenticated principals |
+| `ARGUS_ORGANIZATION_POLICY_VERSION` | `1` | Stable organization-policy identity included in accepted execution cohorts |
 | `ARGUS_ROOT_PATH` | — | Public subpath prefix for dashboard links and redirects, e.g. `/argus` |
 | `ARGUS_MAYA_CAPTURE_URL` | — | Maya's dedicated Argus retrieval-capture endpoint; delivery stays disabled when unset |
 | `ARGUS_MAYA_CAPTURE_TOKEN` | — | Dedicated shared secret for Maya capture delivery; never reuse the generic Maya ingest token |

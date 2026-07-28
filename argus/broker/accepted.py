@@ -194,6 +194,7 @@ def execution_cohort(plan, *, policy_identity: str = "") -> str:
         "egress_preference": plan.egress_preference.value,
         "revalidation": plan.revalidation.value,
         "spend_policy_version": plan.spend_policy_version,
+        "organization_policy_version": plan.organization_policy_version,
         "policy_identity": policy_identity,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()

@@ -249,7 +249,9 @@ async def test_session_write_failure_does_not_hide_durable_acceptance(tmp_path):
         session_id="existing-session",
     )
 
-    assert execution.outcome.value == "success"
+    assert execution.outcome.value == "degraded"
+    assert execution.reason == "session_update_failed"
+    assert "session history update failed" in execution.response.budget_warnings
     assert execution.receipt is not None
     assert session_id == "existing-session"
     assert evidence.accepted_count() == 1
