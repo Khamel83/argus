@@ -53,6 +53,13 @@ def upgrade() -> None:
         ),
     )
     op.create_table(
+        "extraction_artifact_identities",
+        sa.Column("artifact_ref", sa.String(128), primary_key=True),
+        sa.Column("content_identity", sa.String(128), nullable=False),
+        sa.Column("content_text", sa.Text(), nullable=False),
+        sa.Column("evaluation_json", sa.Text(), nullable=False),
+    )
+    op.create_table(
         "extraction_outcome_artifacts",
         sa.Column("id", sa.String(32), primary_key=True),
         sa.Column(
@@ -62,7 +69,15 @@ def upgrade() -> None:
             nullable=False,
             unique=True,
         ),
-        sa.Column("artifact_ref", sa.String(128), nullable=False),
+        sa.Column(
+            "artifact_ref",
+            sa.String(128),
+            sa.ForeignKey(
+                "extraction_artifact_identities.artifact_ref",
+                name="fk_extraction_outcome_artifacts_identity",
+            ),
+            nullable=False,
+        ),
         sa.Column("content_identity", sa.String(128), nullable=False),
         sa.Column("content_text", sa.Text(), nullable=False),
         sa.Column("disposition", sa.String(32), nullable=False),
@@ -70,6 +85,11 @@ def upgrade() -> None:
         sa.Column("is_complete", sa.Boolean(), nullable=True),
         sa.Column("evaluation_json", sa.Text(), nullable=False),
         sa.UniqueConstraint("id", "plan_id"),
+    )
+    op.create_index(
+        "ix_extraction_outcome_artifacts_artifact_ref",
+        "extraction_outcome_artifacts",
+        ["artifact_ref"],
     )
     op.create_table(
         "extraction_outcome_rejections",
@@ -144,11 +164,13 @@ def upgrade() -> None:
             sa.String(32),
             nullable=True,
         ),
+        sa.Column("artifact_plan_id", sa.String(32), nullable=True),
         sa.Column(
             "rejection_row_id",
             sa.String(32),
             nullable=True,
         ),
+        sa.Column("rejection_plan_id", sa.String(32), nullable=True),
         sa.Column("reuse_origin", sa.String(128), nullable=True),
         sa.ForeignKeyConstraint(
             ["extraction_acceptance_ref", "extraction_plan_id"],
@@ -156,20 +178,39 @@ def upgrade() -> None:
                 "extraction_outcome_acceptances.receipt_ref",
                 "extraction_outcome_acceptances.plan_id",
             ],
+            match="FULL",
+            name="fk_result_extraction_links_acceptance_plan",
         ),
         sa.ForeignKeyConstraint(
-            ["artifact_row_id", "extraction_plan_id"],
+            ["artifact_row_id", "artifact_plan_id"],
             [
                 "extraction_outcome_artifacts.id",
                 "extraction_outcome_artifacts.plan_id",
             ],
+            match="FULL",
+            name="fk_result_extraction_links_artifact_plan",
         ),
         sa.ForeignKeyConstraint(
-            ["rejection_row_id", "extraction_plan_id"],
+            ["rejection_row_id", "rejection_plan_id"],
             [
                 "extraction_outcome_rejections.id",
                 "extraction_outcome_rejections.plan_id",
             ],
+            match="FULL",
+            name="fk_result_extraction_links_rejection_plan",
+        ),
+        sa.CheckConstraint(
+            "(extraction_acceptance_ref IS NULL) = "
+            "(extraction_plan_id IS NULL)",
+            name="ck_result_extraction_links_acceptance_pair",
+        ),
+        sa.CheckConstraint(
+            "(artifact_row_id IS NULL) = (artifact_plan_id IS NULL)",
+            name="ck_result_extraction_links_artifact_pair",
+        ),
+        sa.CheckConstraint(
+            "(rejection_row_id IS NULL) = (rejection_plan_id IS NULL)",
+            name="ck_result_extraction_links_rejection_pair",
         ),
         sa.UniqueConstraint(
             "composition_ref",
@@ -204,5 +245,6 @@ def downgrade() -> None:
     op.drop_table("extraction_outcome_acceptances")
     op.drop_table("extraction_outcome_rejections")
     op.drop_table("extraction_outcome_artifacts")
+    op.drop_table("extraction_artifact_identities")
     op.drop_table("extraction_outcome_steps")
     op.drop_table("extraction_outcome_plans")

@@ -105,8 +105,6 @@ class ResultExtractionLink:
         result_cluster_ref: str,
         accepted_outcome: AcceptedExtractionOutcome,
         required: bool,
-        eligible_path: bool,
-        attempted: bool,
         reuse_origin: str | None = None,
     ) -> "ResultExtractionLink":
         if not isinstance(accepted_outcome, AcceptedExtractionOutcome):
@@ -115,6 +113,10 @@ class ResultExtractionLink:
             )
         artifact = accepted_outcome.artifact
         rejection = accepted_outcome.rejection
+        attempted = any(
+            step.decision is not None and step.decision.value == "invoked"
+            for step in accepted_outcome.steps
+        )
         return cls(
             link_ref=link_ref,
             result_cluster_ref=result_cluster_ref,
@@ -127,7 +129,7 @@ class ResultExtractionLink:
             ),
             acceptance_receipt=accepted_outcome.acceptance_receipt,
             required=required,
-            eligible_path=eligible_path,
+            eligible_path=True,
             attempted=attempted,
             artifact_identity=(
                 artifact.content_identity if artifact is not None else None
@@ -291,8 +293,6 @@ def _validate_requirement(
                 result_cluster_ref=link.result_cluster_ref,
                 accepted_outcome=accepted,
                 required=link.required,
-                eligible_path=link.eligible_path,
-                attempted=link.attempted,
                 reuse_origin=link.reuse_origin,
             )
             if link != expected:

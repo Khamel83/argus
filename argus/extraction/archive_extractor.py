@@ -9,7 +9,9 @@ Rate limited to 1 request per 5 seconds.
 
 import asyncio
 from dataclasses import dataclass
+from pathlib import Path
 import re
+import sqlite3
 import time
 from typing import Optional, Protocol
 from urllib.parse import urlsplit
@@ -68,6 +70,33 @@ class ArchiveCreationAuthorizationStore(Protocol):
         idempotency_key: str,
         target: str,
     ) -> bool: ...
+
+
+class SQLiteArchiveCreationAuthorizationStore:
+    """Restart-durable atomic one-use archive authorization store."""
+
+    def __init__(self, path: str | Path):
+        self.path = str(path)
+        with sqlite3.connect(self.path) as connection:
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS archive_creation_consumptions ("
+                "receipt TEXT NOT NULL, "
+                "idempotency_key TEXT NOT NULL, "
+                "target_identity TEXT NOT NULL, "
+                "PRIMARY KEY (receipt, idempotency_key, target_identity))"
+            )
+
+    def consume(self, *, receipt: str, idempotency_key: str, target: str) -> bool:
+        import hashlib
+
+        target_identity = hashlib.sha256(target.encode("utf-8")).hexdigest()
+        with sqlite3.connect(self.path, timeout=5) as connection:
+            cursor = connection.execute(
+                "INSERT OR IGNORE INTO archive_creation_consumptions "
+                "(receipt, idempotency_key, target_identity) VALUES (?, ?, ?)",
+                (receipt, idempotency_key, target_identity),
+            )
+            return cursor.rowcount == 1
 
 
 def _get_lock():

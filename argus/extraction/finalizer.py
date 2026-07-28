@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from decimal import Decimal
@@ -36,8 +37,7 @@ from argus.extraction.outcomes import (
     TerminalCauseKind,
 )
 from argus.extraction.rejection import (
-    ExtractionRejection,
-    classify_typed_extraction_rejection,
+    map_validated_extraction_rejection,
     validate_typed_extraction_rejection,
 )
 
@@ -70,9 +70,9 @@ _TERMINAL_ATTEMPT_MAPPING = {
 }
 
 
-def map_extraction_rejection(facts: RejectionFacts) -> ExtractionRejection:
+def map_extraction_rejection(facts: RejectionFacts):
     """Compatibility facade over issue #57's typed rejection authority."""
-    return classify_typed_extraction_rejection(facts)
+    return map_validated_extraction_rejection(facts)
 
 
 def _safe_label(value: object) -> bool:
@@ -376,6 +376,14 @@ def _validate_inputs(
             or not _safe_ref(origin.extraction_plan_version)
             or not _safe_ref(origin.quality_policy_version)
             or not _safe_ref(origin.completeness_policy_version)
+            or not _safe_ref(origin.normalized_url_identity)
+            or not _safe_label(origin.mode)
+            or not _safe_ref(origin.access_scope)
+            or not _safe_ref(origin.authentication_scope_fingerprint)
+            or not _safe_ref(origin.cache_policy_version)
+            or not _safe_ref(origin.privacy_scope)
+            or not isinstance(origin.cache_created_at, str)
+            or not origin.cache_created_at
             or not isinstance(origin.steps, tuple)
             or len(origin.steps) > 16
         ):
@@ -390,6 +398,13 @@ def _validate_inputs(
         not in {ArtifactDisposition.USABLE, ArtifactDisposition.PARTIAL}
         or cache.origin_evidence.outcome
         not in {CanonicalOutcome.SUCCESS, CanonicalOutcome.DEGRADED}
+        or cache.origin_evidence.normalized_url_identity
+        != "sha256:"
+        + hashlib.sha256(plan.normalized_url.encode("utf-8")).hexdigest()
+        or cache.origin_evidence.mode != plan.mode
+        or cache.origin_evidence.access_scope != plan.access_scope
+        or cache.origin_evidence.cache_policy_version != plan.cache_policy_ref
+        or cache.origin_evidence.privacy_scope != plan.privacy_scope
     ):
         raise ExtractionContractRejected()
     _validate_terminal(raw.terminal_cause, invoked, plan, raw.steps)
@@ -567,6 +582,25 @@ class ExtractionFinalizer:
             raw_extractor_result,
             outcome_policy,
         )
+        origin = raw_extractor_result.cache_decision.origin_evidence
+        if origin is not None:
+            loader = getattr(
+                self.repository,
+                "load_extraction_outcome_by_receipt",
+                None,
+            )
+            if not callable(loader):
+                raise ExtractionContractRejected()
+            durable = loader(origin.acceptance_receipt.receipt_ref)
+            if durable is None:
+                raise ExtractionContractRejected()
+            expected_origin = CacheOriginEvidence.from_accepted(
+                durable,
+                acceptance_repository=self.repository,
+                cache_created_at=origin.cache_created_at,
+            )
+            if expected_origin != origin:
+                raise ExtractionContractRejected()
         if (
             extraction_request.extraction_run_id is None
             and raw_extractor_result.terminal_cause is not None
@@ -738,12 +772,15 @@ class ExtractionFinalizer:
                 autonomous=outcome_policy.autonomous,
             )
             try:
-                rejection = self.rejection_mapper(facts)
+                mapped_rejection = self.rejection_mapper(facts)
             except ExtractionContractRejected:
                 raise
             except Exception as error:
                 raise ExtractionContractRejected() from error
-            validate_typed_extraction_rejection(facts, rejection)
+            rejection = validate_typed_extraction_rejection(
+                facts,
+                mapped_rejection,
+            )
 
         return FinalizedExtractionProjection(
             extraction_outcome_policy_version=outcome_policy.version,
@@ -760,6 +797,10 @@ class ExtractionFinalizer:
             selected_extractor=raw_extractor_result.selected_extractor,
             cache_decision=raw_extractor_result.cache_decision,
             operation_latency_ms=raw_extractor_result.operation_latency_ms,
+            normalized_url_identity="sha256:"
+            + hashlib.sha256(
+                extraction_plan.normalized_url.encode("utf-8")
+            ).hexdigest(),
         )
     @staticmethod
     def _validate_receipt(receipt: ExtractionAcceptanceReceipt) -> None:

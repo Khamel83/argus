@@ -30,6 +30,58 @@ class ExtractionCacheIdentity:
     privacy_scope: str
     partial_allowed: bool
 
+    @classmethod
+    def from_accepted(cls, accepted):
+        from argus.extraction.outcomes import AcceptedExtractionOutcome
+
+        if not isinstance(accepted, AcceptedExtractionOutcome):
+            raise TypeError("cache identity requires an accepted extraction")
+        auth_refs = {
+            provenance.authentication_scope_ref
+            for provenance in (
+                [
+                    accepted.artifact.provenance
+                    if accepted.artifact is not None
+                    else None
+                ]
+                + [
+                    step.provenance
+                    for step in accepted.steps
+                    if step.provenance is not None
+                ]
+            )
+            if provenance is not None
+            and provenance.authentication_scope_ref is not None
+        }
+        if len(auth_refs) > 1:
+            raise ValueError("accepted extraction has inconsistent authentication scope")
+        authentication_scope = next(iter(auth_refs), None)
+        authentication_scope_fingerprint = (
+            "anonymous"
+            if authentication_scope is None
+            else "sha256:"
+            + hashlib.sha256(authentication_scope.encode("utf-8")).hexdigest()
+        )
+        return cls(
+            normalized_url=accepted.normalized_url_identity
+            or "sha256:"
+            + hashlib.sha256(
+                accepted.plan.normalized_url.encode("utf-8")
+            ).hexdigest(),
+            mode=accepted.plan.mode,
+            access_scope=accepted.plan.access_scope,
+            authentication_scope_fingerprint=authentication_scope_fingerprint,
+            cache_policy_version=accepted.plan.cache_policy_ref,
+            extraction_plan_version=accepted.plan.extraction_plan_version,
+            quality_policy_version=accepted.plan.quality_policy_version,
+            completeness_policy_version=(
+                accepted.plan.completeness_policy_version
+            ),
+            outcome_policy_version=accepted.extraction_outcome_policy_version,
+            privacy_scope=accepted.plan.privacy_scope,
+            partial_allowed=accepted.plan.partial_allowed,
+        )
+
     def canonical_bytes(self) -> bytes:
         return json.dumps(
             {
@@ -53,9 +105,10 @@ class ExtractionCacheIdentity:
 
 
 class ExtractionCache:
-    def __init__(self, ttl_hours: int = 168):
+    def __init__(self, ttl_hours: int = 168, *, acceptance_repository=None):
         self._store: dict[str, tuple[object, float]] = {}
         self._ttl = ttl_hours * 3600
+        self._acceptance_repository = acceptance_repository
 
     @staticmethod
     def _key(url: str | ExtractionCacheIdentity) -> str:
@@ -110,7 +163,18 @@ class ExtractionCache:
                     is ArtifactDisposition.PARTIAL
                     and not url.partial_allowed
                 )
+                or ExtractionCacheIdentity.from_accepted(content) != url
             ):
+                return
+            loader = getattr(
+                self._acceptance_repository,
+                "load_extraction_outcome_by_receipt",
+                None,
+            )
+            if not callable(loader):
+                return
+            durable = loader(content.acceptance_receipt.receipt_ref)
+            if durable != content:
                 return
             self._store[self._key(url)] = (content, time.time())
             return

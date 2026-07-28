@@ -312,15 +312,36 @@ class ExtractionOutcomeStepRow(LedgerBase):
     policy_rule_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
+class ExtractionArtifactIdentityRow(LedgerBase):
+    __tablename__ = "extraction_artifact_identities"
+
+    artifact_ref: Mapped[str] = mapped_column(String(128), primary_key=True)
+    content_identity: Mapped[str] = mapped_column(String(128), nullable=False)
+    content_text: Mapped[str] = mapped_column(Text, nullable=False)
+    evaluation_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class ExtractionOutcomeArtifactRow(LedgerBase):
     __tablename__ = "extraction_outcome_artifacts"
-    __table_args__ = (UniqueConstraint("id", "plan_id"),)
+    __table_args__ = (
+        UniqueConstraint("id", "plan_id"),
+        Index(
+            "ix_extraction_outcome_artifacts_artifact_ref",
+            "artifact_ref",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     plan_id: Mapped[str] = mapped_column(
         ForeignKey("extraction_outcome_plans.id"), nullable=False, unique=True
     )
-    artifact_ref: Mapped[str] = mapped_column(String(128), nullable=False)
+    artifact_ref: Mapped[str] = mapped_column(
+        ForeignKey(
+            "extraction_artifact_identities.artifact_ref",
+            name="fk_extraction_outcome_artifacts_identity",
+        ),
+        nullable=False,
+    )
     content_identity: Mapped[str] = mapped_column(String(128), nullable=False)
     content_text: Mapped[str] = mapped_column(Text, nullable=False)
     disposition: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -380,27 +401,50 @@ class RetrievalCompositionRow(LedgerBase):
 class ResultExtractionLinkRow(LedgerBase):
     __tablename__ = "result_extraction_links"
     __table_args__ = (
-        UniqueConstraint("composition_ref", "result_cluster_ref"),
+        UniqueConstraint(
+            "composition_ref",
+            "result_cluster_ref",
+            name="uq_result_extraction_links_composition_cluster",
+        ),
+        CheckConstraint(
+            "(extraction_acceptance_ref IS NULL) = "
+            "(extraction_plan_id IS NULL)",
+            name="ck_result_extraction_links_acceptance_pair",
+        ),
+        CheckConstraint(
+            "(artifact_row_id IS NULL) = (artifact_plan_id IS NULL)",
+            name="ck_result_extraction_links_artifact_pair",
+        ),
+        CheckConstraint(
+            "(rejection_row_id IS NULL) = (rejection_plan_id IS NULL)",
+            name="ck_result_extraction_links_rejection_pair",
+        ),
         ForeignKeyConstraint(
             ["extraction_acceptance_ref", "extraction_plan_id"],
             [
                 "extraction_outcome_acceptances.receipt_ref",
                 "extraction_outcome_acceptances.plan_id",
             ],
+            match="FULL",
+            name="fk_result_extraction_links_acceptance_plan",
         ),
         ForeignKeyConstraint(
-            ["artifact_row_id", "extraction_plan_id"],
+            ["artifact_row_id", "artifact_plan_id"],
             [
                 "extraction_outcome_artifacts.id",
                 "extraction_outcome_artifacts.plan_id",
             ],
+            match="FULL",
+            name="fk_result_extraction_links_artifact_plan",
         ),
         ForeignKeyConstraint(
-            ["rejection_row_id", "extraction_plan_id"],
+            ["rejection_row_id", "rejection_plan_id"],
             [
                 "extraction_outcome_rejections.id",
                 "extraction_outcome_rejections.plan_id",
             ],
+            match="FULL",
+            name="fk_result_extraction_links_rejection_plan",
         ),
     )
 
@@ -418,7 +462,13 @@ class ResultExtractionLinkRow(LedgerBase):
     artifact_row_id: Mapped[str | None] = mapped_column(
         String(32), nullable=True
     )
+    artifact_plan_id: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
     rejection_row_id: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+    rejection_plan_id: Mapped[str | None] = mapped_column(
         String(32), nullable=True
     )
     reuse_origin: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -676,10 +726,11 @@ def _extraction_projection_state(projection) -> dict:
 
     state = asdict(projection)
     raw_url = state["plan"]["normalized_url"]
-    state["plan"]["normalized_url"] = _safe_persisted_url(raw_url)
-    state["normalized_url_identity"] = hashlib.sha256(
-        raw_url.encode("utf-8")
-    ).hexdigest()
+    state["plan"]["normalized_url"] = _safe_extraction_source_url(raw_url)
+    state["normalized_url_identity"] = (
+        getattr(projection, "normalized_url_identity", None)
+        or "sha256:" + hashlib.sha256(raw_url.encode("utf-8")).hexdigest()
+    )
     return _normalize_json_value(state)
 
 
@@ -689,10 +740,10 @@ def _extraction_claim_state(claim) -> dict:
     state = asdict(claim)
     state["plan_ref"] = claim.plan.plan_ref
     raw_url = state["plan"]["normalized_url"]
-    state["plan"]["normalized_url"] = _safe_persisted_url(raw_url)
-    state["normalized_url_identity"] = hashlib.sha256(
-        raw_url.encode("utf-8")
-    ).hexdigest()
+    state["plan"]["normalized_url"] = _safe_extraction_source_url(raw_url)
+    state["normalized_url_identity"] = (
+        "sha256:" + hashlib.sha256(raw_url.encode("utf-8")).hexdigest()
+    )
     return _normalize_json_value(state)
 
 
@@ -860,7 +911,6 @@ def _deserialize_extraction_projection(state: dict):
             }
         )
     projection_state = dict(state)
-    projection_state.pop("normalized_url_identity", None)
     return FinalizedExtractionProjection(
         **{
             **projection_state,
@@ -884,16 +934,41 @@ def _deserialize_extraction_projection(state: dict):
     )
 
 
+def _safe_extraction_source_url(value: str) -> str:
+    """Persist only a credential-free origin; identity is stored separately."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(value)
+    hostname = parts.hostname or ""
+    if ":" in hostname and not hostname.startswith("["):
+        hostname = f"[{hostname}]"
+    netloc = hostname
+    if parts.port is not None:
+        netloc = f"{netloc}:{parts.port}"
+    return urlunsplit((parts.scheme, netloc, "/", "", ""))
+
+
 def _safe_persisted_url(value: str) -> str:
+    """Legacy safe URL projection for non-S3 records that retain page paths."""
     from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
     parts = urlsplit(value)
     query = []
+    sensitive_markers = (
+        "token",
+        "key",
+        "secret",
+        "auth",
+        "signature",
+        "credential",
+        "password",
+        "session",
+        "code",
+        "jwt",
+        "sig",
+    )
     for key, item in parse_qsl(parts.query, keep_blank_values=True):
-        if any(
-            marker in key.lower()
-            for marker in ("token", "key", "secret", "auth", "signature")
-        ):
+        if any(marker in key.lower() for marker in sensitive_markers):
             item = "[redacted]"
         query.append((key, item))
     hostname = parts.hostname or ""
@@ -902,12 +977,15 @@ def _safe_persisted_url(value: str) -> str:
     netloc = hostname
     if parts.port is not None:
         netloc = f"{netloc}:{parts.port}"
-    fragment = parts.fragment
-    if any(
-        marker in fragment.lower()
-        for marker in ("token", "key", "secret", "auth", "signature")
-    ):
-        fragment = "[redacted]"
+    fragment = (
+        "[redacted]"
+        if parts.fragment
+        and any(
+            marker in parts.fragment.lower()
+            for marker in sensitive_markers
+        )
+        else parts.fragment
+    )
     return urlunsplit(
         (parts.scheme, netloc, parts.path, urlencode(query), fragment)
     )
@@ -953,17 +1031,45 @@ def _persist_extraction_projection_rows(
         from argus.extraction.outcomes import ExtractionAcceptanceConflict
 
         artifact_json = _canonical_json(state["artifact"])
-        reused_artifacts = session.scalars(
-            select(ExtractionOutcomeArtifactRow).where(
-                ExtractionOutcomeArtifactRow.artifact_ref
-                == artifact.artifact_ref
+        identity_values = {
+            "artifact_ref": artifact.artifact_ref,
+            "content_identity": artifact.content_identity,
+            "content_text": artifact.text,
+            "evaluation_json": artifact_json,
+        }
+        dialect = session.get_bind().dialect.name
+        if dialect == "sqlite":
+            from sqlalchemy.dialects.sqlite import insert as dialect_insert
+        elif dialect == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert as dialect_insert
+        else:
+            dialect_insert = None
+        if dialect_insert is not None:
+            session.execute(
+                dialect_insert(ExtractionArtifactIdentityRow)
+                .values(**identity_values)
+                .on_conflict_do_nothing(index_elements=["artifact_ref"])
             )
-        ).all()
-        if any(
-            existing.content_identity != artifact.content_identity
-            or existing.content_text != artifact.text
-            or existing.evaluation_json != artifact_json
-            for existing in reused_artifacts
+        else:
+            if session.get(
+                ExtractionArtifactIdentityRow,
+                artifact.artifact_ref,
+            ) is None:
+                session.add(ExtractionArtifactIdentityRow(**identity_values))
+        canonical = session.get(
+            ExtractionArtifactIdentityRow,
+            artifact.artifact_ref,
+        )
+        if canonical is None:
+            session.flush()
+            canonical = session.get(
+                ExtractionArtifactIdentityRow,
+                artifact.artifact_ref,
+            )
+        if (
+            canonical.content_identity != artifact.content_identity
+            or canonical.content_text != artifact.text
+            or canonical.evaluation_json != artifact_json
         ):
             raise ExtractionAcceptanceConflict()
         session.add(
@@ -1456,11 +1562,13 @@ class SqlAlchemySearchLedgerRepository:
                         )
                     )
                     session.flush()
-                    projection = build_projection()
+                    raw_projection = build_projection()
+                    raw_state = _extraction_projection_state(raw_projection)
+                    projection = _deserialize_extraction_projection(raw_state)
                     state = _extraction_projection_state(projection)
                     if (
                         _extraction_source_fingerprint(state)
-                        != source_fingerprint
+                        != _extraction_source_fingerprint(claim_state)
                     ):
                         raise ExtractionAcceptanceConflict()
                     receipt_ref, scope = _persist_extraction_projection_rows(
@@ -1504,11 +1612,14 @@ class SqlAlchemySearchLedgerRepository:
                                 operation_latency_ms=(
                                     existing.operation_latency_ms
                                 ),
+                                normalized_url_identity=(
+                                    existing.normalized_url_identity
+                                ),
                             )
                         )
                         if (
                             _extraction_source_fingerprint(existing_state)
-                            != source_fingerprint
+                            != _extraction_source_fingerprint(claim_state)
                         ):
                             raise ExtractionAcceptanceConflict()
                         return existing
@@ -1612,6 +1723,27 @@ class SqlAlchemySearchLedgerRepository:
             _, acceptance = pair
             state = _parse_json_value(acceptance.projection_json)
             projection = _deserialize_extraction_projection(state)
+            receipt = ExtractionAcceptanceReceipt(
+                receipt_ref=acceptance.receipt_ref,
+                accepted_at=acceptance.accepted_at.isoformat() + "Z",
+                scope=acceptance.scope,
+            )
+            return AcceptedExtractionOutcome.accepted(projection, receipt)
+
+    def load_extraction_outcome_by_receipt(self, receipt_ref: str):
+        """Reload the exact durable accepted projection for cache/composition."""
+        from argus.extraction.outcomes import (
+            AcceptedExtractionOutcome,
+            ExtractionAcceptanceReceipt,
+        )
+
+        with self.session_factory() as session:
+            acceptance = session.get(ExtractionOutcomeAcceptanceRow, receipt_ref)
+            if acceptance is None:
+                return None
+            projection = _deserialize_extraction_projection(
+                _parse_json_value(acceptance.projection_json)
+            )
             receipt = ExtractionAcceptanceReceipt(
                 receipt_ref=acceptance.receipt_ref,
                 accepted_at=acceptance.accepted_at.isoformat() + "Z",
@@ -1756,6 +1888,28 @@ class SqlAlchemySearchLedgerRepository:
                         raise InvalidArtifactRequirement(
                             "extraction receipt is not bound to the linked run"
                         )
+                    from argus.extraction.outcomes import (
+                        AcceptedExtractionOutcome,
+                        ExtractionAcceptanceReceipt,
+                    )
+
+                    durable_projection = _deserialize_extraction_projection(
+                        _parse_json_value(accepted_pair[0].projection_json)
+                    )
+                    durable_accepted = AcceptedExtractionOutcome.accepted(
+                        durable_projection,
+                        ExtractionAcceptanceReceipt(
+                            receipt_ref=accepted_pair[0].receipt_ref,
+                            accepted_at=(
+                                accepted_pair[0].accepted_at.isoformat() + "Z"
+                            ),
+                            scope=accepted_pair[0].scope,
+                        ),
+                    )
+                    if link.accepted_outcome != durable_accepted:
+                        raise InvalidArtifactRequirement(
+                            "link does not match durable accepted extraction"
+                        )
                     extraction_plan_id = accepted_pair[1].id
                     if link.artifact_ref is not None:
                         artifact_row = session.scalar(
@@ -1799,7 +1953,17 @@ class SqlAlchemySearchLedgerRepository:
                         extraction_acceptance_ref=extraction_receipt,
                         extraction_plan_id=extraction_plan_id,
                         artifact_row_id=artifact_row_id,
+                        artifact_plan_id=(
+                            extraction_plan_id
+                            if artifact_row_id is not None
+                            else None
+                        ),
                         rejection_row_id=rejection_row_id,
+                        rejection_plan_id=(
+                            extraction_plan_id
+                            if rejection_row_id is not None
+                            else None
+                        ),
                         reuse_origin=link.reuse_origin,
                     )
                 )

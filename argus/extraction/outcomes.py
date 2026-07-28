@@ -118,12 +118,30 @@ class CacheOriginEvidence:
     quality_policy_version: str
     completeness_policy_version: str
     accepted_at: str
+    normalized_url_identity: str
+    mode: str
+    access_scope: str
+    authentication_scope_fingerprint: str
+    cache_policy_version: str
+    privacy_scope: str
+    cache_created_at: str
 
     @classmethod
     def from_accepted(
         cls,
         accepted: "AcceptedExtractionOutcome",
+        *,
+        acceptance_repository,
+        cache_created_at: str,
     ) -> "CacheOriginEvidence":
+        from argus.extraction.cache import ExtractionCacheIdentity
+
+        durable = acceptance_repository.load_extraction_outcome_by_receipt(
+            accepted.acceptance_receipt.receipt_ref
+        )
+        if durable != accepted:
+            raise ExtractionContractRejected()
+        identity = ExtractionCacheIdentity.from_accepted(accepted)
         return cls(
             extraction_run_id=accepted.extraction_run_id,
             outcome=accepted.outcome,
@@ -141,6 +159,15 @@ class CacheOriginEvidence:
                 accepted.plan.completeness_policy_version
             ),
             accepted_at=accepted.acceptance_receipt.accepted_at,
+            normalized_url_identity=identity.normalized_url,
+            mode=identity.mode,
+            access_scope=identity.access_scope,
+            authentication_scope_fingerprint=(
+                identity.authentication_scope_fingerprint
+            ),
+            cache_policy_version=identity.cache_policy_version,
+            privacy_scope=identity.privacy_scope,
+            cache_created_at=cache_created_at,
         )
 
 
@@ -262,7 +289,7 @@ class RejectionFacts:
     autonomous: bool
 
 
-RejectionMapper = Callable[[RejectionFacts], ExtractionRejection]
+RejectionMapper = Callable[[RejectionFacts], object]
 
 
 @dataclass(frozen=True, slots=True)
@@ -331,6 +358,7 @@ class FinalizedExtractionProjection:
     selected_extractor: str | None
     cache_decision: CacheDecision
     operation_latency_ms: int
+    normalized_url_identity: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,6 +378,7 @@ class AcceptedExtractionOutcome:
     cache_decision: CacheDecision
     operation_latency_ms: int
     acceptance_receipt: ExtractionAcceptanceReceipt
+    normalized_url_identity: str | None = None
 
     @classmethod
     def accepted(
@@ -375,6 +404,7 @@ class AcceptedExtractionOutcome:
             cache_decision=projection.cache_decision,
             operation_latency_ms=projection.operation_latency_ms,
             acceptance_receipt=receipt,
+            normalized_url_identity=projection.normalized_url_identity,
         )
 
     def to_legacy_extracted_content(self):

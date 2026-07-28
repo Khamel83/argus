@@ -36,10 +36,24 @@ class MemoryOutcomeRepository:
         from argus.extraction.outcomes import ExtractionAcceptanceReceipt
 
         self.projections.append(projection)
-        return ExtractionAcceptanceReceipt(
+        self.receipt = ExtractionAcceptanceReceipt(
             receipt_ref=f"receipt-{projection.extraction_run_id}",
             accepted_at="2026-07-27T12:00:00Z",
             scope="test",
+        )
+        return self.receipt
+
+    def load_extraction_outcome_by_receipt(self, receipt_ref):
+        from argus.extraction.outcomes import AcceptedExtractionOutcome
+
+        if (
+            not self.projections
+            or self.receipt.receipt_ref != receipt_ref
+        ):
+            return None
+        return AcceptedExtractionOutcome.accepted(
+            self.projections[-1],
+            self.receipt,
         )
 
 
@@ -418,16 +432,21 @@ def test_fallback_success_retains_failed_steps_without_final_rejection():
 def test_eligible_cache_hit_is_a_decision_not_an_extractor_attempt():
     from argus.extraction.outcomes import CacheOriginEvidence
 
-    origin = _finalize(_raw(artifact=_artifact()))
+    repository = MemoryOutcomeRepository()
+    origin = _finalize(
+        _raw(artifact=_artifact()),
+        repository=repository,
+    )
     accepted = _finalize(
         RawExtractionResult(
             cache_decision=CacheDecision(
                 outcome=CacheOutcome.HIT_ELIGIBLE,
-                origin_run_ref="extract-origin-1",
+                origin_run_ref=origin.extraction_run_id,
                 age_seconds=60,
-                origin_evidence=replace(
-                    CacheOriginEvidence.from_accepted(origin),
-                    extraction_run_id="extract-origin-1",
+                origin_evidence=CacheOriginEvidence.from_accepted(
+                    origin,
+                    acceptance_repository=repository,
+                    cache_created_at="2026-07-27T11:59:00Z",
                 ),
             ),
             steps=(),
@@ -435,12 +454,13 @@ def test_eligible_cache_hit_is_a_decision_not_an_extractor_attempt():
             selected_extractor="trafilatura",
             terminal_cause=None,
             operation_latency_ms=1,
-        )
+        ),
+        repository=repository,
     )
 
     assert accepted.outcome is CanonicalOutcome.SUCCESS
     assert accepted.steps == ()
-    assert accepted.cache_decision.origin_run_ref == "extract-origin-1"
+    assert accepted.cache_decision.origin_run_ref == origin.extraction_run_id
 
 
 def test_cache_decision_integrity_fails_closed():
@@ -637,26 +657,15 @@ def test_outcome_values_are_immutable_and_project_to_legacy_content():
 def test_cache_identity_isolates_access_and_policy_and_rejects_diagnostic_content():
     from argus.extraction.cache import ExtractionCache, ExtractionCacheIdentity
 
-    cache = ExtractionCache()
-    public = ExtractionCacheIdentity(
-        normalized_url="https://example.com/article",
-        mode="default",
-        access_scope="public",
-        authentication_scope_fingerprint="anonymous",
-        cache_policy_version="cache-v1",
-        extraction_plan_version="1",
-        quality_policy_version="quality-v1",
-        completeness_policy_version="complete-v1",
-        outcome_policy_version="outcome-v1",
-        privacy_scope="public",
-        partial_allowed=False,
-    )
+    repository = MemoryOutcomeRepository()
+    usable = _finalize(_raw(artifact=_artifact()), repository=repository)
+    cache = ExtractionCache(acceptance_repository=repository)
+    public = ExtractionCacheIdentity.from_accepted(usable)
     private = replace(
         public,
         access_scope="private",
         authentication_scope_fingerprint="account-a",
     )
-    usable = _finalize(_raw(artifact=_artifact()))
     cache.put(public, usable)
 
     assert cache.get(public) is usable
@@ -930,6 +939,7 @@ def test_0007_sqlite_upgrade_is_additive_and_guarded_after_activation(tmp_path):
     expected = {
         "extraction_outcome_plans",
         "extraction_outcome_steps",
+        "extraction_artifact_identities",
         "extraction_outcome_artifacts",
         "extraction_outcome_rejections",
         "extraction_outcome_acceptances",
@@ -975,7 +985,30 @@ def test_0007_postgresql_upgrade_and_pre_activation_rollback(
     command.upgrade(config, "0006_maya_outbox")
     command.upgrade(config, "head")
     engine = create_engine(postgres_ledger_url)
-    assert "extraction_outcome_plans" in inspect(engine).get_table_names()
+    inspector = inspect(engine)
+    assert "extraction_outcome_plans" in inspector.get_table_names()
+    composite_fks = [
+        foreign_key
+        for foreign_key in inspector.get_foreign_keys(
+            "result_extraction_links"
+        )
+        if len(foreign_key["constrained_columns"]) == 2
+    ]
+    assert len(composite_fks) == 3
+    assert all(
+        foreign_key["options"].get("match") == "FULL"
+        for foreign_key in composite_fks
+    )
+    assert {
+        "ck_result_extraction_links_acceptance_pair",
+        "ck_result_extraction_links_artifact_pair",
+        "ck_result_extraction_links_rejection_pair",
+    } <= {
+        check["name"]
+        for check in inspector.get_check_constraints(
+            "result_extraction_links"
+        )
+    }
     command.downgrade(config, "0006_maya_outbox")
     assert "extraction_outcome_plans" not in inspect(engine).get_table_names()
 
@@ -984,11 +1017,11 @@ def test_issue57_mapper_is_sole_rejection_code_classifier():
     seen = []
 
     def mapper(facts):
-        from argus.extraction.rejection import classify_typed_extraction_rejection
+        from argus.extraction.finalizer import map_extraction_rejection
 
         seen.append(facts)
         assert not hasattr(facts, "code")
-        return classify_typed_extraction_rejection(facts)
+        return map_extraction_rejection(facts)
 
     accepted = _finalize(
         _raw(artifact=_artifact(quality=False, complete=None)),
@@ -1281,21 +1314,10 @@ def test_reused_artifact_ref_with_conflicting_identity_fails_closed(tmp_path):
 def test_policy_complete_cache_preserves_exact_accepted_origin_lineage():
     from argus.extraction.cache import ExtractionCache, ExtractionCacheIdentity
 
-    cache = ExtractionCache()
-    identity = ExtractionCacheIdentity(
-        normalized_url="https://example.com/article/",
-        mode="default",
-        access_scope="public",
-        authentication_scope_fingerprint="anonymous",
-        cache_policy_version="cache-v1",
-        extraction_plan_version="1",
-        quality_policy_version="quality-v1",
-        completeness_policy_version="complete-v1",
-        outcome_policy_version="outcome-v1",
-        privacy_scope="public",
-        partial_allowed=False,
-    )
-    accepted = _finalize(_raw(artifact=_artifact()))
+    repository = MemoryOutcomeRepository()
+    accepted = _finalize(_raw(artifact=_artifact()), repository=repository)
+    cache = ExtractionCache(acceptance_repository=repository)
+    identity = ExtractionCacheIdentity.from_accepted(accepted)
     legacy = accepted.to_legacy_extracted_content()
 
     cache.put(identity, legacy)
@@ -1304,7 +1326,7 @@ def test_policy_complete_cache_preserves_exact_accepted_origin_lineage():
     cache.put(identity, accepted)
     assert cache.get(identity) is accepted
     assert cache.get(
-        replace(identity, normalized_url="https://example.com/article")
+        replace(identity, normalized_url="sha256:" + ("0" * 64))
     ) is None
 
 
@@ -1454,7 +1476,7 @@ def test_all_durable_projection_json_redacts_credential_bearing_url(tmp_path):
     assert "password" not in persisted
     assert "super-secret" not in persisted
     assert "fragment-secret" not in persisted
-    assert "redacted" in persisted
+    assert "normalized_url_identity" in persisted
 
 
 def test_0007_latency_column_is_bigint_and_links_bind_plan_rows(tmp_path):
@@ -1484,8 +1506,8 @@ def test_0007_latency_column_is_bigint_and_links_bind_plan_rows(tmp_path):
         "extraction_acceptance_ref",
         "extraction_plan_id",
     ) in link_fks
-    assert ("artifact_row_id", "extraction_plan_id") in link_fks
-    assert ("rejection_row_id", "extraction_plan_id") in link_fks
+    assert ("artifact_row_id", "artifact_plan_id") in link_fks
+    assert ("rejection_row_id", "rejection_plan_id") in link_fks
 
 
 def test_recovery_contract_covers_every_0007_table_and_relationship():
@@ -1512,3 +1534,297 @@ def test_recovery_contract_covers_every_0007_table_and_relationship():
         "result_extraction_links",
     ):
         assert child in joined_checks
+def test_issue57_classifier_executes_exactly_once_total(monkeypatch):
+    import argus.extraction.rejection as rejection_module
+
+    original = rejection_module.classify_typed_extraction_rejection
+    calls = []
+
+    def instrumented(facts):
+        calls.append(facts)
+        return original(facts)
+
+    monkeypatch.setattr(
+        rejection_module, "classify_typed_extraction_rejection", instrumented
+    )
+
+    accepted = _finalize(_raw(artifact=_artifact(quality=False, complete=None)))
+
+    assert accepted.rejection is not None
+    assert len(calls) == 1
+
+
+def test_first_and_retry_return_same_safe_semantic_projection(tmp_path):
+    from argus.extraction.finalizer import ExtractionFinalizer
+    from argus.persistence.search_ledger import create_search_ledger_repository
+
+    raw_url = (
+        "https://user:password@example.com/private/path"
+        "?session=opaque&code=authorization&jwt=signed#credential=hidden"
+    )
+    repository = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'safe-semantic.db'}"
+    )
+    finalizer = ExtractionFinalizer(
+        repository=repository,
+        clock=lambda: "2026-07-27T12:00:00Z",
+    )
+    request = replace(_request("safe-semantic-run"), normalized_url=raw_url)
+    plan = replace(_plan(), normalized_url=raw_url)
+    first = finalizer.finalize_extraction(
+        request,
+        plan,
+        _raw(artifact=_artifact()),
+        OutcomePolicy(version="outcome-v1"),
+    )
+    retry = finalizer.finalize_extraction(
+        request,
+        plan,
+        _raw(artifact=_artifact()),
+        OutcomePolicy(version="outcome-v1"),
+    )
+
+    assert first == retry
+    assert first.plan.normalized_url == "https://example.com/"
+    assert all(
+        secret not in repr(first)
+        for secret in ("password", "opaque", "authorization", "signed", "hidden")
+    )
+
+
+def test_cache_identity_is_derived_and_verified_against_durable_acceptance(
+    tmp_path,
+):
+    from argus.extraction.cache import ExtractionCache, ExtractionCacheIdentity
+    from argus.extraction.finalizer import ExtractionFinalizer
+    from argus.persistence.search_ledger import create_search_ledger_repository
+
+    repository = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'durable-cache.db'}"
+    )
+    accepted = ExtractionFinalizer(
+        repository=repository,
+        clock=lambda: "2026-07-27T12:00:00Z",
+    ).finalize_extraction(
+        _request("durable-cache-run"),
+        _plan(),
+        _raw(artifact=_artifact()),
+        OutcomePolicy(version="outcome-v1"),
+    )
+    identity = ExtractionCacheIdentity.from_accepted(accepted)
+    cache = ExtractionCache(acceptance_repository=repository)
+
+    cache.put(identity, accepted)
+
+    assert cache.get(identity) == accepted
+    private_key = replace(
+        identity,
+        access_scope="private",
+        privacy_scope="private",
+        authentication_scope_fingerprint="user-a",
+    )
+    cache.put(private_key, accepted)
+    assert cache.get(private_key) is None
+
+
+@pytest.mark.asyncio
+async def test_sqlite_archive_authorization_consume_survives_restart(
+    monkeypatch,
+    tmp_path,
+):
+    import argus.extraction.archive_extractor as archive
+
+    posts = []
+
+    async def submitted(url):
+        posts.append(url)
+        return "https://archive.ph/restart/example"
+
+    class Authority:
+        def verify(self, authorization):
+            return True
+
+    monkeypatch.setattr(archive, "_submit_authorized", submitted)
+    authorization = archive.ArchiveCreationAuthorization(
+        caller_policy_ref="archive-policy-v1",
+        authority_receipt="authority-receipt-restart",
+        idempotency_key="archive-create-restart",
+        bounded_target="https://example.com/article",
+        profile="operator",
+    )
+    path = tmp_path / "archive-authorizations.db"
+    first_store = archive.SQLiteArchiveCreationAuthorizationStore(path)
+    await archive.create_archive(
+        authorization.bounded_target,
+        authorization=authorization,
+        authority=Authority(),
+        authorization_store=first_store,
+    )
+
+    restarted_store = archive.SQLiteArchiveCreationAuthorizationStore(path)
+    with pytest.raises(archive.ArchiveCreationPolicyRejected):
+        await archive.create_archive(
+            authorization.bounded_target,
+            authorization=authorization,
+            authority=Authority(),
+            authorization_store=restarted_store,
+        )
+
+    assert posts == [authorization.bounded_target]
+
+
+def test_concurrent_conflicting_artifact_identity_has_one_canonical_winner(
+    tmp_path,
+):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from argus.extraction.finalizer import ExtractionFinalizer
+    from argus.extraction.outcomes import ExtractionAcceptanceConflict
+    from argus.persistence.search_ledger import create_search_ledger_repository
+
+    url = f"sqlite:///{tmp_path / 'artifact-race.db'}"
+    repositories = [
+        create_search_ledger_repository(url),
+        create_search_ledger_repository(url, create_schema=False),
+    ]
+    barrier = __import__("threading").Barrier(2)
+
+    def run(index):
+        artifact = replace(
+            _artifact(),
+            content_identity="sha256:" + (("a" if index == 0 else "b") * 64),
+            text=f"content-{index}",
+        )
+        barrier.wait()
+        return ExtractionFinalizer(
+            repository=repositories[index],
+            clock=lambda: "2026-07-27T12:00:00Z",
+        ).finalize_extraction(
+            _request(f"artifact-race-{index}"),
+            _plan(),
+            _raw(artifact=artifact),
+            OutcomePolicy(version="outcome-v1"),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(run, index) for index in range(2)]
+    outcomes = []
+    failures = []
+    for future in futures:
+        try:
+            outcomes.append(future.result())
+        except ExtractionAcceptanceConflict as error:
+            failures.append(error)
+
+    assert len(outcomes) == 1
+    assert len(failures) == 1
+
+
+def test_two_repositories_execute_issue57_mapper_once_total(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, Lock
+
+    from argus.extraction.finalizer import (
+        ExtractionFinalizer,
+        map_extraction_rejection,
+    )
+    from argus.persistence.search_ledger import create_search_ledger_repository
+
+    url = f"sqlite:///{tmp_path / 'cross-repository-finalize.db'}"
+    repositories = [
+        create_search_ledger_repository(url),
+        create_search_ledger_repository(url, create_schema=False),
+    ]
+    barrier = Barrier(2)
+    call_lock = Lock()
+    calls = 0
+
+    def mapper(facts):
+        nonlocal calls
+        with call_lock:
+            calls += 1
+        return map_extraction_rejection(facts)
+
+    raw = _raw(artifact=_artifact(quality=False, complete=None))
+
+    def run(index):
+        barrier.wait()
+        return ExtractionFinalizer(
+            repository=repositories[index],
+            rejection_mapper=mapper,
+            clock=lambda: "2026-07-27T12:00:00Z",
+        ).finalize_extraction(
+            _request("cross-repository-run"),
+            _plan(),
+            raw,
+            OutcomePolicy(version="outcome-v1"),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        accepted = list(executor.map(run, range(2)))
+
+    assert calls == 1
+    assert accepted[0] == accepted[1]
+
+
+def test_cache_origin_self_attested_receipt_is_rejected():
+    from argus.extraction.outcomes import (
+        CacheOriginEvidence,
+        ExtractionAcceptanceReceipt,
+        ExtractionContractRejected,
+    )
+
+    repository = MemoryOutcomeRepository()
+    origin = _finalize(_raw(artifact=_artifact()), repository=repository)
+    evidence = CacheOriginEvidence.from_accepted(
+        origin,
+        acceptance_repository=repository,
+        cache_created_at="2026-07-27T11:59:00Z",
+    )
+    fabricated = replace(
+        evidence,
+        acceptance_receipt=ExtractionAcceptanceReceipt(
+            receipt_ref="self-attested-receipt",
+            accepted_at=evidence.accepted_at,
+            scope=evidence.acceptance_receipt.scope,
+        ),
+    )
+    raw = RawExtractionResult(
+        cache_decision=CacheDecision(
+            outcome=CacheOutcome.HIT_ELIGIBLE,
+            origin_run_ref=origin.extraction_run_id,
+            age_seconds=1,
+            origin_evidence=fabricated,
+        ),
+        steps=(),
+        artifact=_artifact(),
+        selected_extractor="trafilatura",
+        terminal_cause=None,
+        operation_latency_ms=1,
+    )
+
+    with pytest.raises(ExtractionContractRejected):
+        _finalize(raw, repository=repository)
+
+
+def test_0007_has_canonical_artifact_identity_and_link_constraints(tmp_path):
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine, inspect
+
+    url = f"sqlite:///{tmp_path / 'canonical-artifact.db'}"
+    config = Config()
+    config.set_main_option("script_location", "migrations")
+    config.set_main_option("sqlalchemy.url", url)
+    command.upgrade(config, "head")
+    inspector = inspect(create_engine(url))
+
+    assert "extraction_artifact_identities" in inspector.get_table_names()
+    pk = inspector.get_pk_constraint("extraction_artifact_identities")
+    assert pk["constrained_columns"] == ["artifact_ref"]
+    artifact_fks = inspector.get_foreign_keys("extraction_outcome_artifacts")
+    assert any(
+        fk["constrained_columns"] == ["artifact_ref"]
+        and fk["referred_table"] == "extraction_artifact_identities"
+        for fk in artifact_fks
+    )

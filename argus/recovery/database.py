@@ -33,6 +33,7 @@ REQUIRED_TABLES = {
     "provider_spend_audit",
     "extraction_outcome_plans",
     "extraction_outcome_steps",
+    "extraction_artifact_identities",
     "extraction_outcome_artifacts",
     "extraction_outcome_rejections",
     "extraction_outcome_acceptances",
@@ -43,6 +44,12 @@ REQUIRED_TABLES = {
 }
 COUNTED_TABLES = sorted(REQUIRED_TABLES - {"alembic_version"})
 REQUIRED_S3_COLUMNS = {
+    "extraction_artifact_identities": {
+        "artifact_ref",
+        "content_identity",
+        "content_text",
+        "evaluation_json",
+    },
     "extraction_outcome_plans": {
         "id",
         "plan_ref",
@@ -116,10 +123,25 @@ REQUIRED_S3_COLUMNS = {
         "extraction_acceptance_ref",
         "extraction_plan_id",
         "artifact_row_id",
+        "artifact_plan_id",
         "rejection_row_id",
+        "rejection_plan_id",
         "reuse_origin",
     },
     "extraction_outcome_activations": {"receipt_ref", "activated_at"},
+}
+REQUIRED_S3_CONSTRAINTS = {
+    "fk_extraction_outcome_artifacts_identity",
+    "fk_result_extraction_links_acceptance_plan",
+    "fk_result_extraction_links_artifact_plan",
+    "fk_result_extraction_links_rejection_plan",
+    "ck_result_extraction_links_acceptance_pair",
+    "ck_result_extraction_links_artifact_pair",
+    "ck_result_extraction_links_rejection_pair",
+    "uq_result_extraction_links_composition_cluster",
+}
+REQUIRED_S3_INDEXES = {
+    "ix_extraction_outcome_artifacts_artifact_ref",
 }
 _ORPHAN_CHECKS = (
     "SELECT count(*) FROM retrieval_runs child "
@@ -149,6 +171,10 @@ _ORPHAN_CHECKS = (
     "SELECT count(*) FROM extraction_outcome_artifacts child "
     "LEFT JOIN extraction_outcome_plans parent ON parent.id = child.plan_id "
     "WHERE parent.id IS NULL",
+    "SELECT count(*) FROM extraction_outcome_artifacts child "
+    "LEFT JOIN extraction_artifact_identities parent "
+    "ON parent.artifact_ref = child.artifact_ref "
+    "WHERE parent.artifact_ref IS NULL",
     "SELECT count(*) FROM extraction_outcome_rejections child "
     "LEFT JOIN extraction_outcome_plans parent ON parent.id = child.plan_id "
     "WHERE parent.id IS NULL",
@@ -173,12 +199,12 @@ _ORPHAN_CHECKS = (
     "LEFT JOIN extraction_outcome_artifacts artifact "
     "ON artifact.id = child.artifact_row_id "
     "WHERE child.artifact_row_id IS NOT NULL "
-    "AND (artifact.id IS NULL OR artifact.plan_id <> child.extraction_plan_id)",
+    "AND (artifact.id IS NULL OR artifact.plan_id <> child.artifact_plan_id)",
     "SELECT count(*) FROM result_extraction_links child "
     "LEFT JOIN extraction_outcome_rejections rejection "
     "ON rejection.id = child.rejection_row_id "
     "WHERE child.rejection_row_id IS NOT NULL "
-    "AND (rejection.id IS NULL OR rejection.plan_id <> child.extraction_plan_id)",
+    "AND (rejection.id IS NULL OR rejection.plan_id <> child.rejection_plan_id)",
 )
 
 
@@ -244,6 +270,26 @@ def verify_argus_database(
                 cursor.execute(f'SELECT count(*) FROM "{table}"')
                 row_counts[table] = int(cursor.fetchone()[0])
             inventory = _inventory(cursor, tables, row_counts)
+            missing_schema_objects = {
+                "constraints": sorted(
+                    REQUIRED_S3_CONSTRAINTS
+                    - {item[0] for item in inventory["constraints"]}
+                ),
+                "indexes": sorted(
+                    REQUIRED_S3_INDEXES
+                    - {item[0] for item in inventory["indexes"]}
+                ),
+            }
+            missing_schema_objects = {
+                kind: names
+                for kind, names in missing_schema_objects.items()
+                if names
+            }
+            if missing_schema_objects:
+                raise RuntimeError(
+                    "missing required S3 schema objects: "
+                    + json.dumps(missing_schema_objects, sort_keys=True)
+                )
             _compare_inventory(inventory, expected_inventory)
 
             for query in _ORPHAN_CHECKS:
@@ -435,9 +481,24 @@ def _inventory(cursor, tables: set[str], row_counts: dict[str, int]) -> dict[str
     )
     if int(cursor.fetchone()[0]) != 0:
         raise RuntimeError("database contains unvalidated foreign-key constraints")
+    cursor.execute(
+        "SELECT constraint_row.conname, "
+        "pg_get_constraintdef(constraint_row.oid) "
+        "FROM pg_constraint constraint_row "
+        "JOIN pg_namespace namespace ON namespace.oid = constraint_row.connamespace "
+        "WHERE namespace.nspname = 'public' ORDER BY constraint_row.conname"
+    )
+    constraints = [list(row) for row in cursor.fetchall()]
+    cursor.execute(
+        "SELECT indexname, indexdef FROM pg_indexes "
+        "WHERE schemaname = 'public' ORDER BY indexname"
+    )
+    indexes = [list(row) for row in cursor.fetchall()]
     schema_state = {
         "tables": sorted(tables),
         "columns": columns,
+        "constraints": constraints,
+        "indexes": indexes,
     }
     return {
         "tables": dict(sorted(row_counts.items())),
@@ -450,6 +511,8 @@ def _inventory(cursor, tables: set[str], row_counts: dict[str, int]) -> dict[str
             ).encode()
         ).hexdigest(),
         "constraints_validated": True,
+        "constraints": constraints,
+        "indexes": indexes,
     }
 
 

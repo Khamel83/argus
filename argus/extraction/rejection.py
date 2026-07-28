@@ -310,18 +310,47 @@ def classify_typed_extraction_rejection(facts) -> ExtractionRejection:
     )
 
 
-def validate_typed_extraction_rejection(facts, rejection) -> None:
-    """Validate one mapper result against its complete typed source facts."""
+_MAPPER_SEAL = object()
+
+
+@dataclass(frozen=True, slots=True)
+class ValidatedExtractionRejection:
+    """Sealed #57 result; classification has already happened exactly once."""
+
+    facts: object
+    rejection: ExtractionRejection
+    _seal: object
+
+
+def map_validated_extraction_rejection(facts) -> ValidatedExtractionRejection:
+    """Classify once and seal the exact facts/result pair."""
     from argus.extraction.outcomes import (
         ExtractionContractRejected,
         RejectionFacts,
     )
 
-    if not isinstance(facts, RejectionFacts) or not isinstance(
-        rejection,
-        ExtractionRejection,
+    if not isinstance(facts, RejectionFacts):
+        raise ExtractionContractRejected()
+    return ValidatedExtractionRejection(
+        facts=facts,
+        rejection=classify_typed_extraction_rejection(facts),
+        _seal=_MAPPER_SEAL,
+    )
+
+
+def validate_typed_extraction_rejection(facts, mapped) -> ExtractionRejection:
+    """Structurally open one sealed mapper result without reclassification."""
+    from argus.extraction.outcomes import (
+        ExtractionContractRejected,
+        RejectionFacts,
+    )
+
+    if (
+        not isinstance(facts, RejectionFacts)
+        or not isinstance(mapped, ValidatedExtractionRejection)
+        or mapped._seal is not _MAPPER_SEAL
+        or mapped.facts != facts
+        or not isinstance(mapped.rejection, ExtractionRejection)
     ):
         raise ExtractionContractRejected()
-    expected = classify_typed_extraction_rejection(facts)
-    if rejection != expected:
-        raise ExtractionContractRejected()
+    return mapped.rejection

@@ -20,6 +20,7 @@ REQUIRED_TABLES = {
     "provider_spend_audit",
     "extraction_outcome_plans",
     "extraction_outcome_steps",
+    "extraction_artifact_identities",
     "extraction_outcome_artifacts",
     "extraction_outcome_rejections",
     "extraction_outcome_acceptances",
@@ -65,6 +66,18 @@ class FakeCursor:
                     REQUIRED_S3_COLUMNS.get(table, {"id"})
                 )
             ]
+        if "pg_get_constraintdef" in self.query:
+            from argus.recovery.database import REQUIRED_S3_CONSTRAINTS
+
+            return [(name, f"definition for {name}") for name in sorted(
+                REQUIRED_S3_CONSTRAINTS
+            )]
+        if "pg_indexes" in self.query:
+            from argus.recovery.database import REQUIRED_S3_INDEXES
+
+            return [(name, f"definition for {name}") for name in sorted(
+                REQUIRED_S3_INDEXES
+            )]
         return [(table,) for table in self.tables]
 
 
@@ -119,6 +132,26 @@ def test_restore_verifier_refuses_missing_schema_table():
     connection = FakeConnection(REQUIRED_TABLES - {"extraction_runs"})
 
     with pytest.raises(RuntimeError, match="missing required tables"):
+        verify_argus_database(
+            "argus_restore_issue40_test",
+            connect=lambda **kwargs: connection,
+            repository_factory=lambda database: None,
+        )
+
+
+def test_restore_verifier_rejects_stamped_schema_missing_required_constraints():
+    from argus.recovery.database import verify_argus_database
+
+    class MissingConstraintCursor(FakeCursor):
+        def fetchall(self):
+            if "pg_constraint" in self.query or "pg_indexes" in self.query:
+                return []
+            return super().fetchall()
+
+    connection = FakeConnection(REQUIRED_TABLES)
+    connection.cursor_instance = MissingConstraintCursor(REQUIRED_TABLES)
+
+    with pytest.raises(RuntimeError, match="missing required S3 schema objects"):
         verify_argus_database(
             "argus_restore_issue40_test",
             connect=lambda **kwargs: connection,
