@@ -109,7 +109,6 @@ jobs:
           uv run --python 3.12 pytest \
             tests/test_search_ledger.py \
             tests/test_provider_spend.py \
-            tests/test_accepted_retrieval.py \
             tests/test_maya_outbox.py \
             tests/test_api.py::TestSearchEndpoint::test_postgresql_constraint_failure_returns_503_and_rolls_back_ledger \
             tests/test_operation_ledger.py::test_postgresql_extraction_and_session_contract \
@@ -118,6 +117,7 @@ jobs:
             tests/test_recovery_database.py \
             tests/test_schema_contract_generator.py \
             tests/test_postgres_provisioning.py \
+            tests/test_accepted_retrieval.py \
             -v --tb=short
 
       - name: Verify PostgreSQL provider-readiness authority
