@@ -8,8 +8,9 @@ from dataclasses import dataclass, field, replace
 from typing import Dict, List, Mapping, Sequence
 
 from argus.broker.budgets import BudgetTracker, PROVIDER_TIERS
-from argus.broker.health import HealthExecutionClaim, HealthTracker
+from argus.broker.health import HealthTracker
 from argus.broker.planning import RetrievalPlan
+from argus.broker.readiness import ExecutionContext, ProviderReadinessService
 from argus.broker.provider_evidence import (
     LegacyProviderBatchAdapter,
     ProviderSearchBatch,
@@ -19,7 +20,7 @@ from argus.broker.provider_evidence import (
     run_with_attempt_deadline,
     with_trusted_provenance,
 )
-from argus.broker.reachability import ReachabilityClaim, ReachabilityMatrix
+from argus.broker.reachability import ReachabilityMatrix
 from argus.config import EgressNode, NodeConfig
 from argus.logging import get_logger
 from argus.models import ProviderName, ProviderTrace, SearchQuery, SearchResult
@@ -54,12 +55,6 @@ _COST_ESTIMATES = {
 
 # Tier 0 providers are always queried — free and unlimited.
 _TIER_0_PROVIDERS = {p for p, t in PROVIDER_TIERS.items() if t == 0}
-
-
-@dataclass(frozen=True)
-class InvocationClaims:
-    health: HealthExecutionClaim
-    reachability: ReachabilityClaim
 
 
 def conservative_charge_estimate(
@@ -118,6 +113,7 @@ class ProviderExecutor:
         spend_repository=None,
         monotonic=time.monotonic,
         node_config: NodeConfig | None = None,
+        readiness_service: ProviderReadinessService | None = None,
     ):
         self._providers = providers
         self._health = health_tracker
@@ -128,21 +124,23 @@ class ProviderExecutor:
         self._spend = spend_repository
         self._monotonic = monotonic
         self._node_config = node_config or NodeConfig()
+        self._readiness = readiness_service or (
+            ProviderReadinessService.from_legacy_observation_sources(
+                providers=providers,
+                health_tracker=health_tracker,
+                budget_tracker=budget_tracker,
+                reachability=self._reachability,
+                spend_repository=spend_repository,
+                monotonic=monotonic,
+            )
+        )
 
-    def _should_query_paid(self, provider: ProviderName, tier: int) -> tuple[bool, str]:
-        """Decide whether to query a paid provider based on budget pace.
-
-        Returns (should_query, reason).
-        Tier 3 (one-time) providers are never "over pace" — exhaustion is the sole gate.
-        Tier 1 (monthly) providers are paced to spread credits across 30 days.
-        """
-        if self._budgets.is_budget_exhausted(provider):
-            return False, "budget exhausted"
-
-        if not self._budgets.is_over_pace(provider):
-            return True, "under pace"
-
-        return False, "over pace, conserving monthly credits"
+    def _should_query_paid(
+        self, provider: ProviderName, tier: int
+    ) -> tuple[bool, str]:
+        """Compatibility projection; readiness remains the decision owner."""
+        allowed, reason, *_ = self._readiness.paid_pacing(provider)
+        return allowed, reason
 
     async def execute(
         self,
@@ -181,48 +179,49 @@ class ProviderExecutor:
                 )
                 continue
 
-            if not provider.is_available():
-                traces.append(
-                    ProviderTrace(
-                        provider=pname, status="skipped", error="not available"
-                    )
-                )
-                continue
-
-            health_status = self._health.peek_execution_status(pname)
-            if health_status is not None:
-                traces.append(
-                    ProviderTrace(
-                        provider=pname,
-                        status="skipped",
-                        error=f"health: {health_status.value}",
-                    )
-                )
-                continue
-
-            tier = self._budgets.get_provider_tier(pname)
-
+            tier = PROVIDER_TIERS[pname]
             cap = caller_tier_cap(query.caller, self._caller_tier_caps)
-            if cap is not None and tier > cap:
+            planned_egress = self._readiness.best_egress(pname)
+            decision = self._readiness.execution_decision(
+                ExecutionContext(
+                    provider=pname,
+                    tier=tier,
+                    plan_providers=plan.candidate_providers,
+                    free_only=query.free_only,
+                    caller_tier_cap=cap,
+                    egress=planned_egress or "local",
+                    request_class=plan.intent.value,
+                )
+            )
+            if decision.code != "eligible":
+                if cap is not None and tier > cap:
+                    compatibility_error = (
+                        f"caller tier cap: caller {query.caller!r} "
+                        f"limited to tier <= {cap}"
+                    )
+                elif query.free_only and tier > 0:
+                    compatibility_error = "free_only mode"
+                elif decision.code == "cooldown":
+                    compatibility_error = (
+                        "health: temporarily_disabled_after_failures"
+                    )
+                elif decision.code == "spend_blocked" and decision.reason == "exhausted":
+                    compatibility_error = "budget exhausted"
+                elif decision.reason == "egress_unreachable":
+                    compatibility_error = "no reachable egress"
+                else:
+                    compatibility_error = f"{decision.code}: {decision.reason}"
                 traces.append(
                     ProviderTrace(
                         provider=pname,
                         status="skipped",
-                        error=f"caller tier cap: caller {query.caller!r} limited to tier <= {cap}",
-                    )
-                )
-                continue
-
-            if query.free_only and tier > 0:
-                traces.append(
-                    ProviderTrace(
-                        provider=pname, status="skipped", error="free_only mode"
+                        error=compatibility_error,
                     )
                 )
                 continue
 
             # Reachability check — route to worker if local is blocked
-            best_egress = self._reachability.peek_best_egress(pname)
+            best_egress = planned_egress
             if best_egress is None:
                 traces.append(
                     ProviderTrace(
@@ -319,26 +318,22 @@ class ProviderExecutor:
                     )
                 traces.append(trace)
                 if trace.status == "success":
-                    self._reachability.update_probe(
-                        trace.egress or best_egress,
+                    self._readiness.record_legacy_outcome(
                         pname,
-                        reachable=True,
+                        egress=trace.egress or best_egress,
+                        success=True,
                         latency_ms=trace.latency_ms,
-                        source="provider_execution",
                     )
                     live_providers_used += 1
                     provider_results[pname.value] = results
                     total_results_so_far += len(results)
-                    self._health.record_success(pname)
                 else:
-                    self._reachability.update_probe(
-                        trace.egress or best_egress,
+                    self._readiness.record_legacy_outcome(
                         pname,
-                        reachable=False,
+                        egress=trace.egress or best_egress,
+                        success=False,
                         latency_ms=trace.latency_ms,
-                        source="provider_execution",
                     )
-                    self._health.record_failure(pname)
                 continue
 
             if (
@@ -360,9 +355,9 @@ class ProviderExecutor:
             if tier > 0:
                 should_query, reason = self._should_query_paid(pname, tier)
                 if not should_query:
-                    remaining = self._budgets.get_remaining_budget(pname) or 0
-                    used_today = self._budgets.used_today(pname)
-                    pace = self._budgets.daily_pace(pname)
+                    _, _, remaining, used_today, pace = self._readiness.paid_pacing(
+                        pname
+                    )
                     warning = (
                         f"{pname.value}: {reason} "
                         f"(used {used_today:.0f} today, pace {pace:.0f}/day, "
@@ -462,19 +457,11 @@ class ProviderExecutor:
 
     def _claim_invocation(
         self, provider: ProviderName, egress: str
-    ) -> InvocationClaims | None:
-        health_claim = self._health.claim_execution(provider)
-        if health_claim is None:
-            return None
-        reachability_claim = self._reachability.claim_egress(provider, egress)
-        if reachability_claim is None:
-            self._health.release_execution_claim(health_claim)
-            return None
-        return InvocationClaims(health_claim, reachability_claim)
+    ):
+        return self._readiness.claim_invocation(provider, egress)
 
-    def _release_invocation_claims(self, claims: InvocationClaims) -> None:
-        self._reachability.release_claim(claims.reachability)
-        self._health.release_execution_claim(claims.health)
+    def _release_invocation_claims(self, claims) -> None:
+        self._readiness.release_invocation(claims)
 
     async def _execute_provider(
         self,
@@ -538,13 +525,11 @@ class ProviderExecutor:
             results = batch.results
             trace = batch.trace
             if trace.status == "success":
-                self._health.record_success(provider_name)
-                self._reachability.update_probe(
-                    trace.egress or "local",
+                self._readiness.record_legacy_outcome(
                     provider_name,
-                    reachable=True,
+                    egress=trace.egress or "local",
+                    success=True,
                     latency_ms=trace.latency_ms,
-                    source="provider_execution",
                 )
 
                 # Use actual cost if provided by trace, otherwise estimate
@@ -555,10 +540,9 @@ class ProviderExecutor:
                     cost = _COST_ESTIMATES.get(provider_name, 0.0)
 
                 if math.isfinite(cost) and cost >= 0:
-                    self._budgets.record_usage(provider_name, cost)
-                trace.budget_remaining = self._budgets.get_remaining_budget(
-                    provider_name
-                )
+                    trace.budget_remaining = self._readiness.record_budget_usage(
+                        provider_name, cost
+                    )
                 trace.results_count = len(results)
                 if trace.credit_info and "cost_usd" in trace.credit_info:
                     reported_cost = float(trace.credit_info["cost_usd"])
@@ -569,13 +553,11 @@ class ProviderExecutor:
                         )
 
             elif trace.status == "error":
-                self._health.record_failure(provider_name)
-                self._reachability.update_probe(
-                    trace.egress or "local",
+                self._readiness.record_legacy_outcome(
                     provider_name,
-                    reachable=False,
+                    egress=trace.egress or "local",
+                    success=False,
                     latency_ms=trace.latency_ms,
-                    source="provider_execution",
                 )
             return ProviderInvocationOutcome(
                 batch=batch,
@@ -588,13 +570,11 @@ class ProviderExecutor:
                 provider_name,
                 type(error).__name__,
             )
-            self._health.record_failure(provider_name)
-            self._reachability.update_probe(
-                "local",
+            self._readiness.record_legacy_outcome(
                 provider_name,
-                reachable=False,
+                egress="local",
+                success=False,
                 latency_ms=0,
-                source="provider_execution",
             )
             failure = failure_batch(provider_name, error)
             return ProviderInvocationOutcome(failure, True, failure.trace)
@@ -615,7 +595,7 @@ class ProviderExecutor:
             return self._spend.reserve(
                 provider=provider,
                 conservative_charge=conservative_charge_estimate(provider, query),
-                budget_limit=self._budgets.get_budget_limit(provider),
+                budget_limit=self._readiness.budget_limit(provider),
                 caller_identity=query.caller or "unknown",
                 caller_label=str(query.metadata.get("caller_label", "")),
                 idempotency_key=f"{scope}:{provider.value}:{index}",
@@ -664,7 +644,7 @@ class ProviderExecutor:
         )
         trace.budget_remaining = self._spend.provider_summary(
             provider,
-            budget_limit=self._budgets.get_budget_limit(provider),
+            budget_limit=self._readiness.budget_limit(provider),
         )["remaining"]
 
     @staticmethod

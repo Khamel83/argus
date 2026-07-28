@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from argus.broker.router import SearchBroker
+from argus.broker.readiness import ProviderReadinessService
 from argus.models import ProviderName
 from argus.operations.presentation import provider_display_state
 from argus.operations.status import OperationalStatusService
@@ -73,11 +74,19 @@ async def provider_health(
     operational: OperationalStatusService = Depends(get_operational_status),
 ):
     try:
-        providers = {
-            pname.value: broker.get_provider_status(pname)
-            for pname in ProviderName
-            if pname != ProviderName.CACHE
-        }
+        authority = getattr(broker, "readiness_service", None)
+        if isinstance(authority, ProviderReadinessService):
+            providers = {
+                pname.value: authority.render_snapshot(pname).as_dict()
+                for pname in ProviderName
+                if pname != ProviderName.CACHE
+            }
+        else:
+            providers = {
+                pname.value: broker.get_provider_status(pname)
+                for pname in ProviderName
+                if pname != ProviderName.CACHE
+            }
     except Exception as exc:
         raise HTTPException(
             status_code=503,
@@ -151,8 +160,6 @@ async def health_detail(broker: SearchBroker = Depends(get_broker)):
         for name, entry in provider_evidence.items()
     }
 
-    health_all = broker.health_tracker.get_all_status()
-
     for pname_str, entry in providers.items():
         try:
             r = (provider_evidence.get(pname_str) or {}).get("reachability")
@@ -168,7 +175,10 @@ async def health_detail(broker: SearchBroker = Depends(get_broker)):
     return {
         "status": "ok",
         "providers": providers,
-        "health_tracking": health_all,
+        "health_tracking": {
+            name: (provider_evidence.get(name) or {}).get("readiness", {})
+            for name in providers
+        },
         "runtime": {
             "browser": browser_capability_status(),
             "recovery": recovery_status_from_environment(),

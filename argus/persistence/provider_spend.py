@@ -218,6 +218,38 @@ class ProviderSpendRepository:
     def __init__(self, factory: sessionmaker):
         self.session_factory = factory
 
+    @staticmethod
+    def _record_readiness_spend(
+        session,
+        *,
+        row: ProviderSpendAttemptRow,
+        state: str,
+        protected: bool,
+    ) -> None:
+        """Write the normalized spend observation in the attempt transaction."""
+        from argus.broker.readiness import ReadinessScope
+        from argus.persistence.readiness import ProviderReadinessObservationRow
+
+        now = datetime.now(tz=None)
+        scope = ReadinessScope()
+        session.add(
+            ProviderReadinessObservationRow(
+                id=uuid.uuid4().hex,
+                provider=row.provider,
+                dimension="spend",
+                state=state,
+                source="provider_spend_transaction",
+                scope_key=scope.fingerprint(),
+                scope_json=_canonical(scope.as_dict()),
+                producer_observed_at=now,
+                ingested_at=now,
+                expires_at=None if protected else now + timedelta(minutes=5),
+                evidence_ref=f"spend-attempt:{row.id}",
+                safe_reason=row.outcome,
+                protected=protected,
+            )
+        )
+
     def reserve(
         self,
         *,
@@ -286,6 +318,9 @@ class ProviderSpendRepository:
                 )
                 session.add(row)
                 session.flush()
+                self._record_readiness_spend(
+                    session, row=row, state="uncertain", protected=True
+                )
                 self._audit(
                     session,
                     row=row,
@@ -335,6 +370,12 @@ class ProviderSpendRepository:
             row.resolution_source = "argus"
             row.resolution_reference = None
             row.updated_at = datetime.now(tz=None)
+            self._record_readiness_spend(
+                session,
+                row=row,
+                state=("exhausted" if outcome == "balance_exhausted" else "available"),
+                protected=outcome == "balance_exhausted",
+            )
             self._audit(
                 session,
                 row=row,
@@ -925,4 +966,7 @@ def create_provider_spend_repository(
         if not is_sqlite:
             raise ValueError("runtime schema creation is only supported for SQLite")
         SpendBase.metadata.create_all(engine)
+        from argus.persistence.readiness import ReadinessBase
+
+        ReadinessBase.metadata.create_all(engine)
     return ProviderSpendRepository(sessionmaker(bind=engine, expire_on_commit=False))

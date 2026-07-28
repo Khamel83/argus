@@ -189,6 +189,15 @@ class HealthTracker:
                 status_override=self.peek_status(provider),
             )
 
+    def normalized_observation(self, provider: ProviderName) -> tuple[str, float | None]:
+        """Project invocation mechanics into the readiness cooldown vocabulary."""
+        evidence = self.evidence_snapshot(provider)
+        if evidence.status_override is ProviderStatus.TEMPORARILY_DISABLED:
+            return "active", evidence.health.disabled_until if evidence.health else None
+        if evidence.health is not None and evidence.health.half_open_claimed:
+            return "half_open_claimed", evidence.health.disabled_until
+        return "clear", evidence.health.disabled_until if evidence.health else None
+
     def get_health(self, provider: ProviderName) -> ProviderHealth:
         return self._get(provider)
 

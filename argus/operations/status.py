@@ -842,6 +842,73 @@ def _observe_provider_status(
             continue
         try:
             evidence = broker_evidence.get(name, {})
+            readiness = evidence.get("readiness")
+            if isinstance(readiness, Mapping):
+                registered = readiness.get("registration") == "registered"
+                configured = (
+                    readiness.get("configuration", {}).get("configured") is True
+                )
+                service.observe_provider(
+                    name,
+                    "capability",
+                    state="healthy" if registered and configured else "disabled",
+                    source="provider_readiness",
+                    observed_at=now,
+                    ttl=timedelta(minutes=5),
+                    reason=(
+                        None
+                        if registered and configured
+                        else readiness.get("execution_decision", {}).get("reason")
+                    ),
+                )
+                if not registered or not configured:
+                    continue
+                mappings = {
+                    "reachability": {
+                        "reachable": "healthy",
+                        "unreachable": "unready",
+                    },
+                    "health": {
+                        "usable": "healthy",
+                        "empty": "healthy",
+                        "unusable": "unready",
+                    },
+                    "cooldown": {
+                        "clear": "healthy",
+                        "active": "unready",
+                        "half_open_claimed": "degraded",
+                    },
+                    "balance": {
+                        "not_applicable": "healthy",
+                        "available": "healthy",
+                        "low": "degraded",
+                        "exhausted": "unready",
+                        "uncertain": "unready",
+                        "policy_denied": "unready",
+                    },
+                }
+                values = {
+                    "reachability": readiness.get("reachability"),
+                    "health": readiness.get("usability"),
+                    "cooldown": readiness.get("cooldown"),
+                    "balance": readiness.get("spend"),
+                }
+                for dimension, value in values.items():
+                    service.observe_provider(
+                        name,
+                        dimension,
+                        state=mappings[dimension].get(str(value), "unknown"),
+                        source="provider_readiness",
+                        observed_at=now,
+                        ttl=timedelta(minutes=5),
+                        reason=(
+                            readiness.get("execution_decision", {}).get("reason")
+                            if mappings[dimension].get(str(value), "unknown")
+                            != "healthy"
+                            else None
+                        ),
+                    )
+                continue
             status = evidence.get("status")
             if not isinstance(status, Mapping):
                 status = broker.get_provider_status(provider)
@@ -1100,7 +1167,7 @@ def refresh_operational_status(
     now: datetime | None = None,
 ) -> None:
     """Refresh cached evidence without making provider or external network probes."""
-    from argus.recovery.database import EXPECTED_SCHEMA_HEAD
+    from argus.recovery.database import COMPATIBLE_SCHEMA_HEADS
 
     if stop_event is not None and stop_event.is_set():
         return
@@ -1169,7 +1236,7 @@ def refresh_operational_status(
             ),
         )
         schema_head = authority.get("schema_head")
-        schema_healthy = schema_head == EXPECTED_SCHEMA_HEAD or (
+        schema_healthy = schema_head in COMPATIBLE_SCHEMA_HEADS or (
             not service.production and schema_head == "sqlite-managed"
         )
         service.observe_dependency(

@@ -14,7 +14,12 @@ from argus.recovery.operator import (
 )
 
 
-EXPECTED_SCHEMA_HEAD = "0007_extraction_outcomes"
+EXPECTED_SCHEMA_HEAD = "0008_provider_readiness"
+# 0008 is additive and the migration is a separate human-gated operation.
+# Restore evidence stamped at 0007 remains valid during the rolling boundary.
+COMPATIBLE_SCHEMA_HEADS = frozenset(
+    {"0007_extraction_outcomes", EXPECTED_SCHEMA_HEAD}
+)
 REQUIRED_TABLES = {
     "retrieval_requests",
     "retrieval_runs",
@@ -392,7 +397,7 @@ def build_argus_schema_contract(
 
     if tables != REQUIRED_TABLES:
         raise RuntimeError("PostgreSQL source does not have the exact Argus tables")
-    if schema_head != EXPECTED_SCHEMA_HEAD:
+    if schema_head not in COMPATIBLE_SCHEMA_HEADS:
         raise RuntimeError(
             "PostgreSQL source is not migrated to the expected schema head"
         )
@@ -580,7 +585,7 @@ def verify_argus_database(
 
             cursor.execute("SELECT version_num FROM alembic_version")
             schema_head = cursor.fetchone()[0]
-            if schema_head != EXPECTED_SCHEMA_HEAD:
+            if schema_head not in COMPATIBLE_SCHEMA_HEADS:
                 raise RuntimeError(
                     f"schema head {schema_head!r} is not {EXPECTED_SCHEMA_HEAD!r}"
                 )

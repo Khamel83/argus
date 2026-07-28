@@ -221,6 +221,16 @@ class ReachabilityMatrix:
                 }
             return result
 
+    def normalized_observation(
+        self, provider: ProviderName, *, egress: str
+    ) -> tuple[str, EgressProbe | None]:
+        """Project routing mechanics without claiming a half-open execution."""
+        with self._lock:
+            probe = self._probes.get(provider, {}).get(egress)
+            if probe is None or probe.expires_at <= self._clock():
+                return "unknown", probe
+            return ("reachable" if probe.reachable else "unreachable"), probe
+
     async def probe_all(
         self,
         local_providers: "dict[ProviderName, BaseProvider]",

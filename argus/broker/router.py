@@ -19,6 +19,7 @@ from argus.broker.planning import (
 from argus.broker.pipeline import SearchResultPipeline
 from argus.broker.policies import resolve_routing
 from argus.broker.reachability import ReachabilityMatrix
+from argus.broker.readiness import ProviderReadinessService
 from argus.broker.session_flow import SessionSearchService
 from argus.config import EgressNode, get_config
 from argus.logging import get_logger
@@ -46,6 +47,7 @@ class SearchBroker:
         authority_capability: object | None = None,
         utc_clock: Callable[[], datetime] | None = None,
         monotonic_clock: Callable[[], float] | None = None,
+        readiness_service: ProviderReadinessService | None = None,
     ):
         from argus.authority import broker_construction_allowed
 
@@ -74,6 +76,16 @@ class SearchBroker:
             spend_repository = create_provider_spend_repository()
         self._spend_repository = spend_repository
         self._reachability.set_spend_repository(self._spend_repository)
+        self._readiness = readiness_service or (
+            ProviderReadinessService.from_legacy_observation_sources(
+                providers=self._providers,
+                health_tracker=self._health,
+                budget_tracker=self._budgets,
+                reachability=self._reachability,
+                spend_repository=self._spend_repository,
+                monotonic=self._monotonic_clock,
+            )
+        )
         self._executor = executor or ProviderExecutor(
             providers=self._providers,
             health_tracker=self._health,
@@ -83,6 +95,7 @@ class SearchBroker:
             caller_tier_caps=self._config.caller_tier_caps,
             spend_repository=self._spend_repository,
             node_config=self._config.node,
+            readiness_service=self._readiness,
         )
         self._pipeline = result_pipeline or SearchResultPipeline(
             cache=self._cache,
@@ -124,6 +137,10 @@ class SearchBroker:
     def spend_repository(self):
         """Return the durable provider-spend ledger."""
         return self._spend_repository
+
+    @property
+    def readiness_service(self) -> ProviderReadinessService:
+        return self._readiness
 
     async def search(
         self,
@@ -227,51 +244,54 @@ class SearchBroker:
         )
 
     def get_provider_status(self, provider: ProviderName) -> dict:
-        """Get combined status for a provider (config + health + budget)."""
-        provider_obj = self._providers.get(provider)
-        base_status = provider_obj.status() if provider_obj else "unknown"
-
-        health_evidence = self._health.evidence_snapshot(provider)
-        health = health_evidence.health
-        health_status = health_evidence.status_override
-        budget_status = self._budgets.check_status(provider)
-
-        effective = base_status
-        if health_status:
-            effective = health_status.value
-        if budget_status:
-            effective = budget_status.value
-
-        return {
-            "provider": provider.value,
-            "config_status": base_status,
-            "health": health.as_dict() if health is not None else None,
-            "budget_remaining": self._budgets.get_remaining_budget(provider),
-            "effective_status": effective,
-        }
+        """Explicit compatibility projection of the readiness snapshot."""
+        readiness = getattr(self, "_readiness", None)
+        legacy_projection = not isinstance(readiness, ProviderReadinessService)
+        if legacy_projection:
+            readiness = ProviderReadinessService.from_legacy_observation_sources(
+                providers=self._providers,
+                health_tracker=self._health,
+                budget_tracker=self._budgets,
+                reachability=getattr(self, "_reachability", ReachabilityMatrix()),
+            )
+            self._readiness = readiness
+        readiness._refresh_legacy_observations(provider, "local")
+        projection = readiness.render_snapshot(provider).as_legacy_status()
+        if legacy_projection:
+            projection["health"] = readiness.legacy_health_projection(provider)
+        return projection
 
     def operational_provider_evidence(self) -> dict[str, dict]:
         """Return the broker-owned, public provider evidence snapshot."""
-        reachability = self._reachability.get_all()
         return {
             provider.value: {
                 "status": self.get_provider_status(provider),
-                "reachability": reachability.get(provider),
+                "readiness": self._readiness.render_snapshot(provider).as_dict(),
             }
             for provider in ProviderName
+            if provider is not ProviderName.CACHE
         }
 
     async def refresh_provider_evidence(self) -> None:
-        """Probe free providers and translate results into health evidence."""
-        current_outcomes = await self._reachability.probe_all(
-            local_providers=self._providers,
-            egress_nodes=list(self._egress_nodes.values()),
-        )
-        for provider, outcomes in current_outcomes.by_provider().items():
-            if any(outcomes):
-                self._health.record_success(provider)
-            elif outcomes:
-                self._health.record_failure(provider)
+        """Refresh cached projections without provider invocation or reservation."""
+        if not isinstance(
+            getattr(self, "_readiness", None), ProviderReadinessService
+        ):
+            # Compatibility for isolated legacy test doubles that bypass the
+            # constructor; real brokers always own readiness and never enter.
+            current_outcomes = await self._reachability.probe_all(
+                local_providers=self._providers,
+                egress_nodes=list(self._egress_nodes.values()),
+            )
+            for provider, outcomes in current_outcomes.by_provider().items():
+                if any(outcomes):
+                    self._health.record_success(provider)
+                elif outcomes:
+                    self._health.record_failure(provider)
+            return
+        for provider in self._providers:
+            self._readiness._refresh_legacy_observations(provider, "local")
+            self._readiness.render_snapshot(provider)
 
 
 def create_broker(*, authority_capability: object | None = None) -> SearchBroker:
