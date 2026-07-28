@@ -131,6 +131,52 @@ async def test_evidence_authority_never_calls_legacy_search_or_accept():
 
 
 @pytest.mark.asyncio
+async def test_evidence_session_persistence_failure_stays_canonical():
+    from argus.broker.accepted import AcceptedSearchExecution
+    from argus.operations.accepted import (
+        AcceptedOperationRegistration,
+        AcceptedOperationService,
+    )
+
+    broker = MagicMock()
+    broker.session_exists.return_value = True
+    broker.search_with_session_accepted = AsyncMock(
+        return_value=(
+            AcceptedSearchExecution(
+                outcome=CanonicalOutcome.PERSISTENCE_FAILED,
+                reason="write_failed",
+                response=None,
+                receipt=None,
+            ),
+            "owned-session",
+        )
+    )
+    session_authority = MagicMock()
+    session_authority.owns.return_value = True
+    service = AcceptedOperationService(
+        broker_provider=lambda: broker,
+        repository_provider=MagicMock(),
+        session_authority=session_authority,
+        registration=AcceptedOperationRegistration.complete(),
+    )
+    service._evidence_repository = MagicMock()
+
+    operation = await service.search(
+        SearchRequest(
+            query="accepted operation",
+            session_id="owned-session",
+        ),
+        principal="maya",
+        request_id="request-session-failure",
+        require_owned_session=True,
+    )
+
+    assert operation.outcome is CanonicalOutcome.PERSISTENCE_FAILED
+    assert operation.result is None
+    assert operation.error.code == "persistence_failed"
+
+
+@pytest.mark.asyncio
 async def test_empty_search_is_an_accepted_empty_outcome():
     from argus.operations.accepted import AcceptedOperationService
 

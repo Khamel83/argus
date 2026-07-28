@@ -627,7 +627,13 @@ class SearchBroker:
             )
             holder["result"] = result
             if result.response is None:
-                raise RuntimeError(result.reason)
+                return SearchResponse(
+                    query=effective_query.query,
+                    mode=effective_query.mode,
+                    results=[],
+                    total_results=0,
+                    search_run_id=None,
+                )
             return result.response
 
         _response, resolved_session_id = await self._session_service.search_with_session(
