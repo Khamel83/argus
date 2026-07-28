@@ -1,0 +1,20 @@
+{
+  "schema_version": 3,
+  "fixture_cases": ["success", "empty", "error", "malformed", "privacy"],
+  "providers": {
+    "brave": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1", "error_category": "rate_limited", "error_http_status": 429},
+    "duckduckgo": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1", "error_category": "rate_limited", "error_http_status": null},
+    "exa": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1", "error_category": "rate_limited", "error_http_status": 429},
+    "github": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1", "error_category": "rate_limited", "error_http_status": 429},
+    "linkup": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1", "error_category": "rate_limited", "error_http_status": 429},
+    "parallel": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1", "error_category": "rate_limited", "error_http_status": 429},
+    "searchapi": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1", "error_category": "rate_limited", "error_http_status": 429},
+    "searxng": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1", "error_category": "rate_limited", "error_http_status": 429},
+    "serper": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1", "error_category": "rate_limited", "error_http_status": 429},
+    "tavily": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1", "error_category": "rate_limited", "error_http_status": 429},
+    "valyu": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1", "error_category": "rate_limited", "error_http_status": 429},
+    "wolfram": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1", "error_category": "rate_limited", "error_http_status": 429},
+    "yahoo": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1", "error_category": "rate_limited", "error_http_status": 429},
+    "you": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1", "error_category": "rate_limited", "error_http_status": 429}
+  }
+}

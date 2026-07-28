@@ -41,10 +41,12 @@ def _executor(caps: dict[str, int]) -> ProviderExecutor:
         ProviderName.DUCKDUCKGO: _StubProvider(ProviderName.DUCKDUCKGO),  # tier 0
         ProviderName.SERPER: _StubProvider(ProviderName.SERPER),  # tier 3
     }
+    budgets = BudgetTracker(persist_path=None)
+    budgets.set_budget(ProviderName.SERPER, 2500.0)
     return ProviderExecutor(
         providers=providers,
         health_tracker=HealthTracker(),
-        budget_tracker=BudgetTracker(persist_path=None),
+        budget_tracker=budgets,
         caller_tier_caps=caps,
     )
 

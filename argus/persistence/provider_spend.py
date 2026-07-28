@@ -24,6 +24,7 @@ from sqlalchemy import (
     create_engine,
     func,
     select,
+    text,
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
@@ -163,7 +164,7 @@ def _fingerprint(value: dict) -> str:
 def _naive_utc(value: datetime) -> datetime:
     """Normalize API timestamps for storage and arithmetic."""
     if value.tzinfo is None:
-        return value
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
@@ -218,6 +219,35 @@ class ProviderSpendRepository:
     def __init__(self, factory: sessionmaker):
         self.session_factory = factory
 
+    @staticmethod
+    def _db_now(session) -> datetime:
+        value = session.execute(text("SELECT CURRENT_TIMESTAMP")).scalar_one()
+        if isinstance(value, str):
+            value = datetime.fromisoformat(value)
+        return value.replace(tzinfo=None) if value.tzinfo else value
+
+    @staticmethod
+    def _record_readiness_spend(
+        session,
+        *,
+        row: ProviderSpendAttemptRow,
+        state: str,
+        protected: bool,
+    ) -> None:
+        """Write the normalized spend observation in the attempt transaction."""
+        from argus.persistence.readiness import ProviderReadinessRepository
+
+        ProviderReadinessRepository(
+            sessionmaker(bind=session.get_bind(), expire_on_commit=False)
+        ).record_spend_in_session(
+            session,
+            provider=ProviderName(row.provider),
+            state=state,
+            evidence_ref=f"spend-attempt:{row.id}",
+            outcome=row.outcome,
+            protected=protected,
+        )
+
     def reserve(
         self,
         *,
@@ -234,6 +264,8 @@ class ProviderSpendRepository:
             raise ValueError("free providers do not create monetary reservations")
         if not math.isfinite(conservative_charge) or conservative_charge <= 0:
             raise ValueError("conservative charge must be finite and positive")
+        if not math.isfinite(budget_limit) or budget_limit <= 0:
+            raise ValueError("budget limit must be finite and positive")
         payload = {
             "provider": provider.value,
             "conservative_charge": conservative_charge,
@@ -243,9 +275,10 @@ class ProviderSpendRepository:
             "idempotency_key": idempotency_key,
         }
         request_hash = _fingerprint(payload)
-        now = created_at or datetime.now(tz=None)
+        del created_at
         try:
             with self._transaction() as session:
+                now = self._db_now(session)
                 existing = session.scalar(
                     select(ProviderSpendAttemptRow).where(
                         ProviderSpendAttemptRow.idempotency_key == idempotency_key
@@ -260,6 +293,23 @@ class ProviderSpendRepository:
                     provider,
                     lock=True,
                 )
+                from argus.persistence.readiness import (
+                    ProviderReadinessRepository,
+                )
+
+                readiness = ProviderReadinessRepository(
+                    sessionmaker(
+                        bind=session.get_bind(),
+                        expire_on_commit=False,
+                    )
+                )
+                if readiness.protected_exhaustion_in_session(
+                    session,
+                    provider,
+                ):
+                    raise BudgetExhaustedError(
+                        f"{provider.value} terminal account exhaustion"
+                    )
                 if budget_limit > 0 and obligation + conservative_charge > budget_limit:
                     raise BudgetExhaustedError(f"{provider.value} budget exhausted")
 
@@ -286,6 +336,9 @@ class ProviderSpendRepository:
                 )
                 session.add(row)
                 session.flush()
+                self._record_readiness_spend(
+                    session, row=row, state="uncertain", protected=True
+                )
                 self._audit(
                     session,
                     row=row,
@@ -334,7 +387,17 @@ class ProviderSpendRepository:
             row.usage = 1.0
             row.resolution_source = "argus"
             row.resolution_reference = None
-            row.updated_at = datetime.now(tz=None)
+            row.updated_at = self._db_now(session)
+            from argus.persistence.readiness import ProviderReadinessRepository
+
+            ProviderReadinessRepository(
+                sessionmaker(bind=session.get_bind(), expire_on_commit=False)
+            ).resolve_spend_in_session(
+                session,
+                attempt=row,
+                outcome=outcome,
+                evidence_ref=f"spend-settlement:{row.id}",
+            )
             self._audit(
                 session,
                 row=row,
@@ -376,6 +439,7 @@ class ProviderSpendRepository:
         }
         request_hash = _fingerprint(payload)
         with self._transaction() as session:
+            now = self._db_now(session)
             row = self._locked_attempt(session, attempt_id)
             prior = session.scalar(
                 select(SpendAuditRow).where(
@@ -412,7 +476,7 @@ class ProviderSpendRepository:
                     raise ValueError(
                         "provider reconciliation charge must match authoritative evidence"
                     )
-                if datetime.now(tz=None) - snapshot.observed_at > timedelta(minutes=15):
+                if now - snapshot.observed_at > timedelta(minutes=15):
                     raise ValueError(
                         "provider reconciliation requires fresh provider evidence"
                     )
@@ -424,7 +488,18 @@ class ProviderSpendRepository:
             row.usage = 1.0
             row.resolution_source = source
             row.resolution_reference = provider_snapshot_id
-            row.updated_at = datetime.now(tz=None)
+            row.updated_at = now
+            from argus.persistence.readiness import ProviderReadinessRepository
+
+            ProviderReadinessRepository(
+                sessionmaker(bind=session.get_bind(), expire_on_commit=False)
+            ).resolve_spend_in_session(
+                session,
+                attempt=row,
+                outcome=outcome,
+                evidence_ref=f"spend-resolution:{row.id}",
+                authoritative_balance=source == "provider",
+            )
             self._audit(
                 session,
                 row=row,
@@ -451,7 +526,6 @@ class ProviderSpendRepository:
         related_attempt_id: str,
         authoritative_charge: float,
     ) -> ProviderSnapshot:
-        now = datetime.now(tz=None)
         observed_at = _naive_utc(observed_at)
         if actor_identity != f"provider:{provider.value}":
             raise ValueError("provider snapshot requires provider-scoped identity")
@@ -460,7 +534,9 @@ class ProviderSpendRepository:
         if not math.isfinite(balance) or balance < 0:
             raise ValueError("provider balance must be finite and non-negative")
         if not math.isfinite(authoritative_charge) or authoritative_charge < 0:
-            raise ValueError("authoritative charge must be finite and non-negative")
+            raise ValueError(
+                "authoritative charge must be finite and non-negative"
+            )
         payload = {
             "provider": provider.value,
             "balance": balance,
@@ -474,6 +550,7 @@ class ProviderSpendRepository:
         request_hash = _fingerprint(payload)
         try:
             with self._transaction() as session:
+                now = self._db_now(session)
                 existing = session.scalar(
                     select(ProviderBalanceSnapshotRow).where(
                         ProviderBalanceSnapshotRow.idempotency_key == idempotency_key
@@ -591,6 +668,8 @@ class ProviderSpendRepository:
         caller_label: str,
         idempotency_key: str,
     ) -> SpendAttempt:
+        if not math.isfinite(usage) or usage <= 0:
+            raise ValueError("free usage must be finite and positive")
         payload = {
             "provider": provider.value,
             "outcome": outcome,
@@ -600,9 +679,9 @@ class ProviderSpendRepository:
             "idempotency_key": idempotency_key,
         }
         request_hash = _fingerprint(payload)
-        now = datetime.now(tz=None)
         try:
             with self._transaction() as session:
+                now = self._db_now(session)
                 existing = session.scalar(
                     select(ProviderSpendAttemptRow).where(
                         ProviderSpendAttemptRow.idempotency_key == idempotency_key
@@ -712,6 +791,12 @@ class ProviderSpendRepository:
             ),
         }
 
+    def non_authoritative_operational_projection(
+        self, provider: ProviderName, *, budget_limit: float,
+    ) -> dict:
+        """Accounting diagnostics, explicitly outside readiness semantics."""
+        return self.provider_summary(provider, budget_limit=budget_limit)
+
     def _obligation(self, session, provider: ProviderName, *, lock: bool) -> float:
         # PostgreSQL needs a lock even when a provider has no attempt rows yet;
         # the transaction-scoped advisory lock supplies that stable mutex.
@@ -719,8 +804,11 @@ class ProviderSpendRepository:
             from sqlalchemy import text
 
             session.execute(
-                text("SELECT pg_advisory_xact_lock(hashtext(:provider))"),
-                {"provider": provider.value},
+                text(
+                    "SELECT pg_advisory_xact_lock("
+                    "hashtextextended(:provider_lock, 0))"
+                ),
+                {"provider_lock": f"provider-budget:{provider.value}"},
             )
         # Lock existing rows as an additional guard on databases that support
         # it. SQLite's BEGIN IMMEDIATE serializes the whole read/write section.
@@ -736,10 +824,7 @@ class ProviderSpendRepository:
 
     @staticmethod
     def _active_filter(provider: ProviderName):
-        if PROVIDER_TIERS.get(provider) == 1:
-            return ProviderSpendAttemptRow.created_at >= (
-                datetime.now(tz=None) - timedelta(days=30)
-            )
+        del provider
         return True
 
     def _settled_charge(self, session, provider: ProviderName) -> float:
@@ -768,7 +853,7 @@ class ProviderSpendRepository:
             ).where(
                 ProviderSpendAttemptRow.provider == provider.value,
                 ProviderSpendAttemptRow.is_paid.is_(True),
-                ProviderSpendAttemptRow.status == "uncertain",
+                ProviderSpendAttemptRow.status.in_(("reserved", "uncertain")),
                 # Uncertain charges intentionally never age out.
             )
         )
@@ -837,7 +922,7 @@ class ProviderSpendRepository:
                 request_hash=request_hash,
                 before_json=_canonical(before) if before is not None else None,
                 after_json=_canonical(_attempt_state(row)),
-                created_at=datetime.now(tz=None),
+                created_at=ProviderSpendRepository._db_now(session),
             )
         )
 
@@ -876,7 +961,7 @@ class ProviderSpendRepository:
                         ),
                     }
                 ),
-                created_at=datetime.now(tz=None),
+                created_at=ProviderSpendRepository._db_now(session),
             )
         )
 
@@ -925,4 +1010,7 @@ def create_provider_spend_repository(
         if not is_sqlite:
             raise ValueError("runtime schema creation is only supported for SQLite")
         SpendBase.metadata.create_all(engine)
+        from argus.persistence.readiness import ReadinessBase
+
+        ReadinessBase.metadata.create_all(engine)
     return ProviderSpendRepository(sessionmaker(bind=engine, expire_on_commit=False))

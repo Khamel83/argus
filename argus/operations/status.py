@@ -800,25 +800,6 @@ def create_operational_status(
     )
 
 
-def _enum_value(value: object) -> str:
-    raw = getattr(value, "value", value)
-    return str(raw or "unknown")
-
-
-def _provider_observed_at(status: Mapping[str, Any], now: datetime) -> datetime:
-    health = status.get("health")
-    if not isinstance(health, Mapping):
-        return now
-    timestamps = [
-        value
-        for value in (health.get("last_success"), health.get("last_failure"))
-        if isinstance(value, (int, float))
-    ]
-    return (
-        datetime.fromtimestamp(max(timestamps), tz=timezone.utc) if timestamps else now
-    )
-
-
 def _observe_provider_status(
     service: OperationalStatusService,
     *,
@@ -842,9 +823,130 @@ def _observe_provider_status(
             continue
         try:
             evidence = broker_evidence.get(name, {})
-            status = evidence.get("status")
-            if not isinstance(status, Mapping):
-                status = broker.get_provider_status(provider)
+            readiness = evidence.get("readiness")
+            if isinstance(readiness, Mapping):
+                registered = readiness.get("registration") == "registered"
+                configured = (
+                    readiness.get("configuration", {}).get("configured") is True
+                )
+                service.observe_provider(
+                    name,
+                    "capability",
+                    state="healthy" if registered and configured else "disabled",
+                    source="provider_readiness",
+                    observed_at=now,
+                    ttl=timedelta(minutes=5),
+                    reason=(
+                        None
+                        if registered and configured
+                        else readiness.get("execution_decision", {}).get("reason")
+                    ),
+                )
+                if not registered or not configured:
+                    continue
+                mappings = {
+                    "reachability": {
+                        "reachable": "healthy",
+                        "unreachable": "unready",
+                    },
+                    "health": {
+                        "usable": "healthy",
+                        "empty": "healthy",
+                        "unusable": "unready",
+                    },
+                    "cooldown": {
+                        "clear": "healthy",
+                        "active": "unready",
+                        "half_open_claimed": "degraded",
+                    },
+                    "balance": {
+                        "not_applicable": "healthy",
+                        "available": "healthy",
+                        "low": "degraded",
+                        "exhausted": "unready",
+                        "uncertain": "unready",
+                        "policy_denied": "unready",
+                    },
+                }
+                values = {
+                    "reachability": readiness.get("reachability"),
+                    "health": readiness.get("usability"),
+                    "cooldown": readiness.get("cooldown"),
+                    "balance": readiness.get("spend"),
+                }
+                for dimension, value in values.items():
+                    service.observe_provider(
+                        name,
+                        dimension,
+                        state=mappings[dimension].get(str(value), "unknown"),
+                        source="provider_readiness",
+                        observed_at=now,
+                        ttl=timedelta(minutes=5),
+                        reason=(
+                            readiness.get("execution_decision", {}).get("reason")
+                            if mappings[dimension].get(str(value), "unknown")
+                            != "healthy"
+                            else None
+                        ),
+                    )
+                try:
+                    summary = broker.provider_budget_projection(provider)
+                    uncertain_charge = float(summary.get("uncertain_charge") or 0)
+                    uncertain_total += uncertain_charge
+                    spend_state = str(readiness.get("spend", "unknown"))
+                    balance_state = (
+                        "healthy"
+                        if spend_state in {"not_applicable", "available"}
+                        else "degraded"
+                        if spend_state == "low"
+                        else "unknown"
+                        if spend_state == "unknown"
+                        else "unready"
+                    )
+                    remaining = summary.get("remaining")
+                    service.observe_provider(
+                        name,
+                        "balance",
+                        state=balance_state,
+                        source="provider_readiness",
+                        observed_at=now,
+                        ttl=timedelta(minutes=5),
+                        reason=(
+                            None
+                            if balance_state == "healthy"
+                            else readiness.get("execution_decision", {}).get("reason")
+                        ),
+                        details={
+                            "remaining": remaining,
+                            "unlimited": remaining is None,
+                        },
+                    )
+                    service.metrics.increment(
+                        "accounting_reconciliation",
+                        {
+                            "provider": name,
+                            "state": (
+                                "degraded" if uncertain_charge > 0 else "healthy"
+                            ),
+                        },
+                    )
+                except Exception:
+                    reconciliation_failures += 1
+                    service.observe_provider(
+                        name,
+                        "balance",
+                        state="unknown",
+                        source="provider_readiness",
+                        observed_at=now,
+                        ttl=timedelta(minutes=5),
+                        reason="balance_unavailable",
+                    )
+                    service.metrics.increment(
+                        "accounting_reconciliation",
+                        {"provider": name, "state": "unknown"},
+                    )
+                continue
+            raise RuntimeError("provider readiness projection unavailable")
         except Exception:
             service.observe_provider(
                 name,
@@ -856,223 +958,6 @@ def _observe_provider_status(
                 reason="provider_status_unavailable",
             )
             continue
-
-        config_status = _enum_value(status.get("config_status"))
-        effective_status = _enum_value(status.get("effective_status"))
-        admitted = config_status in {"enabled", "healthy"}
-        service.observe_provider(
-            name,
-            "capability",
-            state="healthy" if admitted else "disabled",
-            source="runtime_config",
-            observed_at=now,
-            ttl=timedelta(minutes=5),
-            reason=None if admitted else config_status,
-        )
-        if not admitted:
-            continue
-
-        provider_reachability = evidence.get("reachability")
-        if isinstance(provider_reachability, Mapping):
-            probes = provider_reachability.get("probes") or {}
-            probe_values = [
-                probe for probe in probes.values() if isinstance(probe, Mapping)
-            ]
-            current_probe_values = [
-                probe for probe in probe_values if probe.get("stale") is not True
-            ]
-            if probe_values and not current_probe_values:
-                service.observe_provider(
-                    name,
-                    "reachability",
-                    state="unknown",
-                    source="reachability_probe",
-                    observed_at=now,
-                    ttl=timedelta(minutes=5),
-                    reason="reachability_evidence_expired",
-                )
-            else:
-                reachable_probes = [
-                    probe
-                    for probe in current_probe_values
-                    if probe.get("reachable") is True
-                ]
-                reachable = bool(reachable_probes)
-                state_probes = reachable_probes if reachable else current_probe_values
-                latest_probe = max(
-                    state_probes,
-                    key=lambda probe: (
-                        float(probe.get("last_checked"))
-                        if isinstance(probe.get("last_checked"), (int, float))
-                        else float("-inf")
-                    ),
-                    default=None,
-                )
-                observed = (
-                    datetime.fromtimestamp(
-                        float(latest_probe["last_checked"]),
-                        tz=timezone.utc,
-                    )
-                    if latest_probe is not None
-                    and isinstance(latest_probe.get("last_checked"), (int, float))
-                    else now
-                )
-                reachability_source = (
-                    "provider_execution"
-                    if latest_probe is not None
-                    and latest_probe.get("source") == "provider_execution"
-                    else "reachability_probe"
-                )
-                service.observe_provider(
-                    name,
-                    "reachability",
-                    state="healthy" if reachable else "unready",
-                    source=reachability_source,
-                    observed_at=observed,
-                    ttl=timedelta(minutes=35),
-                    reason=None if reachable else "all_egress_probes_failed",
-                )
-        else:
-            service.observe_provider(
-                name,
-                "reachability",
-                state="unknown",
-                source="process_memory",
-                observed_at=now,
-                ttl=timedelta(minutes=35),
-                reason="not_observed_since_restart",
-            )
-
-        health = status.get("health")
-        health_observed = _provider_observed_at(status, now)
-        has_health_evidence = isinstance(health, Mapping) and (
-            any(
-                isinstance(health.get(name), (int, float))
-                and not isinstance(health.get(name), bool)
-                for name in ("last_success", "last_failure", "disabled_until")
-            )
-            or (
-                isinstance(health.get("consecutive_failures"), int)
-                and not isinstance(health.get("consecutive_failures"), bool)
-                and health.get("consecutive_failures", 0) > 0
-            )
-        )
-        if has_health_evidence:
-            failures = int(health.get("consecutive_failures") or 0)
-            health_state = (
-                "unready"
-                if effective_status
-                in {"temporarily_disabled_after_failures", "budget_exhausted"}
-                else "degraded"
-                if failures
-                else "healthy"
-            )
-            service.observe_provider(
-                name,
-                "health",
-                state=health_state,
-                source="process_memory",
-                observed_at=health_observed,
-                ttl=timedelta(minutes=35),
-                reason=("provider_failures" if failures else None),
-                details={"consecutive_failures": failures},
-            )
-            disabled_until = health.get("disabled_until")
-            cooldown_active = (
-                isinstance(disabled_until, (int, float))
-                and disabled_until > now.timestamp()
-            )
-            service.observe_provider(
-                name,
-                "cooldown",
-                state="unready" if cooldown_active else "healthy",
-                source="process_memory",
-                observed_at=health_observed,
-                ttl=timedelta(minutes=35),
-                reason="cooldown_active" if cooldown_active else None,
-                details={
-                    "cooldown_until": (
-                        _iso(datetime.fromtimestamp(disabled_until, tz=timezone.utc))
-                        if cooldown_active
-                        else None
-                    )
-                },
-            )
-        else:
-            for dimension in ("health", "cooldown"):
-                service.observe_provider(
-                    name,
-                    dimension,
-                    state="unknown",
-                    source="process_memory",
-                    observed_at=now,
-                    ttl=timedelta(minutes=35),
-                    reason="not_observed_since_restart",
-                )
-
-        try:
-            budget_limit = broker.budget_tracker.get_budget_limit(provider)
-            summary = broker.spend_repository.provider_summary(
-                provider,
-                budget_limit=budget_limit,
-            )
-            remaining = summary.get("remaining")
-            unlimited = remaining is None
-            balance_state = (
-                "healthy"
-                if unlimited or (isinstance(remaining, (int, float)) and remaining > 0)
-                else "unready"
-            )
-            snapshot = summary.get("provider_snapshot")
-            balance_observed = now
-            source = "accounting_ledger"
-            if isinstance(snapshot, Mapping):
-                source = "provider_snapshot"
-                try:
-                    balance_observed = _aware(
-                        datetime.fromisoformat(
-                            str(snapshot["observed_at"]).replace("Z", "+00:00")
-                        )
-                    )
-                except (KeyError, TypeError, ValueError):
-                    balance_observed = now
-            service.observe_provider(
-                name,
-                "balance",
-                state=balance_state,
-                source=source,
-                observed_at=balance_observed,
-                ttl=timedelta(hours=24),
-                reason="budget_exhausted" if balance_state == "unready" else None,
-                details={"remaining": remaining, "unlimited": unlimited},
-            )
-            uncertain_total += float(summary.get("uncertain_charge") or 0)
-            service.metrics.increment(
-                "accounting_reconciliation",
-                {
-                    "provider": name,
-                    "state": (
-                        "degraded"
-                        if float(summary.get("uncertain_charge") or 0) > 0
-                        else "healthy"
-                    ),
-                },
-            )
-        except Exception:
-            reconciliation_failures += 1
-            service.observe_provider(
-                name,
-                "balance",
-                state="unknown",
-                source="accounting_ledger",
-                observed_at=now,
-                ttl=timedelta(minutes=5),
-                reason="balance_unavailable",
-            )
-            service.metrics.increment(
-                "accounting_reconciliation",
-                {"provider": name, "state": "unknown"},
-            )
 
     service.metrics.set_gauge(
         "accounting_uncertain_charge",
@@ -1100,7 +985,7 @@ def refresh_operational_status(
     now: datetime | None = None,
 ) -> None:
     """Refresh cached evidence without making provider or external network probes."""
-    from argus.recovery.database import EXPECTED_SCHEMA_HEAD
+    from argus.recovery.database import COMPATIBLE_SCHEMA_HEADS
 
     if stop_event is not None and stop_event.is_set():
         return
@@ -1169,7 +1054,7 @@ def refresh_operational_status(
             ),
         )
         schema_head = authority.get("schema_head")
-        schema_healthy = schema_head == EXPECTED_SCHEMA_HEAD or (
+        schema_healthy = schema_head in COMPATIBLE_SCHEMA_HEADS or (
             not service.production and schema_head == "sqlite-managed"
         )
         service.observe_dependency(

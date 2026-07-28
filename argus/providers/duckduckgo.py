@@ -155,6 +155,13 @@ class DuckDuckGoProvider(BaseProvider):
                 started_at=start,
                 request_evidence=request_evidence,
             )
+        except json.JSONDecodeError:
+            return self._typed_failure_batch(
+                FailureCategory.PARSE_ERROR,
+                "DuckDuckGo worker returned malformed JSON",
+                started_at=start,
+                request_evidence=request_evidence,
+            )
         except (asyncio.TimeoutError, TimeoutError):
             if process is not None:
                 await _cancellation_safe_reap(process)

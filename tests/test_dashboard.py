@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock
 
-import pytest
-
 
 def _build_app(admin_key: str = "admin-secret"):
     import os
@@ -20,6 +18,13 @@ def _build_app(admin_key: str = "admin-secret"):
     bt.set_budget(ProviderName.BRAVE, 2000)
     bt.set_budget(ProviderName.SERPER, 2500)
     mock_broker.budget_tracker = bt
+    mock_broker.provider_budget_projection.side_effect = lambda provider: {
+        "provider": provider.value,
+        "budget_limit": bt.get_budget_limit(provider) or None,
+        "remaining": bt.get_remaining_budget(provider),
+        "state": "available",
+        "authority": "provider_readiness",
+    }
     mock_broker.health_tracker = HealthTracker()
     mock_broker.cache = SearchCache()
 
@@ -105,6 +110,13 @@ def test_parallel_budget_status_identifies_monthly_recurring_tier():
     broker = MagicMock()
     broker.budget_tracker = BudgetTracker()
     broker.budget_tracker.set_budget(ProviderName.PARALLEL, 5000.0)
+    broker.provider_budget_projection.side_effect = lambda provider: {
+        "provider": provider.value,
+        "budget_limit": broker.budget_tracker.get_budget_limit(provider) or None,
+        "remaining": broker.budget_tracker.get_remaining_budget(provider),
+        "state": "available",
+        "authority": "provider_readiness",
+    }
 
     row = _build_budget_state(broker)[0]
 
@@ -112,7 +124,7 @@ def test_parallel_budget_status_identifies_monthly_recurring_tier():
     assert row["tier"] == 1
     assert row["budget"] == 5000
     assert row["remaining"] == 5000
-    assert row["status"] == "ok"
+    assert row["status"] == "available"
 
 
 def test_logout_clears_cookie():
@@ -298,8 +310,6 @@ def test_get_caller_activity_groups_by_caller(tmp_path):
 
 
 def test_dashboard_renders_caller_table(monkeypatch):
-    from argus.api.routes_dashboard import router
-    from argus.api.usage import get_caller_activity
     monkeypatch.setattr(
         "argus.api.routes_dashboard.usage_queries.get_caller_activity",
         lambda days=7: [

@@ -228,6 +228,22 @@ def test_expected_schema_manifest_describes_types_nullability_and_definitions():
     ]["definition"]
 
 
+def test_0008_contract_contains_all_readiness_authority_tables():
+    from argus.recovery.database import expected_argus_schema_manifest
+
+    manifest = expected_argus_schema_manifest("0008_provider_readiness")
+
+    assert manifest["schema_head"] == "0008_provider_readiness"
+    assert {
+        "provider_readiness_observations",
+        "provider_readiness_snapshots",
+        "provider_readiness_evidence_refs",
+        "provider_readiness_leases",
+        "provider_readiness_alert_dedupe",
+    } <= set(manifest["columns"])
+    assert len(manifest["contract_sha256"]) == 64
+
+
 def test_checked_contract_retains_migrated_server_defaults_and_deparser_output():
     from argus.recovery.database import expected_argus_schema_manifest
 
@@ -891,6 +907,7 @@ def test_postgresql_restore_verifier_uses_disposable_database(
     from sqlalchemy.engine import make_url
 
     from argus.recovery.database import (
+        EXPECTED_SCHEMA_HEAD,
         verify_argus_database,
         verify_restored_source_inventory,
     )
@@ -930,7 +947,7 @@ def test_postgresql_restore_verifier_uses_disposable_database(
             ),
         )
 
-        assert report["schema_head"] == "0007_extraction_outcomes"
+        assert report["schema_head"] == EXPECTED_SCHEMA_HEAD
         assert report["checks"]["argus_read_path"] is True
         assert verify_restored_source_inventory(
             scratch,

@@ -100,6 +100,10 @@ class ExpandRequest(BaseModel):
 class ProviderTestRequest(BaseModel):
     provider: str = Field(..., description="Provider name to test")
     query: str = Field("argus", description="Test query")
+    live: bool = Field(False, description="Run an explicitly authorized live probe")
+    idempotency_key: Optional[str] = Field(None, min_length=1, max_length=255)
+    durable_receipt: Optional[str] = Field(None, min_length=1, max_length=128)
+    spend_reserved: bool = False
 
 
 class SpendResolutionRequest(BaseModel):

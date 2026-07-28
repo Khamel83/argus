@@ -34,10 +34,39 @@ One change per PR makes review easier. If it's two logically separate things, it
 
 1. Create `argus/providers/yourprovider.py` implementing `BaseProvider`
 2. Add a `ProviderName` enum entry in `argus/models.py`
-3. Wire it into `create_broker()` in `argus/broker/router.py`
-4. Add config entries in `argus/config.py` and `.env.example`
-5. Add tests in `tests/test_providers.py`
-6. Add to routing policies in `argus/broker/policies.py` and budget tiers in `argus/broker/budgets.py`
+3. Add the exact module and adapter class to `CANONICAL_ADAPTERS` in
+   `argus/providers/fixture_registry.py`
+4. Add a hand-curated entry to
+   `argus/providers/fixture_golden_contracts.py` with the exact outbound
+   transport request, raw success/empty/error/malformed fixtures, normalized
+   outcomes, provider contract version, and privacy expectations. This file is
+   review-owned input and is never written by the attestation generator.
+5. Add only the matching request, response, provider-contract, and error
+   declaration metadata to
+   `argus/providers/fixture_contracts.json`
+6. Ensure `argus/providers/fixture_harness.py` can execute the real adapter's
+   `search()` method against the curated transport for success, empty, error,
+   malformed, and private-query cases.
+7. Regenerate and verify the checked content-addressed artifact:
+
+   ```bash
+   PACKAGE_VERSION="$(uv run python -c 'import argus; print(argus.__version__)')"
+   uv run python scripts/generate_provider_fixture_attestations.py \
+     --release-revision "argus-${PACKAGE_VERSION}"
+   uv run python scripts/generate_provider_fixture_attestations.py \
+     --release-revision "argus-${PACKAGE_VERSION}" --check
+   ```
+
+   Commit `argus/providers/fixture_attestations.json` with the adapter and
+   harness changes. Regenerate it for every package release. Runtime startup
+   only loads and verifies the exact release and provider-contract artifact; it
+   does not regenerate it.
+8. Wire the provider into `create_broker()` in `argus/broker/router.py`
+9. Add config entries in `argus/config.py` and `.env.example`
+10. Add adapter and failure-shape tests in `tests/test_providers.py`, plus the
+   canonical fixture-attestation cases in `tests/test_provider_readiness.py`
+11. Add the provider to routing policies in `argus/broker/policies.py` and
+    budget tiers in `argus/broker/budgets.py`
 
 The DuckDuckGo provider is a good reference — it's simple and doesn't need an API key. See [docs/providers.md](docs/providers.md) for the full provider and extractor reference.
 

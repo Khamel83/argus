@@ -40,13 +40,13 @@ jobs:
       postgres:
         image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
         env:
-          POSTGRES_DB: argus_test
+          POSTGRES_DB: argus_restore_ci_authority
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d argus_test"
+          --health-cmd "pg_isready -U postgres -d argus_restore_ci_authority"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -55,7 +55,7 @@ jobs:
       ARGUS_DISABLE_SECRET_RESOLUTION: "true"
       ARGUS_EGRESS_TYPE: "unknown"
       ARGUS_RESIDENTIAL_POLICY: "off"
-      ARGUS_TEST_POSTGRES_URL: postgresql+psycopg2://postgres:postgres@127.0.0.1:5432/argus_test
+      ARGUS_TEST_POSTGRES_URL: postgresql+psycopg2://postgres:postgres@127.0.0.1:5432/argus_restore_ci_authority
       ARGUS_TEST_ALLOW_PROVISIONING: disposable-only
       ARGUS_TEST_PSQL: /usr/bin/psql
     steps:
@@ -72,12 +72,22 @@ jobs:
       - name: Sync dependencies
         run: uv sync --frozen --python 3.12 --extra dev --extra mcp
 
+      - name: Verify canonical provider fixture attestations
+        run: >-
+          uv run --python 3.12
+          python scripts/generate_provider_fixture_attestations.py --check
+
       - name: Install PostgreSQL client
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql-client
           test -x "$ARGUS_TEST_PSQL"
           "$ARGUS_TEST_PSQL" --version
+
+      - name: Migrate PostgreSQL schema
+        run: |
+          ARGUS_DB_URL="$ARGUS_TEST_POSTGRES_URL" \
+            uv run --python 3.12 alembic upgrade head
 
       - name: Run PostgreSQL ledger contract
         run: |
@@ -93,6 +103,20 @@ jobs:
             tests/test_recovery_database.py::test_postgresql_atlas_restore_inventory_detects_count_drift \
             tests/test_postgres_provisioning.py \
             -v --tb=short
+
+      - name: Verify PostgreSQL provider-readiness authority
+        run: |
+          mkdir -p artifacts
+          uv run --python 3.12 \
+            python scripts/verify_provider_readiness_postgres.py \
+            --output artifacts/provider-readiness-postgres.json
+
+      - name: Upload PostgreSQL provider-readiness evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: provider-readiness-postgres
+          path: artifacts/provider-readiness-postgres.json
+          if-no-files-found: error
 
   production-config:
     runs-on: ubuntu-latest

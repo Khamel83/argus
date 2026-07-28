@@ -74,7 +74,7 @@ async def provider_health(
 ):
     try:
         providers = {
-            pname.value: broker.get_provider_status(pname)
+            pname.value: broker.provider_readiness_projection(pname)
             for pname in ProviderName
             if pname != ProviderName.CACHE
         }
@@ -88,8 +88,11 @@ async def provider_health(
         if provider in providers:
             providers[provider] = {
                 **providers[provider],
-                "state": evidence.get("state", "unknown"),
-                "observations": evidence.get("observations") or {},
+                "operational": {
+                    "non_authoritative": True,
+                    "state": evidence.get("state", "unknown"),
+                    "observations": evidence.get("observations") or {},
+                },
             }
     active_states = [
         provider_display_state(status)
@@ -111,10 +114,7 @@ async def caller_budgets(broker: SearchBroker = Depends(get_broker)):
         for pname in ProviderName:
             if pname == ProviderName.CACHE:
                 continue
-            providers[pname.value] = broker.spend_repository.provider_summary(
-                pname,
-                budget_limit=broker.budget_tracker.get_budget_limit(pname),
-            )
+            providers[pname.value] = broker.provider_budget_projection(pname)
     except Exception as exc:
         raise HTTPException(
             status_code=503,
@@ -151,8 +151,6 @@ async def health_detail(broker: SearchBroker = Depends(get_broker)):
         for name, entry in provider_evidence.items()
     }
 
-    health_all = broker.health_tracker.get_all_status()
-
     for pname_str, entry in providers.items():
         try:
             r = (provider_evidence.get(pname_str) or {}).get("reachability")
@@ -168,7 +166,10 @@ async def health_detail(broker: SearchBroker = Depends(get_broker)):
     return {
         "status": "ok",
         "providers": providers,
-        "health_tracking": health_all,
+        "health_tracking": {
+            name: (provider_evidence.get(name) or {}).get("readiness", {})
+            for name in providers
+        },
         "runtime": {
             "browser": browser_capability_status(),
             "recovery": recovery_status_from_environment(),
@@ -180,12 +181,7 @@ async def health_detail(broker: SearchBroker = Depends(get_broker)):
 async def budgets(broker: SearchBroker = Depends(get_broker)):
     budget_info = {}
     for pname in ProviderName:
-        budget_info[pname.value] = {
-            "remaining": broker.budget_tracker.get_remaining_budget(pname),
-            "monthly_usage": broker.budget_tracker.get_monthly_usage(pname),
-            "usage_count": broker.budget_tracker.get_usage_count(pname),
-            "exhausted": broker.budget_tracker.is_budget_exhausted(pname),
-        }
+        budget_info[pname.value] = broker.provider_budget_projection(pname)
 
     # Token balances for extraction services (Jina, etc.)
     token_balances = {}
@@ -193,4 +189,7 @@ async def budgets(broker: SearchBroker = Depends(get_broker)):
     if store:
         token_balances = store.get_all_token_balances()
 
-    return {"budgets": budget_info, "token_balances": token_balances}
+    return {
+        "budgets": budget_info,
+        "non_authoritative_operational": {"token_balances": token_balances},
+    }

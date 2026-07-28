@@ -91,7 +91,7 @@ def test_production_broker_never_opens_legacy_sqlite_budget_store(
     assert broker.budget_tracker._store is None
 
 
-def _half_open_paid_executor(monkeypatch, provider, *, caller_caps=None):
+def _ready_paid_executor(monkeypatch, provider, *, caller_caps=None):
     from unittest.mock import MagicMock
 
     from argus.broker.budgets import BudgetTracker
@@ -105,13 +105,11 @@ def _half_open_paid_executor(monkeypatch, provider, *, caller_caps=None):
     matrix.update_probe(
         "local",
         ProviderName.BRAVE,
-        reachable=False,
-        latency_ms=450,
+        reachable=True,
+        latency_ms=25,
         source="provider_execution",
     )
     health = HealthTracker(failure_threshold=1, cooldown_minutes=0.5)
-    health.record_failure(ProviderName.BRAVE)
-    now[0] += 31
     budgets = BudgetTracker()
     budgets.set_budget(ProviderName.BRAVE, 100.0)
     spend = MagicMock()
@@ -128,7 +126,7 @@ def _half_open_paid_executor(monkeypatch, provider, *, caller_caps=None):
         caller_tier_caps=caller_caps,
         spend_repository=spend,
     )
-    return executor, health, matrix, spend, now
+    return executor, health, matrix, spend, budgets
 
 
 @pytest.mark.asyncio
@@ -347,7 +345,11 @@ async def test_executor_preserves_normalized_batch_and_projects_only_at_compatib
 
     outcome = await execute_with_plan(
         executor,
-        SearchQuery(query="batch evidence", providers=[ProviderName.YAHOO]),
+        SearchQuery(
+            query="batch evidence",
+            mode=SearchMode.RESEARCH,
+            providers=[ProviderName.YAHOO],
+        ),
         [ProviderName.YAHOO],
     )
 
@@ -358,6 +360,12 @@ async def test_executor_preserves_normalized_batch_and_projects_only_at_compatib
     )
     assert outcome.provider_results["yahoo"] == []
     assert outcome.traces[0].status == "success"
+    assert executor._readiness.snapshot(
+        ProviderName.YAHOO, request_class="research"
+    ).usability == "usable"
+    assert executor._readiness.snapshot(
+        ProviderName.YAHOO, request_class="discovery"
+    ).usability == "unknown"
 
 
 @pytest.mark.asyncio
@@ -496,7 +504,7 @@ async def test_refresh_health_uses_only_outcomes_from_current_probe_run():
     assert duck.calls == 2
 
 
-def test_provider_health_snapshot_is_frozen_and_detached():
+def test_provider_readiness_projection_is_detached_from_process_health():
     from dataclasses import FrozenInstanceError
 
     from argus.broker.budgets import BudgetTracker
@@ -514,8 +522,10 @@ def test_provider_health_snapshot_is_frozen_and_detached():
     captured = broker.get_provider_status(ProviderName.BRAVE)
     health.record_failure(ProviderName.BRAVE)
 
-    assert captured["health"]["consecutive_failures"] == 0
-    assert captured["health"]["last_failure"] is None
+    assert captured["authority"] == "provider_readiness"
+    assert captured["health"]["authority"] == "provider_readiness"
+    assert captured["health"]["generation"] > 0
+    assert broker.get_provider_status(ProviderName.BRAVE)["health"] == captured["health"]
     with pytest.raises(FrozenInstanceError):
         frozen.consecutive_failures = 99
 
@@ -567,7 +577,7 @@ async def test_cancelled_probe_cannot_mutate_shared_evidence_after_shutdown():
 
 
 @pytest.mark.asyncio
-async def test_paid_provider_recovers_after_bounded_reachability_half_open(monkeypatch):
+async def test_paid_provider_failure_requires_authoritative_reconciliation(monkeypatch):
     from unittest.mock import MagicMock
 
     from argus.broker.budgets import BudgetTracker
@@ -613,9 +623,9 @@ async def test_paid_provider_recovers_after_bounded_reachability_half_open(monke
     immediate = await execute_with_plan(executor, query, [ProviderName.BRAVE])
 
     assert first.traces[0].status == "error"
-    assert immediate.traces[0].error == ("health: temporarily_disabled_after_failures")
+    assert immediate.traces[0].error == "no reachable egress"
     assert provider.calls == 1
-    assert spend.reserve.call_count == 1
+    assert executor._readiness.snapshot(ProviderName.BRAVE).spend == "uncertain"
 
     now[0] += 31
     provider.trace = ProviderTrace(
@@ -624,19 +634,18 @@ async def test_paid_provider_recovers_after_bounded_reachability_half_open(monke
         latency_ms=25,
     )
 
-    recovered = await execute_with_plan(executor, query, [ProviderName.BRAVE])
+    still_blocked = await execute_with_plan(executor, query, [ProviderName.BRAVE])
 
-    assert recovered.traces[0].status == "success"
-    assert provider.calls == 2
-    assert matrix.get_all()[ProviderName.BRAVE]["probes"]["local"]["reachable"] is True
+    assert still_blocked.traces[0].status == "skipped"
+    assert provider.calls == 1
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("gate", ["free_only", "tier_cap", "free_results", "budget"])
-async def test_paid_pre_call_gates_do_not_consume_half_open_claim(monkeypatch, gate):
+@pytest.mark.parametrize("gate", ["free_only", "tier_cap", "budget"])
+async def test_paid_pre_call_gates_do_not_create_an_execution(monkeypatch, gate):
     provider = StubProvider(name=ProviderName.BRAVE)
     caps = {"limited": 0} if gate == "tier_cap" else None
-    executor, health, matrix, _, _ = _half_open_paid_executor(
+    executor, health, matrix, _, _ = _ready_paid_executor(
         monkeypatch, provider, caller_caps=caps
     )
     query = SearchQuery(
@@ -646,24 +655,25 @@ async def test_paid_pre_call_gates_do_not_consume_half_open_claim(monkeypatch, g
         max_results=1,
     )
     order = [ProviderName.BRAVE]
-    if gate == "free_results":
-        free = StubProvider(
-            name=ProviderName.DUCKDUCKGO,
-            results=[
-                SearchResult(
-                    url="https://free.example",
-                    title="free",
-                    snippet="free",
-                    provider=ProviderName.DUCKDUCKGO,
-                )
-            ],
-        )
-        executor._providers[ProviderName.DUCKDUCKGO] = free
-        order = [ProviderName.DUCKDUCKGO, ProviderName.BRAVE]
     if gate == "budget":
-        executor._should_query_paid = lambda provider, tier: (
-            False,
-            "over pace, conserving monthly credits",
+        from argus.broker.readiness import ProviderObservation
+
+        scope = executor._readiness.execution_scope(
+            ProviderName.BRAVE,
+            egress="local",
+            request_class="discovery",
+        )
+        executor._readiness.record_observation(
+            ProviderObservation(
+                provider=ProviderName.BRAVE,
+                dimension="spend",
+                state="exhausted",
+                source="provider_authoritative",
+                    scope=scope,
+                    observed_at=executor._readiness.repository.authority_now(),
+                    ttl_seconds=None,
+                    protected=True,
+            )
         )
 
     await execute_with_plan(executor, query, order)
@@ -674,31 +684,92 @@ async def test_paid_pre_call_gates_do_not_consume_half_open_claim(monkeypatch, g
 
 
 @pytest.mark.asyncio
-async def test_reservation_skip_does_not_consume_half_open_claim(monkeypatch):
-    from argus.persistence.provider_spend import BudgetExhaustedError
+async def test_free_results_skip_paid_provider_registered_at_startup():
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+
+    free = StubProvider(
+        name=ProviderName.DUCKDUCKGO,
+        results=[
+            SearchResult(
+                url="https://free.example",
+                title="free",
+                snippet="free",
+                provider=ProviderName.DUCKDUCKGO,
+            )
+        ],
+    )
+    paid = StubProvider(name=ProviderName.BRAVE)
+    budgets = BudgetTracker()
+    budgets.set_budget(ProviderName.BRAVE, 100.0)
+    executor = ProviderExecutor(
+        providers={
+            ProviderName.DUCKDUCKGO: free,
+            ProviderName.BRAVE: paid,
+        },
+        health_tracker=HealthTracker(),
+        budget_tracker=budgets,
+    )
+
+    outcome = await execute_with_plan(
+        executor,
+        SearchQuery(query="gate", caller="test", max_results=1),
+        [ProviderName.DUCKDUCKGO, ProviderName.BRAVE],
+    )
+
+    assert outcome.traces[0].status == "success"
+    assert free.calls == 1
+    assert paid.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_budget_exhaustion_skips_before_authority_lease(monkeypatch):
+    from argus.broker.readiness import ProviderObservation
 
     provider = StubProvider(name=ProviderName.BRAVE)
-    executor, health, matrix, spend, _ = _half_open_paid_executor(monkeypatch, provider)
-    spend.reserve.side_effect = BudgetExhaustedError("exhausted")
+    executor, health, matrix, _, _ = _ready_paid_executor(
+        monkeypatch, provider
+    )
+    scope = executor._readiness.execution_scope(
+        ProviderName.BRAVE,
+        egress="local",
+        request_class="discovery",
+    )
+    executor._readiness.record_observation(
+        ProviderObservation(
+            provider=ProviderName.BRAVE,
+            dimension="spend",
+            state="exhausted",
+            source="provider_authoritative",
+            scope=scope,
+            observed_at=executor._readiness.repository.authority_now(),
+            ttl_seconds=None,
+            protected=True,
+        )
+    )
 
-    await execute_with_plan(
+    outcome = await execute_with_plan(
         executor,
         SearchQuery(query="reservation", caller="test"),
         [ProviderName.BRAVE],
     )
 
+    assert outcome.traces[0].status == "skipped"
     assert health.get_health(ProviderName.BRAVE).half_open_claimed is False
     assert matrix.peek_best_egress(ProviderName.BRAVE) == "local"
     assert provider.calls == 0
 
 
 @pytest.mark.asyncio
-async def test_second_claim_failure_rolls_back_health_and_no_call_reservation(
+async def test_legacy_claim_mutation_cannot_override_readiness_authority(
     monkeypatch,
 ):
     provider = StubProvider(name=ProviderName.BRAVE)
-    executor, health, matrix, spend, _ = _half_open_paid_executor(monkeypatch, provider)
-    matrix.claim_egress = lambda provider, egress: None
+    executor, _, matrix, spend, _ = _ready_paid_executor(monkeypatch, provider)
+    matrix.claim_egress = lambda provider, egress: (_ for _ in ()).throw(
+        AssertionError("legacy claim path must not run")
+    )
 
     outcome = await execute_with_plan(
         executor,
@@ -706,18 +777,14 @@ async def test_second_claim_failure_rolls_back_health_and_no_call_reservation(
         [ProviderName.BRAVE],
     )
 
-    assert outcome.traces[0].error == "half-open claim unavailable"
-    assert health.get_health(ProviderName.BRAVE).half_open_claimed is False
-    assert provider.calls == 0
-    spend.settle.assert_called_once()
-    assert spend.settle.call_args.kwargs == {
-        "actual_charge": 0.0,
-        "outcome": "skipped",
-    }
+    assert outcome.traces[0].status == "success"
+    assert provider.calls == 1
+    spend.reserve.assert_not_called()
+    spend.settle.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_cancelled_paid_invocation_releases_half_open_claims(monkeypatch):
+async def test_cancelled_paid_invocation_remains_uncertain_until_reconciled(monkeypatch):
     import asyncio
 
     entered = asyncio.Event()
@@ -731,7 +798,7 @@ async def test_cancelled_paid_invocation_releases_half_open_claims(monkeypatch):
             return [], ProviderTrace(provider=self.name, status="success")
 
     provider = GateProvider(name=ProviderName.BRAVE)
-    executor, health, matrix, _, _ = _half_open_paid_executor(monkeypatch, provider)
+    executor, _, _, _, _ = _ready_paid_executor(monkeypatch, provider)
     first = asyncio.create_task(
         execute_with_plan(
             executor,
@@ -745,19 +812,19 @@ async def test_cancelled_paid_invocation_releases_half_open_claims(monkeypatch):
         await first
 
     release.set()
-    recovered = await execute_with_plan(
+    blocked = await execute_with_plan(
         executor,
         SearchQuery(query="recover", caller="test"),
         [ProviderName.BRAVE],
     )
 
-    assert recovered.traces[0].status == "success"
-    assert health.get_health(ProviderName.BRAVE).half_open_claimed is False
-    assert matrix.get_all()[ProviderName.BRAVE]["probes"]["local"]["reachable"] is True
+    assert blocked.traces[0].status == "skipped"
+    assert executor._readiness.snapshot(ProviderName.BRAVE).spend == "uncertain"
+    assert provider.calls == 1
 
 
 @pytest.mark.asyncio
-async def test_exactly_one_concurrent_paid_caller_claims_half_open(monkeypatch):
+async def test_exactly_one_concurrent_paid_caller_gets_authority_lease(monkeypatch):
     import asyncio
 
     entered = asyncio.Event()
@@ -771,7 +838,7 @@ async def test_exactly_one_concurrent_paid_caller_claims_half_open(monkeypatch):
             return [], ProviderTrace(provider=self.name, status="success")
 
     provider = GateProvider(name=ProviderName.BRAVE)
-    executor, _, _, _, _ = _half_open_paid_executor(monkeypatch, provider)
+    executor, _, _, _, _ = _ready_paid_executor(monkeypatch, provider)
     first = asyncio.create_task(
         execute_with_plan(
             executor,
@@ -1581,8 +1648,8 @@ class TestRouter:
         )
 
     @pytest.mark.asyncio
-    async def test_paid_provider_skipped_when_over_pace(self, monkeypatch):
-        """Paid providers are skipped when today's usage exceeds daily pace."""
+    async def test_process_local_pace_does_not_override_readiness(self, monkeypatch):
+        """Legacy counters are operational-only and cannot deny execution."""
         from argus.broker.budgets import BudgetTracker
         from argus.broker.router import SearchBroker
 
@@ -1633,10 +1700,9 @@ class TestRouter:
         )
 
         assert free.calls == 1
-        assert paid.calls == 0
-        assert response.total_results == 1
-        assert "over pace" in response.traces[-1].error
-        assert response.budget_warnings
+        assert paid.calls == 1
+        assert response.total_results == 2
+        assert response.budget_warnings == []
 
     @pytest.mark.asyncio
     async def test_paid_provider_used_when_under_pace(self, monkeypatch):
@@ -1754,6 +1820,7 @@ class TestRouter:
 
     @pytest.mark.asyncio
     async def test_search_skips_budget_exhausted_provider(self, monkeypatch):
+        from argus.broker.readiness import ProviderObservation
         from argus.broker.budgets import BudgetTracker
         from argus.broker.router import SearchBroker
 
@@ -1777,8 +1844,23 @@ class TestRouter:
             },
             budget_tracker=exhausted_budget,
         )
-        broker.budget_tracker.set_budget(ProviderName.BRAVE, 1.0)
-        broker.budget_tracker.record_usage(ProviderName.BRAVE, 1.0)
+        scope = broker._readiness.execution_scope(
+            ProviderName.BRAVE,
+            egress="local",
+            request_class="discovery",
+        )
+        broker._readiness.record_observation(
+            ProviderObservation(
+                provider=ProviderName.BRAVE,
+                dimension="spend",
+                state="exhausted",
+                source="provider_authoritative",
+                scope=scope,
+                observed_at=broker._readiness.repository.authority_now(),
+                ttl_seconds=None,
+                protected=True,
+            )
+        )
 
         response = await broker.search(
             SearchQuery(
@@ -1793,8 +1875,13 @@ class TestRouter:
         assert backup.calls == 1
 
     @pytest.mark.asyncio
-    async def test_search_handles_provider_exception_and_continues(self, monkeypatch):
+    async def test_search_handles_provider_exception_and_continues(
+        self, monkeypatch, tmp_path
+    ):
         from argus.broker.router import SearchBroker
+        from argus.persistence.provider_spend import (
+            create_provider_spend_repository,
+        )
 
         monkeypatch.setattr(
             "argus.persistence.db.SearchPersistenceGateway.record_completed_search",
@@ -1816,6 +1903,10 @@ class TestRouter:
                 ProviderName.SEARXNG: failing,
                 ProviderName.BRAVE: backup,
             },
+            spend_repository=create_provider_spend_repository(
+                f"sqlite:///{tmp_path / 'exception-spend.db'}",
+                create_schema=True,
+            ),
         )
 
         response = await broker.search(
@@ -1947,13 +2038,15 @@ class TestFreeOnly:
             ],
         )
 
+        budgets = BudgetTracker()
+        budgets.set_budget(ProviderName.BRAVE, 100.0)
         executor = ProviderExecutor(
             providers={
                 ProviderName.DUCKDUCKGO: free_provider,
                 ProviderName.BRAVE: paid_provider,
             },
             health_tracker=HealthTracker(),
-            budget_tracker=BudgetTracker(),
+            budget_tracker=budgets,
         )
 
         q = SearchQuery(query="test", free_only=True, max_results=10)
@@ -2000,13 +2093,15 @@ class TestFreeOnly:
             ],
         )
 
+        budgets = BudgetTracker()
+        budgets.set_budget(ProviderName.BRAVE, 100.0)
         executor = ProviderExecutor(
             providers={
                 ProviderName.DUCKDUCKGO: free_provider,
                 ProviderName.BRAVE: paid_provider,
             },
             health_tracker=HealthTracker(),
-            budget_tracker=BudgetTracker(),
+            budget_tracker=budgets,
         )
 
         q = SearchQuery(query="test", free_only=False, max_results=10)
@@ -2099,6 +2194,44 @@ async def test_executor_routes_to_remote_when_local_blocked():
     assert outcome.live_providers_used == 1
     assert "yahoo" in outcome.provider_results
     assert local_provider.calls == 0  # local should NOT have been called
+
+
+@pytest.mark.asyncio
+async def test_remote_exception_settles_typed_failure_never_success():
+    from unittest.mock import patch
+
+    from argus.broker.reachability import ReachabilityMatrix
+    from argus.config import EgressNode
+
+    matrix = ReachabilityMatrix()
+    matrix.update_probe("local", ProviderName.YAHOO, reachable=False, latency_ms=0)
+    matrix.update_probe("oci-dev", ProviderName.YAHOO, reachable=True, latency_ms=100)
+    executor, _ = _make_executor(
+        reachability=matrix,
+        egress_nodes={
+            "oci-dev": EgressNode(
+                name="oci-dev",
+                url="http://worker:8273",
+                shared_secret="s",
+            )
+        },
+    )
+
+    with patch(
+        "argus.broker.remote_provider.RemoteProviderClient.search",
+        side_effect=RuntimeError("transport lost"),
+    ):
+        outcome = await execute_with_plan(
+            executor,
+            SearchQuery(query="remote failure", mode=SearchMode.DISCOVERY),
+            [ProviderName.YAHOO],
+        )
+
+    assert outcome.traces[0].status == "error"
+    lease = executor._readiness.repository.latest_lease(ProviderName.YAHOO)
+    assert lease is not None
+    assert lease.outcome == "provider_unavailable"
+    assert lease.outcome != "success"
 
 
 @pytest.mark.asyncio

@@ -220,10 +220,7 @@ def search_budgets(broker: SearchBroker) -> str:
     lines = ["## Search Provider Budgets", ""]
 
     for pname in ProviderName:
-        summary = broker.spend_repository.provider_summary(
-            pname,
-            budget_limit=broker.budget_tracker.get_budget_limit(pname),
-        )
+        summary = broker.provider_budget_projection(pname)
         snapshot = summary.get("provider_snapshot")
         snapshot_text = "none"
         if snapshot:
@@ -246,6 +243,10 @@ async def test_provider_mcp(
     query: str = "argus",
     caller_identity: str = "local-mcp",
     caller_label: str = "",
+    live: bool = False,
+    idempotency_key: str | None = None,
+    durable_receipt: str | None = None,
+    spend_reserved: bool = False,
 ) -> str:
     """Smoke-test a single provider.
 
@@ -253,12 +254,45 @@ async def test_provider_mcp(
         provider: Provider name (searxng, brave, serper, tavily, exa)
         query: Test query
     """
+    from argus.broker.budgets import PROVIDER_TIERS
+    from argus.broker.execution import conservative_charge_estimate
+    from argus.broker.readiness import ProbeAuthorization
     from argus.models import ProviderName, SearchQuery
 
     try:
         pname = ProviderName(provider)
     except ValueError:
         return f"**Error:** Unknown provider: {provider}"
+
+    if not live:
+        decision = broker.readiness_service.authorize_probe(pname, "fixture")
+        readiness = broker.provider_readiness_projection(pname)
+        return (
+            f"## Provider Test: {provider}\n"
+            f"Mode: fixture\nStatus: "
+            f"{'fixture_verified' if decision.allowed else 'denied'}\n"
+            f"Readiness: {readiness['state']}"
+        )
+    probe_query = SearchQuery(
+        query=query,
+        max_results=3,
+        providers=[pname],
+        caller=caller_identity,
+        user_visible=False,
+    )
+    authorization = ProbeAuthorization(
+        workflow="explicit_validation", provider=pname,
+        named_quota="free_provider_request" if PROVIDER_TIERS[pname] == 0 else None,
+        idempotency_key=idempotency_key, durable_receipt=durable_receipt,
+        conservative_charge=(
+            conservative_charge_estimate(pname, probe_query)
+            if PROVIDER_TIERS[pname] > 0 else None
+        ),
+    )
+    kind = "no_money_quota" if PROVIDER_TIERS[pname] == 0 else "billable_search"
+    decision = broker.readiness_service.authorize_probe(pname, kind, authorization)
+    if not decision.allowed:
+        return f"**Error:** Live probe denied: {decision.reason}"
 
     q = SearchQuery(
         query=query,
@@ -267,7 +301,12 @@ async def test_provider_mcp(
         providers=[pname],
         caller=caller_identity,
         user_visible=False,
-        metadata={"caller_label": caller_label},
+        metadata={
+            "caller_label": caller_label, "probe_receipt": durable_receipt,
+            "probe_idempotency_key": idempotency_key,
+            "probe_provider": pname.value, "probe_no_fallback": True,
+            "probe_attempt_id": decision.attempt_id,
+        },
     )
     response = await broker.search(q)
 

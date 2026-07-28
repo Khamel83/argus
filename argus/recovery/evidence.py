@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from argus.recovery.database import EXPECTED_SCHEMA_HEAD
+from argus.recovery.database import COMPATIBLE_SCHEMA_HEADS
 
 
 BACKUP_MAX_AGE = timedelta(hours=36)
@@ -117,7 +117,7 @@ def evaluate_recovery_evidence(
     )
     restore_verified = (
         restore_scope_complete
-        and restore.get("schema_head") == EXPECTED_SCHEMA_HEAD
+        and restore.get("schema_head") in COMPATIBLE_SCHEMA_HEADS
         and restore.get("backup_manifest_sha256") == backup.get("manifest_sha256")
         and all(checks.get(name) is True for name in REQUIRED_RESTORE_CHECKS)
     )

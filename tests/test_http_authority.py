@@ -15,6 +15,45 @@ def _production_adapter_environment(**overrides):
     return environment
 
 
+def _configure_authority_projections(broker):
+    def readiness(provider):
+        legacy = broker.get_provider_status(provider)
+        effective = legacy.get("effective_status", "unknown")
+        state = (
+            "healthy"
+            if effective in {"enabled", "healthy"}
+            else "disabled"
+            if effective == "disabled_by_config"
+            else "unready"
+        )
+        return {
+            "provider": provider.value,
+            "registration": (
+                "not_registered" if state == "disabled" else "registered"
+            ),
+            "configuration": {
+                "configured": state != "disabled",
+                "issues": [] if state != "disabled" else ["disabled_by_config"],
+            },
+            "reachability": "reachable" if state == "healthy" else "unknown",
+            "compatibility": "compatible" if state != "disabled" else "unknown",
+            "usability": "usable" if state == "healthy" else "unknown",
+            "cooldown": "clear" if state == "healthy" else "active",
+            "spend": "not_applicable",
+            "state": state,
+            "execution_decision": {"reason": effective},
+            "authority": "provider_readiness",
+        }
+
+    broker.provider_readiness_projection.side_effect = readiness
+    broker.provider_budget_projection.side_effect = lambda provider: (
+        broker.spend_repository.provider_summary(
+            provider,
+            budget_limit=broker.budget_tracker.get_budget_limit(provider),
+        )
+    )
+
+
 @pytest.mark.parametrize(
     "name",
     [
@@ -338,6 +377,7 @@ def test_authenticated_capabilities_health_and_budgets_report_api_truth(
         }
     )
     broker.budget_tracker.get_budget_limit.return_value = 100
+    _configure_authority_projections(broker)
     repository = MagicMock()
     client = TestClient(create_app(broker=broker, search_repository=repository))
     headers = {"Authorization": "Bearer mcp-token"}
@@ -363,7 +403,10 @@ def test_authenticated_capabilities_health_and_budgets_report_api_truth(
     }
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
-    assert health.json()["providers"]["duckduckgo"]["effective_status"] == "enabled"
+    assert health.json()["providers"]["duckduckgo"]["state"] == "healthy"
+    assert health.json()["providers"]["duckduckgo"]["authority"] == (
+        "provider_readiness"
+    )
     assert budgets.status_code == 200
     assert budgets.json()["providers"]["duckduckgo"]["remaining"] == 100
     serialized = json.dumps(
@@ -474,6 +517,7 @@ def test_authority_truth_failures_are_bounded_and_fail_closed(
     broker.spend_repository.provider_summary.side_effect = RuntimeError(
         "database password must-not-leak"
     )
+    _configure_authority_projections(broker)
     client = TestClient(
         create_app(broker=broker, search_repository=MagicMock()),
         raise_server_exceptions=False,
@@ -1168,6 +1212,7 @@ async def test_mcp_restart_reuses_http_health_budget_and_extraction_state(
             "uncertain_charge": 0,
         }
     )
+    _configure_authority_projections(broker)
     repository = MagicMock()
     extract = AsyncMock(
         return_value=ExtractedContent(
@@ -1259,6 +1304,7 @@ async def test_mcp_restart_keeps_sessions_cooldowns_spend_and_outbox_acceptance(
             "uncertain_charge": 0,
         }
     )
+    _configure_authority_projections(broker)
     repository = MagicMock()
     transport = httpx.ASGITransport(
         app=create_app(
@@ -1289,9 +1335,7 @@ async def test_mcp_restart_keeps_sessions_cooldowns_spend_and_outbox_acceptance(
         session_id="durable-session",
     )
 
-    assert "temporarily_disabled_after_failures" in (
-        await after_restart.search_health()
-    )
+    assert "unready" in await after_restart.search_health()
     assert "remaining=75" in await after_restart.search_budgets()
     assert [
         call.kwargs["session_id"] for call in broker.search_with_session.await_args_list

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
+from unittest.mock import patch
 import json
 
 import pytest
@@ -21,6 +22,39 @@ def _repository(tmp_path):
         f"sqlite:///{tmp_path / 'spend.db'}",
         create_schema=True,
     )
+
+
+def _registered_readiness(tmp_path, database_name: str):
+    from argus.broker.readiness import (
+        ProviderReadinessService,
+        ProviderRegistrationSpec,
+    )
+    from argus.persistence.readiness import create_readiness_repository
+    from argus.providers.fixture_attestation import build_fixture_attestation
+
+    readiness = create_readiness_repository(
+        f"sqlite:///{tmp_path / database_name}"
+    )
+    service = ProviderReadinessService(repository=readiness)
+    fixture_ref, attestation = build_fixture_attestation(
+        ProviderName.BRAVE,
+        release="argus-1.6.2",
+        provider_contract="2026-07-27-v1",
+    )
+    service.register_provider(ProviderRegistrationSpec(
+        provider=ProviderName.BRAVE,
+        enabled=True,
+        configuration_fingerprint=f"{database_name}-config",
+        credential_version_fingerprint=f"{database_name}-credential",
+        account_fingerprint=f"{database_name}-account",
+        budget_limit=10.0,
+        durable_spend_repository=True,
+        release_revision="argus-1.6.2",
+        contract_version="2026-07-27-v1",
+        fixture_evidence_ref=fixture_ref,
+        fixture_attestation=attestation,
+    ))
+    return service, readiness
 
 
 def test_paid_attempt_reserves_before_external_work_and_settles_atomically(tmp_path):
@@ -58,6 +92,392 @@ def test_paid_attempt_reserves_before_external_work_and_settles_atomically(tmp_p
         "estimate_source": "argus",
         "provider_snapshot": None,
     }
+
+
+def test_direct_reserve_settle_reconciles_protected_readiness_account_wide(
+    tmp_path,
+):
+    from argus.broker.readiness import (
+        ProviderReadinessService,
+        ProviderRegistrationSpec,
+    )
+    from argus.persistence.provider_spend import ProviderSpendRepository
+    from argus.persistence.readiness import create_readiness_repository
+    from argus.providers.fixture_attestation import build_fixture_attestation
+
+    readiness = create_readiness_repository(
+        f"sqlite:///{tmp_path / 'direct-settle.db'}"
+    )
+    service = ProviderReadinessService(repository=readiness)
+    fixture_ref, attestation = build_fixture_attestation(
+        ProviderName.BRAVE,
+        release="argus-1.6.2",
+        provider_contract="2026-07-27-v1",
+    )
+    service.register_provider(ProviderRegistrationSpec(
+        provider=ProviderName.BRAVE,
+        enabled=True,
+        configuration_fingerprint="direct-settle-config",
+        credential_version_fingerprint="direct-settle-credential",
+        account_fingerprint="direct-settle-account",
+        budget_limit=10.0,
+        durable_spend_repository=True,
+        release_revision="argus-1.6.2",
+        contract_version="2026-07-27-v1",
+        fixture_evidence_ref=fixture_ref,
+        fixture_attestation=attestation,
+    ))
+    spend = ProviderSpendRepository(readiness.session_factory)
+    reservation = spend.reserve(
+        provider=ProviderName.BRAVE,
+        conservative_charge=1.0,
+        budget_limit=10.0,
+        caller_identity="legacy-direct",
+        caller_label="regression",
+        idempotency_key="legacy-direct:reserve",
+    )
+    assert [
+        service.snapshot(ProviderName.BRAVE, request_class=mode).spend
+        for mode in ("discovery", "research", "recovery", "grounding")
+    ] == ["uncertain"] * 4
+
+    settled = spend.settle(
+        reservation.attempt_id,
+        actual_charge=0.25,
+        outcome="success",
+    )
+
+    assert settled.status == "settled"
+    assert settled.attempt_id == reservation.attempt_id
+    for mode in ("discovery", "research", "recovery", "grounding"):
+        snapshot = service.snapshot(ProviderName.BRAVE, request_class=mode)
+        assert snapshot.spend == "available"
+        assert snapshot.execution_decision.code == "eligible"
+
+
+def test_repeated_direct_success_does_not_protect_superseded_spend_receipts(
+    tmp_path,
+):
+    from argus.persistence.provider_spend import ProviderSpendRepository
+    from argus.persistence.readiness import ProviderReadinessEvidenceRefRow
+
+    service, readiness = _registered_readiness(
+        tmp_path, "direct-success-receipts.db"
+    )
+    spend = ProviderSpendRepository(readiness.session_factory)
+
+    for index in range(40):
+        reservation = spend.reserve(
+            provider=ProviderName.BRAVE,
+            conservative_charge=0.01,
+            budget_limit=10.0,
+            caller_identity="legacy-direct",
+            caller_label="receipt-regression",
+            idempotency_key=f"receipt-regression:{index}",
+        )
+        spend.settle(
+            reservation.attempt_id,
+            actual_charge=0.0,
+            outcome="success",
+        )
+
+    snapshot = service.snapshot(
+        ProviderName.BRAVE, request_class="discovery"
+    )
+    current_receipts = {
+        row.evidence_ref
+        for row in readiness.observations(ProviderName.BRAVE)
+        if row.evidence_ref is not None
+    }
+    with readiness.session_factory() as session:
+        stale_protected = list(session.scalars(
+            select(ProviderReadinessEvidenceRefRow).where(
+                ProviderReadinessEvidenceRefRow.provider == "brave",
+                ProviderReadinessEvidenceRefRow.protected.is_(True),
+                ProviderReadinessEvidenceRefRow.evidence_ref.not_in(
+                    current_receipts
+                ),
+            )
+        ))
+
+    assert snapshot.configuration.issues == ()
+    assert snapshot.execution_decision.code == "eligible"
+    assert readiness.evidence_ref_count(ProviderName.BRAVE) <= 32
+    assert stale_protected == []
+
+
+def test_terminal_exhaustion_denies_reserve_and_survives_ordinary_settlement(
+    tmp_path,
+):
+    from argus.broker.readiness import (
+        ProviderReadinessService,
+        ProviderRegistrationSpec,
+    )
+    from argus.persistence.provider_spend import (
+        BudgetExhaustedError,
+        ProviderSpendRepository,
+    )
+    from argus.persistence.readiness import create_readiness_repository
+    from argus.providers.fixture_attestation import build_fixture_attestation
+
+    readiness = create_readiness_repository(
+        f"sqlite:///{tmp_path / 'terminal-precedence.db'}"
+    )
+    service = ProviderReadinessService(repository=readiness)
+    fixture_ref, attestation = build_fixture_attestation(
+        ProviderName.SERPER,
+        release="argus-1.6.2",
+        provider_contract="2026-07-27-v1",
+    )
+    service.register_provider(ProviderRegistrationSpec(
+        provider=ProviderName.SERPER,
+        enabled=True,
+        configuration_fingerprint="terminal-config",
+        credential_version_fingerprint="terminal-credential",
+        account_fingerprint="terminal-account",
+        budget_limit=10.0,
+        durable_spend_repository=True,
+        release_revision="argus-1.6.2",
+        contract_version="2026-07-27-v1",
+        fixture_evidence_ref=fixture_ref,
+        fixture_attestation=attestation,
+    ))
+    spend = ProviderSpendRepository(readiness.session_factory)
+    existing = spend.reserve(
+        provider=ProviderName.SERPER,
+        conservative_charge=1.0,
+        budget_limit=10.0,
+        caller_identity="legacy-direct",
+        caller_label="terminal-regression",
+        idempotency_key="terminal:existing",
+    )
+    readiness.record_terminal_exhaustion(
+        provider=ProviderName.SERPER,
+        account_fingerprint="terminal-account",
+        recurring=False,
+        reset_at=None,
+        evidence_ref="terminal:one-time",
+    )
+
+    with pytest.raises(BudgetExhaustedError, match="terminal"):
+        spend.reserve(
+            provider=ProviderName.SERPER,
+            conservative_charge=0.1,
+            budget_limit=10.0,
+            caller_identity="legacy-direct",
+            caller_label="terminal-regression",
+            idempotency_key="terminal:denied",
+        )
+    assert readiness.paid_attempt_count(ProviderName.SERPER) == 1
+    assert [
+        service.snapshot(ProviderName.SERPER, request_class=mode).spend
+        for mode in ("discovery", "research", "recovery", "grounding")
+    ] == ["exhausted"] * 4
+    assert {
+        row.expires_at
+        for row in readiness.observations(ProviderName.SERPER)
+        if row.dimension == "spend"
+    } == {None}
+
+    spend.settle(existing.attempt_id, actual_charge=0.25, outcome="success")
+
+    assert [
+        service.snapshot(ProviderName.SERPER, request_class=mode).spend
+        for mode in ("discovery", "research", "recovery", "grounding")
+    ] == ["exhausted"] * 4
+
+
+def test_recurring_terminal_expiry_allows_atomic_account_wide_reserve(
+    tmp_path,
+):
+    from argus.broker.readiness import (
+        ProviderReadinessService,
+        ProviderRegistrationSpec,
+    )
+    from argus.persistence.provider_spend import (
+        BudgetExhaustedError,
+        ProviderSpendRepository,
+    )
+    from argus.persistence.readiness import (
+        ProviderReadinessRepository,
+        create_readiness_repository,
+    )
+    from argus.providers.fixture_attestation import build_fixture_attestation
+
+    readiness = create_readiness_repository(
+        f"sqlite:///{tmp_path / 'recurring-terminal-boundary.db'}"
+    )
+    service = ProviderReadinessService(repository=readiness)
+    fixture_ref, attestation = build_fixture_attestation(
+        ProviderName.BRAVE,
+        release="argus-1.6.2",
+        provider_contract="2026-07-27-v1",
+    )
+    service.register_provider(ProviderRegistrationSpec(
+        provider=ProviderName.BRAVE,
+        enabled=True,
+        configuration_fingerprint="recurring-boundary-config",
+        credential_version_fingerprint="recurring-boundary-credential",
+        account_fingerprint="recurring-boundary-account",
+        budget_limit=10.0,
+        durable_spend_repository=True,
+        release_revision="argus-1.6.2",
+        contract_version="2026-07-27-v1",
+        fixture_evidence_ref=fixture_ref,
+        fixture_attestation=attestation,
+    ))
+    spend = ProviderSpendRepository(readiness.session_factory)
+    database_boundary = readiness.authority_now().replace(microsecond=321987)
+    with patch.object(
+        ProviderReadinessRepository,
+        "authority_now",
+        return_value=database_boundary,
+    ):
+        with pytest.raises(
+            ValueError,
+            match="recurring exhaustion requires a future reset",
+        ):
+            readiness.record_terminal_exhaustion(
+                provider=ProviderName.BRAVE,
+                account_fingerprint="recurring-boundary-account",
+                recurring=True,
+                reset_at=database_boundary,
+                evidence_ref="recurring-boundary:not-future",
+            )
+    reset_at = (
+        readiness.authority_now() + timedelta(hours=1)
+    ).replace(microsecond=654321)
+    readiness.record_terminal_exhaustion(
+        provider=ProviderName.BRAVE,
+        account_fingerprint="recurring-boundary-account",
+        recurring=True,
+        reset_at=reset_at,
+        evidence_ref="recurring-boundary:exhausted",
+    )
+    terminal_rows = [
+        row for row in readiness.observations(ProviderName.BRAVE)
+        if row.dimension == "spend"
+    ]
+    assert len(terminal_rows) == 4
+    assert {row.expires_at for row in terminal_rows} == {reset_at}
+
+    with patch.object(
+        ProviderReadinessRepository,
+        "authority_now",
+        return_value=reset_at - timedelta(microseconds=1),
+    ):
+        with pytest.raises(BudgetExhaustedError, match="terminal"):
+            spend.reserve(
+                provider=ProviderName.BRAVE,
+                conservative_charge=0.1,
+                budget_limit=10.0,
+                caller_identity="legacy-direct",
+                caller_label="recurring-boundary",
+                idempotency_key="recurring-boundary:before",
+            )
+    assert readiness.paid_attempt_count(ProviderName.BRAVE) == 0
+    assert [
+        service.snapshot(ProviderName.BRAVE, request_class=mode).spend
+        for mode in ("discovery", "research", "recovery", "grounding")
+    ] == ["exhausted"] * 4
+
+    with patch.object(
+        ProviderReadinessRepository,
+        "authority_now",
+        return_value=reset_at,
+    ):
+        reservation = spend.reserve(
+            provider=ProviderName.BRAVE,
+            conservative_charge=0.1,
+            budget_limit=10.0,
+            caller_identity="legacy-direct",
+            caller_label="recurring-boundary",
+            idempotency_key="recurring-boundary:at",
+        )
+
+    assert reservation.status == "uncertain"
+    assert readiness.paid_attempt_count(ProviderName.BRAVE) == 1
+    assert [
+        service.snapshot(ProviderName.BRAVE, request_class=mode).spend
+        for mode in ("discovery", "research", "recovery", "grounding")
+    ] == ["uncertain"] * 4
+
+
+def test_terminal_fanout_rolls_back_fault_and_uses_one_database_time(tmp_path):
+    service, readiness = _registered_readiness(
+        tmp_path,
+        "terminal-fanout-atomic.db",
+    )
+    modes = ("discovery", "research", "recovery", "grounding")
+    before = {
+        mode: service.snapshot(
+            ProviderName.BRAVE,
+            request_class=mode,
+        ).as_dict()
+        for mode in modes
+    }
+    original_put_snapshot = readiness._put_snapshot
+    snapshot_writes = 0
+
+    def fail_during_second_scope(*args, **kwargs):
+        nonlocal snapshot_writes
+        original_put_snapshot(*args, **kwargs)
+        snapshot_writes += 1
+        if snapshot_writes == 2:
+            raise RuntimeError("injected terminal fanout fault")
+
+    with patch.object(
+        readiness,
+        "_put_snapshot",
+        side_effect=fail_during_second_scope,
+    ):
+        with pytest.raises(RuntimeError, match="injected terminal fanout fault"):
+            readiness.record_terminal_exhaustion(
+                provider=ProviderName.BRAVE,
+                account_fingerprint="terminal-fanout-atomic.db-account",
+                recurring=True,
+                reset_at=readiness.authority_now() + timedelta(hours=1),
+                evidence_ref="terminal-fanout:fault",
+            )
+
+    assert [
+        row for row in readiness.observations(ProviderName.BRAVE)
+        if row.evidence_ref == "terminal-fanout:fault"
+    ] == []
+    assert {
+        mode: service.snapshot(
+            ProviderName.BRAVE,
+            request_class=mode,
+        ).as_dict()
+        for mode in modes
+    } == before
+
+    database_now = readiness.authority_now().replace(microsecond=111111)
+    reset_at = database_now + timedelta(microseconds=1)
+    with patch.object(
+        readiness,
+        "authority_now",
+        side_effect=(database_now, reset_at),
+    ) as authority_now:
+        readiness.record_terminal_exhaustion(
+            provider=ProviderName.BRAVE,
+            account_fingerprint="terminal-fanout-atomic.db-account",
+            recurring=True,
+            reset_at=reset_at,
+            evidence_ref="terminal-fanout:single-clock",
+        )
+
+    assert authority_now.call_count == 1
+    terminal_rows = [
+        row for row in readiness.observations(ProviderName.BRAVE)
+        if row.evidence_ref == "terminal-fanout:single-clock"
+    ]
+    assert len(terminal_rows) == 4
+    assert {row.expires_at for row in terminal_rows} == {reset_at}
+    assert [
+        service.snapshot(ProviderName.BRAVE, request_class=mode).spend
+        for mode in modes
+    ] == ["exhausted"] * 4
 
 
 def test_unknown_outcome_never_expires_or_refunds_automatically(tmp_path):
@@ -195,6 +615,7 @@ def test_operator_resolution_is_idempotent_audited_and_conflict_checked(tmp_path
 
     assert second == first
     assert first.status == "resolved"
+    assert first.actual_charge == 0.0
     with repository.session_factory() as session:
         assert session.scalar(select(func.count()).select_from(SpendAuditRow)) == 2
     with pytest.raises(SpendConflictError):
@@ -249,11 +670,45 @@ def test_authoritative_reconciliation_records_snapshot_freshness_and_is_idempote
     assert summary["provider_snapshot"] == {
         "balance": 1777.0,
         "source": "provider",
-        "observed_at": observed_at.isoformat(),
+            "observed_at": observed_at.astimezone(timezone.utc)
+            .replace(tzinfo=None)
+            .isoformat(),
         "provider_reference": "brave-event-1",
         "related_attempt_id": reservation.attempt_id,
         "authoritative_charge": 1.0,
     }
+
+
+def test_zero_authoritative_charge_is_valid_provider_evidence(tmp_path):
+    repository = _repository(tmp_path)
+    reservation = repository.reserve(
+        provider=ProviderName.BRAVE,
+        conservative_charge=1.0,
+        budget_limit=10.0,
+        caller_identity="maya",
+        caller_label="",
+        idempotency_key="zero-charge-snapshot-attempt",
+    )
+    snapshot = repository.record_provider_snapshot(
+        provider=ProviderName.BRAVE,
+        balance=10.0,
+        observed_at=datetime.now(tz=timezone.utc),
+        actor_identity="provider:brave",
+        idempotency_key="zero-charge-snapshot",
+        provider_reference="brave-zero-charge",
+        related_attempt_id=reservation.attempt_id,
+        authoritative_charge=0.0,
+    )
+    resolved = repository.resolve(
+        reservation.attempt_id,
+        actual_charge=0.0,
+        outcome="confirmed_not_consumed",
+        source="provider",
+        actor_identity="provider:brave",
+        idempotency_key="zero-charge-resolution",
+        provider_snapshot_id=snapshot.snapshot_id,
+    )
+    assert resolved.actual_charge == 0.0
 
 def test_authoritative_charge_overrun_increases_obligation_and_is_audited(tmp_path):
     from argus.persistence.provider_spend import SpendAuditRow
@@ -501,7 +956,7 @@ def test_reconciliation_fault_rolls_back_attempt_and_audit(tmp_path):
         idempotency_key="reconcile-fault-snapshot",
         provider_reference="brave-reconcile-fault",
         related_attempt_id=reservation.attempt_id,
-        authoritative_charge=0.0,
+        authoritative_charge=0.01,
     )
 
     def fail(stage):
@@ -511,7 +966,7 @@ def test_reconciliation_fault_rolls_back_attempt_and_audit(tmp_path):
     with pytest.raises(RuntimeError, match="reconciliation crash"):
         repository.resolve(
             reservation.attempt_id,
-            actual_charge=0.0,
+            actual_charge=0.01,
             outcome="not_charged",
             source="provider",
             actor_identity="provider:brave",
@@ -1149,10 +1604,12 @@ async def test_nonfinite_paid_estimate_fails_before_provider_call(
         ProviderName.BRAVE,
         float("inf"),
     )
+    budgets = BudgetTracker()
+    budgets.set_budget(ProviderName.BRAVE, 100)
     executor = ProviderExecutor(
         providers={ProviderName.BRAVE: provider},
         health_tracker=HealthTracker(),
-        budget_tracker=BudgetTracker(),
+        budget_tracker=budgets,
         spend_repository=repository,
     )
 
@@ -1207,7 +1664,7 @@ def test_every_paid_provider_has_a_finite_conservative_estimator():
     )
 
 
-def test_parallel_recurring_credit_expires_from_budget_without_deleting_history(
+def test_parallel_spend_does_not_reset_without_authoritative_boundary(
     tmp_path,
 ):
     from argus.persistence.provider_spend import ProviderSpendAttemptRow
@@ -1234,9 +1691,9 @@ def test_parallel_recurring_credit_expires_from_budget_without_deleting_history(
     ) == {
         "provider": "parallel",
         "budget_limit": 5000.0,
-        "argus_estimated_charge": 0.0,
+        "argus_estimated_charge": 1.0,
         "uncertain_charge": 0.0,
-        "remaining": 5000.0,
+        "remaining": 4999.0,
         "estimate_source": "argus",
         "provider_snapshot": None,
     }
@@ -1444,14 +1901,21 @@ def test_admin_spend_interfaces_are_authenticated_and_audited(tmp_path, monkeypa
         "Broker",
         (),
         {
-            "budget_tracker": type(
+                "budget_tracker": type(
                 "Budget",
                 (),
                 {
                     "close": lambda self: None,
                     "get_budget_limit": lambda self, provider: 2000.0,
                 },
-            )(),
+                )(),
+                "provider_budget_projection": lambda self, provider: {
+                    "provider": provider.value,
+                    "state": "unknown",
+                    "budget_limit": 2000.0,
+                    "remaining": None,
+                    "authority": "provider_readiness",
+                },
         },
     )()
     client = TestClient(
@@ -1528,7 +1992,7 @@ def test_admin_spend_interfaces_are_authenticated_and_audited(tmp_path, monkeypa
         f"/api/admin/provider-spend/attempts/{reservation.attempt_id}/resolve",
         headers={"X-Admin-API-Key": "admin-secret"},
         json={
-            "actual_charge": 0.0,
+            "actual_charge": 0.01,
             "outcome": "confirmed_not_consumed",
             "source": "operator",
             "idempotency_key": "admin-resolution",
@@ -1566,7 +2030,11 @@ def test_admin_spend_interfaces_are_authenticated_and_audited(tmp_path, monkeypa
     assert resolved.status_code == 200
     assert resolved.json()["status"] == "resolved"
     assert snapshot.status_code == 200
-    brave = next(row for row in summary.json()["providers"] if row["provider"] == "brave")
+    brave = next(
+        row
+        for row in summary.json()["non_authoritative_operational"]["providers"]
+        if row["provider"] == "brave"
+    )
     assert brave["estimate_source"] == "argus"
     assert brave["provider_snapshot"]["source"] == "provider"
     json.dumps(summary.json(), allow_nan=False)
@@ -1832,7 +2300,7 @@ def test_postgresql_direct_overrun_settlement_is_idempotent(
     assert outcomes[0].reservation_overrun == 0.01
 
 
-def test_postgresql_parallel_monthly_rollover_preserves_history(
+def test_postgresql_parallel_spend_does_not_reset_without_authoritative_boundary(
     postgres_ledger_url,
 ):
     from alembic import command
@@ -1867,8 +2335,8 @@ def test_postgresql_parallel_monthly_rollover_preserves_history(
         ProviderName.PARALLEL,
         budget_limit=5000.0,
     )
-    assert summary["argus_estimated_charge"] == 0.0
-    assert summary["remaining"] == 5000.0
+    assert summary["argus_estimated_charge"] == 1.0
+    assert summary["remaining"] == 4999.0
     attempts = repository.list_attempts(provider=ProviderName.PARALLEL)
     assert [attempt.attempt_id for attempt in attempts] == [
         reservation.attempt_id
