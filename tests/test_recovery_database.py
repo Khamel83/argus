@@ -250,6 +250,7 @@ def test_current_schema_head_has_complete_contract_registration():
         EXPECTED_SCHEMA_HEAD,
         REQUIRED_TABLES_BY_HEAD,
         SCHEMA_CONTRACT_PATHS,
+        expected_argus_schema_manifest,
     )
 
     retrieval_evidence_tables = {
@@ -274,6 +275,10 @@ def test_current_schema_head_has_complete_contract_registration():
     assert SCHEMA_CONTRACT_PATHS[EXPECTED_SCHEMA_HEAD].name == (
         "argus_schema_0009.json"
     )
+    manifest = expected_argus_schema_manifest(EXPECTED_SCHEMA_HEAD)
+    assert manifest["schema_head"] == EXPECTED_SCHEMA_HEAD
+    assert retrieval_evidence_tables <= set(manifest["columns"])
+    assert len(manifest["contract_sha256"]) == 64
 
 
 def test_checked_contract_retains_migrated_server_defaults_and_deparser_output():

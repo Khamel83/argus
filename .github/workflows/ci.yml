@@ -89,12 +89,8 @@ jobs:
           ARGUS_DB_URL="$ARGUS_TEST_POSTGRES_URL" \
             uv run --python 3.12 alembic upgrade head
 
-      - name: Generate and verify PostgreSQL schema contract
+      - name: Verify PostgreSQL schema contract
         run: |
-          uv run --python 3.12 \
-            python scripts/generate_argus_schema_contract.py \
-            --database-url "$ARGUS_TEST_POSTGRES_URL" \
-            --schema-head 0009_retrieval_evidence
           uv run --python 3.12 \
             python scripts/generate_argus_schema_contract.py \
             --database-url "$ARGUS_TEST_POSTGRES_URL" \
