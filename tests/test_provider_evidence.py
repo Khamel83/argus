@@ -8,7 +8,7 @@ import json
 import math
 import subprocess
 import sys
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -33,6 +33,7 @@ from argus.broker.provider_evidence import (
     ProviderResponseEvidence,
     ProviderSearchBatch,
     PublicationEvidence,
+    PublicationPrecision,
     QueryRelation,
     RateLimitEvidence,
     RedirectChildEvidence,
@@ -1754,6 +1755,94 @@ def test_normalized_publication_has_explicit_kind_and_parser_version():
     assert publication.parser_version == "iso8601-v1"
 
 
+@pytest.mark.parametrize(
+    ("precision", "value_kind", "valid"),
+    [
+        (precision, value_kind, value_kind == expected)
+        for precision, expected in (
+            (PublicationPrecision.UNKNOWN, "none"),
+            (PublicationPrecision.TIMESTAMP, "timestamp"),
+            (PublicationPrecision.DATE, "date"),
+            (PublicationPrecision.MONTH, "date"),
+            (PublicationPrecision.YEAR, "date"),
+            (PublicationPrecision.PROVIDER_AGE, "date"),
+        )
+        for value_kind in ("none", "timestamp", "date", "datetime_as_date", "both")
+    ],
+)
+def test_publication_precision_and_temporal_value_cross_product_is_exact(
+    precision,
+    value_kind,
+    valid,
+):
+    timestamp = datetime(2026, 7, 27, 12, tzinfo=timezone.utc)
+    kwargs = {
+        "published_at_utc": (
+            timestamp if value_kind in {"timestamp", "both"} else None
+        ),
+        "published_date": (
+            timestamp
+            if value_kind == "datetime_as_date"
+            else (
+                date(2026, 7, 27)
+                if value_kind in {"date", "both"}
+                else None
+            )
+        ),
+        "precision": precision,
+    }
+    if valid:
+        evidence = PublicationEvidence(**kwargs)
+        assert evidence.precision is precision
+        batch = ProviderSearchBatch(
+            provider=ProviderName.EXA,
+            provider_contract_version="v1",
+            observations=(
+                ResultObservation(
+                    provider=ProviderName.EXA,
+                    provider_rank=0,
+                    url="https://example.test/publication",
+                    title="Result",
+                    snippet=SnippetEvidence(
+                        "text",
+                        SnippetKind.PROVIDER_SNIPPET,
+                    ),
+                    publication=evidence,
+                ),
+            ),
+        )
+        assert batch.observations[0].publication is evidence
+    else:
+        with pytest.raises((TypeError, ValueError)):
+            PublicationEvidence(**kwargs)
+
+
+def test_timestamp_precision_rejects_naive_datetime():
+    with pytest.raises(ValueError, match="timezone-aware"):
+        PublicationEvidence(
+            published_at_utc=datetime(2026, 7, 27, 12),
+            precision=PublicationPrecision.TIMESTAMP,
+        )
+
+
+def test_timestamp_precision_rejects_tzinfo_without_utc_offset():
+    class NullOffset(tzinfo):
+        def utcoffset(self, dt):
+            return None
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        PublicationEvidence(
+            published_at_utc=datetime(
+                2026,
+                7,
+                27,
+                12,
+                tzinfo=NullOffset(),
+            ),
+            precision=PublicationPrecision.TIMESTAMP,
+        )
+
+
 def test_normalized_successful_empty_retains_exact_applied_window_contract():
     freshness = FreshnessWindow(
         requested_relative=FreshnessRelative.DAY,
@@ -1970,6 +2059,22 @@ def test_batch_rejects_duplicate_or_noncontiguous_provider_positions():
             provider=ProviderName.BRAVE,
             provider_contract_version="v1",
             observations=(item(1),),
+        )
+
+
+def test_batch_rejects_observation_provider_identity_mismatch():
+    observation = ResultObservation(
+        provider=ProviderName.BRAVE,
+        provider_rank=0,
+        url="https://example.test/result",
+        title="title",
+        snippet=SnippetEvidence("snippet", SnippetKind.PROVIDER_DESCRIPTION),
+    )
+    with pytest.raises(ValueError, match="observation provider must match"):
+        ProviderSearchBatch(
+            provider=ProviderName.EXA,
+            provider_contract_version="v1",
+            observations=(observation,),
         )
 
 

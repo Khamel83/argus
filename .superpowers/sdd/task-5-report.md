@@ -16,10 +16,14 @@ activation. Legacy ranking and deduplication remain unchanged until S7.
   freshness/empty registries, exact applied windows, hard ceilings, non-finite
   clocks, reserve-aware activation, lossless query grammar, computed answers,
   complete ranking/diversity traces, and post-phase timeout semantics.
-- Corrected evidence/provider GREEN: `347 passed`.
+- The second strict re-review RED produced 25 failures across the complete
+  publication precision/value cross-product, forged UNKNOWN timestamp proof,
+  excluded URL/failure/empty/computed/CACHE batches, and duplicate provider
+  batches. Provider identity mismatch coverage was also made explicit.
+- Corrected evidence/provider GREEN: `388 passed`.
 - Exact focused GREEN for `tests/test_evidence_fusion.py`,
-  `tests/test_broker.py`, and `tests/test_attribution.py`: `185 passed`.
-- Final full repository GREEN: `1581 passed, 42 skipped`, with four existing
+  `tests/test_broker.py`, and `tests/test_attribution.py`: `193 passed`.
+- Final full repository GREEN: `1622 passed, 42 skipped`, with four existing
   Starlette per-request-cookie deprecation warnings.
 - `ruff check` and `git diff --check`: passed.
 
@@ -31,6 +35,11 @@ activation. Legacy ranking and deduplication remain unchanged until S7.
   typed `PUBLISHED` semantics, an approved provider source and confidence, and
   rejects modified, updated, indexed, created, and crawled fields, including
   camelCase variants.
+- `PublicationEvidence` now enforces the exact temporal shape: `TIMESTAMP`
+  requires only an actually aware datetime; `DATE`, `MONTH`, `YEAR`, and
+  `PROVIDER_AGE` require only a plain `date`; `UNKNOWN` requires no temporal
+  value. Fusion independently rejects forged or legacy-invalid shapes before
+  they can establish freshness.
 - Successful empty proof is separately version-authorized and requires an
   actual normalized `EMPTY` response, exact strict translation, and equality
   among the request's relative/resolved window, the applied provider window,
@@ -43,6 +52,11 @@ activation. Legacy ranking and deduplication remain unchanged until S7.
   activatable use requires an inherited absolute deadline and a positive
   final-publication reserve. All eight before/after phase checks are covered,
   and a completed phase is recorded before its post-phase expiry check.
+- Every batch provider must be an exact member of the plan's candidate-provider
+  set. `CACHE`, excluded providers, duplicate provider batches, and forged
+  observation/failure provider identity mismatches are rejected as stable
+  invalid input before any fusion phase, retained batch, filter, computed
+  answer, ranking, diversity, failure, or strict-empty trace can be produced.
 - Computed answers are retained as frozen typed artifacts, excluded from URL
   clustering and RRF, and can satisfy only the grounding evidence floor when
   no freshness constraint applies.

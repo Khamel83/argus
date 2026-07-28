@@ -84,7 +84,7 @@ def _publication(
     *,
     when: datetime | None = None,
     day: date | None = date(2026, 7, 27),
-    precision: PublicationPrecision = PublicationPrecision.DATE,
+    precision: PublicationPrecision | None = None,
     source: PublicationSource = PublicationSource.PROVIDER_FIELD,
     confidence: ContractConfidence = ContractConfidence.OFFICIAL_CONTRACT,
     field: str = "published_at",
@@ -95,7 +95,12 @@ def _publication(
     return PublicationEvidence(
         published_at_utc=when,
         published_date=None if when is not None else day,
-        precision=precision,
+        precision=precision
+        or (
+            PublicationPrecision.TIMESTAMP
+            if when is not None
+            else PublicationPrecision.DATE
+        ),
         source=source,
         contract_confidence=confidence,
         raw_field_name=field,
@@ -399,6 +404,42 @@ def test_temporal_claim_kind_and_parser_version_are_closed_and_bounded():
         replace(_publication(), claim_kind="published")  # type: ignore[arg-type]
     with pytest.raises(ValueError):
         replace(_publication(), parser_version="x" * 129)
+
+
+def test_fusion_rejects_authorized_unknown_precision_with_forged_timestamp():
+    publication = object.__new__(PublicationEvidence)
+    values = {
+        "published_at_utc": NOW,
+        "published_date": None,
+        "precision": PublicationPrecision.UNKNOWN,
+        "source": PublicationSource.PROVIDER_FIELD,
+        "contract_confidence": ContractConfidence.OFFICIAL_CONTRACT,
+        "raw_field_name": "publishedAt",
+        "semantic_contract_ref": "exa-search-contract",
+        "parser_version": "iso8601-v1",
+        "claim_kind": TemporalClaimKind.PUBLISHED,
+    }
+    for name, value in values.items():
+        object.__setattr__(publication, name, value)
+    plan = _plan(
+        freshness=FreshnessWindow(requested_relative=FreshnessRelative.DAY)
+    )
+    batch = _batch(
+        ProviderName.EXA,
+        (
+            _observation(
+                ProviderName.EXA,
+                0,
+                "https://x.test/forged",
+                publication=publication,
+            ),
+        ),
+    )
+
+    outcome = _fuse(plan, batch)
+
+    assert outcome.ranked_result_clusters == ()
+    assert outcome.filtered_observations[0].reason == "freshness_unproven"
 
 
 def test_widened_translation_is_exactly_post_filtered():
@@ -737,9 +778,17 @@ def test_computed_answer_is_typed_separate_and_satisfies_only_grounding_floor():
         _plan(mode=SearchMode.GROUNDING),
         _batch(ProviderName.WOLFRAM, (answer,)),
     )
+    discovery_answer = _observation(
+        ProviderName.EXA,
+        0,
+        "https://example.test/computed",
+        title="computed",
+        snippet="answer",
+        source_kind=EvidenceKind.COMPUTED_ANSWER,
+    )
     discovery = _fuse(
         _plan(mode=SearchMode.DISCOVERY),
-        _batch(ProviderName.WOLFRAM, (answer,)),
+        _batch(ProviderName.EXA, (discovery_answer,)),
     )
 
     assert grounding.outcome is CanonicalOutcome.SUCCESS
@@ -778,10 +827,10 @@ def test_freshness_scoped_computed_answer_does_not_satisfy_grounding_floor():
 @pytest.mark.parametrize("mode", [SearchMode.DISCOVERY, SearchMode.GROUNDING, SearchMode.RECOVERY])
 def test_non_research_modes_preserve_exact_base_order(mode):
     rows = tuple(
-        _observation(ProviderName.EXA, rank, f"https://same.test/{rank}")
+        _observation(ProviderName.BRAVE, rank, f"https://same.test/{rank}")
         for rank in range(4)
     )
-    outcome = _fuse(_plan(mode=mode, limit=4), _batch(ProviderName.EXA, rows))
+    outcome = _fuse(_plan(mode=mode, limit=4), _batch(ProviderName.BRAVE, rows))
     assert [c.base_rank for c in outcome.ranked_result_clusters] == [0, 1, 2, 3]
 
 
@@ -912,6 +961,102 @@ def test_bounds_are_checked_before_any_fusion_phase():
     assert outcome.outcome is CanonicalOutcome.INVALID_REQUEST
     assert outcome.reason == "fusion_input_bound_exceeded"
     assert outcome.completed_phases == ()
+
+
+@pytest.mark.parametrize(
+    ("mode", "batch"),
+    [
+        (
+            SearchMode.GROUNDING,
+            _batch(
+                ProviderName.EXA,
+                (
+                    _observation(
+                        ProviderName.EXA,
+                        0,
+                        "https://excluded.test/url",
+                    ),
+                ),
+            ),
+        ),
+        (
+            SearchMode.GROUNDING,
+            replace(
+                _batch(ProviderName.EXA),
+                failure=ProviderFailure(
+                    FailureCategory.AUTHENTICATION_REJECTED,
+                    ProviderName.EXA,
+                    observed_at=NOW,
+                ),
+            ),
+        ),
+        (SearchMode.GROUNDING, _batch(ProviderName.EXA, empty=True)),
+        (
+            SearchMode.DISCOVERY,
+            _batch(
+                ProviderName.WOLFRAM,
+                (
+                    _observation(
+                        ProviderName.WOLFRAM,
+                        0,
+                        "https://wolfram.test/answer",
+                        source_kind=EvidenceKind.COMPUTED_ANSWER,
+                    ),
+                ),
+            ),
+        ),
+        (SearchMode.DISCOVERY, _batch(ProviderName.CACHE, empty=True)),
+    ],
+)
+def test_unplanned_and_cache_batches_are_rejected_before_all_fusion_phases(
+    mode,
+    batch,
+):
+    outcome = _fuse(_plan(mode=mode), batch)
+
+    assert outcome.outcome is CanonicalOutcome.INVALID_REQUEST
+    assert outcome.reason == "fusion_provider_not_planned"
+    assert outcome.completed_phases == ()
+    assert outcome.provider_batches == ()
+    assert outcome.filtered_observations == ()
+    assert outcome.computed_answers == ()
+    assert outcome.ranking_trace.records == ()
+    assert outcome.site_diversity_trace.decisions == ()
+
+
+def test_duplicate_provider_batches_are_rejected_with_stable_identity_error():
+    outcome = _fuse(
+        _plan(),
+        _batch(ProviderName.EXA),
+        _batch(ProviderName.EXA),
+    )
+
+    assert outcome.outcome is CanonicalOutcome.INVALID_REQUEST
+    assert outcome.reason == "fusion_duplicate_provider_batch"
+    assert outcome.completed_phases == ()
+    assert outcome.provider_batches == ()
+
+
+def test_forged_batch_provider_identity_mismatch_is_rejected_before_phases():
+    batch = _batch(ProviderName.EXA)
+    object.__setattr__(
+        batch,
+        "observations",
+        (
+            _observation(
+                ProviderName.BRAVE,
+                0,
+                "https://example.test/mismatch",
+            ),
+        ),
+    )
+
+    outcome = _fuse(_plan(), batch)
+
+    assert outcome.outcome is CanonicalOutcome.INVALID_REQUEST
+    assert outcome.reason == "fusion_batch_identity_mismatch"
+    assert outcome.completed_phases == ()
+    assert outcome.provider_batches == ()
 
 
 @pytest.mark.parametrize(

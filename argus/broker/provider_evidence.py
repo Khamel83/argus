@@ -292,23 +292,44 @@ class PublicationEvidence:
             raise TypeError("publication confidence must be closed")
         if not isinstance(self.claim_kind, TemporalClaimKind):
             raise TypeError("temporal claim kind must be closed")
-        if self.published_at_utc is not None:
-            if (
-                not isinstance(self.published_at_utc, datetime)
-                or self.published_at_utc.tzinfo is None
-            ):
+        timestamp = self.published_at_utc
+        published_date = self.published_date
+        if timestamp is not None:
+            try:
+                aware = (
+                    isinstance(timestamp, datetime)
+                    and timestamp.tzinfo is not None
+                    and timestamp.utcoffset() is not None
+                )
+            except Exception:
+                aware = False
+            if not aware:
                 raise ValueError("publication timestamp must be timezone-aware")
             object.__setattr__(
                 self,
                 "published_at_utc",
-                self.published_at_utc.astimezone(timezone.utc),
+                timestamp.astimezone(timezone.utc),
             )
-        if self.published_date is not None and not isinstance(
-            self.published_date, date
-        ):
-            raise TypeError("publication date must be a date")
-        if self.published_at_utc is not None and self.published_date is not None:
-            raise ValueError("publication evidence must have one temporal value")
+        if published_date is not None and type(published_date) is not date:
+            raise TypeError("publication date must be a plain date")
+        date_precisions = {
+            PublicationPrecision.DATE,
+            PublicationPrecision.MONTH,
+            PublicationPrecision.YEAR,
+            PublicationPrecision.PROVIDER_AGE,
+        }
+        if self.precision is PublicationPrecision.TIMESTAMP:
+            if timestamp is None or published_date is not None:
+                raise ValueError(
+                    "timestamp precision requires only an aware timestamp"
+                )
+        elif self.precision in date_precisions:
+            if timestamp is not None or type(published_date) is not date:
+                raise ValueError(
+                    "date precision requires only a plain publication date"
+                )
+        elif timestamp is not None or published_date is not None:
+            raise ValueError("unknown precision cannot carry a temporal value")
         object.__setattr__(self, "raw_field_name", _bounded_label(self.raw_field_name))
         object.__setattr__(
             self,

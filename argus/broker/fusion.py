@@ -299,11 +299,31 @@ def _end_of_month(value: date) -> date:
 def _publication_interval(
     publication: PublicationEvidence,
 ) -> tuple[datetime, datetime] | None:
-    if publication.published_at_utc is not None:
+    if publication.precision is PublicationPrecision.TIMESTAMP:
+        try:
+            aware_timestamp = (
+                isinstance(publication.published_at_utc, datetime)
+                and publication.published_at_utc.tzinfo is not None
+                and publication.published_at_utc.utcoffset() is not None
+            )
+        except Exception:
+            aware_timestamp = False
+        if not aware_timestamp or publication.published_date is not None:
+            return None
         instant = publication.published_at_utc.astimezone(timezone.utc)
         return instant, instant
     value = publication.published_date
-    if value is None:
+    if (
+        publication.precision
+        not in {
+            PublicationPrecision.DATE,
+            PublicationPrecision.MONTH,
+            PublicationPrecision.YEAR,
+            PublicationPrecision.PROVIDER_AGE,
+        }
+        or type(value) is not date
+        or publication.published_at_utc is not None
+    ):
         return None
     if publication.precision in {
         PublicationPrecision.DATE,
@@ -846,11 +866,28 @@ def _validate_inputs(
         return "fusion_input_bound_exceeded"
     if any(not isinstance(item, ProviderSearchBatch) for item in batches):
         raise TypeError("provider batches must be an immutable normalized tuple")
+    providers = tuple(batch.provider for batch in batches)
+    if len(set(providers)) != len(providers):
+        return "fusion_duplicate_provider_batch"
+    planned_providers = frozenset(plan.candidate_providers)
+    if any(
+        provider is ProviderName.CACHE or provider not in planned_providers
+        for provider in providers
+    ):
+        return "fusion_provider_not_planned"
+    if any(
+        any(observation.provider is not batch.provider for observation in batch.observations)
+        or (
+            batch.failure is not None
+            and batch.failure.provider is not batch.provider
+        )
+        for batch in batches
+    ):
+        return "fusion_batch_identity_mismatch"
     counts = tuple(len(batch.observations) for batch in batches)
     if (
         any(count > policy.max_observations_per_provider for count in counts)
         or sum(counts) > policy.max_total_observations
-        or len({batch.provider for batch in batches}) != len(batches)
     ):
         return "fusion_input_bound_exceeded"
     return None
