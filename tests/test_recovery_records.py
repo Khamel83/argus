@@ -1072,3 +1072,51 @@ def test_retention_plan_rejects_fifo_without_mutation(tmp_path):
         plan_snapshot_retention(root, live_data=live, now=NOW)
 
     assert _filesystem_state(root) == before
+def test_restore_passes_trusted_complete_0007_schema_manifest(tmp_path):
+    from argus.recovery.records import (
+        record_verified_backup,
+        record_verified_restore,
+    )
+
+    root, live, snapshot, _ = _backup_set(tmp_path)
+    evidence = tmp_path / "schema-manifest-recovery.json"
+    record_verified_backup(
+        evidence,
+        backup_set=snapshot,
+        root=root,
+        live_data=live,
+    )
+    seen = []
+    checks = {
+        "schema": True,
+        "row_counts": True,
+        "integrity": True,
+        "argus_read_path": True,
+        "migration_compatible": True,
+    }
+
+    def verify_argus(database, expected):
+        seen.append(expected)
+        return {
+            "schema_head": "0007_extraction_outcomes",
+            "checks": checks,
+        }
+
+    record_verified_restore(
+        evidence,
+        backup_set=snapshot,
+        root=root,
+        live_data=live,
+        argus_database="argus_restore_schema_manifest",
+        atlas_database="atlas_restore_schema_manifest",
+        verify_source=lambda *args: None,
+        migrate_argus=lambda database: None,
+        verify_argus=verify_argus,
+        verify_atlas=lambda database, expected: {
+            "checks": {"schema": True, "row_counts": True, "integrity": True}
+        },
+    )
+
+    assert seen[0]["schema_head"] == "0007_extraction_outcomes"
+    assert "fk_result_extraction_links_acceptance_plan" in seen[0]["constraints"]
+    assert "ix_extraction_outcome_artifacts_artifact_ref" in seen[0]["indexes"]

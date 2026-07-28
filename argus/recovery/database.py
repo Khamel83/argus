@@ -138,11 +138,27 @@ REQUIRED_S3_CONSTRAINTS = {
     "ck_result_extraction_links_acceptance_pair",
     "ck_result_extraction_links_artifact_pair",
     "ck_result_extraction_links_rejection_pair",
+    "ck_result_extraction_links_artifact_same_plan",
+    "ck_result_extraction_links_rejection_same_plan",
     "uq_result_extraction_links_composition_cluster",
 }
 REQUIRED_S3_INDEXES = {
     "ix_extraction_outcome_artifacts_artifact_ref",
 }
+
+
+def expected_argus_schema_manifest() -> dict[str, Any]:
+    """Trusted complete schema contract required after the 0007 migration."""
+    return {
+        "schema_head": EXPECTED_SCHEMA_HEAD,
+        "tables": sorted(REQUIRED_TABLES),
+        "columns": {
+            table: sorted(columns)
+            for table, columns in sorted(REQUIRED_S3_COLUMNS.items())
+        },
+        "constraints": sorted(REQUIRED_S3_CONSTRAINTS),
+        "indexes": sorted(REQUIRED_S3_INDEXES),
+    }
 _ORPHAN_CHECKS = (
     "SELECT count(*) FROM retrieval_runs child "
     "LEFT JOIN retrieval_requests parent ON parent.id = child.request_id "
@@ -200,11 +216,17 @@ _ORPHAN_CHECKS = (
     "ON artifact.id = child.artifact_row_id "
     "WHERE child.artifact_row_id IS NOT NULL "
     "AND (artifact.id IS NULL OR artifact.plan_id <> child.artifact_plan_id)",
+    "SELECT count(*) FROM result_extraction_links "
+    "WHERE artifact_plan_id IS NOT NULL "
+    "AND artifact_plan_id <> extraction_plan_id",
     "SELECT count(*) FROM result_extraction_links child "
     "LEFT JOIN extraction_outcome_rejections rejection "
     "ON rejection.id = child.rejection_row_id "
     "WHERE child.rejection_row_id IS NOT NULL "
     "AND (rejection.id IS NULL OR rejection.plan_id <> child.rejection_plan_id)",
+    "SELECT count(*) FROM result_extraction_links "
+    "WHERE rejection_plan_id IS NOT NULL "
+    "AND rejection_plan_id <> extraction_plan_id",
 )
 
 
@@ -214,9 +236,15 @@ def verify_argus_database(
     connect: Callable[..., Any] | None = None,
     repository_factory: Callable[[str], Any] | None = None,
     expected_inventory: dict[str, Any] | None = None,
+    expected_schema_manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Verify schema, row accounting, relationships, and a basic Argus read path."""
     validated = validate_scratch_database(database)
+    if (
+        expected_schema_manifest is not None
+        and expected_schema_manifest != expected_argus_schema_manifest()
+    ):
+        raise RuntimeError("expected Argus schema manifest is not trusted")
     if connect is None:
         import psycopg2
 

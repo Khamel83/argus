@@ -74,6 +74,53 @@ The separate correction closes every S3 review finding:
 - Ruff over every changed Python path: all checks passed.
 - `git diff --check`: passed.
 
+## Third reviewer correction
+
+The third strict review is closed by a separate correction:
+
+- Every cache hit carries an immutable current `ExtractionCacheIdentity`.
+  Finalization derives the expected identity from the current plan and outcome
+  policy, then requires exact equality with both the decision and durable
+  origin across URL identity, mode, access/privacy/authentication scope, cache,
+  extraction-plan, quality, completeness, outcome policy, and partial policy.
+  Cache age is recomputed from the durable cache-creation timestamp and the
+  authority clock; caller-authored age is not trusted.
+- Link eligibility is derived from eligible candidates in the immutable
+  accepted plan, while attempted state is derived from invoked accepted
+  steps. A valid preflight unready outcome with no candidates deterministically
+  produces `false/false`.
+- Composition persistence rebinds and exactly compares every run-bearing link
+  to its durable accepted projection before any fingerprint replay return.
+  Forged artifact text, latency, or other semantic fields cannot reuse a real
+  receipt.
+- Artifact and rejection nullable composite groups retain `MATCH FULL` and
+  now also require their plan IDs to equal the extraction acceptance plan.
+  Named checks are enforced by migration, ORM metadata, tests, recovery
+  constraint inventory, and orphan verification.
+- The recovery-record workflow passes a trusted complete 0007 schema manifest
+  into Argus verification instead of discarding its expected contract.
+  Verification checks the head, required tables and columns, named
+  constraints, and indexes before recording success.
+- Composition acceptance uses atomic dialect-native insert-on-conflict keyed
+  by the source fingerprint. A uniqueness loser reloads and returns the exact
+  committed receipt; concurrent identical SQLite coverage is mandatory and
+  equivalent PostgreSQL coverage runs when the disposable fixture is
+  available.
+
+Third correction commit message:
+`fix: bind extraction replay to complete durable identity`
+
+Third-correction verification:
+
+- Exact focused S3 command: `166 passed, 7 skipped`.
+- Recovery and operational-status command: `109 passed, 18 skipped`.
+- Dedicated PostgreSQL migration and composition-concurrency tests: present;
+  `2 skipped` because the disposable PostgreSQL fixture was unavailable.
+- Full repository suite: `1444 passed, 40 skipped`, with the same four
+  Starlette cookie deprecation warnings.
+- Ruff over every changed Python path: all checks passed.
+- `git diff --check`: passed.
+
 PostgreSQL migration coverage is present but skips when the disposable
 PostgreSQL fixture is unavailable. No migration was run against production;
 no network retrieval, archive creation, historical replay, deployment, push,

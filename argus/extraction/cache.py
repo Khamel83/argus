@@ -31,55 +31,43 @@ class ExtractionCacheIdentity:
     partial_allowed: bool
 
     @classmethod
+    def from_plan(
+        cls,
+        plan,
+        *,
+        outcome_policy_version: str,
+        normalized_url_identity: str,
+    ):
+        return cls(
+            normalized_url=normalized_url_identity,
+            mode=plan.mode,
+            access_scope=plan.access_scope,
+            authentication_scope_fingerprint=(
+                plan.authentication_scope_fingerprint
+            ),
+            cache_policy_version=plan.cache_policy_ref,
+            extraction_plan_version=plan.extraction_plan_version,
+            quality_policy_version=plan.quality_policy_version,
+            completeness_policy_version=plan.completeness_policy_version,
+            outcome_policy_version=outcome_policy_version,
+            privacy_scope=plan.privacy_scope,
+            partial_allowed=plan.partial_allowed,
+        )
+
+    @classmethod
     def from_accepted(cls, accepted):
         from argus.extraction.outcomes import AcceptedExtractionOutcome
 
         if not isinstance(accepted, AcceptedExtractionOutcome):
             raise TypeError("cache identity requires an accepted extraction")
-        auth_refs = {
-            provenance.authentication_scope_ref
-            for provenance in (
-                [
-                    accepted.artifact.provenance
-                    if accepted.artifact is not None
-                    else None
-                ]
-                + [
-                    step.provenance
-                    for step in accepted.steps
-                    if step.provenance is not None
-                ]
-            )
-            if provenance is not None
-            and provenance.authentication_scope_ref is not None
-        }
-        if len(auth_refs) > 1:
-            raise ValueError("accepted extraction has inconsistent authentication scope")
-        authentication_scope = next(iter(auth_refs), None)
-        authentication_scope_fingerprint = (
-            "anonymous"
-            if authentication_scope is None
-            else "sha256:"
-            + hashlib.sha256(authentication_scope.encode("utf-8")).hexdigest()
-        )
-        return cls(
-            normalized_url=accepted.normalized_url_identity
+        return cls.from_plan(
+            accepted.plan,
+            normalized_url_identity=accepted.normalized_url_identity
             or "sha256:"
             + hashlib.sha256(
                 accepted.plan.normalized_url.encode("utf-8")
             ).hexdigest(),
-            mode=accepted.plan.mode,
-            access_scope=accepted.plan.access_scope,
-            authentication_scope_fingerprint=authentication_scope_fingerprint,
-            cache_policy_version=accepted.plan.cache_policy_ref,
-            extraction_plan_version=accepted.plan.extraction_plan_version,
-            quality_policy_version=accepted.plan.quality_policy_version,
-            completeness_policy_version=(
-                accepted.plan.completeness_policy_version
-            ),
             outcome_policy_version=accepted.extraction_outcome_policy_version,
-            privacy_scope=accepted.plan.privacy_scope,
-            partial_allowed=accepted.plan.partial_allowed,
         )
 
     def canonical_bytes(self) -> bytes:

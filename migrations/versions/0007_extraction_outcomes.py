@@ -212,6 +212,16 @@ def upgrade() -> None:
             "(rejection_row_id IS NULL) = (rejection_plan_id IS NULL)",
             name="ck_result_extraction_links_rejection_pair",
         ),
+        sa.CheckConstraint(
+            "artifact_plan_id IS NULL OR "
+            "artifact_plan_id = extraction_plan_id",
+            name="ck_result_extraction_links_artifact_same_plan",
+        ),
+        sa.CheckConstraint(
+            "rejection_plan_id IS NULL OR "
+            "rejection_plan_id = extraction_plan_id",
+            name="ck_result_extraction_links_rejection_same_plan",
+        ),
         sa.UniqueConstraint(
             "composition_ref",
             "result_cluster_ref",

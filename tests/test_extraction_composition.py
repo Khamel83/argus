@@ -925,6 +925,198 @@ def test_same_accepted_failure_has_one_deterministic_readiness():
     assert (links[0].eligible_path, links[0].attempted) == (True, True)
 
 
+def test_preflight_unready_without_candidates_derives_false_false():
+    accepted = replace(
+        _link().accepted_outcome,
+        outcome=CanonicalOutcome.UNREADY,
+        artifact_disposition=ArtifactDisposition.NONE,
+        plan=replace(_link().accepted_outcome.plan, candidates=()),
+        artifact=None,
+        rejection=None,
+        steps=(),
+        selected_extractor=None,
+    )
+
+    link = ResultExtractionLink.from_accepted(
+        link_ref="preflight-link",
+        result_cluster_ref="cluster-1",
+        accepted_outcome=accepted,
+        required=True,
+    )
+
+    assert (link.eligible_path, link.attempted) == (False, False)
+
+
+def test_composition_replay_rebinds_before_fingerprint_return(tmp_path):
+    from argus.extraction.composition import InvalidArtifactRequirement
+    from argus.extraction.finalizer import ExtractionFinalizer
+    from argus.extraction.outcomes import OutcomePolicy
+    from argus.persistence.search_ledger import create_search_ledger_repository
+    from tests.test_extraction_outcomes import _artifact, _plan, _raw, _request
+
+    repository = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'composition-replay.db'}"
+    )
+    accepted = ExtractionFinalizer(
+        repository=repository,
+        clock=lambda: "2026-07-27T12:00:00Z",
+    ).finalize_extraction(
+        _request("composition-replay-run"),
+        _plan(),
+        _raw(artifact=_artifact()),
+        OutcomePolicy(version="outcome-v1"),
+    )
+    link = ResultExtractionLink.from_accepted(
+        link_ref="replay-link",
+        result_cluster_ref="cluster-1",
+        accepted_outcome=accepted,
+        required=True,
+    )
+    retrieval = Retrieval(CanonicalOutcome.SUCCESS, ("cluster-1",))
+    requirement = _requirement()
+    composition = compose_retrieval_evidence(retrieval, (link,), requirement)
+    repository.accept_retrieval_composition(
+        retrieval,
+        composition,
+        requirement,
+    )
+    forged_accepted = replace(
+        accepted,
+        artifact=replace(accepted.artifact, text="forged artifact text"),
+        operation_latency_ms=accepted.operation_latency_ms + 1,
+    )
+    forged_link = replace(link, accepted_outcome=forged_accepted)
+    forged_composition = replace(composition, links=(forged_link,))
+
+    with pytest.raises(InvalidArtifactRequirement, match="durable accepted"):
+        repository.accept_retrieval_composition(
+            retrieval,
+            forged_composition,
+            requirement,
+        )
+
+
+def test_cross_plan_link_checks_require_one_accepted_plan(tmp_path):
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine, inspect
+
+    url = f"sqlite:///{tmp_path / 'cross-plan-checks.db'}"
+    config = Config()
+    config.set_main_option("script_location", "migrations")
+    config.set_main_option("sqlalchemy.url", url)
+    command.upgrade(config, "head")
+    checks = {
+        check["name"]
+        for check in inspect(create_engine(url)).get_check_constraints(
+            "result_extraction_links"
+        )
+    }
+
+    assert "ck_result_extraction_links_artifact_same_plan" in checks
+    assert "ck_result_extraction_links_rejection_same_plan" in checks
+
+
+def test_concurrent_identical_composition_acceptance_is_idempotent(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from argus.extraction.finalizer import ExtractionFinalizer
+    from argus.extraction.outcomes import OutcomePolicy
+    from argus.persistence.search_ledger import create_search_ledger_repository
+    from tests.test_extraction_outcomes import _artifact, _plan, _raw, _request
+
+    url = f"sqlite:///{tmp_path / 'composition-concurrent.db'}"
+    repositories = [
+        create_search_ledger_repository(url),
+        create_search_ledger_repository(url, create_schema=False),
+    ]
+    accepted = ExtractionFinalizer(
+        repository=repositories[0],
+        clock=lambda: "2026-07-27T12:00:00Z",
+    ).finalize_extraction(
+        _request("composition-concurrent-run"),
+        _plan(),
+        _raw(artifact=_artifact()),
+        OutcomePolicy(version="outcome-v1"),
+    )
+    link = ResultExtractionLink.from_accepted(
+        link_ref="concurrent-link",
+        result_cluster_ref="cluster-1",
+        accepted_outcome=accepted,
+        required=True,
+    )
+    retrieval = Retrieval(CanonicalOutcome.SUCCESS, ("cluster-1",))
+    requirement = _requirement()
+    composition = compose_retrieval_evidence(retrieval, (link,), requirement)
+    barrier = Barrier(2)
+
+    def accept(index):
+        barrier.wait()
+        return repositories[index].accept_retrieval_composition(
+            retrieval,
+            composition,
+            requirement,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        receipts = list(executor.map(accept, range(2)))
+
+    assert receipts[0] == receipts[1]
+
+
+def test_postgresql_concurrent_identical_composition_acceptance(
+    postgres_ledger_url,
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from argus.extraction.finalizer import ExtractionFinalizer
+    from argus.extraction.outcomes import OutcomePolicy
+    from argus.persistence.search_ledger import create_search_ledger_repository
+    from tests.test_extraction_outcomes import _artifact, _plan, _raw, _request
+
+    repositories = [
+        create_search_ledger_repository(postgres_ledger_url),
+        create_search_ledger_repository(
+            postgres_ledger_url,
+            create_schema=False,
+        ),
+    ]
+    accepted = ExtractionFinalizer(
+        repository=repositories[0],
+        clock=lambda: "2026-07-27T12:00:00Z",
+    ).finalize_extraction(
+        _request("postgres-composition-concurrent"),
+        _plan(),
+        _raw(artifact=_artifact()),
+        OutcomePolicy(version="outcome-v1"),
+    )
+    link = ResultExtractionLink.from_accepted(
+        link_ref="postgres-concurrent-link",
+        result_cluster_ref="cluster-1",
+        accepted_outcome=accepted,
+        required=True,
+    )
+    retrieval = Retrieval(CanonicalOutcome.SUCCESS, ("cluster-1",))
+    requirement = _requirement()
+    composition = compose_retrieval_evidence(retrieval, (link,), requirement)
+    barrier = Barrier(2)
+
+    def accept(index):
+        barrier.wait()
+        return repositories[index].accept_retrieval_composition(
+            retrieval,
+            composition,
+            requirement,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        receipts = list(executor.map(accept, range(2)))
+
+    assert receipts[0] == receipts[1]
+
+
 def test_repository_rejects_forged_typed_outcome_with_real_receipt(tmp_path):
     from argus.extraction.finalizer import ExtractionFinalizer
     from argus.extraction.outcomes import OutcomePolicy

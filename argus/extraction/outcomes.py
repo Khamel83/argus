@@ -98,6 +98,7 @@ class ExtractionPlan:
     caller: str
     profile: str
     privacy_scope: str
+    authentication_scope_fingerprint: str = "anonymous"
 
     def __post_init__(self) -> None:
         if isinstance(self.candidates, list):
@@ -124,6 +125,7 @@ class CacheOriginEvidence:
     authentication_scope_fingerprint: str
     cache_policy_version: str
     privacy_scope: str
+    partial_allowed: bool
     cache_created_at: str
 
     @classmethod
@@ -132,7 +134,6 @@ class CacheOriginEvidence:
         accepted: "AcceptedExtractionOutcome",
         *,
         acceptance_repository,
-        cache_created_at: str,
     ) -> "CacheOriginEvidence":
         from argus.extraction.cache import ExtractionCacheIdentity
 
@@ -167,7 +168,8 @@ class CacheOriginEvidence:
             ),
             cache_policy_version=identity.cache_policy_version,
             privacy_scope=identity.privacy_scope,
-            cache_created_at=cache_created_at,
+            partial_allowed=identity.partial_allowed,
+            cache_created_at=durable.acceptance_receipt.accepted_at,
         )
 
 
@@ -177,6 +179,7 @@ class CacheDecision:
     origin_run_ref: str | None = None
     age_seconds: int | None = None
     origin_evidence: CacheOriginEvidence | None = None
+    current_identity: object | None = None
 
 
 @dataclass(frozen=True, slots=True)

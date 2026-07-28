@@ -117,6 +117,9 @@ class ResultExtractionLink:
             step.decision is not None and step.decision.value == "invoked"
             for step in accepted_outcome.steps
         )
+        eligible_path = any(
+            candidate.eligible for candidate in accepted_outcome.plan.candidates
+        )
         return cls(
             link_ref=link_ref,
             result_cluster_ref=result_cluster_ref,
@@ -129,7 +132,7 @@ class ResultExtractionLink:
             ),
             acceptance_receipt=accepted_outcome.acceptance_receipt,
             required=required,
-            eligible_path=True,
+            eligible_path=eligible_path,
             attempted=attempted,
             artifact_identity=(
                 artifact.content_identity if artifact is not None else None

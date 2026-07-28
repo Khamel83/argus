@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Callable
 
 from argus.contracts import CanonicalOutcome
+from argus.extraction.cache import ExtractionCacheIdentity
 from argus.extraction.outcomes import (
     AcceptedExtractionOutcome,
     ArtifactDisposition,
@@ -292,6 +294,7 @@ def _validate_inputs(
         or not _safe_ref(plan.caller, maximum=64)
         or not _safe_ref(plan.profile, maximum=64)
         or not _safe_ref(plan.privacy_scope, maximum=64)
+        or not _safe_ref(plan.authentication_scope_fingerprint)
         or not isinstance(plan.normalized_url, str)
         or len(plan.normalized_url.encode("utf-8")) > 2048
         or not plan.normalized_url.startswith(("http://", "https://"))
@@ -349,6 +352,7 @@ def _validate_inputs(
             cache.origin_run_ref is not None
             or cache.age_seconds is not None
             or cache.origin_evidence is not None
+            or cache.current_identity is not None
         ):
             raise ExtractionContractRejected()
     elif (
@@ -356,6 +360,7 @@ def _validate_inputs(
         or not _plain_int(cache.age_seconds, 0, _MAX_LATENCY_MS)
         or not isinstance(cache.origin_evidence, CacheOriginEvidence)
         or cache.origin_evidence.extraction_run_id != cache.origin_run_ref
+        or not isinstance(cache.current_identity, ExtractionCacheIdentity)
     ):
         raise ExtractionContractRejected()
     if cache.origin_evidence is not None:
@@ -382,6 +387,7 @@ def _validate_inputs(
             or not _safe_ref(origin.authentication_scope_fingerprint)
             or not _safe_ref(origin.cache_policy_version)
             or not _safe_ref(origin.privacy_scope)
+            or type(origin.partial_allowed) is not bool
             or not isinstance(origin.cache_created_at, str)
             or not origin.cache_created_at
             or not isinstance(origin.steps, tuple)
@@ -390,6 +396,36 @@ def _validate_inputs(
             raise ExtractionContractRejected()
         for origin_step in origin.steps:
             _validate_step(origin_step)
+        expected_current_identity = ExtractionCacheIdentity.from_plan(
+            plan,
+            outcome_policy_version=policy.version,
+            normalized_url_identity=(
+                "sha256:"
+                + hashlib.sha256(
+                    plan.normalized_url.encode("utf-8")
+                ).hexdigest()
+            ),
+        )
+        origin_identity = ExtractionCacheIdentity(
+            normalized_url=origin.normalized_url_identity,
+            mode=origin.mode,
+            access_scope=origin.access_scope,
+            authentication_scope_fingerprint=(
+                origin.authentication_scope_fingerprint
+            ),
+            cache_policy_version=origin.cache_policy_version,
+            extraction_plan_version=origin.extraction_plan_version,
+            quality_policy_version=origin.quality_policy_version,
+            completeness_policy_version=origin.completeness_policy_version,
+            outcome_policy_version=origin.extraction_outcome_policy_version,
+            privacy_scope=origin.privacy_scope,
+            partial_allowed=origin.partial_allowed,
+        )
+        if (
+            cache.current_identity != expected_current_identity
+            or cache.current_identity != origin_identity
+        ):
+            raise ExtractionContractRejected()
     if cache.outcome is CacheOutcome.HIT_ELIGIBLE and (
         raw.artifact is None
         or invoked
@@ -597,9 +633,28 @@ class ExtractionFinalizer:
             expected_origin = CacheOriginEvidence.from_accepted(
                 durable,
                 acceptance_repository=self.repository,
-                cache_created_at=origin.cache_created_at,
             )
             if expected_origin != origin:
+                raise ExtractionContractRejected()
+            try:
+                now = datetime.fromisoformat(
+                    self.clock().replace("Z", "+00:00")
+                )
+                created_at = datetime.fromisoformat(
+                    origin.cache_created_at.replace("Z", "+00:00")
+                )
+                if now.tzinfo is None:
+                    now = now.replace(tzinfo=timezone.utc)
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=timezone.utc)
+                derived_age = int((now - created_at).total_seconds())
+            except (AttributeError, TypeError, ValueError):
+                raise ExtractionContractRejected() from None
+            if (
+                derived_age < 0
+                or raw_extractor_result.cache_decision.age_seconds
+                != derived_age
+            ):
                 raise ExtractionContractRejected()
         if (
             extraction_request.extraction_run_id is None

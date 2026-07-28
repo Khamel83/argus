@@ -419,6 +419,16 @@ class ResultExtractionLinkRow(LedgerBase):
             "(rejection_row_id IS NULL) = (rejection_plan_id IS NULL)",
             name="ck_result_extraction_links_rejection_pair",
         ),
+        CheckConstraint(
+            "artifact_plan_id IS NULL OR "
+            "artifact_plan_id = extraction_plan_id",
+            name="ck_result_extraction_links_artifact_same_plan",
+        ),
+        CheckConstraint(
+            "rejection_plan_id IS NULL OR "
+            "rejection_plan_id = extraction_plan_id",
+            name="ck_result_extraction_links_rejection_same_plan",
+        ),
         ForeignKeyConstraint(
             ["extraction_acceptance_ref", "extraction_plan_id"],
             [
@@ -759,6 +769,7 @@ def _deserialize_extraction_projection(state: dict):
     from decimal import Decimal
 
     from argus.contracts import CanonicalOutcome
+    from argus.extraction.cache import ExtractionCacheIdentity
     from argus.extraction.outcomes import (
         ArtifactDisposition,
         ArtifactEvaluation,
@@ -928,6 +939,13 @@ def _deserialize_extraction_projection(state: dict):
                     **cache_state,
                     "outcome": CacheOutcome(cache_state["outcome"]),
                     "origin_evidence": origin,
+                    "current_identity": (
+                        ExtractionCacheIdentity(
+                            **cache_state["current_identity"]
+                        )
+                        if cache_state.get("current_identity") is not None
+                        else None
+                    ),
                 }
             ),
         }
@@ -1732,24 +1750,31 @@ class SqlAlchemySearchLedgerRepository:
 
     def load_extraction_outcome_by_receipt(self, receipt_ref: str):
         """Reload the exact durable accepted projection for cache/composition."""
+        with self.session_factory() as session:
+            return self._load_extraction_outcome_by_receipt_in_session(
+                session,
+                receipt_ref,
+            )
+
+    @staticmethod
+    def _load_extraction_outcome_by_receipt_in_session(session, receipt_ref):
         from argus.extraction.outcomes import (
             AcceptedExtractionOutcome,
             ExtractionAcceptanceReceipt,
         )
 
-        with self.session_factory() as session:
-            acceptance = session.get(ExtractionOutcomeAcceptanceRow, receipt_ref)
-            if acceptance is None:
-                return None
-            projection = _deserialize_extraction_projection(
-                _parse_json_value(acceptance.projection_json)
-            )
-            receipt = ExtractionAcceptanceReceipt(
-                receipt_ref=acceptance.receipt_ref,
-                accepted_at=acceptance.accepted_at.isoformat() + "Z",
-                scope=acceptance.scope,
-            )
-            return AcceptedExtractionOutcome.accepted(projection, receipt)
+        acceptance = session.get(ExtractionOutcomeAcceptanceRow, receipt_ref)
+        if acceptance is None:
+            return None
+        projection = _deserialize_extraction_projection(
+            _parse_json_value(acceptance.projection_json)
+        )
+        receipt = ExtractionAcceptanceReceipt(
+            receipt_ref=acceptance.receipt_ref,
+            accepted_at=acceptance.accepted_at.isoformat() + "Z",
+            scope=acceptance.scope,
+        )
+        return AcceptedExtractionOutcome.accepted(projection, receipt)
 
     def accept_retrieval_composition(
         self,
@@ -1812,6 +1837,26 @@ class SqlAlchemySearchLedgerRepository:
         source_state = _normalize_json_value(source_state)
         fingerprint = acceptance_fingerprint(source_state)
         with self.session_factory.begin() as session:
+            for link in composition.links:
+                if link.extraction_run_id is None:
+                    continue
+                extraction_receipt = getattr(
+                    link.acceptance_receipt,
+                    "receipt_ref",
+                    link.acceptance_receipt,
+                )
+                durable = (
+                    self._load_extraction_outcome_by_receipt_in_session(
+                        session,
+                        extraction_receipt,
+                    )
+                    if isinstance(extraction_receipt, str)
+                    else None
+                )
+                if durable != link.accepted_outcome:
+                    raise InvalidArtifactRequirement(
+                        "link does not match durable accepted extraction"
+                    )
             existing = session.scalar(
                 select(RetrievalCompositionRow).where(
                     RetrievalCompositionRow.source_fingerprint == fingerprint
@@ -1827,28 +1872,63 @@ class SqlAlchemySearchLedgerRepository:
                 )
             now = self.clock()
             receipt_ref = uuid.uuid4().hex
-            session.add(
-                RetrievalCompositionRow(
-                    receipt_ref=receipt_ref,
-                    retrieval_acceptance_ref=retrieval_receipt_ref,
-                    requirement_ref=(
-                        artifact_requirement.requirement_ref
-                        if artifact_requirement is not None
-                        else None
-                    ),
-                    retrieval_outcome=composition.retrieval_outcome.value,
-                    artifact_outcome=(
-                        composition.artifact_outcome.value
-                        if composition.artifact_outcome is not None
-                        else None
-                    ),
-                    composite_outcome=composition.composite_outcome.value,
-                    projection_json=_canonical_json(source_state),
-                    source_fingerprint=fingerprint,
-                    accepted_at=now,
+            composition_values = {
+                "receipt_ref": receipt_ref,
+                "retrieval_acceptance_ref": retrieval_receipt_ref,
+                "requirement_ref": (
+                    artifact_requirement.requirement_ref
+                    if artifact_requirement is not None
+                    else None
+                ),
+                "retrieval_outcome": composition.retrieval_outcome.value,
+                "artifact_outcome": (
+                    composition.artifact_outcome.value
+                    if composition.artifact_outcome is not None
+                    else None
+                ),
+                "composite_outcome": composition.composite_outcome.value,
+                "projection_json": _canonical_json(source_state),
+                "source_fingerprint": fingerprint,
+                "accepted_at": now,
+            }
+            dialect = session.get_bind().dialect.name
+            if dialect == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert as dialect_insert
+            elif dialect == "postgresql":
+                from sqlalchemy.dialects.postgresql import insert as dialect_insert
+            else:
+                dialect_insert = None
+            if dialect_insert is not None:
+                inserted = session.execute(
+                    dialect_insert(RetrievalCompositionRow)
+                    .values(**composition_values)
+                    .on_conflict_do_nothing(
+                        index_elements=["source_fingerprint"]
+                    )
                 )
-            )
-            session.flush()
+                if inserted.rowcount == 0:
+                    existing = session.scalar(
+                        select(RetrievalCompositionRow).where(
+                            RetrievalCompositionRow.source_fingerprint
+                            == fingerprint
+                        )
+                    )
+                    if existing is None:
+                        raise AcceptanceConflictError(
+                            "composition uniqueness winner is not readable"
+                        )
+                    return CompositionAcceptanceReceipt(
+                        receipt_ref=existing.receipt_ref,
+                        accepted_at=existing.accepted_at.isoformat() + "Z",
+                        scope=(
+                            "sqlite_development"
+                            if dialect == "sqlite"
+                            else "postgresql_authority"
+                        ),
+                    )
+            else:
+                session.add(RetrievalCompositionRow(**composition_values))
+                session.flush()
             for link in composition.links:
                 extraction_receipt = getattr(
                     link.acceptance_receipt,

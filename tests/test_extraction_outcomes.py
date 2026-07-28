@@ -430,6 +430,7 @@ def test_fallback_success_retains_failed_steps_without_final_rejection():
 
 
 def test_eligible_cache_hit_is_a_decision_not_an_extractor_attempt():
+    from argus.extraction.cache import ExtractionCacheIdentity
     from argus.extraction.outcomes import CacheOriginEvidence
 
     repository = MemoryOutcomeRepository()
@@ -442,12 +443,12 @@ def test_eligible_cache_hit_is_a_decision_not_an_extractor_attempt():
             cache_decision=CacheDecision(
                 outcome=CacheOutcome.HIT_ELIGIBLE,
                 origin_run_ref=origin.extraction_run_id,
-                age_seconds=60,
+                age_seconds=0,
                 origin_evidence=CacheOriginEvidence.from_accepted(
                     origin,
                     acceptance_repository=repository,
-                    cache_created_at="2026-07-27T11:59:00Z",
                 ),
+                current_identity=ExtractionCacheIdentity.from_accepted(origin),
             ),
             steps=(),
             artifact=_artifact(),
@@ -1779,7 +1780,6 @@ def test_cache_origin_self_attested_receipt_is_rejected():
     evidence = CacheOriginEvidence.from_accepted(
         origin,
         acceptance_repository=repository,
-        cache_created_at="2026-07-27T11:59:00Z",
     )
     fabricated = replace(
         evidence,
@@ -1793,7 +1793,7 @@ def test_cache_origin_self_attested_receipt_is_rejected():
         cache_decision=CacheDecision(
             outcome=CacheOutcome.HIT_ELIGIBLE,
             origin_run_ref=origin.extraction_run_id,
-            age_seconds=1,
+            age_seconds=0,
             origin_evidence=fabricated,
         ),
         steps=(),
@@ -1805,6 +1805,123 @@ def test_cache_origin_self_attested_receipt_is_rejected():
 
     with pytest.raises(ExtractionContractRejected):
         _finalize(raw, repository=repository)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("extraction_plan_version", "plan-v999"),
+        ("quality_policy_version", "quality-v999"),
+        ("completeness_policy_version", "complete-v999"),
+        ("outcome_policy_version", "outcome-v999"),
+        ("partial_allowed", True),
+        ("authentication_scope_fingerprint", "sha256:" + ("f" * 64)),
+    ],
+)
+def test_cache_hit_requires_exact_complete_current_identity(field, value):
+    from argus.extraction.cache import ExtractionCacheIdentity
+    from argus.extraction.outcomes import (
+        CacheOriginEvidence,
+        ExtractionContractRejected,
+    )
+
+    repository = MemoryOutcomeRepository()
+    origin = _finalize(_raw(artifact=_artifact()), repository=repository)
+    current_identity = ExtractionCacheIdentity.from_accepted(origin)
+    origin_evidence = CacheOriginEvidence.from_accepted(
+        origin,
+        acceptance_repository=repository,
+    )
+    raw = RawExtractionResult(
+        cache_decision=CacheDecision(
+            outcome=CacheOutcome.HIT_ELIGIBLE,
+            origin_run_ref=origin.extraction_run_id,
+            age_seconds=0,
+            origin_evidence=origin_evidence,
+            current_identity=replace(current_identity, **{field: value}),
+        ),
+        steps=(),
+        artifact=_artifact(),
+        selected_extractor="trafilatura",
+        terminal_cause=None,
+        operation_latency_ms=1,
+    )
+
+    with pytest.raises(ExtractionContractRejected):
+        _finalize(raw, repository=repository)
+
+
+def test_cache_hit_age_is_derived_from_durable_cache_creation_time():
+    from argus.extraction.cache import ExtractionCacheIdentity
+    from argus.extraction.outcomes import (
+        CacheOriginEvidence,
+        ExtractionContractRejected,
+    )
+
+    repository = MemoryOutcomeRepository()
+    origin = _finalize(_raw(artifact=_artifact()), repository=repository)
+    raw = RawExtractionResult(
+        cache_decision=CacheDecision(
+            outcome=CacheOutcome.HIT_ELIGIBLE,
+            origin_run_ref=origin.extraction_run_id,
+            age_seconds=1,
+            origin_evidence=CacheOriginEvidence.from_accepted(
+                origin,
+                acceptance_repository=repository,
+            ),
+            current_identity=ExtractionCacheIdentity.from_accepted(origin),
+        ),
+        steps=(),
+        artifact=_artifact(),
+        selected_extractor="trafilatura",
+        terminal_cause=None,
+        operation_latency_ms=1,
+    )
+
+    with pytest.raises(ExtractionContractRejected):
+        _finalize(raw, repository=repository)
+
+
+def test_ineligible_cache_hit_still_requires_exact_current_identity():
+    from argus.extraction.cache import ExtractionCacheIdentity
+    from argus.extraction.outcomes import (
+        CacheOriginEvidence,
+        ExtractionContractRejected,
+    )
+
+    repository = MemoryOutcomeRepository()
+    origin = _finalize(_raw(artifact=_artifact()), repository=repository)
+    identity = ExtractionCacheIdentity.from_accepted(origin)
+    raw = replace(
+        _raw(artifact=_artifact()),
+        cache_decision=CacheDecision(
+            outcome=CacheOutcome.HIT_INELIGIBLE,
+            origin_run_ref=origin.extraction_run_id,
+            age_seconds=0,
+            origin_evidence=CacheOriginEvidence.from_accepted(
+                origin,
+                acceptance_repository=repository,
+            ),
+            current_identity=replace(identity, mode="research"),
+        ),
+    )
+
+    with pytest.raises(ExtractionContractRejected):
+        _finalize(raw, repository=repository)
+
+
+def test_cache_creation_time_comes_from_durable_acceptance():
+    from argus.extraction.outcomes import CacheOriginEvidence
+
+    repository = MemoryOutcomeRepository()
+    origin = _finalize(_raw(artifact=_artifact()), repository=repository)
+
+    evidence = CacheOriginEvidence.from_accepted(
+        origin,
+        acceptance_repository=repository,
+    )
+
+    assert evidence.cache_created_at == origin.acceptance_receipt.accepted_at
 
 
 def test_0007_has_canonical_artifact_identity_and_link_constraints(tmp_path):
