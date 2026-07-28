@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -176,33 +175,94 @@ def _postgresql_type_name(column_type: Any) -> str:
 
 
 def _normalize_pg_definition(definition: str) -> str:
-    tokens = re.findall(
-        r"'(?:''|[^'])*'"
-        r'|"(?:[^"]|"")*"'
-        r"|::|<>|<=|>=|!="
-        r"|[\[\](){},.;:]"
-        r"|[-+*/%^<>=~!@#&|`?\\]+"
-        r"|[A-Za-z_][A-Za-z0-9_$]*"
-        r"|\d+(?:\.\d+)?"
-        r"|\S",
-        definition,
-    )
-    normalized = []
-    for token in tokens:
-        if token.startswith("'"):
-            normalized.append(token)
-        elif token.startswith('"'):
-            identifier = token[1:-1].replace('""', '"')
-            normalized.append(
-                identifier
-                if re.fullmatch(r"[a-z_][a-z0-9_$]*", identifier)
-                else token
+    normalized: list[str] = []
+    pending_space = False
+    index = 0
+    length = len(definition)
+
+    while index < length:
+        character = definition[index]
+        if character.isspace():
+            pending_space = True
+            index += 1
+            continue
+        if pending_space:
+            if normalized:
+                normalized.append(" ")
+            pending_space = False
+
+        if character == "'":
+            start = index
+            escape_string = (
+                index > 0
+                and definition[index - 1] in {"e", "E"}
+                and (
+                    index == 1
+                    or not (
+                        definition[index - 2].isalnum()
+                        or definition[index - 2] in {"_", "$"}
+                    )
+                )
             )
-        elif re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", token):
-            normalized.append(token.lower())
-        else:
-            normalized.append(token)
-    return " ".join(normalized)
+            index += 1
+            while index < length:
+                if escape_string and definition[index] == "\\":
+                    index = min(index + 2, length)
+                elif definition[index] == "'":
+                    if index + 1 < length and definition[index + 1] == "'":
+                        index += 2
+                    else:
+                        index += 1
+                        break
+                else:
+                    index += 1
+            normalized.append(definition[start:index])
+            continue
+
+        if character == '"':
+            start = index
+            index += 1
+            while index < length:
+                if definition[index] == '"':
+                    if index + 1 < length and definition[index + 1] == '"':
+                        index += 2
+                    else:
+                        index += 1
+                        break
+                else:
+                    index += 1
+            normalized.append(definition[start:index])
+            continue
+
+        if character == "$":
+            delimiter_end = index + 1
+            while (
+                delimiter_end < length
+                and (
+                    definition[delimiter_end].isalnum()
+                    or definition[delimiter_end] == "_"
+                )
+            ):
+                delimiter_end += 1
+            tag = definition[index + 1 : delimiter_end]
+            valid_tag = not tag or tag[0].isalpha() or tag[0] == "_"
+            if (
+                valid_tag
+                and delimiter_end < length
+                and definition[delimiter_end] == "$"
+            ):
+                delimiter = definition[index : delimiter_end + 1]
+                body_end = definition.find(delimiter, delimiter_end + 1)
+                if body_end >= 0:
+                    literal_end = body_end + len(delimiter)
+                    normalized.append(definition[index:literal_end])
+                    index = literal_end
+                    continue
+
+        normalized.append(character)
+        index += 1
+
+    return "".join(normalized)
 
 
 def _manifest_sha256(manifest: dict[str, Any]) -> str:

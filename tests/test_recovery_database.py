@@ -220,7 +220,7 @@ def test_expected_schema_manifest_describes_types_nullability_and_definitions():
     ] == "double precision"
     assert _postgresql_type_name(Float()) == "double precision"
     assert _postgresql_type_name(Numeric()) == "numeric"
-    assert "match full" in manifest["constraints"][
+    assert "MATCH FULL" in manifest["constraints"][
         "fk_result_extraction_links_acceptance_plan"
     ]["definition"]
     assert "artifact_ref" in manifest["indexes"][
@@ -241,14 +241,14 @@ def test_checked_contract_retains_migrated_server_defaults_and_deparser_output()
     ]["default"] == "false"
     assert manifest["columns"]["provider_spend_attempts"][
         "reservation_overrun"
-    ]["default"] == "'0' :: double precision"
+    ]["default"] == "'0'::double precision"
     assert manifest["columns"]["delivery_intents"]["attempt_count"][
         "default"
     ] == "0"
     assert manifest["columns"]["delivery_intents"]["max_attempts"][
         "default"
     ] == "8"
-    assert ":: text" in manifest["constraints"][
+    assert "::text" in manifest["constraints"][
         "ck_result_extraction_links_artifact_same_plan"
     ]["definition"]
 
@@ -403,6 +403,50 @@ def test_definition_normalization_distinguishes_text_array_from_text():
     ) != _normalize_pg_definition(scalar_text)
 
 
+def test_definition_normalization_distinguishes_quoted_identifier_from_keyword():
+    from argus.recovery.database import _normalize_pg_definition
+
+    quoted_identifier = 'CHECK ("current_user" IS NOT NULL)'
+    keyword = "CHECK (CURRENT_USER IS NOT NULL)"
+
+    assert _normalize_pg_definition(
+        quoted_identifier
+    ) != _normalize_pg_definition(keyword)
+
+
+def test_definition_normalization_preserves_dollar_quote_tag_body_and_case():
+    from argus.recovery.database import _normalize_pg_definition
+
+    assert _normalize_pg_definition(
+        "CHECK ($$Mixed Case$$ IS NOT NULL)"
+    ) != _normalize_pg_definition(
+        "CHECK ($$mixed case$$ IS NOT NULL)"
+    )
+    assert _normalize_pg_definition(
+        "CHECK ($Body$Mixed Case$Body$ IS NOT NULL)"
+    ) != _normalize_pg_definition(
+        "CHECK ($body$Mixed Case$body$ IS NOT NULL)"
+    )
+
+
+def test_definition_normalization_preserves_escape_string_as_one_token():
+    from argus.recovery.database import _normalize_pg_definition
+
+    definition = r"CHECK (value = E'Mixed\'Case')"
+
+    assert r"E'Mixed\'Case'" in _normalize_pg_definition(definition)
+
+
+def test_definition_normalization_only_collapses_external_whitespace():
+    from argus.recovery.database import _normalize_pg_definition
+
+    definition = '  CHECK  ( "Case Sensitive" = \'A  B\' )  '
+
+    assert _normalize_pg_definition(definition) == (
+        'CHECK ( "Case Sensitive" = \'A  B\' )'
+    )
+
+
 @pytest.mark.parametrize(
     ("left", "right"),
     [
@@ -437,6 +481,18 @@ def test_definition_normalization_distinguishes_text_array_from_text():
         (
             'CHECK ("MixedCase" IS NOT NULL)',
             "CHECK (mixedcase IS NOT NULL)",
+        ),
+        (
+            r"CHECK (value = E'Mixed\'Case')",
+            r"CHECK (value = E'mixed\'case')",
+        ),
+        (
+            "CHECK ($tag$Mixed Case$tag$ IS NOT NULL)",
+            "CHECK ($tag$mixed case$tag$ IS NOT NULL)",
+        ),
+        (
+            'CHECK ("A""B" IS NOT NULL)',
+            'CHECK ("a""b" IS NOT NULL)',
         ),
     ],
 )

@@ -374,6 +374,51 @@ Eighth-correction TDD and verification:
 Eighth correction commit message:
 `fix: preserve postgres schema definition tokens`
 
+## Ninth reviewer correction
+
+The ninth strict PostgreSQL quoting review is closed by a separate correction:
+
+- Definition canonicalization is now a quote-aware state machine. It preserves
+  every non-whitespace byte and only collapses whitespace runs outside quoted
+  tokens.
+- Single-quoted literals preserve doubled quotes and `E''` backslash escapes;
+  double-quoted identifiers preserve quotes, case, and doubled quotes; tagged
+  and untagged dollar-quoted literals preserve delimiter tag, body whitespace,
+  and case.
+- Unquoted words are no longer case-folded, and safely spelled quoted
+  identifiers are no longer unquoted. Consequently `"current_user"` remains
+  distinct from `CURRENT_USER`, and `$$Mixed Case$$` remains distinct from
+  `$$mixed case$$`.
+- Catalog definitions cannot carry SQL source comments: constraints and
+  indexes are reconstructed by `pg_get_constraintdef` and `pg_get_indexdef`,
+  while column defaults and generated expressions come from PostgreSQL's
+  parsed catalog expressions. Comment lexer states are therefore outside the
+  checked contract input.
+- A uniquely named disposable PostgreSQL 16 schema was migrated through 0007
+  and the artifact was regenerated from the real catalog. Its SHA-256 is now
+  `73c0c57f1c4899dd0b2d3f1a3e76b7493959b63993fb5f983763e0e5963da51b`.
+  The exact SSH tunnel, `argus-s3-quote-532514ca` container, and
+  `argus-s3-quote-data-532514ca` volume were removed and verified absent;
+  existing Argus and Atlas services were not changed.
+
+Ninth-correction TDD and verification:
+
+- RED quote slice: `5 failed, 10 passed`, directly demonstrating the quoted
+  identifier, tagged/untagged dollar body, and escape-string defects.
+- Real-catalog regeneration correctly made two old lowercase/spacing
+  assertions fail; their expectations now pin PostgreSQL's exact deparser
+  casing and adjacency.
+- Real PostgreSQL recovery and exact-contract module: `49 passed`.
+- Real PostgreSQL 0007 upgrade/pre-activation rollback: `1 passed`; after an
+  explicit upgrade back to head, concurrent composition: `1 passed`.
+- Adjacent recovery suite: `72 passed, 20 skipped`.
+- One fresh full repository suite: `1499 passed, 42 skipped`, with the same
+  four Starlette cookie deprecation warnings and zero failures.
+- Ruff over every changed Python path and `git diff --check`: passed.
+
+Ninth correction commit message:
+`fix: preserve postgres quoted definitions`
+
 ## Commit
 
 Commit message: `feat: finalize and compose extraction outcomes`

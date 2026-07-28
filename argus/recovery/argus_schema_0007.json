@@ -2809,7 +2809,7 @@
       "reservation_overrun": {
         "character_maximum_length": null,
         "datetime_precision": null,
-        "default": "'0' :: double precision",
+        "default": "'0'::double precision",
         "generated": {
           "expression": null,
           "is_generated": false
@@ -4069,567 +4069,567 @@
   },
   "constraints": {
     "alembic_version_pkc": {
-      "definition": "primary key ( version_num )",
+      "definition": "PRIMARY KEY (version_num)",
       "table": "alembic_version"
     },
     "authentication_scope_authority_receipts_pkey": {
-      "definition": "primary key ( receipt_ref )",
+      "definition": "PRIMARY KEY (receipt_ref)",
       "table": "authentication_scope_authority_receipts"
     },
     "ck_delivery_intents_one_parent": {
-      "definition": "check ( ( ( ( run_id is not null ) and ( extraction_run_id is null ) ) or ( ( run_id is null ) and ( extraction_run_id is not null ) ) ) )",
+      "definition": "CHECK ((((run_id IS NOT NULL) AND (extraction_run_id IS NULL)) OR ((run_id IS NULL) AND (extraction_run_id IS NOT NULL))))",
       "table": "delivery_intents"
     },
     "ck_result_extraction_links_acceptance_pair": {
-      "definition": "check ( ( ( extraction_acceptance_ref is null ) = ( extraction_plan_id is null ) ) )",
+      "definition": "CHECK (((extraction_acceptance_ref IS NULL) = (extraction_plan_id IS NULL)))",
       "table": "result_extraction_links"
     },
     "ck_result_extraction_links_artifact_pair": {
-      "definition": "check ( ( ( artifact_row_id is null ) = ( artifact_plan_id is null ) ) )",
+      "definition": "CHECK (((artifact_row_id IS NULL) = (artifact_plan_id IS NULL)))",
       "table": "result_extraction_links"
     },
     "ck_result_extraction_links_artifact_requires_acceptance": {
-      "definition": "check ( ( ( artifact_row_id is null ) or ( ( artifact_plan_id is not null ) and ( extraction_plan_id is not null ) and ( extraction_acceptance_ref is not null ) and ( ( artifact_plan_id ) :: text = ( extraction_plan_id ) :: text ) ) ) )",
+      "definition": "CHECK (((artifact_row_id IS NULL) OR ((artifact_plan_id IS NOT NULL) AND (extraction_plan_id IS NOT NULL) AND (extraction_acceptance_ref IS NOT NULL) AND ((artifact_plan_id)::text = (extraction_plan_id)::text))))",
       "table": "result_extraction_links"
     },
     "ck_result_extraction_links_artifact_same_plan": {
-      "definition": "check ( ( ( artifact_plan_id is null ) or ( ( artifact_plan_id ) :: text = ( extraction_plan_id ) :: text ) ) )",
+      "definition": "CHECK (((artifact_plan_id IS NULL) OR ((artifact_plan_id)::text = (extraction_plan_id)::text)))",
       "table": "result_extraction_links"
     },
     "ck_result_extraction_links_rejection_pair": {
-      "definition": "check ( ( ( rejection_row_id is null ) = ( rejection_plan_id is null ) ) )",
+      "definition": "CHECK (((rejection_row_id IS NULL) = (rejection_plan_id IS NULL)))",
       "table": "result_extraction_links"
     },
     "ck_result_extraction_links_rejection_requires_acceptance": {
-      "definition": "check ( ( ( rejection_row_id is null ) or ( ( rejection_plan_id is not null ) and ( extraction_plan_id is not null ) and ( extraction_acceptance_ref is not null ) and ( ( rejection_plan_id ) :: text = ( extraction_plan_id ) :: text ) ) ) )",
+      "definition": "CHECK (((rejection_row_id IS NULL) OR ((rejection_plan_id IS NOT NULL) AND (extraction_plan_id IS NOT NULL) AND (extraction_acceptance_ref IS NOT NULL) AND ((rejection_plan_id)::text = (extraction_plan_id)::text))))",
       "table": "result_extraction_links"
     },
     "ck_result_extraction_links_rejection_same_plan": {
-      "definition": "check ( ( ( rejection_plan_id is null ) or ( ( rejection_plan_id ) :: text = ( extraction_plan_id ) :: text ) ) )",
+      "definition": "CHECK (((rejection_plan_id IS NULL) OR ((rejection_plan_id)::text = (extraction_plan_id)::text)))",
       "table": "result_extraction_links"
     },
     "content_identities_pkey": {
-      "definition": "primary key ( content_hash )",
+      "definition": "PRIMARY KEY (content_hash)",
       "table": "content_identities"
     },
     "delivery_intents_pkey": {
-      "definition": "primary key ( id )",
+      "definition": "PRIMARY KEY (id)",
       "table": "delivery_intents"
     },
     "delivery_intents_run_id_fkey": {
-      "definition": "foreign key ( run_id ) references retrieval_runs ( id )",
+      "definition": "FOREIGN KEY (run_id) REFERENCES retrieval_runs(id)",
       "table": "delivery_intents"
     },
     "delivery_intents_run_id_key": {
-      "definition": "unique ( run_id )",
+      "definition": "UNIQUE (run_id)",
       "table": "delivery_intents"
     },
     "extraction_artifact_identities_pkey": {
-      "definition": "primary key ( artifact_ref )",
+      "definition": "PRIMARY KEY (artifact_ref)",
       "table": "extraction_artifact_identities"
     },
     "extraction_artifacts_content_hash_fkey": {
-      "definition": "foreign key ( content_hash ) references content_identities ( content_hash )",
+      "definition": "FOREIGN KEY (content_hash) REFERENCES content_identities(content_hash)",
       "table": "extraction_artifacts"
     },
     "extraction_artifacts_pkey": {
-      "definition": "primary key ( id )",
+      "definition": "PRIMARY KEY (id)",
       "table": "extraction_artifacts"
     },
     "extraction_artifacts_run_id_fkey": {
-      "definition": "foreign key ( run_id ) references extraction_runs ( id )",
+      "definition": "FOREIGN KEY (run_id) REFERENCES extraction_runs(id)",
       "table": "extraction_artifacts"
     },
     "extraction_artifacts_run_id_key": {
-      "definition": "unique ( run_id )",
+      "definition": "UNIQUE (run_id)",
       "table": "extraction_artifacts"
     },
     "extraction_outcome_acceptances_pkey": {
-      "definition": "primary key ( receipt_ref )",
+      "definition": "PRIMARY KEY (receipt_ref)",
       "table": "extraction_outcome_acceptances"
     },
     "extraction_outcome_acceptances_plan_id_fkey": {
-      "definition": "foreign key ( plan_id ) references extraction_outcome_plans ( id )",
+      "definition": "FOREIGN KEY (plan_id) REFERENCES extraction_outcome_plans(id)",
       "table": "extraction_outcome_acceptances"
     },
     "extraction_outcome_acceptances_plan_id_key": {
-      "definition": "unique ( plan_id )",
+      "definition": "UNIQUE (plan_id)",
       "table": "extraction_outcome_acceptances"
     },
     "extraction_outcome_acceptances_receipt_ref_plan_id_key": {
-      "definition": "unique ( receipt_ref , plan_id )",
+      "definition": "UNIQUE (receipt_ref, plan_id)",
       "table": "extraction_outcome_acceptances"
     },
     "extraction_outcome_activations_pkey": {
-      "definition": "primary key ( receipt_ref )",
+      "definition": "PRIMARY KEY (receipt_ref)",
       "table": "extraction_outcome_activations"
     },
     "extraction_outcome_artifacts_id_plan_id_key": {
-      "definition": "unique ( id , plan_id )",
+      "definition": "UNIQUE (id, plan_id)",
       "table": "extraction_outcome_artifacts"
     },
     "extraction_outcome_artifacts_pkey": {
-      "definition": "primary key ( id )",
+      "definition": "PRIMARY KEY (id)",
       "table": "extraction_outcome_artifacts"
     },
     "extraction_outcome_artifacts_plan_id_fkey": {
-      "definition": "foreign key ( plan_id ) references extraction_outcome_plans ( id )",
+      "definition": "FOREIGN KEY (plan_id) REFERENCES extraction_outcome_plans(id)",
       "table": "extraction_outcome_artifacts"
     },
     "extraction_outcome_artifacts_plan_id_key": {
-      "definition": "unique ( plan_id )",
+      "definition": "UNIQUE (plan_id)",
       "table": "extraction_outcome_artifacts"
     },
     "extraction_outcome_plans_extraction_run_id_key": {
-      "definition": "unique ( extraction_run_id )",
+      "definition": "UNIQUE (extraction_run_id)",
       "table": "extraction_outcome_plans"
     },
     "extraction_outcome_plans_pkey": {
-      "definition": "primary key ( id )",
+      "definition": "PRIMARY KEY (id)",
       "table": "extraction_outcome_plans"
     },
     "extraction_outcome_rejections_id_plan_id_key": {
-      "definition": "unique ( id , plan_id )",
+      "definition": "UNIQUE (id, plan_id)",
       "table": "extraction_outcome_rejections"
     },
     "extraction_outcome_rejections_pkey": {
-      "definition": "primary key ( id )",
+      "definition": "PRIMARY KEY (id)",
       "table": "extraction_outcome_rejections"
     },
     "extraction_outcome_rejections_plan_id_fkey": {
-      "definition": "foreign key ( plan_id ) references extraction_outcome_plans ( id )",
+      "definition": "FOREIGN KEY (plan_id) REFERENCES extraction_outcome_plans(id)",
       "table": "extraction_outcome_rejections"
     },
     "extraction_outcome_rejections_plan_id_key": {
-      "definition": "unique ( plan_id )",
+      "definition": "UNIQUE (plan_id)",
       "table": "extraction_outcome_rejections"
     },
     "extraction_outcome_steps_pkey": {
-      "definition": "primary key ( id )",
+      "definition": "PRIMARY KEY (id)",
       "table": "extraction_outcome_steps"
     },
     "extraction_outcome_steps_plan_id_fkey": {
-      "definition": "foreign key ( plan_id ) references extraction_outcome_plans ( id )",
+      "definition": "FOREIGN KEY (plan_id) REFERENCES extraction_outcome_plans(id)",
       "table": "extraction_outcome_steps"
     },
     "extraction_runs_content_hash_fkey": {
-      "definition": "foreign key ( content_hash ) references content_identities ( content_hash )",
+      "definition": "FOREIGN KEY (content_hash) REFERENCES content_identities(content_hash)",
       "table": "extraction_runs"
     },
     "extraction_runs_extraction_run_id_key": {
-      "definition": "unique ( extraction_run_id )",
+      "definition": "UNIQUE (extraction_run_id)",
       "table": "extraction_runs"
     },
     "extraction_runs_pkey": {
-      "definition": "primary key ( id )",
+      "definition": "PRIMARY KEY (id)",
       "table": "extraction_runs"
     },
     "extractor_attempts_pkey": {
-      "definition": "primary key ( id )",
+      "definition": "PRIMARY KEY (id)",
       "table": "extractor_attempts"
     },
     "extractor_attempts_run_id_fkey": {
-      "definition": "foreign key ( run_id ) references extraction_runs ( id )",
+      "definition": "FOREIGN KEY (run_id) REFERENCES extraction_runs(id)",
       "table": "extractor_attempts"
     },
     "extractor_attempts_run_id_ordinal_key": {
-      "definition": "unique ( run_id , ordinal )",
+      "definition": "UNIQUE (run_id, ordinal)",
       "table": "extractor_attempts"
     },
     "fk_delivery_intents_extraction_run_id": {
-      "definition": "foreign key ( extraction_run_id ) references extraction_runs ( id )",
+      "definition": "FOREIGN KEY (extraction_run_id) REFERENCES extraction_runs(id)",
       "table": "delivery_intents"
     },
     "fk_extraction_outcome_artifacts_identity": {
-      "definition": "foreign key ( artifact_ref ) references extraction_artifact_identities ( artifact_ref )",
+      "definition": "FOREIGN KEY (artifact_ref) REFERENCES extraction_artifact_identities(artifact_ref)",
       "table": "extraction_outcome_artifacts"
     },
     "fk_result_extraction_links_acceptance_plan": {
-      "definition": "foreign key ( extraction_acceptance_ref , extraction_plan_id ) references extraction_outcome_acceptances ( receipt_ref , plan_id ) match full",
+      "definition": "FOREIGN KEY (extraction_acceptance_ref, extraction_plan_id) REFERENCES extraction_outcome_acceptances(receipt_ref, plan_id) MATCH FULL",
       "table": "result_extraction_links"
     },
     "fk_result_extraction_links_artifact_plan": {
-      "definition": "foreign key ( artifact_row_id , artifact_plan_id ) references extraction_outcome_artifacts ( id , plan_id ) match full",
+      "definition": "FOREIGN KEY (artifact_row_id, artifact_plan_id) REFERENCES extraction_outcome_artifacts(id, plan_id) MATCH FULL",
       "table": "result_extraction_links"
     },
     "fk_result_extraction_links_rejection_plan": {
-      "definition": "foreign key ( rejection_row_id , rejection_plan_id ) references extraction_outcome_rejections ( id , plan_id ) match full",
+      "definition": "FOREIGN KEY (rejection_row_id, rejection_plan_id) REFERENCES extraction_outcome_rejections(id, plan_id) MATCH FULL",
       "table": "result_extraction_links"
     },
     "normalized_results_content_hash_fkey": {
-      "definition": "foreign key ( content_hash ) references content_identities ( content_hash )",
+      "definition": "FOREIGN KEY (content_hash) REFERENCES content_identities(content_hash)",
       "table": "normalized_results"
     },
     "normalized_results_pkey": {
-      "definition": "primary key ( id )",
+      "definition": "PRIMARY KEY (id)",
       "table": "normalized_results"
     },
     "normalized_results_run_id_final_rank_key": {
-      "definition": "unique ( run_id , final_rank )",
+      "definition": "UNIQUE (run_id, final_rank)",
       "table": "normalized_results"
     },
     "normalized_results_run_id_fkey": {
-      "definition": "foreign key ( run_id ) references retrieval_runs ( id )",
+      "definition": "FOREIGN KEY (run_id) REFERENCES retrieval_runs(id)",
       "table": "normalized_results"
     },
     "provider_attempts_pkey": {
-      "definition": "primary key ( id )",
+      "definition": "PRIMARY KEY (id)",
       "table": "provider_attempts"
     },
     "provider_attempts_run_id_fkey": {
-      "definition": "foreign key ( run_id ) references retrieval_runs ( id )",
+      "definition": "FOREIGN KEY (run_id) REFERENCES retrieval_runs(id)",
       "table": "provider_attempts"
     },
     "provider_balance_snapshots_idempotency_key_key": {
-      "definition": "unique ( idempotency_key )",
+      "definition": "UNIQUE (idempotency_key)",
       "table": "provider_balance_snapshots"
     },
     "provider_balance_snapshots_pkey": {
-      "definition": "primary key ( id )",
+      "definition": "PRIMARY KEY (id)",
       "table": "provider_balance_snapshots"
     },
     "provider_spend_attempts_idempotency_key_key": {
-      "definition": "unique ( idempotency_key )",
+      "definition": "UNIQUE (idempotency_key)",
       "table": "provider_spend_attempts"
     },
     "provider_spend_attempts_pkey": {
-      "definition": "primary key ( id )",
+      "definition": "PRIMARY KEY (id)",
       "table": "provider_spend_attempts"
     },
     "provider_spend_audit_pkey": {
-      "definition": "primary key ( id )",
+      "definition": "PRIMARY KEY (id)",
       "table": "provider_spend_audit"
     },
     "result_extraction_links_composition_ref_fkey": {
-      "definition": "foreign key ( composition_ref ) references retrieval_compositions ( receipt_ref )",
+      "definition": "FOREIGN KEY (composition_ref) REFERENCES retrieval_compositions(receipt_ref)",
       "table": "result_extraction_links"
     },
     "result_extraction_links_pkey": {
-      "definition": "primary key ( id )",
+      "definition": "PRIMARY KEY (id)",
       "table": "result_extraction_links"
     },
     "result_provenance_pkey": {
-      "definition": "primary key ( id )",
+      "definition": "PRIMARY KEY (id)",
       "table": "result_provenance"
     },
     "result_provenance_result_id_fkey": {
-      "definition": "foreign key ( result_id ) references normalized_results ( id )",
+      "definition": "FOREIGN KEY (result_id) REFERENCES normalized_results(id)",
       "table": "result_provenance"
     },
     "result_provenance_result_id_key": {
-      "definition": "unique ( result_id )",
+      "definition": "UNIQUE (result_id)",
       "table": "result_provenance"
     },
     "retrieval_compositions_pkey": {
-      "definition": "primary key ( receipt_ref )",
+      "definition": "PRIMARY KEY (receipt_ref)",
       "table": "retrieval_compositions"
     },
     "retrieval_compositions_source_fingerprint_key": {
-      "definition": "unique ( source_fingerprint )",
+      "definition": "UNIQUE (source_fingerprint)",
       "table": "retrieval_compositions"
     },
     "retrieval_requests_pkey": {
-      "definition": "primary key ( id )",
+      "definition": "PRIMARY KEY (id)",
       "table": "retrieval_requests"
     },
     "retrieval_runs_pkey": {
-      "definition": "primary key ( id )",
+      "definition": "PRIMARY KEY (id)",
       "table": "retrieval_runs"
     },
     "retrieval_runs_request_id_fkey": {
-      "definition": "foreign key ( request_id ) references retrieval_requests ( id )",
+      "definition": "FOREIGN KEY (request_id) REFERENCES retrieval_requests(id)",
       "table": "retrieval_runs"
     },
     "retrieval_runs_request_id_key": {
-      "definition": "unique ( request_id )",
+      "definition": "UNIQUE (request_id)",
       "table": "retrieval_runs"
     },
     "retrieval_runs_search_run_id_key": {
-      "definition": "unique ( search_run_id )",
+      "definition": "UNIQUE (search_run_id)",
       "table": "retrieval_runs"
     },
     "retrieval_sessions_pkey": {
-      "definition": "primary key ( id )",
+      "definition": "PRIMARY KEY (id)",
       "table": "retrieval_sessions"
     },
     "session_extracted_urls_pkey": {
-      "definition": "primary key ( id )",
+      "definition": "PRIMARY KEY (id)",
       "table": "session_extracted_urls"
     },
     "session_extracted_urls_query_id_fkey": {
-      "definition": "foreign key ( query_id ) references session_queries ( id )",
+      "definition": "FOREIGN KEY (query_id) REFERENCES session_queries(id)",
       "table": "session_extracted_urls"
     },
     "session_extracted_urls_query_id_url_key": {
-      "definition": "unique ( query_id , url )",
+      "definition": "UNIQUE (query_id, url)",
       "table": "session_extracted_urls"
     },
     "session_queries_pkey": {
-      "definition": "primary key ( id )",
+      "definition": "PRIMARY KEY (id)",
       "table": "session_queries"
     },
     "session_queries_session_id_fkey": {
-      "definition": "foreign key ( session_id ) references retrieval_sessions ( id )",
+      "definition": "FOREIGN KEY (session_id) REFERENCES retrieval_sessions(id)",
       "table": "session_queries"
     },
     "session_queries_session_id_ordinal_key": {
-      "definition": "unique ( session_id , ordinal )",
+      "definition": "UNIQUE (session_id, ordinal)",
       "table": "session_queries"
     },
     "uq_delivery_intents_extraction_run_id": {
-      "definition": "unique ( extraction_run_id )",
+      "definition": "UNIQUE (extraction_run_id)",
       "table": "delivery_intents"
     },
     "uq_extraction_outcome_steps_plan_ordinal": {
-      "definition": "unique ( plan_id , ordinal )",
+      "definition": "UNIQUE (plan_id, ordinal)",
       "table": "extraction_outcome_steps"
     },
     "uq_provider_snapshot_attempt": {
-      "definition": "unique ( related_attempt_id )",
+      "definition": "UNIQUE (related_attempt_id)",
       "table": "provider_balance_snapshots"
     },
     "uq_provider_snapshot_reference": {
-      "definition": "unique ( provider , provider_reference )",
+      "definition": "UNIQUE (provider, provider_reference)",
       "table": "provider_balance_snapshots"
     },
     "uq_result_extraction_links_composition_cluster": {
-      "definition": "unique ( composition_ref , result_cluster_ref )",
+      "definition": "UNIQUE (composition_ref, result_cluster_ref)",
       "table": "result_extraction_links"
     },
     "uq_spend_audit_action_key": {
-      "definition": "unique ( action , idempotency_key )",
+      "definition": "UNIQUE (action, idempotency_key)",
       "table": "provider_spend_audit"
     }
   },
-  "contract_sha256": "cf14673cb03d25ac9eecac8a50470ecdb50430d7e6e12bc1564ff170e1d1ec90",
+  "contract_sha256": "73c0c57f1c4899dd0b2d3f1a3e76b7493959b63993fb5f983763e0e5963da51b",
   "format_version": 1,
   "indexes": {
     "alembic_version_pkc": {
-      "definition": "create unique index alembic_version_pkc on public . alembic_version using btree ( version_num )",
+      "definition": "CREATE UNIQUE INDEX alembic_version_pkc ON public.alembic_version USING btree (version_num)",
       "table": "alembic_version"
     },
     "authentication_scope_authority_receipts_pkey": {
-      "definition": "create unique index authentication_scope_authority_receipts_pkey on public . authentication_scope_authority_receipts using btree ( receipt_ref )",
+      "definition": "CREATE UNIQUE INDEX authentication_scope_authority_receipts_pkey ON public.authentication_scope_authority_receipts USING btree (receipt_ref)",
       "table": "authentication_scope_authority_receipts"
     },
     "content_identities_pkey": {
-      "definition": "create unique index content_identities_pkey on public . content_identities using btree ( content_hash )",
+      "definition": "CREATE UNIQUE INDEX content_identities_pkey ON public.content_identities USING btree (content_hash)",
       "table": "content_identities"
     },
     "delivery_intents_pkey": {
-      "definition": "create unique index delivery_intents_pkey on public . delivery_intents using btree ( id )",
+      "definition": "CREATE UNIQUE INDEX delivery_intents_pkey ON public.delivery_intents USING btree (id)",
       "table": "delivery_intents"
     },
     "delivery_intents_run_id_key": {
-      "definition": "create unique index delivery_intents_run_id_key on public . delivery_intents using btree ( run_id )",
+      "definition": "CREATE UNIQUE INDEX delivery_intents_run_id_key ON public.delivery_intents USING btree (run_id)",
       "table": "delivery_intents"
     },
     "extraction_artifact_identities_pkey": {
-      "definition": "create unique index extraction_artifact_identities_pkey on public . extraction_artifact_identities using btree ( artifact_ref )",
+      "definition": "CREATE UNIQUE INDEX extraction_artifact_identities_pkey ON public.extraction_artifact_identities USING btree (artifact_ref)",
       "table": "extraction_artifact_identities"
     },
     "extraction_artifacts_pkey": {
-      "definition": "create unique index extraction_artifacts_pkey on public . extraction_artifacts using btree ( id )",
+      "definition": "CREATE UNIQUE INDEX extraction_artifacts_pkey ON public.extraction_artifacts USING btree (id)",
       "table": "extraction_artifacts"
     },
     "extraction_artifacts_run_id_key": {
-      "definition": "create unique index extraction_artifacts_run_id_key on public . extraction_artifacts using btree ( run_id )",
+      "definition": "CREATE UNIQUE INDEX extraction_artifacts_run_id_key ON public.extraction_artifacts USING btree (run_id)",
       "table": "extraction_artifacts"
     },
     "extraction_outcome_acceptances_pkey": {
-      "definition": "create unique index extraction_outcome_acceptances_pkey on public . extraction_outcome_acceptances using btree ( receipt_ref )",
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_acceptances_pkey ON public.extraction_outcome_acceptances USING btree (receipt_ref)",
       "table": "extraction_outcome_acceptances"
     },
     "extraction_outcome_acceptances_plan_id_key": {
-      "definition": "create unique index extraction_outcome_acceptances_plan_id_key on public . extraction_outcome_acceptances using btree ( plan_id )",
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_acceptances_plan_id_key ON public.extraction_outcome_acceptances USING btree (plan_id)",
       "table": "extraction_outcome_acceptances"
     },
     "extraction_outcome_acceptances_receipt_ref_plan_id_key": {
-      "definition": "create unique index extraction_outcome_acceptances_receipt_ref_plan_id_key on public . extraction_outcome_acceptances using btree ( receipt_ref , plan_id )",
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_acceptances_receipt_ref_plan_id_key ON public.extraction_outcome_acceptances USING btree (receipt_ref, plan_id)",
       "table": "extraction_outcome_acceptances"
     },
     "extraction_outcome_activations_pkey": {
-      "definition": "create unique index extraction_outcome_activations_pkey on public . extraction_outcome_activations using btree ( receipt_ref )",
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_activations_pkey ON public.extraction_outcome_activations USING btree (receipt_ref)",
       "table": "extraction_outcome_activations"
     },
     "extraction_outcome_artifacts_id_plan_id_key": {
-      "definition": "create unique index extraction_outcome_artifacts_id_plan_id_key on public . extraction_outcome_artifacts using btree ( id , plan_id )",
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_artifacts_id_plan_id_key ON public.extraction_outcome_artifacts USING btree (id, plan_id)",
       "table": "extraction_outcome_artifacts"
     },
     "extraction_outcome_artifacts_pkey": {
-      "definition": "create unique index extraction_outcome_artifacts_pkey on public . extraction_outcome_artifacts using btree ( id )",
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_artifacts_pkey ON public.extraction_outcome_artifacts USING btree (id)",
       "table": "extraction_outcome_artifacts"
     },
     "extraction_outcome_artifacts_plan_id_key": {
-      "definition": "create unique index extraction_outcome_artifacts_plan_id_key on public . extraction_outcome_artifacts using btree ( plan_id )",
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_artifacts_plan_id_key ON public.extraction_outcome_artifacts USING btree (plan_id)",
       "table": "extraction_outcome_artifacts"
     },
     "extraction_outcome_plans_extraction_run_id_key": {
-      "definition": "create unique index extraction_outcome_plans_extraction_run_id_key on public . extraction_outcome_plans using btree ( extraction_run_id )",
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_plans_extraction_run_id_key ON public.extraction_outcome_plans USING btree (extraction_run_id)",
       "table": "extraction_outcome_plans"
     },
     "extraction_outcome_plans_pkey": {
-      "definition": "create unique index extraction_outcome_plans_pkey on public . extraction_outcome_plans using btree ( id )",
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_plans_pkey ON public.extraction_outcome_plans USING btree (id)",
       "table": "extraction_outcome_plans"
     },
     "extraction_outcome_rejections_id_plan_id_key": {
-      "definition": "create unique index extraction_outcome_rejections_id_plan_id_key on public . extraction_outcome_rejections using btree ( id , plan_id )",
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_rejections_id_plan_id_key ON public.extraction_outcome_rejections USING btree (id, plan_id)",
       "table": "extraction_outcome_rejections"
     },
     "extraction_outcome_rejections_pkey": {
-      "definition": "create unique index extraction_outcome_rejections_pkey on public . extraction_outcome_rejections using btree ( id )",
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_rejections_pkey ON public.extraction_outcome_rejections USING btree (id)",
       "table": "extraction_outcome_rejections"
     },
     "extraction_outcome_rejections_plan_id_key": {
-      "definition": "create unique index extraction_outcome_rejections_plan_id_key on public . extraction_outcome_rejections using btree ( plan_id )",
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_rejections_plan_id_key ON public.extraction_outcome_rejections USING btree (plan_id)",
       "table": "extraction_outcome_rejections"
     },
     "extraction_outcome_steps_pkey": {
-      "definition": "create unique index extraction_outcome_steps_pkey on public . extraction_outcome_steps using btree ( id )",
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_steps_pkey ON public.extraction_outcome_steps USING btree (id)",
       "table": "extraction_outcome_steps"
     },
     "extraction_runs_extraction_run_id_key": {
-      "definition": "create unique index extraction_runs_extraction_run_id_key on public . extraction_runs using btree ( extraction_run_id )",
+      "definition": "CREATE UNIQUE INDEX extraction_runs_extraction_run_id_key ON public.extraction_runs USING btree (extraction_run_id)",
       "table": "extraction_runs"
     },
     "extraction_runs_pkey": {
-      "definition": "create unique index extraction_runs_pkey on public . extraction_runs using btree ( id )",
+      "definition": "CREATE UNIQUE INDEX extraction_runs_pkey ON public.extraction_runs USING btree (id)",
       "table": "extraction_runs"
     },
     "extractor_attempts_pkey": {
-      "definition": "create unique index extractor_attempts_pkey on public . extractor_attempts using btree ( id )",
+      "definition": "CREATE UNIQUE INDEX extractor_attempts_pkey ON public.extractor_attempts USING btree (id)",
       "table": "extractor_attempts"
     },
     "extractor_attempts_run_id_ordinal_key": {
-      "definition": "create unique index extractor_attempts_run_id_ordinal_key on public . extractor_attempts using btree ( run_id , ordinal )",
+      "definition": "CREATE UNIQUE INDEX extractor_attempts_run_id_ordinal_key ON public.extractor_attempts USING btree (run_id, ordinal)",
       "table": "extractor_attempts"
     },
     "ix_delivery_intents_dispatch": {
-      "definition": "create index ix_delivery_intents_dispatch on public . delivery_intents using btree ( destination , status , next_attempt_at )",
+      "definition": "CREATE INDEX ix_delivery_intents_dispatch ON public.delivery_intents USING btree (destination, status, next_attempt_at)",
       "table": "delivery_intents"
     },
     "ix_extraction_outcome_artifacts_artifact_ref": {
-      "definition": "create index ix_extraction_outcome_artifacts_artifact_ref on public . extraction_outcome_artifacts using btree ( artifact_ref )",
+      "definition": "CREATE INDEX ix_extraction_outcome_artifacts_artifact_ref ON public.extraction_outcome_artifacts USING btree (artifact_ref)",
       "table": "extraction_outcome_artifacts"
     },
     "ix_provider_balance_snapshots_provider": {
-      "definition": "create index ix_provider_balance_snapshots_provider on public . provider_balance_snapshots using btree ( provider )",
+      "definition": "CREATE INDEX ix_provider_balance_snapshots_provider ON public.provider_balance_snapshots USING btree (provider)",
       "table": "provider_balance_snapshots"
     },
     "ix_provider_spend_attempts_provider": {
-      "definition": "create index ix_provider_spend_attempts_provider on public . provider_spend_attempts using btree ( provider )",
+      "definition": "CREATE INDEX ix_provider_spend_attempts_provider ON public.provider_spend_attempts USING btree (provider)",
       "table": "provider_spend_attempts"
     },
     "normalized_results_pkey": {
-      "definition": "create unique index normalized_results_pkey on public . normalized_results using btree ( id )",
+      "definition": "CREATE UNIQUE INDEX normalized_results_pkey ON public.normalized_results USING btree (id)",
       "table": "normalized_results"
     },
     "normalized_results_run_id_final_rank_key": {
-      "definition": "create unique index normalized_results_run_id_final_rank_key on public . normalized_results using btree ( run_id , final_rank )",
+      "definition": "CREATE UNIQUE INDEX normalized_results_run_id_final_rank_key ON public.normalized_results USING btree (run_id, final_rank)",
       "table": "normalized_results"
     },
     "provider_attempts_pkey": {
-      "definition": "create unique index provider_attempts_pkey on public . provider_attempts using btree ( id )",
+      "definition": "CREATE UNIQUE INDEX provider_attempts_pkey ON public.provider_attempts USING btree (id)",
       "table": "provider_attempts"
     },
     "provider_balance_snapshots_idempotency_key_key": {
-      "definition": "create unique index provider_balance_snapshots_idempotency_key_key on public . provider_balance_snapshots using btree ( idempotency_key )",
+      "definition": "CREATE UNIQUE INDEX provider_balance_snapshots_idempotency_key_key ON public.provider_balance_snapshots USING btree (idempotency_key)",
       "table": "provider_balance_snapshots"
     },
     "provider_balance_snapshots_pkey": {
-      "definition": "create unique index provider_balance_snapshots_pkey on public . provider_balance_snapshots using btree ( id )",
+      "definition": "CREATE UNIQUE INDEX provider_balance_snapshots_pkey ON public.provider_balance_snapshots USING btree (id)",
       "table": "provider_balance_snapshots"
     },
     "provider_spend_attempts_idempotency_key_key": {
-      "definition": "create unique index provider_spend_attempts_idempotency_key_key on public . provider_spend_attempts using btree ( idempotency_key )",
+      "definition": "CREATE UNIQUE INDEX provider_spend_attempts_idempotency_key_key ON public.provider_spend_attempts USING btree (idempotency_key)",
       "table": "provider_spend_attempts"
     },
     "provider_spend_attempts_pkey": {
-      "definition": "create unique index provider_spend_attempts_pkey on public . provider_spend_attempts using btree ( id )",
+      "definition": "CREATE UNIQUE INDEX provider_spend_attempts_pkey ON public.provider_spend_attempts USING btree (id)",
       "table": "provider_spend_attempts"
     },
     "provider_spend_audit_pkey": {
-      "definition": "create unique index provider_spend_audit_pkey on public . provider_spend_audit using btree ( id )",
+      "definition": "CREATE UNIQUE INDEX provider_spend_audit_pkey ON public.provider_spend_audit USING btree (id)",
       "table": "provider_spend_audit"
     },
     "result_extraction_links_pkey": {
-      "definition": "create unique index result_extraction_links_pkey on public . result_extraction_links using btree ( id )",
+      "definition": "CREATE UNIQUE INDEX result_extraction_links_pkey ON public.result_extraction_links USING btree (id)",
       "table": "result_extraction_links"
     },
     "result_provenance_pkey": {
-      "definition": "create unique index result_provenance_pkey on public . result_provenance using btree ( id )",
+      "definition": "CREATE UNIQUE INDEX result_provenance_pkey ON public.result_provenance USING btree (id)",
       "table": "result_provenance"
     },
     "result_provenance_result_id_key": {
-      "definition": "create unique index result_provenance_result_id_key on public . result_provenance using btree ( result_id )",
+      "definition": "CREATE UNIQUE INDEX result_provenance_result_id_key ON public.result_provenance USING btree (result_id)",
       "table": "result_provenance"
     },
     "retrieval_compositions_pkey": {
-      "definition": "create unique index retrieval_compositions_pkey on public . retrieval_compositions using btree ( receipt_ref )",
+      "definition": "CREATE UNIQUE INDEX retrieval_compositions_pkey ON public.retrieval_compositions USING btree (receipt_ref)",
       "table": "retrieval_compositions"
     },
     "retrieval_compositions_source_fingerprint_key": {
-      "definition": "create unique index retrieval_compositions_source_fingerprint_key on public . retrieval_compositions using btree ( source_fingerprint )",
+      "definition": "CREATE UNIQUE INDEX retrieval_compositions_source_fingerprint_key ON public.retrieval_compositions USING btree (source_fingerprint)",
       "table": "retrieval_compositions"
     },
     "retrieval_requests_pkey": {
-      "definition": "create unique index retrieval_requests_pkey on public . retrieval_requests using btree ( id )",
+      "definition": "CREATE UNIQUE INDEX retrieval_requests_pkey ON public.retrieval_requests USING btree (id)",
       "table": "retrieval_requests"
     },
     "retrieval_runs_pkey": {
-      "definition": "create unique index retrieval_runs_pkey on public . retrieval_runs using btree ( id )",
+      "definition": "CREATE UNIQUE INDEX retrieval_runs_pkey ON public.retrieval_runs USING btree (id)",
       "table": "retrieval_runs"
     },
     "retrieval_runs_request_id_key": {
-      "definition": "create unique index retrieval_runs_request_id_key on public . retrieval_runs using btree ( request_id )",
+      "definition": "CREATE UNIQUE INDEX retrieval_runs_request_id_key ON public.retrieval_runs USING btree (request_id)",
       "table": "retrieval_runs"
     },
     "retrieval_runs_search_run_id_key": {
-      "definition": "create unique index retrieval_runs_search_run_id_key on public . retrieval_runs using btree ( search_run_id )",
+      "definition": "CREATE UNIQUE INDEX retrieval_runs_search_run_id_key ON public.retrieval_runs USING btree (search_run_id)",
       "table": "retrieval_runs"
     },
     "retrieval_sessions_pkey": {
-      "definition": "create unique index retrieval_sessions_pkey on public . retrieval_sessions using btree ( id )",
+      "definition": "CREATE UNIQUE INDEX retrieval_sessions_pkey ON public.retrieval_sessions USING btree (id)",
       "table": "retrieval_sessions"
     },
     "session_extracted_urls_pkey": {
-      "definition": "create unique index session_extracted_urls_pkey on public . session_extracted_urls using btree ( id )",
+      "definition": "CREATE UNIQUE INDEX session_extracted_urls_pkey ON public.session_extracted_urls USING btree (id)",
       "table": "session_extracted_urls"
     },
     "session_extracted_urls_query_id_url_key": {
-      "definition": "create unique index session_extracted_urls_query_id_url_key on public . session_extracted_urls using btree ( query_id , url )",
+      "definition": "CREATE UNIQUE INDEX session_extracted_urls_query_id_url_key ON public.session_extracted_urls USING btree (query_id, url)",
       "table": "session_extracted_urls"
     },
     "session_queries_pkey": {
-      "definition": "create unique index session_queries_pkey on public . session_queries using btree ( id )",
+      "definition": "CREATE UNIQUE INDEX session_queries_pkey ON public.session_queries USING btree (id)",
       "table": "session_queries"
     },
     "session_queries_session_id_ordinal_key": {
-      "definition": "create unique index session_queries_session_id_ordinal_key on public . session_queries using btree ( session_id , ordinal )",
+      "definition": "CREATE UNIQUE INDEX session_queries_session_id_ordinal_key ON public.session_queries USING btree (session_id, ordinal)",
       "table": "session_queries"
     },
     "uq_delivery_intents_extraction_run_id": {
-      "definition": "create unique index uq_delivery_intents_extraction_run_id on public . delivery_intents using btree ( extraction_run_id )",
+      "definition": "CREATE UNIQUE INDEX uq_delivery_intents_extraction_run_id ON public.delivery_intents USING btree (extraction_run_id)",
       "table": "delivery_intents"
     },
     "uq_extraction_outcome_steps_plan_ordinal": {
-      "definition": "create unique index uq_extraction_outcome_steps_plan_ordinal on public . extraction_outcome_steps using btree ( plan_id , ordinal )",
+      "definition": "CREATE UNIQUE INDEX uq_extraction_outcome_steps_plan_ordinal ON public.extraction_outcome_steps USING btree (plan_id, ordinal)",
       "table": "extraction_outcome_steps"
     },
     "uq_provider_snapshot_attempt": {
-      "definition": "create unique index uq_provider_snapshot_attempt on public . provider_balance_snapshots using btree ( related_attempt_id )",
+      "definition": "CREATE UNIQUE INDEX uq_provider_snapshot_attempt ON public.provider_balance_snapshots USING btree (related_attempt_id)",
       "table": "provider_balance_snapshots"
     },
     "uq_provider_snapshot_reference": {
-      "definition": "create unique index uq_provider_snapshot_reference on public . provider_balance_snapshots using btree ( provider , provider_reference )",
+      "definition": "CREATE UNIQUE INDEX uq_provider_snapshot_reference ON public.provider_balance_snapshots USING btree (provider, provider_reference)",
       "table": "provider_balance_snapshots"
     },
     "uq_result_extraction_links_composition_cluster": {
-      "definition": "create unique index uq_result_extraction_links_composition_cluster on public . result_extraction_links using btree ( composition_ref , result_cluster_ref )",
+      "definition": "CREATE UNIQUE INDEX uq_result_extraction_links_composition_cluster ON public.result_extraction_links USING btree (composition_ref, result_cluster_ref)",
       "table": "result_extraction_links"
     },
     "uq_spend_audit_action_key": {
-      "definition": "create unique index uq_spend_audit_action_key on public . provider_spend_audit using btree ( action , idempotency_key )",
+      "definition": "CREATE UNIQUE INDEX uq_spend_audit_action_key ON public.provider_spend_audit USING btree (action, idempotency_key)",
       "table": "provider_spend_audit"
     }
   },
