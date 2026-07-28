@@ -38,6 +38,9 @@ def test_built_wheel_installs_complete_migration_chain(tmp_path):
     assert any(name.endswith(
         ".data/data/migrations/versions/0008_provider_readiness.py"
     ) for name in names)
+    assert any(name.endswith(
+        ".data/data/migrations/versions/0009_retrieval_evidence.py"
+    ) for name in names)
 
     subprocess.run(
         [
@@ -59,7 +62,7 @@ def test_built_wheel_installs_complete_migration_chain(tmp_path):
     config = Config(str(install_dir / "alembic.ini"))
     config.set_main_option("script_location", str(install_dir / "migrations"))
     assert ScriptDirectory.from_config(config).get_current_head() == (
-        "0008_provider_readiness"
+        "0009_retrieval_evidence"
     )
 
 

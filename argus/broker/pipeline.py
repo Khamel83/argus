@@ -3,6 +3,7 @@
 import uuid
 
 from argus.broker.cache import SearchCache
+from argus.broker.accepted import CacheOutcome, canonical_cache_outcome
 from argus.broker.dedupe import dedupe_results
 from argus.broker.fusion import project_search_results
 from argus.broker.planning import RetrievalPlan
@@ -35,6 +36,11 @@ class SearchResultPipeline:
             outcome,
             include_attribution=include_attribution,
         )
+
+    @staticmethod
+    def accepted_outcome_for_fusion(outcome: FusionOutcome) -> CacheOutcome:
+        """Map the full S4 fusion decision for S6 evidence; no cache activation."""
+        return canonical_cache_outcome(outcome.outcome, reason=outcome.reason)
 
     def get_cached(
         self,

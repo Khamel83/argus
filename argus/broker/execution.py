@@ -92,6 +92,18 @@ class ProviderExecutionOutcome:
     budget_pace_warnings: List[str] = field(default_factory=list)
     provider_batches: Dict[str, ProviderSearchBatch] = field(default_factory=dict)
 
+    def contributor_attempt_refs(self) -> tuple[str, ...]:
+        """Expose bounded provider attempt lineage for the inactive S6 seam."""
+        refs: list[str] = []
+        for _provider, batch in sorted(self.provider_batches.items()):
+            attempt_id = batch.request_evidence.attempt_id
+            if attempt_id is None:
+                # An accepted cache entry must never invent lineage for a
+                # legacy adapter that did not emit an attempt reference.
+                return ()
+            refs.append(attempt_id)
+        return tuple(refs)
+
 
 @dataclass(frozen=True)
 class ProviderInvocationOutcome:

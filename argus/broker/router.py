@@ -52,6 +52,7 @@ class SearchBroker:
         monotonic_clock: Callable[[], float] | None = None,
         readiness_service: ProviderReadinessService | None = None,
         provider_registry: ExecutableProviderRegistry | None = None,
+        accepted_retrieval_cache=None,
     ):
         from argus.authority import broker_construction_allowed
 
@@ -61,6 +62,9 @@ class SearchBroker:
         self._monotonic_clock = monotonic_clock or time.monotonic
         self._providers = providers
         self._cache = cache or SearchCache()
+        # S6 may be supplied for inspection in tests, but remains deliberately
+        # inactive until the S7/P1 activation gate wires it into ``search``.
+        self._accepted_retrieval_cache = accepted_retrieval_cache
         self._health = health_tracker or HealthTracker()
         self._budgets = budget_tracker or BudgetTracker(
             persist_path=(

@@ -3014,6 +3014,9 @@ def create_search_ledger_repository(
     schema changes are applied only through Alembic.
     """
     url = db_url or get_config().db_url
+    # Register S6 tables with development SQLite schema creation. This import
+    # only declares metadata; it does not activate retrieval evidence writes.
+    from argus.persistence import evidence as _retrieval_evidence  # noqa: F401
     is_sqlite = url.startswith("sqlite:")
     if is_sqlite and url.startswith("sqlite:///"):
         path = url.removeprefix("sqlite:///")
@@ -3034,6 +3037,23 @@ def create_search_ledger_repository(
         sessionmaker(bind=engine, expire_on_commit=False),
         clock=clock,
     )
+
+
+def create_retrieval_evidence_repository(
+    db_url: str | None = None,
+    *,
+    create_schema: bool | None = None,
+    clock: Callable[[], datetime] = _system_now,
+):
+    """Build the inactive S6 evidence repository beside the legacy ledger."""
+    from argus.persistence.evidence import SqlAlchemyEvidenceRepository
+
+    ledger = create_search_ledger_repository(
+        db_url,
+        create_schema=create_schema,
+        clock=clock,
+    )
+    return SqlAlchemyEvidenceRepository(ledger.session_factory, clock=clock)
 
 
 def create_read_only_search_ledger_repository(

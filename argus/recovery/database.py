@@ -14,11 +14,12 @@ from argus.recovery.operator import (
 )
 
 
-EXPECTED_SCHEMA_HEAD = "0008_provider_readiness"
-# 0008 is additive and the migration is a separate human-gated operation.
-# Restore evidence stamped at 0007 remains valid during the rolling boundary.
+EXPECTED_SCHEMA_HEAD = "0009_retrieval_evidence"
+# S6 is additive but deliberately inactive pending the S7/P1 activation gate.
+# Recovery therefore continues accepting only checked, pre-activation schema
+# manifests; it must not pretend that an ungenerated 0009 PG contract is safe.
 COMPATIBLE_SCHEMA_HEADS = frozenset(
-    {"0007_extraction_outcomes", EXPECTED_SCHEMA_HEAD}
+    {"0007_extraction_outcomes", "0008_provider_readiness"}
 )
 REQUIRED_TABLES = {
     "retrieval_requests",
@@ -58,7 +59,7 @@ READINESS_TABLES = {
 }
 REQUIRED_TABLES_BY_HEAD = {
     "0007_extraction_outcomes": REQUIRED_TABLES,
-    EXPECTED_SCHEMA_HEAD: REQUIRED_TABLES | READINESS_TABLES,
+    "0008_provider_readiness": REQUIRED_TABLES | READINESS_TABLES,
 }
 COUNTED_TABLES = sorted(REQUIRED_TABLES - {"alembic_version"})
 REQUIRED_S3_COLUMNS = {
@@ -158,7 +159,7 @@ REQUIRED_S3_COLUMNS = {
 }
 SCHEMA_CONTRACT_PATHS = {
     "0007_extraction_outcomes": Path(__file__).with_name("argus_schema_0007.json"),
-    EXPECTED_SCHEMA_HEAD: Path(__file__).with_name("argus_schema_0008.json"),
+    "0008_provider_readiness": Path(__file__).with_name("argus_schema_0008.json"),
 }
 # Compatibility alias for recovery tooling that still targets the 0007 source
 # inventory. Verification itself selects the contract from the restored head.
