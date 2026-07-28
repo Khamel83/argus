@@ -4,6 +4,8 @@ import asyncio
 import os
 import time
 import uuid
+import weakref
+from dataclasses import replace
 from decimal import Decimal
 from datetime import datetime, timezone
 from collections.abc import Callable
@@ -28,6 +30,7 @@ from argus.broker.execution import (
     conservative_charge_estimate,
 )
 from argus.broker.fusion import PSL_DOMAIN_POLICY_VERSION, fuse_evidence, project_search_results
+from argus.broker.provider_evidence import LegacyProviderBatchAdapter
 from argus.broker.health import HealthTracker
 from argus.broker.planning import (
     EgressPreference,
@@ -46,7 +49,14 @@ from argus.broker.session_flow import SessionSearchService
 from argus.config import EgressNode, get_config
 from argus.contracts import CanonicalOutcome
 from argus.logging import get_logger
-from argus.models import FusionPolicy, ProviderName, SearchQuery, SearchResponse
+from argus.models import (
+    FusionPolicy,
+    ProviderName,
+    ProviderTrace,
+    SearchQuery,
+    SearchResponse,
+    is_adapter_provider,
+)
 from argus.persistence.db import SearchPersistenceGateway
 from argus.persistence.evidence import RetrievalEvidence
 from argus.providers.base import BaseProvider
@@ -86,7 +96,7 @@ class SearchBroker:
         self._accepted_retrieval_cache = accepted_retrieval_cache or RetrievalCache(
             clock=self._utc_clock
         )
-        self._accepted_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        self._accepted_locks = weakref.WeakValueDictionary()
         self._health = health_tracker or HealthTracker()
         self._budgets = budget_tracker or BudgetTracker(
             persist_path=(
@@ -404,10 +414,11 @@ class SearchBroker:
         *,
         evidence_repository,
         compute_attribution: bool = False,
+        empty_fallback=None,
     ) -> AcceptedSearchExecution:
         """Execute, durably accept, then publish one canonical retrieval fact."""
         plan = self._accepted_plan(query, compute_attribution=compute_attribution)
-        cohort = execution_cohort(plan)
+        cohort = execution_cohort(plan, policy_identity=query.caller)
         key = (plan.cache_fingerprint, cohort)
         lock = self._accepted_locks.setdefault(key, asyncio.Lock())
         async with lock:
@@ -495,9 +506,32 @@ class SearchBroker:
                 operation_deadline=operation_deadline,
                 provider_phase_deadline=provider_deadline,
             )
+            provider_batches = dict(execution.provider_batches)
+            if empty_fallback is not None and not any(
+                batch.results for batch in provider_batches.values()
+            ):
+                fallback_result = await empty_fallback()
+                if fallback_result is not None:
+                    fallback_result.provider = ProviderName.ARCHIVE
+                    fallback_trace = ProviderTrace(
+                        provider=ProviderName.ARCHIVE,
+                        status="success",
+                        results_count=1,
+                    )
+                    fallback_batch = LegacyProviderBatchAdapter.from_legacy(
+                        ([fallback_result], fallback_trace)
+                    )
+                    fallback_batch = replace(
+                        fallback_batch,
+                        request_evidence=replace(
+                            fallback_batch.request_evidence,
+                            attempt_id=f"archive:{uuid.uuid4().hex}",
+                        ),
+                    )
+                    provider_batches[ProviderName.ARCHIVE.value] = fallback_batch
+                    execution.traces.append(fallback_trace)
             batches = tuple(
-                execution.provider_batches[name]
-                for name in sorted(execution.provider_batches)
+                provider_batches[name] for name in sorted(provider_batches)
             )
             if not batches:
                 failed = any(trace.status == "error" for trace in execution.traces)
@@ -532,7 +566,11 @@ class SearchBroker:
             )
             results = tuple(self._result_projection(item) for item in rendered)
             traces = tuple(self._trace_projection(item) for item in execution.traces)
-            contributor_refs = execution.contributor_attempt_refs()
+            contributor_refs = tuple(
+                batch.request_evidence.attempt_id
+                for batch in batches
+                if batch.request_evidence.attempt_id is not None
+            )
             operation_id = uuid.uuid4().hex
             origin_spend = self._origin_spend(execution.traces, query)
             fingerprint = acceptance_fingerprint(
@@ -578,7 +616,6 @@ class SearchBroker:
                     **self._readiness.render_snapshot(provider).as_legacy_status(),
                 }
                 for provider in plan.candidate_providers
-                if provider in self._providers
             )
             try:
                 evidence_repository.accept(
@@ -636,11 +673,23 @@ class SearchBroker:
                 )
             return result.response
 
-        _response, resolved_session_id = await self._session_service.search_with_session(
-            query,
-            execute,
-            session_id=session_id,
-        )
+        try:
+            _response, resolved_session_id = (
+                await self._session_service.search_with_session(
+                    query,
+                    execute,
+                    session_id=session_id,
+                )
+            )
+        except Exception:
+            accepted = holder.get("result")
+            if accepted is None or accepted.receipt is None:
+                raise
+            logger.error(
+                "Accepted search %s committed but session update failed",
+                accepted.receipt.receipt_ref,
+            )
+            return accepted, session_id
         return holder["result"], resolved_session_id
 
     async def search_with_session(
@@ -690,7 +739,7 @@ class SearchBroker:
                 "readiness": self._readiness.render_snapshot(provider).as_dict(),
             }
             for provider in ProviderName
-            if provider is not ProviderName.CACHE
+            if is_adapter_provider(provider)
         }
 
     def provider_readiness_projection(self, provider: ProviderName) -> dict:

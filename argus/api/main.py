@@ -619,20 +619,6 @@ def create_app(
     )
     app.state.operational_status = operational_status or create_operational_status()
     app.state.evidence_authority_enabled = accepted_authority == "evidence"
-    from argus.capabilities import http_capability_manifest
-
-    app.state.capability_manifest = http_capability_manifest(
-        evidence_enabled=app.state.evidence_authority_enabled,
-        registrations=(
-            (
-                accepted_operation_service.capability_registrations()
-                if accepted_operation_service is not None
-                else registration.capability_registrations()
-            )
-            if app.state.evidence_authority_enabled
-            else frozenset()
-        ),
-    )
     from argus.api.security import TransportSecurityGuard
 
     app.state.transport_security_guard = TransportSecurityGuard.from_environment()
@@ -751,6 +737,18 @@ def create_app(
         return current_accepted_operation_service
 
     app.state.get_accepted_operation_service = get_accepted_operation_service
+    from argus.capabilities import http_capability_manifest
+
+    if app.state.evidence_authority_enabled:
+        concrete_service = get_accepted_operation_service()
+        concrete_service.validate_runtime_authority()
+        capability_registrations = concrete_service.capability_registrations()
+    else:
+        capability_registrations = frozenset()
+    app.state.capability_manifest = http_capability_manifest(
+        evidence_enabled=app.state.evidence_authority_enabled,
+        registrations=capability_registrations,
+    )
     current_spend_repository = spend_repository
 
     def get_spend_repository():

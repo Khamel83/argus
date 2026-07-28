@@ -115,8 +115,10 @@ def test_v2_search_calls_the_same_accepted_service_once_when_registered(monkeypa
     service = AcceptedOperationService(
         broker_provider=MagicMock(),
         repository_provider=MagicMock(),
+        session_authority=MagicMock(),
         registration=AcceptedOperationRegistration.complete(),
     )
+    service._evidence_repository = MagicMock()
     service.search = AsyncMock(return_value=operation)
     try:
         client = TestClient(create_app(accepted_operation_service=service))
@@ -185,8 +187,10 @@ def test_capabilities_advertise_v2_only_after_complete_registration(monkeypatch)
     service = AcceptedOperationService(
         broker_provider=MagicMock(),
         repository_provider=MagicMock(),
+        session_authority=MagicMock(),
         registration=AcceptedOperationRegistration.complete(),
     )
+    service._evidence_repository = MagicMock()
     try:
         evidence = TestClient(
             create_app(accepted_operation_service=service)
@@ -203,6 +207,34 @@ def test_capabilities_advertise_v2_only_after_complete_registration(monkeypatch)
         "endpoint": "/mcp",
         "argus_tool_contract_versions": ["1"],
     }
+
+
+def test_evidence_capability_fails_startup_without_session_authority(monkeypatch):
+    from argus.api.main import create_app
+    from argus.config import reset_config
+    from argus.operations.accepted import (
+        AcceptedAuthorityConfigurationError,
+        AcceptedOperationRegistration,
+        AcceptedOperationService,
+    )
+
+    monkeypatch.setenv("ARGUS_ACCEPTED_OPERATION_AUTHORITY", "evidence")
+    monkeypatch.delenv("ARGUS_RETRIEVAL_SESSION_SECRET", raising=False)
+    reset_config()
+    service = AcceptedOperationService(
+        broker_provider=MagicMock(),
+        repository_provider=MagicMock(),
+        registration=AcceptedOperationRegistration.complete(),
+    )
+    service._evidence_repository = MagicMock()
+    try:
+        with pytest.raises(
+            AcceptedAuthorityConfigurationError,
+            match="RETRIEVAL_SESSION_SECRET",
+        ):
+            create_app(accepted_operation_service=service)
+    finally:
+        reset_config()
 
 
 def test_release_capability_manifest_is_immutable_and_fail_closed():

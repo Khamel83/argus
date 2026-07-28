@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+from dataclasses import dataclass
 from decimal import Decimal
 from fractions import Fraction
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
 
 SUCCESS_OUTCOMES = {"success", "degraded", "empty"}
 FAILURE_OUTCOMES = {
@@ -39,6 +41,42 @@ FORBIDDEN_KEYS = {
     "provider_payload",
 }
 FORBIDDEN_TEXT = ("authorization: bearer", "bearer sk-", "api_key=", "token=")
+
+
+class RetrievalEvidenceContractViolation(ValueError):
+    """A frozen external evidence envelope failed closed production admission."""
+
+    def __init__(self, violations: list[str]):
+        self.violations = tuple(violations)
+        super().__init__("; ".join(self.violations))
+
+
+def _freeze(value):
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {str(key): _freeze(child) for key, child in value.items()}
+        )
+    if isinstance(value, list):
+        return tuple(_freeze(child) for child in value)
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptedEvidenceEnvelope:
+    """Immutable production admission value for the frozen S1-S7 corpus."""
+
+    evidence: Mapping[str, object]
+
+    @classmethod
+    def from_mapping(cls, evidence: Mapping[str, object]):
+        if not isinstance(evidence, Mapping):
+            raise RetrievalEvidenceContractViolation(
+                ["evidence envelope must be a mapping"]
+            )
+        violations = validate_retrieval_evidence(dict(evidence))
+        if violations:
+            raise RetrievalEvidenceContractViolation(violations)
+        return cls(evidence=_freeze(evidence))
 
 
 def _duplicate(values: list[str]) -> set[str]:

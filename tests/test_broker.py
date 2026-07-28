@@ -204,6 +204,57 @@ async def test_accepted_search_with_no_executable_batch_is_unready_not_empty(tmp
     assert evidence.publication_count() == 0
 
 
+@pytest.mark.asyncio
+async def test_session_write_failure_does_not_hide_durable_acceptance(tmp_path):
+    from unittest.mock import MagicMock
+
+    from argus.broker.router import SearchBroker
+    from argus.persistence.evidence import SqlAlchemyEvidenceRepository
+    from argus.persistence.search_ledger import create_search_ledger_repository
+
+    provider = StubProvider(
+        name=ProviderName.DUCKDUCKGO,
+        results=[
+            SearchResult(
+                url="https://example.test/result",
+                title="Result",
+                snippet="Accepted evidence",
+                provider=ProviderName.DUCKDUCKGO,
+            )
+        ],
+    )
+    broker = SearchBroker(
+        providers={ProviderName.DUCKDUCKGO: provider},
+        spend_repository=MagicMock(),
+    )
+
+    class FailingSessionService:
+        async def search_with_session(self, query, search_fn, session_id=None):
+            await search_fn(query)
+            raise RuntimeError("session write failed")
+
+    broker._session_service = FailingSessionService()
+    ledger = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'session-failure.db'}",
+        create_schema=True,
+    )
+    evidence = SqlAlchemyEvidenceRepository(ledger.session_factory)
+
+    execution, session_id = await broker.search_with_session_accepted(
+        SearchQuery(
+            query="session write failure",
+            providers=[ProviderName.DUCKDUCKGO],
+        ),
+        evidence_repository=evidence,
+        session_id="existing-session",
+    )
+
+    assert execution.outcome.value == "success"
+    assert execution.receipt is not None
+    assert session_id == "existing-session"
+    assert evidence.accepted_count() == 1
+
+
 def _ready_paid_executor(monkeypatch, provider, *, caller_caps=None):
     from unittest.mock import MagicMock
 

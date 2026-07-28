@@ -6,7 +6,7 @@ from threading import Barrier, Thread
 
 import pytest
 
-from argus.models import ProviderName
+from argus.models import ProviderName, is_adapter_provider
 
 
 UTC = timezone.utc
@@ -1658,7 +1658,7 @@ def test_paid_probe_owns_exact_attempt_and_final_result_receipt(tmp_path):
     tuple(
         provider
         for provider in ProviderName
-        if provider is not ProviderName.CACHE
+        if is_adapter_provider(provider)
     ),
 )
 def test_fixture_attestation_executes_all_cases_and_recomputes_content(
@@ -1769,7 +1769,7 @@ def test_fixture_harness_enforces_exact_outcomes_for_all_canonical_adapters():
     from argus.providers.fixture_harness import run_fixture_case_summaries
 
     for provider in ProviderName:
-        if provider is ProviderName.CACHE:
+        if not is_adapter_provider(provider):
             continue
         summaries = run_fixture_case_summaries(provider)
         assert summaries["success"]["observations"] == 1
@@ -1792,7 +1792,7 @@ def test_golden_provider_contract_is_checked_separately_from_attestations():
     )
 
     assert set(GOLDEN_PROVIDER_CONTRACTS) == {
-        provider for provider in ProviderName if provider is not ProviderName.CACHE
+        provider for provider in ProviderName if is_adapter_provider(provider)
     }
     for contract in GOLDEN_PROVIDER_CONTRACTS.values():
         assert contract["provider_contract_version"] == ATTESTED_CONTRACT

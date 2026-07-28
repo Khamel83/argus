@@ -16,7 +16,7 @@ from enum import Enum
 from typing import Awaitable, Mapping, Sequence, TypeVar
 from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
-from argus.models import ProviderName, ProviderTrace, SearchResult
+from argus.models import ProviderName, ProviderTrace, SearchResult, is_adapter_provider
 
 MAX_URL = 8_192
 MAX_TITLE = 1_000
@@ -1318,7 +1318,7 @@ def safe_redirect_request(
 _CONTRACT_VERSION = {
     provider: "2026-07-27-v1"
     for provider in ProviderName
-    if provider is not ProviderName.CACHE
+    if is_adapter_provider(provider)
 }
 
 

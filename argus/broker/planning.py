@@ -253,8 +253,10 @@ def _normalize_providers(
     for provider in providers:
         if not isinstance(provider, ProviderName):
             raise _invalid("explicit providers contain an unknown typed value")
-        if provider is ProviderName.CACHE:
-            raise _invalid("cache is synthetic and cannot be explicitly selected")
+        if provider in {ProviderName.CACHE, ProviderName.ARCHIVE}:
+            raise _invalid(
+                "synthetic recovery providers cannot be explicitly selected"
+            )
     normalized = tuple(stable_tier_sort(providers, deduplicate=True))
     if len(normalized) > len(PROVIDER_TIERS):
         raise _invalid("explicit providers exceed the provider catalog")

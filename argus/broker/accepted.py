@@ -185,7 +185,7 @@ class AcceptancePersister(Protocol):
     def __call__(self, accepted: AcceptedRetrieval) -> AcceptanceReceipt: ...
 
 
-def execution_cohort(plan) -> str:
+def execution_cohort(plan, *, policy_identity: str = "") -> str:
     """Hash exact execution-policy facts that may share one leader."""
     payload = {
         "profile": plan.profile,
@@ -193,6 +193,8 @@ def execution_cohort(plan) -> str:
         "candidate_providers": [provider.value for provider in plan.candidate_providers],
         "egress_preference": plan.egress_preference.value,
         "revalidation": plan.revalidation.value,
+        "spend_policy_version": plan.spend_policy_version,
+        "policy_identity": policy_identity,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(b"argus-execution-cohort-v1\0" + encoded).hexdigest()

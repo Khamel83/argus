@@ -28,12 +28,12 @@ from argus.broker.provider_evidence import (
     SnippetKind,
     classify_http_failure,
 )
-from argus.models import ProviderName
+from argus.models import ProviderName, is_adapter_provider
 
 _CONTRACT_VERSION = {
     provider: "2026-07-27-v1"
     for provider in ProviderName
-    if provider is not ProviderName.CACHE
+    if is_adapter_provider(provider)
 }
 
 

@@ -203,8 +203,10 @@ def test_unexpected_v2_failure_is_safe_enveloped_and_cors_wrapped(monkeypatch):
     service = AcceptedOperationService(
         broker_provider=MagicMock(),
         repository_provider=MagicMock(),
+        session_authority=MagicMock(),
         registration=AcceptedOperationRegistration.complete(),
     )
+    service._evidence_repository = MagicMock()
     service.search = AsyncMock(side_effect=RuntimeError("secret failure"))
     try:
         response = TestClient(

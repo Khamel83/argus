@@ -242,7 +242,13 @@ class ReachabilityMatrix:
         from argus.broker.remote_provider import RemoteProviderClient
         from argus.providers.base import ProbeCapability
 
-        tier_0 = [p for p, t in PROVIDER_TIERS.items() if t == 0]
+        from argus.models import is_adapter_provider
+
+        tier_0 = [
+            provider
+            for provider, tier in PROVIDER_TIERS.items()
+            if tier == 0 and is_adapter_provider(provider)
+        ]
         probe_scope = uuid.uuid4().hex
         probe_query = SearchQuery(
             query="argus probe",

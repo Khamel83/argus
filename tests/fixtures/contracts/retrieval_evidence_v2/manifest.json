@@ -215,11 +215,11 @@
     },
     {
       "path": "argus/contracts/evidence.py",
-      "sha256": "6415d51733a26fd2622a8bd52accec76465fd1b8d7fccfa6121466145a288d00"
+      "sha256": "faf2c67271a000305c463c02924280abfb102b0467bb1fbceffe438977c1b972"
     },
     {
       "path": "tests/test_accepted_operations.py",
-      "sha256": "cc3a4ce0c7c48f6cad7759fc755fb4117e25ed671a0fddd2fb9186f72d391d65"
+      "sha256": "fac579199424fb1d7dd20e49ff4db773555c07d6f6a8808256718091c74fcecd"
     }
   ],
   "valid_vector_count": 8

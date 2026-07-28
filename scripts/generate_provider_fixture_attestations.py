@@ -8,7 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from argus.models import ProviderName
+from argus.models import ProviderName, is_adapter_provider
 from argus.providers.fixture_attestation import (
     _adapter_search_hash,
     _content_ref,
@@ -33,7 +33,7 @@ def generate_attestation_document(
     manifest = json.loads(manifest_path.read_bytes())
     providers = {}
     for provider in ProviderName:
-        if provider is ProviderName.CACHE:
+        if not is_adapter_provider(provider):
             continue
         module_name, class_name, module, provider_class = canonical_adapter(provider)
         contract = manifest["providers"][provider.value]

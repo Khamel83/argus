@@ -36,7 +36,13 @@ class LegacyHttpPresenter:
         return _thaw(operation.result)
 
     def search(self, operation: AcceptedOperation) -> SearchResponse:
-        result = self._result(operation)
+        # V1 historically returned typed search responses with failure traces.
+        # V2 alone owns the canonical non-2xx status projection.
+        result = (
+            _thaw(operation.result)
+            if operation.result is not None
+            else self._result(operation)
+        )
         result.pop("acceptance_receipt", None)
         return SearchResponse.model_validate(result)
 

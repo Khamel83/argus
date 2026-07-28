@@ -222,6 +222,7 @@ async def _extract_url_unpersisted(
     mode: str = "default",
     *,
     allow_legacy_cache: bool = True,
+    allow_legacy_cache_writes: bool = True,
 ) -> ExtractedContent:
     """Extract clean content from a URL using the integrated fallback chain.
 
@@ -285,7 +286,8 @@ async def _extract_url_unpersisted(
                 )
             ]
         if not result.error:
-            _cache.put(url, result)
+            if allow_legacy_cache_writes:
+                _cache.put(url, result)
         return result
 
     # Domain rate limit
@@ -427,7 +429,8 @@ async def _extract_url_unpersisted(
                     result.completeness_result = assess_completeness(result.text, url)
                     if not _should_continue_for_completeness(result, step=1):
                         logger.info("Extracted %s via auth (%d words)", url[:60], result.word_count)
-                        _cache.put(url, result)
+                        if allow_legacy_cache_writes:
+                            _cache.put(url, result)
                         return result
         except Exception as e:
             logger.warning("Auth extraction failed for %s: %s", url[:60], e)
@@ -436,7 +439,8 @@ async def _extract_url_unpersisted(
     if use_residential_early and res_policy != "off":
         res_res = await run_residential_step()
         if res_res:
-            _cache.put(url, res_res)
+            if allow_legacy_cache_writes:
+                _cache.put(url, res_res)
             return res_res
 
     # Local Extractors (Steps 2-5)
@@ -469,7 +473,8 @@ async def _extract_url_unpersisted(
                     result.completeness_result = assess_completeness(result.text, url)
                     if not _should_continue_for_completeness(result, step=step_num):
                         logger.info("Extracted %s via %s (%d words)", url[:60], step_name, result.word_count)
-                        _cache.put(url, result)
+                        if allow_legacy_cache_writes:
+                            _cache.put(url, result)
                         return result
         except Exception as e:
             logger.warning("%s failed for %s: %s", step_name.capitalize(), url[:60], e)
@@ -478,7 +483,8 @@ async def _extract_url_unpersisted(
     if not use_residential_early and res_policy != "off":
         res_res = await run_residential_step()
         if res_res:
-            _cache.put(url, res_res)
+            if allow_legacy_cache_writes:
+                _cache.put(url, res_res)
             return res_res
 
     # External APIs (Steps 7-10)
@@ -520,7 +526,8 @@ async def _extract_url_unpersisted(
                         _track_jina_usage(result.word_count)
                     if not _should_continue_for_completeness(result, step=step_num):
                         logger.info("Extracted %s via %s (%d words)", url[:60], step_name, result.word_count)
-                        _cache.put(url, result)
+                        if allow_legacy_cache_writes:
+                            _cache.put(url, result)
                         return result
         except Exception as e:
             logger.warning("%s failed for %s: %s", step_name.capitalize(), url[:60], e)
@@ -548,7 +555,8 @@ async def _extract_url_unpersisted(
                     track_quality_pass(result)
                     result.completeness_result = assess_completeness(result.text, url)
                     logger.info("Extracted %s via %s (%d words)", url[:60], step_name, result.word_count)
-                    _cache.put(url, result)
+                    if allow_legacy_cache_writes:
+                        _cache.put(url, result)
                     return result
         except Exception as e:
             logger.warning("%s failed for %s: %s", step_name.capitalize(), url[:60], e)
@@ -583,7 +591,8 @@ async def _extract_url_unpersisted(
                             _track_jina_usage(result.word_count)
                         if not _should_continue_for_completeness(result, step=step_num):
                             logger.info("Extracted %s via %s (%d words)", url[:60], step_name, result.word_count)
-                            _cache.put(url, result)
+                            if allow_legacy_cache_writes:
+                                _cache.put(url, result)
                             return result
             except Exception as e:
                 logger.warning("%s failed for %s: %s", step_name.capitalize(), url[:60], e)
@@ -596,7 +605,8 @@ async def _extract_url_unpersisted(
         best_quality_result.quality_reason = None
         best_quality_result.extractors_tried = extractors_tried
         best_quality_result.attempts = list(attempts)
-        _cache.put(url, best_quality_result)
+        if allow_legacy_cache_writes:
+            _cache.put(url, best_quality_result)
         logger.warning(
             "Completeness fallbacks exhausted for %s, returning valid incomplete "
             "content (%d words via %s)",
@@ -614,7 +624,8 @@ async def _extract_url_unpersisted(
         best_result.attempts = list(attempts)
         if best_result.text and best_result.completeness_result is None:
             best_result.completeness_result = assess_completeness(best_result.text, url)
-        _cache.put(url, best_result)
+        if allow_legacy_cache_writes:
+            _cache.put(url, best_result)
         logger.warning(
             "All quality gates failed for %s, returning best (%d words via %s)",
             url[:60], best_result.word_count, best_result.extractor,
@@ -655,6 +666,7 @@ async def extract_url(
         domain=domain,
         mode=mode,
         allow_legacy_cache=not use_evidence_authority,
+        allow_legacy_cache_writes=not use_evidence_authority,
     )
     if repository is None:
         from argus.persistence.search_ledger import (

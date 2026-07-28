@@ -217,6 +217,21 @@ class AcceptedOperationService:
         """Validate the concrete service's atomic authority registration."""
         self._registration.validate(authority)
 
+    def validate_runtime_authority(self) -> None:
+        """Bind every concrete dependency before advertising evidence support."""
+        self.validate_registration("evidence")
+        broker = self._broker_provider()
+        if not callable(getattr(broker, "search_accepted", None)):
+            raise AcceptedAuthorityConfigurationError(
+                "evidence authority broker lacks accepted search execution"
+            )
+        if self._session_authority is None:
+            raise AcceptedAuthorityConfigurationError(
+                "evidence authority requires ARGUS_RETRIEVAL_SESSION_SECRET"
+            )
+        evidence_repository = self._get_evidence_repository()
+        evidence_repository.accepted_count()
+
     @property
     def registration(self) -> AcceptedOperationRegistration:
         return self._registration
@@ -263,8 +278,11 @@ class AcceptedOperationService:
         )
         result["session_id"] = session_id
         result["acceptance_receipt"] = {
-            "run_id": execution.response.search_run_id,
-            "delivery_intent_id": execution.receipt.receipt_ref,
+            "receipt_ref": execution.receipt.receipt_ref,
+            "accepted_at": execution.receipt.accepted_at.isoformat(),
+            "acceptance_fingerprint": (
+                execution.receipt.acceptance_fingerprint
+            ),
         }
         return AcceptedOperation(
             outcome=outcome,
@@ -487,9 +505,27 @@ class AcceptedOperationService:
             caller=principal,
         )
         if self._registration == AcceptedOperationRegistration.complete():
+            async def archive_fallback():
+                archive_lookup = self._archive_lookup or try_archive_ph
+                try:
+                    archived = await archive_lookup(request.url)
+                except Exception:
+                    return None
+                if not archived:
+                    return None
+                return SearchResult(
+                    url=archived["url"],
+                    title=archived["title"],
+                    snippet=archived["snippet"],
+                    domain=archived["domain"],
+                    score=archived["score"],
+                    metadata={"source_type": "archive_ph"},
+                )
+
             execution = await self._broker_provider().search_accepted(
                 query,
                 evidence_repository=self._get_evidence_repository(),
+                empty_fallback=archive_fallback,
             )
             return self._accepted_search_operation(
                 execution,

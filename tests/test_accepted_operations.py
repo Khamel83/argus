@@ -177,6 +177,101 @@ async def test_evidence_session_persistence_failure_stays_canonical():
 
 
 @pytest.mark.asyncio
+async def test_evidence_recovery_accepts_archive_fallback_before_persistence(
+    tmp_path,
+):
+    from argus.api.schemas import RecoverUrlRequest
+    from argus.broker.router import SearchBroker
+    from argus.operations.accepted import (
+        AcceptedOperationRegistration,
+        AcceptedOperationService,
+    )
+    from argus.persistence.evidence import SqlAlchemyEvidenceRepository
+    from argus.persistence.search_ledger import create_search_ledger_repository
+
+    ledger = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'recovery-evidence.db'}",
+        create_schema=True,
+    )
+    evidence = SqlAlchemyEvidenceRepository(ledger.session_factory)
+    broker = SearchBroker(providers={}, spend_repository=MagicMock())
+    archive_lookup = AsyncMock(
+        return_value={
+            "url": "https://archive.example/snapshot",
+            "title": "Archived",
+            "snippet": "Recovered snapshot",
+            "domain": "archive.example",
+            "score": 1.0,
+        }
+    )
+    service = AcceptedOperationService(
+        broker_provider=lambda: broker,
+        repository_provider=lambda: ledger,
+        archive_lookup=archive_lookup,
+        session_authority=MagicMock(),
+        registration=AcceptedOperationRegistration.complete(),
+    )
+    service._evidence_repository = evidence
+
+    operation = await service.recover(
+        RecoverUrlRequest(url="https://dead.example/article"),
+        principal="maya",
+        request_id="request-recovery",
+    )
+
+    assert operation.outcome is CanonicalOutcome.SUCCESS
+    assert operation.result["results"][0]["provider"] == "archive_ph"
+    assert evidence.accepted_count() == 1
+    archive_lookup.assert_awaited_once()
+
+
+def test_legacy_search_presenter_preserves_failure_trace_response():
+    from argus.api.presenters import LegacyHttpPresenter
+    from argus.contracts import AcceptedOperation, OperationError
+
+    operation = AcceptedOperation(
+        outcome=CanonicalOutcome.PROVIDERS_FAILED,
+        request_id="request-v1-failure",
+        result={
+            "query": "failed",
+            "mode": "discovery",
+            "results": [],
+            "traces": [
+                {
+                    "provider": "duckduckgo",
+                    "status": "error",
+                    "results_count": 0,
+                    "latency_ms": 0,
+                    "error": "provider unavailable",
+                    "budget_remaining": None,
+                }
+            ],
+            "total_results": 0,
+            "cached": False,
+            "budget_warnings": [],
+            "search_run_id": "run-failed",
+            "session_id": None,
+        },
+        error=OperationError(
+            outcome=CanonicalOutcome.PROVIDERS_FAILED,
+            type="urn:argus:problem:providers_failed",
+            title="Providers Failed",
+            status=502,
+            detail="Providers failed",
+            instance="urn:argus:request:request-v1-failure",
+            code="providers_failed",
+            retryable=False,
+            retry_after_seconds=None,
+        ),
+    )
+
+    response = LegacyHttpPresenter().search(operation)
+
+    assert response.search_run_id == "run-failed"
+    assert response.traces[0].status == "error"
+
+
+@pytest.mark.asyncio
 async def test_empty_search_is_an_accepted_empty_outcome():
     from argus.operations.accepted import AcceptedOperationService
 
@@ -408,16 +503,25 @@ def test_app_rejects_partial_evidence_authority_registration(monkeypatch):
 
 
 def test_production_evidence_validator_replays_all_frozen_scenarios_and_mutations():
-    from argus.contracts.evidence import validate_retrieval_evidence
+    from argus.contracts.evidence import (
+        AcceptedEvidenceEnvelope,
+        RetrievalEvidenceContractViolation,
+    )
 
     manifest = json.loads((EVIDENCE_FIXTURES / "manifest.json").read_text())
     for entry in manifest["fixtures"]:
         envelope = json.loads((EVIDENCE_FIXTURES / entry["path"]).read_text())
-        violations = validate_retrieval_evidence(envelope["result"]["evidence"])
         if entry["kind"] == "valid":
-            assert violations == [], entry["path"]
+            accepted = AcceptedEvidenceEnvelope.from_mapping(
+                envelope["result"]["evidence"]
+            )
+            assert accepted.evidence["request"]["request_id"]
         else:
+            with pytest.raises(RetrievalEvidenceContractViolation) as rejected:
+                AcceptedEvidenceEnvelope.from_mapping(
+                    envelope["result"]["evidence"]
+                )
             assert any(
                 entry["expected_invariant"] in violation
-                for violation in violations
-            ), (entry["path"], violations)
+                for violation in rejected.value.violations
+            ), (entry["path"], rejected.value.violations)

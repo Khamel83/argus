@@ -11,13 +11,13 @@ from argus.broker.provider_evidence import (
     FilterStrength,
     TranslationPrecision,
 )
-from argus.models import ProviderName
+from argus.models import ProviderName, is_adapter_provider
 
 
 PROVIDER_ENV_PREFIXES = tuple(
     provider.value.upper()
     for provider in ProviderName
-    if provider is not ProviderName.CACHE
+    if is_adapter_provider(provider)
 )
 EXTRACTION_PROVIDER_ENV_PREFIXES = ("JINA", "FIRECRAWL")
 HERMETIC_PROVIDER_ENV_PREFIXES = (

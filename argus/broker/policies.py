@@ -22,6 +22,7 @@ MODE_PROVIDER_PREFERENCES: dict[SearchMode, list[ProviderName]] = {
         ProviderName.SEARXNG,
         ProviderName.DUCKDUCKGO,
         ProviderName.YAHOO,
+        ProviderName.ARCHIVE,
         ProviderName.BRAVE,
         ProviderName.SERPER,
         ProviderName.TAVILY,
