@@ -70,6 +70,13 @@ REGISTERED = {
     provider.value for provider in ProviderName if provider is not ProviderName.CACHE
 }
 EXPECTED_MAX_RATE_RESET_AHEAD_SECONDS = 366 * 24 * 60 * 60
+PROVIDER_FIXTURE_OBSERVED_AT = datetime(
+    2026,
+    7,
+    27,
+    12,
+    tzinfo=timezone.utc,
+)
 
 
 def _canonical_status_schema() -> dict[str, object]:
@@ -999,6 +1006,7 @@ def test_manifest_usage_and_rate_signal_declarations_are_executable(provider_nam
         fixture.get("body", fixture),
         max_results=10,
         response_headers=fixture.get("headers", {}),
+        observed_at=PROVIDER_FIXTURE_OBSERVED_AT,
     )
 
     def resolve(path: str):
@@ -1470,7 +1478,11 @@ def test_usage_rate_fixtures_retain_only_typed_response_evidence(
     payload = fixture.get("body", fixture)
     headers = fixture.get("headers", {})
     batch = normalize_provider_response(
-        provider, payload, max_results=10, response_headers=headers
+        provider,
+        payload,
+        max_results=10,
+        response_headers=headers,
+        observed_at=PROVIDER_FIXTURE_OBSERVED_AT,
     )
     response = batch.response_evidence
     if field == "rate_remaining":

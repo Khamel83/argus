@@ -174,6 +174,34 @@ Fourth-correction TDD and verification:
 Fourth correction commit message:
 `fix: enforce cache authority and schema contracts`
 
+## Provider fixture clock correction
+
+A separate narrow test-only correction removes the five wall-clock-dependent
+provider failures without changing production temporal semantics:
+
+- The provider fixture suite now supplies the historical fixture observation
+  time (`2026-07-27T12:00:00Z`) when normalizing usage/rate captures.
+- Brave and GitHub are the only fixture captures with absolute
+  `X-RateLimit-Reset` epochs; the complete fixture tree was audited for the
+  same dependency.
+- The production default remains the live UTC clock. Existing contract tests
+  still accept reset-at-observation and the exact one-year maximum, and reject
+  one microsecond before/after those bounds as applicable.
+
+Clock-correction TDD and verification:
+
+- RED affected command: `5 failed, 22 passed`; all failures were the Brave and
+  GitHub absolute-reset cases.
+- GREEN affected command: `27 passed`.
+- Full provider-evidence module: `265 passed`.
+- Fresh full repository suite: `1454 passed, 40 skipped`, with the same four
+  Starlette cookie deprecation warnings and zero failures.
+- Ruff over the changed Python test: all checks passed.
+- `git diff --check`: passed.
+
+Provider fixture correction commit message:
+`test: pin provider fixture observation clock`
+
 ## Commit
 
 Commit message: `feat: finalize and compose extraction outcomes`
