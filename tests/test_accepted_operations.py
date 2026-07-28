@@ -221,6 +221,11 @@ async def test_evidence_recovery_accepts_archive_fallback_before_persistence(
 
     assert operation.outcome is CanonicalOutcome.SUCCESS
     assert operation.result["results"][0]["provider"] == "archive_ph"
+    assert [
+        trace["status"]
+        for trace in operation.result["traces"]
+        if trace["provider"] == "archive_ph"
+    ] == ["success"]
     assert evidence.accepted_count() == 1
     archive_lookup.assert_awaited_once()
 

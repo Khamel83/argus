@@ -529,6 +529,11 @@ class SearchBroker:
                         ),
                     )
                     provider_batches[ProviderName.ARCHIVE.value] = fallback_batch
+                    execution.traces = [
+                        trace
+                        for trace in execution.traces
+                        if trace.provider is not ProviderName.ARCHIVE
+                    ]
                     execution.traces.append(fallback_trace)
             batches = tuple(
                 provider_batches[name] for name in sorted(provider_batches)
@@ -611,10 +616,22 @@ class SearchBroker:
                 "proven_empty",
             } and bool(contributor_refs)
             readiness = tuple(
-                {
-                    "provider": provider.value,
-                    **self._readiness.render_snapshot(provider).as_legacy_status(),
-                }
+                (
+                    {
+                        "provider": provider.value,
+                        "effective_status": "healthy",
+                        "authority": "archive_recovery",
+                        "decision": "eligible",
+                    }
+                    if provider is ProviderName.ARCHIVE
+                    and provider.value in provider_batches
+                    else {
+                        "provider": provider.value,
+                        **self._readiness.render_snapshot(
+                            provider
+                        ).as_legacy_status(),
+                    }
+                )
                 for provider in plan.candidate_providers
             )
             try:
