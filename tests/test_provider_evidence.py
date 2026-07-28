@@ -70,6 +70,13 @@ REGISTERED = {
     provider.value for provider in ProviderName if provider is not ProviderName.CACHE
 }
 EXPECTED_MAX_RATE_RESET_AHEAD_SECONDS = 366 * 24 * 60 * 60
+PROVIDER_FIXTURE_OBSERVED_AT = datetime(
+    2026,
+    7,
+    27,
+    12,
+    tzinfo=timezone.utc,
+)
 
 
 def _canonical_status_schema() -> dict[str, object]:
@@ -999,6 +1006,7 @@ def test_manifest_usage_and_rate_signal_declarations_are_executable(provider_nam
         fixture.get("body", fixture),
         max_results=10,
         response_headers=fixture.get("headers", {}),
+        observed_at=PROVIDER_FIXTURE_OBSERVED_AT,
     )
 
     def resolve(path: str):
@@ -1255,7 +1263,14 @@ async def test_github_rate_limited_403_preserves_transport_evidence():
         },
     )
     response.request = MagicMock()
-    with patch("argus.providers.github.httpx.AsyncClient") as client_type:
+    with (
+        patch(
+            "argus.providers.normalization.datetime",
+            wraps=datetime,
+        ) as datetime_type,
+        patch("argus.providers.github.httpx.AsyncClient") as client_type,
+    ):
+        datetime_type.now.return_value = PROVIDER_FIXTURE_OBSERVED_AT
         client = client_type.return_value
         client.__aenter__ = AsyncMock(return_value=client)
         client.__aexit__ = AsyncMock(return_value=False)
@@ -1470,7 +1485,11 @@ def test_usage_rate_fixtures_retain_only_typed_response_evidence(
     payload = fixture.get("body", fixture)
     headers = fixture.get("headers", {})
     batch = normalize_provider_response(
-        provider, payload, max_results=10, response_headers=headers
+        provider,
+        payload,
+        max_results=10,
+        response_headers=headers,
+        observed_at=PROVIDER_FIXTURE_OBSERVED_AT,
     )
     response = batch.response_evidence
     if field == "rate_remaining":
@@ -1650,6 +1669,7 @@ def test_private_sentinels_are_scrubbed_and_all_projection_values_are_bounded():
         ),
         usage_count=7,
         cost_usd=0.25,
+        observed_at=datetime(2026, 7, 27, tzinfo=timezone.utc),
         rate_limit_reset=datetime(2026, 7, 28, tzinfo=timezone.utc),
     )
     observation = ResultObservation(
