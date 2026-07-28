@@ -12,6 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from argus.auth import (
     AuthConfig,
@@ -34,6 +35,7 @@ from argus.api.routes_extract import router as extract_router
 from argus.api.routes_health import router as health_router
 from argus.api.routes_search import router as search_router
 from argus.api.routes_workflows import router as workflows_router
+from argus.api.routes_v2 import router as v2_router
 from argus.broker.router import SearchBroker, create_broker
 from argus.logging import get_logger
 from argus.operations.status import (
@@ -620,6 +622,29 @@ def create_app(
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request: Request, exc: RequestValidationError):
+        if request.url.path.startswith("/api/v2"):
+            from argus.api.contracts_v2 import (
+                EvidenceHttpPresenter,
+                admission_operation,
+            )
+            from argus.contracts import CanonicalOutcome
+
+            malformed = any(
+                error.get("type") == "json_invalid" for error in exc.errors()
+            )
+            code = "malformed_request" if malformed else "invalid_request"
+            operation = admission_operation(
+                outcome=CanonicalOutcome.INVALID_REQUEST,
+                request_id=getattr(request.state, "request_id", "unknown"),
+                detail=(
+                    "Request body is malformed"
+                    if malformed
+                    else "Request fields are invalid"
+                ),
+                code=code,
+            )
+            return EvidenceHttpPresenter().response(operation)
+
         def json_safe(value):
             if isinstance(value, float) and not math.isfinite(value):
                 return str(value)
@@ -634,6 +659,40 @@ def create_app(
         return JSONResponse(
             status_code=422,
             content={"detail": json_safe(exc.errors())},
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error_handler(request: Request, exc: StarletteHTTPException):
+        if not request.url.path.startswith("/api/v2"):
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": exc.detail},
+                headers=exc.headers,
+            )
+        from argus.api.contracts_v2 import (
+            EvidenceHttpPresenter,
+            admission_operation,
+        )
+        from argus.contracts import CanonicalOutcome
+
+        if exc.status_code == 404:
+            code = "route_not_found"
+            detail = "Versioned route was not found"
+        elif exc.status_code == 405:
+            code = "method_not_allowed"
+            detail = "Method is not allowed for this route"
+        else:
+            code = "invalid_request"
+            detail = "Request cannot be admitted"
+        operation = admission_operation(
+            outcome=CanonicalOutcome.INVALID_REQUEST,
+            request_id=getattr(request.state, "request_id", "unknown"),
+            detail=detail,
+            code=code,
+        )
+        return EvidenceHttpPresenter().response(
+            operation,
+            extra_headers=exc.headers,
         )
 
     # Broker singleton
@@ -743,11 +802,51 @@ def create_app(
 
         if is_caller_path(path) and (production_mode or not is_local):
             if not auth.has_caller_key():
+                if path.startswith("/api/v2/"):
+                    from argus.api.contracts_v2 import (
+                        EvidenceHttpPresenter,
+                        admission_operation,
+                    )
+                    from argus.contracts import CanonicalOutcome
+
+                    return EvidenceHttpPresenter().response(
+                        admission_operation(
+                            outcome=CanonicalOutcome.UNREADY,
+                            request_id=getattr(
+                                request.state,
+                                "request_id",
+                                safe_correlation_id(
+                                    request.headers.get("x-request-id")
+                                ),
+                            ),
+                            detail="Caller authentication is not configured",
+                        )
+                    )
                 return JSONResponse(
                     status_code=503,
                     content={"error": "API key is not configured for remote access"},
                 )
             if not auth.matches_caller_token(token):
+                if path.startswith("/api/v2/"):
+                    from argus.api.contracts_v2 import (
+                        EvidenceHttpPresenter,
+                        admission_operation,
+                    )
+                    from argus.contracts import CanonicalOutcome
+
+                    return EvidenceHttpPresenter().response(
+                        admission_operation(
+                            outcome=CanonicalOutcome.AUTHENTICATION_REJECTED,
+                            request_id=getattr(
+                                request.state,
+                                "request_id",
+                                safe_correlation_id(
+                                    request.headers.get("x-request-id")
+                                ),
+                            ),
+                            detail="Bearer authentication is required",
+                        )
+                    )
                 return JSONResponse(
                     status_code=401,
                     content={"error": "Authentication required"},
@@ -765,6 +864,33 @@ def create_app(
         )
 
         if not allowed:
+            if request.url.path.startswith("/api/v2/"):
+                from argus.api.contracts_v2 import (
+                    EvidenceHttpPresenter,
+                    admission_operation,
+                )
+                from argus.contracts import CanonicalOutcome
+
+                try:
+                    retry_after = int(headers.get("Retry-After", ""))
+                except (TypeError, ValueError):
+                    retry_after = None
+                return EvidenceHttpPresenter().response(
+                    admission_operation(
+                        outcome=CanonicalOutcome.UNREADY,
+                        request_id=getattr(
+                            request.state,
+                            "request_id",
+                            safe_correlation_id(
+                                request.headers.get("x-request-id")
+                            ),
+                        ),
+                        detail="Request admission is rate limited",
+                        code="rate_limited",
+                        retryable=True,
+                        retry_after_seconds=retry_after,
+                    )
+                )
             return JSONResponse(
                 status_code=429,
                 content={
@@ -836,6 +962,7 @@ def create_app(
     app.include_router(health_router, prefix="/api")
     app.include_router(admin_router, prefix="/api")
     app.include_router(extract_router, prefix="/api")
+    app.include_router(v2_router, prefix="/api/v2")
     app.include_router(workflows_router, prefix="/api")
     app.include_router(dashboard_router)
     app.state.operational_status.metrics.register_route_templates(

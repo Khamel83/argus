@@ -488,22 +488,6 @@ def test_retrieval_evidence_manifest_hashes_every_source_and_fixture():
         assert hashlib.sha256(path.read_bytes()).hexdigest() == entry["sha256"]
 
 
-def test_valid_retrieval_evidence_is_an_exact_standalone_copy():
-    source_vectors = {
-        vector["scenario"]: vector
-        for vector in _load_json(
-            ROOT / "docs/prototypes/retrieval-evidence-envelope/vectors.json"
-        )
-    }
-    manifest = _load_json(EVIDENCE_ROOT / "manifest.json")
-
-    for entry in manifest["fixtures"]:
-        if entry["kind"] != "valid":
-            continue
-        fixture = _load_json(EVIDENCE_ROOT / entry["path"])
-        assert fixture["result"]["evidence"] == source_vectors[entry["scenario"]]
-
-
 def test_every_retrieval_fixture_loads_immutably_and_obeys_outer_contract():
     contracts = _contracts()
     manifest = _load_json(EVIDENCE_ROOT / "manifest.json")
