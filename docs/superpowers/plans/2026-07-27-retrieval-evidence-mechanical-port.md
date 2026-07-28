@@ -43,8 +43,190 @@
 - No presenter imports or calls providers, extractors, cache-fill code, persistence mappers, or rejection classifiers.
 - No mixed execution, persistence, classification, or presentation authority may be deployed.
 - No manual result labeling, owner research queue, provider-credit purchase, destructive cleanup, secret rotation, broad rewrite, production LLM dependency, vector database, or silent stale fallback.
-- Every implementation slice starts from its predecessor's accepted commit, uses an isolated worktree, runs tests first, and publishes one non-duplicate review PR for that slice.
+- Every published implementation phase starts from its predecessor's accepted
+  commit, uses an isolated worktree, runs tests first, and publishes one
+  non-duplicate review PR for that phase. The remaining-work revision defines
+  which mechanical slices share a published phase.
 - Human merge and protected-environment deployment approval remain gates. They are not requests for the owner to research or grade results.
+- A push to `main` builds an immutable image and submits the `promote` job to
+  the protected GitHub `production` environment. Before merging any remaining
+  stack PR, verify that the environment still requires a reviewer. Every
+  S2-S10 intermediate promotion request must remain unapproved or be rejected
+  with its run URL recorded on the PR. Only the final P1 candidate may receive
+  deployment approval.
+
+---
+
+## 2026-07-28 Remaining-Work Revision
+
+This section is the controlling execution and publication policy for the
+remaining Wayfinder work. It supersedes the original one-PR-per-micro-slice
+sequencing in Tasks 8 through 16 and the original dependency graph wherever
+they conflict. The detailed task bodies remain the mechanical acceptance
+inventory; consolidation does not remove any invariant, test, compatibility
+boundary, or protected gate.
+
+The destination remains one private homelab production authority with truthful
+HTTP/MCP retrieval and extraction, durable evidence, immutable rollback, and a
+current operations/recovery runbook. The destination is not complete while a
+Wayfinder implementation or operational issue is left in a non-terminal
+state.
+
+### Current accepted and in-flight state
+
+- S0 and S1 are merged in PRs #83 and #85.
+- S2 through S5 are published as the clean stack PRs #87, #89, #91, and #93.
+- S6 is implemented at `f085131` on
+  `codex/wayfinder-s6-accepted-retrieval`. Its hermetic suites, SQLite
+  migration cycle, Ruff, and diff checks pass.
+- S6 publication is gated on recovery/health compatibility for schema head
+  0009 in code, a PostgreSQL-derived
+  `argus/recovery/argus_schema_0009.json`, and a green `postgres-ledger` job.
+  The current S6 commit does not yet meet those gates: 0009 is absent from the
+  compatible-head/table/manifest maps, the generator targets the 0007 alias,
+  and the PostgreSQL recovery assertions are pinned to an older head. The
+  manifest must be produced by the existing GitHub Actions PostgreSQL service
+  or a separately approved disposable-infrastructure gate; it must not be
+  fabricated, and Docker/PostgreSQL must not be installed or started on the
+  Mac control machine.
+- Runtime, migration, cutover, and rollback proof belong on the homelab.
+  Source editing, hermetic tests, Git, GitHub, and read-only inspection belong
+  on the Mac.
+- Read-only GitHub inspection on 2026-07-28 confirmed the `production`
+  environment has a required reviewer (`Khamel83`) and a branch policy.
+  Refresh this immediately before the first remaining merge; it is live
+  configuration, not a permanent assumption.
+
+### Revised closure-driven critical path
+
+1. **Finish the existing S2-S6 stack.** First verify the protected
+   `production` environment gate described above. PRs #87, #89, and #91 may
+   merge in order when green. Before #93 merges, correct its PostgreSQL
+   recovery test to expect schema head 0008 and require a green
+   `postgres-ledger` job. Then complete the 0009 recovery/generator/CI work in
+   S6, publish S6, require a green full recovery suite and checked 0009
+   manifest artifact, and merge #93 and the S6 PR in order. Close #86, #88,
+   #90, #92, and #94 with the accepted commit and test/migration evidence.
+   Issue #94 closes with S6; it must not remain open for S7/S8.
+2. **Combine S7 and S8 into one HTTP-authority PR.** Wire one
+   `AcceptedOperation` execution into frozen v1 presenters and additive v2
+   presenters, capabilities, and pre-execution transport security. Preserve
+   all Task 8 and Task 9 acceptance checks. Production activation remains off.
+3. **Combine S9a through S9d into one client-transport PR.** Implement
+   fail-closed capability negotiation, bounded MCP transport/session security,
+   versioned structured-content tools, and exact CLI output together. Preserve
+   all Task 10 through Task 13 checks and the stateless authenticated
+   MCP-to-HTTP boundary.
+4. **Keep S9e as a focused workflow-safety PR.** Prove workflows consume the
+   accepted operation and never deliver rejected or diagnostic-only content.
+   Keeping this separate preserves a narrow delivery rollback boundary.
+5. **Keep S10 as a pruned automated scorecard/candidate PR.** Run only frozen,
+   hermetic stability and competitive-sign fixtures in ordinary CI and emit a
+   checksummed, secret-free candidate bundle. No user labeling, research
+   queue, live paid provider run, or subjective manual grading is permitted.
+6. **Execute P1 through the protected homelab gate.** Use
+   `docs/superpowers/plans/2026-07-27-immutable-homelab-promotion.md` as the
+   single promotion authority rather than reimplementing its candidate,
+   cutover, soak, or rollback procedure here. Promote the exact candidate
+   digest, apply additive migrations 0007-0009, run private HTTP/MCP/client
+   canaries, prove rollback to a specifically named image that accepts schema
+   head 0009, retire or prove absent every duplicate authority, create the
+   operations/recovery runbook, and close #41, #42, #44, then #58 in that
+   evidence order.
+
+No speculative OAuth surface, vector store, LLM planner, provider-shard
+fusion, custom transport framework, or unowned compatibility layer may enter
+these phases. A new abstraction requires an active consumer named in
+`AGENTS.md` or a demonstrated security/correctness invariant in ADR 0002-0006.
+
+### GitHub terminal-state protocol
+
+- The already-published S2-S5 stack and the S6 publication are the only
+  permitted concurrent implementation backlog. After that stack merges, at
+  most one successor implementation issue and PR may be open at a time.
+- Before creating the first successor, update #58 to replace its original
+  S7/S8/S9a-S9e/S10 child sequence with exactly these four issues, recording
+  the consolidation rationale and closing any already-created displaced child
+  as superseded:
+  1. **HTTP authority:** accepted-operation orchestration, frozen v1
+     presenters, v2, capabilities, and transport security.
+  2. **Client transports:** capability negotiation, MCP sessions and legacy
+     SSE security, versioned tools, and CLI.
+  3. **Workflow safety:** extraction composition and delivery safety.
+  4. **Candidate evidence:** hermetic scorecard and checksummed bundle.
+- Create the successor issue only after its predecessor issue and PR are
+  terminal. Its PR body must use `Closes #<issue>` and identify the exact base,
+  commit, tests, compatibility boundary, and rollback boundary.
+- A PR existing, code being locally complete, or local tests being green is
+  not terminal evidence. Terminal means the PR merged into `main`, required CI
+  and migration evidence is green, and the linked issue is closed with the
+  accepted `main` commit.
+- If a planned slice becomes unnecessary, close its issue as superseded or
+  out of scope with the exact replacement evidence and rationale. Never leave
+  it open as a reminder.
+- #41 closes only with the immutable candidate digest and rollback receipt.
+  #42 closes only with private canaries and proof that duplicate production
+  authorities are retired. #44 closes only after
+  `docs/operations-runbook.md`, including migrations 0007-0009,
+  backup/restore, schema compatibility, MCP adapter configuration, and
+  recovery/rollback steps, merges.
+- #58 closes last, after every Wayfinder child and operational issue is
+  terminal and its destination evidence table points to current `main` and
+  current homelab receipts.
+
+| Issue/work item | Terminal event | Required evidence |
+|---|---|---|
+| #86 / PR #87 | PR merges; issue closes | Accepted `main` commit, green CI, provider fixture/privacy evidence |
+| #88 / PR #89 | PR merges after #86 | Accepted commit, 0007 and extraction finalization evidence |
+| #90 / PR #91 | PR merges after #88 | Accepted commit, exact fusion/freshness/diversity evidence |
+| #92 / PR #93 | PR merges after #90 | Corrected 0008 PostgreSQL assertion, green `postgres-ledger`, readiness artifact |
+| #94 / S6 PR | S6 PR merges after #92 | Runtime-compatible 0009 contract, checked PostgreSQL manifest, full green recovery job |
+| HTTP authority successor | Consolidated S7+S8 PR merges | Frozen v1, v2 envelope, capability, security, and architecture-boundary evidence |
+| Client transports successor | Consolidated S9a-S9d PR merges | Negotiation, MCP/session/SSE, tool, CLI, and production-config evidence |
+| Workflow safety successor | S9e PR merges | Accepted-operation composition and no rejected-content delivery evidence |
+| Candidate evidence successor | S10 PR merges | Hermetic stable verdict and verified checksummed bundle |
+| #41 | Close during P1 | Immutable promotion receipt and named 0009-compatible rollback receipt |
+| #42 | Close after #41 evidence | HTTP/MCP/CLI/workflow canaries and enumerated one-authority proof |
+| #44 | Runbook PR merges | `docs/operations-runbook.md` with current P1 receipt references |
+| #58 | Close last | Every row above terminal; completion audit points to current `main` and homelab evidence |
+
+### Bounded review and stop policy
+
+- Each implementation PR receives one independent review against its exact
+  merge base, one fix pass for evidence-backed Critical/Important findings,
+  and one confirmation pass. At most one additional cycle is allowed if the
+  fix introduced a new Critical/Important defect or required a material design
+  change. Anything still disputed becomes one named human gate; it does not
+  start another autonomous review loop. Style, speculative future work, and
+  repeated restatements do not block merge.
+- The repository's fast `ai-review.yml` result is advisory: its diff is
+  truncated and its prompt is limited to obvious syntax/formatting findings.
+  Disposition it once and do not count it as the independent review.
+- Test duration is monitored against the repository's established CI baseline;
+  there is no arbitrary wall-clock product gate. A suite must fail early on
+  contract/schema errors and must not depend on live providers, paid spend, or
+  the Mac running production infrastructure.
+- Stop and expose a named gate only for missing authority, failed required
+  evidence, a real security/correctness defect, or a protected deployment
+  action. Do not replace these with additional planning or review loops.
+
+### External adversarial review disposition
+
+Gemini 3.6 Flash (High) independently judged the destination coherent and the
+remaining micro-slice sequence overengineered. This revision accepts its
+S7+S8 consolidation, S9a-S9d consolidation, focused S9e, automated S10, and
+terminal-issue protocol. It rejects deferring #94 past S6 and rejects a fixed
+15-minute CI threshold because neither matches the actual ownership or
+evidence boundary.
+
+Claude Opus 5 then independently returned **APPROVE WITH REQUIRED EDITS**. Its
+source-backed blockers are incorporated here: complete 0009 recovery
+compatibility and PostgreSQL CI before S6 merge; recognize `main` as a
+promotion trigger; name successor issues; use the existing immutable
+promotion plan as the sole promotion authority; require a 0009-compatible
+rollback digest; create the missing runbook; bound competitive inconclusive
+results; and enumerate duplicate authorities for #42. These are direct
+completion blockers, not a reopening of accepted S0-S6 policy.
 
 ---
 
@@ -81,7 +263,7 @@ session refreshes its dependency PRs, and P1 refreshes all live operational
 evidence before mutation. A stale issue state or old green check never
 satisfies a production gate.
 
-## Dependency Graph
+## Original Mechanical Dependency Graph
 
 ```text
 S0 contract kernel and frozen fixtures
@@ -112,7 +294,8 @@ S7
 
 S1, S2, and S3 may be developed in parallel only in distinct worktrees. Their
 PRs merge in the numbered order so later shared-file conflicts remain
-mechanical. S4 through P1 are strictly serial.
+mechanical. The remaining-work revision above controls publication grouping:
+S7+S8 and S9a-S9d are consolidated, while S9e, S10, and P1 remain serial.
 
 ## File Map
 
@@ -863,6 +1046,11 @@ and existing search/spend ledgers.
 - Modify: `argus/broker/pipeline.py`
 - Modify: `argus/broker/router.py`
 - Modify: `argus/persistence/search_ledger.py`
+- Modify: `argus/recovery/database.py`
+- Create: `argus/recovery/argus_schema_0009.json`
+- Modify: `scripts/generate_argus_schema_contract.py`
+- Modify: `tests/test_recovery_database.py`
+- Modify: `.github/workflows/ci.yml`
 
 **Interfaces:**
 - Produces `AcceptedRetrieval`, `RetrievalEvidence`, `CacheDecision`,
@@ -918,23 +1106,49 @@ freshness-unproven, structural-floor failure, every-provider failure,
 unready, timeout, and persistence failure from complete traces. Do not infer
 outcome from result count alone.
 
-- [ ] **Step 6: Verify atomicity and commit**
+- [ ] **Step 6: Restore recovery compatibility for schema head 0009**
+
+Add 0009 to the compatible-head, required-table, and schema-contract maps.
+Inventory all twelve 0009 tables from the migration rather than maintaining a
+partial subset. Make the schema-contract generator require an explicit schema
+head, select the matching output path, and support a non-writing `--check`
+mode; it must never write through the 0007 compatibility alias. Parametrize
+the migrated PostgreSQL recovery tests by the actual Alembic head so S5 proves
+0008 and S6 proves 0009. Prove that runtime health/initialization accepts the
+new head and that an older image is not claimed compatible unless its source
+actually accepts 0009.
+
+- [ ] **Step 7: Close the PostgreSQL CI gap**
+
+Run the complete `tests/test_recovery_database.py` file in the
+`postgres-ledger` job rather than two hand-selected node IDs. In the same
+PostgreSQL job, generate the 0009 contract from the fully migrated disposable
+database, verify `--check`, and retain the checked manifest as an artifact.
+PR #93 must first correct its stale 0007 assertion and prove head 0008 in the
+same job. A local SQLite migration cycle is necessary but not sufficient.
+
+- [ ] **Step 8: Verify atomicity, recovery, and commit**
 
 ```bash
 uv run pytest tests/test_accepted_retrieval.py tests/test_search_ledger.py \
-  tests/test_broker.py tests/test_spend_boundaries.py -q
+  tests/test_broker.py tests/test_spend_boundaries.py \
+  tests/test_recovery_database.py -q
 uv run pytest -q
 git diff --check
 git add argus/broker/accepted.py argus/persistence/evidence.py \
   migrations/versions/0009_retrieval_evidence.py argus/broker/cache.py \
   argus/broker/execution.py argus/broker/pipeline.py argus/broker/router.py \
-  argus/persistence/search_ledger.py tests/test_accepted_retrieval.py
+  argus/persistence/search_ledger.py argus/recovery/database.py \
+  argus/recovery/argus_schema_0009.json \
+  scripts/generate_argus_schema_contract.py .github/workflows/ci.yml \
+  tests/test_accepted_retrieval.py tests/test_recovery_database.py
 git commit -m "feat: accept retrieval evidence before cache publication"
 ```
 
 **Acceptance evidence:** Issue #65 valid/cache vectors, atomic acceptance,
 complete origin lineage, exact accounting, bounded completion, no fabricated
-receipt, and concurrency-safe single-flight.
+receipt, concurrency-safe single-flight, runtime-compatible 0009 recovery
+contract, and a green PostgreSQL recovery/manifest job.
 
 **Rollback boundary:** New cache is not production-active until S7/P1. Old
 entries have no valid evidence identity and are intentionally discarded at
@@ -1074,6 +1288,9 @@ the image restores the old orchestrator without changing legacy wire shapes.
 - Modify: `argus/auth.py`
 - Modify: `argus/config.py`
 - Modify: `argus/authority.py`
+- Modify: `.env.example`
+- Modify: `README.md`
+- Modify: `CHANGELOG.md`
 
 **Interfaces:**
 - Produces `EvidenceHttpPresenter`, `TransportSecurityGuard`, and authenticated
@@ -1104,6 +1321,11 @@ session, persistence, or execution. Ignore forwarded headers unless a trusted
 ingress already rewrote the actual request. Remote/proxy exposure fails
 startup without bearer auth and explicit Host/Origin policy. CORS uses exact
 origins, no wildcard, no credentials, and wraps safe errors.
+This guard changes request acceptance even while
+`ARGUS_ACCEPTED_OPERATION_AUTHORITY=legacy`; it is not an inert v2-only
+feature. Give the guard its own revertable commit within the consolidated
+S7/S8 PR, document every configuration key and safe default, and prove the
+production minimal-environment contract remains valid.
 
 - [ ] **Step 4: Enforce principal authority**
 
@@ -1138,6 +1360,7 @@ git diff --check
 git add argus/capabilities.py argus/api/contracts_v2.py argus/api/routes_v2.py \
   argus/api/security.py argus/api/main.py argus/api/lifecycle.py \
   argus/api/routes_health.py argus/auth.py argus/config.py argus/authority.py \
+  .env.example README.md CHANGELOG.md \
   tests/test_transport_v2.py tests/test_transport_security.py
 git commit -m "feat: add secure version two HTTP contract"
 ```
@@ -1253,6 +1476,12 @@ pressure.
 Keep `GET /sse` and `POST /messages/` wire behavior, but apply the shared
 bearer, Host, Origin, CORS, body, and principal guard before session/tool work.
 Capabilities continue to direct new clients to `/mcp`.
+The legacy-SSE guard changes running behavior independently of the evidence
+authority flag. Land it as its own revertable commit inside the consolidated
+S9a-S9d PR, document its configuration/defaults, and prove both the
+`argus-mcp` minimal production environment and frozen legacy SSE fixtures.
+P1 must include an authenticated legacy-SSE client canary before retiring that
+compatibility path.
 
 - [ ] **Step 5: Verify and commit**
 
@@ -1578,14 +1807,16 @@ runtime execution or deployment by itself.
 
 ### Task 16: P1 — Immutable homelab port, competitive proof, and rollback
 
-**Inputs:** Exact merged S10 revision, closed/current operational gates #40,
-#41, #42, and #44, protected production environment, canonical
-`homelab-postgres`, immutable release workflow, and documented rollback
-operator.
+**Inputs:** Exact merged S10 revision, current #40 recovery evidence, open
+operational work #41/#42/#44 to be completed by this task, protected
+production environment, canonical `homelab-postgres`, and
+`docs/superpowers/plans/2026-07-27-immutable-homelab-promotion.md` as the
+single promotion authority.
 
 **Files:**
 - Modify in Argus only when required by release evidence: `CHANGELOG.md`,
   `docs/operations-status.md`
+- Create: `docs/operations-runbook.md`
 - Modify in Homelab through its own one review PR: Argus immutable digest,
   encrypted non-secret configuration references, migration job declaration,
   canaries, and evidence receipt paths.
@@ -1601,97 +1832,114 @@ operator.
 Read GitHub and live homelab evidence. Require:
 
 - #40 recovery current for the schema-changing promotion;
-- #41 exact digest promotion and rollback path current;
-- #42 one private production authority and approved client inventory current;
-- #44 runbook current;
+- #41, #42, and #44 have explicit acceptance checklists and remain open for
+  this task to complete; they are not circular prerequisites;
 - PostgreSQL backup and isolated restore fresh;
-- previous compatible image digest retained;
+- a specifically named rollback image digest that accepts schema head 0009 is
+  retained; today's pre-evidence image is not assumed compatible merely
+  because the schema change is additive;
 - no dirty checkout mutation or unresolved migration lock.
 
 Failure leaves production unchanged and records the missing gate.
 
-- [ ] **Step 2: Build once and test the isolated candidate**
+- [ ] **Step 2: Supply inputs to the single immutable promoter**
 
-Build the exact merged revision once. Record source revision, image digest,
-SBOM, provenance, lock hash, schema heads, and config/profile hash. Start it
-against scratch PostgreSQL without paid credentials, production ingress, or
-external delivery. Run migrations 0007-0009 and the full hermetic stability
-lane.
+Do not hand-build a candidate, create a second cutover procedure, or duplicate
+soak/rollback logic in this plan. Supply the existing immutable-promotion plan
+with the approved source revision/digest, migrations 0007-0009 declaration,
+fresh backup/restore evidence, candidate bundle hashes, configuration/profile
+identity, and the named 0009-compatible rollback digest. Consume its build,
+SBOM/provenance, candidate, cutover, soak, and rollback receipts.
 
-- [ ] **Step 3: Exercise rollback before production**
+- [ ] **Step 3: Prove rollback compatibility before approval**
 
 Upgrade a restored production-compatible database copy, run search/extraction/
-HTTP/MCP/persistence/readiness canaries, switch back to the previous image
-against the retained additive schema, and rerun legacy v1 canaries. Do not
-downgrade or delete the new tables.
+HTTP/MCP/persistence/readiness canaries, then run the named rollback image
+against the retained additive schema and rerun legacy v1/readiness/recovery
+canaries. If no retained image accepts 0009, first produce and promote a
+compatibility-only image or choose another evidence-backed rollback strategy;
+the evidence release may not proceed with an incompatible rollback target.
+Do not downgrade or delete the new tables.
 
 - [ ] **Step 4: Run the bounded competitive lane**
 
 Through canonical HTTP, run baseline and candidate close together for the
 declared profile/topology/provider snapshot. Run both evaluator orders and
 verify the bundle. Promotion requires exact candidate `stable` plus
-`competitive`. The free profile may run under the automated lane. Before a
+`competitive` on the first bounded attempt. The free profile may run under the automated lane. Before a
 budgeted profile reserves anything, require a distinct, unused authorization
 receipt for this exact run/generation with provider allowlist, maximum tier,
 maximum calls, and maximum cost/credit exposure. Existing deployment approval,
 configured budget, or an older run receipt is not spend authorization.
 One-time-credit providers remain disabled unless individually named.
-`inconclusive` leaves production unchanged; a free rerun may be scheduled
-automatically, while a budgeted rerun requires a new authorization receipt.
-Neither path creates owner labeling work.
+After two consecutive free-profile `inconclusive` verdicts, the hermetic
+`stable` verdict becomes the hard promotion gate and the competitive result is
+recorded on #58 as accepted residual risk. Do not schedule a budgeted rerun
+without a new authorization receipt. Neither path creates owner labeling work.
 
-- [ ] **Step 5: Publish one Homelab review PR**
+- [ ] **Step 5: Approve and consume one protected promotion**
 
-Pin the exact candidate digest and declare the migration/canary receipts.
-Preserve the prior digest as rollback target. Do not duplicate the PR or
-include secrets. Human merge and protected-environment approval remain
-required.
+The GitHub `production` environment is the deployment gate. Approve only the
+final P1 digest; intermediate S2-S10 promotion requests remain unapproved or
+are rejected. The existing promoter owns the host lock, isolated candidate,
+migration application, cutover, soak, and automatic rollback. Verify from its
+receipts that `/api` v1, `/api/v2`, `/mcp`, authenticated legacy SSE, CLI,
+PostgreSQL acceptance, cache origin lineage, readiness, free-only no-spend,
+extraction rejection, workflow links, and recovery evidence passed.
 
-- [ ] **Step 6: Apply additive migrations and promote**
-
-After approval, acquire the host promotion lock, verify backup/restore again,
-apply migrations exactly once, promote the digest, and atomically set
-`ARGUS_ACCEPTED_OPERATION_AUTHORITY=evidence`. Verify `/api` v1, `/api/v2`,
-`/mcp`, legacy SSE, CLI, PostgreSQL acceptance, cache origin lineage,
-readiness, free-only no-spend, extraction rejection, workflow links, and
-recovery evidence.
-
-- [ ] **Step 7: Cut approved clients to v2**
+- [ ] **Step 6: Cut approved clients to v2**
 
 MCP/CLI clients negotiate capabilities. Explicit HTTP clients change to
 `/api/v2` one at a time with caller identity and canary receipts. A failed
 client returns to v1 without repeating an ambiguous provider-spending
-operation. No Mac/OCI/duplicate Argus authority is introduced.
+operation.
 
-- [ ] **Step 8: Soak and prove rollback**
+- [ ] **Step 7: Inventory and retire duplicate authorities**
 
-Observe the runbook-defined soak. If a hard stability gate fails, promote the
-previous digest, keep additive schema, and rerun v1 canaries. Do not discard
-accepted data. Record both candidate and rollback receipts.
+Enumerate every potential serving authority from private ingress/DNS, client
+configuration, process/container inventory, and deployment definitions. At
+minimum explicitly account for the Mac, any OCI host, the homelab authority,
+and the repository `docker-compose.yml`: prove each non-homelab candidate is
+non-serving or retire its production role, and prove only `homelab` serves the
+private Argus ingress. Development-only Compose remains source tooling, not a
+production authority.
 
-- [ ] **Step 9: Close the map from evidence**
+- [ ] **Step 8: Publish the operations and recovery runbook**
+
+Create `docs/operations-runbook.md` covering immutable build/promotion,
+migrations 0007-0009, schema-head compatibility, backup/isolated restore,
+rollback to the named compatible digest, canaries and receipts, failure
+diagnosis, and the stateless MCP adapter's required environment contract.
+Close #44 only when this file and the actual P1 receipt references merge.
+
+- [ ] **Step 9: Close the operational issues and map from evidence**
 
 Attach:
 
 - exact Argus and Homelab PRs/merge revisions;
 - image and prior rollback digests;
 - migration/backup/restore receipts;
-- stable and competitive bundle hashes;
+- stable and competitive bundle hashes or the bounded-inconclusive residual
+  risk receipt;
 - HTTP/MCP/CLI/workflow/free-only/provider/readiness canaries;
 - rollback drill;
 - current runbook;
 - one-authority proof.
 
-Close implementation children and #67 only after their code/evidence is
-merged. Close parent #58 only when every named operational and retrieval
-requirement is proven current.
+Close #41 after immutable promotion and compatible rollback proof. Close #42
+after the client canaries and enumerated one-authority proof. Close #44 after
+the runbook merge. Close implementation successors only through their merged
+PRs. Close parent #58 last, only when every named operational and retrieval
+requirement is terminal and proven current.
 
 **Acceptance evidence:** One immutable private production authority running
-the exact stable/competitive digest with PostgreSQL durability, truthful v1/v2
-transports, current recovery proof, client canaries, and tested rollback.
+the exact stable candidate digest with PostgreSQL durability, truthful v1/v2
+transports, current recovery proof, client canaries, tested rollback, and a
+competitive verdict or bounded-inconclusive residual-risk receipt.
 
-**Rollback boundary:** Promote the retained previous digest; never delete or
-downgrade accepted evidence tables during emergency rollback.
+**Rollback boundary:** Promote only the retained, specifically named digest
+already proven compatible with schema head 0009; never delete or downgrade
+accepted evidence tables during emergency rollback.
 
 **Human gate:** Human merge and protected deployment approval. A budgeted live
 competitive run additionally requires its bounded run authorization. Secret
@@ -1703,7 +1951,9 @@ and are not part of this plan.
 
 ## Per-Slice Review and Publication Protocol
 
-For S0 through S10:
+For S0 through S6, use the already-established slice issues and stacked PRs.
+For the consolidated remaining phases, apply the same evidence protocol once
+per consolidated issue/PR:
 
 1. Claim the implementation issue with an AI-generated disclosure.
 2. Create a clean worktree from the exact predecessor commit.
@@ -1712,20 +1962,22 @@ For S0 through S10:
 5. Implement tests first and preserve the red-to-green evidence.
 6. Run the focused tests, `uv run pytest -q`, formatting/static checks, fixture
    hash verifier, secret sentinel scan, and `git diff --check`.
-7. Request independent review against the exact predecessor merge base.
+7. Request one independent review against the exact predecessor merge base.
 8. Fix every evidence-backed Critical or Important finding and rerun the exact
-   verification.
+   verification; request one confirmation pass.
 9. Commit focused changes and push the named branch.
 10. Open one ready PR against the predecessor branch/main as appropriate,
     include exact verification, dependency order, compatibility/rollback
     boundary, and `Resolves #<slice issue>`.
 11. Wait for all GitHub checks; disposition automated comments with evidence.
-12. Update issue #67 and parent #58 with PR, revision, tests, review, gate
-    status, and next slice.
+12. Close the implementation issue through the merged PR, post the accepted
+    `main` revision and evidence, and update parent #58 with the terminal state
+    and next slice.
 
 Do not close a design or implementation issue merely because a PR exists.
 Resolution requires its accepted evidence. Do not merge, deploy, buy credits,
 rotate secrets, or delete state from an autonomous implementation session.
+Do not create the next implementation issue until the current one is terminal.
 
 ## Completion Audit
 
