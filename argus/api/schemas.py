@@ -107,7 +107,7 @@ class ProviderTestRequest(BaseModel):
 
 
 class SpendResolutionRequest(BaseModel):
-    actual_charge: float = Field(..., gt=0, allow_inf_nan=False)
+    actual_charge: float = Field(..., ge=0, allow_inf_nan=False)
     outcome: str = Field(..., min_length=1, max_length=100)
     source: str = Field(..., pattern="^(operator|provider)$")
     idempotency_key: str = Field(..., min_length=1, max_length=255)
@@ -119,7 +119,7 @@ class ProviderSnapshotRequest(BaseModel):
     observed_at: datetime
     provider_reference: str = Field(..., min_length=1, max_length=255)
     related_attempt_id: str = Field(..., min_length=1, max_length=32)
-    authoritative_charge: float = Field(..., gt=0, allow_inf_nan=False)
+    authoritative_charge: float = Field(..., ge=0, allow_inf_nan=False)
     idempotency_key: str = Field(..., min_length=1, max_length=255)
 
 

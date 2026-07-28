@@ -165,6 +165,9 @@ class ProviderExecutor:
         live_providers_used = 0
         pace_warnings: List[str] = []
         attempt_scope = str(query.metadata.get("attempt_scope") or uuid.uuid4().hex)
+        probe_execution_authorization = None
+        probe_key = None
+        probe_result_key = None
         if query.metadata.get("probe_no_fallback") is True:
             expected = query.metadata.get("probe_provider")
             if (
@@ -174,12 +177,21 @@ class ProviderExecutor:
             ):
                 raise ValueError("probe execution requires one exact provider")
             probe_key = str(query.metadata.get("probe_idempotency_key") or "")
-            self._readiness.repository.consume_probe_once(
-                provider=provider_order[0],
-                idempotency_key=probe_key,
-                durable_receipt=str(query.metadata.get("probe_receipt") or ""),
-                spend_reserved=PROVIDER_TIERS[provider_order[0]] > 0,
+            probe_execution_authorization = (
+                self._readiness.repository.consume_probe_once(
+                    provider=provider_order[0],
+                    idempotency_key=probe_key,
+                    durable_receipt=str(
+                        query.metadata.get("probe_receipt") or ""
+                    ),
+                    attempt_id=(
+                        str(query.metadata["probe_attempt_id"])
+                        if query.metadata.get("probe_attempt_id") else None
+                    ),
+                )
             )
+            if probe_execution_authorization is not None:
+                probe_result_key = probe_key
             attempt_scope = probe_key
 
         ordered = [p for p in provider_order if p != ProviderName.CACHE]
@@ -248,11 +260,17 @@ class ProviderExecutor:
                 from argus.broker.remote_provider import RemoteProviderClient
 
                 remote = RemoteProviderClient(pname, node)
-                authorization = self._readiness.authorize_execution(
-                    context,
-                    owner=f"{self._node_config.machine_name or 'local'}:{attempt_scope}",
-                    conservative_charge=0.0,
-                    execution_timeout_seconds=60,
+                authorization = (
+                    probe_execution_authorization
+                    or self._readiness.authorize_execution(
+                        context,
+                        owner=(
+                            f"{self._node_config.machine_name or 'local'}:"
+                            f"{attempt_scope}"
+                        ),
+                        conservative_charge=0.0,
+                        execution_timeout_seconds=60,
+                    )
                 )
                 if not authorization.allowed:
                     traces.append(
@@ -293,7 +311,9 @@ class ProviderExecutor:
                     self._readiness.complete_execution(
                         authorization, failure=cancelled.failure, actual_charge=None,
                         charge_known=(tier == 0),
+                        termination_known=False,
                         evidence_ref=f"execution:{authorization.attempt_id}",
+                        probe_idempotency_key=probe_result_key,
                     )
                     raise
                 self._readiness.complete_execution(
@@ -302,6 +322,7 @@ class ProviderExecutor:
                     actual_charge=0.0 if trace.status == "success" else None,
                     charge_known=(tier == 0),
                     evidence_ref=f"execution:{authorization.attempt_id}",
+                    probe_idempotency_key=probe_result_key,
                 )
                 traces.append(trace)
                 if trace.status == "success":
@@ -341,11 +362,17 @@ class ProviderExecutor:
                 charge = (
                     conservative_charge_estimate(pname, query) if tier > 0 else 0.0
                 )
-                authorization = self._readiness.authorize_execution(
-                    context,
-                    owner=f"{self._node_config.machine_name or 'local'}:{attempt_scope}",
-                    conservative_charge=charge,
-                    execution_timeout_seconds=60,
+                authorization = (
+                    probe_execution_authorization
+                    or self._readiness.authorize_execution(
+                        context,
+                        owner=(
+                            f"{self._node_config.machine_name or 'local'}:"
+                            f"{attempt_scope}"
+                        ),
+                        conservative_charge=charge,
+                        execution_timeout_seconds=60,
+                    )
                 )
             except ValueError as exc:
                 traces.append(
@@ -398,7 +425,9 @@ class ProviderExecutor:
                     failure=None,
                     actual_charge=None,
                     charge_known=(tier == 0),
+                    termination_known=False,
                     evidence_ref=f"execution:{authorization.attempt_id}",
+                    probe_idempotency_key=probe_result_key,
                 )
                 raise
             actual_charge = None
@@ -412,6 +441,7 @@ class ProviderExecutor:
                 actual_charge=actual_charge,
                 charge_known=(tier == 0 or not uncertain),
                 evidence_ref=f"execution:{authorization.attempt_id}",
+                probe_idempotency_key=probe_result_key,
             )
             trace.budget_remaining = self._readiness.budget_projection(pname)["remaining"]
             traces.append(trace)

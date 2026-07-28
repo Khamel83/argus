@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import hashlib
-import inspect
 import json
 import math
 import os
 import re
 import time
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Mapping
 from pathlib import Path
 
@@ -326,7 +325,7 @@ class ProbeAuthorization:
     named_quota: str | None = None
     idempotency_key: str | None = None
     durable_receipt: str | None = None
-    spend_reserved: bool = False
+    conservative_charge: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -334,6 +333,7 @@ class ProbeDecision:
     allowed: bool
     reason: str
     authorization_id: str | None = None
+    attempt_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,6 +360,8 @@ class ProviderRegistrationSpec:
     fixture_evidence_ref: str | None
     fixture_attestation: Mapping[str, str] | None = None
     budget_reset_at: datetime | None = None
+    budget_period_started_at: datetime | None = None
+    budget_next_reset_at: datetime | None = None
     machine: str = "test-machine"
     egress: str = "local"
     request_class: str = "discovery"
@@ -380,11 +382,12 @@ class ExecutableProviderRegistry:
     @classmethod
     def from_runtime(cls, *, config, providers, durable_spend_repository: bool):
         from argus import __version__
+        from argus.providers.fixture_attestation import (
+            build_fixture_attestation,
+        )
 
         fixture_path = Path(__file__).parents[1] / "providers" / "fixture_contracts.json"
-        fixture_bytes = fixture_path.read_bytes()
-        fixture = json.loads(fixture_bytes)
-        fixture_hash = hashlib.sha256(fixture_bytes).hexdigest()
+        fixture = json.loads(fixture_path.read_bytes())
         keyless = {
             ProviderName.SEARXNG, ProviderName.DUCKDUCKGO,
             ProviderName.YAHOO, ProviderName.GITHUB,
@@ -417,38 +420,41 @@ class ExecutableProviderRegistry:
                 "contract_version"
             )
             adapter = providers[provider]
-            source_path = inspect.getsourcefile(type(adapter))
-            adapter_hash = (
-                hashlib.sha256(Path(source_path).read_bytes()).hexdigest()
-                if source_path else None
+            release = os.environ.get(
+                "ARGUS_RELEASE_REVISION", f"argus-{__version__}"
             )
-            fixture_contract = fixture["providers"].get(provider.value, {})
-            attestation_payload = {
-                "provider": provider.value,
-                "release": os.environ.get(
-                    "ARGUS_RELEASE_REVISION", f"argus-{__version__}"
-                ),
-                "adapter_code_sha256": adapter_hash,
-                "fixture_manifest_sha256": fixture_hash,
-                "request_contract": fixture_contract.get("request_contract"),
-                "response_contract": fixture_contract.get("response_contract"),
-                "provider_contract": contract,
-            }
-            attested = all(attestation_payload.values())
-            attestation_ref = (
-                "attestation:" + hashlib.sha256(json.dumps(
-                    attestation_payload, sort_keys=True, separators=(",", ":")
-                ).encode()).hexdigest()[:48]
-                if attested else None
-            )
+            try:
+                attestation_ref, attestation_payload = (
+                    build_fixture_attestation(
+                        provider,
+                        release=release,
+                        provider_contract=str(contract),
+                        adapter_module=type(adapter).__module__,
+                    )
+                )
+            except (ImportError, OSError, ValueError):
+                attestation_ref, attestation_payload = None, None
             reset_value = os.environ.get(f"ARGUS_{prefix}_BUDGET_RESET_AT")
-            reset_at = (
+            next_reset_at = (
                 datetime.fromisoformat(reset_value.replace("Z", "+00:00"))
                 if reset_value else None
             )
-            if reset_at is not None and reset_at.tzinfo is None:
+            period_start_value = os.environ.get(
+                f"ARGUS_{prefix}_BUDGET_PERIOD_STARTED_AT"
+            )
+            period_started_at = (
+                datetime.fromisoformat(
+                    period_start_value.replace("Z", "+00:00")
+                )
+                if period_start_value else None
+            )
+            if next_reset_at is not None and next_reset_at.tzinfo is None:
                 raise ValueError(
                     f"ARGUS_{prefix}_BUDGET_RESET_AT must include a timezone"
+                )
+            if period_started_at is not None and period_started_at.tzinfo is None:
+                raise ValueError(
+                    f"ARGUS_{prefix}_BUDGET_PERIOD_STARTED_AT must include a timezone"
                 )
             specs.append(ProviderRegistrationSpec(
                 provider=provider,
@@ -460,16 +466,12 @@ class ExecutableProviderRegistry:
                     float(provider_config.monthly_budget_usd) if tier > 0 else None
                 ),
                 durable_spend_repository=durable_spend_repository,
-                release_revision=os.environ.get(
-                    "ARGUS_RELEASE_REVISION", f"argus-{__version__}"
-                ),
+                release_revision=release,
                 contract_version=contract,
                 fixture_evidence_ref=attestation_ref,
-                fixture_attestation=(
-                    {key: str(value) for key, value in attestation_payload.items()}
-                    if attested else None
-                ),
-                budget_reset_at=reset_at,
+                fixture_attestation=attestation_payload,
+                budget_next_reset_at=next_reset_at,
+                budget_period_started_at=period_started_at,
                 machine=config.node.machine_name or "argus-primary",
             ))
         return cls(tuple(specs))
@@ -516,12 +518,21 @@ class ProviderReadinessService:
         )
         # Compatibility construction is explicit and fail-closed. It never
         # asks an adapter to describe its own availability.
+        from argus.providers.fixture_attestation import (
+            build_fixture_attestation,
+        )
         for provider in providers:
             tier = PROVIDER_TIERS[provider]
             reachability_state = reachability.get_all().get(provider, {})
             registered_egress = reachability_state.get("best", "local")
             budget_limit = (
                 budget_tracker.get_budget_limit(provider) if tier > 0 else None
+            )
+            fixture_ref, fixture_attestation = build_fixture_attestation(
+                provider,
+                release="legacy-release-v1",
+                provider_contract="legacy-contract-v1",
+                adapter_module=type(providers[provider]).__module__,
             )
             service.register_provider(ProviderRegistrationSpec(
                 provider=provider, enabled=True,
@@ -534,15 +545,8 @@ class ProviderReadinessService:
                 durable_spend_repository=True,
                 release_revision="legacy-release-v1",
                 contract_version="legacy-contract-v1",
-                fixture_evidence_ref="attestation:legacy-fixture-contract-v1",
-                fixture_attestation={
-                    "release": "legacy-release-v1",
-                    "adapter_code_sha256": "legacy-adapter-code-v1",
-                    "fixture_manifest_sha256": "legacy-fixture-manifest-v1",
-                    "request_contract": "search-request-v1",
-                    "response_contract": "provider-batch-v1",
-                    "provider_contract": "legacy-contract-v1",
-                },
+                fixture_evidence_ref=fixture_ref,
+                fixture_attestation=fixture_attestation,
                 machine="legacy-machine",
                 egress=registered_egress or "local",
             ))
@@ -552,22 +556,16 @@ class ProviderReadinessService:
                     egress=registered_egress or "local",
                     request_class=request_class,
                 )
-                service.record_observation(ProviderObservation(
-                    provider=provider, dimension="reachability",
-                    state=(
-                        "unreachable"
-                        if registered_egress is None
-                        else "reachable"
-                    ),
-                    source="legacy_explicit_fixture",
-                    scope=scope, observed_at=repository.authority_now(),
-                    ttl_seconds=60,
-                ))
-                service.record_observation(ProviderObservation(
-                    provider=provider, dimension="usability", state="usable",
-                    source="legacy_explicit_fixture", scope=scope,
-                    observed_at=repository.authority_now(), ttl_seconds=60,
-                ))
+                if registered_egress is None:
+                    service.record_observation(ProviderObservation(
+                        provider=provider,
+                        dimension="reachability",
+                        state="unreachable",
+                        source="legacy_observed_failure",
+                        scope=scope,
+                        observed_at=repository.authority_now(),
+                        ttl_seconds=60,
+                    ))
                 if health_tracker is not None:
                     cooldown, _ = health_tracker.normalized_observation(provider)
                     service.record_observation(ProviderObservation(
@@ -605,14 +603,56 @@ class ProviderReadinessService:
         self, spec: ProviderRegistrationSpec, *, adapter=None,
     ) -> RegistrationDecision:
         del adapter  # adapters are executable objects, never evidence authorities
+        account_spend = self.repository.spend_state(
+            spec.provider,
+            account_fingerprint=(
+                spec.account_fingerprint or "missing-account"
+            ),
+        )
+        now = self.repository.authority_now()
+        period_started_at = spec.budget_period_started_at
+        next_reset_at = spec.budget_next_reset_at or spec.budget_reset_at
+        for name, value in (
+            ("budget_period_started_at", period_started_at),
+            ("budget_next_reset_at", next_reset_at),
+        ):
+            if value is not None and value.tzinfo is None:
+                raise ValueError(f"{name} must be timezone aware")
+        if period_started_at is not None and period_started_at > now:
+            raise ValueError("budget period start cannot be in the future")
+        if (
+            period_started_at is not None
+            and now - period_started_at > timedelta(days=370)
+        ):
+            raise ValueError("budget period start is implausibly old")
+        if next_reset_at is not None and next_reset_at <= now:
+            raise ValueError("budget next reset must be in the future")
+        if (
+            next_reset_at is not None
+            and next_reset_at - now > timedelta(days=370)
+        ):
+            raise ValueError("budget next reset is implausibly distant")
+        if (
+            period_started_at is not None
+            and next_reset_at is not None
+            and period_started_at >= next_reset_at
+        ):
+            raise ValueError("budget period boundaries are inverted")
         required_attestation_fields = {
+            "provider",
             "release",
+            "adapter_module",
             "adapter_code_sha256",
+            "shared_adapter_sha256",
             "fixture_manifest_sha256",
+            "fixture_case_digest",
             "request_contract",
             "response_contract",
             "provider_contract",
         }
+        from argus.providers.fixture_attestation import (
+            verify_fixture_attestation,
+        )
         compatibility = bool(
             spec.release_revision and spec.contract_version
             and spec.fixture_evidence_ref
@@ -624,6 +664,10 @@ class ProviderReadinessService:
                 spec.fixture_attestation.get("provider_contract")
                 == spec.contract_version
             )
+            and verify_fixture_attestation(
+                spec.fixture_attestation,
+                evidence_ref=spec.fixture_evidence_ref,
+            )
         )
         decision = self.evaluate_registration(spec.provider, RegistrationInputs(
             enabled=spec.enabled,
@@ -633,6 +677,12 @@ class ProviderReadinessService:
             durable_spend_repository=spec.durable_spend_repository,
             compatible_fixture_release=compatibility,
         ))
+        previous_registration = self.repository.get_registration(spec.provider) or {}
+        authority_changed = (
+            previous_registration.get("fixture_evidence_ref")
+            != spec.fixture_evidence_ref
+            or previous_registration.get("registered") != decision.registered
+        )
         scopes = tuple(ReadinessScope(
             egress=spec.egress, machine=spec.machine,
             request_class=request_class,
@@ -657,24 +707,43 @@ class ProviderReadinessService:
             "scopes": [item.as_dict() for item in scopes],
             "fixture_evidence_ref": spec.fixture_evidence_ref,
             "fixture_attestation": dict(spec.fixture_attestation or {}),
-            "budget_reset_at": (
-                spec.budget_reset_at.astimezone(UTC).isoformat()
-                if spec.budget_reset_at else None
+            "budget_period_started_at": (
+                period_started_at.astimezone(UTC).isoformat()
+                if period_started_at else None
+            ),
+            "budget_next_reset_at": (
+                next_reset_at.astimezone(UTC).isoformat()
+                if next_reset_at else None
             ),
         })
-        now = self.repository.authority_now()
+        configuration_issue = next(
+            (
+                issue for issue in decision.issues
+                if issue in _DIMENSIONS["configuration"]
+            ),
+            None,
+        )
         observations = (
             ("registration", "registered" if decision.registered else "not_registered",
              "registry", None),
-            ("configuration", "configured" if not decision.issues else decision.issues[0],
+            ("configuration", configuration_issue or "configured",
              "registry", None),
             ("compatibility", "compatible" if compatibility else "unknown",
              "fixture_contract", spec.fixture_evidence_ref),
             ("reachability", "unknown", "topology_registry", None),
             ("usability", "unknown", "fixture_contract", None),
             ("cooldown", "clear", "registry", None),
-            ("spend", "not_applicable" if PROVIDER_TIERS[spec.provider] == 0
-             else "available" if decision.registered else "unknown", "registry", None),
+            (
+                "spend",
+                "not_applicable" if PROVIDER_TIERS[spec.provider] == 0
+                else account_spend
+                if account_spend in {"exhausted", "uncertain"}
+                else "available" if decision.registered else "unknown",
+                "account_spend_authority"
+                if account_spend in {"exhausted", "uncertain"}
+                else "registry",
+                None,
+            ),
         )
         for exact_scope in scopes:
             for dimension, state, source, receipt in observations:
@@ -689,7 +758,12 @@ class ProviderReadinessService:
                             spec.provider, exact_scope, rows, folded_at, generation
                         ).as_dict()
                     ),
-                    replace_existing=False,
+                    replace_existing=(
+                        authority_changed
+                        and dimension in {
+                            "registration", "configuration", "compatibility"
+                        }
+                    ),
                 )
                 ProviderReadinessSnapshot.from_dict(payload)
         return decision
@@ -794,6 +868,7 @@ class ProviderReadinessService:
     def authorize_execution(
         self, context: ExecutionContext, *, owner: str,
         conservative_charge: float, execution_timeout_seconds: int,
+        _probe_authorization: ProbeAuthorization | None = None,
     ) -> ExecutionAuthorization:
         assert context.scope is not None
         result = self.repository.authorize_execution(
@@ -801,6 +876,7 @@ class ProviderReadinessService:
             conservative_charge=conservative_charge,
             execution_timeout_seconds=execution_timeout_seconds,
             decide=self._decision_from_payload,
+            probe_authorization=_probe_authorization,
         )
         return ExecutionAuthorization(
             allowed=result["allowed"], decision=result["decision"],
@@ -814,6 +890,8 @@ class ProviderReadinessService:
     def complete_execution(
         self, authorization: ExecutionAuthorization, *, failure,
         actual_charge: float | None, charge_known: bool, evidence_ref: str,
+        termination_known: bool = True,
+        probe_idempotency_key: str | None = None,
     ) -> None:
         if not authorization.allowed or not authorization.fencing_token:
             raise ValueError("durable execution authorization is required")
@@ -823,7 +901,9 @@ class ProviderReadinessService:
             self.repository.settle_execution(
                 authorization=authorization, category=category or "success",
                 actual_charge=actual_charge, charge_known=charge_known,
+                termination_known=termination_known,
                 evidence_ref=evidence_ref,
+                probe_idempotency_key=probe_idempotency_key,
                 fold=lambda rows, now, generation: self._fold(
                     authorization.provider, authorization.scope, rows, now, generation
                 ).as_dict(),
@@ -939,8 +1019,10 @@ class ProviderReadinessService:
             return ExecutionDecision(
                 "compatibility_unproven", compatibility, ("compatibility",)
             )
-        if reachability != "reachable":
+        if reachability == "unreachable":
             return ExecutionDecision("unavailable", "egress_unreachable", ("reachability",))
+        if usability == "unusable":
+            return ExecutionDecision("unavailable", "provider_unusable", ("usability",))
         if cooldown != "clear":
             return ExecutionDecision("cooldown", cooldown, ("cooldown",))
         if spend in {"exhausted", "uncertain", "policy_denied", "unknown"}:
@@ -951,7 +1033,7 @@ class ProviderReadinessService:
         registration = self.repository.get_registration(provider) or {}
         egress = (registration.get("scope") or {}).get("egress", "local")
         snapshot = self.snapshot(provider, egress=egress)
-        return egress if snapshot.reachability == "reachable" else None
+        return egress if snapshot.reachability != "unreachable" else None
 
     def execution_scope(
         self, provider: ProviderName, *, egress: str, request_class: str,
@@ -1065,11 +1147,48 @@ class ProviderReadinessService:
             and authorization.durable_receipt
             and (
                 probe_kind == "no_money_quota"
-                or (probe_kind == "billable_search" and authorization.spend_reserved)
+                or (
+                    probe_kind == "billable_search"
+                    and authorization.conservative_charge is not None
+                    and math.isfinite(authorization.conservative_charge)
+                    and authorization.conservative_charge > 0
+                )
             )
         )
         if not allowed:
             return ProbeDecision(False, "probe_denied")
+        if probe_kind == "billable_search":
+            scope = self.execution_scope(
+                provider, egress=self.best_egress(provider) or "local",
+                request_class="discovery",
+            )
+            execution = self.authorize_execution(
+                ExecutionContext(
+                    provider=provider,
+                    tier=PROVIDER_TIERS[provider],
+                    plan_providers=(provider,),
+                    free_only=False,
+                    caller_tier_cap=PROVIDER_TIERS[provider],
+                    scope=scope,
+                    plan_id=f"probe:{authorization.idempotency_key}",
+                    caller_identity="explicit_validation",
+                    idempotency_key=str(authorization.idempotency_key),
+                ),
+                owner=f"probe:{authorization.idempotency_key}",
+                conservative_charge=float(authorization.conservative_charge),
+                execution_timeout_seconds=60,
+                _probe_authorization=authorization,
+            )
+            if not execution.allowed:
+                return ProbeDecision(False, execution.decision.reason)
+            return ProbeDecision(
+                True,
+                "explicit_probe_authorized",
+                self.repository.probe_authorization_id(
+                    str(authorization.idempotency_key)
+                ),
+                execution.attempt_id,
+            )
         authorization_id = self.repository.authorize_probe_once(
             provider=provider,
             probe_kind=probe_kind,
@@ -1089,25 +1208,27 @@ class ProviderReadinessService:
             return ProbeDecision(False, "fixture_attestation_missing")
         attestation = registration.get("fixture_attestation") or {}
         if not attestation or not {
+            "provider",
             "release",
+            "adapter_module",
             "adapter_code_sha256",
+            "shared_adapter_sha256",
             "fixture_manifest_sha256",
+            "fixture_case_digest",
             "request_contract",
             "response_contract",
             "provider_contract",
         } <= set(attestation):
             return ProbeDecision(False, "fixture_attestation_incomplete")
-        # Canonical no-network fixture round trip: validate the exact request
-        # and normalized response contracts bound by the stored attestation.
-        request = {"query": "argus-fixture", "max_results": 1}
-        response = {
-            "provider": provider.value,
-            "results": [],
-            "contract": "provider-batch-v1",
-        }
-        if request["max_results"] != 1 or response["provider"] != provider.value:
+        from argus.providers.fixture_attestation import (
+            verify_fixture_attestation,
+        )
+        if not verify_fixture_attestation(
+            attestation,
+            evidence_ref=evidence_ref,
+        ):
             return ProbeDecision(False, "fixture_contract_failed")
-        return ProbeDecision(True, "fixture_round_trip_verified", evidence_ref)
+        return ProbeDecision(True, "fixture_cases_verified", evidence_ref)
 
     @staticmethod
     def validate_scope_manifest(*, egresses, request_classes):

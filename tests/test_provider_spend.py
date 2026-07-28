@@ -178,7 +178,7 @@ def test_operator_resolution_is_idempotent_audited_and_conflict_checked(tmp_path
 
     first = repository.resolve(
         reservation.attempt_id,
-        actual_charge=0.01,
+        actual_charge=0.0,
         outcome="confirmed_not_consumed",
         source="operator",
         actor_identity="admin",
@@ -186,7 +186,7 @@ def test_operator_resolution_is_idempotent_audited_and_conflict_checked(tmp_path
     )
     second = repository.resolve(
         reservation.attempt_id,
-        actual_charge=0.01,
+        actual_charge=0.0,
         outcome="confirmed_not_consumed",
         source="operator",
         actor_identity="admin",
@@ -195,6 +195,7 @@ def test_operator_resolution_is_idempotent_audited_and_conflict_checked(tmp_path
 
     assert second == first
     assert first.status == "resolved"
+    assert first.actual_charge == 0.0
     with repository.session_factory() as session:
         assert session.scalar(select(func.count()).select_from(SpendAuditRow)) == 2
     with pytest.raises(SpendConflictError):
@@ -256,6 +257,38 @@ def test_authoritative_reconciliation_records_snapshot_freshness_and_is_idempote
         "related_attempt_id": reservation.attempt_id,
         "authoritative_charge": 1.0,
     }
+
+
+def test_zero_authoritative_charge_is_valid_provider_evidence(tmp_path):
+    repository = _repository(tmp_path)
+    reservation = repository.reserve(
+        provider=ProviderName.BRAVE,
+        conservative_charge=1.0,
+        budget_limit=10.0,
+        caller_identity="maya",
+        caller_label="",
+        idempotency_key="zero-charge-snapshot-attempt",
+    )
+    snapshot = repository.record_provider_snapshot(
+        provider=ProviderName.BRAVE,
+        balance=10.0,
+        observed_at=datetime.now(tz=timezone.utc),
+        actor_identity="provider:brave",
+        idempotency_key="zero-charge-snapshot",
+        provider_reference="brave-zero-charge",
+        related_attempt_id=reservation.attempt_id,
+        authoritative_charge=0.0,
+    )
+    resolved = repository.resolve(
+        reservation.attempt_id,
+        actual_charge=0.0,
+        outcome="confirmed_not_consumed",
+        source="provider",
+        actor_identity="provider:brave",
+        idempotency_key="zero-charge-resolution",
+        provider_snapshot_id=snapshot.snapshot_id,
+    )
+    assert resolved.actual_charge == 0.0
 
 def test_authoritative_charge_overrun_increases_obligation_and_is_audited(tmp_path):
     from argus.persistence.provider_spend import SpendAuditRow

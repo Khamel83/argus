@@ -295,7 +295,7 @@ def test_live_probe_authorization_is_durable_bound_and_exactly_once(tmp_path):
         provider=ProviderName.BRAVE,
         idempotency_key="probe:brave:1",
         durable_receipt="receipt:brave:1",
-        spend_reserved=True,
+        conservative_charge=0.5,
     )
 
     decision = service.authorize_probe(
@@ -307,14 +307,14 @@ def test_live_probe_authorization_is_durable_bound_and_exactly_once(tmp_path):
         provider=ProviderName.BRAVE,
         idempotency_key="probe:brave:1",
         durable_receipt="receipt:brave:1",
-        spend_reserved=True,
+        attempt_id=decision.attempt_id,
     )
     with pytest.raises(ReadinessConflict, match="already consumed"):
         repository.consume_probe_once(
             provider=ProviderName.BRAVE,
             idempotency_key="probe:brave:1",
             durable_receipt="receipt:brave:1",
-            spend_reserved=True,
+            attempt_id=decision.attempt_id,
         )
 
 
@@ -573,9 +573,33 @@ def _registration(
     durable_spend: bool = True,
     release: str | None = "release-1",
     contract: str | None = "contract-1",
-    fixture: str | None = "attestation:manifest:v1",
+    fixture: str | None = "runtime",
 ):
     from argus.broker.readiness import ProviderRegistrationSpec
+    from argus.providers.fixture_attestation import build_fixture_attestation
+
+    if fixture == "runtime" and release and contract:
+        fixture, fixture_attestation = build_fixture_attestation(
+            provider,
+            release=release,
+            provider_contract=contract,
+        )
+    else:
+        fixture_attestation = (
+            {
+                "provider": provider.value,
+                "release": release,
+                "adapter_module": f"argus.providers.{provider.value}",
+                "adapter_code_sha256": "adapter-sha",
+                "shared_adapter_sha256": "shared-sha",
+                "fixture_manifest_sha256": "manifest-sha",
+                "fixture_case_digest": "cases-sha",
+                "request_contract": "search-request-v1",
+                "response_contract": "provider-batch-v1",
+                "provider_contract": contract,
+            }
+            if fixture and release and contract else None
+        )
 
     return ProviderRegistrationSpec(
         provider=provider,
@@ -588,17 +612,7 @@ def _registration(
         release_revision=release,
         contract_version=contract,
         fixture_evidence_ref=fixture,
-        fixture_attestation=(
-            {
-                "release": release,
-                "adapter_code_sha256": "adapter-sha",
-                "fixture_manifest_sha256": "manifest-sha",
-                "request_contract": "search-request-v1",
-                "response_contract": "provider-batch-v1",
-                "provider_contract": contract,
-            }
-            if fixture and release and contract else None
-        ),
+        fixture_attestation=fixture_attestation,
     )
 
 
@@ -682,7 +696,474 @@ def test_startup_materializes_all_search_mode_scopes(tmp_path):
         rendered = service.snapshot_for_scope(ProviderName.BRAVE, scope)
         assert rendered.compatibility == "compatible"
         assert rendered.reachability == "unknown"
-        assert rendered.execution_decision.code == "unavailable"
+        assert rendered.usability == "unknown"
+        assert rendered.healthy is False
+        assert rendered.execution_decision.code == "eligible"
+
+
+def test_different_modes_share_one_provider_account_budget_lock(tmp_path):
+    from argus.broker.readiness import ExecutionContext
+    from argus.persistence.readiness import create_readiness_repository
+
+    url = f"sqlite:///{tmp_path / 'cross-mode-budget.db'}"
+    first = __import__(
+        "argus.broker.readiness", fromlist=["ProviderReadinessService"]
+    ).ProviderReadinessService(repository=create_readiness_repository(url))
+    first.register_provider(_registration(budget=1.5))
+    second = __import__(
+        "argus.broker.readiness", fromlist=["ProviderReadinessService"]
+    ).ProviderReadinessService(repository=create_readiness_repository(url))
+    barrier = Barrier(2)
+    results = []
+
+    def authorize(service, mode, owner):
+        barrier.wait()
+        results.append(service.authorize_execution(
+            ExecutionContext(
+                provider=ProviderName.BRAVE,
+                tier=1,
+                plan_providers=(ProviderName.BRAVE,),
+                free_only=False,
+                caller_tier_cap=1,
+                scope=_exact_scope(request_class=mode),
+                plan_id=f"plan:{mode}",
+                caller_identity="test",
+                idempotency_key=f"request:{mode}",
+            ),
+            owner=owner,
+            conservative_charge=1.0,
+            execution_timeout_seconds=30,
+        ))
+
+    threads = [
+        Thread(target=authorize, args=(first, "discovery", "worker-1")),
+        Thread(target=authorize, args=(second, "research", "worker-2")),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len([result for result in results if result.allowed]) == 1
+    assert first.repository.paid_attempt_count(ProviderName.BRAVE) == 1
+
+
+def test_terminal_spend_survives_credential_rotation_for_account_all_modes(
+    tmp_path,
+):
+    service, _ = _service(tmp_path)
+    service.register_provider(_registration(provider=ProviderName.SERPER))
+    service.repository.record_terminal_exhaustion(
+        provider=ProviderName.SERPER,
+        account_fingerprint="account:v1",
+        recurring=False,
+        reset_at=None,
+        evidence_ref="provider:terminal:v1",
+    )
+
+    service.register_provider(_registration(
+        provider=ProviderName.SERPER,
+        credential="secret-version:v2",
+        release="release-2",
+    ))
+
+    for mode in ("discovery", "research", "recovery", "grounding"):
+        scope = _exact_scope(
+            provider=ProviderName.SERPER,
+            request_class=mode,
+            release="release-2",
+            credential="secret-version:v2",
+        )
+        assert service.snapshot_for_scope(ProviderName.SERPER, scope).spend == (
+            "exhausted"
+        )
+
+    service.register_provider(_registration(
+        provider=ProviderName.SERPER,
+        account="account:v2",
+        credential="secret-version:v3",
+        release="release-3",
+    ))
+    assert service.snapshot(
+        ProviderName.SERPER, request_class="discovery"
+    ).spend == "available"
+
+
+def test_completion_materializes_evidence_on_authorized_mode_only(tmp_path):
+    from argus.broker.readiness import ExecutionContext
+
+    service, _ = _service(tmp_path)
+    service.register_provider(_registration())
+    authorization = service.authorize_execution(
+        ExecutionContext(
+            provider=ProviderName.BRAVE,
+            tier=1,
+            plan_providers=(ProviderName.BRAVE,),
+            free_only=False,
+            caller_tier_cap=1,
+            scope=_exact_scope(request_class="research"),
+            plan_id="plan:research",
+            caller_identity="test",
+            idempotency_key="request:research",
+        ),
+        owner="research-worker",
+        conservative_charge=1.0,
+        execution_timeout_seconds=30,
+    )
+    assert authorization.allowed
+    service.complete_execution(
+        authorization,
+        failure=None,
+        actual_charge=0.0,
+        charge_known=True,
+        evidence_ref="execution:research",
+    )
+
+    research = service.snapshot_for_scope(
+        ProviderName.BRAVE, _exact_scope(request_class="research")
+    )
+    discovery = service.snapshot_for_scope(
+        ProviderName.BRAVE, _exact_scope(request_class="discovery")
+    )
+    assert "execution:research" in research.evidence_receipts
+    assert "execution:research" not in discovery.evidence_receipts
+
+
+def test_fixture_attestation_change_replaces_compatibility_evidence(tmp_path):
+    service, _ = _service(tmp_path)
+    service.register_provider(_registration())
+    assert service.run_fixture_probe(ProviderName.BRAVE).allowed
+
+    changed = _registration(fixture="attestation:manifest:v2")
+    object.__setattr__(changed, "fixture_attestation", {
+        **dict(changed.fixture_attestation or {}),
+        "fixture_case_digest": "cases-v2",
+        "provider_contract": "wrong-contract",
+    })
+    service.register_provider(changed)
+
+    snapshot = service.snapshot(
+        ProviderName.BRAVE,
+    )
+    assert snapshot.compatibility == "unknown"
+    assert snapshot.registration == "not_registered"
+
+
+def test_cancellation_is_termination_indeterminate_even_for_free_provider(tmp_path):
+    from argus.broker.readiness import ExecutionContext
+
+    service, repository = _service(tmp_path)
+    service.register_provider(_registration(
+        provider=ProviderName.YAHOO,
+        account="not-applicable-account",
+        budget=None,
+    ))
+    context = ExecutionContext(
+        provider=ProviderName.YAHOO,
+        tier=0,
+        plan_providers=(ProviderName.YAHOO,),
+        free_only=False,
+        caller_tier_cap=0,
+        scope=_exact_scope(
+            provider=ProviderName.YAHOO,
+            account="not-applicable-account",
+        ),
+        plan_id="plan:yahoo",
+        caller_identity="test",
+        idempotency_key="request:yahoo:1",
+    )
+    authorization = service.authorize_execution(
+        context,
+        owner="worker",
+        conservative_charge=0.0,
+        execution_timeout_seconds=30,
+    )
+    assert authorization.allowed
+    service.complete_execution(
+        authorization,
+        failure=None,
+        actual_charge=0.0,
+        charge_known=True,
+        termination_known=False,
+        evidence_ref="cancelled:yahoo",
+    )
+    assert repository.latest_lease(ProviderName.YAHOO).outcome == (
+        "termination_indeterminate"
+    )
+    replacement = service.authorize_execution(
+        ExecutionContext(**{
+            **context.as_dict(),
+            "idempotency_key": "request:yahoo:2",
+        }),
+        owner="worker-2",
+        conservative_charge=0.0,
+        execution_timeout_seconds=30,
+    )
+    assert replacement.allowed is False
+
+
+def test_active_receipts_are_protected_before_overflow_compaction(tmp_path):
+    from sqlalchemy import select
+    from argus.persistence.readiness import ProviderReadinessEvidenceRefRow
+
+    service, repository = _service(tmp_path)
+    service.register_provider(_registration())
+    dimensions = (
+        ("registration", "registered"),
+        ("configuration", "configured"),
+        ("compatibility", "compatible"),
+        ("reachability", "reachable"),
+        ("usability", "usable"),
+        ("cooldown", "clear"),
+        ("spend", "available"),
+    )
+    for mode_index in range(5):
+        for dimension, state in dimensions:
+            service.record_observation(_observation(
+                ProviderName.BRAVE,
+                dimension,
+                state,
+                receipt=f"active:{mode_index}:{dimension}",
+                request_class=f"mode-{mode_index}",
+                ttl_seconds=None,
+            ))
+
+    with repository.session_factory() as session:
+        active = session.scalar(select(ProviderReadinessEvidenceRefRow).where(
+            ProviderReadinessEvidenceRefRow.provider == "brave",
+            ProviderReadinessEvidenceRefRow.evidence_ref
+            == "active:0:registration",
+        ))
+        assert active is not None
+        assert active.protected is True
+    assert any(
+        row.dimension == "configuration" and row.state == "evidence_overflow"
+        for row in repository.observations(ProviderName.BRAVE)
+    )
+    stale_scope = _exact_scope(request_class="mode-0")
+    failed_closed = service.snapshot_for_scope(
+        ProviderName.BRAVE, stale_scope
+    )
+    assert failed_closed.configuration.issues == ("evidence_overflow",)
+    assert failed_closed.execution_decision.code == "unavailable"
+
+
+def test_next_reset_does_not_exclude_current_period_spend(tmp_path):
+    from dataclasses import replace
+    from argus.broker.readiness import ExecutionContext
+
+    service, _ = _service(tmp_path)
+    now = service.repository.authority_now()
+    service.register_provider(replace(
+        _registration(budget=2.0),
+        budget_period_started_at=now - timedelta(days=1),
+        budget_next_reset_at=now + timedelta(days=29),
+    ))
+    first = service.authorize_execution(
+        ExecutionContext(
+            provider=ProviderName.BRAVE,
+            tier=1,
+            plan_providers=(ProviderName.BRAVE,),
+            free_only=False,
+            caller_tier_cap=1,
+            scope=_exact_scope(),
+            plan_id="period-plan",
+            caller_identity="test",
+            idempotency_key="period-request-1",
+        ),
+        owner="worker-1",
+        conservative_charge=1.5,
+        execution_timeout_seconds=30,
+    )
+    assert first.allowed
+    service.complete_execution(
+        first,
+        failure=None,
+        actual_charge=1.5,
+        charge_known=True,
+        evidence_ref="period-charge",
+    )
+    denied = service.authorize_execution(
+        ExecutionContext(
+            provider=ProviderName.BRAVE,
+            tier=1,
+            plan_providers=(ProviderName.BRAVE,),
+            free_only=False,
+            caller_tier_cap=1,
+            scope=_exact_scope(request_class="research"),
+            plan_id="period-plan-research",
+            caller_identity="test",
+            idempotency_key="period-request-2",
+        ),
+        owner="worker-2",
+        conservative_charge=1.0,
+        execution_timeout_seconds=30,
+    )
+    assert denied.allowed is False
+    assert denied.decision.reason == "exhausted"
+
+
+def test_paid_probe_owns_exact_attempt_and_final_result_receipt(tmp_path):
+    from argus.broker.readiness import ProbeAuthorization
+    from argus.persistence.provider_spend import (
+        ProviderSpendRepository,
+        SpendAuditRow,
+    )
+    from sqlalchemy import select
+
+    service, repository = _service(tmp_path)
+    service.register_provider(_registration(budget=5.0))
+    decision = service.authorize_probe(
+        ProviderName.BRAVE,
+        "billable_search",
+        ProbeAuthorization(
+            workflow="explicit_validation",
+            provider=ProviderName.BRAVE,
+            idempotency_key="probe:paid:1",
+            durable_receipt="probe:permission:1",
+            conservative_charge=0.5,
+        ),
+    )
+    assert decision.allowed
+    assert decision.attempt_id
+    attempt = ProviderSpendRepository(repository.session_factory).get_attempt(
+        decision.attempt_id
+    )
+    assert attempt.status == "reserved"
+
+    authorization = repository.consume_probe_once(
+        provider=ProviderName.BRAVE,
+        idempotency_key="probe:paid:1",
+        durable_receipt="probe:permission:1",
+        attempt_id=decision.attempt_id,
+    )
+    assert authorization.attempt_id == decision.attempt_id
+    service.complete_execution(
+        authorization,
+        failure=None,
+        actual_charge=0.0,
+        charge_known=True,
+        evidence_ref="probe:result:1",
+        probe_idempotency_key="probe:paid:1",
+    )
+
+    with repository.session_factory() as session:
+        result = session.scalar(select(SpendAuditRow).where(
+            SpendAuditRow.action == "probe_result",
+            SpendAuditRow.attempt_id == decision.attempt_id,
+        ))
+        assert result is not None
+        assert "success" in result.after_json
+    replay = service.authorize_probe(
+        ProviderName.BRAVE,
+        "billable_search",
+        ProbeAuthorization(
+            workflow="explicit_validation",
+            provider=ProviderName.BRAVE,
+            idempotency_key="probe:paid:1",
+            durable_receipt="probe:permission:1",
+            conservative_charge=0.5,
+        ),
+    )
+    assert replay.allowed is False
+    assert replay.reason == "probe_already_consumed"
+
+
+@pytest.mark.parametrize(
+    "provider",
+    tuple(
+        provider
+        for provider in ProviderName
+        if provider is not ProviderName.CACHE
+    ),
+)
+def test_fixture_attestation_executes_all_cases_and_recomputes_content(
+    provider,
+):
+    from argus.providers.fixture_attestation import (
+        build_fixture_attestation,
+        run_fixture_cases,
+        verify_fixture_attestation,
+    )
+
+    evidence_ref, attestation = build_fixture_attestation(
+        provider,
+        release="fixture-test-release",
+        provider_contract="fixture-test-contract",
+    )
+    assert run_fixture_cases(provider) == attestation["fixture_case_digest"]
+    assert verify_fixture_attestation(
+        attestation,
+        evidence_ref=evidence_ref,
+    )
+    assert not verify_fixture_attestation(
+        {**attestation, "shared_adapter_sha256": "tampered"},
+        evidence_ref=evidence_ref,
+    )
+
+
+def test_authoritative_zero_reconciliation_clears_terminal_account_all_modes(
+    tmp_path,
+):
+    from argus.persistence.provider_spend import ProviderSpendRepository
+
+    service, repository = _service(tmp_path)
+    service.register_provider(_registration(provider=ProviderName.SERPER))
+    repository.record_terminal_exhaustion(
+        provider=ProviderName.SERPER,
+        account_fingerprint="account:v1",
+        recurring=False,
+        reset_at=None,
+        evidence_ref="terminal:serper",
+    )
+    spend = ProviderSpendRepository(repository.session_factory)
+    attempt = spend.reserve(
+        provider=ProviderName.SERPER,
+        conservative_charge=1.0,
+        budget_limit=10.0,
+        caller_identity="operator",
+        caller_label="reconciliation",
+        idempotency_key="reconcile-terminal-attempt",
+    )
+    spend.resolve(
+        attempt.attempt_id,
+        actual_charge=0.0,
+        outcome="confirmed_not_consumed",
+        source="operator",
+        actor_identity="operator",
+        idempotency_key="reconcile-terminal-resolution",
+    )
+
+    for mode in ("discovery", "research", "recovery", "grounding"):
+        assert service.snapshot(
+            ProviderName.SERPER, request_class=mode
+        ).spend == "available"
+
+
+@pytest.mark.parametrize(
+    ("start_delta", "reset_delta"),
+    [
+        (timedelta(seconds=1), timedelta(days=30)),
+        (timedelta(days=-1), timedelta(seconds=-1)),
+        (timedelta(days=-400), timedelta(days=30)),
+        (timedelta(days=-1), timedelta(days=400)),
+    ],
+)
+def test_budget_period_boundaries_use_database_time_and_fail_implausible(
+    tmp_path,
+    start_delta,
+    reset_delta,
+):
+    from dataclasses import replace
+
+    service, _ = _service(tmp_path)
+    now = service.repository.authority_now()
+    with pytest.raises(ValueError, match="budget"):
+        service.register_provider(replace(
+            _registration(),
+            budget_period_started_at=now + start_delta,
+            budget_next_reset_at=now + reset_delta,
+        ))
 
 
 def test_protected_evidence_overflow_is_bounded_and_unavailable(tmp_path):

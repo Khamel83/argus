@@ -346,8 +346,8 @@ class ProviderSpendRepository:
         outcome: str,
         fault_hook: Callable[[str], None] | None = None,
     ) -> SpendAttempt:
-        if not math.isfinite(actual_charge) or actual_charge <= 0:
-            raise ValueError("actual charge must be finite and positive")
+        if not math.isfinite(actual_charge) or actual_charge < 0:
+            raise ValueError("actual charge must be finite and non-negative")
         payload = {
             "attempt_id": attempt_id,
             "actual_charge": actual_charge,
@@ -405,8 +405,8 @@ class ProviderSpendRepository:
     ) -> SpendAttempt:
         if source not in {"operator", "provider"}:
             raise ValueError("resolution source must be operator or provider")
-        if not math.isfinite(actual_charge) or actual_charge <= 0:
-            raise ValueError("actual charge must be finite and positive")
+        if not math.isfinite(actual_charge) or actual_charge < 0:
+            raise ValueError("actual charge must be finite and non-negative")
         payload = {
             "attempt_id": attempt_id,
             "actual_charge": actual_charge,
@@ -511,8 +511,10 @@ class ProviderSpendRepository:
             raise ValueError("provider reference is required")
         if not math.isfinite(balance) or balance < 0:
             raise ValueError("provider balance must be finite and non-negative")
-        if not math.isfinite(authoritative_charge) or authoritative_charge <= 0:
-            raise ValueError("authoritative charge must be finite and positive")
+        if not math.isfinite(authoritative_charge) or authoritative_charge < 0:
+            raise ValueError(
+                "authoritative charge must be finite and non-negative"
+            )
         payload = {
             "provider": provider.value,
             "balance": balance,
@@ -780,8 +782,11 @@ class ProviderSpendRepository:
             from sqlalchemy import text
 
             session.execute(
-                text("SELECT pg_advisory_xact_lock(hashtext(:provider))"),
-                {"provider": provider.value},
+                text(
+                    "SELECT pg_advisory_xact_lock("
+                    "hashtextextended(:provider_lock, 0))"
+                ),
+                {"provider_lock": f"provider-budget:{provider.value}"},
             )
         # Lock existing rows as an additional guard on databases that support
         # it. SQLite's BEGIN IMMEDIATE serializes the whole read/write section.

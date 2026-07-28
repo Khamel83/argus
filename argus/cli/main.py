@@ -801,6 +801,7 @@ def test_provider(
     """Smoke-test a single provider."""
     from argus.broker.router import create_broker
     from argus.broker.budgets import PROVIDER_TIERS
+    from argus.broker.execution import conservative_charge_estimate
     from argus.broker.readiness import ProbeAuthorization
     from argus.models import ProviderName, SearchMode, SearchQuery
 
@@ -821,11 +822,22 @@ def test_provider(
             f"(readiness={snapshot['state']})"
         )
         return
+    q = SearchQuery(
+        query=query,
+        mode=SearchMode.DISCOVERY,
+        max_results=3,
+        providers=[pname],
+        caller="local-cli",
+        user_visible=False,
+    )
     authorization = ProbeAuthorization(
         workflow="explicit_validation", provider=pname,
         named_quota="free_provider_request" if PROVIDER_TIERS[pname] == 0 else None,
         idempotency_key=idempotency_key, durable_receipt=durable_receipt,
-        spend_reserved=spend_reserved,
+        conservative_charge=(
+            conservative_charge_estimate(pname, q)
+            if PROVIDER_TIERS[pname] > 0 else None
+        ),
     )
     kind = "no_money_quota" if PROVIDER_TIERS[pname] == 0 else "billable_search"
     decision = broker.readiness_service.authorize_probe(pname, kind, authorization)
@@ -842,6 +854,7 @@ def test_provider(
             "caller_label": "cli-smoke", "probe_receipt": durable_receipt,
             "probe_idempotency_key": idempotency_key,
             "probe_provider": pname.value, "probe_no_fallback": True,
+            "probe_attempt_id": decision.attempt_id,
         },
     )
     response = _run(broker.search(q))

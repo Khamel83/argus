@@ -21,6 +21,7 @@ from argus.broker.readiness import (
 from argus.models import ProviderName
 from argus.persistence.readiness import create_readiness_repository
 from argus.persistence.provider_spend import ProviderSpendRepository
+from argus.providers.fixture_attestation import build_fixture_attestation
 from argus.recovery.operator import validate_scratch_database
 
 
@@ -41,25 +42,23 @@ def main() -> None:
     first = ProviderReadinessService(
         repository=create_readiness_repository(url, create_schema=False)
     )
+    fixture_ref, fixture_attestation = build_fixture_attestation(
+        ProviderName.SEARCHAPI,
+        release=scope.release_revision,
+        provider_contract=scope.contract_version,
+    )
     first.register_provider(ProviderRegistrationSpec(
         provider=ProviderName.SEARCHAPI,
         enabled=True,
         configuration_fingerprint=scope.configuration_fingerprint,
         credential_version_fingerprint=scope.credential_version_fingerprint,
         account_fingerprint=scope.account_fingerprint,
-        budget_limit=100.0,
+        budget_limit=1.5,
         durable_spend_repository=True,
         release_revision=scope.release_revision,
         contract_version=scope.contract_version,
-        fixture_evidence_ref=f"attestation:{suffix}",
-        fixture_attestation={
-            "release": scope.release_revision,
-            "adapter_code_sha256": f"adapter-{suffix}",
-            "fixture_manifest_sha256": f"manifest-{suffix}",
-            "request_contract": "search-request-v1",
-            "response_contract": "provider-batch-v1",
-            "provider_contract": scope.contract_version,
-        },
+        fixture_evidence_ref=fixture_ref,
+        fixture_attestation=fixture_attestation,
         machine=scope.machine,
     ))
     now = datetime.now(timezone.utc)
@@ -82,32 +81,41 @@ def main() -> None:
     second = ProviderReadinessService(
         repository=create_readiness_repository(url, create_schema=False)
     )
-    context = ExecutionContext(
-        provider=ProviderName.SEARCHAPI,
-        tier=3,
-        plan_providers=(ProviderName.SEARCHAPI,),
-        free_only=False,
-        caller_tier_cap=3,
-        scope=scope,
-        plan_id=f"pg-plan-{suffix}",
-        caller_identity="postgres-ci",
-        idempotency_key=f"pg-request-{suffix}",
-    )
+    contexts = {
+        mode: ExecutionContext(
+            provider=ProviderName.SEARCHAPI,
+            tier=3,
+            plan_providers=(ProviderName.SEARCHAPI,),
+            free_only=False,
+            caller_tier_cap=3,
+            scope=first.execution_scope(
+                ProviderName.SEARCHAPI,
+                egress="local",
+                request_class=mode,
+            ),
+            plan_id=f"pg-plan-{mode}-{suffix}",
+            caller_identity="postgres-ci",
+            idempotency_key=f"pg-request-{mode}-{suffix}",
+        )
+        for mode in ("discovery", "research")
+    }
     barrier = Barrier(2)
     results = []
 
-    def authorize(service: ProviderReadinessService, owner: str) -> None:
+    def authorize(
+        service: ProviderReadinessService, owner: str, mode: str,
+    ) -> None:
         barrier.wait()
         results.append(service.authorize_execution(
-            context,
+            contexts[mode],
             owner=owner,
             conservative_charge=1.0,
             execution_timeout_seconds=30,
         ))
 
     workers = [
-        Thread(target=authorize, args=(first, "pg-worker-1")),
-        Thread(target=authorize, args=(second, "pg-worker-2")),
+        Thread(target=authorize, args=(first, "pg-worker-1", "discovery")),
+        Thread(target=authorize, args=(second, "pg-worker-2", "research")),
     ]
     for worker in workers:
         worker.start()
@@ -116,31 +124,6 @@ def main() -> None:
     granted = [result for result in results if result.allowed]
     if len(granted) != 1:
         raise RuntimeError("PostgreSQL fencing did not grant exactly one attempt")
-
-    fixture_probe = first.authorize_probe(ProviderName.SEARCHAPI, "fixture")
-    if not fixture_probe.allowed:
-        raise RuntimeError("attested fixture round trip was not authorized")
-    probe_key = f"pg-probe-{suffix}"
-    probe_receipt = f"pg-probe-receipt-{suffix}"
-    probe = first.authorize_probe(
-        ProviderName.SEARCHAPI,
-        "billable_search",
-        ProbeAuthorization(
-            workflow="explicit_validation",
-            provider=ProviderName.SEARCHAPI,
-            idempotency_key=probe_key,
-            durable_receipt=probe_receipt,
-            spend_reserved=True,
-        ),
-    )
-    if not probe.allowed or not probe.authorization_id:
-        raise RuntimeError("durable live-probe authorization was not persisted")
-    first.repository.consume_probe_once(
-        provider=ProviderName.SEARCHAPI,
-        idempotency_key=probe_key,
-        durable_receipt=probe_receipt,
-        spend_reserved=True,
-    )
 
     first.complete_execution(
         granted[0],
@@ -157,9 +140,86 @@ def main() -> None:
         actor_identity="postgres-ci",
         idempotency_key=f"resolve-{suffix}",
     )
-    snapshot = first.snapshot_for_scope(ProviderName.SEARCHAPI, scope)
-    if snapshot.execution_decision.code != "eligible":
-        raise RuntimeError("materialized readiness snapshot was not recovered")
+    fixture_probe = first.authorize_probe(ProviderName.SEARCHAPI, "fixture")
+    if not fixture_probe.allowed:
+        raise RuntimeError("attested fixture round trip was not authorized")
+    probe_key = f"pg-probe-{suffix}"
+    probe_receipt = f"pg-probe-receipt-{suffix}"
+    probe = first.authorize_probe(
+        ProviderName.SEARCHAPI,
+        "billable_search",
+        ProbeAuthorization(
+            workflow="explicit_validation",
+            provider=ProviderName.SEARCHAPI,
+            idempotency_key=probe_key,
+            durable_receipt=probe_receipt,
+            conservative_charge=0.25,
+        ),
+    )
+    if not probe.allowed or not probe.authorization_id:
+        raise RuntimeError("durable live-probe authorization was not persisted")
+    probe_execution = first.repository.consume_probe_once(
+        provider=ProviderName.SEARCHAPI,
+        idempotency_key=probe_key,
+        durable_receipt=probe_receipt,
+        attempt_id=probe.attempt_id,
+    )
+    first.complete_execution(
+        probe_execution,
+        failure=None,
+        actual_charge=0.0,
+        charge_known=True,
+        evidence_ref=f"probe-result-{suffix}",
+        probe_idempotency_key=probe_key,
+    )
+
+    first.repository.record_terminal_exhaustion(
+        provider=ProviderName.SEARCHAPI,
+        account_fingerprint=scope.account_fingerprint,
+        recurring=False,
+        reset_at=None,
+        evidence_ref=f"terminal-{suffix}",
+    )
+    rotated_release = f"release-rotated-{suffix}"
+    rotated_fixture_ref, rotated_attestation = build_fixture_attestation(
+        ProviderName.SEARCHAPI,
+        release=rotated_release,
+        provider_contract=scope.contract_version,
+    )
+    first.register_provider(ProviderRegistrationSpec(
+        provider=ProviderName.SEARCHAPI,
+        enabled=True,
+        configuration_fingerprint=f"config-rotated-{suffix}",
+        credential_version_fingerprint=f"credential-rotated-{suffix}",
+        account_fingerprint=scope.account_fingerprint,
+        budget_limit=1.5,
+        durable_spend_repository=True,
+        release_revision=rotated_release,
+        contract_version=scope.contract_version,
+        fixture_evidence_ref=rotated_fixture_ref,
+        fixture_attestation=rotated_attestation,
+        machine=scope.machine,
+    ))
+    restarted = ProviderReadinessService(
+        repository=create_readiness_repository(url, create_schema=False)
+    )
+    terminal_modes = [
+        restarted.snapshot(
+            ProviderName.SEARCHAPI,
+            request_class=mode,
+        ).spend
+        for mode in ("discovery", "research", "recovery", "grounding")
+    ]
+    if terminal_modes != ["exhausted"] * 4:
+        raise RuntimeError(
+            "terminal account spend did not survive credential rotation"
+        )
+    snapshot = restarted.snapshot(
+        ProviderName.SEARCHAPI,
+        request_class="discovery",
+    )
+    if snapshot.execution_decision.code != "spend_blocked":
+        raise RuntimeError("materialized terminal snapshot was not recovered")
     print(json.dumps({
         "database": database,
         "granted": len(granted),
@@ -167,6 +227,7 @@ def main() -> None:
         "fixture_probe": fixture_probe.reason,
         "live_probe_consumed": True,
         "reconciled_attempt": True,
+        "terminal_modes_after_credential_rotation": terminal_modes,
         "snapshot_generation": snapshot.generation,
         "status": "ok",
     }, sort_keys=True))

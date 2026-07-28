@@ -179,9 +179,13 @@ async def test_paid_mcp_provider_test_defaults_to_fixture_without_broker_search(
 
 @pytest.mark.asyncio
 async def test_paid_mcp_live_probe_requires_reservation_and_has_no_fallback():
-    from argus.broker.readiness import ProviderReadinessService
+    from argus.broker.readiness import (
+        ProviderReadinessService,
+        ProviderRegistrationSpec,
+    )
     from argus.mcp.tools import test_provider_mcp
     from argus.persistence.readiness import create_readiness_repository
+    from argus.providers.fixture_attestation import build_fixture_attestation
 
     broker = MagicMock()
     broker.readiness_service = ProviderReadinessService(
@@ -200,6 +204,24 @@ async def test_paid_mcp_live_probe_requires_reservation_and_has_no_fallback():
     )
     assert "Live probe denied" in denied
     broker.search.assert_not_called()
+    fixture_ref, fixture_attestation = build_fixture_attestation(
+        ProviderName.BRAVE,
+        release="test-release",
+        provider_contract="test-contract",
+    )
+    broker.readiness_service.register_provider(ProviderRegistrationSpec(
+        provider=ProviderName.BRAVE,
+        enabled=True,
+        configuration_fingerprint="test-config",
+        credential_version_fingerprint="test-credential",
+        account_fingerprint="test-account",
+        budget_limit=10.0,
+        durable_spend_repository=True,
+        release_revision="test-release",
+        contract_version="test-contract",
+        fixture_evidence_ref=fixture_ref,
+        fixture_attestation=fixture_attestation,
+    ))
 
     await test_provider_mcp(
         broker,
@@ -209,10 +231,12 @@ async def test_paid_mcp_live_probe_requires_reservation_and_has_no_fallback():
         live=True,
         idempotency_key="mcp-smoke:2",
         durable_receipt="receipt:mcp-smoke:2",
-        spend_reserved=True,
+        spend_reserved=False,
     )
     query = broker.search.await_args.args[0]
     assert query.providers == [ProviderName.BRAVE]
+    attempt_id = query.metadata.pop("probe_attempt_id")
+    assert attempt_id
     assert query.metadata == {
         "caller_label": "smoke",
         "probe_receipt": "receipt:mcp-smoke:2",

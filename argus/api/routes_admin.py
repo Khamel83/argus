@@ -10,6 +10,7 @@ from argus.api.schemas import (
 )
 from argus.broker.router import SearchBroker
 from argus.broker.budgets import PROVIDER_TIERS
+from argus.broker.execution import conservative_charge_estimate
 from argus.broker.readiness import ProbeAuthorization
 from argus.models import ProviderName, SearchMode, SearchQuery
 from argus.workflows import WorkflowService
@@ -83,19 +84,30 @@ async def test_provider(
             "sample_results": [],
         }
 
+    probe_query = SearchQuery(
+        query=req.query,
+        mode=SearchMode.DISCOVERY,
+        max_results=3,
+        providers=[pname],
+        caller=getattr(request.state, "caller_identity", "admin"),
+        user_visible=False,
+    )
     authorization = ProbeAuthorization(
         workflow="explicit_validation", provider=pname,
         named_quota="free_provider_request" if PROVIDER_TIERS[pname] == 0 else None,
         idempotency_key=req.idempotency_key,
         durable_receipt=req.durable_receipt,
-        spend_reserved=req.spend_reserved,
+        conservative_charge=(
+            conservative_charge_estimate(pname, probe_query)
+            if PROVIDER_TIERS[pname] > 0 else None
+        ),
     )
     kind = "no_money_quota" if PROVIDER_TIERS[pname] == 0 else "billable_search"
     decision = broker.readiness_service.authorize_probe(pname, kind, authorization)
     if not decision.allowed:
         raise HTTPException(status_code=409, detail=decision.reason)
     query = SearchQuery(
-        query=req.query,
+        query=probe_query.query,
         mode=SearchMode.DISCOVERY,
         max_results=3,
         providers=[pname],
@@ -107,6 +119,7 @@ async def test_provider(
             "probe_idempotency_key": req.idempotency_key,
             "probe_provider": pname.value,
             "probe_no_fallback": True,
+            "probe_attempt_id": decision.attempt_id,
         },
     )
     response = await broker.search(query)

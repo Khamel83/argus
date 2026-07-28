@@ -255,6 +255,7 @@ async def test_provider_mcp(
         query: Test query
     """
     from argus.broker.budgets import PROVIDER_TIERS
+    from argus.broker.execution import conservative_charge_estimate
     from argus.broker.readiness import ProbeAuthorization
     from argus.models import ProviderName, SearchQuery
 
@@ -272,11 +273,21 @@ async def test_provider_mcp(
             f"{'fixture_verified' if decision.allowed else 'denied'}\n"
             f"Readiness: {readiness['state']}"
         )
+    probe_query = SearchQuery(
+        query=query,
+        max_results=3,
+        providers=[pname],
+        caller=caller_identity,
+        user_visible=False,
+    )
     authorization = ProbeAuthorization(
         workflow="explicit_validation", provider=pname,
         named_quota="free_provider_request" if PROVIDER_TIERS[pname] == 0 else None,
         idempotency_key=idempotency_key, durable_receipt=durable_receipt,
-        spend_reserved=spend_reserved,
+        conservative_charge=(
+            conservative_charge_estimate(pname, probe_query)
+            if PROVIDER_TIERS[pname] > 0 else None
+        ),
     )
     kind = "no_money_quota" if PROVIDER_TIERS[pname] == 0 else "billable_search"
     decision = broker.readiness_service.authorize_probe(pname, kind, authorization)
@@ -294,6 +305,7 @@ async def test_provider_mcp(
             "caller_label": caller_label, "probe_receipt": durable_receipt,
             "probe_idempotency_key": idempotency_key,
             "probe_provider": pname.value, "probe_no_fallback": True,
+            "probe_attempt_id": decision.attempt_id,
         },
     )
     response = await broker.search(q)
