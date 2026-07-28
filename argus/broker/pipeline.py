@@ -4,10 +4,11 @@ import uuid
 
 from argus.broker.cache import SearchCache
 from argus.broker.dedupe import dedupe_results
+from argus.broker.fusion import project_search_results
 from argus.broker.planning import RetrievalPlan
 from argus.broker.ranking import reciprocal_rank_fusion
 from argus.logging import get_logger
-from argus.models import SearchQuery, SearchResponse
+from argus.models import FusionOutcome, SearchQuery, SearchResponse, SearchResult
 from argus.persistence.db import SearchPersistenceGateway
 
 logger = get_logger("broker.pipeline")
@@ -22,6 +23,18 @@ class SearchResultPipeline:
     ):
         self._cache = cache
         self._persistence = persistence or SearchPersistenceGateway()
+
+    @staticmethod
+    def project_fusion_outcome(
+        outcome: FusionOutcome,
+        *,
+        include_attribution: bool = False,
+    ) -> list[SearchResult]:
+        """Render S4 evidence without activating cache or persistence publication."""
+        return project_search_results(
+            outcome,
+            include_attribution=include_attribution,
+        )
 
     def get_cached(
         self,
