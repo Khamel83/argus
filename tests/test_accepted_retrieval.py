@@ -28,11 +28,23 @@ from argus.persistence.search_ledger import create_search_ledger_repository
 NOW = datetime(2026, 7, 28, 12, tzinfo=timezone.utc)
 
 
-def _accepted(*, outcome: CacheOutcome = CacheOutcome.SUCCESS) -> AcceptedRetrieval:
+def _accepted(
+    *,
+    outcome: CacheOutcome = CacheOutcome.SUCCESS,
+    operation_id: str = "operation-origin",
+    cache_fingerprint: str = "cache-fingerprint",
+    execution_cohort: str = "free:en",
+    contributor_attempt_refs: tuple[str, ...] = (
+        "attempt-brave",
+        "attempt-duckduckgo",
+    ),
+    receipt_ref: str = "receipt-origin",
+    acceptance_fingerprint: str = "a" * 64,
+) -> AcceptedRetrieval:
     return AcceptedRetrieval(
-        operation_id="operation-origin",
-        cache_fingerprint="cache-fingerprint",
-        execution_cohort="free:en",
+        operation_id=operation_id,
+        cache_fingerprint=cache_fingerprint,
+        execution_cohort=execution_cohort,
         outcome=outcome,
         results=(
             {
@@ -41,12 +53,12 @@ def _accepted(*, outcome: CacheOutcome = CacheOutcome.SUCCESS) -> AcceptedRetrie
                 "providers": ("brave", "duckduckgo"),
             },
         ),
-        contributor_attempt_refs=("attempt-brave", "attempt-duckduckgo"),
+        contributor_attempt_refs=contributor_attempt_refs,
         origin_spend_usd="0.01",
         acceptance_receipt=AcceptanceReceipt(
-            receipt_ref="receipt-origin",
+            receipt_ref=receipt_ref,
             accepted_at=NOW,
-            acceptance_fingerprint="a" * 64,
+            acceptance_fingerprint=acceptance_fingerprint,
         ),
     )
 
@@ -197,6 +209,118 @@ def test_durable_acceptance_is_idempotent_and_precedes_cache_publication(tmp_pat
     assert first == second == accepted.acceptance_receipt
     assert evidence.accepted_count() == 1
     assert evidence.publication_count() == 1
+
+
+def test_postgresql_concurrent_acceptance_is_single_publish_and_atomic(
+    postgres_ledger_url,
+):
+    """Racing leaders must publish once and roll back every losing evidence row."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import func, select
+    from sqlalchemy.exc import IntegrityError
+
+    from argus.persistence.evidence import RetrievalEvidencePlanRow
+
+    config = Config("alembic.ini")
+    config.set_main_option(
+        "sqlalchemy.url",
+        postgres_ledger_url.replace("%", "%%"),
+    )
+    command.downgrade(config, "base")
+    command.upgrade(config, "head")
+    ledgers = [
+        create_search_ledger_repository(
+            postgres_ledger_url,
+            create_schema=False,
+        )
+        for _ in range(2)
+    ]
+    repositories = [
+        SqlAlchemyEvidenceRepository(
+            ledger.session_factory,
+            clock=lambda: NOW,
+        )
+        for ledger in ledgers
+    ]
+
+    identical = RetrievalEvidence.from_accepted(
+        _accepted(
+            operation_id="concurrent-identical",
+            cache_fingerprint="concurrent-identical-cache",
+            contributor_attempt_refs=(
+                "concurrent-identical-brave",
+                "concurrent-identical-duckduckgo",
+            ),
+            receipt_ref="concurrent-identical-receipt",
+            acceptance_fingerprint="b" * 64,
+        )
+    )
+    identical_barrier = Barrier(2)
+
+    def accept_identical(index):
+        identical_barrier.wait()
+        return repositories[index].accept(identical)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        receipts = list(executor.map(accept_identical, range(2)))
+
+    assert receipts == [
+        identical.accepted.acceptance_receipt,
+        identical.accepted.acceptance_receipt,
+    ]
+    assert repositories[0].accepted_count() == 1
+    assert repositories[0].publication_count() == 1
+
+    collision = [
+        RetrievalEvidence.from_accepted(
+            _accepted(
+                operation_id=f"concurrent-collision-{index}",
+                cache_fingerprint="concurrent-collision-cache",
+                contributor_attempt_refs=(
+                    f"concurrent-collision-{index}-brave",
+                    f"concurrent-collision-{index}-duckduckgo",
+                ),
+                receipt_ref=f"concurrent-collision-receipt-{index}",
+                acceptance_fingerprint=str(index + 1) * 64,
+            )
+        )
+        for index in range(2)
+    ]
+    collision_barrier = Barrier(2)
+
+    def accept_collision(index):
+        collision_barrier.wait()
+        try:
+            return repositories[index].accept(collision[index])
+        except Exception as error:
+            return error
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(accept_collision, range(2)))
+
+    assert sum(isinstance(outcome, AcceptanceReceipt) for outcome in outcomes) == 1
+    assert sum(isinstance(outcome, IntegrityError) for outcome in outcomes) == 1
+    assert repositories[0].accepted_count() == 2
+    assert repositories[0].publication_count() == 2
+    with ledgers[0].session_factory() as session:
+        plan_count = session.scalar(
+            select(func.count()).select_from(RetrievalEvidencePlanRow)
+        )
+        collision_operations = set(
+            session.scalars(
+                select(RetrievalEvidencePlanRow.operation_id).where(
+                    RetrievalEvidencePlanRow.operation_id.like(
+                        "concurrent-collision-%"
+                    )
+                )
+            )
+        )
+    assert plan_count == 2
+    assert len(collision_operations) == 1
 
 
 def test_0009_downgrade_refuses_after_an_accepted_receipt(monkeypatch):
