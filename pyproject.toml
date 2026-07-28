@@ -74,14 +74,7 @@ include = ["argus*"]
 [tool.setuptools.data-files]
 "." = ["alembic.ini"]
 "migrations" = ["migrations/env.py", "migrations/script.py.mako"]
-"migrations/versions" = [
-    "migrations/versions/0001_search_ledger.py",
-    "migrations/versions/0002_acceptance_fingerprint.py",
-    "migrations/versions/0003_request_routing_fields.py",
-    "migrations/versions/0004_operation_ledger.py",
-    "migrations/versions/0005_provider_spend.py",
-    "migrations/versions/0006_maya_outbox.py",
-]
+"migrations/versions" = ["migrations/versions/*.py"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

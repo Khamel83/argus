@@ -177,6 +177,14 @@ class YahooProvider(BaseProvider):
             results = self._parse(resp.text, query.max_results)
 
             if not results:
+                if re.search(r"\bno results\b", resp.text, re.IGNORECASE):
+                    return self._typed_failure_batch(
+                        FailureCategory.EMPTY,
+                        "Yahoo returned an explicit empty result page",
+                        started_at=started_at,
+                        request_evidence=request_evidence,
+                        observed_status=self._response_status(resp),
+                    )
                 return self._typed_failure_batch(
                     FailureCategory.PARSE_ERROR,
                     "Yahoo success page did not match the parser contract",

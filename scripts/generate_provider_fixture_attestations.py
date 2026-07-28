@@ -14,14 +14,19 @@ from argus.providers.fixture_attestation import (
     _content_ref,
     _manifest_path,
     _sha256_file,
+    _shared_dependency_files,
     _shared_dependency_hash,
     attestation_artifact_path,
+    default_release_revision,
 )
 from argus.providers.fixture_harness import run_fixture_cases
 from argus.providers.fixture_registry import canonical_adapter
 
 
-def generate_attestation_document() -> dict[str, object]:
+def generate_attestation_document(
+    release_revision: str | None = None,
+) -> dict[str, object]:
+    release_revision = release_revision or default_release_revision()
     manifest_path = _manifest_path()
     manifest = json.loads(manifest_path.read_bytes())
     providers = {}
@@ -32,12 +37,13 @@ def generate_attestation_document() -> dict[str, object]:
         contract = manifest["providers"][provider.value]
         attestation = {
             "provider": provider.value,
-            "release": "canonical-adapter-fixtures-v1",
+            "release": release_revision,
             "adapter_module": module_name,
             "adapter_class": class_name,
             "adapter_code_sha256": _sha256_file(Path(module.__file__ or "")),
             "adapter_identity_sha256": _adapter_search_hash(provider_class),
             "shared_adapter_sha256": _shared_dependency_hash(),
+            "shared_dependency_files": list(_shared_dependency_files()),
             "fixture_manifest_sha256": _sha256_file(manifest_path),
             "fixture_case_digest": run_fixture_cases(provider),
             "request_contract": str(contract["request_contract"]),
@@ -52,6 +58,7 @@ def generate_attestation_document() -> dict[str, object]:
         "generator": "scripts/generate_provider_fixture_attestations.py",
         "harness": "canonical-adapter-v1",
         "providers": providers,
+        "release_revision": release_revision,
         "schema_version": 1,
     }
 
@@ -67,8 +74,12 @@ def _encoded(document: dict[str, object]) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
+    parser.add_argument(
+        "--release-revision",
+        default=default_release_revision(),
+    )
     args = parser.parse_args()
-    generated = generate_attestation_document()
+    generated = generate_attestation_document(args.release_revision)
     if args.check:
         existing = load_attestation_document()
         if generated != existing:

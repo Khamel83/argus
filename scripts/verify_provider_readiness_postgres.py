@@ -24,7 +24,11 @@ from argus.broker.readiness import (
 from argus.models import ProviderName
 from argus.persistence.readiness import create_readiness_repository
 from argus.persistence.provider_spend import ProviderSpendRepository
-from argus.providers.fixture_attestation import build_fixture_attestation
+from argus.providers.fixture_attestation import (
+    _manifest_path,
+    build_fixture_attestation,
+    default_release_revision,
+)
 from argus.recovery.operator import validate_scratch_database
 
 
@@ -197,12 +201,15 @@ def main() -> None:
     url = os.environ["ARGUS_TEST_POSTGRES_URL"]
     validate_scratch_database(urlparse(url).path.lstrip("/"))
     suffix = uuid.uuid4().hex[:12]
+    contract_version = json.loads(
+        _manifest_path().read_bytes()
+    )["providers"][ProviderName.SEARCHAPI.value]["contract_version"]
     scope = ReadinessScope(
         egress="local",
         machine=f"pg-ci-{suffix}",
         request_class="discovery",
-        release_revision=f"release-{suffix}",
-        contract_version="contract-1",
+        release_revision=default_release_revision(),
+        contract_version=contract_version,
         configuration_fingerprint=f"config-{suffix}",
         credential_version_fingerprint=f"credential-{suffix}",
         account_fingerprint=f"account-{suffix}",
@@ -292,14 +299,24 @@ def main() -> None:
         charge_known=False,
         evidence_ref=f"uncertain-{suffix}",
     )
-    ProviderSpendRepository(first.repository.session_factory).resolve(
-        granted[0].attempt_id,
+    first.complete_execution(
+        granted[0],
+        failure=None,
         actual_charge=0.5,
-        outcome="success",
-        source="operator",
-        actor_identity="postgres-ci",
-        idempotency_key=f"resolve-{suffix}",
+        charge_known=True,
+        evidence_ref=f"matched-settlement-{suffix}",
     )
+    matched_modes = [
+        first.snapshot(
+            ProviderName.SEARCHAPI,
+            request_class=mode,
+        ).spend
+        for mode in ("discovery", "research", "recovery", "grounding")
+    ]
+    if matched_modes != ["available"] * 4:
+        raise RuntimeError(
+            "matched settlement did not clear account uncertainty"
+        )
     settle_race_blocked = verify_settle_authorize_race(
         first, second, contexts, suffix
     )
@@ -343,10 +360,9 @@ def main() -> None:
         reset_at=None,
         evidence_ref=f"terminal-{suffix}",
     )
-    rotated_release = f"release-rotated-{suffix}"
     rotated_fixture_ref, rotated_attestation = build_fixture_attestation(
         ProviderName.SEARCHAPI,
-        release=rotated_release,
+        release=scope.release_revision,
         provider_contract=scope.contract_version,
     )
     first.register_provider(ProviderRegistrationSpec(
@@ -357,7 +373,7 @@ def main() -> None:
         account_fingerprint=scope.account_fingerprint,
         budget_limit=1.5,
         durable_spend_repository=True,
-        release_revision=rotated_release,
+        release_revision=scope.release_revision,
         contract_version=scope.contract_version,
         fixture_evidence_ref=rotated_fixture_ref,
         fixture_attestation=rotated_attestation,
@@ -390,7 +406,7 @@ def main() -> None:
             "attested_fixture_probe_authorized": fixture_probe.allowed,
             "billable_probe_consumed": True,
             "settle_authorize_race_blocked": settle_race_blocked,
-            "uncertain_attempt_reconciled": True,
+            "matched_uncertainty_modes": matched_modes,
             "terminal_account_modes": terminal_modes,
         },
         "status": "ok",

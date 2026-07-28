@@ -10,6 +10,8 @@ from argus.models import ProviderName
 
 
 UTC = timezone.utc
+ATTESTED_RELEASE = "argus-1.6.2"
+ATTESTED_CONTRACT = "2026-07-27-v1"
 
 
 def _service(tmp_path):
@@ -44,8 +46,8 @@ def _observation(
             egress=egress,
             machine="test-machine",
             request_class=request_class,
-            release_revision="release-1",
-            contract_version="contract-1",
+            release_revision=ATTESTED_RELEASE,
+            contract_version=ATTESTED_CONTRACT,
             configuration_fingerprint="config:v1",
             credential_version_fingerprint="secret-version:v1",
             account_fingerprint="account:v1",
@@ -80,8 +82,8 @@ def test_snapshot_is_immutable_and_derives_healthy_from_orthogonal_evidence(tmp_
         ProviderName.BRAVE,
         egress="local",
         request_class="discovery",
-        release_revision="release-1",
-        contract_version="contract-1",
+        release_revision=ATTESTED_RELEASE,
+        contract_version=ATTESTED_CONTRACT,
     )
 
     assert snapshot.catalog_status == "supported"
@@ -118,8 +120,8 @@ def test_deterministic_fail_closed_decision_fold(tmp_path, dimension, state, cod
         ProviderName.BRAVE,
         egress="local",
         request_class="discovery",
-        release_revision="release-1",
-        contract_version="contract-1",
+        release_revision=ATTESTED_RELEASE,
+        contract_version=ATTESTED_CONTRACT,
     )
 
     assert snapshot.execution_decision.code == code
@@ -141,8 +143,8 @@ def test_policy_precedes_other_failures_and_free_only_is_rechecked(tmp_path):
             caller_tier_cap=3,
             egress="local",
             request_class="discovery",
-            release_revision="release-1",
-            contract_version="contract-1",
+            release_revision=ATTESTED_RELEASE,
+            contract_version=ATTESTED_CONTRACT,
         )
     )
 
@@ -547,8 +549,8 @@ def _exact_scope(
     egress: str = "local",
     machine: str = "test-machine",
     request_class: str = "discovery",
-    release: str = "release-1",
-    contract: str = "contract-1",
+    release: str = ATTESTED_RELEASE,
+    contract: str = ATTESTED_CONTRACT,
 ):
     from argus.broker.readiness import ReadinessScope
 
@@ -573,8 +575,8 @@ def _registration(
     account: str | None = "account:v1",
     budget: float | None = 100.0,
     durable_spend: bool = True,
-    release: str | None = "release-1",
-    contract: str | None = "contract-1",
+    release: str | None = ATTESTED_RELEASE,
+    contract: str | None = ATTESTED_CONTRACT,
     fixture: str | None = "runtime",
 ):
     from argus.broker.readiness import ProviderRegistrationSpec
@@ -766,14 +768,12 @@ def test_terminal_spend_survives_credential_rotation_for_account_all_modes(
     service.register_provider(_registration(
         provider=ProviderName.SERPER,
         credential="secret-version:v2",
-        release="release-2",
     ))
 
     for mode in ("discovery", "research", "recovery", "grounding"):
         scope = _exact_scope(
             provider=ProviderName.SERPER,
             request_class=mode,
-            release="release-2",
             credential="secret-version:v2",
         )
         assert service.snapshot_for_scope(ProviderName.SERPER, scope).spend == (
@@ -784,7 +784,6 @@ def test_terminal_spend_survives_credential_rotation_for_account_all_modes(
         provider=ProviderName.SERPER,
         account="account:v2",
         credential="secret-version:v3",
-        release="release-3",
     ))
     assert service.snapshot(
         ProviderName.SERPER, request_class="discovery"
@@ -1011,6 +1010,55 @@ def test_uncertain_paid_execution_blocks_other_account_modes_until_reconciled(
     )
     assert denied.allowed is False
     assert denied.decision.reason == "uncertain"
+
+
+def test_matching_successful_settlement_clears_uncertain_account_all_modes(
+    tmp_path,
+):
+    from argus.broker.readiness import ExecutionContext
+
+    service, _ = _service(tmp_path)
+    service.register_provider(_registration())
+    authorization = service.authorize_execution(
+        ExecutionContext(
+            provider=ProviderName.BRAVE,
+            tier=1,
+            plan_providers=(ProviderName.BRAVE,),
+            free_only=False,
+            caller_tier_cap=1,
+            scope=_exact_scope(request_class="discovery"),
+            plan_id="plan:matched-resolution",
+            caller_identity="test",
+            idempotency_key="request:matched-resolution",
+        ),
+        owner="worker",
+        conservative_charge=1.0,
+        execution_timeout_seconds=30,
+    )
+    assert authorization.allowed
+    service.complete_execution(
+        authorization,
+        failure=None,
+        actual_charge=None,
+        charge_known=False,
+        evidence_ref="execution:matched-uncertain",
+    )
+    assert service.snapshot(
+        ProviderName.BRAVE, request_class="research"
+    ).spend == "uncertain"
+
+    service.complete_execution(
+        authorization,
+        failure=None,
+        actual_charge=0.25,
+        charge_known=True,
+        evidence_ref="execution:matched-resolved",
+    )
+
+    for mode in ("discovery", "research", "recovery", "grounding"):
+        snapshot = service.snapshot(ProviderName.BRAVE, request_class=mode)
+        assert snapshot.spend == "available"
+        assert snapshot.execution_decision.code == "eligible"
 
 
 def test_settlement_uses_same_provider_budget_lock_as_authorization(
@@ -1280,8 +1328,8 @@ def test_fixture_attestation_executes_all_cases_and_recomputes_content(
 
     evidence_ref, attestation = build_fixture_attestation(
         provider,
-        release="fixture-test-release",
-        provider_contract="fixture-test-contract",
+        release=ATTESTED_RELEASE,
+        provider_contract=ATTESTED_CONTRACT,
     )
     assert run_fixture_cases(provider) == attestation["fixture_case_digest"]
     assert verify_fixture_attestation(
@@ -1302,8 +1350,8 @@ def test_fixture_attestation_rejects_noncanonical_adapter_substitution():
 
     evidence_ref, attestation = build_fixture_attestation(
         ProviderName.BRAVE,
-        release="fixture-test-release",
-        provider_contract="fixture-test-contract",
+        release=ATTESTED_RELEASE,
+        provider_contract=ATTESTED_CONTRACT,
     )
     assert attestation["adapter_module"] == "argus.providers.brave"
     assert attestation["adapter_class"] == "BraveProvider"
@@ -1314,10 +1362,90 @@ def test_fixture_attestation_rejects_noncanonical_adapter_substitution():
     with pytest.raises(ValueError, match="canonical adapter"):
         build_fixture_attestation(
             ProviderName.BRAVE,
-            release="fixture-test-release",
-            provider_contract="fixture-test-contract",
+            release=ATTESTED_RELEASE,
+            provider_contract=ATTESTED_CONTRACT,
             adapter_module="argus.providers.base",
         )
+
+
+def test_fixture_attestation_requires_exact_release_and_provider_contract():
+    from argus.providers.fixture_attestation import build_fixture_attestation
+
+    _, checked = build_fixture_attestation(
+        ProviderName.BRAVE,
+        release=ATTESTED_RELEASE,
+        provider_contract=ATTESTED_CONTRACT,
+    )
+    with pytest.raises(ValueError, match="release"):
+        build_fixture_attestation(
+            ProviderName.BRAVE,
+            release="unattested-release",
+            provider_contract=checked["provider_contract"],
+        )
+    with pytest.raises(ValueError, match="contract"):
+        build_fixture_attestation(
+            ProviderName.BRAVE,
+            release=checked["release"],
+            provider_contract="unattested-contract",
+        )
+
+
+def test_fixture_attestation_hashes_full_request_shape_seam():
+    from argus.providers.fixture_attestation import build_fixture_attestation
+
+    _, attestation = build_fixture_attestation(
+        ProviderName.BRAVE,
+        release=ATTESTED_RELEASE,
+        provider_contract=ATTESTED_CONTRACT,
+    )
+    dependencies = set(attestation["shared_dependency_files"])
+    assert {
+        "models.py",
+        "config.py",
+        "provider_controls.py",
+        "broker/planning.py",
+        "broker/provider_evidence.py",
+        "providers/base.py",
+        "providers/ddg_worker.py",
+        "providers/normalization.py",
+    } <= dependencies
+
+
+def test_fixture_harness_enforces_exact_outcomes_for_all_canonical_adapters():
+    from argus.broker.provider_evidence import FailureCategory
+    from argus.providers.fixture_harness import run_fixture_case_summaries
+
+    for provider in ProviderName:
+        if provider is ProviderName.CACHE:
+            continue
+        summaries = run_fixture_case_summaries(provider)
+        assert summaries["success"]["observations"] == 1
+        assert summaries["success"]["failure"] is None
+        assert summaries["empty"]["observations"] == 0
+        assert summaries["empty"]["failure"] == FailureCategory.EMPTY.value
+        assert summaries["error"]["failure"] == "rate_limited"
+        assert summaries["malformed"]["failure"] == (
+            FailureCategory.PARSE_ERROR.value
+        )
+
+
+def test_fixture_harness_rejects_private_query_in_adapter_logs(monkeypatch):
+    import logging
+
+    from argus.providers.brave import BraveProvider
+    from argus.providers.fixture_harness import run_fixture_cases
+
+    original = BraveProvider.search
+
+    async def leaking_search(self, query):
+        logging.getLogger("argus.providers.brave").warning(
+            "leaked query %s", query.query
+        )
+        return await original(self, query)
+
+    monkeypatch.setattr(BraveProvider, "search", leaking_search)
+    with pytest.raises(ValueError, match="privacy"):
+        run_fixture_cases(ProviderName.BRAVE)
 
 
 def test_fixture_attestation_loads_checked_artifact_without_running_harness(
@@ -1334,8 +1462,8 @@ def test_fixture_attestation_loads_checked_artifact_without_running_harness(
     )
     evidence_ref, attestation = fixture_attestation.build_fixture_attestation(
         ProviderName.BRAVE,
-        release="ignored-runtime-release",
-        provider_contract="2026-07-27-v1",
+        release=ATTESTED_RELEASE,
+        provider_contract=ATTESTED_CONTRACT,
     )
     assert fixture_attestation.verify_fixture_attestation(
         attestation, evidence_ref=evidence_ref
@@ -1352,8 +1480,8 @@ def test_monkeypatched_canonical_adapter_fails_checked_attestation(monkeypatch):
 
     evidence_ref, attestation = build_fixture_attestation(
         ProviderName.BRAVE,
-        release="ignored-runtime-release",
-        provider_contract="2026-07-27-v1",
+        release=ATTESTED_RELEASE,
+        provider_contract=ATTESTED_CONTRACT,
     )
 
     async def changed_search(self, query):
@@ -1752,7 +1880,6 @@ def test_terminal_failure_and_uncertain_charge_materialize_in_completion_transac
     restarted.register_provider(_registration(
         provider=ProviderName.SERPER,
         credential="secret-version:v2",
-        release="release-2",
     ))
     for mode in ("discovery", "research", "recovery", "grounding"):
         assert restarted.snapshot(

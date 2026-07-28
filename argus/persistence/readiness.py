@@ -1226,6 +1226,7 @@ class ProviderReadinessRepository:
             if (
                 lease is None or lease.owner != authorization.owner
                 or lease.fencing_token != authorization.fencing_token
+                or lease.attempt_id != authorization.attempt_id
             ):
                 # A stale owner may be relevant to charge reconciliation, but
                 # must never settle the current readiness lease/snapshot.
@@ -1237,9 +1238,23 @@ class ProviderReadinessRepository:
                 if termination_known
                 else "termination_indeterminate"
             )
-            if lease.state in {"completed", "unresolved"}:
+            resolving_matching_uncertainty = (
+                lease.state == "unresolved" and not unresolved
+            )
+            if lease.state == "completed":
                 if lease.outcome != outcome or lease.uncertain_charge != uncertain:
                     raise ReadinessConflict("completion replay has a different outcome")
+            elif lease.state == "unresolved":
+                if not resolving_matching_uncertainty and (
+                    lease.outcome != outcome
+                    or lease.uncertain_charge != uncertain
+                ):
+                    raise ReadinessConflict("completion replay has a different outcome")
+                if resolving_matching_uncertainty:
+                    lease.state = "completed"
+                    lease.outcome = outcome
+                    lease.uncertain_charge = False
+                    lease.completed_at = _naive(now)
             elif lease.state != "claimed":
                 raise StaleFencingToken("execution claim is no longer active")
             else:
@@ -1248,8 +1263,13 @@ class ProviderReadinessRepository:
                 lease.uncertain_charge = uncertain
                 lease.completed_at = _naive(now)
             attempt = session.get(ProviderSpendAttemptRow, authorization.attempt_id)
-            if attempt is not None and attempt.status == "reserved":
-                if unresolved:
+            if attempt is not None and attempt.status in {"reserved", "uncertain"}:
+                if (
+                    attempt.status == "uncertain"
+                    and not resolving_matching_uncertainty
+                ):
+                    pass
+                elif unresolved:
                     attempt.status = "uncertain"
                     attempt.outcome = outcome
                 else:
@@ -1322,7 +1342,11 @@ class ProviderReadinessRepository:
                 provider=authorization.provider,
                 state=state,
                 evidence_ref=evidence_ref,
-                outcome=outcome,
+                outcome=(
+                    f"reconciled_{outcome}"
+                    if resolving_matching_uncertainty
+                    else outcome
+                ),
                 protected=state in {"uncertain", "exhausted"},
                 scope=authorization.scope,
             )

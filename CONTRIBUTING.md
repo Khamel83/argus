@@ -45,12 +45,16 @@ One change per PR makes review easier. If it's two logically separate things, it
 6. Regenerate and verify the checked content-addressed artifact:
 
    ```bash
-   uv run python scripts/generate_provider_fixture_attestations.py
-   uv run python scripts/generate_provider_fixture_attestations.py --check
+   PACKAGE_VERSION="$(uv run python -c 'import argus; print(argus.__version__)')"
+   uv run python scripts/generate_provider_fixture_attestations.py \
+     --release-revision "argus-${PACKAGE_VERSION}"
+   uv run python scripts/generate_provider_fixture_attestations.py \
+     --release-revision "argus-${PACKAGE_VERSION}" --check
    ```
 
    Commit `argus/providers/fixture_attestations.json` with the adapter and
-   harness changes. Runtime startup only loads and verifies this artifact; it
+   harness changes. Regenerate it for every package release. Runtime startup
+   only loads and verifies the exact release and provider-contract artifact; it
    does not regenerate it.
 7. Wire the provider into `create_broker()` in `argus/broker/router.py`
 8. Add config entries in `argus/config.py` and `.env.example`

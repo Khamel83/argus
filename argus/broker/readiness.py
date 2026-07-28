@@ -358,7 +358,7 @@ class ProviderRegistrationSpec:
     release_revision: str | None
     contract_version: str | None
     fixture_evidence_ref: str | None
-    fixture_attestation: Mapping[str, str] | None = None
+    fixture_attestation: Mapping[str, object] | None = None
     budget_reset_at: datetime | None = None
     budget_period_started_at: datetime | None = None
     budget_next_reset_at: datetime | None = None
@@ -427,6 +427,8 @@ class ExecutableProviderRegistry:
                 attestation_ref, attestation_payload = (
                     load_fixture_attestation(
                         provider,
+                        release_revision=release,
+                        provider_contract=str(contract),
                         adapter_module=type(adapter).__module__,
                         adapter_class=type(adapter).__name__,
                     )
@@ -518,8 +520,14 @@ class ProviderReadinessService:
         # Compatibility construction is explicit and fail-closed. It never
         # asks an adapter to describe its own availability.
         from argus.providers.fixture_attestation import (
+            default_release_revision,
             load_fixture_attestation,
         )
+        fixture_path = (
+            Path(__file__).parents[1] / "providers" / "fixture_contracts.json"
+        )
+        fixture_contracts = json.loads(fixture_path.read_bytes())["providers"]
+        fixture_release = default_release_revision()
         for provider in providers:
             tier = PROVIDER_TIERS[provider]
             reachability_state = reachability.get_all().get(provider, {})
@@ -527,7 +535,14 @@ class ProviderReadinessService:
             budget_limit = (
                 budget_tracker.get_budget_limit(provider) if tier > 0 else None
             )
-            fixture_ref, fixture_attestation = load_fixture_attestation(provider)
+            fixture_contract = str(
+                fixture_contracts[provider.value]["contract_version"]
+            )
+            fixture_ref, fixture_attestation = load_fixture_attestation(
+                provider,
+                release_revision=fixture_release,
+                provider_contract=fixture_contract,
+            )
             service.register_provider(ProviderRegistrationSpec(
                 provider=provider, enabled=True,
                 configuration_fingerprint="legacy-config-v1",
@@ -537,8 +552,8 @@ class ProviderReadinessService:
                 ),
                 budget_limit=budget_limit,
                 durable_spend_repository=True,
-                release_revision="legacy-release-v1",
-                contract_version="legacy-contract-v1",
+                release_revision=fixture_release,
+                contract_version=fixture_contract,
                 fixture_evidence_ref=fixture_ref,
                 fixture_attestation=fixture_attestation,
                 machine="legacy-machine",
@@ -640,6 +655,7 @@ class ProviderReadinessService:
             "adapter_code_sha256",
             "adapter_identity_sha256",
             "shared_adapter_sha256",
+            "shared_dependency_files",
             "fixture_manifest_sha256",
             "fixture_case_digest",
             "request_contract",
@@ -655,6 +671,11 @@ class ProviderReadinessService:
             and spec.fixture_evidence_ref.startswith("attestation:")
             and spec.fixture_attestation
             and required_attestation_fields <= set(spec.fixture_attestation)
+            and spec.fixture_attestation.get("release") == spec.release_revision
+            and (
+                spec.fixture_attestation.get("provider_contract")
+                == spec.contract_version
+            )
             and verify_fixture_attestation(
                 spec.fixture_attestation,
                 evidence_ref=spec.fixture_evidence_ref,
@@ -1207,6 +1228,7 @@ class ProviderReadinessService:
             "adapter_code_sha256",
             "adapter_identity_sha256",
             "shared_adapter_sha256",
+            "shared_dependency_files",
             "fixture_manifest_sha256",
             "fixture_case_digest",
             "request_contract",
