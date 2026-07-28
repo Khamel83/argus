@@ -2636,8 +2636,4 @@ def test_outbox_compaction_failure_does_not_rewrite_maya_delivery_evidence(
         while not delivered and time.monotonic() < deadline:
             time.sleep(0.01)
         assert delivered is True
-        maya_state = service.full_status()["dependencies"]["maya"]["state"]
-        while maya_state != "healthy" and time.monotonic() < deadline:
-            time.sleep(0.01)
-            maya_state = service.full_status()["dependencies"]["maya"]["state"]
-        assert maya_state == "healthy"
+        assert service.full_status()["dependencies"]["maya"]["state"] == "healthy"

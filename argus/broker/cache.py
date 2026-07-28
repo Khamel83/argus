@@ -6,7 +6,7 @@ Keys by normalized query + mode. TTL configurable via config.
 
 import hashlib
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 from argus.models import SearchMode, SearchResponse
 
@@ -50,3 +50,10 @@ class SearchCache:
 
     def size(self) -> int:
         return len(self._store)
+
+
+def create_accepted_retrieval_cache(*, clock: Callable, on_publish=None):
+    """Construct the S6 immutable cache without changing legacy cache routing."""
+    from argus.broker.accepted import RetrievalCache
+
+    return RetrievalCache(clock=clock, on_publish=on_publish)
