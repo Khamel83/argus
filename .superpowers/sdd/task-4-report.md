@@ -339,6 +339,41 @@ Seventh-correction TDD and verification:
 Seventh correction commit message:
 `fix: derive recovery contract from postgres`
 
+## Eighth reviewer correction
+
+The eighth strict PostgreSQL-definition exactness review is closed by a
+separate correction:
+
+- Definition normalization now preserves square brackets, braces, colons, the
+  complete PostgreSQL operator-character alphabet, and every otherwise
+  unmatched non-whitespace token. It can no longer silently erase meaningful
+  syntax.
+- Explicit regressions distinguish `text[]` from `text`, array bounds and
+  subscripts, JSON `?|`, `?&`, and `@?` operators from shorter operators,
+  `->` from `->>`, and case-sensitive quoted literals and identifiers.
+- A compact operator-alphabet audit covers
+  `+-*/<>=~!@#%^&|` plus backtick, question mark, and backslash, together with
+  PostgreSQL syntax punctuation `[](){},.;:`.
+- The Alembic schema and persistence definitions contain none of the newly
+  preserved tokens in catalog constraint, index, generated-expression, or
+  default definitions. The checked real-catalog artifact therefore has no
+  output change, its embedded hash remains valid at
+  `cf14673cb03d25ac9eecac8a50470ecdb50430d7e6e12bc1564ff170e1d1ec90`,
+  and no disposable PostgreSQL resources were created.
+
+Eighth-correction TDD and verification:
+
+- RED tokenizer slice: `5 failed, 4 passed`, directly demonstrating collisions
+  for array casts and the three truncated JSON operators.
+- GREEN focused recovery verifier: `38 passed, 4 skipped`.
+- Adjacent recovery suite: `65 passed, 20 skipped`.
+- One fresh full repository suite: `1492 passed, 42 skipped`, with the same
+  four Starlette cookie deprecation warnings and zero failures.
+- Ruff over every changed Python path and `git diff --check`: passed.
+
+Eighth correction commit message:
+`fix: preserve postgres schema definition tokens`
+
 ## Commit
 
 Commit message: `feat: finalize and compose extraction outcomes`

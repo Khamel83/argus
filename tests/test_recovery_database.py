@@ -392,6 +392,73 @@ def test_definition_normalization_preserves_boolean_grouping():
     )
 
 
+def test_definition_normalization_distinguishes_text_array_from_text():
+    from argus.recovery.database import _normalize_pg_definition
+
+    text_array = "CHECK (value::text[] IS NOT NULL)"
+    scalar_text = "CHECK (value::text IS NOT NULL)"
+
+    assert _normalize_pg_definition(
+        text_array
+    ) != _normalize_pg_definition(scalar_text)
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        (
+            "CHECK (items[1:2] IS NULL)",
+            "CHECK (items[12] IS NULL)",
+        ),
+        (
+            "CHECK (value::text[] IS NOT NULL)",
+            "CHECK (value::text IS NOT NULL)",
+        ),
+        (
+            "CHECK (payload ?| ARRAY['a'])",
+            "CHECK (payload | ARRAY['a'])",
+        ),
+        (
+            "CHECK (payload ?& ARRAY['a'])",
+            "CHECK (payload & ARRAY['a'])",
+        ),
+        (
+            "CHECK (payload @? '$.a')",
+            "CHECK (payload @ '$.a')",
+        ),
+        (
+            "CHECK (payload -> 'a' IS NOT NULL)",
+            "CHECK (payload ->> 'a' IS NOT NULL)",
+        ),
+        (
+            "CHECK (label = 'Mixed Case')",
+            "CHECK (label = 'mixed case')",
+        ),
+        (
+            'CHECK ("MixedCase" IS NOT NULL)',
+            "CHECK (mixedcase IS NOT NULL)",
+        ),
+    ],
+)
+def test_definition_normalization_has_no_significant_token_collisions(
+    left,
+    right,
+):
+    from argus.recovery.database import _normalize_pg_definition
+
+    assert _normalize_pg_definition(left) != _normalize_pg_definition(right)
+
+
+def test_definition_normalization_preserves_postgresql_punctuation_alphabet():
+    from argus.recovery.database import _normalize_pg_definition
+
+    operator_characters = r"+-*/<>=~!@#%^&|`?\\"
+    syntax_punctuation = "[](){},.;:"
+
+    for token in operator_characters + syntax_punctuation:
+        assert token in _normalize_pg_definition(f"left {token} right")
+
+
 def test_checked_contract_records_complete_column_semantics():
     from argus.recovery.database import expected_argus_schema_manifest
 
