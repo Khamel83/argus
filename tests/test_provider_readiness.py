@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import datetime, timedelta, timezone
 from threading import Barrier, Thread
 
@@ -177,6 +177,118 @@ def test_authority_clock_rejects_future_skew_and_expires_to_unknown(tmp_path):
         ProviderName.BRAVE, egress="local", request_class="discovery"
     )
     assert snapshot.reachability == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("dimension", "state", "source", "protected"),
+    [
+        ("reachability", "reachable", "provider_authoritative", True),
+        ("spend", "available", "provider_authoritative", True),
+        ("spend", "exhausted", "test_fixture", True),
+        ("spend", "exhausted", "provider_authoritative", False),
+    ],
+)
+def test_exact_expiry_model_is_terminal_spend_authority_only(
+    dimension,
+    state,
+    source,
+    protected,
+):
+    from argus.broker.readiness import ProviderObservation, ReadinessScope
+
+    observed_at = datetime.now(UTC)
+    with pytest.raises(ValueError, match="exact expiry"):
+        ProviderObservation(
+            provider=ProviderName.BRAVE,
+            dimension=dimension,
+            state=state,
+            source=source,
+            scope=ReadinessScope(account_fingerprint="account:v1"),
+            observed_at=observed_at,
+            ttl_seconds=None,
+            protected=protected,
+            expires_at=observed_at + timedelta(hours=1),
+        )
+
+
+def test_exact_expiry_model_and_persistence_reject_100_year_reachability(
+    tmp_path,
+):
+    from argus.broker.readiness import ProviderObservation, ReadinessScope
+
+    service, repository = _service(tmp_path)
+    observed_at = repository.authority_now()
+    reachable = _observation(
+        ProviderName.BRAVE,
+        "reachability",
+        "reachable",
+        receipt="exact-expiry-100-year",
+        ttl_seconds=None,
+        protected=True,
+    )
+    object.__setattr__(reachable, "source", "provider_authoritative")
+    with pytest.raises(ValueError, match="exact expiry"):
+        replace(
+            reachable,
+            expires_at=observed_at + timedelta(days=365 * 100),
+        )
+
+    object.__setattr__(
+        reachable,
+        "expires_at",
+        observed_at + timedelta(days=365 * 100),
+    )
+    with pytest.raises(ValueError, match="exact expiry"):
+        service.record_observation(reachable)
+
+    with pytest.raises(ValueError, match="bounded to one year"):
+        ProviderObservation(
+            provider=ProviderName.BRAVE,
+            dimension="spend",
+            state="exhausted",
+            source="provider_authoritative",
+            scope=ReadinessScope(account_fingerprint="account:v1"),
+            observed_at=observed_at,
+            ttl_seconds=None,
+            evidence_ref="exact-expiry-model-100-year",
+            protected=True,
+            expires_at=observed_at + timedelta(days=365 * 100),
+        )
+
+    with pytest.raises(ValueError, match="one-year bound"):
+        repository.record_terminal_exhaustion(
+            provider=ProviderName.BRAVE,
+            account_fingerprint="account:v1",
+            recurring=True,
+            reset_at=observed_at + timedelta(days=365 * 100),
+            evidence_ref="exact-expiry-persistence-100-year",
+        )
+    assert [
+        row for row in repository.observations(ProviderName.BRAVE)
+        if row.evidence_ref == "exact-expiry-persistence-100-year"
+    ] == []
+
+
+def test_generic_observation_path_rejects_semantic_exact_expiry(tmp_path):
+    service, repository = _service(tmp_path)
+    observed_at = repository.authority_now()
+    terminal = _observation(
+        ProviderName.BRAVE,
+        "spend",
+        "exhausted",
+        receipt="generic-terminal-expiry",
+        ttl_seconds=None,
+        protected=True,
+    )
+    object.__setattr__(terminal, "source", "provider_authoritative")
+    object.__setattr__(
+        terminal,
+        "expires_at",
+        observed_at + timedelta(hours=1),
+    )
+
+    with pytest.raises(ValueError, match="exact expiry.*authorized"):
+        service.record_observation(terminal)
 
 
 def test_valid_until_uses_earliest_expiry_and_renderer_cache_never_outlives_it(

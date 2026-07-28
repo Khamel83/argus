@@ -18,6 +18,11 @@ from argus.models import ProviderName
 
 UTC = timezone.utc
 MAX_EVIDENCE_RECEIPTS = 32
+MAX_OBSERVATION_TTL_SECONDS = 31_536_000
+EXACT_EXPIRY_SOURCES = frozenset({
+    "provider_authoritative",
+    "provider_reconciliation",
+})
 MAX_EXECUTABLE_SCOPES = 32
 EXECUTABLE_REQUEST_CLASSES = ("discovery", "research", "recovery", "grounding")
 _SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -121,7 +126,7 @@ class ProviderObservation:
             raise ValueError("observation dimension/state is outside the closed taxonomy")
         if self.ttl_seconds is not None and (
             type(self.ttl_seconds) is not int
-            or not 1 <= self.ttl_seconds <= 31_536_000
+            or not 1 <= self.ttl_seconds <= MAX_OBSERVATION_TTL_SECONDS
         ):
             raise ValueError("observation TTL must be a bounded positive integer")
         if self.observed_at.tzinfo is None:
@@ -131,10 +136,27 @@ class ProviderObservation:
                 raise ValueError("expires_at must be timezone aware")
             if self.ttl_seconds is not None:
                 raise ValueError("observation expiry must use TTL or expires_at")
+            if (
+                self.dimension != "spend"
+                or self.state != "exhausted"
+                or self.source not in EXACT_EXPIRY_SOURCES
+                or not self.protected
+            ):
+                raise ValueError(
+                    "exact expiry is restricted to authoritative terminal spend"
+                )
+            observed_at = self.observed_at.astimezone(timezone.utc)
+            expires_at = self.expires_at.astimezone(timezone.utc)
+            if (
+                expires_at <= observed_at
+                or expires_at
+                > observed_at + timedelta(seconds=MAX_OBSERVATION_TTL_SECONDS)
+            ):
+                raise ValueError("exact expiry must be future and bounded to one year")
             object.__setattr__(
                 self,
                 "expires_at",
-                self.expires_at.astimezone(timezone.utc),
+                expires_at,
             )
         _identifier(self.source, "source")
         if self.evidence_ref is not None:

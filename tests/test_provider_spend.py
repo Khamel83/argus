@@ -24,6 +24,39 @@ def _repository(tmp_path):
     )
 
 
+def _registered_readiness(tmp_path, database_name: str):
+    from argus.broker.readiness import (
+        ProviderReadinessService,
+        ProviderRegistrationSpec,
+    )
+    from argus.persistence.readiness import create_readiness_repository
+    from argus.providers.fixture_attestation import build_fixture_attestation
+
+    readiness = create_readiness_repository(
+        f"sqlite:///{tmp_path / database_name}"
+    )
+    service = ProviderReadinessService(repository=readiness)
+    fixture_ref, attestation = build_fixture_attestation(
+        ProviderName.BRAVE,
+        release="argus-1.6.2",
+        provider_contract="2026-07-27-v1",
+    )
+    service.register_provider(ProviderRegistrationSpec(
+        provider=ProviderName.BRAVE,
+        enabled=True,
+        configuration_fingerprint=f"{database_name}-config",
+        credential_version_fingerprint=f"{database_name}-credential",
+        account_fingerprint=f"{database_name}-account",
+        budget_limit=10.0,
+        durable_spend_repository=True,
+        release_revision="argus-1.6.2",
+        contract_version="2026-07-27-v1",
+        fixture_evidence_ref=fixture_ref,
+        fixture_attestation=attestation,
+    ))
+    return service, readiness
+
+
 def test_paid_attempt_reserves_before_external_work_and_settles_atomically(tmp_path):
     repository = _repository(tmp_path)
     external_observations = []
@@ -317,6 +350,83 @@ def test_recurring_terminal_expiry_allows_atomic_account_wide_reserve(
         service.snapshot(ProviderName.BRAVE, request_class=mode).spend
         for mode in ("discovery", "research", "recovery", "grounding")
     ] == ["uncertain"] * 4
+
+
+def test_terminal_fanout_rolls_back_fault_and_uses_one_database_time(tmp_path):
+    service, readiness = _registered_readiness(
+        tmp_path,
+        "terminal-fanout-atomic.db",
+    )
+    modes = ("discovery", "research", "recovery", "grounding")
+    before = {
+        mode: service.snapshot(
+            ProviderName.BRAVE,
+            request_class=mode,
+        ).as_dict()
+        for mode in modes
+    }
+    original_put_snapshot = readiness._put_snapshot
+    snapshot_writes = 0
+
+    def fail_during_second_scope(*args, **kwargs):
+        nonlocal snapshot_writes
+        original_put_snapshot(*args, **kwargs)
+        snapshot_writes += 1
+        if snapshot_writes == 2:
+            raise RuntimeError("injected terminal fanout fault")
+
+    with patch.object(
+        readiness,
+        "_put_snapshot",
+        side_effect=fail_during_second_scope,
+    ):
+        with pytest.raises(RuntimeError, match="injected terminal fanout fault"):
+            readiness.record_terminal_exhaustion(
+                provider=ProviderName.BRAVE,
+                account_fingerprint="terminal-fanout-atomic.db-account",
+                recurring=True,
+                reset_at=readiness.authority_now() + timedelta(hours=1),
+                evidence_ref="terminal-fanout:fault",
+            )
+
+    assert [
+        row for row in readiness.observations(ProviderName.BRAVE)
+        if row.evidence_ref == "terminal-fanout:fault"
+    ] == []
+    assert {
+        mode: service.snapshot(
+            ProviderName.BRAVE,
+            request_class=mode,
+        ).as_dict()
+        for mode in modes
+    } == before
+
+    database_now = readiness.authority_now().replace(microsecond=111111)
+    reset_at = database_now + timedelta(microseconds=1)
+    with patch.object(
+        readiness,
+        "authority_now",
+        side_effect=(database_now, reset_at),
+    ) as authority_now:
+        readiness.record_terminal_exhaustion(
+            provider=ProviderName.BRAVE,
+            account_fingerprint="terminal-fanout-atomic.db-account",
+            recurring=True,
+            reset_at=reset_at,
+            evidence_ref="terminal-fanout:single-clock",
+        )
+
+    assert authority_now.call_count == 1
+    terminal_rows = [
+        row for row in readiness.observations(ProviderName.BRAVE)
+        if row.evidence_ref == "terminal-fanout:single-clock"
+    ]
+    assert len(terminal_rows) == 4
+    assert {row.expires_at for row in terminal_rows} == {reset_at}
+    assert [
+        service.snapshot(ProviderName.BRAVE, request_class=mode).spend
+        for mode in modes
+    ] == ["exhausted"] * 4
 
 
 def test_unknown_outcome_never_expires_or_refunds_automatically(tmp_path):

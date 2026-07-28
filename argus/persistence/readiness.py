@@ -32,6 +32,11 @@ from argus.models import ProviderName
 
 UTC = timezone.utc
 MAX_EVIDENCE_REFS = 32
+MAX_EXACT_EXPIRY_SECONDS = 31_536_000
+EXACT_EXPIRY_SOURCES = frozenset({
+    "provider_authoritative",
+    "provider_reconciliation",
+})
 
 
 class ReadinessBase(DeclarativeBase):
@@ -238,11 +243,14 @@ class ProviderReadinessRepository:
         fold: Callable[[list[StoredObservation], datetime, int], Mapping[str, Any]],
         *,
         replace_existing: bool = True,
+        _session: Any | None = None,
+        _now: datetime | None = None,
+        _allow_exact_expiry: bool = False,
     ) -> Mapping[str, Any]:
         """Replace one current dimension and fold the bounded seven-row state."""
         scope_key = observation.scope.fingerprint()
-        with self._write_transaction() as session:
-            now = self.authority_now(session)
+
+        def persist(session, now):
             producer = _aware(observation.observed_at)
             if producer > now + timedelta(seconds=30):
                 raise ValueError("producer observed_at is too far in the future")
@@ -293,6 +301,19 @@ class ProviderReadinessRepository:
             )
             if exact_expires is not None and expires <= now:
                 raise ValueError("observation expires_at must be after database time")
+            if exact_expires is not None:
+                exact_shape = (
+                    observation.dimension == "spend"
+                    and observation.state == "exhausted"
+                    and observation.source in EXACT_EXPIRY_SOURCES
+                    and observation.protected is True
+                )
+                if not _allow_exact_expiry or not exact_shape:
+                    raise ValueError("exact expiry write is not authorized")
+                if expires > now + timedelta(seconds=MAX_EXACT_EXPIRY_SECONDS):
+                    raise ValueError(
+                        "observation expires_at exceeds one-year database bound"
+                    )
             row = ProviderReadinessObservationRow(
                 id=uuid.uuid4().hex,
                 provider=observation.provider.value,
@@ -359,6 +380,12 @@ class ProviderReadinessRepository:
                 json.loads(materialized.snapshot_json)
                 if materialized is not None else payload
             )
+        if _session is not None:
+            if _now is None:
+                raise ValueError("session-bound observation write requires database time")
+            return persist(_session, _aware(_now))
+        with self._write_transaction() as session:
+            return persist(session, self.authority_now(session))
 
     def record_observation(self, observation: Any) -> StoredObservation:
         """Compatibility write. New authority callers use record_and_materialize."""
@@ -1673,37 +1700,83 @@ class ProviderReadinessRepository:
         self, *, provider: ProviderName, account_fingerprint: str,
         recurring: bool, reset_at: datetime | None, evidence_ref: str,
     ) -> None:
-        from argus.broker.readiness import ProviderObservation, ReadinessScope
-        registration = self.get_registration(provider) or {}
-        scope_values = registration.get("scopes") or (
-            [registration["scope"]] if registration.get("scope") else []
+        from argus.broker.readiness import (
+            ProviderObservation,
+            ProviderReadinessService,
+            ReadinessScope,
         )
-        if not scope_values:
-            scope_values = [
-                ReadinessScope(
-                    account_fingerprint=account_fingerprint
-                ).as_dict()
-            ]
-        now = self.authority_now()
-        exact_reset = None
-        if recurring:
-            if reset_at is None or _aware(reset_at) <= now:
-                raise ValueError("recurring exhaustion requires a future reset")
-            exact_reset = _aware(reset_at)
-        elif reset_at is not None:
-            raise ValueError("one-time exhaustion cannot have an automatic reset")
-        for value in scope_values:
-            scope_data = dict(value)
-            scope_data["account_fingerprint"] = account_fingerprint
-            self.record_observation(ProviderObservation(
-                provider=provider, dimension="spend", state="exhausted",
-                source="provider_authoritative",
-                scope=ReadinessScope(**scope_data), observed_at=now,
-                ttl_seconds=None, evidence_ref=evidence_ref, protected=True,
-                safe_reason="recurring_quota_exhausted" if recurring
-                else "one_time_credit_exhausted",
-                expires_at=exact_reset,
-            ))
+
+        with self._write_transaction() as session:
+            now = self.authority_now(session)
+            exact_reset = None
+            if recurring:
+                if reset_at is None or _aware(reset_at) <= now:
+                    raise ValueError(
+                        "recurring exhaustion requires a future reset"
+                    )
+                exact_reset = _aware(reset_at)
+                if (
+                    exact_reset
+                    > now + timedelta(seconds=MAX_EXACT_EXPIRY_SECONDS)
+                ):
+                    raise ValueError(
+                        "recurring exhaustion reset exceeds one-year bound"
+                    )
+            elif reset_at is not None:
+                raise ValueError(
+                    "one-time exhaustion cannot have an automatic reset"
+                )
+            registration = self.get_registration_in_session(
+                session,
+                provider,
+            )
+            scope_values = registration.get("scopes") or (
+                [registration["scope"]] if registration.get("scope") else []
+            )
+            if not scope_values:
+                scope_values = [
+                    ReadinessScope(
+                        account_fingerprint=account_fingerprint
+                    ).as_dict()
+                ]
+            observations = []
+            for value in scope_values:
+                scope_data = dict(value)
+                scope_data["account_fingerprint"] = account_fingerprint
+                observations.append(ProviderObservation(
+                    provider=provider,
+                    dimension="spend",
+                    state="exhausted",
+                    source="provider_authoritative",
+                    scope=ReadinessScope(**scope_data),
+                    observed_at=now,
+                    ttl_seconds=None,
+                    evidence_ref=evidence_ref,
+                    protected=True,
+                    safe_reason=(
+                        "recurring_quota_exhausted"
+                        if recurring
+                        else "one_time_credit_exhausted"
+                    ),
+                    expires_at=exact_reset,
+                ))
+            service = ProviderReadinessService(repository=self)
+            for observation in observations:
+                self.record_and_materialize(
+                    observation,
+                    lambda rows, fold_now, generation, scope=observation.scope: (
+                        service._fold(
+                            provider,
+                            scope,
+                            rows,
+                            fold_now,
+                            generation,
+                        ).as_dict()
+                    ),
+                    _session=session,
+                    _now=now,
+                    _allow_exact_expiry=recurring,
+                )
 
     def spend_state(self, provider: ProviderName, *, account_fingerprint: str) -> str:
         now = self.authority_now()

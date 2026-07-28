@@ -394,17 +394,98 @@ def main() -> None:
         probe_idempotency_key=probe_key,
     )
 
+    request_modes = ("discovery", "research", "recovery", "grounding")
+    oversized_ref = f"recurring-oversized-{suffix}"
+    try:
+        first.repository.record_terminal_exhaustion(
+            provider=ProviderName.SEARCHAPI,
+            account_fingerprint=scope.account_fingerprint,
+            recurring=True,
+            reset_at=(
+                first.repository.authority_now() + timedelta(days=365 * 100)
+            ),
+            evidence_ref=oversized_ref,
+        )
+    except ValueError:
+        pass
+    else:
+        raise RuntimeError("100-year recurring reset was accepted")
+    if any(
+        row.evidence_ref == oversized_ref
+        for row in first.repository.observations(ProviderName.SEARCHAPI)
+    ):
+        raise RuntimeError("oversized recurring reset wrote partial evidence")
+
+    fault_ref = f"recurring-fault-{suffix}"
+    fault_before = [
+        first.snapshot(
+            ProviderName.SEARCHAPI,
+            request_class=mode,
+        ).as_dict()
+        for mode in request_modes
+    ]
+    original_put_snapshot = first.repository._put_snapshot
+    fault_snapshot_writes = 0
+
+    def fail_during_second_terminal_scope(*put_args, **put_kwargs):
+        nonlocal fault_snapshot_writes
+        original_put_snapshot(*put_args, **put_kwargs)
+        fault_snapshot_writes += 1
+        if fault_snapshot_writes == 2:
+            raise RuntimeError("injected PostgreSQL terminal fanout fault")
+
+    with patch.object(
+        first.repository,
+        "_put_snapshot",
+        side_effect=fail_during_second_terminal_scope,
+    ):
+        try:
+            first.repository.record_terminal_exhaustion(
+                provider=ProviderName.SEARCHAPI,
+                account_fingerprint=scope.account_fingerprint,
+                recurring=True,
+                reset_at=first.repository.authority_now() + timedelta(hours=1),
+                evidence_ref=fault_ref,
+            )
+        except RuntimeError as error:
+            if str(error) != "injected PostgreSQL terminal fanout fault":
+                raise
+        else:
+            raise RuntimeError("terminal fanout fault was not injected")
+    if any(
+        row.evidence_ref == fault_ref
+        for row in first.repository.observations(ProviderName.SEARCHAPI)
+    ):
+        raise RuntimeError("terminal fanout fault committed partial evidence")
+    fault_after = [
+        first.snapshot(
+            ProviderName.SEARCHAPI,
+            request_class=mode,
+        ).as_dict()
+        for mode in request_modes
+    ]
+    if fault_after != fault_before:
+        raise RuntimeError("terminal fanout fault committed partial snapshots")
+
     recurring_ref = f"recurring-terminal-{suffix}"
-    recurring_reset_at = (
-        first.repository.authority_now() + timedelta(hours=1)
-    ).replace(microsecond=654321)
-    first.repository.record_terminal_exhaustion(
-        provider=ProviderName.SEARCHAPI,
-        account_fingerprint=scope.account_fingerprint,
-        recurring=True,
-        reset_at=recurring_reset_at,
-        evidence_ref=recurring_ref,
+    recurring_database_now = first.repository.authority_now().replace(
+        microsecond=654320
     )
+    recurring_reset_at = recurring_database_now + timedelta(microseconds=1)
+    with patch.object(
+        first.repository,
+        "authority_now",
+        side_effect=(recurring_database_now, recurring_reset_at),
+    ) as recurring_clock:
+        first.repository.record_terminal_exhaustion(
+            provider=ProviderName.SEARCHAPI,
+            account_fingerprint=scope.account_fingerprint,
+            recurring=True,
+            reset_at=recurring_reset_at,
+            evidence_ref=recurring_ref,
+        )
+    if recurring_clock.call_count != 1:
+        raise RuntimeError("terminal fanout read database time more than once")
     recurring_rows = [
         row for row in first.repository.observations(ProviderName.SEARCHAPI)
         if (
@@ -455,7 +536,7 @@ def main() -> None:
             ProviderName.SEARCHAPI,
             request_class=mode,
         ).spend
-        for mode in ("discovery", "research", "recovery", "grounding")
+        for mode in request_modes
     ]
     if recurring_reset_modes != ["uncertain"] * 4:
         raise RuntimeError(
@@ -555,7 +636,9 @@ def main() -> None:
             "attested_fixture_probe_authorized": fixture_probe.allowed,
             "billable_probe_consumed": True,
             "direct_settlement_modes": direct_settlement_modes,
+            "recurring_atomic_rollback": True,
             "recurring_reset_modes": recurring_reset_modes,
+            "recurring_single_db_now_calls": recurring_clock.call_count,
             "settle_authorize_race_blocked": settle_race_blocked,
             "terminal_precedence_modes": terminal_precedence_modes,
             "matched_uncertainty_modes": matched_modes,
