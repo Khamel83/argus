@@ -26,14 +26,43 @@ def _request(
     headers: dict[str, object] | None = None,
     json_body: dict[str, object] | None = None,
     client_headers: dict[str, object] | None = None,
+    client_follow_redirects: bool | None = None,
+    client_timeout: float = 2,
+    call_timeout: float | None = None,
 ) -> dict[str, object]:
+    def channels(**values: object) -> dict[str, object]:
+        return {
+            "params": values.get("params"),
+            "headers": values.get("headers"),
+            "json": values.get("json"),
+            "data": values.get("data"),
+            "content": values.get("content"),
+            "files": values.get("files"),
+            "cookies": values.get("cookies"),
+            "auth": values.get("auth"),
+            "extensions": values.get("extensions"),
+            "timeout": values.get("timeout"),
+            "follow_redirects": values.get("follow_redirects"),
+            "extra_kwargs": {},
+        }
+
     return {
+        "kind": "http",
         "method": method,
         "url": url,
-        "params": params,
-        "headers": headers,
-        "json": json_body,
-        "client_headers": client_headers,
+        "client_args": [],
+        "client_kwargs": channels(
+            headers=client_headers,
+            timeout=client_timeout,
+            follow_redirects=client_follow_redirects,
+        ),
+        "call_args": [],
+        "call_kwargs": channels(
+            params=params,
+            headers=headers,
+            json=json_body,
+            timeout=call_timeout,
+        ),
     }
 
 
@@ -147,9 +176,26 @@ _CONTRACTS: dict[ProviderName, dict[str, object]] = {
     ),
     ProviderName.DUCKDUCKGO: _contract(
         request={
+            "kind": "subprocess",
             "method": "SUBPROCESS",
-            "argv": ["<python>", "-m", "argus.providers.ddg_worker"],
-            "stdin": {
+            "args": ["<python>", "-m", "argus.providers.ddg_worker"],
+            "kwargs": {
+                "stdin": "PIPE",
+                "stdout": "PIPE",
+                "stderr": "PIPE",
+                "env": None,
+                "cwd": None,
+                "limit": 1_048_576,
+                "start_new_session": None,
+                "close_fds": None,
+                "shell": None,
+                "executable": None,
+                "preexec_fn": None,
+                "pass_fds": None,
+                "restore_signals": None,
+                "extra_kwargs": {},
+            },
+            "stdin_payload": {
                 "query": QUERY,
                 "max_results": 1,
                 "timelimit": None,
@@ -188,6 +234,8 @@ _CONTRACTS: dict[ProviderName, dict[str, object]] = {
                 "Accept-Language": "en-US,en;q=0.5",
                 "Accept-Encoding": "gzip, deflate",
             },
+            client_follow_redirects=False,
+            call_timeout=2,
         ),
         success_response=(
             '<div class="dd algo-sr"><div class="compTitle">'
@@ -203,6 +251,7 @@ _CONTRACTS: dict[ProviderName, dict[str, object]] = {
             "http://127.0.0.1:8080/search",
             params={"q": QUERY, "format": "json", "pageno": 1},
             headers={"Accept": "application/json"},
+            client_timeout=12,
         ),
         success_response={"results": [_CONTENT_RESULT]},
         empty_response={"results": []},

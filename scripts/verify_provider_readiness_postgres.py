@@ -23,7 +23,10 @@ from argus.broker.readiness import (
 )
 from argus.models import ProviderName
 from argus.persistence.readiness import create_readiness_repository
-from argus.persistence.provider_spend import ProviderSpendRepository
+from argus.persistence.provider_spend import (
+    BudgetExhaustedError,
+    ProviderSpendRepository,
+)
 from argus.providers.fixture_attestation import (
     _manifest_path,
     build_fixture_attestation,
@@ -387,6 +390,14 @@ def main() -> None:
         probe_idempotency_key=probe_key,
     )
 
+    pre_terminal_reservation = legacy_spend.reserve(
+        provider=ProviderName.SEARCHAPI,
+        conservative_charge=0.1,
+        budget_limit=1.5,
+        caller_identity="postgres-ci-legacy",
+        caller_label="terminal-precedence",
+        idempotency_key=f"pg-pre-terminal-{suffix}",
+    )
     first.repository.record_terminal_exhaustion(
         provider=ProviderName.SEARCHAPI,
         account_fingerprint=scope.account_fingerprint,
@@ -394,6 +405,33 @@ def main() -> None:
         reset_at=None,
         evidence_ref=f"terminal-{suffix}",
     )
+    try:
+        legacy_spend.reserve(
+            provider=ProviderName.SEARCHAPI,
+            conservative_charge=0.01,
+            budget_limit=1.5,
+            caller_identity="postgres-ci-legacy",
+            caller_label="terminal-precedence",
+            idempotency_key=f"pg-terminal-denied-{suffix}",
+        )
+    except BudgetExhaustedError:
+        pass
+    else:
+        raise RuntimeError("terminal exhaustion allowed a direct reservation")
+    legacy_spend.settle(
+        pre_terminal_reservation.attempt_id,
+        actual_charge=0.05,
+        outcome="success",
+    )
+    terminal_precedence_modes = [
+        first.snapshot(
+            ProviderName.SEARCHAPI,
+            request_class=mode,
+        ).spend
+        for mode in ("discovery", "research", "recovery", "grounding")
+    ]
+    if terminal_precedence_modes != ["exhausted"] * 4:
+        raise RuntimeError("ordinary settlement cleared terminal exhaustion")
     rotated_fixture_ref, rotated_attestation = build_fixture_attestation(
         ProviderName.SEARCHAPI,
         release=scope.release_revision,
@@ -441,6 +479,7 @@ def main() -> None:
             "billable_probe_consumed": True,
             "direct_settlement_modes": direct_settlement_modes,
             "settle_authorize_race_blocked": settle_race_blocked,
+            "terminal_precedence_modes": terminal_precedence_modes,
             "matched_uncertainty_modes": matched_modes,
             "terminal_account_modes": terminal_modes,
         },

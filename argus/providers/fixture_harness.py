@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from unittest.mock import patch
@@ -23,6 +24,34 @@ from argus.providers.fixture_registry import canonical_adapter
 _SECRET = QUERY
 _SENTINEL = "fixture-credential-sentinel"
 _SCENARIOS = ("success", "empty", "error", "malformed")
+_HTTP_CHANNELS = (
+    "params",
+    "headers",
+    "json",
+    "data",
+    "content",
+    "files",
+    "cookies",
+    "auth",
+    "extensions",
+    "timeout",
+    "follow_redirects",
+)
+_SUBPROCESS_CHANNELS = (
+    "stdin",
+    "stdout",
+    "stderr",
+    "env",
+    "cwd",
+    "limit",
+    "start_new_session",
+    "close_fds",
+    "shell",
+    "executable",
+    "preexec_fn",
+    "pass_fds",
+    "restore_signals",
+)
 
 
 class _CaptureHandler(logging.Handler):
@@ -55,6 +84,70 @@ def _redact_fixture_credential(value: object) -> object:
     return value
 
 
+def _transport_value(value: object) -> object:
+    if value == asyncio.subprocess.PIPE:
+        return "PIPE"
+    if isinstance(value, Mapping):
+        return {
+            str(key): _transport_value(item) for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_transport_value(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return repr(value)
+
+
+def _complete_kwargs(
+    kwargs: Mapping[str, object],
+    channels: tuple[str, ...],
+) -> dict[str, object]:
+    return {
+        **{
+            channel: _transport_value(kwargs.get(channel))
+            for channel in channels
+        },
+        "extra_kwargs": {
+            key: _transport_value(value)
+            for key, value in kwargs.items()
+            if key not in channels
+        },
+    }
+
+
+def _secret_paths(
+    value: object,
+    path: tuple[object, ...] = (),
+) -> set[tuple[object, ...]]:
+    if isinstance(value, Mapping):
+        paths: set[tuple[object, ...]] = set()
+        for key, item in value.items():
+            paths.update(_secret_paths(item, (*path, key)))
+        return paths
+    if isinstance(value, (list, tuple)):
+        paths = set()
+        for index, item in enumerate(value):
+            paths.update(_secret_paths(item, (*path, index)))
+        return paths
+    if isinstance(value, str) and (
+        _SECRET in value or CREDENTIAL in value or _SENTINEL in value
+    ):
+        return {path}
+    return set()
+
+
+def _privacy_error(
+    provider: ProviderName,
+    actual: Mapping[str, object],
+    expected: Mapping[str, object],
+) -> str | None:
+    normalized = _redact_fixture_credential(actual)
+    leaked_paths = _secret_paths(normalized) - _secret_paths(expected)
+    if leaked_paths:
+        return f"{provider.value} transport privacy contract mismatch"
+    return None
+
+
 @dataclass
 class _FakeResponse:
     scenario: str
@@ -84,12 +177,16 @@ class _FakeClient:
         provider: ProviderName,
         scenario: str,
         contract: Mapping[str, object],
+        args: tuple[object, ...],
         **kwargs,
     ):
         self.provider = provider
         self.contract = contract
+        self.client_args = args
         self.client_kwargs = kwargs
         self.validation_error: str | None = None
+        self.privacy_error: str | None = None
+        self.actual_request: dict[str, object] | None = None
         responses = contract["responses"]
         assert isinstance(responses, Mapping)
         self.response = _FakeResponse(
@@ -109,29 +206,45 @@ class _FakeClient:
     async def __aexit__(self, *_args):
         return False
 
-    def _validate(self, method: str, url: object, kwargs: Mapping) -> None:
+    def _validate(
+        self,
+        method: str,
+        url: object,
+        args: tuple[object, ...],
+        kwargs: Mapping[str, object],
+    ) -> None:
         expected = self.contract["request"]
         assert isinstance(expected, Mapping)
         actual = {
+            "kind": "http",
             "method": method,
-            "url": url,
-            "params": kwargs.get("params"),
-            "headers": kwargs.get("headers"),
-            "json": kwargs.get("json"),
-            "client_headers": self.client_kwargs.get("headers"),
+            "url": _transport_value(url),
+            "client_args": _transport_value(self.client_args),
+            "client_kwargs": _complete_kwargs(
+                self.client_kwargs,
+                _HTTP_CHANNELS,
+            ),
+            "call_args": _transport_value(args),
+            "call_kwargs": _complete_kwargs(kwargs, _HTTP_CHANNELS),
         }
+        self.actual_request = actual
         normalized = _redact_fixture_credential(actual)
+        self.privacy_error = _privacy_error(
+            self.provider,
+            actual,
+            expected,
+        )
         if normalized != _plain(expected):
             self.validation_error = (
                 f"{self.provider.value} golden request contract mismatch"
             )
 
-    async def get(self, url, **kwargs):
-        self._validate("GET", url, kwargs)
+    async def get(self, url, *args, **kwargs):
+        self._validate("GET", url, args, kwargs)
         return self.response
 
-    async def post(self, url, **kwargs):
-        self._validate("POST", url, kwargs)
+    async def post(self, url, *args, **kwargs):
+        self._validate("POST", url, args, kwargs)
         return self.response
 
 
@@ -142,22 +255,40 @@ class _FakeProcess:
         scenario: str,
         contract: Mapping[str, object],
         argv: tuple[object, ...],
+        kwargs: Mapping[str, object],
     ):
         self.provider = provider
         self.scenario = scenario
         self.contract = contract
         self.argv = argv
+        self.kwargs = kwargs
         self.returncode = 0
         self.validation_error: str | None = None
+        self.privacy_error: str | None = None
+        self.actual_request: dict[str, object] | None = None
 
     async def communicate(self, input_bytes):
         expected = self.contract["request"]
         assert isinstance(expected, Mapping)
+        args = list(self.argv)
+        if args and args[0] == sys.executable:
+            args[0] = "<python>"
         actual = {
+            "kind": "subprocess",
             "method": "SUBPROCESS",
-            "argv": ["<python>", *self.argv[1:]],
-            "stdin": json.loads(input_bytes),
+            "args": _transport_value(args),
+            "kwargs": _complete_kwargs(
+                self.kwargs,
+                _SUBPROCESS_CHANNELS,
+            ),
+            "stdin_payload": json.loads(input_bytes),
         }
+        self.actual_request = actual
+        self.privacy_error = _privacy_error(
+            self.provider,
+            actual,
+            expected,
+        )
         if _redact_fixture_credential(actual) != _plain(expected):
             self.validation_error = (
                 f"{self.provider.value} golden request contract mismatch"
@@ -200,13 +331,25 @@ async def _execute_case(provider: ProviderName, scenario: str):
     query = SearchQuery(query=_SECRET, max_results=1)
     transports: list[_FakeClient | _FakeProcess] = []
 
-    def fake_client(**kwargs):
-        transport = _FakeClient(provider, scenario, contract, **kwargs)
+    def fake_client(*args, **kwargs):
+        transport = _FakeClient(
+            provider,
+            scenario,
+            contract,
+            args,
+            **kwargs,
+        )
         transports.append(transport)
         return transport
 
-    async def fake_subprocess(*args, **_kwargs):
-        transport = _FakeProcess(provider, scenario, contract, args)
+    async def fake_subprocess(*args, **kwargs):
+        transport = _FakeProcess(
+            provider,
+            scenario,
+            contract,
+            args,
+            kwargs,
+        )
         transports.append(transport)
         return transport
 
@@ -236,6 +379,16 @@ async def _execute_case(provider: ProviderName, scenario: str):
             request = contract["request"]
             assert isinstance(request, Mapping)
             expected_transport_count = 1
+            privacy_failure = next(
+                (
+                    item.privacy_error
+                    for item in transports
+                    if item.privacy_error
+                ),
+                None,
+            )
+            if privacy_failure is not None:
+                raise ValueError(privacy_failure)
             if (
                 len(transports) != expected_transport_count
                 or any(item.validation_error for item in transports)

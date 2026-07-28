@@ -1516,6 +1516,124 @@ def test_attestation_regeneration_rejects_wrong_normalized_title(monkeypatch):
         generate_attestation_document()
 
 
+def test_golden_transport_rejects_brave_cookie_and_url_query_leaks(monkeypatch):
+    import httpx
+
+    from argus.providers.brave import BRAVE_API_BASE, BraveProvider
+    from scripts.generate_provider_fixture_attestations import (
+        generate_attestation_document,
+    )
+
+    original = BraveProvider.search
+
+    async def leaking_transport(self, query):
+        async with httpx.AsyncClient(cookies={"fixture": query.query}) as client:
+            await client.get(
+                f"{BRAVE_API_BASE}?debug={query.query}",
+                cookies={"fixture": query.query},
+            )
+        return await original(self, query)
+
+    monkeypatch.setattr(BraveProvider, "search", leaking_transport)
+    with pytest.raises(ValueError, match="privacy"):
+        generate_attestation_document()
+
+
+def test_golden_transport_rejects_form_auth_and_extensions(monkeypatch):
+    import httpx
+
+    from argus.providers.brave import BRAVE_API_BASE, BraveProvider
+    from scripts.generate_provider_fixture_attestations import (
+        generate_attestation_document,
+    )
+
+    original = BraveProvider.search
+
+    async def extra_channels(self, query):
+        async with httpx.AsyncClient(auth=("fixture", "fixture")) as client:
+            await client.post(
+                BRAVE_API_BASE,
+                data={"mode": "unexpected"},
+                auth=("fixture", "fixture"),
+                extensions={"fixture": True},
+            )
+        return await original(self, query)
+
+    monkeypatch.setattr(BraveProvider, "search", extra_channels)
+    with pytest.raises(ValueError, match="golden request"):
+        generate_attestation_document()
+
+
+def test_golden_transport_rejects_ddg_env_query_leak(monkeypatch):
+    import asyncio
+    import json
+    import sys
+
+    from argus.providers.duckduckgo import DuckDuckGoProvider
+    from scripts.generate_provider_fixture_attestations import (
+        generate_attestation_document,
+    )
+
+    original = DuckDuckGoProvider.search
+
+    async def leaking_subprocess(self, query):
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "argus.providers.ddg_worker",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env={"FIXTURE_QUERY": query.query},
+            limit=1_048_576,
+        )
+        await process.communicate(json.dumps({
+            "query": query.query,
+            "max_results": 1,
+            "timelimit": None,
+        }).encode())
+        return await original(self, query)
+
+    monkeypatch.setattr(DuckDuckGoProvider, "search", leaking_subprocess)
+    with pytest.raises(ValueError, match="privacy"):
+        generate_attestation_document()
+
+
+def test_golden_transport_rejects_undeclared_ddg_env(monkeypatch):
+    import asyncio
+    import json
+    import sys
+
+    from argus.providers.duckduckgo import DuckDuckGoProvider
+    from scripts.generate_provider_fixture_attestations import (
+        generate_attestation_document,
+    )
+
+    original = DuckDuckGoProvider.search
+
+    async def undeclared_env(self, query):
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "argus.providers.ddg_worker",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env={"FIXTURE_MODE": "unexpected"},
+            limit=1_048_576,
+        )
+        await process.communicate(json.dumps({
+            "query": query.query,
+            "max_results": 1,
+            "timelimit": None,
+        }).encode())
+        return await original(self, query)
+
+    monkeypatch.setattr(DuckDuckGoProvider, "search", undeclared_env)
+    with pytest.raises(ValueError, match="golden request"):
+        generate_attestation_document()
+
+
 def test_fixture_harness_rejects_private_query_in_adapter_logs(monkeypatch):
     import logging
 
@@ -1623,6 +1741,15 @@ def test_authoritative_zero_reconciliation_clears_terminal_account_all_modes(
 
     service, repository = _service(tmp_path)
     service.register_provider(_registration(provider=ProviderName.SERPER))
+    spend = ProviderSpendRepository(repository.session_factory)
+    attempt = spend.reserve(
+        provider=ProviderName.SERPER,
+        conservative_charge=1.0,
+        budget_limit=10.0,
+        caller_identity="provider:serper",
+        caller_label="reconciliation",
+        idempotency_key="reconcile-terminal-attempt",
+    )
     repository.record_terminal_exhaustion(
         provider=ProviderName.SERPER,
         account_fingerprint="account:v1",
@@ -1630,22 +1757,24 @@ def test_authoritative_zero_reconciliation_clears_terminal_account_all_modes(
         reset_at=None,
         evidence_ref="terminal:serper",
     )
-    spend = ProviderSpendRepository(repository.session_factory)
-    attempt = spend.reserve(
+    snapshot = spend.record_provider_snapshot(
         provider=ProviderName.SERPER,
-        conservative_charge=1.0,
-        budget_limit=10.0,
-        caller_identity="operator",
-        caller_label="reconciliation",
-        idempotency_key="reconcile-terminal-attempt",
+        balance=10.0,
+        observed_at=repository.authority_now(),
+        actor_identity="provider:serper",
+        idempotency_key="reconcile-terminal-snapshot",
+        provider_reference="serper-terminal-authority",
+        related_attempt_id=attempt.attempt_id,
+        authoritative_charge=0.0,
     )
     spend.resolve(
         attempt.attempt_id,
         actual_charge=0.0,
         outcome="confirmed_not_consumed",
-        source="operator",
-        actor_identity="operator",
+        source="provider",
+        actor_identity="provider:serper",
         idempotency_key="reconcile-terminal-resolution",
+        provider_snapshot_id=snapshot.snapshot_id,
     )
 
     for mode in ("discovery", "research", "recovery", "grounding"):

@@ -293,6 +293,23 @@ class ProviderSpendRepository:
                     provider,
                     lock=True,
                 )
+                from argus.persistence.readiness import (
+                    ProviderReadinessRepository,
+                )
+
+                readiness = ProviderReadinessRepository(
+                    sessionmaker(
+                        bind=session.get_bind(),
+                        expire_on_commit=False,
+                    )
+                )
+                if readiness.protected_exhaustion_in_session(
+                    session,
+                    provider,
+                ):
+                    raise BudgetExhaustedError(
+                        f"{provider.value} terminal account exhaustion"
+                    )
                 if budget_limit > 0 and obligation + conservative_charge > budget_limit:
                     raise BudgetExhaustedError(f"{provider.value} budget exhausted")
 
@@ -481,6 +498,7 @@ class ProviderSpendRepository:
                 attempt=row,
                 outcome=outcome,
                 evidence_ref=f"spend-resolution:{row.id}",
+                authoritative_balance=source == "provider",
             )
             self._audit(
                 session,

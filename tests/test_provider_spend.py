@@ -121,6 +121,82 @@ def test_direct_reserve_settle_reconciles_protected_readiness_account_wide(
         assert snapshot.execution_decision.code == "eligible"
 
 
+def test_terminal_exhaustion_denies_reserve_and_survives_ordinary_settlement(
+    tmp_path,
+):
+    from argus.broker.readiness import (
+        ProviderReadinessService,
+        ProviderRegistrationSpec,
+    )
+    from argus.persistence.provider_spend import (
+        BudgetExhaustedError,
+        ProviderSpendRepository,
+    )
+    from argus.persistence.readiness import create_readiness_repository
+    from argus.providers.fixture_attestation import build_fixture_attestation
+
+    readiness = create_readiness_repository(
+        f"sqlite:///{tmp_path / 'terminal-precedence.db'}"
+    )
+    service = ProviderReadinessService(repository=readiness)
+    fixture_ref, attestation = build_fixture_attestation(
+        ProviderName.SERPER,
+        release="argus-1.6.2",
+        provider_contract="2026-07-27-v1",
+    )
+    service.register_provider(ProviderRegistrationSpec(
+        provider=ProviderName.SERPER,
+        enabled=True,
+        configuration_fingerprint="terminal-config",
+        credential_version_fingerprint="terminal-credential",
+        account_fingerprint="terminal-account",
+        budget_limit=10.0,
+        durable_spend_repository=True,
+        release_revision="argus-1.6.2",
+        contract_version="2026-07-27-v1",
+        fixture_evidence_ref=fixture_ref,
+        fixture_attestation=attestation,
+    ))
+    spend = ProviderSpendRepository(readiness.session_factory)
+    existing = spend.reserve(
+        provider=ProviderName.SERPER,
+        conservative_charge=1.0,
+        budget_limit=10.0,
+        caller_identity="legacy-direct",
+        caller_label="terminal-regression",
+        idempotency_key="terminal:existing",
+    )
+    readiness.record_terminal_exhaustion(
+        provider=ProviderName.SERPER,
+        account_fingerprint="terminal-account",
+        recurring=False,
+        reset_at=None,
+        evidence_ref="terminal:one-time",
+    )
+
+    with pytest.raises(BudgetExhaustedError, match="terminal"):
+        spend.reserve(
+            provider=ProviderName.SERPER,
+            conservative_charge=0.1,
+            budget_limit=10.0,
+            caller_identity="legacy-direct",
+            caller_label="terminal-regression",
+            idempotency_key="terminal:denied",
+        )
+    assert readiness.paid_attempt_count(ProviderName.SERPER) == 1
+    assert [
+        service.snapshot(ProviderName.SERPER, request_class=mode).spend
+        for mode in ("discovery", "research", "recovery", "grounding")
+    ] == ["exhausted"] * 4
+
+    spend.settle(existing.attempt_id, actual_charge=0.25, outcome="success")
+
+    assert [
+        service.snapshot(ProviderName.SERPER, request_class=mode).spend
+        for mode in ("discovery", "research", "recovery", "grounding")
+    ] == ["exhausted"] * 4
+
+
 def test_unknown_outcome_never_expires_or_refunds_automatically(tmp_path):
     repository = _repository(tmp_path)
     reservation = repository.reserve(

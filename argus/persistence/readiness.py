@@ -1349,6 +1349,7 @@ class ProviderReadinessRepository:
                 ),
                 protected=state in {"uncertain", "exhausted"},
                 scope=authorization.scope,
+                replace_protected_uncertain=resolving_matching_uncertainty,
             )
             scope_key = authorization.scope.fingerprint()
             snapshot_row = session.scalar(
@@ -1381,6 +1382,8 @@ class ProviderReadinessRepository:
         self, session, *, provider: ProviderName, state: str,
         evidence_ref: str, outcome: str | None, protected: bool,
         scope: Any | None = None,
+        replace_protected_uncertain: bool = False,
+        replace_protected_exhausted: bool = False,
     ) -> None:
         """Fold spend reconciliation into readiness in the caller transaction."""
         from argus.broker.readiness import (
@@ -1395,7 +1398,8 @@ class ProviderReadinessRepository:
         targets = {primary_scope.fingerprint(): primary_scope}
         account_wide = (
             state in {"exhausted", "uncertain"}
-            or (outcome or "").startswith("reconciled")
+            or replace_protected_uncertain
+            or replace_protected_exhausted
         )
         if account_wide:
             account = primary_scope.account_fingerprint
@@ -1426,8 +1430,17 @@ class ProviderReadinessRepository:
             )
             if current is not None:
                 if (
-                    current.protected and state == "available"
-                    and not (outcome or "").startswith("reconciled")
+                    current.protected
+                    and current.state == "exhausted"
+                    and state != "exhausted"
+                    and not replace_protected_exhausted
+                ):
+                    continue
+                if (
+                    current.protected
+                    and current.state == "uncertain"
+                    and state == "available"
+                    and not replace_protected_uncertain
                 ):
                     continue
                 session.delete(current)
@@ -1479,6 +1492,7 @@ class ProviderReadinessRepository:
 
     def resolve_spend_in_session(
         self, session, *, attempt: Any, outcome: str, evidence_ref: str,
+        authoritative_balance: bool = False,
     ) -> None:
         """Resolve attempt, lease, protected evidence and snapshot atomically."""
         lease = session.scalar(
@@ -1509,9 +1523,43 @@ class ProviderReadinessRepository:
             provider=ProviderName(attempt.provider),
             state=state,
             evidence_ref=evidence_ref,
-            outcome=f"reconciled_{outcome}",
+            outcome=(
+                f"authoritative_balance_{outcome}"
+                if authoritative_balance
+                else f"reconciled_{outcome}"
+            ),
             protected=state == "exhausted",
             scope=scope,
+            replace_protected_uncertain=True,
+            replace_protected_exhausted=authoritative_balance,
+        )
+
+    def protected_exhaustion_in_session(
+        self,
+        session,
+        provider: ProviderName,
+    ) -> bool:
+        """Return whether the registered account has current protected exhaustion."""
+        registration = self.get_registration_in_session(session, provider)
+        scope = registration.get("scope") or {}
+        account = scope.get("account_fingerprint")
+        if not account:
+            return False
+        now = self.authority_now(session)
+        rows = session.scalars(
+            select(ProviderReadinessObservationRow)
+            .where(
+                ProviderReadinessObservationRow.provider == provider.value,
+                ProviderReadinessObservationRow.dimension == "spend",
+                ProviderReadinessObservationRow.state == "exhausted",
+                ProviderReadinessObservationRow.protected.is_(True),
+            )
+            .with_for_update()
+        )
+        return any(
+            json.loads(row.scope_json).get("account_fingerprint") == account
+            and (row.expires_at is None or now < _aware(row.expires_at))
+            for row in rows
         )
 
     def append_stale_charge_evidence(
