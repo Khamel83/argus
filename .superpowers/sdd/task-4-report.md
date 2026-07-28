@@ -252,6 +252,46 @@ Fifth-correction TDD and verification:
 Fifth correction commit message:
 `fix: require durable authority and exact schema`
 
+## Sixth reviewer correction
+
+The sixth strict schema review is closed by a separate correction:
+
+- Restore verification always loads the checked-in trusted contract. A caller
+  may supply an expectation only when its complete content and hash exactly
+  equal that artifact; a different self-hashed manifest is rejected before
+  connecting to the database.
+- Every column now records and exactly compares PostgreSQL type, character
+  maximum length, numeric precision and scale, datetime precision, normalized
+  default expression, identity state and generation mode, generated state and
+  expression, and nullability. Parameterized drift coverage changes each
+  attribute independently and requires failure.
+- SQL constraint and index normalization now preserves parentheses,
+  punctuation, operators, casts, literals, and identifier order while
+  normalizing only insignificant whitespace, keyword case, and safe lowercase
+  identifier quoting. The regression proves `a AND (b OR c)` remains distinct
+  from `(a AND b) OR c`.
+- The checked PostgreSQL contract was regenerated with the expanded column
+  semantics and grouping-preserving definitions. Its SHA-256 is
+  `df54a62bbe62877d27d2187534824ccd8880aa7ecbebb00dee10dac507f2552c`.
+
+Sixth-correction TDD and verification:
+
+- RED strict slice: `12 failed, 2 passed`, directly covering caller trust
+  replacement, grouping loss, incomplete column semantics, and independent
+  semantic drift.
+- GREEN focused recovery verifier: `27 passed, 4 skipped`.
+- Adjacent recovery, search-ledger, provider-spend, and operational-status
+  command: `220 passed, 31 skipped`.
+- Dedicated migrated-PostgreSQL type and complete-contract tests: `2 skipped`
+  because the disposable PostgreSQL fixture was unavailable.
+- One fresh full repository suite: `1481 passed, 42 skipped`, with the same
+  four Starlette cookie deprecation warnings and zero failures.
+- Checked contract regenerated exactly from metadata; Ruff and
+  `git diff --check` passed.
+
+Sixth correction commit message:
+`fix: pin complete recovery schema semantics`
+
 ## Commit
 
 Commit message: `feat: finalize and compose extraction outcomes`

@@ -2,1566 +2,4634 @@
   "columns": {
     "alembic_version": {
       "version_num": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       }
     },
     "authentication_scope_authority_receipts": {
       "access_scope": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "authentication_scope_fingerprint": {
+        "character_maximum_length": 71,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "issued_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "privacy_scope": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "receipt_ref": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "scope": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       }
     },
     "content_identities": {
       "canonical_url": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "content_hash": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "created_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       }
     },
     "delivery_intents": {
       "attempt_count": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
         "type": "integer"
       },
       "content_sha256": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "created_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "delivered_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "destination": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "extraction_run_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "last_attempt_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "last_error_code": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "last_error_summary": {
+        "character_maximum_length": 256,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "lease_expires_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "lease_token": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "max_attempts": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
         "type": "integer"
       },
       "next_attempt_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "payload_compacted_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "payload_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "payload_sha256": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "response_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "run_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "status": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "updated_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       }
     },
     "extraction_artifact_identities": {
       "artifact_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "content_identity": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "content_text": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "evaluation_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       }
     },
     "extraction_artifacts": {
       "archive_used": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "boolean"
       },
       "auth_used": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "boolean"
       },
       "canonical_url": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "content_hash": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "cookies_used": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "boolean"
       },
       "cost": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 53,
+        "numeric_scale": null,
         "type": "double precision"
       },
       "egress": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "machine": {
+        "character_maximum_length": 100,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "metadata_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "run_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "source_type": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       }
     },
     "extraction_outcome_acceptances": {
       "acceptance_fingerprint": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "accepted_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "artifact_disposition": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "outcome": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "outcome_policy_version": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "plan_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "projection_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "receipt_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "scope": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       }
     },
     "extraction_outcome_activations": {
       "activated_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "receipt_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       }
     },
     "extraction_outcome_artifacts": {
       "artifact_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "content_identity": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "content_text": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "disposition": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "evaluation_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "is_complete": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "boolean"
       },
       "plan_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "quality_passed": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "boolean"
       }
     },
     "extraction_outcome_plans": {
       "access_scope": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "created_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "extraction_run_id": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "mode": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "normalized_url": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "plan_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "plan_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "request_id": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "source_fingerprint": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       }
     },
     "extraction_outcome_rejections": {
       "code": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "plan_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "projection_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "provider": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "recommended_action": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "rejection_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       }
     },
     "extraction_outcome_steps": {
       "attempt_outcome": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "decision": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "extractor": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "latency_ms": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
         "type": "bigint"
       },
       "ordinal": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
         "type": "integer"
       },
       "plan_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "policy_rule_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "provenance_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "spend_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       }
     },
     "extraction_runs": {
       "acceptance_fingerprint": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "author": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "caller": {
+        "character_maximum_length": 100,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "committed_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "content_hash": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "domain": {
+        "character_maximum_length": 255,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "error_summary": {
+        "character_maximum_length": 256,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "extraction_run_id": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "latency_ms": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
         "type": "integer"
       },
       "mode": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "published_date": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "quality_passed": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "boolean"
       },
       "quality_reason": {
+        "character_maximum_length": 255,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "request_url": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "selected_extractor": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "started_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "status": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "title": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "word_count": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
         "type": "integer"
       }
     },
     "extractor_attempts": {
       "extractor": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "failure_summary": {
+        "character_maximum_length": 256,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "latency_ms": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
         "type": "integer"
       },
       "ordinal": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
         "type": "integer"
       },
       "run_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "status": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       }
     },
     "normalized_results": {
       "content_hash": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "domain": {
+        "character_maximum_length": 255,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "final_rank": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
         "type": "integer"
       },
       "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "provider": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "run_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "score": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 53,
+        "numeric_scale": null,
         "type": "double precision"
       },
       "snippet": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "title": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "url": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       }
     },
     "provider_attempts": {
       "budget_remaining": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": 53,
+        "numeric_scale": null,
         "type": "double precision"
       },
       "egress": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "error": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "latency_ms": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
         "type": "integer"
       },
       "provider": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "results_count": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
         "type": "integer"
       },
       "run_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "status": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       }
     },
     "provider_balance_snapshots": {
       "actor_identity": {
+        "character_maximum_length": 100,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "authoritative_charge": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 53,
+        "numeric_scale": null,
         "type": "double precision"
       },
       "balance": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 53,
+        "numeric_scale": null,
         "type": "double precision"
       },
       "created_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "idempotency_key": {
+        "character_maximum_length": 255,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "observed_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "provider": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "provider_reference": {
+        "character_maximum_length": 255,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "related_attempt_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "request_hash": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "source": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       }
     },
     "provider_spend_attempts": {
       "actual_charge": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": 53,
+        "numeric_scale": null,
         "type": "double precision"
       },
       "caller_identity": {
+        "character_maximum_length": 100,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "caller_label": {
+        "character_maximum_length": 100,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "created_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "estimator_violation": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "boolean"
       },
       "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "idempotency_key": {
+        "character_maximum_length": 255,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "is_paid": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "boolean"
       },
       "outcome": {
+        "character_maximum_length": 100,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "provider": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "request_hash": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "reservation_overrun": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 53,
+        "numeric_scale": null,
         "type": "double precision"
       },
       "reserved_charge": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 53,
+        "numeric_scale": null,
         "type": "double precision"
       },
       "resolution_reference": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "resolution_source": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "status": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "tier": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
         "type": "integer"
       },
       "updated_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "usage": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 53,
+        "numeric_scale": null,
         "type": "double precision"
       }
     },
     "provider_spend_audit": {
       "action": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "actor_identity": {
+        "character_maximum_length": 100,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "after_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "attempt_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "before_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "created_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "idempotency_key": {
+        "character_maximum_length": 255,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "provider": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "request_hash": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       }
     },
     "result_extraction_links": {
       "artifact_plan_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "artifact_row_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "composition_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "extraction_acceptance_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "extraction_plan_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "rejection_plan_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "rejection_row_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "result_cluster_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "reuse_origin": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       }
     },
     "result_provenance": {
       "egress": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "machine": {
+        "character_maximum_length": 100,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "metadata_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "provider": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "result_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "source_type": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       }
     },
     "retrieval_compositions": {
       "accepted_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "artifact_outcome": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "composite_outcome": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "projection_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "receipt_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "requirement_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "retrieval_acceptance_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "retrieval_outcome": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "source_fingerprint": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       }
     },
     "retrieval_requests": {
       "caller": {
+        "character_maximum_length": 100,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "created_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "free_only": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "boolean"
       },
       "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "max_results": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
         "type": "integer"
       },
       "mode": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "providers_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "query_text": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       }
     },
     "retrieval_runs": {
       "acceptance_fingerprint": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "cached": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "boolean"
       },
       "committed_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "request_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "search_run_id": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "started_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "status": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "total_results": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
         "type": "integer"
       }
     },
     "retrieval_sessions": {
       "created_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "id": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       }
     },
     "session_extracted_urls": {
       "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "query_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "url": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       }
     },
     "session_queries": {
       "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "mode": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       },
       "ordinal": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
         "type": "integer"
       },
       "queried_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "timestamp without time zone"
       },
       "query_text": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "text"
       },
       "results_count": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
         "type": "integer"
       },
       "session_id": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
         "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
         "type": "character varying"
       }
     }
   },
   "constraints": {
     "alembic_version_pkc": {
-      "definition": "primary key version_num",
+      "definition": "primary key ( version_num )",
       "table": "alembic_version"
     },
     "authentication_scope_authority_receipts_pkey": {
-      "definition": "primary key receipt_ref",
+      "definition": "primary key ( receipt_ref )",
       "table": "authentication_scope_authority_receipts"
     },
     "ck_delivery_intents_one_parent": {
-      "definition": "check run_id is not null and extraction_run_id is null or run_id is null and extraction_run_id is not null",
+      "definition": "check ( ( run_id is not null and extraction_run_id is null ) or ( run_id is null and extraction_run_id is not null ) )",
       "table": "delivery_intents"
     },
     "ck_result_extraction_links_acceptance_pair": {
-      "definition": "check extraction_acceptance_ref is null = extraction_plan_id is null",
+      "definition": "check ( ( extraction_acceptance_ref is null ) = ( extraction_plan_id is null ) )",
       "table": "result_extraction_links"
     },
     "ck_result_extraction_links_artifact_pair": {
-      "definition": "check artifact_row_id is null = artifact_plan_id is null",
+      "definition": "check ( ( artifact_row_id is null ) = ( artifact_plan_id is null ) )",
       "table": "result_extraction_links"
     },
     "ck_result_extraction_links_artifact_requires_acceptance": {
-      "definition": "check artifact_row_id is null or artifact_plan_id is not null and extraction_plan_id is not null and extraction_acceptance_ref is not null and artifact_plan_id = extraction_plan_id",
+      "definition": "check ( artifact_row_id is null or ( artifact_plan_id is not null and extraction_plan_id is not null and extraction_acceptance_ref is not null and artifact_plan_id = extraction_plan_id ) )",
       "table": "result_extraction_links"
     },
     "ck_result_extraction_links_artifact_same_plan": {
-      "definition": "check artifact_plan_id is null or artifact_plan_id = extraction_plan_id",
+      "definition": "check ( artifact_plan_id is null or artifact_plan_id = extraction_plan_id )",
       "table": "result_extraction_links"
     },
     "ck_result_extraction_links_rejection_pair": {
-      "definition": "check rejection_row_id is null = rejection_plan_id is null",
+      "definition": "check ( ( rejection_row_id is null ) = ( rejection_plan_id is null ) )",
       "table": "result_extraction_links"
     },
     "ck_result_extraction_links_rejection_requires_acceptance": {
-      "definition": "check rejection_row_id is null or rejection_plan_id is not null and extraction_plan_id is not null and extraction_acceptance_ref is not null and rejection_plan_id = extraction_plan_id",
+      "definition": "check ( rejection_row_id is null or ( rejection_plan_id is not null and extraction_plan_id is not null and extraction_acceptance_ref is not null and rejection_plan_id = extraction_plan_id ) )",
       "table": "result_extraction_links"
     },
     "ck_result_extraction_links_rejection_same_plan": {
-      "definition": "check rejection_plan_id is null or rejection_plan_id = extraction_plan_id",
+      "definition": "check ( rejection_plan_id is null or rejection_plan_id = extraction_plan_id )",
       "table": "result_extraction_links"
     },
     "content_identities_pkey": {
-      "definition": "primary key content_hash",
+      "definition": "primary key ( content_hash )",
       "table": "content_identities"
     },
     "delivery_intents_pkey": {
-      "definition": "primary key id",
+      "definition": "primary key ( id )",
       "table": "delivery_intents"
     },
     "delivery_intents_run_id_fkey": {
-      "definition": "foreign key run_id references retrieval_runs id",
+      "definition": "foreign key ( run_id ) references retrieval_runs ( id )",
       "table": "delivery_intents"
     },
     "delivery_intents_run_id_key": {
-      "definition": "unique run_id",
+      "definition": "unique ( run_id )",
       "table": "delivery_intents"
     },
     "extraction_artifact_identities_pkey": {
-      "definition": "primary key artifact_ref",
+      "definition": "primary key ( artifact_ref )",
       "table": "extraction_artifact_identities"
     },
     "extraction_artifacts_content_hash_fkey": {
-      "definition": "foreign key content_hash references content_identities content_hash",
+      "definition": "foreign key ( content_hash ) references content_identities ( content_hash )",
       "table": "extraction_artifacts"
     },
     "extraction_artifacts_pkey": {
-      "definition": "primary key id",
+      "definition": "primary key ( id )",
       "table": "extraction_artifacts"
     },
     "extraction_artifacts_run_id_fkey": {
-      "definition": "foreign key run_id references extraction_runs id",
+      "definition": "foreign key ( run_id ) references extraction_runs ( id )",
       "table": "extraction_artifacts"
     },
     "extraction_artifacts_run_id_key": {
-      "definition": "unique run_id",
+      "definition": "unique ( run_id )",
       "table": "extraction_artifacts"
     },
     "extraction_outcome_acceptances_pkey": {
-      "definition": "primary key receipt_ref",
+      "definition": "primary key ( receipt_ref )",
       "table": "extraction_outcome_acceptances"
     },
     "extraction_outcome_acceptances_plan_id_fkey": {
-      "definition": "foreign key plan_id references extraction_outcome_plans id",
+      "definition": "foreign key ( plan_id ) references extraction_outcome_plans ( id )",
       "table": "extraction_outcome_acceptances"
     },
     "extraction_outcome_acceptances_plan_id_key": {
-      "definition": "unique plan_id",
+      "definition": "unique ( plan_id )",
       "table": "extraction_outcome_acceptances"
     },
     "extraction_outcome_acceptances_receipt_ref_plan_id_key": {
-      "definition": "unique receipt_ref plan_id",
+      "definition": "unique ( receipt_ref , plan_id )",
       "table": "extraction_outcome_acceptances"
     },
     "extraction_outcome_activations_pkey": {
-      "definition": "primary key receipt_ref",
+      "definition": "primary key ( receipt_ref )",
       "table": "extraction_outcome_activations"
     },
     "extraction_outcome_artifacts_id_plan_id_key": {
-      "definition": "unique id plan_id",
+      "definition": "unique ( id , plan_id )",
       "table": "extraction_outcome_artifacts"
     },
     "extraction_outcome_artifacts_pkey": {
-      "definition": "primary key id",
+      "definition": "primary key ( id )",
       "table": "extraction_outcome_artifacts"
     },
     "extraction_outcome_artifacts_plan_id_fkey": {
-      "definition": "foreign key plan_id references extraction_outcome_plans id",
+      "definition": "foreign key ( plan_id ) references extraction_outcome_plans ( id )",
       "table": "extraction_outcome_artifacts"
     },
     "extraction_outcome_artifacts_plan_id_key": {
-      "definition": "unique plan_id",
+      "definition": "unique ( plan_id )",
       "table": "extraction_outcome_artifacts"
     },
     "extraction_outcome_plans_extraction_run_id_key": {
-      "definition": "unique extraction_run_id",
+      "definition": "unique ( extraction_run_id )",
       "table": "extraction_outcome_plans"
     },
     "extraction_outcome_plans_pkey": {
-      "definition": "primary key id",
+      "definition": "primary key ( id )",
       "table": "extraction_outcome_plans"
     },
     "extraction_outcome_rejections_id_plan_id_key": {
-      "definition": "unique id plan_id",
+      "definition": "unique ( id , plan_id )",
       "table": "extraction_outcome_rejections"
     },
     "extraction_outcome_rejections_pkey": {
-      "definition": "primary key id",
+      "definition": "primary key ( id )",
       "table": "extraction_outcome_rejections"
     },
     "extraction_outcome_rejections_plan_id_fkey": {
-      "definition": "foreign key plan_id references extraction_outcome_plans id",
+      "definition": "foreign key ( plan_id ) references extraction_outcome_plans ( id )",
       "table": "extraction_outcome_rejections"
     },
     "extraction_outcome_rejections_plan_id_key": {
-      "definition": "unique plan_id",
+      "definition": "unique ( plan_id )",
       "table": "extraction_outcome_rejections"
     },
     "extraction_outcome_steps_pkey": {
-      "definition": "primary key id",
+      "definition": "primary key ( id )",
       "table": "extraction_outcome_steps"
     },
     "extraction_outcome_steps_plan_id_fkey": {
-      "definition": "foreign key plan_id references extraction_outcome_plans id",
+      "definition": "foreign key ( plan_id ) references extraction_outcome_plans ( id )",
       "table": "extraction_outcome_steps"
     },
     "extraction_runs_content_hash_fkey": {
-      "definition": "foreign key content_hash references content_identities content_hash",
+      "definition": "foreign key ( content_hash ) references content_identities ( content_hash )",
       "table": "extraction_runs"
     },
     "extraction_runs_extraction_run_id_key": {
-      "definition": "unique extraction_run_id",
+      "definition": "unique ( extraction_run_id )",
       "table": "extraction_runs"
     },
     "extraction_runs_pkey": {
-      "definition": "primary key id",
+      "definition": "primary key ( id )",
       "table": "extraction_runs"
     },
     "extractor_attempts_pkey": {
-      "definition": "primary key id",
+      "definition": "primary key ( id )",
       "table": "extractor_attempts"
     },
     "extractor_attempts_run_id_fkey": {
-      "definition": "foreign key run_id references extraction_runs id",
+      "definition": "foreign key ( run_id ) references extraction_runs ( id )",
       "table": "extractor_attempts"
     },
     "extractor_attempts_run_id_ordinal_key": {
-      "definition": "unique run_id ordinal",
+      "definition": "unique ( run_id , ordinal )",
       "table": "extractor_attempts"
     },
     "fk_delivery_intents_extraction_run_id": {
-      "definition": "foreign key extraction_run_id references extraction_runs id",
+      "definition": "foreign key ( extraction_run_id ) references extraction_runs ( id )",
       "table": "delivery_intents"
     },
     "fk_extraction_outcome_artifacts_identity": {
-      "definition": "foreign key artifact_ref references extraction_artifact_identities artifact_ref",
+      "definition": "foreign key ( artifact_ref ) references extraction_artifact_identities ( artifact_ref )",
       "table": "extraction_outcome_artifacts"
     },
     "fk_result_extraction_links_acceptance_plan": {
-      "definition": "foreign key extraction_acceptance_ref extraction_plan_id references extraction_outcome_acceptances receipt_ref plan_id match full",
+      "definition": "foreign key ( extraction_acceptance_ref , extraction_plan_id ) references extraction_outcome_acceptances ( receipt_ref , plan_id ) match full",
       "table": "result_extraction_links"
     },
     "fk_result_extraction_links_artifact_plan": {
-      "definition": "foreign key artifact_row_id artifact_plan_id references extraction_outcome_artifacts id plan_id match full",
+      "definition": "foreign key ( artifact_row_id , artifact_plan_id ) references extraction_outcome_artifacts ( id , plan_id ) match full",
       "table": "result_extraction_links"
     },
     "fk_result_extraction_links_rejection_plan": {
-      "definition": "foreign key rejection_row_id rejection_plan_id references extraction_outcome_rejections id plan_id match full",
+      "definition": "foreign key ( rejection_row_id , rejection_plan_id ) references extraction_outcome_rejections ( id , plan_id ) match full",
       "table": "result_extraction_links"
     },
     "normalized_results_content_hash_fkey": {
-      "definition": "foreign key content_hash references content_identities content_hash",
+      "definition": "foreign key ( content_hash ) references content_identities ( content_hash )",
       "table": "normalized_results"
     },
     "normalized_results_pkey": {
-      "definition": "primary key id",
+      "definition": "primary key ( id )",
       "table": "normalized_results"
     },
     "normalized_results_run_id_final_rank_key": {
-      "definition": "unique run_id final_rank",
+      "definition": "unique ( run_id , final_rank )",
       "table": "normalized_results"
     },
     "normalized_results_run_id_fkey": {
-      "definition": "foreign key run_id references retrieval_runs id",
+      "definition": "foreign key ( run_id ) references retrieval_runs ( id )",
       "table": "normalized_results"
     },
     "provider_attempts_pkey": {
-      "definition": "primary key id",
+      "definition": "primary key ( id )",
       "table": "provider_attempts"
     },
     "provider_attempts_run_id_fkey": {
-      "definition": "foreign key run_id references retrieval_runs id",
+      "definition": "foreign key ( run_id ) references retrieval_runs ( id )",
       "table": "provider_attempts"
     },
     "provider_balance_snapshots_idempotency_key_key": {
-      "definition": "unique idempotency_key",
+      "definition": "unique ( idempotency_key )",
       "table": "provider_balance_snapshots"
     },
     "provider_balance_snapshots_pkey": {
-      "definition": "primary key id",
+      "definition": "primary key ( id )",
       "table": "provider_balance_snapshots"
     },
     "provider_spend_attempts_idempotency_key_key": {
-      "definition": "unique idempotency_key",
+      "definition": "unique ( idempotency_key )",
       "table": "provider_spend_attempts"
     },
     "provider_spend_attempts_pkey": {
-      "definition": "primary key id",
+      "definition": "primary key ( id )",
       "table": "provider_spend_attempts"
     },
     "provider_spend_audit_pkey": {
-      "definition": "primary key id",
+      "definition": "primary key ( id )",
       "table": "provider_spend_audit"
     },
     "result_extraction_links_composition_ref_fkey": {
-      "definition": "foreign key composition_ref references retrieval_compositions receipt_ref",
+      "definition": "foreign key ( composition_ref ) references retrieval_compositions ( receipt_ref )",
       "table": "result_extraction_links"
     },
     "result_extraction_links_pkey": {
-      "definition": "primary key id",
+      "definition": "primary key ( id )",
       "table": "result_extraction_links"
     },
     "result_provenance_pkey": {
-      "definition": "primary key id",
+      "definition": "primary key ( id )",
       "table": "result_provenance"
     },
     "result_provenance_result_id_fkey": {
-      "definition": "foreign key result_id references normalized_results id",
+      "definition": "foreign key ( result_id ) references normalized_results ( id )",
       "table": "result_provenance"
     },
     "result_provenance_result_id_key": {
-      "definition": "unique result_id",
+      "definition": "unique ( result_id )",
       "table": "result_provenance"
     },
     "retrieval_compositions_pkey": {
-      "definition": "primary key receipt_ref",
+      "definition": "primary key ( receipt_ref )",
       "table": "retrieval_compositions"
     },
     "retrieval_compositions_source_fingerprint_key": {
-      "definition": "unique source_fingerprint",
+      "definition": "unique ( source_fingerprint )",
       "table": "retrieval_compositions"
     },
     "retrieval_requests_pkey": {
-      "definition": "primary key id",
+      "definition": "primary key ( id )",
       "table": "retrieval_requests"
     },
     "retrieval_runs_pkey": {
-      "definition": "primary key id",
+      "definition": "primary key ( id )",
       "table": "retrieval_runs"
     },
     "retrieval_runs_request_id_fkey": {
-      "definition": "foreign key request_id references retrieval_requests id",
+      "definition": "foreign key ( request_id ) references retrieval_requests ( id )",
       "table": "retrieval_runs"
     },
     "retrieval_runs_request_id_key": {
-      "definition": "unique request_id",
+      "definition": "unique ( request_id )",
       "table": "retrieval_runs"
     },
     "retrieval_runs_search_run_id_key": {
-      "definition": "unique search_run_id",
+      "definition": "unique ( search_run_id )",
       "table": "retrieval_runs"
     },
     "retrieval_sessions_pkey": {
-      "definition": "primary key id",
+      "definition": "primary key ( id )",
       "table": "retrieval_sessions"
     },
     "session_extracted_urls_pkey": {
-      "definition": "primary key id",
+      "definition": "primary key ( id )",
       "table": "session_extracted_urls"
     },
     "session_extracted_urls_query_id_fkey": {
-      "definition": "foreign key query_id references session_queries id",
+      "definition": "foreign key ( query_id ) references session_queries ( id )",
       "table": "session_extracted_urls"
     },
     "session_extracted_urls_query_id_url_key": {
-      "definition": "unique query_id url",
+      "definition": "unique ( query_id , url )",
       "table": "session_extracted_urls"
     },
     "session_queries_pkey": {
-      "definition": "primary key id",
+      "definition": "primary key ( id )",
       "table": "session_queries"
     },
     "session_queries_session_id_fkey": {
-      "definition": "foreign key session_id references retrieval_sessions id",
+      "definition": "foreign key ( session_id ) references retrieval_sessions ( id )",
       "table": "session_queries"
     },
     "session_queries_session_id_ordinal_key": {
-      "definition": "unique session_id ordinal",
+      "definition": "unique ( session_id , ordinal )",
       "table": "session_queries"
     },
     "uq_delivery_intents_extraction_run_id": {
-      "definition": "unique extraction_run_id",
+      "definition": "unique ( extraction_run_id )",
       "table": "delivery_intents"
     },
     "uq_extraction_outcome_steps_plan_ordinal": {
-      "definition": "unique plan_id ordinal",
+      "definition": "unique ( plan_id , ordinal )",
       "table": "extraction_outcome_steps"
     },
     "uq_provider_snapshot_attempt": {
-      "definition": "unique related_attempt_id",
+      "definition": "unique ( related_attempt_id )",
       "table": "provider_balance_snapshots"
     },
     "uq_provider_snapshot_reference": {
-      "definition": "unique provider provider_reference",
+      "definition": "unique ( provider , provider_reference )",
       "table": "provider_balance_snapshots"
     },
     "uq_result_extraction_links_composition_cluster": {
-      "definition": "unique composition_ref result_cluster_ref",
+      "definition": "unique ( composition_ref , result_cluster_ref )",
       "table": "result_extraction_links"
     },
     "uq_spend_audit_action_key": {
-      "definition": "unique action idempotency_key",
+      "definition": "unique ( action , idempotency_key )",
       "table": "provider_spend_audit"
     }
   },
-  "contract_sha256": "7c88cf3dcf99ef5c7bd8674acb10b11ce6cfca17c3dc5d8c9321a96341f7062f",
+  "contract_sha256": "df54a62bbe62877d27d2187534824ccd8880aa7ecbebb00dee10dac507f2552c",
   "format_version": 1,
   "indexes": {
     "alembic_version_pkc": {
-      "definition": "create unique index alembic_version_pkc on public alembic_version using btree version_num",
+      "definition": "create unique index alembic_version_pkc on public . alembic_version using btree ( version_num )",
       "table": "alembic_version"
     },
     "authentication_scope_authority_receipts_pkey": {
-      "definition": "create unique index authentication_scope_authority_receipts_pkey on public authentication_scope_authority_receipts using btree receipt_ref",
+      "definition": "create unique index authentication_scope_authority_receipts_pkey on public . authentication_scope_authority_receipts using btree ( receipt_ref )",
       "table": "authentication_scope_authority_receipts"
     },
     "content_identities_pkey": {
-      "definition": "create unique index content_identities_pkey on public content_identities using btree content_hash",
+      "definition": "create unique index content_identities_pkey on public . content_identities using btree ( content_hash )",
       "table": "content_identities"
     },
     "delivery_intents_pkey": {
-      "definition": "create unique index delivery_intents_pkey on public delivery_intents using btree id",
+      "definition": "create unique index delivery_intents_pkey on public . delivery_intents using btree ( id )",
       "table": "delivery_intents"
     },
     "delivery_intents_run_id_key": {
-      "definition": "create unique index delivery_intents_run_id_key on public delivery_intents using btree run_id",
+      "definition": "create unique index delivery_intents_run_id_key on public . delivery_intents using btree ( run_id )",
       "table": "delivery_intents"
     },
     "extraction_artifact_identities_pkey": {
-      "definition": "create unique index extraction_artifact_identities_pkey on public extraction_artifact_identities using btree artifact_ref",
+      "definition": "create unique index extraction_artifact_identities_pkey on public . extraction_artifact_identities using btree ( artifact_ref )",
       "table": "extraction_artifact_identities"
     },
     "extraction_artifacts_pkey": {
-      "definition": "create unique index extraction_artifacts_pkey on public extraction_artifacts using btree id",
+      "definition": "create unique index extraction_artifacts_pkey on public . extraction_artifacts using btree ( id )",
       "table": "extraction_artifacts"
     },
     "extraction_artifacts_run_id_key": {
-      "definition": "create unique index extraction_artifacts_run_id_key on public extraction_artifacts using btree run_id",
+      "definition": "create unique index extraction_artifacts_run_id_key on public . extraction_artifacts using btree ( run_id )",
       "table": "extraction_artifacts"
     },
     "extraction_outcome_acceptances_pkey": {
-      "definition": "create unique index extraction_outcome_acceptances_pkey on public extraction_outcome_acceptances using btree receipt_ref",
+      "definition": "create unique index extraction_outcome_acceptances_pkey on public . extraction_outcome_acceptances using btree ( receipt_ref )",
       "table": "extraction_outcome_acceptances"
     },
     "extraction_outcome_acceptances_plan_id_key": {
-      "definition": "create unique index extraction_outcome_acceptances_plan_id_key on public extraction_outcome_acceptances using btree plan_id",
+      "definition": "create unique index extraction_outcome_acceptances_plan_id_key on public . extraction_outcome_acceptances using btree ( plan_id )",
       "table": "extraction_outcome_acceptances"
     },
     "extraction_outcome_acceptances_receipt_ref_plan_id_key": {
-      "definition": "create unique index extraction_outcome_acceptances_receipt_ref_plan_id_key on public extraction_outcome_acceptances using btree receipt_ref plan_id",
+      "definition": "create unique index extraction_outcome_acceptances_receipt_ref_plan_id_key on public . extraction_outcome_acceptances using btree ( receipt_ref , plan_id )",
       "table": "extraction_outcome_acceptances"
     },
     "extraction_outcome_activations_pkey": {
-      "definition": "create unique index extraction_outcome_activations_pkey on public extraction_outcome_activations using btree receipt_ref",
+      "definition": "create unique index extraction_outcome_activations_pkey on public . extraction_outcome_activations using btree ( receipt_ref )",
       "table": "extraction_outcome_activations"
     },
     "extraction_outcome_artifacts_id_plan_id_key": {
-      "definition": "create unique index extraction_outcome_artifacts_id_plan_id_key on public extraction_outcome_artifacts using btree id plan_id",
+      "definition": "create unique index extraction_outcome_artifacts_id_plan_id_key on public . extraction_outcome_artifacts using btree ( id , plan_id )",
       "table": "extraction_outcome_artifacts"
     },
     "extraction_outcome_artifacts_pkey": {
-      "definition": "create unique index extraction_outcome_artifacts_pkey on public extraction_outcome_artifacts using btree id",
+      "definition": "create unique index extraction_outcome_artifacts_pkey on public . extraction_outcome_artifacts using btree ( id )",
       "table": "extraction_outcome_artifacts"
     },
     "extraction_outcome_artifacts_plan_id_key": {
-      "definition": "create unique index extraction_outcome_artifacts_plan_id_key on public extraction_outcome_artifacts using btree plan_id",
+      "definition": "create unique index extraction_outcome_artifacts_plan_id_key on public . extraction_outcome_artifacts using btree ( plan_id )",
       "table": "extraction_outcome_artifacts"
     },
     "extraction_outcome_plans_extraction_run_id_key": {
-      "definition": "create unique index extraction_outcome_plans_extraction_run_id_key on public extraction_outcome_plans using btree extraction_run_id",
+      "definition": "create unique index extraction_outcome_plans_extraction_run_id_key on public . extraction_outcome_plans using btree ( extraction_run_id )",
       "table": "extraction_outcome_plans"
     },
     "extraction_outcome_plans_pkey": {
-      "definition": "create unique index extraction_outcome_plans_pkey on public extraction_outcome_plans using btree id",
+      "definition": "create unique index extraction_outcome_plans_pkey on public . extraction_outcome_plans using btree ( id )",
       "table": "extraction_outcome_plans"
     },
     "extraction_outcome_rejections_id_plan_id_key": {
-      "definition": "create unique index extraction_outcome_rejections_id_plan_id_key on public extraction_outcome_rejections using btree id plan_id",
+      "definition": "create unique index extraction_outcome_rejections_id_plan_id_key on public . extraction_outcome_rejections using btree ( id , plan_id )",
       "table": "extraction_outcome_rejections"
     },
     "extraction_outcome_rejections_pkey": {
-      "definition": "create unique index extraction_outcome_rejections_pkey on public extraction_outcome_rejections using btree id",
+      "definition": "create unique index extraction_outcome_rejections_pkey on public . extraction_outcome_rejections using btree ( id )",
       "table": "extraction_outcome_rejections"
     },
     "extraction_outcome_rejections_plan_id_key": {
-      "definition": "create unique index extraction_outcome_rejections_plan_id_key on public extraction_outcome_rejections using btree plan_id",
+      "definition": "create unique index extraction_outcome_rejections_plan_id_key on public . extraction_outcome_rejections using btree ( plan_id )",
       "table": "extraction_outcome_rejections"
     },
     "extraction_outcome_steps_pkey": {
-      "definition": "create unique index extraction_outcome_steps_pkey on public extraction_outcome_steps using btree id",
+      "definition": "create unique index extraction_outcome_steps_pkey on public . extraction_outcome_steps using btree ( id )",
       "table": "extraction_outcome_steps"
     },
     "extraction_runs_extraction_run_id_key": {
-      "definition": "create unique index extraction_runs_extraction_run_id_key on public extraction_runs using btree extraction_run_id",
+      "definition": "create unique index extraction_runs_extraction_run_id_key on public . extraction_runs using btree ( extraction_run_id )",
       "table": "extraction_runs"
     },
     "extraction_runs_pkey": {
-      "definition": "create unique index extraction_runs_pkey on public extraction_runs using btree id",
+      "definition": "create unique index extraction_runs_pkey on public . extraction_runs using btree ( id )",
       "table": "extraction_runs"
     },
     "extractor_attempts_pkey": {
-      "definition": "create unique index extractor_attempts_pkey on public extractor_attempts using btree id",
+      "definition": "create unique index extractor_attempts_pkey on public . extractor_attempts using btree ( id )",
       "table": "extractor_attempts"
     },
     "extractor_attempts_run_id_ordinal_key": {
-      "definition": "create unique index extractor_attempts_run_id_ordinal_key on public extractor_attempts using btree run_id ordinal",
+      "definition": "create unique index extractor_attempts_run_id_ordinal_key on public . extractor_attempts using btree ( run_id , ordinal )",
       "table": "extractor_attempts"
     },
     "ix_delivery_intents_dispatch": {
-      "definition": "create index ix_delivery_intents_dispatch on public delivery_intents using btree destination status next_attempt_at",
+      "definition": "create index ix_delivery_intents_dispatch on public . delivery_intents using btree ( destination , status , next_attempt_at )",
       "table": "delivery_intents"
     },
     "ix_extraction_outcome_artifacts_artifact_ref": {
-      "definition": "create index ix_extraction_outcome_artifacts_artifact_ref on public extraction_outcome_artifacts using btree artifact_ref",
+      "definition": "create index ix_extraction_outcome_artifacts_artifact_ref on public . extraction_outcome_artifacts using btree ( artifact_ref )",
       "table": "extraction_outcome_artifacts"
     },
     "ix_provider_balance_snapshots_provider": {
-      "definition": "create index ix_provider_balance_snapshots_provider on public provider_balance_snapshots using btree provider",
+      "definition": "create index ix_provider_balance_snapshots_provider on public . provider_balance_snapshots using btree ( provider )",
       "table": "provider_balance_snapshots"
     },
     "ix_provider_spend_attempts_provider": {
-      "definition": "create index ix_provider_spend_attempts_provider on public provider_spend_attempts using btree provider",
+      "definition": "create index ix_provider_spend_attempts_provider on public . provider_spend_attempts using btree ( provider )",
       "table": "provider_spend_attempts"
     },
     "normalized_results_pkey": {
-      "definition": "create unique index normalized_results_pkey on public normalized_results using btree id",
+      "definition": "create unique index normalized_results_pkey on public . normalized_results using btree ( id )",
       "table": "normalized_results"
     },
     "normalized_results_run_id_final_rank_key": {
-      "definition": "create unique index normalized_results_run_id_final_rank_key on public normalized_results using btree run_id final_rank",
+      "definition": "create unique index normalized_results_run_id_final_rank_key on public . normalized_results using btree ( run_id , final_rank )",
       "table": "normalized_results"
     },
     "provider_attempts_pkey": {
-      "definition": "create unique index provider_attempts_pkey on public provider_attempts using btree id",
+      "definition": "create unique index provider_attempts_pkey on public . provider_attempts using btree ( id )",
       "table": "provider_attempts"
     },
     "provider_balance_snapshots_idempotency_key_key": {
-      "definition": "create unique index provider_balance_snapshots_idempotency_key_key on public provider_balance_snapshots using btree idempotency_key",
+      "definition": "create unique index provider_balance_snapshots_idempotency_key_key on public . provider_balance_snapshots using btree ( idempotency_key )",
       "table": "provider_balance_snapshots"
     },
     "provider_balance_snapshots_pkey": {
-      "definition": "create unique index provider_balance_snapshots_pkey on public provider_balance_snapshots using btree id",
+      "definition": "create unique index provider_balance_snapshots_pkey on public . provider_balance_snapshots using btree ( id )",
       "table": "provider_balance_snapshots"
     },
     "provider_spend_attempts_idempotency_key_key": {
-      "definition": "create unique index provider_spend_attempts_idempotency_key_key on public provider_spend_attempts using btree idempotency_key",
+      "definition": "create unique index provider_spend_attempts_idempotency_key_key on public . provider_spend_attempts using btree ( idempotency_key )",
       "table": "provider_spend_attempts"
     },
     "provider_spend_attempts_pkey": {
-      "definition": "create unique index provider_spend_attempts_pkey on public provider_spend_attempts using btree id",
+      "definition": "create unique index provider_spend_attempts_pkey on public . provider_spend_attempts using btree ( id )",
       "table": "provider_spend_attempts"
     },
     "provider_spend_audit_pkey": {
-      "definition": "create unique index provider_spend_audit_pkey on public provider_spend_audit using btree id",
+      "definition": "create unique index provider_spend_audit_pkey on public . provider_spend_audit using btree ( id )",
       "table": "provider_spend_audit"
     },
     "result_extraction_links_pkey": {
-      "definition": "create unique index result_extraction_links_pkey on public result_extraction_links using btree id",
+      "definition": "create unique index result_extraction_links_pkey on public . result_extraction_links using btree ( id )",
       "table": "result_extraction_links"
     },
     "result_provenance_pkey": {
-      "definition": "create unique index result_provenance_pkey on public result_provenance using btree id",
+      "definition": "create unique index result_provenance_pkey on public . result_provenance using btree ( id )",
       "table": "result_provenance"
     },
     "result_provenance_result_id_key": {
-      "definition": "create unique index result_provenance_result_id_key on public result_provenance using btree result_id",
+      "definition": "create unique index result_provenance_result_id_key on public . result_provenance using btree ( result_id )",
       "table": "result_provenance"
     },
     "retrieval_compositions_pkey": {
-      "definition": "create unique index retrieval_compositions_pkey on public retrieval_compositions using btree receipt_ref",
+      "definition": "create unique index retrieval_compositions_pkey on public . retrieval_compositions using btree ( receipt_ref )",
       "table": "retrieval_compositions"
     },
     "retrieval_compositions_source_fingerprint_key": {
-      "definition": "create unique index retrieval_compositions_source_fingerprint_key on public retrieval_compositions using btree source_fingerprint",
+      "definition": "create unique index retrieval_compositions_source_fingerprint_key on public . retrieval_compositions using btree ( source_fingerprint )",
       "table": "retrieval_compositions"
     },
     "retrieval_requests_pkey": {
-      "definition": "create unique index retrieval_requests_pkey on public retrieval_requests using btree id",
+      "definition": "create unique index retrieval_requests_pkey on public . retrieval_requests using btree ( id )",
       "table": "retrieval_requests"
     },
     "retrieval_runs_pkey": {
-      "definition": "create unique index retrieval_runs_pkey on public retrieval_runs using btree id",
+      "definition": "create unique index retrieval_runs_pkey on public . retrieval_runs using btree ( id )",
       "table": "retrieval_runs"
     },
     "retrieval_runs_request_id_key": {
-      "definition": "create unique index retrieval_runs_request_id_key on public retrieval_runs using btree request_id",
+      "definition": "create unique index retrieval_runs_request_id_key on public . retrieval_runs using btree ( request_id )",
       "table": "retrieval_runs"
     },
     "retrieval_runs_search_run_id_key": {
-      "definition": "create unique index retrieval_runs_search_run_id_key on public retrieval_runs using btree search_run_id",
+      "definition": "create unique index retrieval_runs_search_run_id_key on public . retrieval_runs using btree ( search_run_id )",
       "table": "retrieval_runs"
     },
     "retrieval_sessions_pkey": {
-      "definition": "create unique index retrieval_sessions_pkey on public retrieval_sessions using btree id",
+      "definition": "create unique index retrieval_sessions_pkey on public . retrieval_sessions using btree ( id )",
       "table": "retrieval_sessions"
     },
     "session_extracted_urls_pkey": {
-      "definition": "create unique index session_extracted_urls_pkey on public session_extracted_urls using btree id",
+      "definition": "create unique index session_extracted_urls_pkey on public . session_extracted_urls using btree ( id )",
       "table": "session_extracted_urls"
     },
     "session_extracted_urls_query_id_url_key": {
-      "definition": "create unique index session_extracted_urls_query_id_url_key on public session_extracted_urls using btree query_id url",
+      "definition": "create unique index session_extracted_urls_query_id_url_key on public . session_extracted_urls using btree ( query_id , url )",
       "table": "session_extracted_urls"
     },
     "session_queries_pkey": {
-      "definition": "create unique index session_queries_pkey on public session_queries using btree id",
+      "definition": "create unique index session_queries_pkey on public . session_queries using btree ( id )",
       "table": "session_queries"
     },
     "session_queries_session_id_ordinal_key": {
-      "definition": "create unique index session_queries_session_id_ordinal_key on public session_queries using btree session_id ordinal",
+      "definition": "create unique index session_queries_session_id_ordinal_key on public . session_queries using btree ( session_id , ordinal )",
       "table": "session_queries"
     },
     "uq_delivery_intents_extraction_run_id": {
-      "definition": "create unique index uq_delivery_intents_extraction_run_id on public delivery_intents using btree extraction_run_id",
+      "definition": "create unique index uq_delivery_intents_extraction_run_id on public . delivery_intents using btree ( extraction_run_id )",
       "table": "delivery_intents"
     },
     "uq_extraction_outcome_steps_plan_ordinal": {
-      "definition": "create unique index uq_extraction_outcome_steps_plan_ordinal on public extraction_outcome_steps using btree plan_id ordinal",
+      "definition": "create unique index uq_extraction_outcome_steps_plan_ordinal on public . extraction_outcome_steps using btree ( plan_id , ordinal )",
       "table": "extraction_outcome_steps"
     },
     "uq_provider_snapshot_attempt": {
-      "definition": "create unique index uq_provider_snapshot_attempt on public provider_balance_snapshots using btree related_attempt_id",
+      "definition": "create unique index uq_provider_snapshot_attempt on public . provider_balance_snapshots using btree ( related_attempt_id )",
       "table": "provider_balance_snapshots"
     },
     "uq_provider_snapshot_reference": {
-      "definition": "create unique index uq_provider_snapshot_reference on public provider_balance_snapshots using btree provider provider_reference",
+      "definition": "create unique index uq_provider_snapshot_reference on public . provider_balance_snapshots using btree ( provider , provider_reference )",
       "table": "provider_balance_snapshots"
     },
     "uq_result_extraction_links_composition_cluster": {
-      "definition": "create unique index uq_result_extraction_links_composition_cluster on public result_extraction_links using btree composition_ref result_cluster_ref",
+      "definition": "create unique index uq_result_extraction_links_composition_cluster on public . result_extraction_links using btree ( composition_ref , result_cluster_ref )",
       "table": "result_extraction_links"
     },
     "uq_spend_audit_action_key": {
-      "definition": "create unique index uq_spend_audit_action_key on public provider_spend_audit using btree action idempotency_key",
+      "definition": "create unique index uq_spend_audit_action_key on public . provider_spend_audit using btree ( action , idempotency_key )",
       "table": "provider_spend_audit"
     }
   },

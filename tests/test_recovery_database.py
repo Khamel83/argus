@@ -32,6 +32,32 @@ REQUIRED_TABLES = {
 }
 
 
+def _manifest_column_rows(manifest):
+    return [
+        (
+            table,
+            column,
+            definition["type"],
+            "YES" if definition["nullable"] else "NO",
+            definition["default"],
+            definition["character_maximum_length"],
+            definition["numeric_precision"],
+            definition["numeric_scale"],
+            definition["datetime_precision"],
+            "YES" if definition["identity"]["is_identity"] else "NO",
+            definition["identity"]["generation"],
+            (
+                "ALWAYS"
+                if definition["generated"]["is_generated"]
+                else "NEVER"
+            ),
+            definition["generated"]["expression"],
+        )
+        for table, columns in manifest["columns"].items()
+        for column, definition in columns.items()
+    ]
+
+
 class FakeCursor:
     def __init__(self, tables, database="argus_restore_issue40_test"):
         self.tables = tables
@@ -61,18 +87,11 @@ class FakeCursor:
             from argus.recovery.database import expected_argus_schema_manifest
 
             return [
-                (
-                    table,
-                    column,
-                    definition["type"],
-                    "YES" if definition["nullable"] else "NO",
-                    None,
+                row
+                for row in _manifest_column_rows(
+                    expected_argus_schema_manifest()
                 )
-                for table, columns in expected_argus_schema_manifest()[
-                    "columns"
-                ].items()
-                if table in self.tables
-                for column, definition in columns.items()
+                if row[0] in self.tables
             ]
         if "pg_get_constraintdef" in self.query:
             from argus.recovery.database import expected_argus_schema_manifest
@@ -189,10 +208,9 @@ def test_expected_schema_manifest_describes_types_nullability_and_definitions():
     assert manifest == build_argus_schema_contract()
     assert len(manifest["constraints"]) == 83
     assert len(manifest["indexes"]) == 57
-    assert manifest["columns"]["extraction_outcome_steps"]["latency_ms"] == {
-        "type": "bigint",
-        "nullable": True,
-    }
+    latency = manifest["columns"]["extraction_outcome_steps"]["latency_ms"]
+    assert latency["type"] == "bigint"
+    assert latency["nullable"] is True
     assert manifest["columns"]["provider_attempts"]["budget_remaining"][
         "type"
     ] == "double precision"
@@ -220,17 +238,7 @@ def test_restore_compares_database_to_supplied_schema_manifest():
     class ManifestCursor(FakeCursor):
         def fetchall(self):
             if "information_schema.columns" in self.query:
-                return [
-                    (
-                        table,
-                        column,
-                        definition["type"],
-                        "YES" if definition["nullable"] else "NO",
-                        None,
-                    )
-                    for table, columns in trusted["columns"].items()
-                    for column, definition in columns.items()
-                ]
+                return _manifest_column_rows(trusted)
             if "pg_get_constraintdef" in self.query:
                 return [
                     (name, value["table"], value["definition"])
@@ -275,12 +283,228 @@ def test_restore_compares_database_to_supplied_schema_manifest():
     connection = FakeConnection(REQUIRED_TABLES)
     connection.cursor_instance = ManifestCursor(REQUIRED_TABLES)
 
-    with pytest.raises(RuntimeError, match="database schema manifest"):
+    with pytest.raises(RuntimeError, match="checked-in.*schema contract"):
         verify_argus_database(
             "argus_restore_issue40_test",
             connect=lambda **kwargs: connection,
             repository_factory=lambda database: None,
             expected_schema_manifest=corrupted,
+        )
+
+
+def test_self_hashed_caller_manifest_cannot_replace_checked_in_trust():
+    import hashlib
+    import json
+
+    from argus.recovery.database import (
+        expected_argus_schema_manifest,
+        verify_argus_database,
+    )
+
+    untrusted = expected_argus_schema_manifest()
+    untrusted["columns"]["extraction_outcome_steps"]["latency_ms"][
+        "type"
+    ] = "integer"
+    untrusted["contract_sha256"] = hashlib.sha256(
+        json.dumps(
+            {
+                key: value
+                for key, value in untrusted.items()
+                if key != "contract_sha256"
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+    class UntrustedManifestCursor(FakeCursor):
+        def fetchall(self):
+            if "information_schema.columns" in self.query:
+                return _manifest_column_rows(untrusted)
+            if "pg_get_constraintdef" in self.query:
+                return [
+                    (name, value["table"], value["definition"])
+                    for name, value in untrusted["constraints"].items()
+                ]
+            if "pg_indexes" in self.query:
+                return [
+                    (name, value["table"], value["definition"])
+                    for name, value in untrusted["indexes"].items()
+                ]
+            return super().fetchall()
+
+    connection = FakeConnection(set(untrusted["tables"]))
+    connection.cursor_instance = UntrustedManifestCursor(
+        set(untrusted["tables"])
+    )
+    repository = type(
+        "Repository",
+        (),
+        {"list_session_ids": lambda self: []},
+    )()
+
+    with pytest.raises(RuntimeError, match="checked-in.*schema contract"):
+        verify_argus_database(
+            "argus_restore_issue40_test",
+            connect=lambda **kwargs: connection,
+            repository_factory=lambda database: repository,
+            expected_schema_manifest=untrusted,
+        )
+
+
+def test_definition_normalization_preserves_boolean_grouping():
+    from argus.recovery.database import _normalize_pg_definition
+
+    left_grouped = "CHECK ((a AND (b OR c)))"
+    right_grouped = "CHECK (((a AND b) OR c))"
+
+    assert _normalize_pg_definition(left_grouped) != _normalize_pg_definition(
+        right_grouped
+    )
+
+
+def test_checked_contract_records_complete_column_semantics():
+    from argus.recovery.database import expected_argus_schema_manifest
+
+    manifest = expected_argus_schema_manifest()
+    varchar = manifest["columns"]["retrieval_requests"]["id"]
+    numeric = manifest["columns"]["extraction_outcome_steps"]["latency_ms"]
+
+    assert varchar == {
+        "type": "character varying",
+        "character_maximum_length": 32,
+        "numeric_precision": None,
+        "numeric_scale": None,
+        "datetime_precision": None,
+        "default": None,
+        "identity": {
+            "is_identity": False,
+            "generation": None,
+        },
+        "generated": {
+            "is_generated": False,
+            "expression": None,
+        },
+        "nullable": False,
+    }
+    assert numeric["numeric_precision"] == 64
+    assert numeric["numeric_scale"] == 0
+
+
+@pytest.mark.parametrize(
+    ("attribute", "replacement"),
+    [
+        ("type", "text"),
+        ("character_maximum_length", 31),
+        ("numeric_precision", 63),
+        ("numeric_scale", 1),
+        ("datetime_precision", 3),
+        ("default", "'drift'::character varying"),
+        ("is_identity", True),
+        ("identity_generation", "ALWAYS"),
+        ("is_generated", True),
+        ("generation_expression", "length(id)"),
+        ("nullable", True),
+    ],
+)
+def test_restore_rejects_each_column_semantic_drift(attribute, replacement):
+    from argus.recovery.database import (
+        expected_argus_schema_manifest,
+        verify_argus_database,
+    )
+
+    trusted = expected_argus_schema_manifest()
+    target_column = (
+        "latency_ms"
+        if attribute in {"numeric_precision", "numeric_scale"}
+        else "id"
+    )
+    target_table = (
+        "provider_attempts"
+        if target_column == "latency_ms"
+        else "retrieval_requests"
+    )
+
+    class ColumnDriftCursor(FakeCursor):
+        def fetchall(self):
+            if "information_schema.columns" in self.query:
+                rows = []
+                for table, columns in trusted["columns"].items():
+                    for column, definition in columns.items():
+                        values = {
+                            "type": definition["type"],
+                            "nullable": definition["nullable"],
+                            "default": definition.get("default"),
+                            "character_maximum_length": definition.get(
+                                "character_maximum_length"
+                            ),
+                            "numeric_precision": definition.get(
+                                "numeric_precision"
+                            ),
+                            "numeric_scale": definition.get("numeric_scale"),
+                            "datetime_precision": definition.get(
+                                "datetime_precision"
+                            ),
+                            "is_identity": definition.get("identity", {}).get(
+                                "is_identity", False
+                            ),
+                            "identity_generation": definition.get(
+                                "identity", {}
+                            ).get("generation"),
+                            "is_generated": definition.get(
+                                "generated", {}
+                            ).get("is_generated", False),
+                            "generation_expression": definition.get(
+                                "generated", {}
+                            ).get("expression"),
+                        }
+                        if table == target_table and column == target_column:
+                            values[attribute] = replacement
+                        rows.append(
+                            (
+                                table,
+                                column,
+                                values["type"],
+                                "YES" if values["nullable"] else "NO",
+                                values["default"],
+                                values["character_maximum_length"],
+                                values["numeric_precision"],
+                                values["numeric_scale"],
+                                values["datetime_precision"],
+                                "YES" if values["is_identity"] else "NO",
+                                values["identity_generation"],
+                                "ALWAYS"
+                                if values["is_generated"]
+                                else "NEVER",
+                                values["generation_expression"],
+                            )
+                        )
+                return rows
+            if "pg_get_constraintdef" in self.query:
+                return [
+                    (name, value["table"], value["definition"])
+                    for name, value in trusted["constraints"].items()
+                ]
+            if "pg_indexes" in self.query:
+                return [
+                    (name, value["table"], value["definition"])
+                    for name, value in trusted["indexes"].items()
+                ]
+            return super().fetchall()
+
+    connection = FakeConnection(set(trusted["tables"]))
+    connection.cursor_instance = ColumnDriftCursor(set(trusted["tables"]))
+    repository = type(
+        "Repository",
+        (),
+        {"list_session_ids": lambda self: []},
+    )()
+
+    with pytest.raises(RuntimeError, match="schema manifest columns"):
+        verify_argus_database(
+            "argus_restore_issue40_test",
+            connect=lambda **kwargs: connection,
+            repository_factory=lambda database: repository,
         )
 
 
@@ -296,17 +520,7 @@ def test_restore_requires_exact_schema_object_sets_and_definitions(mutation):
     class ExactManifestCursor(FakeCursor):
         def fetchall(self):
             if "information_schema.columns" in self.query:
-                return [
-                    (
-                        table,
-                        column,
-                        definition["type"],
-                        "YES" if definition["nullable"] else "NO",
-                        None,
-                    )
-                    for table, columns in trusted["columns"].items()
-                    for column, definition in columns.items()
-                ]
+                return _manifest_column_rows(trusted)
             if "pg_get_constraintdef" in self.query:
                 constraints = [
                     (name, value["table"], value["definition"])
@@ -369,6 +583,65 @@ def test_migrated_postgres_uses_double_precision_for_float_columns(
         ).scalar_one()
 
     assert data_type == "double precision"
+
+
+def test_migrated_postgres_matches_checked_in_schema_contract(
+    migrated_postgres_ledger,
+):
+    from argus.recovery.database import (
+        _verify_schema_manifest,
+        expected_argus_schema_manifest,
+    )
+
+    engine = migrated_postgres_ledger.session_factory.kw["bind"]
+    connection = engine.raw_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'public'"
+            )
+            tables = {row[0] for row in cursor.fetchall()}
+            cursor.execute(
+                "SELECT table_name, column_name, data_type, is_nullable, "
+                "column_default, character_maximum_length, "
+                "numeric_precision, numeric_scale, datetime_precision, "
+                "is_identity, identity_generation, is_generated, "
+                "generation_expression "
+                "FROM information_schema.columns "
+                "WHERE table_schema = 'public'"
+            )
+            columns = cursor.fetchall()
+            cursor.execute(
+                "SELECT constraint_row.conname, relation.relname, "
+                "pg_get_constraintdef(constraint_row.oid) "
+                "FROM pg_constraint constraint_row "
+                "JOIN pg_namespace namespace "
+                "ON namespace.oid = constraint_row.connamespace "
+                "JOIN pg_class relation "
+                "ON relation.oid = constraint_row.conrelid "
+                "WHERE namespace.nspname = 'public' "
+                "ORDER BY constraint_row.conname"
+            )
+            constraints = cursor.fetchall()
+            cursor.execute(
+                "SELECT indexname, tablename, indexdef FROM pg_indexes "
+                "WHERE schemaname = 'public' ORDER BY indexname"
+            )
+            indexes = cursor.fetchall()
+            cursor.execute("SELECT version_num FROM alembic_version")
+            schema_head = cursor.fetchone()[0]
+    finally:
+        connection.close()
+
+    _verify_schema_manifest(
+        expected=expected_argus_schema_manifest(),
+        schema_head=schema_head,
+        tables=tables,
+        columns=columns,
+        constraints=constraints,
+        indexes=indexes,
+    )
 
 
 def test_restore_verifier_rejects_production_target_before_connecting():

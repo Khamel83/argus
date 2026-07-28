@@ -176,17 +176,92 @@ def _postgresql_type_name(column_type: Any) -> str:
 
 
 def _normalize_pg_definition(definition: str) -> str:
-    without_casts = re.sub(
-        r"::(?:character varying|text|double precision|numeric|bigint|integer)",
-        "",
-        definition.lower(),
+    tokens = re.findall(
+        r"'(?:''|[^'])*'"
+        r'|"(?:[^"]|"")*"'
+        r"|::|<>|<=|>=|!="
+        r"|[(),.;]"
+        r"|[-+*/%^<>=~!@#&|]+"
+        r"|[A-Za-z_][A-Za-z0-9_$]*"
+        r"|\d+(?:\.\d+)?",
+        definition,
     )
-    return " ".join(
-        re.findall(
-            r"<>|<=|>=|=|<|>|[a-z_][a-z0-9_]*|[0-9]+",
-            without_casts,
-        )
+    normalized = []
+    for token in tokens:
+        if token.startswith("'"):
+            normalized.append(token)
+        elif token.startswith('"'):
+            identifier = token[1:-1].replace('""', '"')
+            normalized.append(
+                identifier
+                if re.fullmatch(r"[a-z_][a-z0-9_$]*", identifier)
+                else token
+            )
+        elif re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", token):
+            normalized.append(token.lower())
+        else:
+            normalized.append(token)
+    return " ".join(normalized)
+
+
+def _numeric_semantics(column_type: Any) -> tuple[int | None, int | None]:
+    from sqlalchemy import BigInteger, Float, Integer, Numeric
+
+    if isinstance(column_type, BigInteger):
+        return 64, 0
+    if isinstance(column_type, Integer):
+        return 32, 0
+    if isinstance(column_type, Float):
+        return column_type.precision or 53, None
+    if isinstance(column_type, Numeric):
+        return column_type.precision, column_type.scale
+    return None, None
+
+
+def _column_semantics(column: Any) -> dict[str, Any]:
+    from sqlalchemy import DateTime, String, Text
+
+    numeric_precision, numeric_scale = _numeric_semantics(column.type)
+    server_default = column.server_default
+    default = (
+        _normalize_pg_definition(str(server_default.arg))
+        if server_default is not None
+        else None
     )
+    identity = column.identity
+    computed = column.computed
+    return {
+        "type": _postgresql_type_name(column.type),
+        "character_maximum_length": (
+            column.type.length
+            if isinstance(column.type, String)
+            and not isinstance(column.type, Text)
+            else None
+        ),
+        "numeric_precision": numeric_precision,
+        "numeric_scale": numeric_scale,
+        "datetime_precision": (
+            6 if isinstance(column.type, DateTime) else None
+        ),
+        "default": default,
+        "identity": {
+            "is_identity": identity is not None,
+            "generation": (
+                str(identity.always and "ALWAYS" or "BY DEFAULT")
+                if identity is not None
+                else None
+            ),
+        },
+        "generated": {
+            "is_generated": computed is not None,
+            "expression": (
+                _normalize_pg_definition(str(computed.sqltext))
+                if computed is not None
+                else None
+            ),
+        },
+        "nullable": bool(column.nullable),
+    }
 
 
 def _constraint_name(table_name: str, constraint: Any) -> str:
@@ -267,10 +342,7 @@ def build_argus_schema_contract() -> dict[str, Any]:
     }
     columns = {
         table_name: {
-            column.name: {
-                "type": _postgresql_type_name(column.type),
-                "nullable": bool(column.nullable),
-            }
+            column.name: _column_semantics(column)
             for column in table.columns
         }
         for table_name, table in sorted(tables.items())
@@ -279,6 +351,19 @@ def build_argus_schema_contract() -> dict[str, Any]:
     columns["alembic_version"] = {
         "version_num": {
             "type": "character varying",
+            "character_maximum_length": 32,
+            "numeric_precision": None,
+            "numeric_scale": None,
+            "datetime_precision": None,
+            "default": None,
+            "identity": {
+                "is_identity": False,
+                "generation": None,
+            },
+            "generated": {
+                "is_generated": False,
+                "expression": None,
+            },
             "nullable": False,
         }
     }
@@ -380,6 +465,27 @@ def _verify_schema_manifest(
         table: {
             str(row[1]): {
                 "type": str(row[2]).lower(),
+                "character_maximum_length": row[5],
+                "numeric_precision": row[6],
+                "numeric_scale": row[7],
+                "datetime_precision": row[8],
+                "default": (
+                    _normalize_pg_definition(str(row[4]))
+                    if row[4] is not None
+                    else None
+                ),
+                "identity": {
+                    "is_identity": str(row[9]).upper() == "YES",
+                    "generation": row[10],
+                },
+                "generated": {
+                    "is_generated": str(row[11]).upper() != "NEVER",
+                    "expression": (
+                        _normalize_pg_definition(str(row[12]))
+                        if row[12] is not None
+                        else None
+                    ),
+                },
                 "nullable": str(row[3]).upper() == "YES",
             }
             for row in columns
@@ -493,11 +599,14 @@ def verify_argus_database(
 ) -> dict[str, Any]:
     """Verify schema, row accounting, relationships, and a basic Argus read path."""
     validated = validate_scratch_database(database)
-    schema_manifest = (
-        expected_schema_manifest
-        if expected_schema_manifest is not None
-        else expected_argus_schema_manifest()
-    )
+    schema_manifest = expected_argus_schema_manifest()
+    if (
+        expected_schema_manifest is not None
+        and expected_schema_manifest != schema_manifest
+    ):
+        raise RuntimeError(
+            "caller schema manifest does not match checked-in schema contract"
+        )
     if connect is None:
         import psycopg2
 
@@ -522,7 +631,10 @@ def verify_argus_database(
                 )
             cursor.execute(
                 "SELECT table_name, column_name, data_type, is_nullable, "
-                "column_default "
+                "column_default, character_maximum_length, "
+                "numeric_precision, numeric_scale, datetime_precision, "
+                "is_identity, identity_generation, is_generated, "
+                "generation_expression "
                 "FROM information_schema.columns "
                 "WHERE table_schema = 'public'"
             )
