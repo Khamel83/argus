@@ -88,8 +88,11 @@ async def provider_health(
         if provider in providers:
             providers[provider] = {
                 **providers[provider],
-                "state": evidence.get("state", "unknown"),
-                "observations": evidence.get("observations") or {},
+                "operational": {
+                    "non_authoritative": True,
+                    "state": evidence.get("state", "unknown"),
+                    "observations": evidence.get("observations") or {},
+                },
             }
     active_states = [
         provider_display_state(status)

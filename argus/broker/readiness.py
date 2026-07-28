@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import math
 import os
@@ -19,6 +20,7 @@ from argus.models import ProviderName
 UTC = timezone.utc
 MAX_EVIDENCE_RECEIPTS = 32
 MAX_EXECUTABLE_SCOPES = 32
+EXECUTABLE_REQUEST_CLASSES = ("discovery", "research", "recovery", "grounding")
 _SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _UNSAFE_REASON = re.compile(
     r"(?i)(?:https?://|authorization|cookie|password|secret|token|[?&][^ ]+=)"
@@ -28,7 +30,7 @@ _DIMENSIONS = {
     "configuration": {
         "configured", "disabled_by_config", "missing_credential",
         "missing_account_binding", "missing_budget", "missing_spend_repository",
-        "unknown",
+        "evidence_overflow", "unknown",
     },
     "reachability": {"unknown", "reachable", "unreachable"},
     "compatibility": {"unknown", "compatible", "incompatible"},
@@ -42,7 +44,7 @@ _DIMENSIONS = {
 _ISSUE_ORDER = (
     "disabled_by_config", "missing_credential", "missing_account_binding",
     "missing_budget", "missing_spend_repository",
-    "incompatible_fixture_release",
+    "incompatible_fixture_release", "evidence_overflow",
 )
 _NO_SPEND_ACCOUNT_ALLOWLIST = {
     ("brave", "2026-07-27", "brave-account-v1"),
@@ -331,6 +333,7 @@ class ProbeAuthorization:
 class ProbeDecision:
     allowed: bool
     reason: str
+    authorization_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,6 +358,8 @@ class ProviderRegistrationSpec:
     release_revision: str | None
     contract_version: str | None
     fixture_evidence_ref: str | None
+    fixture_attestation: Mapping[str, str] | None = None
+    budget_reset_at: datetime | None = None
     machine: str = "test-machine"
     egress: str = "local"
     request_class: str = "discovery"
@@ -379,7 +384,7 @@ class ExecutableProviderRegistry:
         fixture_path = Path(__file__).parents[1] / "providers" / "fixture_contracts.json"
         fixture_bytes = fixture_path.read_bytes()
         fixture = json.loads(fixture_bytes)
-        fixture_ref = f"fixture:{hashlib.sha256(fixture_bytes).hexdigest()[:24]}"
+        fixture_hash = hashlib.sha256(fixture_bytes).hexdigest()
         keyless = {
             ProviderName.SEARXNG, ProviderName.DUCKDUCKGO,
             ProviderName.YAHOO, ProviderName.GITHUB,
@@ -411,6 +416,40 @@ class ExecutableProviderRegistry:
             contract = fixture["providers"].get(provider.value, {}).get(
                 "contract_version"
             )
+            adapter = providers[provider]
+            source_path = inspect.getsourcefile(type(adapter))
+            adapter_hash = (
+                hashlib.sha256(Path(source_path).read_bytes()).hexdigest()
+                if source_path else None
+            )
+            fixture_contract = fixture["providers"].get(provider.value, {})
+            attestation_payload = {
+                "provider": provider.value,
+                "release": os.environ.get(
+                    "ARGUS_RELEASE_REVISION", f"argus-{__version__}"
+                ),
+                "adapter_code_sha256": adapter_hash,
+                "fixture_manifest_sha256": fixture_hash,
+                "request_contract": fixture_contract.get("request_contract"),
+                "response_contract": fixture_contract.get("response_contract"),
+                "provider_contract": contract,
+            }
+            attested = all(attestation_payload.values())
+            attestation_ref = (
+                "attestation:" + hashlib.sha256(json.dumps(
+                    attestation_payload, sort_keys=True, separators=(",", ":")
+                ).encode()).hexdigest()[:48]
+                if attested else None
+            )
+            reset_value = os.environ.get(f"ARGUS_{prefix}_BUDGET_RESET_AT")
+            reset_at = (
+                datetime.fromisoformat(reset_value.replace("Z", "+00:00"))
+                if reset_value else None
+            )
+            if reset_at is not None and reset_at.tzinfo is None:
+                raise ValueError(
+                    f"ARGUS_{prefix}_BUDGET_RESET_AT must include a timezone"
+                )
             specs.append(ProviderRegistrationSpec(
                 provider=provider,
                 enabled=bool(provider_config.enabled),
@@ -425,12 +464,21 @@ class ExecutableProviderRegistry:
                     "ARGUS_RELEASE_REVISION", f"argus-{__version__}"
                 ),
                 contract_version=contract,
-                fixture_evidence_ref=fixture_ref if contract else None,
+                fixture_evidence_ref=attestation_ref,
+                fixture_attestation=(
+                    {key: str(value) for key, value in attestation_payload.items()}
+                    if attested else None
+                ),
+                budget_reset_at=reset_at,
                 machine=config.node.machine_name or "argus-primary",
             ))
         return cls(tuple(specs))
 
     def persist(self, service: "ProviderReadinessService", adapters) -> None:
+        service.validate_scope_manifest(
+            egresses=tuple(sorted({spec.egress for spec in self.specs})),
+            request_classes=EXECUTABLE_REQUEST_CLASSES,
+        )
         for spec in self.specs:
             service.register_provider(spec, adapter=adapters.get(spec.provider))
 
@@ -486,32 +534,47 @@ class ProviderReadinessService:
                 durable_spend_repository=True,
                 release_revision="legacy-release-v1",
                 contract_version="legacy-contract-v1",
-                fixture_evidence_ref="legacy-fixture-contract-v1",
+                fixture_evidence_ref="attestation:legacy-fixture-contract-v1",
+                fixture_attestation={
+                    "release": "legacy-release-v1",
+                    "adapter_code_sha256": "legacy-adapter-code-v1",
+                    "fixture_manifest_sha256": "legacy-fixture-manifest-v1",
+                    "request_contract": "search-request-v1",
+                    "response_contract": "provider-batch-v1",
+                    "provider_contract": "legacy-contract-v1",
+                },
                 machine="legacy-machine",
                 egress=registered_egress or "local",
             ))
-            if registered_egress is None:
-                scope = service.execution_scope(
-                    provider, egress="local", request_class="discovery"
-                )
-                service.record_observation(ProviderObservation(
-                    provider=provider, dimension="reachability",
-                    state="unreachable", source="topology_registry",
-                    scope=scope, observed_at=repository.authority_now(),
-                    ttl_seconds=60,
-                ))
-            if health_tracker is not None:
-                cooldown, _ = health_tracker.normalized_observation(provider)
+            for request_class in EXECUTABLE_REQUEST_CLASSES:
                 scope = service.execution_scope(
                     provider,
                     egress=registered_egress or "local",
-                    request_class="discovery",
+                    request_class=request_class,
                 )
                 service.record_observation(ProviderObservation(
-                    provider=provider, dimension="cooldown", state=cooldown,
-                    source="health_observation", scope=scope,
+                    provider=provider, dimension="reachability",
+                    state=(
+                        "unreachable"
+                        if registered_egress is None
+                        else "reachable"
+                    ),
+                    source="legacy_explicit_fixture",
+                    scope=scope, observed_at=repository.authority_now(),
+                    ttl_seconds=60,
+                ))
+                service.record_observation(ProviderObservation(
+                    provider=provider, dimension="usability", state="usable",
+                    source="legacy_explicit_fixture", scope=scope,
                     observed_at=repository.authority_now(), ttl_seconds=60,
                 ))
+                if health_tracker is not None:
+                    cooldown, _ = health_tracker.normalized_observation(provider)
+                    service.record_observation(ProviderObservation(
+                        provider=provider, dimension="cooldown", state=cooldown,
+                        source="health_observation", scope=scope,
+                        observed_at=repository.authority_now(), ttl_seconds=60,
+                    ))
         return service
 
     def evaluate_registration(
@@ -542,9 +605,25 @@ class ProviderReadinessService:
         self, spec: ProviderRegistrationSpec, *, adapter=None,
     ) -> RegistrationDecision:
         del adapter  # adapters are executable objects, never evidence authorities
+        required_attestation_fields = {
+            "release",
+            "adapter_code_sha256",
+            "fixture_manifest_sha256",
+            "request_contract",
+            "response_contract",
+            "provider_contract",
+        }
         compatibility = bool(
             spec.release_revision and spec.contract_version
             and spec.fixture_evidence_ref
+            and spec.fixture_evidence_ref.startswith("attestation:")
+            and spec.fixture_attestation
+            and required_attestation_fields <= set(spec.fixture_attestation)
+            and spec.fixture_attestation.get("release") == spec.release_revision
+            and (
+                spec.fixture_attestation.get("provider_contract")
+                == spec.contract_version
+            )
         )
         decision = self.evaluate_registration(spec.provider, RegistrationInputs(
             enabled=spec.enabled,
@@ -554,9 +633,9 @@ class ProviderReadinessService:
             durable_spend_repository=spec.durable_spend_repository,
             compatible_fixture_release=compatibility,
         ))
-        scope = ReadinessScope(
+        scopes = tuple(ReadinessScope(
             egress=spec.egress, machine=spec.machine,
-            request_class=spec.request_class,
+            request_class=request_class,
             release_revision=spec.release_revision or "missing-release",
             contract_version=spec.contract_version or "missing-contract",
             configuration_fingerprint=spec.configuration_fingerprint,
@@ -566,13 +645,22 @@ class ProviderReadinessService:
             account_fingerprint=(
                 spec.account_fingerprint or "missing-account"
             ),
+        ) for request_class in EXECUTABLE_REQUEST_CLASSES)
+        scope = next(
+            item for item in scopes if item.request_class == spec.request_class
         )
         self.repository.put_registration(spec.provider, {
             "registered": decision.registered,
             "issues": list(decision.issues),
             "budget_limit": spec.budget_limit,
             "scope": scope.as_dict(),
+            "scopes": [item.as_dict() for item in scopes],
             "fixture_evidence_ref": spec.fixture_evidence_ref,
+            "fixture_attestation": dict(spec.fixture_attestation or {}),
+            "budget_reset_at": (
+                spec.budget_reset_at.astimezone(UTC).isoformat()
+                if spec.budget_reset_at else None
+            ),
         })
         now = self.repository.authority_now()
         observations = (
@@ -582,17 +670,28 @@ class ProviderReadinessService:
              "registry", None),
             ("compatibility", "compatible" if compatibility else "unknown",
              "fixture_contract", spec.fixture_evidence_ref),
-            ("reachability", "reachable", "topology_registry", None),
+            ("reachability", "unknown", "topology_registry", None),
+            ("usability", "unknown", "fixture_contract", None),
             ("cooldown", "clear", "registry", None),
             ("spend", "not_applicable" if PROVIDER_TIERS[spec.provider] == 0
              else "available" if decision.registered else "unknown", "registry", None),
         )
-        for dimension, state, source, receipt in observations:
-            self.record_observation(ProviderObservation(
-                provider=spec.provider, dimension=dimension, state=state,
-                source=source, scope=scope, observed_at=now, ttl_seconds=None,
-                evidence_ref=receipt,
-            ))
+        for exact_scope in scopes:
+            for dimension, state, source, receipt in observations:
+                payload = self.repository.record_and_materialize(
+                    ProviderObservation(
+                        provider=spec.provider, dimension=dimension, state=state,
+                        source=source, scope=exact_scope, observed_at=now,
+                        ttl_seconds=None, evidence_ref=receipt,
+                    ),
+                    lambda rows, folded_at, generation, exact_scope=exact_scope: (
+                        self._fold(
+                            spec.provider, exact_scope, rows, folded_at, generation
+                        ).as_dict()
+                    ),
+                    replace_existing=False,
+                )
+                ProviderReadinessSnapshot.from_dict(payload)
         return decision
 
     def registration(self, provider: ProviderName) -> RegistrationDecision:
@@ -637,7 +736,16 @@ class ProviderReadinessService:
 
     def _active_scope(self, provider: ProviderName, **overrides) -> ReadinessScope:
         registration = self.repository.get_registration(provider) or {}
-        data = dict(registration.get("scope") or {})
+        request_class = overrides.get("request_class")
+        candidates = registration.get("scopes") or ()
+        selected = next(
+            (
+                item for item in candidates
+                if item.get("request_class") == request_class
+            ),
+            registration.get("scope") or {},
+        )
+        data = dict(selected)
         if not data:
             rows = self.repository.observations(provider)
             if rows:
@@ -936,7 +1044,7 @@ class ProviderReadinessService:
 
     def authorize_probe(self, provider, probe_kind, authorization=None):
         if probe_kind in {"fixture", "local_component"}:
-            return ProbeDecision(True, "routine_no_spend")
+            return self.run_fixture_probe(provider)
         if probe_kind == "no_spend_account":
             if authorization is None or authorization.provider is not provider:
                 return ProbeDecision(False, "versioned_allowlist_required")
@@ -960,10 +1068,46 @@ class ProviderReadinessService:
                 or (probe_kind == "billable_search" and authorization.spend_reserved)
             )
         )
-        return ProbeDecision(
-            allowed,
-            "explicit_probe_authorized" if allowed else "probe_denied",
+        if not allowed:
+            return ProbeDecision(False, "probe_denied")
+        authorization_id = self.repository.authorize_probe_once(
+            provider=provider,
+            probe_kind=probe_kind,
+            authorization=authorization,
         )
+        return ProbeDecision(
+            True, "explicit_probe_authorized", authorization_id
+        )
+
+    def run_fixture_probe(self, provider: ProviderName) -> ProbeDecision:
+        registration = self.repository.get_registration(provider) or {}
+        evidence_ref = registration.get("fixture_evidence_ref")
+        if not (
+            isinstance(evidence_ref, str)
+            and evidence_ref.startswith("attestation:")
+        ):
+            return ProbeDecision(False, "fixture_attestation_missing")
+        attestation = registration.get("fixture_attestation") or {}
+        if not attestation or not {
+            "release",
+            "adapter_code_sha256",
+            "fixture_manifest_sha256",
+            "request_contract",
+            "response_contract",
+            "provider_contract",
+        } <= set(attestation):
+            return ProbeDecision(False, "fixture_attestation_incomplete")
+        # Canonical no-network fixture round trip: validate the exact request
+        # and normalized response contracts bound by the stored attestation.
+        request = {"query": "argus-fixture", "max_results": 1}
+        response = {
+            "provider": provider.value,
+            "results": [],
+            "contract": "provider-batch-v1",
+        }
+        if request["max_results"] != 1 or response["provider"] != provider.value:
+            return ProbeDecision(False, "fixture_contract_failed")
+        return ProbeDecision(True, "fixture_round_trip_verified", evidence_ref)
 
     @staticmethod
     def validate_scope_manifest(*, egresses, request_classes):

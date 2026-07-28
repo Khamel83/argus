@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from argus.broker.readiness import (
     ExecutionContext,
+    ProbeAuthorization,
     ProviderObservation,
     ProviderReadinessService,
     ProviderRegistrationSpec,
@@ -19,6 +20,7 @@ from argus.broker.readiness import (
 )
 from argus.models import ProviderName
 from argus.persistence.readiness import create_readiness_repository
+from argus.persistence.provider_spend import ProviderSpendRepository
 from argus.recovery.operator import validate_scratch_database
 
 
@@ -49,7 +51,15 @@ def main() -> None:
         durable_spend_repository=True,
         release_revision=scope.release_revision,
         contract_version=scope.contract_version,
-        fixture_evidence_ref=f"fixture-{suffix}",
+        fixture_evidence_ref=f"attestation:{suffix}",
+        fixture_attestation={
+            "release": scope.release_revision,
+            "adapter_code_sha256": f"adapter-{suffix}",
+            "fixture_manifest_sha256": f"manifest-{suffix}",
+            "request_contract": "search-request-v1",
+            "response_contract": "provider-batch-v1",
+            "provider_contract": scope.contract_version,
+        },
         machine=scope.machine,
     ))
     now = datetime.now(timezone.utc)
@@ -106,6 +116,47 @@ def main() -> None:
     granted = [result for result in results if result.allowed]
     if len(granted) != 1:
         raise RuntimeError("PostgreSQL fencing did not grant exactly one attempt")
+
+    fixture_probe = first.authorize_probe(ProviderName.SEARCHAPI, "fixture")
+    if not fixture_probe.allowed:
+        raise RuntimeError("attested fixture round trip was not authorized")
+    probe_key = f"pg-probe-{suffix}"
+    probe_receipt = f"pg-probe-receipt-{suffix}"
+    probe = first.authorize_probe(
+        ProviderName.SEARCHAPI,
+        "billable_search",
+        ProbeAuthorization(
+            workflow="explicit_validation",
+            provider=ProviderName.SEARCHAPI,
+            idempotency_key=probe_key,
+            durable_receipt=probe_receipt,
+            spend_reserved=True,
+        ),
+    )
+    if not probe.allowed or not probe.authorization_id:
+        raise RuntimeError("durable live-probe authorization was not persisted")
+    first.repository.consume_probe_once(
+        provider=ProviderName.SEARCHAPI,
+        idempotency_key=probe_key,
+        durable_receipt=probe_receipt,
+        spend_reserved=True,
+    )
+
+    first.complete_execution(
+        granted[0],
+        failure=None,
+        actual_charge=None,
+        charge_known=False,
+        evidence_ref=f"uncertain-{suffix}",
+    )
+    ProviderSpendRepository(first.repository.session_factory).resolve(
+        granted[0].attempt_id,
+        actual_charge=0.5,
+        outcome="success",
+        source="operator",
+        actor_identity="postgres-ci",
+        idempotency_key=f"resolve-{suffix}",
+    )
     snapshot = first.snapshot_for_scope(ProviderName.SEARCHAPI, scope)
     if snapshot.execution_decision.code != "eligible":
         raise RuntimeError("materialized readiness snapshot was not recovered")
@@ -113,6 +164,9 @@ def main() -> None:
         "database": database,
         "granted": len(granted),
         "fencing_token": granted[0].fencing_token,
+        "fixture_probe": fixture_probe.reason,
+        "live_probe_consumed": True,
+        "reconciled_attempt": True,
         "snapshot_generation": snapshot.generation,
         "status": "ok",
     }, sort_keys=True))

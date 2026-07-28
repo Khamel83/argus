@@ -263,6 +263,7 @@ def test_probe_authorization_is_closed_and_routine_diagnostics_are_no_spend(tmp_
     from argus.broker.readiness import ProbeAuthorization
 
     service, _ = _service(tmp_path)
+    service.register_provider(_registration())
     assert service.authorize_probe(ProviderName.BRAVE, "fixture").allowed
     assert service.authorize_probe(ProviderName.BRAVE, "local_component").allowed
     assert not service.authorize_probe(ProviderName.BRAVE, "billable_search").allowed
@@ -281,6 +282,40 @@ def test_probe_authorization_is_closed_and_routine_diagnostics_are_no_spend(tmp_
         ),
     )
     assert allowed.allowed
+
+
+def test_live_probe_authorization_is_durable_bound_and_exactly_once(tmp_path):
+    from argus.broker.readiness import ProbeAuthorization
+    from argus.persistence.readiness import ReadinessConflict
+
+    service, repository = _service(tmp_path)
+    service.register_provider(_registration())
+    authorization = ProbeAuthorization(
+        workflow="explicit_validation",
+        provider=ProviderName.BRAVE,
+        idempotency_key="probe:brave:1",
+        durable_receipt="receipt:brave:1",
+        spend_reserved=True,
+    )
+
+    decision = service.authorize_probe(
+        ProviderName.BRAVE, "billable_search", authorization
+    )
+    assert decision.allowed
+    assert decision.authorization_id
+    repository.consume_probe_once(
+        provider=ProviderName.BRAVE,
+        idempotency_key="probe:brave:1",
+        durable_receipt="receipt:brave:1",
+        spend_reserved=True,
+    )
+    with pytest.raises(ReadinessConflict, match="already consumed"):
+        repository.consume_probe_once(
+            provider=ProviderName.BRAVE,
+            idempotency_key="probe:brave:1",
+            durable_receipt="receipt:brave:1",
+            spend_reserved=True,
+        )
 
 
 def test_two_repositories_grant_one_half_open_claim_and_fence_stale_completion(
@@ -538,7 +573,7 @@ def _registration(
     durable_spend: bool = True,
     release: str | None = "release-1",
     contract: str | None = "contract-1",
-    fixture: str | None = "fixture:manifest:v1",
+    fixture: str | None = "attestation:manifest:v1",
 ):
     from argus.broker.readiness import ProviderRegistrationSpec
 
@@ -553,6 +588,17 @@ def _registration(
         release_revision=release,
         contract_version=contract,
         fixture_evidence_ref=fixture,
+        fixture_attestation=(
+            {
+                "release": release,
+                "adapter_code_sha256": "adapter-sha",
+                "fixture_manifest_sha256": "manifest-sha",
+                "request_contract": "search-request-v1",
+                "response_contract": "provider-batch-v1",
+                "provider_contract": contract,
+            }
+            if fixture and release and contract else None
+        ),
     )
 
 
@@ -596,6 +642,70 @@ def test_registration_persists_all_issues_and_never_calls_adapter_availability(
         repository=create_readiness_repository(url)
     )
     assert restarted.registration(ProviderName.BRAVE).issues == decision.issues
+
+
+def test_reregistration_preserves_protected_terminal_spend(tmp_path):
+    service, _ = _service(tmp_path)
+    spec = _registration(provider=ProviderName.SERPER)
+    service.register_provider(spec)
+    _ready(service, ProviderName.SERPER)
+    service.record_observation(
+        _observation(
+            ProviderName.SERPER,
+            "spend",
+            "exhausted",
+            receipt="provider:serper:exhausted",
+            ttl_seconds=None,
+            protected=True,
+        )
+    )
+
+    service.register_provider(spec)
+
+    snapshot = service.snapshot_for_scope(
+        ProviderName.SERPER,
+        _exact_scope(provider=ProviderName.SERPER),
+    )
+    assert snapshot.spend == "exhausted"
+    assert snapshot.execution_decision.code == "spend_blocked"
+
+
+def test_startup_materializes_all_search_mode_scopes(tmp_path):
+    service, repository = _service(tmp_path)
+    service.register_provider(_registration())
+
+    for request_class in ("discovery", "research", "recovery", "grounding"):
+        scope = _exact_scope(request_class=request_class)
+        assert repository.get_snapshot(
+            ProviderName.BRAVE, scope.fingerprint()
+        ) is not None
+        rendered = service.snapshot_for_scope(ProviderName.BRAVE, scope)
+        assert rendered.compatibility == "compatible"
+        assert rendered.reachability == "unknown"
+        assert rendered.execution_decision.code == "unavailable"
+
+
+def test_protected_evidence_overflow_is_bounded_and_unavailable(tmp_path):
+    service, repository = _service(tmp_path)
+    service.register_provider(_registration())
+    _ready(service)
+
+    for index in range(33):
+        service.record_observation(
+            _observation(
+                ProviderName.BRAVE,
+                "spend",
+                "exhausted",
+                receipt=f"protected:{index}",
+                ttl_seconds=None,
+                protected=True,
+            )
+        )
+
+    snapshot = service.snapshot_for_scope(ProviderName.BRAVE, _exact_scope())
+    assert snapshot.configuration.issues == ("evidence_overflow",)
+    assert snapshot.execution_decision.code == "unavailable"
+    assert repository.evidence_ref_count(ProviderName.BRAVE) == 32
 
 
 def test_registration_requires_exact_fixture_release_and_contract(tmp_path):
@@ -840,13 +950,30 @@ def test_terminal_failure_and_uncertain_charge_materialize_in_completion_transac
     snapshot = service.snapshot_for_scope(
         ProviderName.SERPER, _exact_scope(provider=ProviderName.SERPER)
     )
-    assert snapshot.spend == "uncertain"
+    assert snapshot.spend == "exhausted"
     assert snapshot.execution_decision.code == "spend_blocked"
     assert repository.emit_operator_alert_once(
         ProviderName.SERPER,
         account_fingerprint="account:v1",
         alert_kind="exhaustion_without_refresh",
     ) is False
+
+    from argus.persistence.provider_spend import ProviderSpendRepository
+
+    spend = ProviderSpendRepository(repository.session_factory)
+    resolved = spend.resolve(
+        authorization.attempt_id,
+        actual_charge=1.0,
+        outcome="balance_exhausted",
+        source="operator",
+        actor_identity="operator:test",
+        idempotency_key="resolve:serper",
+    )
+    assert resolved.status == "resolved"
+    assert service.snapshot_for_scope(
+        ProviderName.SERPER,
+        _exact_scope(provider=ProviderName.SERPER),
+    ).spend == "exhausted"
 
 
 def test_architecture_has_no_legacy_semantic_reads_in_decision_or_surfaces():

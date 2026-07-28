@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -289,7 +289,7 @@ def test_durable_budget_renderers_include_uncertainty_and_provider_freshness(
     assert "source=provider" in markdown
     assert resource["brave"]["uncertain_charge"] == 1.0
     assert resource["brave"]["provider_snapshot"]["observed_at"] == (
-        observed_at.isoformat()
+        observed_at.astimezone(timezone.utc).replace(tzinfo=None).isoformat()
     )
 
 

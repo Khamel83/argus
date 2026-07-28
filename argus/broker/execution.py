@@ -165,6 +165,22 @@ class ProviderExecutor:
         live_providers_used = 0
         pace_warnings: List[str] = []
         attempt_scope = str(query.metadata.get("attempt_scope") or uuid.uuid4().hex)
+        if query.metadata.get("probe_no_fallback") is True:
+            expected = query.metadata.get("probe_provider")
+            if (
+                len(provider_order) != 1
+                or provider_order[0].value != expected
+                or query.providers != [provider_order[0]]
+            ):
+                raise ValueError("probe execution requires one exact provider")
+            probe_key = str(query.metadata.get("probe_idempotency_key") or "")
+            self._readiness.repository.consume_probe_once(
+                provider=provider_order[0],
+                idempotency_key=probe_key,
+                durable_receipt=str(query.metadata.get("probe_receipt") or ""),
+                spend_reserved=PROVIDER_TIERS[provider_order[0]] > 0,
+            )
+            attempt_scope = probe_key
 
         ordered = [p for p in provider_order if p != ProviderName.CACHE]
         total_results_so_far = 0
@@ -267,19 +283,24 @@ class ProviderExecutor:
                             ),
                             egress=best_egress,
                         )
+                        batch = failure_batch(pname, exc)
                         uncertain = True
                 except BaseException:
+                    cancelled = failure_batch(
+                        pname,
+                        RuntimeError("remote_execution_cancelled"),
+                    )
                     self._readiness.complete_execution(
-                        authorization, failure=None, actual_charge=None,
-                        charge_known=True,
+                        authorization, failure=cancelled.failure, actual_charge=None,
+                        charge_known=(tier == 0),
                         evidence_ref=f"execution:{authorization.attempt_id}",
                     )
                     raise
                 self._readiness.complete_execution(
                     authorization,
                     failure=batch.failure if batch is not None else None,
-                    actual_charge=0.0,
-                    charge_known=True,
+                    actual_charge=0.0 if trace.status == "success" else None,
+                    charge_known=(tier == 0),
                     evidence_ref=f"execution:{authorization.attempt_id}",
                 )
                 traces.append(trace)

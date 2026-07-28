@@ -24,6 +24,7 @@ from sqlalchemy import (
     create_engine,
     func,
     select,
+    text,
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
@@ -163,7 +164,7 @@ def _fingerprint(value: dict) -> str:
 def _naive_utc(value: datetime) -> datetime:
     """Normalize API timestamps for storage and arithmetic."""
     if value.tzinfo is None:
-        return value
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
@@ -219,6 +220,13 @@ class ProviderSpendRepository:
         self.session_factory = factory
 
     @staticmethod
+    def _db_now(session) -> datetime:
+        value = session.execute(text("SELECT CURRENT_TIMESTAMP")).scalar_one()
+        if isinstance(value, str):
+            value = datetime.fromisoformat(value)
+        return value.replace(tzinfo=None) if value.tzinfo else value
+
+    @staticmethod
     def _record_readiness_spend(
         session,
         *,
@@ -256,6 +264,8 @@ class ProviderSpendRepository:
             raise ValueError("free providers do not create monetary reservations")
         if not math.isfinite(conservative_charge) or conservative_charge <= 0:
             raise ValueError("conservative charge must be finite and positive")
+        if not math.isfinite(budget_limit) or budget_limit <= 0:
+            raise ValueError("budget limit must be finite and positive")
         payload = {
             "provider": provider.value,
             "conservative_charge": conservative_charge,
@@ -265,9 +275,10 @@ class ProviderSpendRepository:
             "idempotency_key": idempotency_key,
         }
         request_hash = _fingerprint(payload)
-        now = created_at or datetime.now(tz=None)
+        del created_at
         try:
             with self._transaction() as session:
+                now = self._db_now(session)
                 existing = session.scalar(
                     select(ProviderSpendAttemptRow).where(
                         ProviderSpendAttemptRow.idempotency_key == idempotency_key
@@ -335,8 +346,8 @@ class ProviderSpendRepository:
         outcome: str,
         fault_hook: Callable[[str], None] | None = None,
     ) -> SpendAttempt:
-        if not math.isfinite(actual_charge) or actual_charge < 0:
-            raise ValueError("actual charge must be finite and non-negative")
+        if not math.isfinite(actual_charge) or actual_charge <= 0:
+            raise ValueError("actual charge must be finite and positive")
         payload = {
             "attempt_id": attempt_id,
             "actual_charge": actual_charge,
@@ -359,7 +370,7 @@ class ProviderSpendRepository:
             row.usage = 1.0
             row.resolution_source = "argus"
             row.resolution_reference = None
-            row.updated_at = datetime.now(tz=None)
+            row.updated_at = self._db_now(session)
             self._record_readiness_spend(
                 session,
                 row=row,
@@ -394,8 +405,8 @@ class ProviderSpendRepository:
     ) -> SpendAttempt:
         if source not in {"operator", "provider"}:
             raise ValueError("resolution source must be operator or provider")
-        if not math.isfinite(actual_charge) or actual_charge < 0:
-            raise ValueError("actual charge must be finite and non-negative")
+        if not math.isfinite(actual_charge) or actual_charge <= 0:
+            raise ValueError("actual charge must be finite and positive")
         payload = {
             "attempt_id": attempt_id,
             "actual_charge": actual_charge,
@@ -407,6 +418,7 @@ class ProviderSpendRepository:
         }
         request_hash = _fingerprint(payload)
         with self._transaction() as session:
+            now = self._db_now(session)
             row = self._locked_attempt(session, attempt_id)
             prior = session.scalar(
                 select(SpendAuditRow).where(
@@ -443,7 +455,7 @@ class ProviderSpendRepository:
                     raise ValueError(
                         "provider reconciliation charge must match authoritative evidence"
                     )
-                if datetime.now(tz=None) - snapshot.observed_at > timedelta(minutes=15):
+                if now - snapshot.observed_at > timedelta(minutes=15):
                     raise ValueError(
                         "provider reconciliation requires fresh provider evidence"
                     )
@@ -455,7 +467,17 @@ class ProviderSpendRepository:
             row.usage = 1.0
             row.resolution_source = source
             row.resolution_reference = provider_snapshot_id
-            row.updated_at = datetime.now(tz=None)
+            row.updated_at = now
+            from argus.persistence.readiness import ProviderReadinessRepository
+
+            ProviderReadinessRepository(
+                sessionmaker(bind=session.get_bind(), expire_on_commit=False)
+            ).resolve_spend_in_session(
+                session,
+                attempt=row,
+                outcome=outcome,
+                evidence_ref=f"spend-resolution:{row.id}",
+            )
             self._audit(
                 session,
                 row=row,
@@ -482,7 +504,6 @@ class ProviderSpendRepository:
         related_attempt_id: str,
         authoritative_charge: float,
     ) -> ProviderSnapshot:
-        now = datetime.now(tz=None)
         observed_at = _naive_utc(observed_at)
         if actor_identity != f"provider:{provider.value}":
             raise ValueError("provider snapshot requires provider-scoped identity")
@@ -490,8 +511,8 @@ class ProviderSpendRepository:
             raise ValueError("provider reference is required")
         if not math.isfinite(balance) or balance < 0:
             raise ValueError("provider balance must be finite and non-negative")
-        if not math.isfinite(authoritative_charge) or authoritative_charge < 0:
-            raise ValueError("authoritative charge must be finite and non-negative")
+        if not math.isfinite(authoritative_charge) or authoritative_charge <= 0:
+            raise ValueError("authoritative charge must be finite and positive")
         payload = {
             "provider": provider.value,
             "balance": balance,
@@ -505,6 +526,7 @@ class ProviderSpendRepository:
         request_hash = _fingerprint(payload)
         try:
             with self._transaction() as session:
+                now = self._db_now(session)
                 existing = session.scalar(
                     select(ProviderBalanceSnapshotRow).where(
                         ProviderBalanceSnapshotRow.idempotency_key == idempotency_key
@@ -622,6 +644,8 @@ class ProviderSpendRepository:
         caller_label: str,
         idempotency_key: str,
     ) -> SpendAttempt:
+        if not math.isfinite(usage) or usage <= 0:
+            raise ValueError("free usage must be finite and positive")
         payload = {
             "provider": provider.value,
             "outcome": outcome,
@@ -631,9 +655,9 @@ class ProviderSpendRepository:
             "idempotency_key": idempotency_key,
         }
         request_hash = _fingerprint(payload)
-        now = datetime.now(tz=None)
         try:
             with self._transaction() as session:
+                now = self._db_now(session)
                 existing = session.scalar(
                     select(ProviderSpendAttemptRow).where(
                         ProviderSpendAttemptRow.idempotency_key == idempotency_key
@@ -773,10 +797,7 @@ class ProviderSpendRepository:
 
     @staticmethod
     def _active_filter(provider: ProviderName):
-        if PROVIDER_TIERS.get(provider) == 1:
-            return ProviderSpendAttemptRow.created_at >= (
-                datetime.now(tz=None) - timedelta(days=30)
-            )
+        del provider
         return True
 
     def _settled_charge(self, session, provider: ProviderName) -> float:
@@ -874,7 +895,7 @@ class ProviderSpendRepository:
                 request_hash=request_hash,
                 before_json=_canonical(before) if before is not None else None,
                 after_json=_canonical(_attempt_state(row)),
-                created_at=datetime.now(tz=None),
+                created_at=ProviderSpendRepository._db_now(session),
             )
         )
 
@@ -913,7 +934,7 @@ class ProviderSpendRepository:
                         ),
                     }
                 ),
-                created_at=datetime.now(tz=None),
+                created_at=ProviderSpendRepository._db_now(session),
             )
         )
 

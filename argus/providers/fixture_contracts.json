@@ -1,19 +1,19 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "providers": {
-    "brave": {"contract_version": "2026-07-27-v1"},
-    "duckduckgo": {"contract_version": "2026-07-27-v1"},
-    "exa": {"contract_version": "2026-07-27-v1"},
-    "github": {"contract_version": "2026-07-27-v1"},
-    "linkup": {"contract_version": "2026-07-27-v1"},
-    "parallel": {"contract_version": "2026-07-27-v1"},
-    "searchapi": {"contract_version": "2026-07-27-v1"},
-    "searxng": {"contract_version": "2026-07-27-v1"},
-    "serper": {"contract_version": "2026-07-27-v1"},
-    "tavily": {"contract_version": "2026-07-27-v1"},
-    "valyu": {"contract_version": "2026-07-27-v1"},
-    "wolfram": {"contract_version": "2026-07-27-v1"},
-    "yahoo": {"contract_version": "2026-07-27-v1"},
-    "you": {"contract_version": "2026-07-27-v1"}
+    "brave": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1"},
+    "duckduckgo": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1"},
+    "exa": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1"},
+    "github": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1"},
+    "linkup": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1"},
+    "parallel": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1"},
+    "searchapi": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1"},
+    "searxng": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1"},
+    "serper": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1"},
+    "tavily": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1"},
+    "valyu": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1"},
+    "wolfram": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1"},
+    "yahoo": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1"},
+    "you": {"contract_version": "2026-07-27-v1", "request_contract": "search-query-v1", "response_contract": "provider-batch-v1"}
   }
 }

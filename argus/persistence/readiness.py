@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -234,6 +235,8 @@ class ProviderReadinessRepository:
         self,
         observation: Any,
         fold: Callable[[list[StoredObservation], datetime, int], Mapping[str, Any]],
+        *,
+        replace_existing: bool = True,
     ) -> Mapping[str, Any]:
         """Replace one current dimension and fold the bounded seven-row state."""
         scope_key = observation.scope.fingerprint()
@@ -251,6 +254,18 @@ class ProviderReadinessRepository:
                 )
                 .with_for_update()
             )
+            if old is not None and not replace_existing:
+                current = [_stored(item) for item in self._current_rows(
+                    session, observation.provider, scope_key
+                )]
+                generation = self._next_generation(
+                    session, observation.provider, scope_key
+                )
+                payload = dict(fold(current, now, generation))
+                self._put_snapshot(
+                    session, observation.provider, scope_key, payload, generation, now
+                )
+                return payload
             if old is not None:
                 session.delete(old)
                 session.flush()
@@ -432,15 +447,59 @@ class ProviderReadinessRepository:
                 ProviderReadinessEvidenceRefRow.created_at.desc(),
             )
         ))
-        keep = set(current)
+        protected_refs = [row for row in refs if row.protected]
+        overflow = len(protected_refs) > MAX_EVIDENCE_REFS
+        if overflow:
+            for row in session.scalars(
+                select(ProviderReadinessObservationRow).where(
+                    ProviderReadinessObservationRow.provider == provider.value,
+                    ProviderReadinessObservationRow.dimension == "configuration",
+                )
+            ):
+                row.state = "evidence_overflow"
+                row.safe_reason = "evidence_overflow"
+                row.protected = True
+        keep = {row.evidence_ref for row in refs[:MAX_EVIDENCE_REFS]}
         for row in refs:
-            if len(keep) >= MAX_EVIDENCE_REFS:
-                break
-            keep.add(row.evidence_ref)
-        for row in refs:
-            row.protected = bool(current.get(row.evidence_ref, False))
+            row.protected = row.protected or bool(
+                current.get(row.evidence_ref, False)
+            )
             if row.evidence_ref not in keep:
                 session.delete(row)
+
+    def get_snapshot(
+        self, provider: ProviderName, scope_key: str,
+    ) -> Mapping[str, Any] | None:
+        with self.session_factory() as session:
+            row = session.scalar(select(ProviderReadinessSnapshotRow).where(
+                ProviderReadinessSnapshotRow.provider == provider.value,
+                ProviderReadinessSnapshotRow.scope_key == scope_key,
+            ))
+            return json.loads(row.snapshot_json) if row else None
+
+    def latest_lease(self, provider: ProviderName) -> HalfOpenCompletion | None:
+        with self.session_factory() as session:
+            row = session.scalar(
+                select(ProviderReadinessLeaseRow)
+                .where(
+                    ProviderReadinessLeaseRow.scope_key.like(
+                        f"{provider.value}:%"
+                    )
+                )
+                .order_by(ProviderReadinessLeaseRow.created_at.desc())
+                .limit(1)
+            )
+            if row is None or row.completed_at is None:
+                return None
+            return HalfOpenCompletion(
+                row.scope_key,
+                row.owner,
+                row.fencing_token,
+                row.attempt_id,
+                row.outcome or "unknown",
+                row.uncertain_charge,
+                _aware(row.completed_at),
+            )
 
     def evidence_ref_count(self, provider: ProviderName) -> int:
         with self.session_factory() as session:
@@ -597,14 +656,16 @@ class ProviderReadinessRepository:
                         ProviderSpendAttemptRow.status.in_(("reserved", "uncertain")),
                     )
                 ) or 0.0
+                registration = self.get_registration_in_session(session, context.provider)
                 settled_filters = [
                     ProviderSpendAttemptRow.provider == context.provider.value,
                     ProviderSpendAttemptRow.status.in_(("settled", "resolved")),
                 ]
-                if context.tier == 1:
+                reset_at = registration.get("budget_reset_at")
+                if reset_at:
                     settled_filters.append(
                         ProviderSpendAttemptRow.created_at
-                        >= _naive(now - timedelta(days=30))
+                        >= _naive(datetime.fromisoformat(reset_at))
                     )
                 settled = session.scalar(
                     select(func.coalesce(func.sum(
@@ -612,7 +673,6 @@ class ProviderReadinessRepository:
                     ), 0.0)).where(*settled_filters)
                 ) or 0.0
                 obligation = Decimal(str(unresolved)) + Decimal(str(settled))
-                registration = self.get_registration_in_session(session, context.provider)
                 limit = float(registration.get("budget_limit") or 0)
                 requested = obligation + Decimal(str(conservative_charge))
                 if limit <= 0 or requested > Decimal(str(limit)):
@@ -629,6 +689,28 @@ class ProviderReadinessRepository:
                     status="reserved",
                     outcome=None,
                     reserved_charge=conservative_charge,
+                    estimator_violation=False,
+                    reservation_overrun=0.0,
+                    actual_charge=None,
+                    usage=0.0,
+                    caller_identity=context.caller_identity,
+                    caller_label=context.caller_identity,
+                    resolution_source=None,
+                    resolution_reference=None,
+                    created_at=_naive(now),
+                    updated_at=_naive(now),
+                ))
+            else:
+                session.add(ProviderSpendAttemptRow(
+                    id=attempt_id,
+                    idempotency_key=context.idempotency_key,
+                    request_hash=context.plan_id,
+                    provider=context.provider.value,
+                    tier=context.tier,
+                    is_paid=False,
+                    status="reserved",
+                    outcome=None,
+                    reserved_charge=0.0,
                     estimator_violation=False,
                     reservation_overrun=0.0,
                     actual_charge=None,
@@ -664,6 +746,92 @@ class ProviderReadinessRepository:
                 "scope_key": lease_key, "fencing_token": token,
                 "attempt_id": attempt_id, "owner": owner,
             }
+
+    def authorize_probe_once(
+        self, *, provider: ProviderName, probe_kind: str, authorization: Any,
+    ) -> str:
+        from argus.persistence.provider_spend import SpendAuditRow
+
+        payload = {
+            "provider": provider.value,
+            "probe_kind": probe_kind,
+            "workflow": authorization.workflow,
+            "receipt": authorization.durable_receipt,
+            "spend_reserved": bool(authorization.spend_reserved),
+            "no_fallback": True,
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        request_hash = hashlib.sha256(encoded.encode()).hexdigest()
+        key = str(authorization.idempotency_key)
+        with self._write_transaction() as session:
+            existing = session.scalar(select(SpendAuditRow).where(
+                SpendAuditRow.action == "probe_authorize",
+                SpendAuditRow.idempotency_key == key,
+            ))
+            if existing is not None:
+                if existing.request_hash != request_hash:
+                    raise ReadinessConflict(
+                        "probe idempotency key reused with different contract"
+                    )
+                return existing.id
+            now = self.authority_now(session)
+            row_id = uuid.uuid4().hex
+            session.add(SpendAuditRow(
+                id=row_id,
+                attempt_id=None,
+                provider=provider.value,
+                action="probe_authorize",
+                actor_identity=authorization.workflow,
+                idempotency_key=key,
+                request_hash=request_hash,
+                before_json=None,
+                after_json=encoded,
+                created_at=_naive(now),
+            ))
+            return row_id
+
+    def consume_probe_once(
+        self, *, provider: ProviderName, idempotency_key: str,
+        durable_receipt: str, spend_reserved: bool,
+    ) -> None:
+        from argus.persistence.provider_spend import SpendAuditRow
+
+        with self._write_transaction() as session:
+            authorized = session.scalar(select(SpendAuditRow).where(
+                SpendAuditRow.action == "probe_authorize",
+                SpendAuditRow.idempotency_key == idempotency_key,
+                SpendAuditRow.provider == provider.value,
+            ).with_for_update())
+            if authorized is None:
+                raise ReadinessConflict("probe authorization is missing")
+            contract = json.loads(authorized.after_json)
+            if (
+                contract.get("receipt") != durable_receipt
+                or contract.get("spend_reserved") is not bool(spend_reserved)
+                or contract.get("no_fallback") is not True
+            ):
+                raise ReadinessConflict("probe authorization binding mismatch")
+            consumed = session.scalar(select(SpendAuditRow).where(
+                SpendAuditRow.action == "probe_consume",
+                SpendAuditRow.idempotency_key == idempotency_key,
+            ))
+            if consumed is not None:
+                raise ReadinessConflict("probe authorization already consumed")
+            now = self.authority_now(session)
+            session.add(SpendAuditRow(
+                id=uuid.uuid4().hex,
+                attempt_id=None,
+                provider=provider.value,
+                action="probe_consume",
+                actor_identity="executor",
+                idempotency_key=idempotency_key,
+                request_hash=authorized.request_hash,
+                before_json=authorized.after_json,
+                after_json=json.dumps(
+                    {"consumed": True}, sort_keys=True, separators=(",", ":")
+                ),
+                created_at=_naive(now),
+            ))
 
     def settle_execution(
         self, *, authorization: Any, category: str, actual_charge: float | None,
@@ -708,7 +876,11 @@ class ProviderReadinessRepository:
                     attempt.status = "settled"
                     attempt.outcome = outcome
                     attempt.actual_charge = float(actual_charge or 0.0)
-                    attempt.usage = float(actual_charge or 0.0)
+                    attempt.usage = (
+                        1.0
+                        if not attempt.is_paid and outcome == "success"
+                        else float(actual_charge or 0.0)
+                    )
                     if attempt.actual_charge > attempt.reserved_charge:
                         attempt.estimator_violation = True
                         attempt.reservation_overrun = float(
@@ -720,8 +892,8 @@ class ProviderReadinessRepository:
             state = (
                 "not_applicable"
                 if PROVIDER_TIERS[authorization.provider] == 0
-                else "uncertain" if uncertain
                 else "exhausted" if category == "balance_exhausted"
+                else "uncertain" if uncertain
                 else "available"
             )
             scope_key = authorization.scope.fingerprint()
@@ -800,6 +972,7 @@ class ProviderReadinessRepository:
     def record_spend_in_session(
         self, session, *, provider: ProviderName, state: str,
         evidence_ref: str, outcome: str | None, protected: bool,
+        scope: Any | None = None,
     ) -> None:
         """Fold spend reconciliation into readiness in the caller transaction."""
         from argus.broker.readiness import (
@@ -808,9 +981,9 @@ class ProviderReadinessRepository:
         )
 
         registration = self.get_registration_in_session(session, provider)
-        if not registration.get("scope"):
+        if scope is None and not registration.get("scope"):
             return
-        scope = ReadinessScope(**registration["scope"])
+        scope = scope or ReadinessScope(**registration["scope"])
         scope_key = scope.fingerprint()
         now = self.authority_now(session)
         current = session.scalar(
@@ -868,6 +1041,43 @@ class ProviderReadinessRepository:
         ).as_dict()
         self._put_snapshot(session, provider, scope_key, payload, generation, now)
 
+    def resolve_spend_in_session(
+        self, session, *, attempt: Any, outcome: str, evidence_ref: str,
+    ) -> None:
+        """Resolve attempt, lease, protected evidence and snapshot atomically."""
+        lease = session.scalar(
+            select(ProviderReadinessLeaseRow)
+            .where(ProviderReadinessLeaseRow.attempt_id == attempt.id)
+            .with_for_update()
+        )
+        now = self.authority_now(session)
+        scope = None
+        if lease is not None:
+            lease.state = "completed"
+            lease.outcome = outcome
+            lease.uncertain_charge = False
+            lease.completed_at = _naive(now)
+            scope_row = session.scalar(
+                select(ProviderReadinessObservationRow).where(
+                    ProviderReadinessObservationRow.provider == attempt.provider,
+                    ProviderReadinessObservationRow.scope_key == lease.scope_key,
+                )
+            )
+            if scope_row is not None:
+                from argus.broker.readiness import ReadinessScope
+
+                scope = ReadinessScope(**json.loads(scope_row.scope_json))
+        state = "exhausted" if outcome == "balance_exhausted" else "available"
+        self.record_spend_in_session(
+            session,
+            provider=ProviderName(attempt.provider),
+            state=state,
+            evidence_ref=evidence_ref,
+            outcome=f"reconciled_{outcome}",
+            protected=state == "exhausted",
+            scope=scope,
+        )
+
     def append_stale_charge_evidence(
         self, *, authorization: Any, actual_charge: float | None,
         charge_known: bool, evidence_ref: str,
@@ -919,19 +1129,19 @@ class ProviderReadinessRepository:
         self, provider: ProviderName, *, budget_limit: float,
     ) -> dict[str, float | None]:
         """Project authoritative settled and unresolved obligations using DB time."""
-        from argus.broker.budgets import PROVIDER_TIERS
         from argus.persistence.provider_spend import ProviderSpendAttemptRow
 
         with self.session_factory() as session:
-            now = self.authority_now(session)
+            registration = self.get_registration_in_session(session, provider)
             settled_filters = [
                 ProviderSpendAttemptRow.provider == provider.value,
                 ProviderSpendAttemptRow.status.in_(("settled", "resolved")),
             ]
-            if PROVIDER_TIERS[provider] == 1:
+            reset_at = registration.get("budget_reset_at")
+            if reset_at:
                 settled_filters.append(
                     ProviderSpendAttemptRow.created_at
-                    >= _naive(now - timedelta(days=30))
+                    >= _naive(datetime.fromisoformat(reset_at))
                 )
             settled = session.scalar(
                 select(func.coalesce(func.sum(

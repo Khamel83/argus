@@ -1312,15 +1312,28 @@ def test_provider_health_compatibility_surface_includes_cached_nested_evidence()
             else "disabled_by_config"
         ),
     }
+    broker.provider_readiness_projection.side_effect = lambda provider: {
+        "provider": provider.value,
+        "state": (
+            "healthy"
+            if provider.value in {"duckduckgo", "brave"}
+            else "disabled"
+        ),
+        "authority": "provider_readiness",
+    }
     client = TestClient(create_app(broker=broker, operational_status=service))
 
     response = client.get("/api/provider-health")
 
     assert response.status_code == 200
-    assert response.json()["status"] == "degraded"
+    assert response.json()["status"] == "ok"
     brave = response.json()["providers"]["brave"]
-    assert brave["state"] == "unready"
-    assert brave["observations"]["reachability"]["reason"] == "probe_failed"
+    assert brave["state"] == "healthy"
+    assert brave["operational"]["non_authoritative"] is True
+    assert brave["operational"]["state"] == "unready"
+    assert brave["operational"]["observations"]["reachability"]["reason"] == (
+        "probe_failed"
+    )
 
 
 def test_liveness_is_exempt_from_request_rate_limits():

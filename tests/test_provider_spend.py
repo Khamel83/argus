@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 import json
@@ -178,7 +178,7 @@ def test_operator_resolution_is_idempotent_audited_and_conflict_checked(tmp_path
 
     first = repository.resolve(
         reservation.attempt_id,
-        actual_charge=0.0,
+        actual_charge=0.01,
         outcome="confirmed_not_consumed",
         source="operator",
         actor_identity="admin",
@@ -186,7 +186,7 @@ def test_operator_resolution_is_idempotent_audited_and_conflict_checked(tmp_path
     )
     second = repository.resolve(
         reservation.attempt_id,
-        actual_charge=0.0,
+        actual_charge=0.01,
         outcome="confirmed_not_consumed",
         source="operator",
         actor_identity="admin",
@@ -249,7 +249,9 @@ def test_authoritative_reconciliation_records_snapshot_freshness_and_is_idempote
     assert summary["provider_snapshot"] == {
         "balance": 1777.0,
         "source": "provider",
-        "observed_at": observed_at.isoformat(),
+            "observed_at": observed_at.astimezone(timezone.utc)
+            .replace(tzinfo=None)
+            .isoformat(),
         "provider_reference": "brave-event-1",
         "related_attempt_id": reservation.attempt_id,
         "authoritative_charge": 1.0,
@@ -501,7 +503,7 @@ def test_reconciliation_fault_rolls_back_attempt_and_audit(tmp_path):
         idempotency_key="reconcile-fault-snapshot",
         provider_reference="brave-reconcile-fault",
         related_attempt_id=reservation.attempt_id,
-        authoritative_charge=0.0,
+        authoritative_charge=0.01,
     )
 
     def fail(stage):
@@ -511,7 +513,7 @@ def test_reconciliation_fault_rolls_back_attempt_and_audit(tmp_path):
     with pytest.raises(RuntimeError, match="reconciliation crash"):
         repository.resolve(
             reservation.attempt_id,
-            actual_charge=0.0,
+            actual_charge=0.01,
             outcome="not_charged",
             source="provider",
             actor_identity="provider:brave",
@@ -1209,7 +1211,7 @@ def test_every_paid_provider_has_a_finite_conservative_estimator():
     )
 
 
-def test_parallel_recurring_credit_expires_from_budget_without_deleting_history(
+def test_parallel_spend_does_not_reset_without_authoritative_boundary(
     tmp_path,
 ):
     from argus.persistence.provider_spend import ProviderSpendAttemptRow
@@ -1236,9 +1238,9 @@ def test_parallel_recurring_credit_expires_from_budget_without_deleting_history(
     ) == {
         "provider": "parallel",
         "budget_limit": 5000.0,
-        "argus_estimated_charge": 0.0,
+        "argus_estimated_charge": 1.0,
         "uncertain_charge": 0.0,
-        "remaining": 5000.0,
+        "remaining": 4999.0,
         "estimate_source": "argus",
         "provider_snapshot": None,
     }
@@ -1537,7 +1539,7 @@ def test_admin_spend_interfaces_are_authenticated_and_audited(tmp_path, monkeypa
         f"/api/admin/provider-spend/attempts/{reservation.attempt_id}/resolve",
         headers={"X-Admin-API-Key": "admin-secret"},
         json={
-            "actual_charge": 0.0,
+            "actual_charge": 0.01,
             "outcome": "confirmed_not_consumed",
             "source": "operator",
             "idempotency_key": "admin-resolution",

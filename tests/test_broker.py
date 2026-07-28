@@ -1865,8 +1865,13 @@ class TestRouter:
         assert backup.calls == 1
 
     @pytest.mark.asyncio
-    async def test_search_handles_provider_exception_and_continues(self, monkeypatch):
+    async def test_search_handles_provider_exception_and_continues(
+        self, monkeypatch, tmp_path
+    ):
         from argus.broker.router import SearchBroker
+        from argus.persistence.provider_spend import (
+            create_provider_spend_repository,
+        )
 
         monkeypatch.setattr(
             "argus.persistence.db.SearchPersistenceGateway.record_completed_search",
@@ -1888,6 +1893,10 @@ class TestRouter:
                 ProviderName.SEARXNG: failing,
                 ProviderName.BRAVE: backup,
             },
+            spend_repository=create_provider_spend_repository(
+                f"sqlite:///{tmp_path / 'exception-spend.db'}",
+                create_schema=True,
+            ),
         )
 
         response = await broker.search(
@@ -2175,6 +2184,44 @@ async def test_executor_routes_to_remote_when_local_blocked():
     assert outcome.live_providers_used == 1
     assert "yahoo" in outcome.provider_results
     assert local_provider.calls == 0  # local should NOT have been called
+
+
+@pytest.mark.asyncio
+async def test_remote_exception_settles_typed_failure_never_success():
+    from unittest.mock import patch
+
+    from argus.broker.reachability import ReachabilityMatrix
+    from argus.config import EgressNode
+
+    matrix = ReachabilityMatrix()
+    matrix.update_probe("local", ProviderName.YAHOO, reachable=False, latency_ms=0)
+    matrix.update_probe("oci-dev", ProviderName.YAHOO, reachable=True, latency_ms=100)
+    executor, _ = _make_executor(
+        reachability=matrix,
+        egress_nodes={
+            "oci-dev": EgressNode(
+                name="oci-dev",
+                url="http://worker:8273",
+                shared_secret="s",
+            )
+        },
+    )
+
+    with patch(
+        "argus.broker.remote_provider.RemoteProviderClient.search",
+        side_effect=RuntimeError("transport lost"),
+    ):
+        outcome = await execute_with_plan(
+            executor,
+            SearchQuery(query="remote failure", mode=SearchMode.DISCOVERY),
+            [ProviderName.YAHOO],
+        )
+
+    assert outcome.traces[0].status == "error"
+    lease = executor._readiness.repository.latest_lease(ProviderName.YAHOO)
+    assert lease is not None
+    assert lease.outcome == "provider_unavailable"
+    assert lease.outcome != "success"
 
 
 @pytest.mark.asyncio
