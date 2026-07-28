@@ -1149,10 +1149,12 @@ async def test_nonfinite_paid_estimate_fails_before_provider_call(
         ProviderName.BRAVE,
         float("inf"),
     )
+    budgets = BudgetTracker()
+    budgets.set_budget(ProviderName.BRAVE, 100)
     executor = ProviderExecutor(
         providers={ProviderName.BRAVE: provider},
         health_tracker=HealthTracker(),
-        budget_tracker=BudgetTracker(),
+        budget_tracker=budgets,
         spend_repository=repository,
     )
 
@@ -1444,14 +1446,21 @@ def test_admin_spend_interfaces_are_authenticated_and_audited(tmp_path, monkeypa
         "Broker",
         (),
         {
-            "budget_tracker": type(
+                "budget_tracker": type(
                 "Budget",
                 (),
                 {
                     "close": lambda self: None,
                     "get_budget_limit": lambda self, provider: 2000.0,
                 },
-            )(),
+                )(),
+                "provider_budget_projection": lambda self, provider: {
+                    "provider": provider.value,
+                    "state": "unknown",
+                    "budget_limit": 2000.0,
+                    "remaining": None,
+                    "authority": "provider_readiness",
+                },
         },
     )()
     client = TestClient(
@@ -1566,7 +1575,11 @@ def test_admin_spend_interfaces_are_authenticated_and_audited(tmp_path, monkeypa
     assert resolved.status_code == 200
     assert resolved.json()["status"] == "resolved"
     assert snapshot.status_code == 200
-    brave = next(row for row in summary.json()["providers"] if row["provider"] == "brave")
+    brave = next(
+        row
+        for row in summary.json()["non_authoritative_operational"]["providers"]
+        if row["provider"] == "brave"
+    )
     assert brave["estimate_source"] == "argus"
     assert brave["provider_snapshot"]["source"] == "provider"
     json.dumps(summary.json(), allow_nan=False)

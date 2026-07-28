@@ -59,36 +59,28 @@ def _get_broker(request: Request) -> SearchBroker:
 
 
 def _build_budget_state(broker: SearchBroker) -> list[dict]:
-    """Build per-provider budget cards. Only includes providers with a budget set."""
-    bt = broker.budget_tracker
+    """Build budget cards solely from the readiness authority projection."""
     rows = []
     for pname in ProviderName:
-        budget = bt._budgets.get(pname)
-        if budget is None or budget <= 0:
+        projection = broker.provider_budget_projection(pname)
+        budget = projection.get("budget_limit")
+        if not isinstance(budget, (int, float)) or budget <= 0:
             continue
-        remaining = bt.get_remaining_budget(pname) or 0.0
-        used = bt.get_usage_count(pname)
-        exhausted = bt.is_budget_exhausted(pname)
-        over_pace = bt.is_over_pace(pname)
-        used_today = bt.used_today(pname)
-        pct_used = min(100.0, (used / budget) * 100.0) if budget else 0.0
-
-        if exhausted:
-            status = "exhausted"
-        elif over_pace:
-            status = "over_pace"
-        elif pct_used >= 80:
-            status = "warning"
-        else:
-            status = "ok"
+        remaining = projection.get("remaining")
+        used = (
+            max(0.0, budget - remaining)
+            if isinstance(remaining, (int, float)) else 0.0
+        )
+        pct_used = min(100.0, (used / budget) * 100.0)
+        status = str(projection.get("state", "unknown"))
 
         rows.append({
             "provider": pname.value,
             "tier": PROVIDER_TIERS.get(pname, 99),
             "budget": int(budget),
             "used": int(used),
-            "remaining": int(remaining),
-            "used_today": used_today,
+            "remaining": int(remaining) if isinstance(remaining, (int, float)) else None,
+            "used_today": 0,
             "pct_used": round(pct_used, 1),
             "status": status,
         })

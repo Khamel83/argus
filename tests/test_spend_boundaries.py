@@ -159,11 +159,12 @@ async def test_mcp_recover_and_expand_propagate_principal():
 
 
 @pytest.mark.asyncio
-async def test_paid_mcp_provider_test_routes_through_broker():
+async def test_paid_mcp_provider_test_defaults_to_fixture_without_broker_search():
     from argus.mcp.tools import test_provider_mcp
 
     broker = MagicMock()
-    broker.search = AsyncMock(side_effect=_empty_response)
+    broker.readiness_service.authorize_probe.return_value.allowed = True
+    broker.provider_readiness_projection.return_value = {"state": "healthy"}
 
     await test_provider_mcp(
         broker,
@@ -172,10 +173,53 @@ async def test_paid_mcp_provider_test_routes_through_broker():
         caller_label="smoke",
     )
 
+    broker.search.assert_not_called()
+    broker.readiness_service.authorize_probe.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_paid_mcp_live_probe_requires_reservation_and_has_no_fallback():
+    from argus.broker.readiness import ProviderReadinessService
+    from argus.mcp.tools import test_provider_mcp
+    from argus.persistence.readiness import create_readiness_repository
+
+    broker = MagicMock()
+    broker.readiness_service = ProviderReadinessService(
+        repository=create_readiness_repository("sqlite:///:memory:")
+    )
+    broker.search = AsyncMock(side_effect=_empty_response)
+
+    denied = await test_provider_mcp(
+        broker,
+        "brave",
+        caller_identity="admin",
+        live=True,
+        idempotency_key="mcp-smoke:1",
+        durable_receipt="receipt:mcp-smoke:1",
+        spend_reserved=False,
+    )
+    assert "Live probe denied" in denied
+    broker.search.assert_not_called()
+
+    await test_provider_mcp(
+        broker,
+        "brave",
+        caller_identity="admin",
+        caller_label="smoke",
+        live=True,
+        idempotency_key="mcp-smoke:2",
+        durable_receipt="receipt:mcp-smoke:2",
+        spend_reserved=True,
+    )
     query = broker.search.await_args.args[0]
     assert query.providers == [ProviderName.BRAVE]
-    assert query.caller == "admin"
-    assert query.user_visible is False
+    assert query.metadata == {
+        "caller_label": "smoke",
+        "probe_receipt": "receipt:mcp-smoke:2",
+        "probe_idempotency_key": "mcp-smoke:2",
+        "probe_provider": "brave",
+        "probe_no_fallback": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -232,6 +276,9 @@ def test_durable_budget_renderers_include_uncertainty_and_provider_freshness(
         spend_repository=repository,
         budget_tracker=SimpleNamespace(
             get_budget_limit=lambda provider: 10.0
+        ),
+        provider_budget_projection=lambda provider: repository.provider_summary(
+            provider, budget_limit=10.0
         ),
     )
 

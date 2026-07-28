@@ -675,13 +675,6 @@ def health():
         raw = effective if isinstance(effective, str) else effective.value
         click.echo(f"  {pname.value:12s} {_STATUS_DISPLAY.get(raw, raw)}")
     click.echo()
-    all_health = broker.health_tracker.get_all_status()
-    if all_health:
-        click.echo("Health tracking:")
-        for pname, info in all_health.items():
-            click.echo(
-                f"  {pname.value}: failures={info['consecutive_failures']} cooldown={info['in_cooldown']}"
-            )
 
 
 @cli.command()
@@ -705,10 +698,7 @@ def budgets():
     broker = create_broker()
     click.echo("Provider budgets:")
     for pname in ProviderName:
-        summary = broker.spend_repository.provider_summary(
-            pname,
-            budget_limit=broker.budget_tracker.get_budget_limit(pname),
-        )
+        summary = broker.provider_budget_projection(pname)
         snapshot = summary.get("provider_snapshot")
         snapshot_text = (
             f" provider_observed_at={snapshot['observed_at']}" if snapshot else ""
@@ -801,9 +791,17 @@ def set_balance(service, balance):
 @cli.command()
 @click.option("--provider", "-p", required=True, help="Provider name")
 @click.option("--query", "-q", default="argus", help="Test query")
-def test_provider(provider, query):
+@click.option("--live", is_flag=True, help="Run an explicitly authorized live probe")
+@click.option("--idempotency-key")
+@click.option("--durable-receipt")
+@click.option("--spend-reserved", is_flag=True)
+def test_provider(
+    provider, query, live, idempotency_key, durable_receipt, spend_reserved
+):
     """Smoke-test a single provider."""
     from argus.broker.router import create_broker
+    from argus.broker.budgets import PROVIDER_TIERS
+    from argus.broker.readiness import ProbeAuthorization
     from argus.models import ProviderName, SearchMode, SearchQuery
 
     broker = create_broker()
@@ -815,6 +813,24 @@ def test_provider(provider, query):
         sys.exit(1)
 
     click.echo(f"Testing {pname.value}...")
+    if not live:
+        decision = broker.readiness_service.authorize_probe(pname, "fixture")
+        snapshot = broker.provider_readiness_projection(pname)
+        click.echo(
+            f"  Fixture: {'verified' if decision.allowed else 'denied'} "
+            f"(readiness={snapshot['state']})"
+        )
+        return
+    authorization = ProbeAuthorization(
+        workflow="explicit_validation", provider=pname,
+        named_quota="free_provider_request" if PROVIDER_TIERS[pname] == 0 else None,
+        idempotency_key=idempotency_key, durable_receipt=durable_receipt,
+        spend_reserved=spend_reserved,
+    )
+    kind = "no_money_quota" if PROVIDER_TIERS[pname] == 0 else "billable_search"
+    decision = broker.readiness_service.authorize_probe(pname, kind, authorization)
+    if not decision.allowed:
+        raise click.ClickException(decision.reason)
     q = SearchQuery(
         query=query,
         mode=SearchMode.DISCOVERY,
@@ -822,7 +838,11 @@ def test_provider(provider, query):
         providers=[pname],
         caller="local-cli",
         user_visible=False,
-        metadata={"caller_label": "cli-smoke"},
+        metadata={
+            "caller_label": "cli-smoke", "probe_receipt": durable_receipt,
+            "probe_idempotency_key": idempotency_key,
+            "probe_provider": pname.value, "probe_no_fallback": True,
+        },
     )
     response = _run(broker.search(q))
 
@@ -922,12 +942,12 @@ def doctor(as_json):
     try:
         from argus.providers.duckduckgo import DuckDuckGoProvider
 
-        ddg = DuckDuckGoProvider(cfg.duckduckgo)
+        DuckDuckGoProvider(cfg.duckduckgo)
         checks.append(
             (
                 "DuckDuckGo",
-                ddg.is_available(),
-                "available" if ddg.is_available() else "not available",
+                True,
+                "adapter constructed; readiness is reported by the authority",
             )
         )
     except Exception as e:

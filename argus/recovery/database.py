@@ -49,6 +49,17 @@ REQUIRED_TABLES = {
     "extraction_outcome_activations",
     "alembic_version",
 }
+READINESS_TABLES = {
+    "provider_readiness_observations",
+    "provider_readiness_snapshots",
+    "provider_readiness_evidence_refs",
+    "provider_readiness_leases",
+    "provider_readiness_alert_dedupe",
+}
+REQUIRED_TABLES_BY_HEAD = {
+    "0007_extraction_outcomes": REQUIRED_TABLES,
+    EXPECTED_SCHEMA_HEAD: REQUIRED_TABLES | READINESS_TABLES,
+}
 COUNTED_TABLES = sorted(REQUIRED_TABLES - {"alembic_version"})
 REQUIRED_S3_COLUMNS = {
     "authentication_scope_authority_receipts": {
@@ -145,7 +156,13 @@ REQUIRED_S3_COLUMNS = {
     },
     "extraction_outcome_activations": {"receipt_ref", "activated_at"},
 }
-SCHEMA_CONTRACT_PATH = Path(__file__).with_name("argus_schema_0007.json")
+SCHEMA_CONTRACT_PATHS = {
+    "0007_extraction_outcomes": Path(__file__).with_name("argus_schema_0007.json"),
+    EXPECTED_SCHEMA_HEAD: Path(__file__).with_name("argus_schema_0008.json"),
+}
+# Compatibility alias for recovery tooling that still targets the 0007 source
+# inventory. Verification itself selects the contract from the restored head.
+SCHEMA_CONTRACT_PATH = SCHEMA_CONTRACT_PATHS["0007_extraction_outcomes"]
 
 
 def _postgresql_type_name(column_type: Any) -> str:
@@ -395,7 +412,8 @@ def build_argus_schema_contract(
         cursor.execute(_SCHEMA_INDEX_QUERY)
         index_rows = cursor.fetchall()
 
-    if tables != REQUIRED_TABLES:
+    required_tables = REQUIRED_TABLES_BY_HEAD.get(schema_head)
+    if required_tables is None or tables != required_tables:
         raise RuntimeError("PostgreSQL source does not have the exact Argus tables")
     if schema_head not in COMPATIBLE_SCHEMA_HEADS:
         raise RuntimeError(
@@ -415,10 +433,13 @@ def build_argus_schema_contract(
     return manifest
 
 
-def expected_argus_schema_manifest() -> dict[str, Any]:
+def expected_argus_schema_manifest(
+    schema_head: str = "0007_extraction_outcomes",
+) -> dict[str, Any]:
     """Load the checked-in complete PostgreSQL schema contract."""
     try:
-        manifest = json.loads(SCHEMA_CONTRACT_PATH.read_text(encoding="utf-8"))
+        path = SCHEMA_CONTRACT_PATHS[schema_head]
+        manifest = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise RuntimeError("checked-in Argus schema contract is invalid") from error
     if manifest.get("contract_sha256") != _manifest_sha256(manifest):
@@ -537,14 +558,6 @@ def verify_argus_database(
 ) -> dict[str, Any]:
     """Verify schema, row accounting, relationships, and a basic Argus read path."""
     validated = validate_scratch_database(database)
-    schema_manifest = expected_argus_schema_manifest()
-    if (
-        expected_schema_manifest is not None
-        and expected_schema_manifest != schema_manifest
-    ):
-        raise RuntimeError(
-            "caller schema manifest does not match checked-in schema contract"
-        )
     if connect is None:
         import psycopg2
 
@@ -562,10 +575,34 @@ def verify_argus_database(
                 "WHERE table_schema = 'public'"
             )
             tables = {row[0] for row in cursor.fetchall()}
-            missing = sorted(REQUIRED_TABLES - tables)
-            if missing:
+            cursor.execute("SELECT version_num FROM alembic_version")
+            schema_head = cursor.fetchone()[0]
+            if schema_head not in COMPATIBLE_SCHEMA_HEADS:
                 raise RuntimeError(
-                    "missing required tables: " + ", ".join(missing)
+                    f"schema head {schema_head!r} is not {EXPECTED_SCHEMA_HEAD!r}"
+                )
+            required_tables = REQUIRED_TABLES_BY_HEAD[schema_head]
+            missing = sorted(required_tables - tables)
+            unexpected = sorted(tables - required_tables)
+            if missing or unexpected:
+                if missing and not unexpected:
+                    raise RuntimeError(
+                        "missing required tables: " + ", ".join(missing)
+                    )
+                raise RuntimeError(
+                    "database schema manifest table mismatch: "
+                    + json.dumps(
+                        {"missing": missing, "unexpected": unexpected},
+                        sort_keys=True,
+                    )
+                )
+            schema_manifest = expected_argus_schema_manifest(schema_head)
+            if (
+                expected_schema_manifest is not None
+                and expected_schema_manifest != schema_manifest
+            ):
+                raise RuntimeError(
+                    "caller schema manifest does not match checked-in schema contract"
                 )
             cursor.execute(_SCHEMA_COLUMN_QUERY)
             columns_by_table: dict[str, set[str]] = {}
@@ -583,15 +620,8 @@ def verify_argus_database(
                     + json.dumps(missing_columns, sort_keys=True)
                 )
 
-            cursor.execute("SELECT version_num FROM alembic_version")
-            schema_head = cursor.fetchone()[0]
-            if schema_head not in COMPATIBLE_SCHEMA_HEADS:
-                raise RuntimeError(
-                    f"schema head {schema_head!r} is not {EXPECTED_SCHEMA_HEAD!r}"
-                )
-
             row_counts = {}
-            for table in COUNTED_TABLES:
+            for table in sorted(required_tables - {"alembic_version"}):
                 cursor.execute(f'SELECT count(*) FROM "{table}"')
                 row_counts[table] = int(cursor.fetchone()[0])
             inventory = _inventory(cursor, tables, row_counts)

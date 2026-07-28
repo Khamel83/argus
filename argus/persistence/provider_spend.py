@@ -227,27 +227,17 @@ class ProviderSpendRepository:
         protected: bool,
     ) -> None:
         """Write the normalized spend observation in the attempt transaction."""
-        from argus.broker.readiness import ReadinessScope
-        from argus.persistence.readiness import ProviderReadinessObservationRow
+        from argus.persistence.readiness import ProviderReadinessRepository
 
-        now = datetime.now(tz=None)
-        scope = ReadinessScope()
-        session.add(
-            ProviderReadinessObservationRow(
-                id=uuid.uuid4().hex,
-                provider=row.provider,
-                dimension="spend",
-                state=state,
-                source="provider_spend_transaction",
-                scope_key=scope.fingerprint(),
-                scope_json=_canonical(scope.as_dict()),
-                producer_observed_at=now,
-                ingested_at=now,
-                expires_at=None if protected else now + timedelta(minutes=5),
-                evidence_ref=f"spend-attempt:{row.id}",
-                safe_reason=row.outcome,
-                protected=protected,
-            )
+        ProviderReadinessRepository(
+            sessionmaker(bind=session.get_bind(), expire_on_commit=False)
+        ).record_spend_in_session(
+            session,
+            provider=ProviderName(row.provider),
+            state=state,
+            evidence_ref=f"spend-attempt:{row.id}",
+            outcome=row.outcome,
+            protected=protected,
         )
 
     def reserve(
@@ -753,6 +743,12 @@ class ProviderSpendRepository:
             ),
         }
 
+    def non_authoritative_operational_projection(
+        self, provider: ProviderName, *, budget_limit: float,
+    ) -> dict:
+        """Accounting diagnostics, explicitly outside readiness semantics."""
+        return self.provider_summary(provider, budget_limit=budget_limit)
+
     def _obligation(self, session, provider: ProviderName, *, lock: bool) -> float:
         # PostgreSQL needs a lock even when a provider has no attempt rows yet;
         # the transaction-scoped advisory lock supplies that stable mutex.
@@ -809,7 +805,7 @@ class ProviderSpendRepository:
             ).where(
                 ProviderSpendAttemptRow.provider == provider.value,
                 ProviderSpendAttemptRow.is_paid.is_(True),
-                ProviderSpendAttemptRow.status == "uncertain",
+                ProviderSpendAttemptRow.status.in_(("reserved", "uncertain")),
                 # Uncertain charges intentionally never age out.
             )
         )

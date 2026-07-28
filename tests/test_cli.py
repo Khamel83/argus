@@ -245,19 +245,19 @@ def test_search_caller_defaults_to_cli(monkeypatch):
 
 def test_provider_smoke_cli_marks_query_operational_only(monkeypatch):
     from argus.cli import main as cli_main
-    from argus.models import SearchResponse
+    from argus.models import ProviderName
+    from unittest.mock import MagicMock
 
     seen = {}
 
     def fake_create_broker():
         class FakeBroker:
-            async def search(self, query):
-                seen["query"] = query
-                return SearchResponse(
-                    query=query.query,
-                    mode=query.mode,
-                    results=[],
-                )
+            readiness_service = MagicMock()
+            readiness_service.authorize_probe.return_value.allowed = True
+
+            def provider_readiness_projection(self, provider):
+                seen["provider"] = provider
+                return {"state": "healthy"}
 
         return FakeBroker()
 
@@ -269,4 +269,5 @@ def test_provider_smoke_cli_marks_query_operational_only(monkeypatch):
     )
 
     assert result.exit_code == 0, result.output
-    assert seen["query"].user_visible is False
+    assert seen["provider"] == ProviderName.DUCKDUCKGO
+    assert "Fixture: verified" in result.output

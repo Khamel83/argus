@@ -182,43 +182,23 @@ class ProviderExecutor:
             tier = PROVIDER_TIERS[pname]
             cap = caller_tier_cap(query.caller, self._caller_tier_caps)
             planned_egress = self._readiness.best_egress(pname)
-            decision = self._readiness.execution_decision(
-                ExecutionContext(
-                    provider=pname,
-                    tier=tier,
-                    plan_providers=plan.candidate_providers,
-                    free_only=query.free_only,
-                    caller_tier_cap=cap,
+            context = ExecutionContext(
+                provider=pname,
+                tier=tier,
+                plan_providers=plan.candidate_providers,
+                free_only=query.free_only,
+                caller_tier_cap=cap,
+                scope=self._readiness.execution_scope(
+                    pname,
                     egress=planned_egress or "local",
                     request_class=plan.intent.value,
-                )
+                ),
+                plan_id=str(getattr(plan, "plan_id", None) or attempt_scope),
+                caller_identity=query.caller or "unknown",
+                idempotency_key=f"{attempt_scope}:{pname.value}:{index}",
+                egress=planned_egress or "local",
+                request_class=plan.intent.value,
             )
-            if decision.code != "eligible":
-                if cap is not None and tier > cap:
-                    compatibility_error = (
-                        f"caller tier cap: caller {query.caller!r} "
-                        f"limited to tier <= {cap}"
-                    )
-                elif query.free_only and tier > 0:
-                    compatibility_error = "free_only mode"
-                elif decision.code == "cooldown":
-                    compatibility_error = (
-                        "health: temporarily_disabled_after_failures"
-                    )
-                elif decision.code == "spend_blocked" and decision.reason == "exhausted":
-                    compatibility_error = "budget exhausted"
-                elif decision.reason == "egress_unreachable":
-                    compatibility_error = "no reachable egress"
-                else:
-                    compatibility_error = f"{decision.code}: {decision.reason}"
-                traces.append(
-                    ProviderTrace(
-                        provider=pname,
-                        status="skipped",
-                        error=compatibility_error,
-                    )
-                )
-                continue
 
             # Reachability check — route to worker if local is blocked
             best_egress = planned_egress
@@ -252,38 +232,22 @@ class ProviderExecutor:
                 from argus.broker.remote_provider import RemoteProviderClient
 
                 remote = RemoteProviderClient(pname, node)
-                reservation = self._reserve_paid_attempt(
-                    query, pname, tier, attempt_scope, index
+                authorization = self._readiness.authorize_execution(
+                    context,
+                    owner=f"{self._node_config.machine_name or 'local'}:{attempt_scope}",
+                    conservative_charge=0.0,
+                    execution_timeout_seconds=60,
                 )
-                if reservation is False:
+                if not authorization.allowed:
                     traces.append(
                         ProviderTrace(
                             provider=pname,
                             status="skipped",
-                            error="budget exhausted",
-                            budget_remaining=0.0,
+                            error=authorization.decision.reason,
                         )
                     )
                     continue
-                claims = self._claim_invocation(pname, best_egress)
-                if claims is None:
-                    trace = ProviderTrace(
-                        provider=pname,
-                        status="skipped",
-                        error="half-open claim unavailable",
-                    )
-                    if tier > 0:
-                        self._record_known_outcome(
-                            query,
-                            pname,
-                            tier,
-                            attempt_scope,
-                            index,
-                            trace,
-                            reservation,
-                        )
-                    traces.append(trace)
-                    continue
+                batch = None
                 try:
                     try:
                         legacy = await remote.search(query)
@@ -304,18 +268,20 @@ class ProviderExecutor:
                             egress=best_egress,
                         )
                         uncertain = True
-                finally:
-                    self._release_invocation_claims(claims)
-                if not uncertain or tier <= 0:
-                    self._record_known_outcome(
-                        query,
-                        pname,
-                        tier,
-                        attempt_scope,
-                        index,
-                        trace,
-                        reservation,
+                except BaseException:
+                    self._readiness.complete_execution(
+                        authorization, failure=None, actual_charge=None,
+                        charge_known=True,
+                        evidence_ref=f"execution:{authorization.attempt_id}",
                     )
+                    raise
+                self._readiness.complete_execution(
+                    authorization,
+                    failure=batch.failure if batch is not None else None,
+                    actual_charge=0.0,
+                    charge_known=True,
+                    evidence_ref=f"execution:{authorization.attempt_id}",
+                )
                 traces.append(trace)
                 if trace.status == "success":
                     self._readiness.record_legacy_outcome(
@@ -350,33 +316,15 @@ class ProviderExecutor:
                 )
                 continue
 
-            # Tier 0: always query (free, unlimited)
-            # Tier 1/3: check budget pace before spending credits
-            if tier > 0:
-                should_query, reason = self._should_query_paid(pname, tier)
-                if not should_query:
-                    _, _, remaining, used_today, pace = self._readiness.paid_pacing(
-                        pname
-                    )
-                    warning = (
-                        f"{pname.value}: {reason} "
-                        f"(used {used_today:.0f} today, pace {pace:.0f}/day, "
-                        f"{remaining:.0f} remaining)"
-                    )
-                    pace_warnings.append(warning)
-                    traces.append(
-                        ProviderTrace(
-                            provider=pname,
-                            status="skipped",
-                            error=reason,
-                            budget_remaining=remaining,
-                        )
-                    )
-                    continue
-
             try:
-                reservation = self._reserve_paid_attempt(
-                    query, pname, tier, attempt_scope, index
+                charge = (
+                    conservative_charge_estimate(pname, query) if tier > 0 else 0.0
+                )
+                authorization = self._readiness.authorize_execution(
+                    context,
+                    owner=f"{self._node_config.machine_name or 'local'}:{attempt_scope}",
+                    conservative_charge=charge,
+                    execution_timeout_seconds=60,
                 )
             except ValueError as exc:
                 traces.append(
@@ -387,34 +335,26 @@ class ProviderExecutor:
                     )
                 )
                 continue
-            if reservation is False:
+            if not authorization.allowed:
+                denied_reason = authorization.decision.reason
+                if denied_reason == "exhausted":
+                    denied_reason = "budget exhausted"
+                elif denied_reason == "free_only":
+                    denied_reason = "free_only mode"
+                elif denied_reason == "caller_tier_cap":
+                    denied_reason = "caller tier cap"
                 traces.append(
                     ProviderTrace(
                         provider=pname,
                         status="skipped",
-                        error="budget exhausted",
-                        budget_remaining=0.0,
+                        error=denied_reason,
+                        budget_remaining=(
+                            0.0
+                            if authorization.decision.code == "spend_blocked"
+                            else None
+                        ),
                     )
                 )
-                continue
-            claims = self._claim_invocation(pname, best_egress)
-            if claims is None:
-                trace = ProviderTrace(
-                    provider=pname,
-                    status="skipped",
-                    error="half-open claim unavailable",
-                )
-                if tier > 0:
-                    self._record_known_outcome(
-                        query,
-                        pname,
-                        tier,
-                        attempt_scope,
-                        index,
-                        trace,
-                        reservation,
-                    )
-                traces.append(trace)
                 continue
 
             try:
@@ -429,18 +369,30 @@ class ProviderExecutor:
                 results, trace = batch.results, invocation.compatibility_trace
                 provider_batches[pname.value] = batch
                 uncertain = invocation.uncertain_charge
-            finally:
-                self._release_invocation_claims(claims)
-            if not uncertain or tier <= 0:
-                self._record_known_outcome(
-                    query,
-                    pname,
-                    tier,
-                    attempt_scope,
-                    index,
-                    trace,
-                    reservation,
+            except BaseException:
+                # The provider may have accepted work before cancellation or
+                # transport loss. Preserve the reservation as uncertain.
+                self._readiness.complete_execution(
+                    authorization,
+                    failure=None,
+                    actual_charge=None,
+                    charge_known=(tier == 0),
+                    evidence_ref=f"execution:{authorization.attempt_id}",
                 )
+                raise
+            actual_charge = None
+            if trace.credit_info and "cost_usd" in trace.credit_info:
+                actual_charge = float(trace.credit_info["cost_usd"])
+            elif trace.status == "success":
+                actual_charge = charge
+            self._readiness.complete_execution(
+                authorization,
+                failure=batch.failure,
+                actual_charge=actual_charge,
+                charge_known=(tier == 0 or not uncertain),
+                evidence_ref=f"execution:{authorization.attempt_id}",
+            )
+            trace.budget_remaining = self._readiness.budget_projection(pname)["remaining"]
             traces.append(trace)
             if trace.status == "success":
                 live_providers_used += 1
@@ -454,14 +406,6 @@ class ProviderExecutor:
             budget_pace_warnings=pace_warnings,
             provider_batches=provider_batches,
         )
-
-    def _claim_invocation(
-        self, provider: ProviderName, egress: str
-    ):
-        return self._readiness.claim_invocation(provider, egress)
-
-    def _release_invocation_claims(self, claims) -> None:
-        self._readiness.release_invocation(claims)
 
     async def _execute_provider(
         self,
@@ -578,74 +522,6 @@ class ProviderExecutor:
             )
             failure = failure_batch(provider_name, error)
             return ProviderInvocationOutcome(failure, True, failure.trace)
-
-    def _reserve_paid_attempt(
-        self,
-        query: SearchQuery,
-        provider: ProviderName,
-        tier: int,
-        scope: str,
-        index: int,
-    ):
-        if tier <= 0 or self._spend is None:
-            return None
-        from argus.persistence.provider_spend import BudgetExhaustedError
-
-        try:
-            return self._spend.reserve(
-                provider=provider,
-                conservative_charge=conservative_charge_estimate(provider, query),
-                budget_limit=self._readiness.budget_limit(provider),
-                caller_identity=query.caller or "unknown",
-                caller_label=str(query.metadata.get("caller_label", "")),
-                idempotency_key=f"{scope}:{provider.value}:{index}",
-            )
-        except BudgetExhaustedError:
-            return False
-
-    def _record_known_outcome(
-        self,
-        query: SearchQuery,
-        provider: ProviderName,
-        tier: int,
-        scope: str,
-        index: int,
-        trace: ProviderTrace,
-        reservation,
-    ) -> None:
-        if self._spend is None:
-            return
-        if tier <= 0:
-            self._spend.record_free_attempt(
-                provider=provider,
-                outcome=trace.status,
-                usage=1.0,
-                caller_identity=query.caller or "unknown",
-                caller_label=str(query.metadata.get("caller_label", "")),
-                idempotency_key=f"{scope}:{provider.value}:{index}",
-            )
-            return
-        if reservation is None:
-            return
-        actual = 0.0
-        if trace.credit_info and "cost_usd" in trace.credit_info:
-            actual = float(trace.credit_info["cost_usd"])
-        elif trace.status == "success":
-            actual = reservation.reserved_charge
-        if not math.isfinite(actual) or actual < 0:
-            trace.error = (
-                "provider returned an invalid charge; reservation left uncertain"
-            )
-            return
-        self._spend.settle(
-            reservation.attempt_id,
-            actual_charge=actual,
-            outcome=trace.status,
-        )
-        trace.budget_remaining = self._spend.provider_summary(
-            provider,
-            budget_limit=self._readiness.budget_limit(provider),
-        )["remaining"]
 
     @staticmethod
     def _trace_charge_known(provider: ProviderName, trace: ProviderTrace) -> bool:

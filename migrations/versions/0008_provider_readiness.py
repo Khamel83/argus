@@ -34,6 +34,12 @@ def upgrade() -> None:
         sa.Column(
             "protected", sa.Boolean(), nullable=False, server_default=sa.false()
         ),
+        sa.UniqueConstraint(
+            "provider",
+            "scope_key",
+            "dimension",
+            name="uq_provider_readiness_current_dimension",
+        ),
     )
     op.create_index(
         "ix_provider_readiness_observations_provider",
@@ -72,7 +78,6 @@ def upgrade() -> None:
         sa.Column(
             "observation_id",
             sa.String(32),
-            sa.ForeignKey("provider_readiness_observations.id"),
             nullable=False,
         ),
         sa.Column("evidence_ref", sa.String(128), nullable=False),

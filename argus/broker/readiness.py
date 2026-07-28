@@ -4,32 +4,30 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import os
 import re
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Mapping
+from pathlib import Path
 
 from argus.broker.budgets import PROVIDER_TIERS
 from argus.models import ProviderName
 
-
 UTC = timezone.utc
 MAX_EVIDENCE_RECEIPTS = 32
 MAX_EXECUTABLE_SCOPES = 32
-_SAFE_VALUE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _UNSAFE_REASON = re.compile(
     r"(?i)(?:https?://|authorization|cookie|password|secret|token|[?&][^ ]+=)"
 )
-_DIMENSION_STATES = {
+_DIMENSIONS = {
     "registration": {"registered", "not_registered", "unknown"},
     "configuration": {
-        "configured",
-        "disabled_by_config",
-        "missing_credential",
-        "missing_account_binding",
-        "missing_budget",
-        "missing_spend_repository",
+        "configured", "disabled_by_config", "missing_credential",
+        "missing_account_binding", "missing_budget", "missing_spend_repository",
         "unknown",
     },
     "reachability": {"unknown", "reachable", "unreachable"},
@@ -37,21 +35,13 @@ _DIMENSION_STATES = {
     "usability": {"unknown", "usable", "empty", "unusable"},
     "cooldown": {"clear", "active", "half_open_claimed", "unknown"},
     "spend": {
-        "not_applicable",
-        "unknown",
-        "available",
-        "low",
-        "exhausted",
-        "uncertain",
-        "policy_denied",
+        "not_applicable", "unknown", "available", "low", "exhausted",
+        "uncertain", "policy_denied",
     },
 }
-_CONFIGURATION_ISSUES = (
-    "disabled_by_config",
-    "missing_credential",
-    "missing_account_binding",
-    "missing_budget",
-    "missing_spend_repository",
+_ISSUE_ORDER = (
+    "disabled_by_config", "missing_credential", "missing_account_binding",
+    "missing_budget", "missing_spend_repository",
     "incompatible_fixture_release",
 )
 _NO_SPEND_ACCOUNT_ALLOWLIST = {
@@ -59,21 +49,19 @@ _NO_SPEND_ACCOUNT_ALLOWLIST = {
 }
 
 
-def _safe_optional(value: str | None, name: str) -> str | None:
+def _identifier(value: str | None, name: str) -> str:
     if value is None:
-        return None
-    if not isinstance(value, str) or not _SAFE_VALUE.fullmatch(value):
+        raise ValueError(f"{name} is required for exact evidence scope")
+    if not isinstance(value, str) or not _SAFE.fullmatch(value):
         raise ValueError(f"{name} must be an opaque bounded identifier")
     return value
 
 
-def _safe_reason(value: str | None) -> str | None:
+def _reason(value: str | None) -> str | None:
     if value is None:
         return None
     if (
-        not isinstance(value, str)
-        or not value.strip()
-        or len(value) > 160
+        not isinstance(value, str) or not value.strip() or len(value) > 160
         or _UNSAFE_REASON.search(value)
         or any(ord(character) < 32 for character in value)
     ):
@@ -82,36 +70,33 @@ def _safe_reason(value: str | None) -> str | None:
 
 
 def provider_catalog() -> tuple[ProviderName, ...]:
-    """Static complete provider catalog, excluding the synthetic cache."""
     return tuple(provider for provider in ProviderName if provider is not ProviderName.CACHE)
 
 
 @dataclass(frozen=True, slots=True)
 class ReadinessScope:
-    egress: str | None = None
-    machine: str | None = None
-    request_class: str | None = None
-    release_revision: str | None = None
-    contract_version: str | None = None
-    configuration_fingerprint: str | None = None
-    credential_version_fingerprint: str | None = None
-    account_fingerprint: str | None = None
+    """Exact evidence identity. Sentinel values are identities, never wildcards."""
+
+    egress: str = "local"
+    machine: str = "unknown-machine"
+    request_class: str = "discovery"
+    release_revision: str = "unknown-release"
+    contract_version: str = "unknown-contract"
+    configuration_fingerprint: str = "unknown-config"
+    credential_version_fingerprint: str = "not-applicable-credential"
+    account_fingerprint: str = "not-applicable-account"
 
     def __post_init__(self) -> None:
         for name in self.__dataclass_fields__:
-            object.__setattr__(self, name, _safe_optional(getattr(self, name), name))
+            object.__setattr__(self, name, _identifier(getattr(self, name), name))
 
-    def as_dict(self) -> dict[str, str | None]:
-        return {
-            name: getattr(self, name)
-            for name in self.__dataclass_fields__
-        }
+    def as_dict(self) -> dict[str, str]:
+        return {name: getattr(self, name) for name in self.__dataclass_fields__}
 
     def fingerprint(self) -> str:
-        encoded = json.dumps(
+        return hashlib.sha256(json.dumps(
             self.as_dict(), sort_keys=True, separators=(",", ":")
-        ).encode()
-        return hashlib.sha256(encoded).hexdigest()
+        ).encode()).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,22 +115,19 @@ class ProviderObservation:
     def __post_init__(self) -> None:
         if self.provider is ProviderName.CACHE:
             raise ValueError("cache is not a provider-readiness subject")
-        allowed = _DIMENSION_STATES.get(self.dimension)
-        if allowed is None or self.state not in allowed:
+        if self.state not in _DIMENSIONS.get(self.dimension, set()):
             raise ValueError("observation dimension/state is outside the closed taxonomy")
-        if (
-            self.ttl_seconds is not None
-            and (
-                type(self.ttl_seconds) is not int
-                or not 1 <= self.ttl_seconds <= 31_536_000
-            )
+        if self.ttl_seconds is not None and (
+            type(self.ttl_seconds) is not int
+            or not 1 <= self.ttl_seconds <= 31_536_000
         ):
             raise ValueError("observation TTL must be a bounded positive integer")
         if self.observed_at.tzinfo is None:
             raise ValueError("observed_at must be timezone aware")
-        _safe_optional(self.source, "source")
-        _safe_optional(self.evidence_ref, "evidence_ref")
-        object.__setattr__(self, "safe_reason", _safe_reason(self.safe_reason))
+        _identifier(self.source, "source")
+        if self.evidence_ref is not None:
+            _identifier(self.evidence_ref, "evidence_ref")
+        object.__setattr__(self, "safe_reason", _reason(self.safe_reason))
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,12 +147,8 @@ class ExecutionDecision:
 
     def __post_init__(self) -> None:
         if self.code not in {
-            "eligible",
-            "policy_skipped",
-            "unavailable",
-            "cooldown",
-            "spend_blocked",
-            "compatibility_unproven",
+            "eligible", "policy_skipped", "unavailable", "cooldown",
+            "spend_blocked", "compatibility_unproven",
         }:
             raise ValueError("execution decision is outside the closed taxonomy")
 
@@ -197,15 +175,12 @@ class ProviderReadinessSnapshot:
 
     def as_dict(self) -> dict[str, object]:
         state = (
-            "healthy"
-            if self.healthy
-            else "disabled"
-            if self.registration != "registered"
-            or not self.configuration.configured
-            else "unready"
-            if self.execution_decision.code
-            in {"unavailable", "cooldown", "spend_blocked"}
-            else "degraded"
+            "healthy" if self.healthy else
+            "disabled" if self.registration != "registered"
+            or not self.configuration.configured else
+            "unready" if self.execution_decision.code in {
+                "unavailable", "cooldown", "spend_blocked"
+            } else "degraded"
         )
         return {
             "provider": self.provider.value,
@@ -230,9 +205,7 @@ class ProviderReadinessSnapshot:
                 ),
             },
             "observed_at": self.observed_at.isoformat(),
-            "valid_until": (
-                self.valid_until.isoformat() if self.valid_until else None
-            ),
+            "valid_until": self.valid_until.isoformat() if self.valid_until else None,
             "evidence_receipts": list(self.evidence_receipts),
             "generation": self.generation,
             "protected_evidence_count": self.protected_evidence_count,
@@ -240,22 +213,52 @@ class ProviderReadinessSnapshot:
             "authority": "provider_readiness",
         }
 
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> "ProviderReadinessSnapshot":
+        configuration = payload["configuration"]
+        decision = payload["execution_decision"]
+        assert isinstance(configuration, Mapping) and isinstance(decision, Mapping)
+        return cls(
+            provider=ProviderName(str(payload["provider"])),
+            catalog_status=str(payload["catalog_status"]),
+            registration=str(payload["registration"]),
+            configuration=ConfigurationReadiness(tuple(configuration["issues"])),
+            reachability=str(payload["reachability"]),
+            compatibility=str(payload["compatibility"]),
+            usability=str(payload["usability"]),
+            cooldown=str(payload["cooldown"]),
+            spend=str(payload["spend"]),
+            healthy=bool(payload["healthy"]),
+            execution_decision=ExecutionDecision(
+                str(decision["code"]), str(decision["reason"]),
+                tuple(decision["contributing_dimensions"]),
+            ),
+            observed_at=datetime.fromisoformat(str(payload["observed_at"])),
+            valid_until=(
+                datetime.fromisoformat(str(payload["valid_until"]))
+                if payload.get("valid_until") else None
+            ),
+            evidence_receipts=tuple(payload["evidence_receipts"]),
+            generation=int(payload["generation"]),
+            protected_evidence_count=int(payload.get("protected_evidence_count", 0)),
+            scope_fingerprint=str(payload["scope_fingerprint"]),
+        )
+
     def as_legacy_status(self) -> dict[str, object]:
-        if self.healthy:
-            effective = "healthy"
-        elif self.registration != "registered" or not self.configuration.configured:
-            effective = "disabled_by_config"
-        elif self.spend in {"exhausted", "uncertain", "policy_denied"}:
-            effective = "budget_exhausted"
-        elif self.cooldown != "clear":
-            effective = "temporarily_disabled_after_failures"
-        else:
-            effective = "degraded"
+        effective = (
+            "healthy" if self.healthy else
+            "disabled_by_config" if self.registration != "registered"
+            or not self.configuration.configured else
+            "budget_exhausted" if self.spend in {
+                "exhausted", "uncertain", "policy_denied"
+            } else
+            "temporarily_disabled_after_failures" if self.cooldown != "clear"
+            else "degraded"
+        )
         return {
             "provider": self.provider.value,
-            "config_status": (
-                "enabled" if self.configuration.configured else "disabled_by_config"
-            ),
+            "config_status": "enabled" if self.configuration.configured
+            else "disabled_by_config",
             "health": self.as_dict(),
             "budget_remaining": None,
             "effective_status": effective,
@@ -270,10 +273,46 @@ class ExecutionContext:
     plan_providers: tuple[ProviderName, ...]
     free_only: bool
     caller_tier_cap: int | None
-    egress: str
-    request_class: str
-    release_revision: str | None = None
-    contract_version: str | None = None
+    scope: ReadinessScope | None = None
+    plan_id: str = "legacy-plan"
+    caller_identity: str = "legacy-caller"
+    idempotency_key: str = "legacy-request"
+    egress: str = "local"
+    request_class: str = "discovery"
+    release_revision: str = "unknown-release"
+    contract_version: str = "unknown-contract"
+
+    def __post_init__(self):
+        if self.scope is None:
+            object.__setattr__(self, "scope", ReadinessScope(
+                egress=self.egress, request_class=self.request_class,
+                release_revision=self.release_revision,
+                contract_version=self.contract_version,
+            ))
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "provider": self.provider, "tier": self.tier,
+            "plan_providers": self.plan_providers, "free_only": self.free_only,
+            "caller_tier_cap": self.caller_tier_cap, "scope": self.scope,
+            "plan_id": self.plan_id, "caller_identity": self.caller_identity,
+            "idempotency_key": self.idempotency_key, "egress": self.egress,
+            "request_class": self.request_class,
+            "release_revision": self.release_revision,
+            "contract_version": self.contract_version,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionAuthorization:
+    allowed: bool
+    decision: ExecutionDecision
+    provider: ProviderName
+    scope: ReadinessScope
+    owner: str = ""
+    scope_key: str = ""
+    fencing_token: int = 0
+    attempt_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -305,33 +344,106 @@ class RegistrationInputs:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderRegistrationSpec:
+    provider: ProviderName
+    enabled: bool
+    configuration_fingerprint: str
+    credential_version_fingerprint: str | None
+    account_fingerprint: str | None
+    budget_limit: float | None
+    durable_spend_repository: bool
+    release_revision: str | None
+    contract_version: str | None
+    fixture_evidence_ref: str | None
+    machine: str = "test-machine"
+    egress: str = "local"
+    request_class: str = "discovery"
+
+
+@dataclass(frozen=True, slots=True)
 class RegistrationDecision:
     registered: bool
     issues: tuple[str, ...]
 
 
-@dataclass(slots=True)
-class _RenderCacheEntry:
-    snapshot: ProviderReadinessSnapshot
-    local_deadline: float
+@dataclass(frozen=True, slots=True)
+class ExecutableProviderRegistry:
+    """Immutable startup registry containing every registration predicate."""
+
+    specs: tuple[ProviderRegistrationSpec, ...]
+
+    @classmethod
+    def from_runtime(cls, *, config, providers, durable_spend_repository: bool):
+        from argus import __version__
+
+        fixture_path = Path(__file__).parents[1] / "providers" / "fixture_contracts.json"
+        fixture_bytes = fixture_path.read_bytes()
+        fixture = json.loads(fixture_bytes)
+        fixture_ref = f"fixture:{hashlib.sha256(fixture_bytes).hexdigest()[:24]}"
+        keyless = {
+            ProviderName.SEARXNG, ProviderName.DUCKDUCKGO,
+            ProviderName.YAHOO, ProviderName.GITHUB,
+        }
+        specs = []
+        for provider in providers:
+            provider_config = getattr(config, provider.value)
+            tier = PROVIDER_TIERS[provider]
+            prefix = provider.value.upper()
+            config_payload = {
+                "enabled": bool(provider_config.enabled),
+                "timeout_seconds": int(provider_config.timeout_seconds),
+            }
+            if hasattr(provider_config, "base_url"):
+                config_payload["base_url"] = str(provider_config.base_url)
+            config_ref = "config:" + hashlib.sha256(json.dumps(
+                config_payload, sort_keys=True, separators=(",", ":")
+            ).encode()).hexdigest()[:24]
+            credential_ref = (
+                "not-applicable-credential"
+                if provider in keyless
+                else os.environ.get(f"ARGUS_{prefix}_CREDENTIAL_VERSION_FINGERPRINT")
+            )
+            account_ref = (
+                "not-applicable-account"
+                if tier == 0
+                else os.environ.get(f"ARGUS_{prefix}_ACCOUNT_FINGERPRINT")
+            )
+            contract = fixture["providers"].get(provider.value, {}).get(
+                "contract_version"
+            )
+            specs.append(ProviderRegistrationSpec(
+                provider=provider,
+                enabled=bool(provider_config.enabled),
+                configuration_fingerprint=config_ref,
+                credential_version_fingerprint=credential_ref,
+                account_fingerprint=account_ref,
+                budget_limit=(
+                    float(provider_config.monthly_budget_usd) if tier > 0 else None
+                ),
+                durable_spend_repository=durable_spend_repository,
+                release_revision=os.environ.get(
+                    "ARGUS_RELEASE_REVISION", f"argus-{__version__}"
+                ),
+                contract_version=contract,
+                fixture_evidence_ref=fixture_ref if contract else None,
+                machine=config.node.machine_name or "argus-primary",
+            ))
+        return cls(tuple(specs))
+
+    def persist(self, service: "ProviderReadinessService", adapters) -> None:
+        for spec in self.specs:
+            service.register_provider(spec, adapter=adapters.get(spec.provider))
 
 
 class ProviderReadinessService:
-    """Folds durable normalized observations into one immutable truth."""
+    """Deterministic fold over exact, durable evidence scopes."""
 
     def __init__(
-        self,
-        *,
-        repository,
-        monotonic=time.monotonic,
-        legacy_health=None,
-        legacy_budgets=None,
-        legacy_reachability=None,
-        legacy_providers=None,
+        self, *, repository, monotonic=time.monotonic, legacy_health=None,
+        legacy_budgets=None, legacy_reachability=None, legacy_providers=None,
     ):
         self.repository = repository
         self._monotonic = monotonic
-        self._render_cache: dict[tuple[str, str], _RenderCacheEntry] = {}
         self._legacy_health = legacy_health
         self._legacy_budgets = legacy_budgets
         self._legacy_reachability = legacy_reachability
@@ -339,563 +451,526 @@ class ProviderReadinessService:
 
     @classmethod
     def from_legacy_observation_sources(
-        cls,
-        *,
-        providers,
-        health_tracker,
-        budget_tracker,
-        reachability,
-        spend_repository=None,
-        monotonic=time.monotonic,
-    ) -> "ProviderReadinessService":
-        """Normalize frozen legacy mechanics behind the readiness seam."""
+        cls, *, providers, health_tracker, budget_tracker, reachability,
+        spend_repository=None, monotonic=time.monotonic,
+    ):
         factory = getattr(spend_repository, "session_factory", None)
-        bind = getattr(factory, "kw", {}).get("bind") if factory is not None else None
-        if bind is not None and bind.__class__.__module__.startswith("sqlalchemy."):
-            from argus.persistence.readiness import (
-                readiness_repository_from_session_factory,
-            )
-
-            repository = readiness_repository_from_session_factory(
-                factory
-            )
+        if factory is not None and isinstance(getattr(factory, "kw", None), Mapping):
+            from argus.persistence.readiness import readiness_repository_from_session_factory
+            repository = readiness_repository_from_session_factory(factory)
         else:
             from argus.persistence.readiness import create_readiness_repository
-
             repository = create_readiness_repository("sqlite:///:memory:")
-        return cls(
-            repository=repository,
-            monotonic=monotonic,
-            legacy_health=health_tracker,
-            legacy_budgets=budget_tracker,
-            legacy_reachability=reachability,
-            legacy_providers=providers,
+        service = cls(
+            repository=repository, monotonic=monotonic,
+            legacy_health=health_tracker, legacy_budgets=budget_tracker,
+            legacy_reachability=reachability, legacy_providers=providers,
         )
+        # Compatibility construction is explicit and fail-closed. It never
+        # asks an adapter to describe its own availability.
+        for provider in providers:
+            tier = PROVIDER_TIERS[provider]
+            reachability_state = reachability.get_all().get(provider, {})
+            registered_egress = reachability_state.get("best", "local")
+            budget_limit = (
+                budget_tracker.get_budget_limit(provider) if tier > 0 else None
+            )
+            service.register_provider(ProviderRegistrationSpec(
+                provider=provider, enabled=True,
+                configuration_fingerprint="legacy-config-v1",
+                credential_version_fingerprint="legacy-credential-v1",
+                account_fingerprint=(
+                    "not-applicable-account" if tier == 0 else "legacy-account-v1"
+                ),
+                budget_limit=budget_limit,
+                durable_spend_repository=True,
+                release_revision="legacy-release-v1",
+                contract_version="legacy-contract-v1",
+                fixture_evidence_ref="legacy-fixture-contract-v1",
+                machine="legacy-machine",
+                egress=registered_egress or "local",
+            ))
+            if registered_egress is None:
+                scope = service.execution_scope(
+                    provider, egress="local", request_class="discovery"
+                )
+                service.record_observation(ProviderObservation(
+                    provider=provider, dimension="reachability",
+                    state="unreachable", source="topology_registry",
+                    scope=scope, observed_at=repository.authority_now(),
+                    ttl_seconds=60,
+                ))
+            if health_tracker is not None:
+                cooldown, _ = health_tracker.normalized_observation(provider)
+                scope = service.execution_scope(
+                    provider,
+                    egress=registered_egress or "local",
+                    request_class="discovery",
+                )
+                service.record_observation(ProviderObservation(
+                    provider=provider, dimension="cooldown", state=cooldown,
+                    source="health_observation", scope=scope,
+                    observed_at=repository.authority_now(), ttl_seconds=60,
+                ))
+        return service
 
-    def record_observation(
-        self, observation: ProviderObservation
-    ) -> ProviderReadinessSnapshot:
-        self.repository.record_observation(observation)
-        self._drop_provider_cache(observation.provider)
-        return self.snapshot(
-            observation.provider,
-            egress=observation.scope.egress or "local",
-            request_class=observation.scope.request_class or "discovery",
-            release_revision=observation.scope.release_revision,
-            contract_version=observation.scope.contract_version,
+    def evaluate_registration(
+        self, provider: ProviderName, inputs: RegistrationInputs,
+    ) -> RegistrationDecision:
+        issues = []
+        if not inputs.enabled:
+            issues.append("disabled_by_config")
+        if not inputs.credential_present:
+            issues.append("missing_credential")
+        if PROVIDER_TIERS[provider] > 0:
+            if not inputs.account_fingerprint:
+                issues.append("missing_account_binding")
+            if (
+                inputs.budget_limit is None
+                or not math.isfinite(float(inputs.budget_limit))
+                or inputs.budget_limit <= 0
+            ):
+                issues.append("missing_budget")
+            if not inputs.durable_spend_repository:
+                issues.append("missing_spend_repository")
+        if not inputs.compatible_fixture_release:
+            issues.append("incompatible_fixture_release")
+        ordered = tuple(issue for issue in _ISSUE_ORDER if issue in issues)
+        return RegistrationDecision(not ordered, ordered)
+
+    def register_provider(
+        self, spec: ProviderRegistrationSpec, *, adapter=None,
+    ) -> RegistrationDecision:
+        del adapter  # adapters are executable objects, never evidence authorities
+        compatibility = bool(
+            spec.release_revision and spec.contract_version
+            and spec.fixture_evidence_ref
         )
+        decision = self.evaluate_registration(spec.provider, RegistrationInputs(
+            enabled=spec.enabled,
+            credential_present=bool(spec.credential_version_fingerprint),
+            account_fingerprint=spec.account_fingerprint,
+            budget_limit=spec.budget_limit,
+            durable_spend_repository=spec.durable_spend_repository,
+            compatible_fixture_release=compatibility,
+        ))
+        scope = ReadinessScope(
+            egress=spec.egress, machine=spec.machine,
+            request_class=spec.request_class,
+            release_revision=spec.release_revision or "missing-release",
+            contract_version=spec.contract_version or "missing-contract",
+            configuration_fingerprint=spec.configuration_fingerprint,
+            credential_version_fingerprint=(
+                spec.credential_version_fingerprint or "missing-credential"
+            ),
+            account_fingerprint=(
+                spec.account_fingerprint or "missing-account"
+            ),
+        )
+        self.repository.put_registration(spec.provider, {
+            "registered": decision.registered,
+            "issues": list(decision.issues),
+            "budget_limit": spec.budget_limit,
+            "scope": scope.as_dict(),
+            "fixture_evidence_ref": spec.fixture_evidence_ref,
+        })
+        now = self.repository.authority_now()
+        observations = (
+            ("registration", "registered" if decision.registered else "not_registered",
+             "registry", None),
+            ("configuration", "configured" if not decision.issues else decision.issues[0],
+             "registry", None),
+            ("compatibility", "compatible" if compatibility else "unknown",
+             "fixture_contract", spec.fixture_evidence_ref),
+            ("reachability", "reachable", "topology_registry", None),
+            ("cooldown", "clear", "registry", None),
+            ("spend", "not_applicable" if PROVIDER_TIERS[spec.provider] == 0
+             else "available" if decision.registered else "unknown", "registry", None),
+        )
+        for dimension, state, source, receipt in observations:
+            self.record_observation(ProviderObservation(
+                provider=spec.provider, dimension=dimension, state=state,
+                source=source, scope=scope, observed_at=now, ttl_seconds=None,
+                evidence_ref=receipt,
+            ))
+        return decision
 
-    def snapshot(
-        self,
-        provider: ProviderName,
-        *,
-        egress: str = "local",
-        request_class: str = "discovery",
-        release_revision: str | None = None,
-        contract_version: str | None = None,
+    def registration(self, provider: ProviderName) -> RegistrationDecision:
+        payload = self.repository.get_registration(provider) or {}
+        issues = tuple(payload.get("issues", ("not_registered",)))
+        return RegistrationDecision(bool(payload.get("registered")), issues)
+
+    def record_observation(self, observation: ProviderObservation):
+        payload = self.repository.record_and_materialize(
+            observation,
+            lambda rows, now, generation: self._fold(
+                observation.provider, observation.scope, rows, now, generation
+            ).as_dict(),
+        )
+        return ProviderReadinessSnapshot.from_dict(payload)
+
+    def snapshot_for_scope(
+        self, provider: ProviderName, scope: ReadinessScope,
         execution_context: ExecutionContext | None = None,
     ) -> ProviderReadinessSnapshot:
-        query_scope = ReadinessScope(
-            egress=egress,
-            request_class=request_class,
-            release_revision=release_revision,
-            contract_version=contract_version,
-        )
-        now = self.repository.authority_now()
-        all_rows = self.repository.observations(provider)
-        matching = [row for row in all_rows if self._scope_matches(row.scope, query_scope)]
-        current = [
-            row
-            for row in matching
-            if row.expires_at is None or now < row.expires_at
-        ]
-        latest: dict[str, object] = {}
-        for row in current:
-            latest[row.dimension] = row
+        payload = self.repository.read_snapshot(provider, scope.fingerprint())
+        if payload is None or payload.get("compatibility_write"):
+            payload = self.repository.refresh_expired(
+                provider, scope.fingerprint(),
+                lambda rows, now, generation: self._fold(
+                    provider, scope, rows, now, generation, execution_context
+                ).as_dict(),
+            )
+        snapshot = ProviderReadinessSnapshot.from_dict(payload)
+        if snapshot.valid_until and self.repository.authority_now() >= snapshot.valid_until:
+            payload = self.repository.refresh_expired(
+                provider, scope.fingerprint(),
+                lambda rows, now, generation: self._fold(
+                    provider, scope, rows, now, generation, execution_context
+                ).as_dict(),
+            )
+            snapshot = ProviderReadinessSnapshot.from_dict(payload)
+        if execution_context is not None:
+            decision = self._decision_from_snapshot(snapshot, execution_context)
+            return replace(snapshot, execution_decision=decision)
+        return snapshot
 
-        registration = self._state(latest, "registration", "not_registered")
-        config_state = self._state(latest, "configuration", "unknown")
+    def _active_scope(self, provider: ProviderName, **overrides) -> ReadinessScope:
+        registration = self.repository.get_registration(provider) or {}
+        data = dict(registration.get("scope") or {})
+        if not data:
+            rows = self.repository.observations(provider)
+            if rows:
+                data = dict(rows[-1].scope)
+        defaults = ReadinessScope().as_dict()
+        defaults.update(data)
+        for name, value in overrides.items():
+            if value is not None:
+                defaults[name] = value
+        return ReadinessScope(**defaults)
+
+    def snapshot(
+        self, provider: ProviderName, *, egress="local",
+        request_class="discovery", release_revision=None, contract_version=None,
+        execution_context=None,
+    ):
+        scope = self._active_scope(
+            provider, egress=egress, request_class=request_class,
+            release_revision=release_revision, contract_version=contract_version,
+        )
+        return self.snapshot_for_scope(provider, scope, execution_context)
+
+    render_snapshot = snapshot
+
+    def execution_decision(self, context: ExecutionContext) -> ExecutionDecision:
+        assert context.scope is not None
+        if context.scope.configuration_fingerprint == "unknown-config":
+            scope = self._active_scope(
+                context.provider,
+                egress=context.egress,
+                request_class=context.request_class,
+                release_revision=(
+                    None if context.release_revision == "unknown-release"
+                    else context.release_revision
+                ),
+                contract_version=(
+                    None if context.contract_version == "unknown-contract"
+                    else context.contract_version
+                ),
+            )
+            context = replace(context, scope=scope)
+        return self.snapshot_for_scope(
+            context.provider, context.scope, context
+        ).execution_decision
+
+    def authorize_execution(
+        self, context: ExecutionContext, *, owner: str,
+        conservative_charge: float, execution_timeout_seconds: int,
+    ) -> ExecutionAuthorization:
+        assert context.scope is not None
+        result = self.repository.authorize_execution(
+            context=context, owner=owner,
+            conservative_charge=conservative_charge,
+            execution_timeout_seconds=execution_timeout_seconds,
+            decide=self._decision_from_payload,
+        )
+        return ExecutionAuthorization(
+            allowed=result["allowed"], decision=result["decision"],
+            provider=context.provider, scope=context.scope,
+            owner=result.get("owner", owner),
+            scope_key=result.get("scope_key", ""),
+            fencing_token=result.get("fencing_token", 0),
+            attempt_id=result.get("attempt_id", ""),
+        )
+
+    def complete_execution(
+        self, authorization: ExecutionAuthorization, *, failure,
+        actual_charge: float | None, charge_known: bool, evidence_ref: str,
+    ) -> None:
+        if not authorization.allowed or not authorization.fencing_token:
+            raise ValueError("durable execution authorization is required")
+        category = getattr(getattr(failure, "category", None), "value", None)
+        from argus.persistence.readiness import StaleFencingToken
+        try:
+            self.repository.settle_execution(
+                authorization=authorization, category=category or "success",
+                actual_charge=actual_charge, charge_known=charge_known,
+                evidence_ref=evidence_ref,
+                fold=lambda rows, now, generation: self._fold(
+                    authorization.provider, authorization.scope, rows, now, generation
+                ).as_dict(),
+            )
+        except StaleFencingToken:
+            self.repository.append_stale_charge_evidence(
+                authorization=authorization, actual_charge=actual_charge,
+                charge_known=charge_known, evidence_ref=evidence_ref,
+            )
+            raise
+
+    def _fold(
+        self, provider, scope, rows, now, generation, context=None,
+    ) -> ProviderReadinessSnapshot:
+        current = {
+            row.dimension: row for row in rows
+            if row.expires_at is None or now < row.expires_at
+        }
+        registration = current.get("registration")
+        config = current.get("configuration")
+        reach = current.get("reachability")
+        compatibility = current.get("compatibility")
+        usability = current.get("usability")
+        cooldown = current.get("cooldown")
+        spend = current.get("spend")
+        registration_state = registration.state if registration else "not_registered"
+        config_state = config.state if config else "unknown"
         configuration = ConfigurationReadiness(
             () if config_state == "configured" else (config_state,)
         )
-        reachability = self._state(latest, "reachability", "unknown")
-        compatibility = self._state(latest, "compatibility", "unknown")
-        usability = self._state(latest, "usability", "unknown")
-        cooldown = self._state(latest, "cooldown", "unknown")
-        spend_default = (
+        spend_state = (
+            spend.state if spend else
             "not_applicable" if PROVIDER_TIERS.get(provider, 0) == 0 else "unknown"
         )
-        spend = self._state(latest, "spend", spend_default)
-
-        protected_rows = [
-            row for row in all_rows if row.protected and row.evidence_ref
-        ]
-        protected_count = len({row.evidence_ref for row in protected_rows})
-        receipts = self._compact_receipts(all_rows)
-        overflow = protected_count > MAX_EVIDENCE_RECEIPTS
-        decision = self._decision(
-            provider=provider,
-            registration=registration,
-            configuration=configuration,
-            reachability=reachability,
-            compatibility=compatibility,
-            cooldown=cooldown,
-            spend=spend,
-            context=execution_context,
-            evidence_overflow=overflow,
-        )
+        receipts = []
+        protected = set()
+        for row in sorted(current.values(), key=lambda item: item.ingested_at, reverse=True):
+            if row.evidence_ref and row.evidence_ref not in receipts:
+                receipts.append(row.evidence_ref)
+            if row.evidence_ref and row.protected:
+                protected.add(row.evidence_ref)
+        receipts = receipts[:MAX_EVIDENCE_RECEIPTS]
+        provisional = {
+            "registration": registration_state,
+            "configuration": configuration,
+            "reachability": reach.state if reach else "unknown",
+            "compatibility": compatibility.state if compatibility else "unknown",
+            "usability": usability.state if usability else "unknown",
+            "cooldown": cooldown.state if cooldown else "unknown",
+            "spend": spend_state,
+        }
+        decision = self._decision(**provisional, context=context)
         healthy = (
-            not overflow
-            and registration == "registered"
-            and configuration.configured
-            and compatibility == "compatible"
-            and reachability == "reachable"
-            and usability in {"usable", "empty"}
-            and cooldown == "clear"
-            and spend in {"not_applicable", "available", "low"}
+            registration_state == "registered" and configuration.configured
+            and provisional["compatibility"] == "compatible"
+            and provisional["reachability"] == "reachable"
+            and provisional["usability"] in {"usable", "empty"}
+            and provisional["cooldown"] == "clear"
+            and spend_state in {"not_applicable", "available", "low"}
         )
-        expiries = [row.expires_at for row in current if row.expires_at is not None]
-        valid_until = min(expiries) if expiries else None
-        provisional = ProviderReadinessSnapshot(
-            provider=provider,
-            catalog_status="supported",
-            registration=registration,
-            configuration=configuration,
-            reachability=reachability,
-            compatibility=compatibility,
-            usability=usability,
-            cooldown=cooldown,
-            spend=spend,
-            healthy=healthy,
-            execution_decision=decision,
-            observed_at=now,
-            valid_until=valid_until,
-            evidence_receipts=receipts,
-            generation=0,
-            protected_evidence_count=protected_count,
-            scope_fingerprint=query_scope.fingerprint(),
+        expiries = [
+            row.expires_at for row in current.values() if row.expires_at is not None
+        ]
+        return ProviderReadinessSnapshot(
+            provider=provider, catalog_status="supported",
+            registration=registration_state, configuration=configuration,
+            reachability=provisional["reachability"],
+            compatibility=provisional["compatibility"],
+            usability=provisional["usability"],
+            cooldown=provisional["cooldown"], spend=spend_state,
+            healthy=healthy, execution_decision=decision, observed_at=now,
+            valid_until=min(expiries) if expiries else None,
+            evidence_receipts=tuple(receipts), generation=generation,
+            protected_evidence_count=len(protected),
+            scope_fingerprint=scope.fingerprint(),
         )
-        generation = self.repository.materialize_snapshot(
-            provider=provider,
-            scope_key=query_scope.fingerprint(),
-            snapshot=provisional.as_dict(),
-            valid_until=valid_until,
-        )
-        return replace(provisional, generation=generation)
 
-    def render_snapshot(self, provider: ProviderName, **scope) -> ProviderReadinessSnapshot:
-        query_scope = ReadinessScope(
-            egress=scope.get("egress", "local"),
-            request_class=scope.get("request_class", "discovery"),
-            release_revision=scope.get("release_revision"),
-            contract_version=scope.get("contract_version"),
+    def _decision_from_payload(self, payload, context):
+        if not payload:
+            return ExecutionDecision("unavailable", "not_materialized", ("snapshot",))
+        snapshot = ProviderReadinessSnapshot.from_dict(payload)
+        return self._decision_from_snapshot(snapshot, context)
+
+    def _decision_from_snapshot(self, snapshot, context):
+        return self._decision(
+            registration=snapshot.registration,
+            configuration=snapshot.configuration,
+            reachability=snapshot.reachability,
+            compatibility=snapshot.compatibility,
+            usability=snapshot.usability,
+            cooldown=snapshot.cooldown,
+            spend=snapshot.spend,
+            context=context,
         )
-        key = (provider.value, query_scope.fingerprint())
-        local_now = self._monotonic()
-        authority_now = self.repository.authority_now()
-        cached = self._render_cache.get(key)
-        if (
-            cached is not None
-            and local_now < cached.local_deadline
-            and (
-                cached.snapshot.valid_until is None
-                or authority_now < cached.snapshot.valid_until
+
+    @staticmethod
+    def _decision(
+        *, registration, configuration, reachability, compatibility,
+        usability, cooldown, spend, context=None,
+    ):
+        if context is not None:
+            if context.caller_tier_cap is not None and context.tier > context.caller_tier_cap:
+                return ExecutionDecision("policy_skipped", "caller_tier_cap", ("plan",))
+            if context.free_only and context.tier > 0:
+                return ExecutionDecision("policy_skipped", "free_only", ("plan",))
+            if context.provider not in context.plan_providers:
+                return ExecutionDecision("policy_skipped", "provider_not_in_plan", ("plan",))
+        if registration != "registered":
+            return ExecutionDecision("unavailable", registration, ("registration",))
+        if not configuration.configured:
+            return ExecutionDecision("unavailable", configuration.issues[0], ("configuration",))
+        if compatibility != "compatible":
+            return ExecutionDecision(
+                "compatibility_unproven", compatibility, ("compatibility",)
             )
-        ):
-            return cached.snapshot
-        snapshot = self.snapshot(provider, **scope)
-        if snapshot.valid_until is None:
-            lifetime = 5.0
-        else:
-            lifetime = min(
-                5.0,
-                (snapshot.valid_until - self.repository.authority_now()).total_seconds()
-                - 1.0,
-            )
-        if lifetime > 0:
-            self._render_cache[key] = _RenderCacheEntry(
-                snapshot=snapshot, local_deadline=local_now + lifetime
-            )
-        else:
-            self._render_cache.pop(key, None)
-        return snapshot
+        if reachability != "reachable":
+            return ExecutionDecision("unavailable", "egress_unreachable", ("reachability",))
+        if cooldown != "clear":
+            return ExecutionDecision("cooldown", cooldown, ("cooldown",))
+        if spend in {"exhausted", "uncertain", "policy_denied", "unknown"}:
+            return ExecutionDecision("spend_blocked", spend, ("spend",))
+        return ExecutionDecision("eligible", "ready", ())
 
-    def execution_decision(self, context: ExecutionContext) -> ExecutionDecision:
-        self._refresh_legacy_observations(context.provider, context.egress)
-        return self.snapshot(
-            context.provider,
-            egress=context.egress,
-            request_class=context.request_class,
-            release_revision=context.release_revision,
-            contract_version=context.contract_version,
-            execution_context=context,
-        ).execution_decision
+    def best_egress(self, provider):
+        registration = self.repository.get_registration(provider) or {}
+        egress = (registration.get("scope") or {}).get("egress", "local")
+        snapshot = self.snapshot(provider, egress=egress)
+        return egress if snapshot.reachability == "reachable" else None
 
-    def best_egress(self, provider: ProviderName) -> str | None:
-        if self._legacy_reachability is None:
-            return "local"
-        return self._legacy_reachability.peek_best_egress(provider)
+    def execution_scope(
+        self, provider: ProviderName, *, egress: str, request_class: str,
+    ) -> ReadinessScope:
+        return self._active_scope(
+            provider, egress=egress, request_class=request_class
+        )
 
-    def claim_invocation(self, provider: ProviderName, egress: str):
-        if self._legacy_health is None or self._legacy_reachability is None:
-            return (None, None)
-        health_claim = self._legacy_health.claim_execution(provider)
-        if health_claim is None:
-            return None
-        reachability_claim = self._legacy_reachability.claim_egress(provider, egress)
-        if reachability_claim is None:
-            self._legacy_health.release_execution_claim(health_claim)
-            return None
-        return (health_claim, reachability_claim)
+    def claim_invocation(self, provider, egress):
+        return (None, None)
 
-    def release_invocation(self, claims) -> None:
-        if claims is None or self._legacy_health is None or self._legacy_reachability is None:
-            return
-        health_claim, reachability_claim = claims
-        if reachability_claim is not None:
-            self._legacy_reachability.release_claim(reachability_claim)
-        if health_claim is not None:
-            self._legacy_health.release_execution_claim(health_claim)
+    def release_invocation(self, claims):
+        return None
 
-    def record_legacy_outcome(
-        self,
-        provider: ProviderName,
-        *,
-        egress: str,
-        success: bool,
-        latency_ms: int,
-    ) -> None:
+    def record_legacy_outcome(self, provider, *, egress, success, latency_ms):
         if self._legacy_health is not None:
             (
                 self._legacy_health.record_success
-                if success
-                else self._legacy_health.record_failure
+                if success else self._legacy_health.record_failure
             )(provider)
-        if self._legacy_reachability is not None and success:
+        if self._legacy_reachability is not None:
             self._legacy_reachability.update_probe(
-                egress,
-                provider,
-                reachable=success,
-                latency_ms=latency_ms,
+                egress, provider, reachable=success, latency_ms=latency_ms,
                 source="provider_execution",
             )
-        self._refresh_legacy_observations(provider, egress)
+        scope = self._active_scope(provider, egress=egress)
+        now = self.repository.authority_now()
+        self.record_observation(ProviderObservation(
+            provider=provider, dimension="reachability",
+            state="reachable" if success else "unreachable",
+            source="provider_execution", scope=scope, observed_at=now,
+            ttl_seconds=60,
+        ))
+        self.record_observation(ProviderObservation(
+            provider=provider, dimension="usability",
+            state="usable" if success else "unusable",
+            source="provider_execution", scope=scope, observed_at=now,
+            ttl_seconds=60,
+        ))
 
-    def paid_pacing(self, provider: ProviderName) -> tuple[bool, str, float, float, float]:
-        if self._legacy_budgets is None:
-            return True, "under pace", 0.0, 0.0, 0.0
-        remaining = self._legacy_budgets.get_remaining_budget(provider) or 0.0
-        used_today = self._legacy_budgets.used_today(provider)
-        pace = self._legacy_budgets.daily_pace(provider)
-        if self._legacy_budgets.is_budget_exhausted(provider):
-            return False, "budget exhausted", remaining, used_today, pace
-        if self._legacy_budgets.is_over_pace(provider):
-            return (
-                False,
-                "over pace, conserving monthly credits",
-                remaining,
-                used_today,
-                pace,
-            )
-        return True, "under pace", remaining, used_today, pace
+    def paid_pacing(self, provider):
+        snapshot = self.snapshot(provider)
+        if snapshot.spend not in {"exhausted", "uncertain"} and self._legacy_budgets:
+            if self._legacy_budgets.is_budget_exhausted(provider):
+                return False, "budget exhausted", 0.0, 0.0, 0.0
+            if self._legacy_budgets.is_over_pace(provider):
+                return False, "over pace, conserving monthly credits", 0.0, 0.0, 0.0
+        allowed = snapshot.spend in {"available", "low"}
+        return allowed, snapshot.spend, 0.0, 0.0, 0.0
 
-    def budget_limit(self, provider: ProviderName) -> float:
-        if self._legacy_budgets is None:
-            return 0.0
-        return self._legacy_budgets.get_budget_limit(provider)
+    def budget_limit(self, provider):
+        return float((self.repository.get_registration(provider) or {}).get(
+            "budget_limit"
+        ) or 0.0)
 
-    def legacy_health_projection(self, provider: ProviderName) -> dict | None:
-        """Explicit detached projection for the pre-readiness response shape."""
-        if self._legacy_health is None:
-            return None
-        snapshot = self._legacy_health.snapshot(provider)
-        return snapshot.as_dict() if snapshot is not None else None
-
-    def record_budget_usage(self, provider: ProviderName, cost: float) -> float | None:
+    def record_budget_usage(self, provider, cost):
         if self._legacy_budgets is None:
             return None
         self._legacy_budgets.record_usage(provider, cost)
-        return self._legacy_budgets.get_remaining_budget(provider)
+        return None
 
-    def _refresh_legacy_observations(
-        self, provider: ProviderName, egress: str
-    ) -> None:
-        if not self._legacy_providers:
-            return
-        now = datetime.now(UTC)
-        provider_object = self._legacy_providers.get(provider)
-        available = bool(provider_object and provider_object.is_available())
-        observations = [
-            ProviderObservation(
-                provider=provider,
-                dimension="registration",
-                state="registered" if available else "not_registered",
-                source="legacy_registration_projection",
-                scope=ReadinessScope(),
-                observed_at=now,
-                ttl_seconds=300,
-                safe_reason="explicit_compatibility_projection",
-            ),
-            ProviderObservation(
-                provider=provider,
-                dimension="configuration",
-                state="configured" if available else "disabled_by_config",
-                source="legacy_configuration_projection",
-                scope=ReadinessScope(),
-                observed_at=now,
-                ttl_seconds=300,
-            ),
-            ProviderObservation(
-                provider=provider,
-                dimension="compatibility",
-                state="compatible" if available else "unknown",
-                source="versioned_fixture_projection",
-                scope=ReadinessScope(),
-                observed_at=now,
-                ttl_seconds=300,
-                safe_reason="explicit_compatibility_projection",
-            ),
-        ]
-        cooldown = "clear"
-        if self._legacy_health is not None:
-            cooldown, _ = self._legacy_health.normalized_observation(provider)
-        observations.append(
-            ProviderObservation(
-                provider=provider,
-                dimension="cooldown",
-                state=cooldown,
-                source="legacy_health_observation",
-                scope=ReadinessScope(),
-                observed_at=now,
-                ttl_seconds=60,
-            )
-        )
-        reachability = "unknown"
-        if self._legacy_reachability is not None:
-            reachability, _ = self._legacy_reachability.normalized_observation(
-                provider, egress=egress
-            )
-        observations.append(
-            ProviderObservation(
-                provider=provider,
-                dimension="reachability",
-                state=reachability,
-                source="legacy_reachability_observation",
-                scope=ReadinessScope(egress=egress),
-                observed_at=now,
-                ttl_seconds=60,
-            )
-        )
-        tier = PROVIDER_TIERS.get(provider, 0)
-        spend = "not_applicable"
-        if tier > 0:
-            spend = (
-                "exhausted"
-                if self._legacy_budgets is not None
-                and self._legacy_budgets.is_budget_exhausted(provider)
-                else "available"
-            )
-        observations.append(
-            ProviderObservation(
-                provider=provider,
-                dimension="spend",
-                state=spend,
-                source="legacy_spend_observation",
-                scope=ReadinessScope(),
-                observed_at=now,
-                ttl_seconds=60,
-            )
-        )
-        for observation in observations:
-            self.repository.record_observation(observation)
-        self._drop_provider_cache(provider)
+    def legacy_health_projection(self, provider):
+        return self.snapshot(provider).as_dict()
 
-    def authorize_probe(
-        self,
-        provider: ProviderName,
-        probe_kind: str,
-        authorization: ProbeAuthorization | None = None,
-    ) -> ProbeDecision:
+    def readiness_projection(self, provider: ProviderName) -> dict[str, object]:
+        return self.snapshot(provider).as_dict()
+
+    def budget_projection(self, provider: ProviderName) -> dict[str, object]:
+        snapshot = self.snapshot(provider)
+        limit = self.budget_limit(provider)
+        spend = self.repository.provider_spend_projection(
+            provider, budget_limit=limit
+        )
+        return {
+            "provider": provider.value,
+            "state": snapshot.spend,
+            "budget_limit": limit if limit > 0 else None,
+            "remaining": spend["remaining"],
+            "argus_estimated_charge": spend["argus_estimated_charge"],
+            "uncertain_charge": spend["uncertain_charge"],
+            "exhausted": snapshot.spend == "exhausted",
+            "authority": "provider_readiness",
+            "readiness_generation": snapshot.generation,
+        }
+
+    def _refresh_legacy_observations(self, provider, egress):
+        # Frozen mechanics may feed explicit observations through
+        # record_legacy_outcome; they may never overwrite durable readiness.
+        del provider, egress
+
+    def authorize_probe(self, provider, probe_kind, authorization=None):
         if probe_kind in {"fixture", "local_component"}:
             return ProbeDecision(True, "routine_no_spend")
         if probe_kind == "no_spend_account":
             if authorization is None or authorization.provider is not provider:
                 return ProbeDecision(False, "versioned_allowlist_required")
             key = (
-                provider.value,
-                authorization.allowlist_version,
+                provider.value, authorization.allowlist_version,
                 authorization.endpoint_contract,
             )
-            return (
-                ProbeDecision(True, "versioned_no_spend_contract")
-                if key in _NO_SPEND_ACCOUNT_ALLOWLIST
-                else ProbeDecision(False, "endpoint_not_allowlisted")
-            )
-        if probe_kind == "no_money_quota":
-            allowed = bool(
-                authorization
-                and authorization.workflow == "explicit_validation"
-                and authorization.named_quota
-                and authorization.idempotency_key
-                and authorization.durable_receipt
-            )
             return ProbeDecision(
-                allowed, "explicit_quota_authorized" if allowed else "quota_spend_denied"
+                key in _NO_SPEND_ACCOUNT_ALLOWLIST,
+                "versioned_no_spend_contract" if key in _NO_SPEND_ACCOUNT_ALLOWLIST
+                else "endpoint_not_allowlisted",
             )
-        if probe_kind == "billable_search":
-            allowed = bool(
-                authorization
-                and authorization.workflow == "explicit_validation"
-                and authorization.provider is provider
-                and authorization.idempotency_key
-                and authorization.durable_receipt
-                and authorization.spend_reserved
+        allowed = bool(
+            authorization
+            and authorization.workflow == "explicit_validation"
+            and authorization.provider is provider
+            and authorization.idempotency_key
+            and authorization.durable_receipt
+            and (
+                probe_kind == "no_money_quota"
+                or (probe_kind == "billable_search" and authorization.spend_reserved)
             )
-            return ProbeDecision(
-                allowed, "explicit_spend_authorized" if allowed else "billable_probe_denied"
-            )
-        return ProbeDecision(False, "unknown_probe_kind")
-
-    def evaluate_registration(
-        self, provider: ProviderName, inputs: RegistrationInputs
-    ) -> RegistrationDecision:
-        tier = PROVIDER_TIERS[provider]
-        issues: list[str] = []
-        if not inputs.enabled:
-            issues.append("disabled_by_config")
-        if not inputs.credential_present:
-            issues.append("missing_credential")
-        if tier > 0:
-            if not inputs.account_fingerprint:
-                issues.append("missing_account_binding")
-            if inputs.budget_limit is None or inputs.budget_limit <= 0:
-                issues.append("missing_budget")
-            if not inputs.durable_spend_repository:
-                issues.append("missing_spend_repository")
-        if not inputs.compatible_fixture_release:
-            issues.append("incompatible_fixture_release")
-        ordered = tuple(issue for issue in _CONFIGURATION_ISSUES if issue in issues)
-        return RegistrationDecision(not ordered, ordered)
+        )
+        return ProbeDecision(
+            allowed,
+            "explicit_probe_authorized" if allowed else "probe_denied",
+        )
 
     @staticmethod
-    def validate_scope_manifest(
-        *, egresses: tuple[str, ...], request_classes: tuple[str, ...]
-    ) -> None:
+    def validate_scope_manifest(*, egresses, request_classes):
         if (
-            len(egresses) > 8
-            or len(request_classes) > 4
+            len(egresses) > 8 or len(request_classes) > 4
             or len(egresses) * len(request_classes) > MAX_EXECUTABLE_SCOPES
         ):
             raise ValueError("scope manifest exceeds 32 executable scopes")
-        if len(set(egresses)) != len(egresses) or len(set(request_classes)) != len(
-            request_classes
-        ):
+        if len(set(egresses)) != len(egresses) or len(set(request_classes)) != len(request_classes):
             raise ValueError("scope manifest entries must be unique")
-
-    @staticmethod
-    def _scope_matches(stored: Mapping[str, str | None], query: ReadinessScope) -> bool:
-        requested = query.as_dict()
-        scoped_dimensions = {
-            "egress",
-            "request_class",
-            "release_revision",
-            "contract_version",
-        }
-        for name in scoped_dimensions:
-            expected = stored.get(name)
-            actual = requested.get(name)
-            if expected is not None and actual is not None and expected != actual:
-                return False
-        return True
-
-    @staticmethod
-    def _state(latest: Mapping[str, object], dimension: str, default: str) -> str:
-        row = latest.get(dimension)
-        return getattr(row, "state", default)
-
-    @staticmethod
-    def _compact_receipts(rows) -> tuple[str, ...]:
-        protected = []
-        diagnostics = []
-        for row in reversed(rows):
-            receipt = row.evidence_ref
-            if not receipt:
-                continue
-            target = protected if row.protected else diagnostics
-            if receipt not in target:
-                target.append(receipt)
-        selected = protected[:MAX_EVIDENCE_RECEIPTS]
-        for receipt in diagnostics:
-            if len(selected) >= MAX_EVIDENCE_RECEIPTS:
-                break
-            if receipt not in selected:
-                selected.append(receipt)
-        return tuple(selected)
-
-    @staticmethod
-    def _decision(
-        *,
-        provider: ProviderName,
-        registration: str,
-        configuration: ConfigurationReadiness,
-        reachability: str,
-        compatibility: str,
-        cooldown: str,
-        spend: str,
-        context: ExecutionContext | None,
-        evidence_overflow: bool,
-    ) -> ExecutionDecision:
-        if evidence_overflow:
-            return ExecutionDecision(
-                "unavailable", "evidence_overflow", ("evidence_receipts",)
-            )
-        if context is not None:
-            if provider not in context.plan_providers:
-                return ExecutionDecision(
-                    "policy_skipped", "provider_not_in_plan", ("plan",)
-                )
-            if context.free_only and context.tier > 0:
-                return ExecutionDecision(
-                    "policy_skipped", "free_only", ("caller_policy",)
-                )
-            if (
-                context.caller_tier_cap is not None
-                and context.tier > context.caller_tier_cap
-            ):
-                return ExecutionDecision(
-                    "policy_skipped", "caller_tier_cap", ("caller_policy",)
-                )
-        if registration != "registered":
-            return ExecutionDecision(
-                "unavailable", "not_registered", ("registration",)
-            )
-        if not configuration.configured:
-            return ExecutionDecision(
-                "unavailable",
-                configuration.issues[0],
-                ("configuration",),
-            )
-        if compatibility != "compatible":
-            return ExecutionDecision(
-                "compatibility_unproven",
-                (
-                    "compatibility_incompatible"
-                    if compatibility == "incompatible"
-                    else "compatibility_unknown"
-                ),
-                ("compatibility",),
-            )
-        if reachability == "unreachable":
-            return ExecutionDecision(
-                "unavailable", "egress_unreachable", ("reachability",)
-            )
-        if cooldown in {"active", "half_open_claimed"}:
-            return ExecutionDecision("cooldown", cooldown, ("cooldown",))
-        if spend in {"exhausted", "uncertain", "policy_denied", "unknown"}:
-            return ExecutionDecision("spend_blocked", spend, ("spend",))
-        return ExecutionDecision("eligible", "all_gates_satisfied")
-
-    def _drop_provider_cache(self, provider: ProviderName) -> None:
-        for key in list(self._render_cache):
-            if key[0] == provider.value:
-                self._render_cache.pop(key, None)

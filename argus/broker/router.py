@@ -19,7 +19,10 @@ from argus.broker.planning import (
 from argus.broker.pipeline import SearchResultPipeline
 from argus.broker.policies import resolve_routing
 from argus.broker.reachability import ReachabilityMatrix
-from argus.broker.readiness import ProviderReadinessService
+from argus.broker.readiness import (
+    ExecutableProviderRegistry,
+    ProviderReadinessService,
+)
 from argus.broker.session_flow import SessionSearchService
 from argus.config import EgressNode, get_config
 from argus.logging import get_logger
@@ -48,6 +51,7 @@ class SearchBroker:
         utc_clock: Callable[[], datetime] | None = None,
         monotonic_clock: Callable[[], float] | None = None,
         readiness_service: ProviderReadinessService | None = None,
+        provider_registry: ExecutableProviderRegistry | None = None,
     ):
         from argus.authority import broker_construction_allowed
 
@@ -65,6 +69,21 @@ class SearchBroker:
                 else os.environ.get("ARGUS_BUDGET_DB_PATH", None)
             )
         )
+        configured_budgets = {
+            ProviderName.BRAVE: self._config.brave.monthly_budget_usd,
+            ProviderName.SERPER: self._config.serper.monthly_budget_usd,
+            ProviderName.TAVILY: self._config.tavily.monthly_budget_usd,
+            ProviderName.EXA: self._config.exa.monthly_budget_usd,
+            ProviderName.SEARCHAPI: self._config.searchapi.monthly_budget_usd,
+            ProviderName.YOU: self._config.you.monthly_budget_usd,
+            ProviderName.PARALLEL: self._config.parallel.monthly_budget_usd,
+            ProviderName.LINKUP: self._config.linkup.monthly_budget_usd,
+            ProviderName.VALYU: self._config.valyu.monthly_budget_usd,
+            ProviderName.WOLFRAM: self._config.wolfram.monthly_budget_usd,
+        }
+        for provider_name, configured_budget in configured_budgets.items():
+            if configured_budget > 0:
+                self._budgets.set_budget(provider_name, configured_budget)
         self._session_store = session_store
         self._reachability = reachability or ReachabilityMatrix()
         self._egress_nodes = egress_nodes or {}
@@ -86,6 +105,8 @@ class SearchBroker:
                 monotonic=self._monotonic_clock,
             )
         )
+        if provider_registry is not None:
+            provider_registry.persist(self._readiness, self._providers)
         self._executor = executor or ProviderExecutor(
             providers=self._providers,
             health_tracker=self._health,
@@ -272,6 +293,12 @@ class SearchBroker:
             if provider is not ProviderName.CACHE
         }
 
+    def provider_readiness_projection(self, provider: ProviderName) -> dict:
+        return self._readiness.readiness_projection(provider)
+
+    def provider_budget_projection(self, provider: ProviderName) -> dict:
+        return self._readiness.budget_projection(provider)
+
     async def refresh_provider_evidence(self) -> None:
         """Refresh cached projections without provider invocation or reservation."""
         if not isinstance(
@@ -344,4 +371,9 @@ def create_broker(*, authority_capability: object | None = None) -> SearchBroker
         reachability=reachability,
         egress_nodes=egress_nodes,
         authority_capability=authority_capability,
+        provider_registry=ExecutableProviderRegistry.from_runtime(
+            config=config,
+            providers=providers,
+            durable_spend_repository=True,
+        ),
     )

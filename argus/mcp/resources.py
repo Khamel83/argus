@@ -31,10 +31,7 @@ def provider_budgets_resource(broker: SearchBroker) -> str:
 
     budgets = {}
     for pname in ProviderName:
-        budgets[pname.value] = broker.spend_repository.provider_summary(
-            pname,
-            budget_limit=broker.budget_tracker.get_budget_limit(pname),
-        )
+        budgets[pname.value] = broker.provider_budget_projection(pname)
 
     return json.dumps(budgets, indent=2)
 

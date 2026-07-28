@@ -9,6 +9,8 @@ from argus.api.schemas import (
     SpendResolutionRequest,
 )
 from argus.broker.router import SearchBroker
+from argus.broker.budgets import PROVIDER_TIERS
+from argus.broker.readiness import ProbeAuthorization
 from argus.models import ProviderName, SearchMode, SearchQuery
 from argus.workflows import WorkflowService
 
@@ -69,6 +71,29 @@ async def test_provider(
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Unknown provider: {req.provider}")
 
+    if not req.live:
+        decision = broker.readiness_service.authorize_probe(pname, "fixture")
+        readiness = broker.provider_readiness_projection(pname)
+        return {
+            "provider": req.provider,
+            "mode": "fixture",
+            "available": decision.allowed,
+            "status": "fixture_verified" if decision.allowed else "denied",
+            "readiness": readiness,
+            "sample_results": [],
+        }
+
+    authorization = ProbeAuthorization(
+        workflow="explicit_validation", provider=pname,
+        named_quota="free_provider_request" if PROVIDER_TIERS[pname] == 0 else None,
+        idempotency_key=req.idempotency_key,
+        durable_receipt=req.durable_receipt,
+        spend_reserved=req.spend_reserved,
+    )
+    kind = "no_money_quota" if PROVIDER_TIERS[pname] == 0 else "billable_search"
+    decision = broker.readiness_service.authorize_probe(pname, kind, authorization)
+    if not decision.allowed:
+        raise HTTPException(status_code=409, detail=decision.reason)
     query = SearchQuery(
         query=req.query,
         mode=SearchMode.DISCOVERY,
@@ -76,13 +101,20 @@ async def test_provider(
         providers=[pname],
         caller=getattr(request.state, "caller_identity", "admin"),
         user_visible=False,
-        metadata={"caller_label": "http-admin-smoke"},
+        metadata={
+            "caller_label": "http-admin-smoke",
+            "probe_receipt": req.durable_receipt,
+            "probe_idempotency_key": req.idempotency_key,
+            "probe_provider": pname.value,
+            "probe_no_fallback": True,
+        },
     )
     response = await broker.search(query)
     trace = response.traces[0] if response.traces else None
 
     return {
         "provider": req.provider,
+        "mode": "live",
         "available": trace is not None,
         "status": trace.status if trace else "no_trace",
         "trace": {
@@ -104,16 +136,23 @@ async def provider_spend(
     repository=Depends(get_spend_repository),
 ):
     providers = []
+    operational = []
     for provider in ProviderName:
         if provider == ProviderName.CACHE:
             continue
         providers.append(
-            repository.provider_summary(
-                provider,
-                budget_limit=broker.budget_tracker.get_budget_limit(provider),
-            )
+            broker.provider_budget_projection(provider)
         )
-    return {"providers": providers}
+        operational.append(repository.non_authoritative_operational_projection(
+            provider,
+            budget_limit=float(
+                broker.provider_budget_projection(provider).get("budget_limit") or 0
+            ),
+        ))
+    return {
+        "providers": providers,
+        "non_authoritative_operational": {"providers": operational},
+    }
 
 
 @router.get("/provider-spend/attempts")

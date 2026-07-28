@@ -270,6 +270,10 @@ def serve_mcp(
         async def test_provider(
             provider: str,
             query: str = "argus",
+            live: bool = False,
+            idempotency_key: str | None = None,
+            durable_receipt: str | None = None,
+            spend_reserved: bool = False,
         ) -> str:
             return await tools.test_provider_mcp(
                 backend.broker,
@@ -277,6 +281,10 @@ def serve_mcp(
                 query,
                 caller_identity=_mcp_caller_identity(),
                 caller_label="mcp-admin-smoke",
+                live=live,
+                idempotency_key=idempotency_key,
+                durable_receipt=durable_receipt,
+                spend_reserved=spend_reserved,
             )
 
         @mcp.tool()

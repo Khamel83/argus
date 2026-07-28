@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from argus.broker.router import SearchBroker
-from argus.broker.readiness import ProviderReadinessService
 from argus.models import ProviderName
 from argus.operations.presentation import provider_display_state
 from argus.operations.status import OperationalStatusService
@@ -74,19 +73,11 @@ async def provider_health(
     operational: OperationalStatusService = Depends(get_operational_status),
 ):
     try:
-        authority = getattr(broker, "readiness_service", None)
-        if isinstance(authority, ProviderReadinessService):
-            providers = {
-                pname.value: authority.render_snapshot(pname).as_dict()
-                for pname in ProviderName
-                if pname != ProviderName.CACHE
-            }
-        else:
-            providers = {
-                pname.value: broker.get_provider_status(pname)
-                for pname in ProviderName
-                if pname != ProviderName.CACHE
-            }
+        providers = {
+            pname.value: broker.provider_readiness_projection(pname)
+            for pname in ProviderName
+            if pname != ProviderName.CACHE
+        }
     except Exception as exc:
         raise HTTPException(
             status_code=503,
@@ -120,10 +111,7 @@ async def caller_budgets(broker: SearchBroker = Depends(get_broker)):
         for pname in ProviderName:
             if pname == ProviderName.CACHE:
                 continue
-            providers[pname.value] = broker.spend_repository.provider_summary(
-                pname,
-                budget_limit=broker.budget_tracker.get_budget_limit(pname),
-            )
+            providers[pname.value] = broker.provider_budget_projection(pname)
     except Exception as exc:
         raise HTTPException(
             status_code=503,
@@ -190,12 +178,7 @@ async def health_detail(broker: SearchBroker = Depends(get_broker)):
 async def budgets(broker: SearchBroker = Depends(get_broker)):
     budget_info = {}
     for pname in ProviderName:
-        budget_info[pname.value] = {
-            "remaining": broker.budget_tracker.get_remaining_budget(pname),
-            "monthly_usage": broker.budget_tracker.get_monthly_usage(pname),
-            "usage_count": broker.budget_tracker.get_usage_count(pname),
-            "exhausted": broker.budget_tracker.is_budget_exhausted(pname),
-        }
+        budget_info[pname.value] = broker.provider_budget_projection(pname)
 
     # Token balances for extraction services (Jina, etc.)
     token_balances = {}
@@ -203,4 +186,7 @@ async def budgets(broker: SearchBroker = Depends(get_broker)):
     if store:
         token_balances = store.get_all_token_balances()
 
-    return {"budgets": budget_info, "token_balances": token_balances}
+    return {
+        "budgets": budget_info,
+        "non_authoritative_operational": {"token_balances": token_balances},
+    }

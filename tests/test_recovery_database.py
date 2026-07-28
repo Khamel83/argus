@@ -228,6 +228,22 @@ def test_expected_schema_manifest_describes_types_nullability_and_definitions():
     ]["definition"]
 
 
+def test_0008_contract_contains_all_readiness_authority_tables():
+    from argus.recovery.database import expected_argus_schema_manifest
+
+    manifest = expected_argus_schema_manifest("0008_provider_readiness")
+
+    assert manifest["schema_head"] == "0008_provider_readiness"
+    assert {
+        "provider_readiness_observations",
+        "provider_readiness_snapshots",
+        "provider_readiness_evidence_refs",
+        "provider_readiness_leases",
+        "provider_readiness_alert_dedupe",
+    } <= set(manifest["columns"])
+    assert len(manifest["contract_sha256"]) == 64
+
+
 def test_checked_contract_retains_migrated_server_defaults_and_deparser_output():
     from argus.recovery.database import expected_argus_schema_manifest
 

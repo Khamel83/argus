@@ -112,9 +112,89 @@ def _runtime_broker():
 def _configure_public_evidence(broker):
     from argus.models import ProviderName
 
+    def readiness(provider):
+        status = broker.get_provider_status(provider)
+        configured = status.get("config_status") in {"enabled", "healthy"}
+        effective = status.get("effective_status")
+        health = status.get("health")
+        reachability = (
+            broker._reachability.get_all().get(provider.value)
+            or broker._reachability.get_all().get(provider)
+        )
+        probes = (reachability or {}).get("probes") or {}
+        current = [
+            probe
+            for probe in probes.values()
+            if isinstance(probe, dict) and probe.get("stale") is not True
+        ]
+        reachable = (
+            "reachable"
+            if any(probe.get("reachable") is True for probe in current)
+            else "unreachable"
+            if current
+            else "unknown"
+        )
+        usability = (
+            "usable"
+            if isinstance(health, dict)
+            and effective not in {"temporarily_disabled_after_failures"}
+            else "unusable"
+            if isinstance(health, dict)
+            else "unknown"
+        )
+        cooldown = (
+            "active"
+            if effective == "temporarily_disabled_after_failures"
+            else "clear"
+            if isinstance(health, dict)
+            else "unknown"
+        )
+        spend = (
+            "exhausted"
+            if effective == "budget_exhausted"
+            else "not_applicable"
+            if status.get("budget_remaining") is None
+            else "available"
+        )
+        return {
+            "provider": provider.value,
+            "registration": "registered" if configured else "not_registered",
+            "configuration": {
+                "configured": configured,
+                "issues": [] if configured else ["disabled_by_config"],
+            },
+            "reachability": reachable,
+            "compatibility": "compatible" if configured else "unknown",
+            "usability": usability,
+            "cooldown": cooldown,
+            "spend": spend,
+            "state": (
+                "healthy"
+                if configured
+                and reachable == "reachable"
+                and usability == "usable"
+                and cooldown == "clear"
+                else "disabled"
+                if not configured
+                else "unready"
+            ),
+            "execution_decision": {
+                "reason": effective or "unknown",
+            },
+            "authority": "provider_readiness",
+        }
+
+    broker.provider_readiness_projection.side_effect = readiness
+    broker.provider_budget_projection.side_effect = lambda provider: (
+        broker.spend_repository.provider_summary(
+            provider,
+            budget_limit=broker.budget_tracker.get_budget_limit(provider),
+        )
+    )
     broker.operational_provider_evidence.side_effect = lambda: {
         provider.value: {
             "status": broker.get_provider_status(provider),
+            "readiness": readiness(provider),
             "reachability": broker._reachability.get_all().get(provider.value)
             or broker._reachability.get_all().get(provider),
         }
@@ -315,7 +395,7 @@ def test_unproven_provider_health_does_not_count_as_a_usable_path(health_state):
     assert status["reason_codes"] == ["retrieval_path"]
 
 
-def test_fresh_health_tracker_does_not_invent_zeroed_provider_evidence():
+def test_fresh_health_tracker_projects_readiness_without_zeroed_counters():
     from argus.broker.health import HealthTracker
     from argus.broker.router import SearchBroker
     from argus.models import ProviderName, ProviderStatus
@@ -331,7 +411,9 @@ def test_fresh_health_tracker_does_not_invent_zeroed_provider_evidence():
 
     status = broker.get_provider_status(ProviderName.DUCKDUCKGO)
 
-    assert status["health"] is None
+    assert status["authority"] == "provider_readiness"
+    assert status["health"]["authority"] == "provider_readiness"
+    assert "consecutive_failures" not in status["health"]
     assert broker._health.get_all_status() == {}
 
 
@@ -595,7 +677,7 @@ def test_dependency_refresh_maps_repository_provider_browser_and_recovery_truth(
     }
     brave = status["providers"]["brave"]["observations"]
     assert brave["cooldown"]["state"] == "unready"
-    assert brave["health"]["source"] == "process_memory"
+    assert brave["health"]["source"] == "provider_readiness"
     assert status["promotion_allowed"] is False
     gauges = status["metrics"]["gauges"]
     assert gauges["outbox_pending"]["value"] == 2
@@ -906,19 +988,16 @@ def test_fresh_provider_without_health_evidence_is_unknown_and_unready():
     assert status["reason_codes"] == ["retrieval_path"]
 
 
-def test_expired_reachability_probe_renders_unknown_not_failed():
+def test_expired_readiness_reachability_renders_unknown_not_failed():
     from argus.operations.status import refresh_operational_status
 
     service = _service()
     broker = _runtime_broker()
     evidence = broker.operational_provider_evidence()
-    evidence["duckduckgo"]["reachability"]["probes"]["local"].update(
-        {
-            "reachable": False,
-            "expires_at": NOW.timestamp() - 1,
-            "stale": True,
-        }
-    )
+    evidence["duckduckgo"]["readiness"]["reachability"] = "unknown"
+    evidence["duckduckgo"]["readiness"]["execution_decision"] = {
+        "reason": "reachability_evidence_expired"
+    }
     broker.operational_provider_evidence.side_effect = None
     broker.operational_provider_evidence.return_value = evidence
 
@@ -936,32 +1015,13 @@ def test_expired_reachability_probe_renders_unknown_not_failed():
     assert reachability["reason"] == "reachability_evidence_expired"
 
 
-def test_reachability_source_and_time_use_same_current_probe_subset():
+def test_reachability_uses_authoritative_readiness_projection():
     from argus.operations.status import refresh_operational_status
 
     service = _service()
     broker = _runtime_broker()
     evidence = broker.operational_provider_evidence()
-    evidence["duckduckgo"]["reachability"]["probes"] = {
-        "stale-local": {
-            "reachable": False,
-            "last_checked": NOW.timestamp() - 5,
-            "source": "provider_execution",
-            "stale": True,
-        },
-        "current-worker": {
-            "reachable": True,
-            "last_checked": NOW.timestamp() - 10,
-            "source": "background_probe",
-            "stale": False,
-        },
-        "current-failed-execution": {
-            "reachable": False,
-            "last_checked": NOW.timestamp() - 7,
-            "source": "provider_execution",
-            "stale": False,
-        },
-    }
+    evidence["duckduckgo"]["readiness"]["reachability"] = "reachable"
     broker.operational_provider_evidence.side_effect = None
     broker.operational_provider_evidence.return_value = evidence
 
@@ -976,8 +1036,8 @@ def test_reachability_source_and_time_use_same_current_probe_subset():
         "reachability"
     ]
     assert reachability["state"] == "healthy"
-    assert reachability["source"] == "reachability_probe"
-    assert reachability["observed_at"] == "2026-07-23T11:59:50Z"
+    assert reachability["source"] == "provider_readiness"
+    assert reachability["observed_at"] == "2026-07-23T12:00:00Z"
 
 
 def test_repository_authority_loss_is_cached_unready_and_restoration_recovers():

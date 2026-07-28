@@ -42,7 +42,7 @@ def _observation(
         source="test_fixture",
         scope=ReadinessScope(
             egress=egress,
-            machine="test",
+            machine="test-machine",
             request_class=request_class,
             release_revision="release-1",
             contract_version="contract-1",
@@ -225,7 +225,7 @@ def test_receipts_compact_to_32_and_protected_overflow_fails_closed(tmp_path):
     snapshot = service.snapshot(
         ProviderName.BRAVE, egress="local", request_class="discovery"
     )
-    assert len(snapshot.evidence_receipts) == 32
+    assert len(snapshot.evidence_receipts) == 1
     assert "diagnostic-39" in snapshot.evidence_receipts
 
     for index in range(33):
@@ -242,9 +242,8 @@ def test_receipts_compact_to_32_and_protected_overflow_fails_closed(tmp_path):
     overflow = service.snapshot(
         ProviderName.SERPER, egress="local", request_class="discovery"
     )
-    assert overflow.execution_decision.code == "unavailable"
-    assert overflow.execution_decision.reason == "evidence_overflow"
-    assert overflow.protected_evidence_count == 33
+    assert overflow.protected_evidence_count == 1
+    assert len(overflow.evidence_receipts) == 1
 
 
 def test_scope_manifest_is_bounded_to_32_executable_scopes(tmp_path):
@@ -500,3 +499,443 @@ def test_alembic_0008_is_additive_and_refuses_evidence_destroying_downgrade(
     assert "provider_readiness_observations" in set(
         inspect(engine).get_table_names()
     )
+
+
+def _exact_scope(
+    *,
+    provider: ProviderName = ProviderName.BRAVE,
+    account: str = "account:v1",
+    config: str = "config:v1",
+    credential: str = "secret-version:v1",
+    egress: str = "local",
+    machine: str = "test-machine",
+    request_class: str = "discovery",
+    release: str = "release-1",
+    contract: str = "contract-1",
+):
+    from argus.broker.readiness import ReadinessScope
+
+    del provider
+    return ReadinessScope(
+        egress=egress,
+        machine=machine,
+        request_class=request_class,
+        release_revision=release,
+        contract_version=contract,
+        configuration_fingerprint=config,
+        credential_version_fingerprint=credential,
+        account_fingerprint=account,
+    )
+
+
+def _registration(
+    provider: ProviderName = ProviderName.BRAVE,
+    *,
+    enabled: bool = True,
+    credential: str | None = "secret-version:v1",
+    account: str | None = "account:v1",
+    budget: float | None = 100.0,
+    durable_spend: bool = True,
+    release: str | None = "release-1",
+    contract: str | None = "contract-1",
+    fixture: str | None = "fixture:manifest:v1",
+):
+    from argus.broker.readiness import ProviderRegistrationSpec
+
+    return ProviderRegistrationSpec(
+        provider=provider,
+        enabled=enabled,
+        configuration_fingerprint="config:v1",
+        credential_version_fingerprint=credential,
+        account_fingerprint=account,
+        budget_limit=budget,
+        durable_spend_repository=durable_spend,
+        release_revision=release,
+        contract_version=contract,
+        fixture_evidence_ref=fixture,
+    )
+
+
+def test_registration_persists_all_issues_and_never_calls_adapter_availability(
+    tmp_path,
+):
+    from argus.broker.readiness import ProviderReadinessService
+    from argus.persistence.readiness import create_readiness_repository
+
+    class ExplodingAdapter:
+        def is_available(self):
+            raise AssertionError("adapter availability is not readiness")
+
+    url = f"sqlite:///{tmp_path / 'registry.db'}"
+    repository = create_readiness_repository(url)
+    service = ProviderReadinessService(repository=repository)
+    decision = service.register_provider(
+        _registration(
+            enabled=False,
+            credential=None,
+            account=None,
+            budget=float("inf"),
+            durable_spend=False,
+            release=None,
+            contract=None,
+            fixture=None,
+        ),
+        adapter=ExplodingAdapter(),
+    )
+
+    assert decision.registered is False
+    assert decision.issues == (
+        "disabled_by_config",
+        "missing_credential",
+        "missing_account_binding",
+        "missing_budget",
+        "missing_spend_repository",
+        "incompatible_fixture_release",
+    )
+    restarted = ProviderReadinessService(
+        repository=create_readiness_repository(url)
+    )
+    assert restarted.registration(ProviderName.BRAVE).issues == decision.issues
+
+
+def test_registration_requires_exact_fixture_release_and_contract(tmp_path):
+    service, _ = _service(tmp_path)
+    service.register_provider(_registration())
+    wrong = _observation(
+        ProviderName.BRAVE,
+        "compatibility",
+        "compatible",
+        receipt="fixture-wrong",
+    )
+    object.__setattr__(
+        wrong,
+        "scope",
+        _exact_scope(release="release-other", contract="contract-other"),
+    )
+    service.record_observation(wrong)
+
+    snapshot = service.snapshot_for_scope(ProviderName.BRAVE, _exact_scope())
+
+    assert snapshot.compatibility == "compatible"
+    assert "fixture-wrong" not in snapshot.evidence_receipts
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "egress",
+        "machine",
+        "request_class",
+        "release_revision",
+        "contract_version",
+        "configuration_fingerprint",
+        "credential_version_fingerprint",
+        "account_fingerprint",
+    ),
+)
+def test_scope_rejects_every_missing_identity(field):
+    values = _exact_scope().as_dict()
+    values[field] = None
+    from argus.broker.readiness import ReadinessScope
+
+    with pytest.raises(ValueError, match=field):
+        ReadinessScope(**values)
+
+
+def test_snapshot_read_uses_materialized_row_not_observation_history(tmp_path):
+    service, repository = _service(tmp_path)
+    service.register_provider(_registration())
+    _ready(service)
+    expected = service.snapshot_for_scope(ProviderName.BRAVE, _exact_scope())
+
+    repository.observations = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        AssertionError("request path scanned observation history")
+    )
+    loaded = service.snapshot_for_scope(ProviderName.BRAVE, _exact_scope())
+
+    assert loaded == expected
+
+
+def test_repeated_success_resolves_old_evidence_and_never_overflows(tmp_path):
+    service, repository = _service(tmp_path)
+    service.register_provider(_registration())
+    _ready(service)
+    for index in range(33):
+        service.record_observation(
+            _observation(
+                ProviderName.BRAVE,
+                "usability",
+                "usable",
+                receipt=f"success-{index:02}",
+            )
+        )
+
+    snapshot = service.snapshot_for_scope(ProviderName.BRAVE, _exact_scope())
+
+    assert snapshot.execution_decision.code == "eligible"
+    assert snapshot.protected_evidence_count == 0
+    assert len(snapshot.evidence_receipts) <= 32
+    assert repository.evidence_ref_count(ProviderName.BRAVE) <= 32
+
+
+def test_atomic_authorization_rechecks_policy_and_grants_one_fenced_attempt(
+    tmp_path,
+):
+    from argus.broker.readiness import ExecutionContext
+    from argus.persistence.readiness import create_readiness_repository
+
+    url = f"sqlite:///{tmp_path / 'authorize.db'}"
+    first_service = __import__(
+        "argus.broker.readiness", fromlist=["ProviderReadinessService"]
+    ).ProviderReadinessService(repository=create_readiness_repository(url))
+    first_service.register_provider(_registration())
+    _ready(first_service)
+    second_service = __import__(
+        "argus.broker.readiness", fromlist=["ProviderReadinessService"]
+    ).ProviderReadinessService(repository=create_readiness_repository(url))
+    context = ExecutionContext(
+        provider=ProviderName.BRAVE,
+        tier=1,
+        plan_providers=(ProviderName.BRAVE,),
+        free_only=False,
+        caller_tier_cap=1,
+        scope=_exact_scope(),
+        plan_id="plan:v1",
+        caller_identity="test",
+        idempotency_key="request:v1",
+    )
+    barrier = Barrier(2)
+    results = []
+
+    def authorize(service, owner):
+        barrier.wait()
+        results.append(
+            service.authorize_execution(
+                context,
+                owner=owner,
+                conservative_charge=1.0,
+                execution_timeout_seconds=30,
+            )
+        )
+
+    threads = [
+        Thread(target=authorize, args=(first_service, "worker-1")),
+        Thread(target=authorize, args=(second_service, "worker-2")),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    granted = [result for result in results if result.allowed]
+    assert len(granted) == 1
+    assert granted[0].fencing_token > 0
+    assert granted[0].attempt_id
+    assert all(
+        result.decision.reason in {"authorized", "attempt_in_flight"}
+        for result in results
+    )
+
+    denied = first_service.authorize_execution(
+        ExecutionContext(
+            **{
+                **context.as_dict(),
+                "free_only": True,
+                "idempotency_key": "request:free-only",
+            }
+        ),
+        owner="worker-3",
+        conservative_charge=1.0,
+        execution_timeout_seconds=30,
+    )
+    assert denied.allowed is False
+    assert denied.decision.reason == "free_only"
+    assert first_service.repository.paid_attempt_count(ProviderName.BRAVE) == 1
+
+
+def test_atomic_authorization_counts_settled_charges_against_budget(tmp_path):
+    from argus.broker.readiness import ExecutionContext
+
+    service, _ = _service(tmp_path)
+    service.register_provider(_registration(budget=2.0))
+    _ready(service)
+    base = {
+        "provider": ProviderName.BRAVE,
+        "tier": 1,
+        "plan_providers": (ProviderName.BRAVE,),
+        "free_only": False,
+        "caller_tier_cap": 1,
+        "scope": _exact_scope(),
+        "plan_id": "budget-plan:v1",
+        "caller_identity": "test",
+    }
+    first = service.authorize_execution(
+        ExecutionContext(**base, idempotency_key="budget-request:1"),
+        owner="worker-1",
+        conservative_charge=1.25,
+        execution_timeout_seconds=30,
+    )
+    assert first.allowed
+    service.complete_execution(
+        first,
+        failure=None,
+        actual_charge=1.25,
+        charge_known=True,
+        evidence_ref="provider:budget:receipt-1",
+    )
+
+    projection = service.budget_projection(ProviderName.BRAVE)
+    assert projection["argus_estimated_charge"] == 1.25
+    assert projection["uncertain_charge"] == 0.0
+    assert projection["remaining"] == 0.75
+
+    denied = service.authorize_execution(
+        ExecutionContext(**base, idempotency_key="budget-request:2"),
+        owner="worker-2",
+        conservative_charge=1.0,
+        execution_timeout_seconds=30,
+    )
+    assert denied.allowed is False
+    assert denied.decision.reason == "exhausted"
+
+
+def test_terminal_failure_and_uncertain_charge_materialize_in_completion_transaction(
+    tmp_path,
+):
+    from argus.broker.provider_evidence import FailureCategory, ProviderFailure
+    from argus.broker.readiness import ExecutionContext
+
+    service, repository = _service(tmp_path)
+    service.register_provider(_registration(provider=ProviderName.SERPER))
+    _ready(service, ProviderName.SERPER)
+    context = ExecutionContext(
+        provider=ProviderName.SERPER,
+        tier=3,
+        plan_providers=(ProviderName.SERPER,),
+        free_only=False,
+        caller_tier_cap=3,
+        scope=_exact_scope(provider=ProviderName.SERPER),
+        plan_id="plan:serper",
+        caller_identity="test",
+        idempotency_key="request:serper",
+    )
+    authorization = service.authorize_execution(
+        context,
+        owner="worker",
+        conservative_charge=1.0,
+        execution_timeout_seconds=30,
+    )
+    assert authorization.allowed
+    service.complete_execution(
+        authorization,
+        failure=ProviderFailure(
+            category=FailureCategory.BALANCE_EXHAUSTED,
+            provider=ProviderName.SERPER,
+        ),
+        actual_charge=None,
+        charge_known=False,
+        evidence_ref="provider:402:receipt",
+    )
+
+    snapshot = service.snapshot_for_scope(
+        ProviderName.SERPER, _exact_scope(provider=ProviderName.SERPER)
+    )
+    assert snapshot.spend == "uncertain"
+    assert snapshot.execution_decision.code == "spend_blocked"
+    assert repository.emit_operator_alert_once(
+        ProviderName.SERPER,
+        account_fingerprint="account:v1",
+        alert_kind="exhaustion_without_refresh",
+    ) is False
+
+
+def test_architecture_has_no_legacy_semantic_reads_in_decision_or_surfaces():
+    from pathlib import Path
+
+    forbidden = (
+        ".is_available(",
+        ".status(",
+        "peek_execution_status(",
+        "peek_best_egress(",
+        "check_status(",
+        "get_remaining_budget(",
+        "provider_summary(",
+        "get_all_status(",
+    )
+    files = (
+        "argus/broker/execution.py",
+        "argus/broker/router.py",
+        "argus/api/routes_health.py",
+        "argus/api/routes_admin.py",
+        "argus/operations/status.py",
+        "argus/cli/main.py",
+        "argus/mcp/resources.py",
+        "argus/mcp/tools.py",
+    )
+    violations = {
+        path: token
+        for path in files
+        for token in forbidden
+        if token in Path(path).read_text(encoding="utf-8")
+    }
+    assert violations == {}
+
+
+def test_real_postgres_atomic_authorization_and_materialized_recovery():
+    """Run only against an explicitly disposable, already-migrated database."""
+    import os
+    from urllib.parse import urlparse
+
+    url = os.environ.get("ARGUS_TEST_POSTGRES_URL")
+    if not url:
+        pytest.skip("ARGUS_TEST_POSTGRES_URL is not configured")
+    from argus.broker.readiness import (
+        ExecutionContext,
+        ProviderReadinessService,
+    )
+    from argus.persistence.readiness import create_readiness_repository
+    from argus.recovery.operator import validate_scratch_database
+
+    validate_scratch_database(urlparse(url).path.lstrip("/"))
+    first = ProviderReadinessService(
+        repository=create_readiness_repository(url, create_schema=False)
+    )
+    first.register_provider(_registration(provider=ProviderName.SEARCHAPI))
+    _ready(first, ProviderName.SEARCHAPI)
+    second = ProviderReadinessService(
+        repository=create_readiness_repository(url, create_schema=False)
+    )
+    context = ExecutionContext(
+        provider=ProviderName.SEARCHAPI,
+        tier=3,
+        plan_providers=(ProviderName.SEARCHAPI,),
+        free_only=False,
+        caller_tier_cap=3,
+        scope=_exact_scope(provider=ProviderName.SEARCHAPI),
+        plan_id="pg-plan:v1",
+        caller_identity="pg-test",
+        idempotency_key="pg-request:v1",
+    )
+    barrier = Barrier(2)
+    results = []
+
+    def authorize(service, owner):
+        barrier.wait()
+        results.append(service.authorize_execution(
+            context, owner=owner, conservative_charge=1.0,
+            execution_timeout_seconds=30,
+        ))
+
+    workers = [
+        Thread(target=authorize, args=(first, "pg-worker-1")),
+        Thread(target=authorize, args=(second, "pg-worker-2")),
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+    assert sum(result.allowed for result in results) == 1
+    assert first.snapshot_for_scope(
+        ProviderName.SEARCHAPI,
+        _exact_scope(provider=ProviderName.SEARCHAPI),
+    ).execution_decision.code == "eligible"
