@@ -340,7 +340,18 @@ class ProviderReadinessRepository:
             self._put_snapshot(
                 session, observation.provider, scope_key, payload, generation, now
             )
-            return payload
+            self._compact_evidence(session, observation.provider)
+            materialized = session.scalar(
+                select(ProviderReadinessSnapshotRow).where(
+                    ProviderReadinessSnapshotRow.provider
+                    == observation.provider.value,
+                    ProviderReadinessSnapshotRow.scope_key == scope_key,
+                )
+            )
+            return (
+                json.loads(materialized.snapshot_json)
+                if materialized is not None else payload
+            )
 
     def record_observation(self, observation: Any) -> StoredObservation:
         """Compatibility write. New authority callers use record_and_materialize."""
@@ -442,14 +453,16 @@ class ProviderReadinessRepository:
             row.materialized_at = _naive(now)
 
     def _compact_evidence(self, session, provider: ProviderName) -> None:
-        current = {
-            row.evidence_ref
-            for row in session.scalars(
-                select(ProviderReadinessObservationRow).where(
-                    ProviderReadinessObservationRow.provider == provider.value,
-                    ProviderReadinessObservationRow.evidence_ref.is_not(None),
-                )
+        from argus.persistence.provider_spend import SpendAuditRow
+
+        current_rows = list(session.scalars(
+            select(ProviderReadinessObservationRow).where(
+                ProviderReadinessObservationRow.provider == provider.value,
+                ProviderReadinessObservationRow.evidence_ref.is_not(None),
             )
+        ))
+        current = {
+            row.evidence_ref for row in current_rows if row.evidence_ref is not None
         }
         refs = list(session.scalars(
             select(ProviderReadinessEvidenceRefRow)
@@ -466,9 +479,125 @@ class ProviderReadinessRepository:
             ),
             reverse=True,
         )
-        protected_refs = [row for row in refs if row.protected]
-        overflow = len(protected_refs) > MAX_EVIDENCE_REFS
+        protected = current | {
+            row.evidence_ref
+            for row in refs
+            if row.protected and not row.evidence_ref.startswith("overflow:")
+        }
+        audit_key = f"readiness-overflow:{provider.value}"
+        overflow_audit = session.scalar(select(SpendAuditRow).where(
+            SpendAuditRow.action == "readiness_overflow",
+            SpendAuditRow.idempotency_key == audit_key,
+        ))
+        overflow = len(protected) > MAX_EVIDENCE_REFS or overflow_audit is not None
+        overflow_ref = None
         if overflow:
+            now = self.authority_now(session)
+            for evidence_ref in protected:
+                reference_hash = hashlib.sha256(evidence_ref.encode()).hexdigest()
+                archive_key = (
+                    f"readiness-evidence:{provider.value}:{reference_hash}"
+                )
+                archived = session.scalar(select(SpendAuditRow.id).where(
+                    SpendAuditRow.action == "readiness_evidence_archive",
+                    SpendAuditRow.idempotency_key == archive_key,
+                ))
+                if archived is None:
+                    session.add(SpendAuditRow(
+                        id=uuid.uuid4().hex,
+                        attempt_id=None,
+                        provider=provider.value,
+                        action="readiness_evidence_archive",
+                        actor_identity="readiness_authority",
+                        idempotency_key=archive_key,
+                        request_hash=reference_hash,
+                        before_json=None,
+                        after_json=json.dumps(
+                            {"evidence_ref": evidence_ref},
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        created_at=_naive(now),
+                    ))
+            session.flush()
+            archived_refs = {
+                json.loads(row.after_json)["evidence_ref"]
+                for row in session.scalars(select(SpendAuditRow).where(
+                    SpendAuditRow.provider == provider.value,
+                    SpendAuditRow.action == "readiness_evidence_archive",
+                ))
+            }
+            ordered_current = sorted(archived_refs)
+            selected_current = set(ordered_current[: MAX_EVIDENCE_REFS - 1])
+            omitted = ordered_current[MAX_EVIDENCE_REFS - 1 :]
+            digest = hashlib.sha256(
+                json.dumps(
+                    ordered_current, separators=(",", ":")
+                ).encode()
+            ).hexdigest()
+            overflow_ref = f"overflow:{digest[:48]}"
+            for row in current_rows:
+                row.protected = True
+            overflow_payload = {
+                "omitted_count": len(omitted),
+                "protected_count": len(ordered_current),
+                "provider": provider.value,
+                "query": {
+                    "action": "readiness_evidence_archive",
+                    "provider": provider.value,
+                    "source": "provider_spend_audit",
+                },
+                "reference_set_sha256": digest,
+            }
+            encoded_overflow = json.dumps(
+                overflow_payload, sort_keys=True, separators=(",", ":")
+            )
+            if overflow_audit is None:
+                session.add(SpendAuditRow(
+                    id=uuid.uuid4().hex,
+                    attempt_id=None,
+                    provider=provider.value,
+                    action="readiness_overflow",
+                    actor_identity="readiness_authority",
+                    idempotency_key=audit_key,
+                    request_hash=digest,
+                    before_json=None,
+                    after_json=encoded_overflow,
+                    created_at=_naive(now),
+                ))
+            else:
+                overflow_audit.before_json = overflow_audit.after_json
+                overflow_audit.after_json = encoded_overflow
+                overflow_audit.request_hash = digest
+                overflow_audit.created_at = _naive(now)
+            by_reference = {
+                row.evidence_ref: row for row in refs
+            }
+            observation_ids = {
+                row.evidence_ref: row.id for row in current_rows
+                if row.evidence_ref is not None
+            }
+            for evidence_ref in selected_current | {overflow_ref}:
+                evidence = by_reference.get(evidence_ref)
+                observation_id = (
+                    observation_ids.get(evidence_ref)
+                    or current_rows[0].id
+                )
+                if evidence is None:
+                    evidence = ProviderReadinessEvidenceRefRow(
+                        id=uuid.uuid4().hex,
+                        provider=provider.value,
+                        observation_id=observation_id,
+                        evidence_ref=evidence_ref,
+                        protected=True,
+                        created_at=_naive(now),
+                    )
+                    session.add(evidence)
+                    refs.append(evidence)
+                else:
+                    evidence.observation_id = observation_id
+                    evidence.protected = True
+                    evidence.created_at = _naive(now)
             for row in session.scalars(
                 select(ProviderReadinessObservationRow).where(
                     ProviderReadinessObservationRow.provider == provider.value,
@@ -478,7 +607,6 @@ class ProviderReadinessRepository:
                 row.state = "evidence_overflow"
                 row.safe_reason = "evidence_overflow"
                 row.protected = True
-            now = self.authority_now(session)
             for snapshot in session.scalars(
                 select(ProviderReadinessSnapshotRow).where(
                     ProviderReadinessSnapshotRow.provider == provider.value,
@@ -503,25 +631,33 @@ class ProviderReadinessRepository:
                     "reason": "evidence_overflow",
                     "contributing_dimensions": ["configuration"],
                 }
+                receipts = [
+                    overflow_ref,
+                    *(
+                        receipt
+                        for receipt in payload.get("evidence_receipts", [])
+                        if not str(receipt).startswith("overflow:")
+                    ),
+                ]
+                payload["evidence_receipts"] = receipts[:MAX_EVIDENCE_REFS]
+                payload["protected_evidence_count"] = len({
+                    row.evidence_ref
+                    for row in current_rows
+                    if row.scope_key == snapshot.scope_key
+                })
                 snapshot.generation += 1
                 payload["generation"] = snapshot.generation
                 snapshot.snapshot_json = json.dumps(
                     payload, sort_keys=True, separators=(",", ":")
                 )
                 snapshot.materialized_at = _naive(now)
-        keep = set(current)
-        keep.update(
-            row.evidence_ref
-            for row in refs
-            if row.evidence_ref not in keep
-        )
-        if len(keep) > MAX_EVIDENCE_REFS:
-            bounded = set(current)
+            keep = selected_current | {overflow_ref}
+        else:
+            keep = set(current)
             for row in refs:
-                if len(bounded) >= MAX_EVIDENCE_REFS:
+                if len(keep) >= MAX_EVIDENCE_REFS:
                     break
-                bounded.add(row.evidence_ref)
-            keep = bounded
+                keep.add(row.evidence_ref)
         for row in refs:
             if row.evidence_ref not in keep:
                 session.delete(row)
@@ -761,6 +897,12 @@ class ProviderReadinessRepository:
                         "attempt_id": contract["attempt_id"],
                         "owner": contract["owner"],
                     }
+            lease_key = f"{context.provider.value}:{context.scope.fingerprint()}"
+            lease = session.scalar(
+                select(ProviderReadinessLeaseRow)
+                .where(ProviderReadinessLeaseRow.scope_key == lease_key)
+                .with_for_update()
+            )
             snapshot_row = session.scalar(
                 select(ProviderReadinessSnapshotRow)
                 .where(
@@ -773,17 +915,7 @@ class ProviderReadinessRepository:
             decision = decide(payload, context)
             if decision.code != "eligible":
                 return {"allowed": False, "decision": decision}
-            lease_key = f"{context.provider.value}:{context.scope.fingerprint()}"
-            lease = session.scalar(
-                select(ProviderReadinessLeaseRow)
-                .where(ProviderReadinessLeaseRow.scope_key == lease_key)
-                .with_for_update()
-            )
-            if (
-                lease is not None
-                and lease.state in {"claimed", "unresolved"}
-                and now < _aware(lease.execution_deadline)
-            ):
+            if lease is not None and lease.state in {"claimed", "unresolved"}:
                 return {"allowed": False, "decision": type(decision)(
                     "unavailable", "attempt_in_flight", ("lease",)
                 )}
@@ -1179,61 +1311,24 @@ class ProviderReadinessRepository:
                 else "uncertain" if uncertain
                 else "available"
             )
+            self.record_spend_in_session(
+                session,
+                provider=authorization.provider,
+                state=state,
+                evidence_ref=evidence_ref,
+                outcome=outcome,
+                protected=state in {"uncertain", "exhausted"},
+                scope=authorization.scope,
+            )
             scope_key = authorization.scope.fingerprint()
-            old = session.scalar(
-                select(ProviderReadinessObservationRow)
-                .where(
-                    ProviderReadinessObservationRow.provider
+            snapshot_row = session.scalar(
+                select(ProviderReadinessSnapshotRow).where(
+                    ProviderReadinessSnapshotRow.provider
                     == authorization.provider.value,
-                    ProviderReadinessObservationRow.scope_key == scope_key,
-                    ProviderReadinessObservationRow.dimension == "spend",
-                )
-                .with_for_update()
-            )
-            if old is not None:
-                session.delete(old)
-                session.flush()
-            observation_id = uuid.uuid4().hex
-            session.add(ProviderReadinessObservationRow(
-                id=observation_id, provider=authorization.provider.value,
-                dimension="spend", state=state, source="execution_settlement",
-                scope_key=scope_key,
-                scope_json=json.dumps(
-                    authorization.scope.as_dict(),
-                    sort_keys=True, separators=(",", ":"),
-                ),
-                producer_observed_at=_naive(now), ingested_at=_naive(now),
-                expires_at=None, evidence_ref=evidence_ref,
-                safe_reason=outcome, protected=state in {"uncertain", "exhausted"},
-            ))
-            evidence = session.scalar(
-                select(ProviderReadinessEvidenceRefRow).where(
-                    ProviderReadinessEvidenceRefRow.provider
-                    == authorization.provider.value,
-                    ProviderReadinessEvidenceRefRow.evidence_ref == evidence_ref,
+                    ProviderReadinessSnapshotRow.scope_key == scope_key,
                 )
             )
-            if evidence is None:
-                session.add(ProviderReadinessEvidenceRefRow(
-                    id=uuid.uuid4().hex, provider=authorization.provider.value,
-                    observation_id=observation_id, evidence_ref=evidence_ref,
-                    protected=state in {"uncertain", "exhausted"},
-                    created_at=_naive(now),
-                ))
-            else:
-                evidence.observation_id = observation_id
-                evidence.protected = state in {"uncertain", "exhausted"}
-                evidence.created_at = _naive(now)
-            self._compact_evidence(session, authorization.provider)
-            session.flush()
-            rows = self._current_rows(session, authorization.provider, scope_key)
-            generation = self._next_generation(
-                session, authorization.provider, scope_key
-            )
-            payload = dict(fold([_stored(row) for row in rows], now, generation))
-            self._put_snapshot(
-                session, authorization.provider, scope_key, payload, generation, now
-            )
+            payload = json.loads(snapshot_row.snapshot_json) if snapshot_row else {}
             if state in {"uncertain", "exhausted"}:
                 existing_alert = session.scalar(select(ProviderReadinessAlertRow).where(
                     ProviderReadinessAlertRow.provider == authorization.provider.value,

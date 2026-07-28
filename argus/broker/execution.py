@@ -331,6 +331,7 @@ class ProviderExecutor:
                         egress=trace.egress or best_egress,
                         success=True,
                         latency_ms=trace.latency_ms,
+                        scope=authorization.scope,
                     )
                     live_providers_used += 1
                     provider_results[pname.value] = results
@@ -341,6 +342,7 @@ class ProviderExecutor:
                         egress=trace.egress or best_egress,
                         success=False,
                         latency_ms=trace.latency_ms,
+                        scope=authorization.scope,
                     )
                 continue
 
@@ -410,6 +412,7 @@ class ProviderExecutor:
                     query,
                     provider,
                     pname,
+                    scope=authorization.scope,
                     plan=plan,
                     provider_phase_deadline=provider_phase_deadline,
                 )
@@ -464,9 +467,16 @@ class ProviderExecutor:
         provider: BaseProvider,
         provider_name: ProviderName,
         *,
+        scope=None,
         plan: RetrievalPlan | None = None,
         provider_phase_deadline: float | None = None,
     ) -> ProviderInvocationOutcome:
+        if scope is None:
+            scope = self._readiness.execution_scope(
+                provider_name,
+                egress="local",
+                request_class=query.mode.value,
+            )
         metadata = dict(query.metadata)
         if plan is not None:
             metadata["_retrieval_plan"] = plan
@@ -525,6 +535,7 @@ class ProviderExecutor:
                     egress=trace.egress or "local",
                     success=True,
                     latency_ms=trace.latency_ms,
+                    scope=scope,
                 )
 
                 # Use actual cost if provided by trace, otherwise estimate
@@ -553,6 +564,7 @@ class ProviderExecutor:
                     egress=trace.egress or "local",
                     success=False,
                     latency_ms=trace.latency_ms,
+                    scope=scope,
                 )
             return ProviderInvocationOutcome(
                 batch=batch,
@@ -570,6 +582,7 @@ class ProviderExecutor:
                 egress="local",
                 success=False,
                 latency_ms=0,
+                scope=scope,
             )
             failure = failure_batch(provider_name, error)
             return ProviderInvocationOutcome(failure, True, failure.trace)

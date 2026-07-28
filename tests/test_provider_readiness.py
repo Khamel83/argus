@@ -243,7 +243,9 @@ def test_receipts_compact_to_32_and_protected_overflow_fails_closed(tmp_path):
         ProviderName.SERPER, egress="local", request_class="discovery"
     )
     assert overflow.protected_evidence_count == 1
-    assert len(overflow.evidence_receipts) == 1
+    assert len(overflow.evidence_receipts) == 2
+    assert overflow.evidence_receipts[0].startswith("overflow:")
+    assert "terminal-32" in overflow.evidence_receipts
 
 
 def test_scope_manifest_is_bounded_to_32_executable_scopes(tmp_path):
@@ -902,9 +904,65 @@ def test_cancellation_is_termination_indeterminate_even_for_free_provider(tmp_pa
     assert replacement.allowed is False
 
 
+def test_expired_unresolved_execution_still_blocks_replacement(tmp_path):
+    from argus.broker.readiness import ExecutionContext
+
+    service, repository = _service(tmp_path)
+    service.register_provider(_registration(
+        provider=ProviderName.YAHOO,
+        account="not-applicable-account",
+        budget=None,
+    ))
+    _ready(service, ProviderName.YAHOO)
+    context = ExecutionContext(
+        provider=ProviderName.YAHOO,
+        tier=0,
+        plan_providers=(ProviderName.YAHOO,),
+        free_only=False,
+        caller_tier_cap=0,
+        scope=_exact_scope(
+            provider=ProviderName.YAHOO,
+            account="not-applicable-account",
+        ),
+        plan_id="plan:unresolved",
+        caller_identity="test",
+        idempotency_key="request:unresolved:1",
+    )
+    authorization = service.authorize_execution(
+        context,
+        owner="worker-1",
+        conservative_charge=0.0,
+        execution_timeout_seconds=1,
+    )
+    assert authorization.allowed
+    service.complete_execution(
+        authorization,
+        failure=None,
+        actual_charge=0.0,
+        charge_known=True,
+        termination_known=False,
+        evidence_ref="execution:indeterminate",
+    )
+
+    repository.advance_authority_clock_for_test(timedelta(seconds=2))
+    denied = service.authorize_execution(
+        ExecutionContext(**{
+            **context.as_dict(),
+            "idempotency_key": "request:unresolved:2",
+        }),
+        owner="worker-2",
+        conservative_charge=0.0,
+        execution_timeout_seconds=1,
+    )
+
+    assert denied.allowed is False
+    assert denied.decision.reason == "attempt_in_flight"
+
+
 def test_active_receipts_are_protected_before_overflow_compaction(tmp_path):
     from sqlalchemy import select
     from argus.persistence.readiness import ProviderReadinessEvidenceRefRow
+    from argus.persistence.provider_spend import SpendAuditRow
 
     service, repository = _service(tmp_path)
     service.register_provider(_registration())
@@ -946,6 +1004,41 @@ def test_active_receipts_are_protected_before_overflow_compaction(tmp_path):
     )
     assert failed_closed.configuration.issues == ("evidence_overflow",)
     assert failed_closed.execution_decision.code == "unavailable"
+    assert failed_closed.protected_evidence_count == 7
+    assert any(
+        receipt.startswith("overflow:")
+        for receipt in failed_closed.evidence_receipts
+    )
+    with repository.session_factory() as session:
+        evidence_count = len(list(session.scalars(
+            select(ProviderReadinessEvidenceRefRow).where(
+                ProviderReadinessEvidenceRefRow.provider == "brave",
+            )
+        )))
+        overflow_audit = session.scalar(select(SpendAuditRow).where(
+            SpendAuditRow.provider == "brave",
+            SpendAuditRow.action == "readiness_overflow",
+        ))
+        archived_evidence = list(session.scalars(select(SpendAuditRow).where(
+            SpendAuditRow.provider == "brave",
+            SpendAuditRow.action == "readiness_evidence_archive",
+        )))
+    assert evidence_count <= 32
+    assert overflow_audit is not None
+    overflow_payload = __import__("json").loads(overflow_audit.after_json)
+    assert overflow_payload["protected_count"] == 36
+    assert overflow_payload["omitted_count"] == 5
+    assert overflow_payload["query"] == {
+        "action": "readiness_evidence_archive",
+        "provider": "brave",
+        "source": "provider_spend_audit",
+    }
+    assert "omitted_refs" not in overflow_payload
+    assert len(archived_evidence) == overflow_payload["protected_count"]
+    assert all(
+        set(__import__("json").loads(row.after_json)) == {"evidence_ref"}
+        for row in archived_evidence
+    )
 
 
 def test_next_reset_does_not_exclude_current_period_spend(tmp_path):
@@ -1102,6 +1195,32 @@ def test_fixture_attestation_executes_all_cases_and_recomputes_content(
     )
 
 
+def test_fixture_attestation_rejects_noncanonical_adapter_substitution():
+    from argus.providers.fixture_attestation import (
+        build_fixture_attestation,
+        verify_fixture_attestation,
+    )
+
+    evidence_ref, attestation = build_fixture_attestation(
+        ProviderName.BRAVE,
+        release="fixture-test-release",
+        provider_contract="fixture-test-contract",
+    )
+    assert attestation["adapter_module"] == "argus.providers.brave"
+    assert attestation["adapter_class"] == "BraveProvider"
+    assert not verify_fixture_attestation(
+        {**attestation, "adapter_class": "BaseProvider"},
+        evidence_ref=evidence_ref,
+    )
+    with pytest.raises(ValueError, match="canonical adapter"):
+        build_fixture_attestation(
+            ProviderName.BRAVE,
+            release="fixture-test-release",
+            provider_contract="fixture-test-contract",
+            adapter_module="argus.providers.base",
+        )
+
+
 def test_authoritative_zero_reconciliation_clears_terminal_account_all_modes(
     tmp_path,
 ):
@@ -1167,6 +1286,9 @@ def test_budget_period_boundaries_use_database_time_and_fail_implausible(
 
 
 def test_protected_evidence_overflow_is_bounded_and_unavailable(tmp_path):
+    from sqlalchemy import select
+    from argus.persistence.provider_spend import SpendAuditRow
+
     service, repository = _service(tmp_path)
     service.register_provider(_registration())
     _ready(service)
@@ -1187,6 +1309,18 @@ def test_protected_evidence_overflow_is_bounded_and_unavailable(tmp_path):
     assert snapshot.configuration.issues == ("evidence_overflow",)
     assert snapshot.execution_decision.code == "unavailable"
     assert repository.evidence_ref_count(ProviderName.BRAVE) == 32
+    with repository.session_factory() as session:
+        overflow = session.scalar(select(SpendAuditRow).where(
+            SpendAuditRow.provider == "brave",
+            SpendAuditRow.action == "readiness_overflow",
+        ))
+        archive = list(session.scalars(select(SpendAuditRow).where(
+            SpendAuditRow.provider == "brave",
+            SpendAuditRow.action == "readiness_evidence_archive",
+        )))
+    payload = __import__("json").loads(overflow.after_json)
+    assert payload["protected_count"] == len(archive)
+    assert payload["protected_count"] >= 40
 
 
 def test_registration_requires_exact_fixture_release_and_contract(tmp_path):
@@ -1428,11 +1562,22 @@ def test_terminal_failure_and_uncertain_charge_materialize_in_completion_transac
         evidence_ref="provider:402:receipt",
     )
 
-    snapshot = service.snapshot_for_scope(
-        ProviderName.SERPER, _exact_scope(provider=ProviderName.SERPER)
-    )
-    assert snapshot.spend == "exhausted"
-    assert snapshot.execution_decision.code == "spend_blocked"
+    for mode in ("discovery", "research", "recovery", "grounding"):
+        snapshot = service.snapshot(
+            ProviderName.SERPER, request_class=mode
+        )
+        assert snapshot.spend == "exhausted"
+        assert snapshot.execution_decision.code == "spend_blocked"
+    restarted, _ = _service(tmp_path)
+    restarted.register_provider(_registration(
+        provider=ProviderName.SERPER,
+        credential="secret-version:v2",
+        release="release-2",
+    ))
+    for mode in ("discovery", "research", "recovery", "grounding"):
+        assert restarted.snapshot(
+            ProviderName.SERPER, request_class=mode
+        ).spend == "exhausted"
     assert repository.emit_operator_alert_once(
         ProviderName.SERPER,
         account_fingerprint="account:v1",
@@ -1455,6 +1600,38 @@ def test_terminal_failure_and_uncertain_charge_materialize_in_completion_transac
         ProviderName.SERPER,
         _exact_scope(provider=ProviderName.SERPER),
     ).spend == "exhausted"
+
+
+def test_execution_outcome_updates_exact_request_class_only(tmp_path):
+    service, _ = _service(tmp_path)
+    service.register_provider(_registration())
+    research_scope = _exact_scope(request_class="research")
+
+    service.record_legacy_outcome(
+        ProviderName.BRAVE,
+        egress="local",
+        success=True,
+        latency_ms=12,
+        scope=research_scope,
+    )
+
+    research = service.snapshot_for_scope(ProviderName.BRAVE, research_scope)
+    discovery = service.snapshot_for_scope(
+        ProviderName.BRAVE, _exact_scope(request_class="discovery")
+    )
+    assert research.usability == "usable"
+    assert research.reachability == "reachable"
+    assert discovery.usability == "unknown"
+    assert discovery.reachability == "unknown"
+
+
+def test_postgres_ci_persists_sanitized_readiness_evidence_artifact():
+    from pathlib import Path
+
+    workflow = Path(".github/workflows/ci.yml").read_text()
+    assert "scripts/verify_provider_readiness_postgres.py" in workflow
+    assert "provider-readiness-postgres.json" in workflow
+    assert "actions/upload-artifact@" in workflow
 
 
 def test_architecture_has_no_legacy_semantic_reads_in_decision_or_surfaces():

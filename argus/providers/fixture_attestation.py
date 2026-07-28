@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import inspect
 import json
 from pathlib import Path
 from typing import Mapping
@@ -20,13 +21,24 @@ from argus.providers.normalization import (
 )
 
 
-_PROVIDER_MODULES = {
-    provider: f"argus.providers.{provider.value}"
-    for provider in ProviderName
-    if provider is not ProviderName.CACHE
+_CANONICAL_ADAPTERS = {
+    ProviderName.BRAVE: ("argus.providers.brave", "BraveProvider"),
+    ProviderName.DUCKDUCKGO: (
+        "argus.providers.duckduckgo", "DuckDuckGoProvider"
+    ),
+    ProviderName.EXA: ("argus.providers.exa", "ExaProvider"),
+    ProviderName.GITHUB: ("argus.providers.github", "GitHubProvider"),
+    ProviderName.LINKUP: ("argus.providers.linkup", "LinkupProvider"),
+    ProviderName.PARALLEL: ("argus.providers.parallel", "ParallelProvider"),
+    ProviderName.SEARCHAPI: ("argus.providers.searchapi", "SearchApiProvider"),
+    ProviderName.SEARXNG: ("argus.providers.searxng", "SearXNGProvider"),
+    ProviderName.SERPER: ("argus.providers.serper", "SerperProvider"),
+    ProviderName.TAVILY: ("argus.providers.tavily", "TavilyProvider"),
+    ProviderName.VALYU: ("argus.providers.valyu", "ValyuProvider"),
+    ProviderName.WOLFRAM: ("argus.providers.wolfram", "WolframProvider"),
+    ProviderName.YAHOO: ("argus.providers.yahoo", "YahooProvider"),
+    ProviderName.YOU: ("argus.providers.you", "YouProvider"),
 }
-_PROVIDER_MODULES[ProviderName.DUCKDUCKGO] = "argus.providers.duckduckgo"
-_PROVIDER_MODULES[ProviderName.SEARCHAPI] = "argus.providers.searchapi"
 
 
 def _sha256_file(path: Path) -> str:
@@ -185,19 +197,29 @@ def build_fixture_attestation(
     release: str,
     provider_contract: str,
     adapter_module: str | None = None,
+    adapter_class: str | None = None,
 ) -> tuple[str, Mapping[str, str]]:
     """Build an attestation from the exact checked-in executable inputs."""
     manifest_path = _manifest_path()
     manifest = json.loads(manifest_path.read_bytes())
     contract = manifest["providers"][provider.value]
-    module_name = adapter_module or _PROVIDER_MODULES[provider]
+    module_name, class_name = _CANONICAL_ADAPTERS[provider]
+    if adapter_module is not None and adapter_module != module_name:
+        raise ValueError("runtime adapter module is not the canonical adapter")
+    if adapter_class is not None and adapter_class != class_name:
+        raise ValueError("runtime adapter class is not the canonical adapter")
     module = importlib.import_module(module_name)
     module_path = Path(module.__file__ or "")
+    provider_class = getattr(module, class_name)
     payload = {
         "provider": provider.value,
         "release": release,
         "adapter_module": module_name,
+        "adapter_class": class_name,
         "adapter_code_sha256": _sha256_file(module_path),
+        "adapter_identity_sha256": hashlib.sha256(
+            inspect.getsource(provider_class).encode()
+        ).hexdigest(),
         "shared_adapter_sha256": _shared_dependency_hash(),
         "fixture_manifest_sha256": _sha256_file(manifest_path),
         "fixture_case_digest": run_fixture_cases(provider),
@@ -224,8 +246,17 @@ def verify_fixture_attestation(
             release=attestation["release"],
             provider_contract=attestation["provider_contract"],
             adapter_module=attestation["adapter_module"],
+            adapter_class=attestation["adapter_class"],
         )
-    except (KeyError, ValueError, ImportError, OSError, json.JSONDecodeError):
+    except (
+        AttributeError,
+        KeyError,
+        ValueError,
+        ImportError,
+        OSError,
+        TypeError,
+        json.JSONDecodeError,
+    ):
         return False
     supplied_ref = "attestation:" + hashlib.sha256(json.dumps(
         dict(attestation), sort_keys=True, separators=(",", ":")

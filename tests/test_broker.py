@@ -345,7 +345,11 @@ async def test_executor_preserves_normalized_batch_and_projects_only_at_compatib
 
     outcome = await execute_with_plan(
         executor,
-        SearchQuery(query="batch evidence", providers=[ProviderName.YAHOO]),
+        SearchQuery(
+            query="batch evidence",
+            mode=SearchMode.RESEARCH,
+            providers=[ProviderName.YAHOO],
+        ),
         [ProviderName.YAHOO],
     )
 
@@ -356,6 +360,12 @@ async def test_executor_preserves_normalized_batch_and_projects_only_at_compatib
     )
     assert outcome.provider_results["yahoo"] == []
     assert outcome.traces[0].status == "success"
+    assert executor._readiness.snapshot(
+        ProviderName.YAHOO, request_class="research"
+    ).usability == "usable"
+    assert executor._readiness.snapshot(
+        ProviderName.YAHOO, request_class="discovery"
+    ).usability == "unknown"
 
 
 @pytest.mark.asyncio

@@ -430,6 +430,7 @@ class ExecutableProviderRegistry:
                         release=release,
                         provider_contract=str(contract),
                         adapter_module=type(adapter).__module__,
+                        adapter_class=type(adapter).__name__,
                     )
                 )
             except (ImportError, OSError, ValueError):
@@ -532,7 +533,6 @@ class ProviderReadinessService:
                 provider,
                 release="legacy-release-v1",
                 provider_contract="legacy-contract-v1",
-                adapter_module=type(providers[provider]).__module__,
             )
             service.register_provider(ProviderRegistrationSpec(
                 provider=provider, enabled=True,
@@ -1048,7 +1048,9 @@ class ProviderReadinessService:
     def release_invocation(self, claims):
         return None
 
-    def record_legacy_outcome(self, provider, *, egress, success, latency_ms):
+    def record_legacy_outcome(
+        self, provider, *, egress, success, latency_ms, scope,
+    ):
         if self._legacy_health is not None:
             (
                 self._legacy_health.record_success
@@ -1059,7 +1061,6 @@ class ProviderReadinessService:
                 egress, provider, reachable=success, latency_ms=latency_ms,
                 source="provider_execution",
             )
-        scope = self._active_scope(provider, egress=egress)
         now = self.repository.authority_now()
         self.record_observation(ProviderObservation(
             provider=provider, dimension="reachability",

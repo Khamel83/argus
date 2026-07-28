@@ -6,7 +6,9 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from argparse import ArgumentParser
 from datetime import datetime, timezone
+from pathlib import Path
 from threading import Barrier, Thread
 from urllib.parse import urlparse
 
@@ -26,8 +28,11 @@ from argus.recovery.operator import validate_scratch_database
 
 
 def main() -> None:
+    parser = ArgumentParser()
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args()
     url = os.environ["ARGUS_TEST_POSTGRES_URL"]
-    database = validate_scratch_database(urlparse(url).path.lstrip("/"))
+    validate_scratch_database(urlparse(url).path.lstrip("/"))
     suffix = uuid.uuid4().hex[:12]
     scope = ReadinessScope(
         egress="local",
@@ -220,17 +225,22 @@ def main() -> None:
     )
     if snapshot.execution_decision.code != "spend_blocked":
         raise RuntimeError("materialized terminal snapshot was not recovered")
-    print(json.dumps({
-        "database": database,
-        "granted": len(granted),
-        "fencing_token": granted[0].fencing_token,
-        "fixture_probe": fixture_probe.reason,
-        "live_probe_consumed": True,
-        "reconciled_attempt": True,
-        "terminal_modes_after_credential_rotation": terminal_modes,
-        "snapshot_generation": snapshot.generation,
+    summary = {
+        "schema": "argus-provider-readiness-postgres-v1",
+        "scenarios": {
+            "account_lock_grants": len(granted),
+            "attested_fixture_probe_authorized": fixture_probe.allowed,
+            "billable_probe_consumed": True,
+            "uncertain_attempt_reconciled": True,
+            "terminal_account_modes": terminal_modes,
+        },
         "status": "ok",
-    }, sort_keys=True))
+    }
+    encoded = json.dumps(summary, sort_keys=True, separators=(",", ":"))
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(encoded + "\n")
+    print(encoded)
 
 
 if __name__ == "__main__":
