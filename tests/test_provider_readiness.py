@@ -959,6 +959,105 @@ def test_expired_unresolved_execution_still_blocks_replacement(tmp_path):
     assert denied.decision.reason == "attempt_in_flight"
 
 
+def test_uncertain_paid_execution_blocks_other_account_modes_until_reconciled(
+    tmp_path,
+):
+    from argus.broker.readiness import ExecutionContext
+
+    service, _ = _service(tmp_path)
+    service.register_provider(_registration())
+    discovery = ExecutionContext(
+        provider=ProviderName.BRAVE,
+        tier=1,
+        plan_providers=(ProviderName.BRAVE,),
+        free_only=False,
+        caller_tier_cap=1,
+        scope=_exact_scope(request_class="discovery"),
+        plan_id="plan:uncertain:discovery",
+        caller_identity="test",
+        idempotency_key="request:uncertain:discovery",
+    )
+    authorization = service.authorize_execution(
+        discovery,
+        owner="discovery-worker",
+        conservative_charge=1.0,
+        execution_timeout_seconds=30,
+    )
+    assert authorization.allowed
+    service.complete_execution(
+        authorization,
+        failure=None,
+        actual_charge=None,
+        charge_known=False,
+        evidence_ref="execution:uncertain:discovery",
+    )
+
+    for mode in ("discovery", "research", "recovery", "grounding"):
+        assert service.snapshot(
+            ProviderName.BRAVE, request_class=mode
+        ).spend == "uncertain"
+    denied = service.authorize_execution(
+        ExecutionContext(
+            **{
+                **discovery.as_dict(),
+                "scope": _exact_scope(request_class="research"),
+                "plan_id": "plan:uncertain:research",
+                "idempotency_key": "request:uncertain:research",
+            }
+        ),
+        owner="research-worker",
+        conservative_charge=0.01,
+        execution_timeout_seconds=30,
+    )
+    assert denied.allowed is False
+    assert denied.decision.reason == "uncertain"
+
+
+def test_settlement_uses_same_provider_budget_lock_as_authorization(
+    tmp_path, monkeypatch,
+):
+    from argus.broker.readiness import ExecutionContext
+
+    service, repository = _service(tmp_path)
+    service.register_provider(_registration())
+    calls = []
+    original = repository._lock_provider_budget
+
+    def observe_lock(session, provider):
+        calls.append(provider)
+        return original(session, provider)
+
+    monkeypatch.setattr(repository, "_lock_provider_budget", observe_lock)
+    authorization = service.authorize_execution(
+        ExecutionContext(
+            provider=ProviderName.BRAVE,
+            tier=1,
+            plan_providers=(ProviderName.BRAVE,),
+            free_only=False,
+            caller_tier_cap=1,
+            scope=_exact_scope(),
+            plan_id="plan:lock",
+            caller_identity="test",
+            idempotency_key="request:lock",
+        ),
+        owner="worker",
+        conservative_charge=1.0,
+        execution_timeout_seconds=30,
+    )
+    assert authorization.allowed
+    assert calls == [ProviderName.BRAVE]
+    calls.clear()
+
+    service.complete_execution(
+        authorization,
+        failure=None,
+        actual_charge=None,
+        charge_known=False,
+        evidence_ref="execution:lock",
+    )
+    assert calls == [ProviderName.BRAVE]
+
+
 def test_active_receipts_are_protected_before_overflow_compaction(tmp_path):
     from sqlalchemy import select
     from argus.persistence.readiness import ProviderReadinessEvidenceRefRow
@@ -1218,6 +1317,87 @@ def test_fixture_attestation_rejects_noncanonical_adapter_substitution():
             release="fixture-test-release",
             provider_contract="fixture-test-contract",
             adapter_module="argus.providers.base",
+        )
+
+
+def test_fixture_attestation_loads_checked_artifact_without_running_harness(
+    monkeypatch,
+):
+    import argus.providers.fixture_attestation as fixture_attestation
+
+    monkeypatch.setattr(
+        fixture_attestation,
+        "run_fixture_cases",
+        lambda _provider: (_ for _ in ()).throw(
+            AssertionError("startup must not execute fixture harness")
+        ),
+    )
+    evidence_ref, attestation = fixture_attestation.build_fixture_attestation(
+        ProviderName.BRAVE,
+        release="ignored-runtime-release",
+        provider_contract="2026-07-27-v1",
+    )
+    assert fixture_attestation.verify_fixture_attestation(
+        attestation, evidence_ref=evidence_ref
+    )
+
+
+def test_monkeypatched_canonical_adapter_fails_checked_attestation(monkeypatch):
+    from argus.config import ProviderConfig
+    from argus.providers.brave import BraveProvider
+    from argus.providers.fixture_attestation import (
+        build_fixture_attestation,
+        verify_fixture_attestation,
+    )
+
+    evidence_ref, attestation = build_fixture_attestation(
+        ProviderName.BRAVE,
+        release="ignored-runtime-release",
+        provider_contract="2026-07-27-v1",
+    )
+
+    async def changed_search(self, query):
+        del self, query
+        raise AssertionError("changed adapter")
+
+    monkeypatch.setattr(BraveProvider, "search", changed_search)
+    assert not verify_fixture_attestation(
+        attestation, evidence_ref=evidence_ref
+    )
+    assert BraveProvider(ProviderConfig(enabled=True, api_key="fixture"))
+
+
+def test_generated_fixture_attestation_artifact_is_current():
+    from scripts.generate_provider_fixture_attestations import (
+        generate_attestation_document,
+        load_attestation_document,
+    )
+
+    assert generate_attestation_document() == load_attestation_document()
+
+
+def test_postgres_verifier_rejects_any_worker_exception():
+    from scripts.verify_provider_readiness_postgres import (
+        authorize_workers,
+    )
+
+    class Service:
+        def __init__(self, fail):
+            self.fail = fail
+
+        def authorize_execution(self, *_args, **_kwargs):
+            if self.fail:
+                raise RuntimeError("worker failed")
+            return object()
+
+    contexts = {"discovery": object(), "research": object()}
+    with pytest.raises(RuntimeError, match="worker"):
+        authorize_workers(
+            (
+                (Service(False), "worker-1", "discovery"),
+                (Service(True), "worker-2", "research"),
+            ),
+            contexts,
         )
 
 
@@ -1630,6 +1810,10 @@ def test_postgres_ci_persists_sanitized_readiness_evidence_artifact():
 
     workflow = Path(".github/workflows/ci.yml").read_text()
     assert "scripts/verify_provider_readiness_postgres.py" in workflow
+    assert (
+        "scripts/generate_provider_fixture_attestations.py --check"
+        in workflow
+    )
     assert "provider-readiness-postgres.json" in workflow
     assert "actions/upload-artifact@" in workflow
 

@@ -1,44 +1,18 @@
-"""Content-addressed, no-network provider fixture attestations."""
+"""Load and verify checked canonical-adapter fixture attestations."""
 
 from __future__ import annotations
 
 import hashlib
-import importlib
 import inspect
 import json
 from pathlib import Path
 from typing import Mapping
 
-from argus.broker.provider_evidence import (
-    FailureCategory,
-    ProviderRequestEvidence,
-    query_hash,
-)
 from argus.models import ProviderName
-from argus.providers.normalization import (
-    classify_provider_failure_response,
-    normalize_provider_response,
+from argus.providers.fixture_harness import (  # noqa: F401
+    run_fixture_cases as run_fixture_cases,
 )
-
-
-_CANONICAL_ADAPTERS = {
-    ProviderName.BRAVE: ("argus.providers.brave", "BraveProvider"),
-    ProviderName.DUCKDUCKGO: (
-        "argus.providers.duckduckgo", "DuckDuckGoProvider"
-    ),
-    ProviderName.EXA: ("argus.providers.exa", "ExaProvider"),
-    ProviderName.GITHUB: ("argus.providers.github", "GitHubProvider"),
-    ProviderName.LINKUP: ("argus.providers.linkup", "LinkupProvider"),
-    ProviderName.PARALLEL: ("argus.providers.parallel", "ParallelProvider"),
-    ProviderName.SEARCHAPI: ("argus.providers.searchapi", "SearchApiProvider"),
-    ProviderName.SEARXNG: ("argus.providers.searxng", "SearXNGProvider"),
-    ProviderName.SERPER: ("argus.providers.serper", "SerperProvider"),
-    ProviderName.TAVILY: ("argus.providers.tavily", "TavilyProvider"),
-    ProviderName.VALYU: ("argus.providers.valyu", "ValyuProvider"),
-    ProviderName.WOLFRAM: ("argus.providers.wolfram", "WolframProvider"),
-    ProviderName.YAHOO: ("argus.providers.yahoo", "YahooProvider"),
-    ProviderName.YOU: ("argus.providers.you", "YouProvider"),
-}
+from argus.providers.fixture_registry import CANONICAL_ADAPTERS, canonical_adapter
 
 
 def _sha256_file(path: Path) -> str:
@@ -49,11 +23,17 @@ def _manifest_path() -> Path:
     return Path(__file__).with_name("fixture_contracts.json")
 
 
+def attestation_artifact_path() -> Path:
+    return Path(__file__).with_name("fixture_attestations.json")
+
+
 def _shared_dependency_hash() -> str:
     root = Path(__file__).parents[1]
     paths = (
         root / "providers" / "base.py",
         root / "providers" / "normalization.py",
+        root / "providers" / "fixture_harness.py",
+        root / "providers" / "fixture_registry.py",
         root / "broker" / "provider_evidence.py",
         Path(__file__),
     )
@@ -66,129 +46,48 @@ def _shared_dependency_hash() -> str:
     return digest.hexdigest()
 
 
-def _payload(provider: ProviderName, rows: list[object]) -> dict[str, object]:
-    if provider is ProviderName.BRAVE:
-        return {"web": {"results": rows}}
-    if provider is ProviderName.GITHUB:
-        return {"items": rows}
-    if provider is ProviderName.SERPER:
-        return {"organic": rows}
-    if provider is ProviderName.YOU:
-        return {"results": {"web": rows}}
-    if provider is ProviderName.SEARCHAPI:
-        return {"organic_results": rows}
-    if provider is ProviderName.WOLFRAM:
-        return (
-            {
-                "answer": "fixture answer",
-                "query_url": "https://www.wolframalpha.com/",
-            }
-            if rows else {"empty": True}
-        )
-    return {"results": rows}
+def _adapter_search_hash(provider_class) -> str:
+    return hashlib.sha256(
+        inspect.getsource(provider_class.search).encode()
+    ).hexdigest()
 
 
-def _row(provider: ProviderName) -> dict[str, object]:
-    url = "https://example.com/fixture"
-    fields = {
-        ProviderName.DUCKDUCKGO: {
-            "href": url, "title": "Fixture", "body": "fixture snippet"
-        },
-        ProviderName.GITHUB: {
-            "html_url": url,
-            "full_name": "fixture/repository",
-            "description": "fixture snippet",
-        },
-        ProviderName.LINKUP: {
-            "url": url, "name": "Fixture", "content": "fixture snippet"
-        },
-        ProviderName.SERPER: {
-            "link": url, "title": "Fixture", "snippet": "fixture snippet"
-        },
-        ProviderName.SEARXNG: {
-            "url": url, "title": "Fixture", "content": "fixture snippet"
-        },
-        ProviderName.TAVILY: {
-            "url": url, "title": "Fixture", "content": "fixture snippet"
-        },
-        ProviderName.VALYU: {
-            "url": url, "title": "Fixture", "description": "fixture snippet"
-        },
-        ProviderName.BRAVE: {
-            "url": url, "title": "Fixture", "description": "fixture snippet"
-        },
-        ProviderName.PARALLEL: {
-            "url": url, "title": "Fixture", "excerpt": "fixture snippet"
-        },
-        ProviderName.EXA: {
-            "url": url, "title": "Fixture", "text": "fixture snippet"
-        },
-        ProviderName.SEARCHAPI: {
-            "link": url, "title": "Fixture", "snippet": "fixture snippet"
-        },
-        ProviderName.YOU: {
-            "url": url, "title": "Fixture", "description": "fixture snippet"
-        },
-        ProviderName.YAHOO: {
-            "url": url, "title": "Fixture", "snippet": "fixture snippet"
-        },
-    }
-    return fields.get(provider, {"url": url, "title": "Fixture"})
+def _load_document() -> Mapping[str, object]:
+    payload = json.loads(attestation_artifact_path().read_bytes())
+    if payload.get("schema_version") != 1:
+        raise ValueError("unsupported fixture attestation schema")
+    providers = payload.get("providers")
+    if not isinstance(providers, dict):
+        raise ValueError("fixture attestation providers are missing")
+    return payload
 
 
-def run_fixture_cases(provider: ProviderName) -> str:
-    """Execute success, empty, error, malformed, and privacy cases."""
-    secret = "fixture-private-query-value"
-    request = ProviderRequestEvidence(
-        effective_query_hash=query_hash(secret),
-        provider_query_hash=query_hash(secret),
-    )
-    success = normalize_provider_response(
-        provider,
-        _payload(provider, [_row(provider)]),
-        max_results=1,
-        request_evidence=request,
-    )
-    empty = normalize_provider_response(
-        provider,
-        _payload(provider, []),
-        max_results=1,
-        request_evidence=request,
-    )
-    malformed = normalize_provider_response(
-        provider,
-        {"unexpected": [secret]},
-        max_results=1,
-        request_evidence=request,
-    )
-    error = classify_provider_failure_response(
-        provider,
-        {"transport": {"status_code": 429}, "body": {}},
-    )
-    if len(success.observations) != 1 or success.failure is not None:
-        raise ValueError("fixture success case failed")
-    if empty.failure is None or empty.failure.category is not FailureCategory.EMPTY:
-        raise ValueError("fixture empty case failed")
-    if (
-        malformed.failure is None
-        or malformed.failure.category is not FailureCategory.PARSE_ERROR
-    ):
-        raise ValueError("fixture malformed case failed")
-    if error.category is not FailureCategory.RATE_LIMITED:
-        raise ValueError("fixture error case failed")
-    safe = json.dumps(
-        {
-            "success": success.safe_log_record(),
-            "empty": empty.safe_log_record(),
-            "malformed": malformed.safe_log_record(),
-            "error": error.safe_log_record(),
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    if secret in safe:
-        raise ValueError("fixture privacy case failed")
-    return hashlib.sha256(safe.encode()).hexdigest()
+def _content_ref(payload: Mapping[str, str]) -> str:
+    return "attestation:" + hashlib.sha256(json.dumps(
+        dict(payload), sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()[:48]
+
+
+def load_fixture_attestation(
+    provider: ProviderName,
+    *,
+    adapter_module: str | None = None,
+    adapter_class: str | None = None,
+) -> tuple[str, Mapping[str, str]]:
+    """Load one checked artifact; runtime values cannot regenerate its claims."""
+    module_name, class_name = CANONICAL_ADAPTERS[provider]
+    if adapter_module is not None and adapter_module != module_name:
+        raise ValueError("runtime adapter module is not the canonical adapter")
+    if adapter_class is not None and adapter_class != class_name:
+        raise ValueError("runtime adapter class is not the canonical adapter")
+    entry = _load_document()["providers"].get(provider.value)
+    if not isinstance(entry, dict):
+        raise ValueError("provider fixture attestation is missing")
+    evidence_ref = entry.get("evidence_ref")
+    attestation = entry.get("attestation")
+    if not isinstance(evidence_ref, str) or not isinstance(attestation, dict):
+        raise ValueError("provider fixture attestation is malformed")
+    return evidence_ref, dict(attestation)
 
 
 def build_fixture_attestation(
@@ -199,38 +98,13 @@ def build_fixture_attestation(
     adapter_module: str | None = None,
     adapter_class: str | None = None,
 ) -> tuple[str, Mapping[str, str]]:
-    """Build an attestation from the exact checked-in executable inputs."""
-    manifest_path = _manifest_path()
-    manifest = json.loads(manifest_path.read_bytes())
-    contract = manifest["providers"][provider.value]
-    module_name, class_name = _CANONICAL_ADAPTERS[provider]
-    if adapter_module is not None and adapter_module != module_name:
-        raise ValueError("runtime adapter module is not the canonical adapter")
-    if adapter_class is not None and adapter_class != class_name:
-        raise ValueError("runtime adapter class is not the canonical adapter")
-    module = importlib.import_module(module_name)
-    module_path = Path(module.__file__ or "")
-    provider_class = getattr(module, class_name)
-    payload = {
-        "provider": provider.value,
-        "release": release,
-        "adapter_module": module_name,
-        "adapter_class": class_name,
-        "adapter_code_sha256": _sha256_file(module_path),
-        "adapter_identity_sha256": hashlib.sha256(
-            inspect.getsource(provider_class).encode()
-        ).hexdigest(),
-        "shared_adapter_sha256": _shared_dependency_hash(),
-        "fixture_manifest_sha256": _sha256_file(manifest_path),
-        "fixture_case_digest": run_fixture_cases(provider),
-        "request_contract": str(contract["request_contract"]),
-        "response_contract": str(contract["response_contract"]),
-        "provider_contract": provider_contract,
-    }
-    ref = "attestation:" + hashlib.sha256(json.dumps(
-        payload, sort_keys=True, separators=(",", ":")
-    ).encode()).hexdigest()[:48]
-    return ref, payload
+    """Compatibility wrapper for callers migrating to the checked loader."""
+    del release, provider_contract
+    return load_fixture_attestation(
+        provider,
+        adapter_module=adapter_module,
+        adapter_class=adapter_class,
+    )
 
 
 def verify_fixture_attestation(
@@ -238,16 +112,24 @@ def verify_fixture_attestation(
     *,
     evidence_ref: str | None = None,
 ) -> bool:
-    """Recompute every content address and executable case digest."""
+    """Verify checked content and current code identity without running fixtures."""
     try:
         provider = ProviderName(attestation["provider"])
-        expected_ref, expected = build_fixture_attestation(
+        expected_ref, expected = load_fixture_attestation(
             provider,
-            release=attestation["release"],
-            provider_contract=attestation["provider_contract"],
             adapter_module=attestation["adapter_module"],
             adapter_class=attestation["adapter_class"],
         )
+        module_name, class_name, module, provider_class = canonical_adapter(provider)
+        module_path = Path(module.__file__ or "")
+        live_checks = {
+            "adapter_module": module_name,
+            "adapter_class": class_name,
+            "adapter_code_sha256": _sha256_file(module_path),
+            "adapter_identity_sha256": _adapter_search_hash(provider_class),
+            "shared_adapter_sha256": _shared_dependency_hash(),
+            "fixture_manifest_sha256": _sha256_file(_manifest_path()),
+        }
     except (
         AttributeError,
         KeyError,
@@ -258,11 +140,9 @@ def verify_fixture_attestation(
         json.JSONDecodeError,
     ):
         return False
-    supplied_ref = "attestation:" + hashlib.sha256(json.dumps(
-        dict(attestation), sort_keys=True, separators=(",", ":")
-    ).encode()).hexdigest()[:48]
     return (
         dict(attestation) == dict(expected)
-        and supplied_ref == expected_ref
+        and all(attestation.get(key) == value for key, value in live_checks.items())
+        and _content_ref(attestation) == expected_ref
         and (evidence_ref is None or evidence_ref == expected_ref)
     )

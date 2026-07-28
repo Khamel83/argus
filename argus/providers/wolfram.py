@@ -9,7 +9,7 @@ Get a key at https://developer.wolframalpha.com/
 """
 
 import time
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import urlparse
 
 import httpx
 
@@ -26,7 +26,7 @@ from argus.broker.provider_evidence import ProviderSearchBatch
 logger = get_logger("providers.wolfram")
 
 WOLFRAM_LLM_API = "https://www.wolframalpha.com/api/v1/llm-api"
-WOLFRAM_QUERY_URL = "https://www.wolframalpha.com/input?i={}"
+WOLFRAM_RESULT_URL = "https://www.wolframalpha.com/"
 
 
 class WolframProvider(BaseProvider):
@@ -103,8 +103,8 @@ class WolframProvider(BaseProvider):
             return self._normalized_batch(
                 {
                     "answer": text,
-                    "query_url": WOLFRAM_QUERY_URL.format(quote_plus(query.query)),
-                    "title": f"Wolfram|Alpha: {query.query}",
+                    "query_url": WOLFRAM_RESULT_URL,
+                    "title": "Wolfram|Alpha computed answer",
                 },
                 query,
                 started_at=start,

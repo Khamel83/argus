@@ -72,6 +72,11 @@ jobs:
       - name: Sync dependencies
         run: uv sync --frozen --python 3.12 --extra dev --extra mcp
 
+      - name: Verify canonical provider fixture attestations
+        run: >-
+          uv run --python 3.12
+          python scripts/generate_provider_fixture_attestations.py --check
+
       - name: Install PostgreSQL client
         run: |
           sudo apt-get update

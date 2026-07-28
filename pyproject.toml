@@ -69,6 +69,7 @@ include = ["argus*"]
 
 [tool.setuptools.package-data]
 "argus.api" = ["templates/*.html"]
+"argus.providers" = ["fixture_attestations.json", "fixture_contracts.json"]
 
 [tool.setuptools.data-files]
 "." = ["alembic.ini"]

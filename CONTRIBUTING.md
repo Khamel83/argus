@@ -34,10 +34,30 @@ One change per PR makes review easier. If it's two logically separate things, it
 
 1. Create `argus/providers/yourprovider.py` implementing `BaseProvider`
 2. Add a `ProviderName` enum entry in `argus/models.py`
-3. Wire it into `create_broker()` in `argus/broker/router.py`
-4. Add config entries in `argus/config.py` and `.env.example`
-5. Add tests in `tests/test_providers.py`
-6. Add to routing policies in `argus/broker/policies.py` and budget tiers in `argus/broker/budgets.py`
+3. Add the exact module and adapter class to `CANONICAL_ADAPTERS` in
+   `argus/providers/fixture_registry.py`
+4. Add the provider's success/empty payload shape and canonical result row to
+   `argus/providers/fixture_harness.py`; the harness must exercise the real
+   adapter's `search()` method with hermetic transport fixtures for success,
+   empty, error, malformed, and private-query cases
+5. Add the request, response, and provider contract versions to
+   `argus/providers/fixture_contracts.json`
+6. Regenerate and verify the checked content-addressed artifact:
+
+   ```bash
+   uv run python scripts/generate_provider_fixture_attestations.py
+   uv run python scripts/generate_provider_fixture_attestations.py --check
+   ```
+
+   Commit `argus/providers/fixture_attestations.json` with the adapter and
+   harness changes. Runtime startup only loads and verifies this artifact; it
+   does not regenerate it.
+7. Wire the provider into `create_broker()` in `argus/broker/router.py`
+8. Add config entries in `argus/config.py` and `.env.example`
+9. Add adapter and failure-shape tests in `tests/test_providers.py`, plus the
+   canonical fixture-attestation cases in `tests/test_provider_readiness.py`
+10. Add the provider to routing policies in `argus/broker/policies.py` and
+    budget tiers in `argus/broker/budgets.py`
 
 The DuckDuckGo provider is a good reference — it's simple and doesn't need an API key. See [docs/providers.md](docs/providers.md) for the full provider and extractor reference.
 

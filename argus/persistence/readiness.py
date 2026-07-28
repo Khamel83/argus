@@ -799,6 +799,19 @@ class ProviderReadinessRepository:
                 uncertain_charge, completed_at,
             )
 
+    @staticmethod
+    def _lock_provider_budget(session, provider: ProviderName) -> None:
+        """Serialize every provider/account budget mutation on PostgreSQL."""
+        if session.get_bind().dialect.name != "postgresql":
+            return
+        session.execute(
+            text(
+                "SELECT pg_advisory_xact_lock("
+                "hashtextextended(:account_lock, 0))"
+            ),
+            {"account_lock": f"provider-budget:{provider.value}"},
+        )
+
     def authorize_execution(
         self, *, context: Any, owner: str, conservative_charge: float,
         execution_timeout_seconds: int,
@@ -813,15 +826,7 @@ class ProviderReadinessRepository:
 
         with self._write_transaction() as session:
             now = self.authority_now(session)
-            account_lock = f"provider-budget:{context.provider.value}"
-            if session.get_bind().dialect.name == "postgresql":
-                session.execute(
-                    text(
-                        "SELECT pg_advisory_xact_lock("
-                        "hashtextextended(:account_lock, 0))"
-                    ),
-                    {"account_lock": account_lock},
-                )
+            self._lock_provider_budget(session, context.provider)
             if probe_authorization is not None:
                 existing_probe = session.scalar(select(SpendAuditRow).where(
                     SpendAuditRow.action == "probe_authorize",
@@ -1212,6 +1217,7 @@ class ProviderReadinessRepository:
 
         with self._write_transaction() as session:
             now = self.authority_now(session)
+            self._lock_provider_budget(session, authorization.provider)
             lease = session.scalar(
                 select(ProviderReadinessLeaseRow)
                 .where(ProviderReadinessLeaseRow.scope_key == authorization.scope_key)
@@ -1364,7 +1370,7 @@ class ProviderReadinessRepository:
         primary_scope = scope or ReadinessScope(**registration["scope"])
         targets = {primary_scope.fingerprint(): primary_scope}
         account_wide = (
-            state == "exhausted"
+            state in {"exhausted", "uncertain"}
             or (outcome or "").startswith("reconciled")
         )
         if account_wide:

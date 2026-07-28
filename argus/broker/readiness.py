@@ -383,7 +383,7 @@ class ExecutableProviderRegistry:
     def from_runtime(cls, *, config, providers, durable_spend_repository: bool):
         from argus import __version__
         from argus.providers.fixture_attestation import (
-            build_fixture_attestation,
+            load_fixture_attestation,
         )
 
         fixture_path = Path(__file__).parents[1] / "providers" / "fixture_contracts.json"
@@ -425,10 +425,8 @@ class ExecutableProviderRegistry:
             )
             try:
                 attestation_ref, attestation_payload = (
-                    build_fixture_attestation(
+                    load_fixture_attestation(
                         provider,
-                        release=release,
-                        provider_contract=str(contract),
                         adapter_module=type(adapter).__module__,
                         adapter_class=type(adapter).__name__,
                     )
@@ -520,7 +518,7 @@ class ProviderReadinessService:
         # Compatibility construction is explicit and fail-closed. It never
         # asks an adapter to describe its own availability.
         from argus.providers.fixture_attestation import (
-            build_fixture_attestation,
+            load_fixture_attestation,
         )
         for provider in providers:
             tier = PROVIDER_TIERS[provider]
@@ -529,11 +527,7 @@ class ProviderReadinessService:
             budget_limit = (
                 budget_tracker.get_budget_limit(provider) if tier > 0 else None
             )
-            fixture_ref, fixture_attestation = build_fixture_attestation(
-                provider,
-                release="legacy-release-v1",
-                provider_contract="legacy-contract-v1",
-            )
+            fixture_ref, fixture_attestation = load_fixture_attestation(provider)
             service.register_provider(ProviderRegistrationSpec(
                 provider=provider, enabled=True,
                 configuration_fingerprint="legacy-config-v1",
@@ -642,7 +636,9 @@ class ProviderReadinessService:
             "provider",
             "release",
             "adapter_module",
+            "adapter_class",
             "adapter_code_sha256",
+            "adapter_identity_sha256",
             "shared_adapter_sha256",
             "fixture_manifest_sha256",
             "fixture_case_digest",
@@ -659,11 +655,6 @@ class ProviderReadinessService:
             and spec.fixture_evidence_ref.startswith("attestation:")
             and spec.fixture_attestation
             and required_attestation_fields <= set(spec.fixture_attestation)
-            and spec.fixture_attestation.get("release") == spec.release_revision
-            and (
-                spec.fixture_attestation.get("provider_contract")
-                == spec.contract_version
-            )
             and verify_fixture_attestation(
                 spec.fixture_attestation,
                 evidence_ref=spec.fixture_evidence_ref,
@@ -1212,7 +1203,9 @@ class ProviderReadinessService:
             "provider",
             "release",
             "adapter_module",
+            "adapter_class",
             "adapter_code_sha256",
+            "adapter_identity_sha256",
             "shared_adapter_sha256",
             "fixture_manifest_sha256",
             "fixture_case_digest",
