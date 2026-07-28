@@ -223,6 +223,27 @@ def test_production_extraction_adapter_uses_canonical_finalizer():
     assert projected.text == result.text
 
 
+def test_production_extraction_adapter_accepts_visible_terminal_failure():
+    from argus.extraction.extractor import _finalize_accepted_extraction
+    from argus.extraction.models import ExtractedContent
+
+    projected = _finalize_accepted_extraction(
+        ExtractedContent(
+            url="https://example.com/article",
+            error="all extractors failed",
+        ),
+        url="https://example.com/article",
+        mode="default",
+        caller="maya",
+        request_id="request-production-failure",
+        latency_ms=12,
+        repository=MemoryOutcomeRepository(),
+    )
+
+    assert projected.error == "extraction_failed"
+    assert projected.extraction_run_id
+
+
 @pytest.mark.parametrize(
     ("quality", "complete", "partial_allowed", "outcome", "disposition", "code"),
     [

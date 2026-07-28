@@ -716,7 +716,7 @@ def _finalize_accepted_extraction(
 
     run_id = uuid.uuid4().hex
     selected = result.extractor.value if result.extractor else None
-    candidate_names = tuple(
+    candidate_names = list(
         dict.fromkeys(
             [
                 *(attempt.extractor for attempt in result.attempts),
@@ -748,8 +748,20 @@ def _finalize_accepted_extraction(
                 latency_ms=max(0, attempt.latency_ms),
                 provenance=provenance,
                 spend=SpendEvidence(
-                    actual_usd=Decimal(str(max(0.0, result.cost))),
-                    reserved_usd=Decimal(str(max(0.0, result.cost))),
+                    actual_usd=Decimal(
+                        str(
+                            max(0.0, result.cost)
+                            if selected == attempt.extractor
+                            else 0.0
+                        )
+                    ),
+                    reserved_usd=Decimal(
+                        str(
+                            max(0.0, result.cost)
+                            if selected == attempt.extractor
+                            else 0.0
+                        )
+                    ),
                     spend_attempt_ref=f"extract-spend-{run_id}-{ordinal}",
                 ),
             )
@@ -770,6 +782,23 @@ def _finalize_accepted_extraction(
                     actual_usd=Decimal(str(max(0.0, result.cost))),
                     reserved_usd=Decimal(str(max(0.0, result.cost))),
                     spend_attempt_ref=f"extract-spend-{run_id}-{len(decisions)}",
+                ),
+            )
+        )
+    if not decisions:
+        candidate_names.append("preflight")
+        decisions.append(
+            ExtractorDecision(
+                ordinal=0,
+                extractor="preflight",
+                decision=ExtractorExecutionDecision.INVOKED,
+                attempt_outcome=AttemptOutcome.UNKNOWN_FAILURE,
+                latency_ms=latency_ms,
+                provenance=provenance,
+                spend=SpendEvidence(
+                    actual_usd=Decimal("0"),
+                    reserved_usd=Decimal("0"),
+                    spend_attempt_ref=f"extract-spend-{run_id}-0",
                 ),
             )
         )
@@ -820,7 +849,7 @@ def _finalize_accepted_extraction(
                 eligible=True,
                 spend_class="metered" if result.cost else "free",
             )
-            for name in candidate_names
+            for name in dict.fromkeys(candidate_names)
         ),
         cache_policy_ref="accepted-extraction-cache-v1",
         extraction_plan_version="1",
