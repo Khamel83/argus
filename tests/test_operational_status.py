@@ -132,7 +132,7 @@ def _runtime_repository():
     repository.operational_status.return_value = {
         "backend": "postgresql",
         "connected": True,
-        "schema_head": "0006_maya_outbox",
+        "schema_head": "0007_extraction_outcomes",
         "outbox": {"counts": {}},
     }
     return repository
@@ -494,7 +494,7 @@ def test_dependency_refresh_maps_repository_provider_browser_and_recovery_truth(
     repository.operational_status.return_value = {
         "backend": "postgresql",
         "connected": True,
-        "schema_head": "0006_maya_outbox",
+        "schema_head": "0007_extraction_outcomes",
         "outbox": {
             "counts": {"pending": 2, "dead_letter": 1},
             "oldest_pending_age_seconds": 12,
@@ -584,7 +584,7 @@ def test_dependency_refresh_maps_repository_provider_browser_and_recovery_truth(
     assert status["status"] == "degraded"
     assert status["dependencies"]["postgresql"]["state"] == "healthy"
     assert status["dependencies"]["schema"]["details"]["schema_head"] == (
-        "0006_maya_outbox"
+        "0007_extraction_outcomes"
     )
     assert status["dependencies"]["outbox"]["state"] == "healthy"
     assert status["dependencies"]["browser"]["state"] == "degraded"
@@ -842,7 +842,7 @@ def test_repository_refresh_updates_actual_backend_identity():
     repository.operational_status.return_value = {
         "backend": "postgresql",
         "connected": True,
-        "schema_head": "0006_maya_outbox",
+        "schema_head": "0007_extraction_outcomes",
         "outbox": {"counts": {}},
     }
     broker = MagicMock()
@@ -1008,7 +1008,7 @@ def test_repository_authority_loss_is_cached_unready_and_restoration_recovers():
     repository.operational_status.return_value = {
         "backend": "postgresql",
         "connected": True,
-        "schema_head": "0006_maya_outbox",
+        "schema_head": "0007_extraction_outcomes",
         "outbox": {"counts": {}},
     }
     broker.get_provider_status.side_effect = lambda provider: {
@@ -1762,7 +1762,7 @@ def test_slow_maya_lane_does_not_stale_authority_status(
         return {
             "backend": "postgresql",
             "connected": True,
-            "schema_head": "0006_maya_outbox",
+            "schema_head": "0007_extraction_outcomes",
             "outbox": {"counts": {}},
         }
 
@@ -1984,7 +1984,7 @@ def test_startup_remains_initialized_across_runtime_authority_loss_and_recovery(
     repository.operational_status.return_value = {
         "backend": "postgresql",
         "connected": True,
-        "schema_head": "0006_maya_outbox",
+        "schema_head": "0007_extraction_outcomes",
         "outbox": {"counts": {}},
     }
     refresh_operational_status(
@@ -2226,7 +2226,7 @@ def test_operational_background_workers_shutdown_cleanly():
     repository.operational_status.return_value = {
         "backend": "postgresql",
         "connected": True,
-        "schema_head": "0006_maya_outbox",
+        "schema_head": "0007_extraction_outcomes",
         "outbox": {"counts": {}},
     }
     service = _service()

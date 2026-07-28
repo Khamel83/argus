@@ -228,6 +228,7 @@ def record_verified_restore(
 ) -> None:
     """Verify restored databases against their source manifest before evidence."""
     from argus.recovery.database import (
+        expected_argus_schema_manifest,
         verify_argus_database,
         verify_atlas_database,
         verify_restored_source_inventory,
@@ -286,7 +287,10 @@ def record_verified_restore(
                 command.upgrade(config, "head")
         migrate_argus(argus_name)
         argus_verifier = verify_argus or (
-            lambda database, expected: verify_argus_database(database)
+            lambda database, expected: verify_argus_database(
+                database,
+                expected_schema_manifest=expected,
+            )
         )
         atlas_verifier = verify_atlas or (
             lambda database, expected: verify_atlas_database(
@@ -296,7 +300,7 @@ def record_verified_restore(
         )
         argus_report = argus_verifier(
             argus_name,
-            None,
+            expected_argus_schema_manifest(),
         )
         atlas_report = atlas_verifier(
             atlas_name,

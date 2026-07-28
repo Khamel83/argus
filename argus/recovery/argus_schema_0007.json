@@ -1,0 +1,4666 @@
+{
+  "columns": {
+    "alembic_version": {
+      "version_num": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      }
+    },
+    "authentication_scope_authority_receipts": {
+      "access_scope": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "authentication_scope_fingerprint": {
+        "character_maximum_length": 71,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "issued_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "privacy_scope": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "receipt_ref": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "scope": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      }
+    },
+    "content_identities": {
+      "canonical_url": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "content_hash": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "created_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      }
+    },
+    "delivery_intents": {
+      "attempt_count": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": "0",
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "type": "integer"
+      },
+      "content_sha256": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "created_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "delivered_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "destination": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "extraction_run_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "last_attempt_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "last_error_code": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "last_error_summary": {
+        "character_maximum_length": 256,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "lease_expires_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "lease_token": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "max_attempts": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": "8",
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "type": "integer"
+      },
+      "next_attempt_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "payload_compacted_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "payload_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "payload_sha256": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "response_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "run_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "status": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "updated_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      }
+    },
+    "extraction_artifact_identities": {
+      "artifact_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "content_identity": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "content_text": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "evaluation_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      }
+    },
+    "extraction_artifacts": {
+      "archive_used": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "boolean"
+      },
+      "auth_used": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "boolean"
+      },
+      "canonical_url": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "content_hash": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "cookies_used": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "boolean"
+      },
+      "cost": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "type": "double precision"
+      },
+      "egress": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "machine": {
+        "character_maximum_length": 100,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "metadata_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "run_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "source_type": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      }
+    },
+    "extraction_outcome_acceptances": {
+      "acceptance_fingerprint": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "accepted_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "artifact_disposition": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "outcome": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "outcome_policy_version": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "plan_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "projection_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "receipt_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "scope": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      }
+    },
+    "extraction_outcome_activations": {
+      "activated_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "receipt_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      }
+    },
+    "extraction_outcome_artifacts": {
+      "artifact_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "content_identity": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "content_text": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "disposition": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "evaluation_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "is_complete": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "boolean"
+      },
+      "plan_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "quality_passed": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "boolean"
+      }
+    },
+    "extraction_outcome_plans": {
+      "access_scope": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "created_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "extraction_run_id": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "mode": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "normalized_url": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "plan_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "plan_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "request_id": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "source_fingerprint": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      }
+    },
+    "extraction_outcome_rejections": {
+      "code": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "plan_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "projection_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "provider": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "recommended_action": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "rejection_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      }
+    },
+    "extraction_outcome_steps": {
+      "attempt_outcome": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "decision": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "extractor": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "latency_ms": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": 64,
+        "numeric_scale": 0,
+        "type": "bigint"
+      },
+      "ordinal": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "type": "integer"
+      },
+      "plan_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "policy_rule_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "provenance_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "spend_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      }
+    },
+    "extraction_runs": {
+      "acceptance_fingerprint": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "author": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "caller": {
+        "character_maximum_length": 100,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "committed_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "content_hash": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "domain": {
+        "character_maximum_length": 255,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "error_summary": {
+        "character_maximum_length": 256,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "extraction_run_id": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "latency_ms": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "type": "integer"
+      },
+      "mode": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "published_date": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "quality_passed": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "boolean"
+      },
+      "quality_reason": {
+        "character_maximum_length": 255,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "request_url": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "selected_extractor": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "started_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "status": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "title": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "word_count": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "type": "integer"
+      }
+    },
+    "extractor_attempts": {
+      "extractor": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "failure_summary": {
+        "character_maximum_length": 256,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "latency_ms": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "type": "integer"
+      },
+      "ordinal": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "type": "integer"
+      },
+      "run_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "status": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      }
+    },
+    "normalized_results": {
+      "content_hash": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "domain": {
+        "character_maximum_length": 255,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "final_rank": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "type": "integer"
+      },
+      "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "provider": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "run_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "score": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "type": "double precision"
+      },
+      "snippet": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "title": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "url": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      }
+    },
+    "provider_attempts": {
+      "budget_remaining": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "type": "double precision"
+      },
+      "egress": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "error": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "latency_ms": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "type": "integer"
+      },
+      "provider": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "results_count": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "type": "integer"
+      },
+      "run_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "status": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      }
+    },
+    "provider_balance_snapshots": {
+      "actor_identity": {
+        "character_maximum_length": 100,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "authoritative_charge": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "type": "double precision"
+      },
+      "balance": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "type": "double precision"
+      },
+      "created_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "idempotency_key": {
+        "character_maximum_length": 255,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "observed_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "provider": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "provider_reference": {
+        "character_maximum_length": 255,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "related_attempt_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "request_hash": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "source": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      }
+    },
+    "provider_spend_attempts": {
+      "actual_charge": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "type": "double precision"
+      },
+      "caller_identity": {
+        "character_maximum_length": 100,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "caller_label": {
+        "character_maximum_length": 100,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "created_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "estimator_violation": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": "false",
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "boolean"
+      },
+      "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "idempotency_key": {
+        "character_maximum_length": 255,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "is_paid": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "boolean"
+      },
+      "outcome": {
+        "character_maximum_length": 100,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "provider": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "request_hash": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "reservation_overrun": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": "'0'::double precision",
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "type": "double precision"
+      },
+      "reserved_charge": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "type": "double precision"
+      },
+      "resolution_reference": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "resolution_source": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "status": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "tier": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "type": "integer"
+      },
+      "updated_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "usage": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 53,
+        "numeric_scale": null,
+        "type": "double precision"
+      }
+    },
+    "provider_spend_audit": {
+      "action": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "actor_identity": {
+        "character_maximum_length": 100,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "after_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "attempt_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "before_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "created_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "idempotency_key": {
+        "character_maximum_length": 255,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "provider": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "request_hash": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      }
+    },
+    "result_extraction_links": {
+      "artifact_plan_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "artifact_row_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "composition_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "extraction_acceptance_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "extraction_plan_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "rejection_plan_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "rejection_row_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "result_cluster_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "reuse_origin": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      }
+    },
+    "result_provenance": {
+      "egress": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "machine": {
+        "character_maximum_length": 100,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "metadata_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "provider": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "result_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "source_type": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      }
+    },
+    "retrieval_compositions": {
+      "accepted_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "artifact_outcome": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "composite_outcome": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "projection_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "receipt_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "requirement_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "retrieval_acceptance_ref": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "retrieval_outcome": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "source_fingerprint": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      }
+    },
+    "retrieval_requests": {
+      "caller": {
+        "character_maximum_length": 100,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "created_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "free_only": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": "false",
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "boolean"
+      },
+      "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "max_results": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "type": "integer"
+      },
+      "mode": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "providers_json": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "query_text": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      }
+    },
+    "retrieval_runs": {
+      "acceptance_fingerprint": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "cached": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "boolean"
+      },
+      "committed_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "request_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "search_run_id": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "started_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "status": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "total_results": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "type": "integer"
+      }
+    },
+    "retrieval_sessions": {
+      "created_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "id": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      }
+    },
+    "session_extracted_urls": {
+      "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "query_id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "url": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      }
+    },
+    "session_queries": {
+      "id": {
+        "character_maximum_length": 32,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "mode": {
+        "character_maximum_length": 50,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "ordinal": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "type": "integer"
+      },
+      "queried_at": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
+      "query_text": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "text"
+      },
+      "results_count": {
+        "character_maximum_length": null,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": 32,
+        "numeric_scale": 0,
+        "type": "integer"
+      },
+      "session_id": {
+        "character_maximum_length": 64,
+        "datetime_precision": null,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      }
+    }
+  },
+  "constraints": {
+    "alembic_version_pkc": {
+      "definition": "PRIMARY KEY (version_num)",
+      "table": "alembic_version"
+    },
+    "authentication_scope_authority_receipts_pkey": {
+      "definition": "PRIMARY KEY (receipt_ref)",
+      "table": "authentication_scope_authority_receipts"
+    },
+    "ck_delivery_intents_one_parent": {
+      "definition": "CHECK ((((run_id IS NOT NULL) AND (extraction_run_id IS NULL)) OR ((run_id IS NULL) AND (extraction_run_id IS NOT NULL))))",
+      "table": "delivery_intents"
+    },
+    "ck_result_extraction_links_acceptance_pair": {
+      "definition": "CHECK (((extraction_acceptance_ref IS NULL) = (extraction_plan_id IS NULL)))",
+      "table": "result_extraction_links"
+    },
+    "ck_result_extraction_links_artifact_pair": {
+      "definition": "CHECK (((artifact_row_id IS NULL) = (artifact_plan_id IS NULL)))",
+      "table": "result_extraction_links"
+    },
+    "ck_result_extraction_links_artifact_requires_acceptance": {
+      "definition": "CHECK (((artifact_row_id IS NULL) OR ((artifact_plan_id IS NOT NULL) AND (extraction_plan_id IS NOT NULL) AND (extraction_acceptance_ref IS NOT NULL) AND ((artifact_plan_id)::text = (extraction_plan_id)::text))))",
+      "table": "result_extraction_links"
+    },
+    "ck_result_extraction_links_artifact_same_plan": {
+      "definition": "CHECK (((artifact_plan_id IS NULL) OR ((artifact_plan_id)::text = (extraction_plan_id)::text)))",
+      "table": "result_extraction_links"
+    },
+    "ck_result_extraction_links_rejection_pair": {
+      "definition": "CHECK (((rejection_row_id IS NULL) = (rejection_plan_id IS NULL)))",
+      "table": "result_extraction_links"
+    },
+    "ck_result_extraction_links_rejection_requires_acceptance": {
+      "definition": "CHECK (((rejection_row_id IS NULL) OR ((rejection_plan_id IS NOT NULL) AND (extraction_plan_id IS NOT NULL) AND (extraction_acceptance_ref IS NOT NULL) AND ((rejection_plan_id)::text = (extraction_plan_id)::text))))",
+      "table": "result_extraction_links"
+    },
+    "ck_result_extraction_links_rejection_same_plan": {
+      "definition": "CHECK (((rejection_plan_id IS NULL) OR ((rejection_plan_id)::text = (extraction_plan_id)::text)))",
+      "table": "result_extraction_links"
+    },
+    "content_identities_pkey": {
+      "definition": "PRIMARY KEY (content_hash)",
+      "table": "content_identities"
+    },
+    "delivery_intents_pkey": {
+      "definition": "PRIMARY KEY (id)",
+      "table": "delivery_intents"
+    },
+    "delivery_intents_run_id_fkey": {
+      "definition": "FOREIGN KEY (run_id) REFERENCES retrieval_runs(id)",
+      "table": "delivery_intents"
+    },
+    "delivery_intents_run_id_key": {
+      "definition": "UNIQUE (run_id)",
+      "table": "delivery_intents"
+    },
+    "extraction_artifact_identities_pkey": {
+      "definition": "PRIMARY KEY (artifact_ref)",
+      "table": "extraction_artifact_identities"
+    },
+    "extraction_artifacts_content_hash_fkey": {
+      "definition": "FOREIGN KEY (content_hash) REFERENCES content_identities(content_hash)",
+      "table": "extraction_artifacts"
+    },
+    "extraction_artifacts_pkey": {
+      "definition": "PRIMARY KEY (id)",
+      "table": "extraction_artifacts"
+    },
+    "extraction_artifacts_run_id_fkey": {
+      "definition": "FOREIGN KEY (run_id) REFERENCES extraction_runs(id)",
+      "table": "extraction_artifacts"
+    },
+    "extraction_artifacts_run_id_key": {
+      "definition": "UNIQUE (run_id)",
+      "table": "extraction_artifacts"
+    },
+    "extraction_outcome_acceptances_pkey": {
+      "definition": "PRIMARY KEY (receipt_ref)",
+      "table": "extraction_outcome_acceptances"
+    },
+    "extraction_outcome_acceptances_plan_id_fkey": {
+      "definition": "FOREIGN KEY (plan_id) REFERENCES extraction_outcome_plans(id)",
+      "table": "extraction_outcome_acceptances"
+    },
+    "extraction_outcome_acceptances_plan_id_key": {
+      "definition": "UNIQUE (plan_id)",
+      "table": "extraction_outcome_acceptances"
+    },
+    "extraction_outcome_acceptances_receipt_ref_plan_id_key": {
+      "definition": "UNIQUE (receipt_ref, plan_id)",
+      "table": "extraction_outcome_acceptances"
+    },
+    "extraction_outcome_activations_pkey": {
+      "definition": "PRIMARY KEY (receipt_ref)",
+      "table": "extraction_outcome_activations"
+    },
+    "extraction_outcome_artifacts_id_plan_id_key": {
+      "definition": "UNIQUE (id, plan_id)",
+      "table": "extraction_outcome_artifacts"
+    },
+    "extraction_outcome_artifacts_pkey": {
+      "definition": "PRIMARY KEY (id)",
+      "table": "extraction_outcome_artifacts"
+    },
+    "extraction_outcome_artifacts_plan_id_fkey": {
+      "definition": "FOREIGN KEY (plan_id) REFERENCES extraction_outcome_plans(id)",
+      "table": "extraction_outcome_artifacts"
+    },
+    "extraction_outcome_artifacts_plan_id_key": {
+      "definition": "UNIQUE (plan_id)",
+      "table": "extraction_outcome_artifacts"
+    },
+    "extraction_outcome_plans_extraction_run_id_key": {
+      "definition": "UNIQUE (extraction_run_id)",
+      "table": "extraction_outcome_plans"
+    },
+    "extraction_outcome_plans_pkey": {
+      "definition": "PRIMARY KEY (id)",
+      "table": "extraction_outcome_plans"
+    },
+    "extraction_outcome_rejections_id_plan_id_key": {
+      "definition": "UNIQUE (id, plan_id)",
+      "table": "extraction_outcome_rejections"
+    },
+    "extraction_outcome_rejections_pkey": {
+      "definition": "PRIMARY KEY (id)",
+      "table": "extraction_outcome_rejections"
+    },
+    "extraction_outcome_rejections_plan_id_fkey": {
+      "definition": "FOREIGN KEY (plan_id) REFERENCES extraction_outcome_plans(id)",
+      "table": "extraction_outcome_rejections"
+    },
+    "extraction_outcome_rejections_plan_id_key": {
+      "definition": "UNIQUE (plan_id)",
+      "table": "extraction_outcome_rejections"
+    },
+    "extraction_outcome_steps_pkey": {
+      "definition": "PRIMARY KEY (id)",
+      "table": "extraction_outcome_steps"
+    },
+    "extraction_outcome_steps_plan_id_fkey": {
+      "definition": "FOREIGN KEY (plan_id) REFERENCES extraction_outcome_plans(id)",
+      "table": "extraction_outcome_steps"
+    },
+    "extraction_runs_content_hash_fkey": {
+      "definition": "FOREIGN KEY (content_hash) REFERENCES content_identities(content_hash)",
+      "table": "extraction_runs"
+    },
+    "extraction_runs_extraction_run_id_key": {
+      "definition": "UNIQUE (extraction_run_id)",
+      "table": "extraction_runs"
+    },
+    "extraction_runs_pkey": {
+      "definition": "PRIMARY KEY (id)",
+      "table": "extraction_runs"
+    },
+    "extractor_attempts_pkey": {
+      "definition": "PRIMARY KEY (id)",
+      "table": "extractor_attempts"
+    },
+    "extractor_attempts_run_id_fkey": {
+      "definition": "FOREIGN KEY (run_id) REFERENCES extraction_runs(id)",
+      "table": "extractor_attempts"
+    },
+    "extractor_attempts_run_id_ordinal_key": {
+      "definition": "UNIQUE (run_id, ordinal)",
+      "table": "extractor_attempts"
+    },
+    "fk_delivery_intents_extraction_run_id": {
+      "definition": "FOREIGN KEY (extraction_run_id) REFERENCES extraction_runs(id)",
+      "table": "delivery_intents"
+    },
+    "fk_extraction_outcome_artifacts_identity": {
+      "definition": "FOREIGN KEY (artifact_ref) REFERENCES extraction_artifact_identities(artifact_ref)",
+      "table": "extraction_outcome_artifacts"
+    },
+    "fk_result_extraction_links_acceptance_plan": {
+      "definition": "FOREIGN KEY (extraction_acceptance_ref, extraction_plan_id) REFERENCES extraction_outcome_acceptances(receipt_ref, plan_id) MATCH FULL",
+      "table": "result_extraction_links"
+    },
+    "fk_result_extraction_links_artifact_plan": {
+      "definition": "FOREIGN KEY (artifact_row_id, artifact_plan_id) REFERENCES extraction_outcome_artifacts(id, plan_id) MATCH FULL",
+      "table": "result_extraction_links"
+    },
+    "fk_result_extraction_links_rejection_plan": {
+      "definition": "FOREIGN KEY (rejection_row_id, rejection_plan_id) REFERENCES extraction_outcome_rejections(id, plan_id) MATCH FULL",
+      "table": "result_extraction_links"
+    },
+    "normalized_results_content_hash_fkey": {
+      "definition": "FOREIGN KEY (content_hash) REFERENCES content_identities(content_hash)",
+      "table": "normalized_results"
+    },
+    "normalized_results_pkey": {
+      "definition": "PRIMARY KEY (id)",
+      "table": "normalized_results"
+    },
+    "normalized_results_run_id_final_rank_key": {
+      "definition": "UNIQUE (run_id, final_rank)",
+      "table": "normalized_results"
+    },
+    "normalized_results_run_id_fkey": {
+      "definition": "FOREIGN KEY (run_id) REFERENCES retrieval_runs(id)",
+      "table": "normalized_results"
+    },
+    "provider_attempts_pkey": {
+      "definition": "PRIMARY KEY (id)",
+      "table": "provider_attempts"
+    },
+    "provider_attempts_run_id_fkey": {
+      "definition": "FOREIGN KEY (run_id) REFERENCES retrieval_runs(id)",
+      "table": "provider_attempts"
+    },
+    "provider_balance_snapshots_idempotency_key_key": {
+      "definition": "UNIQUE (idempotency_key)",
+      "table": "provider_balance_snapshots"
+    },
+    "provider_balance_snapshots_pkey": {
+      "definition": "PRIMARY KEY (id)",
+      "table": "provider_balance_snapshots"
+    },
+    "provider_spend_attempts_idempotency_key_key": {
+      "definition": "UNIQUE (idempotency_key)",
+      "table": "provider_spend_attempts"
+    },
+    "provider_spend_attempts_pkey": {
+      "definition": "PRIMARY KEY (id)",
+      "table": "provider_spend_attempts"
+    },
+    "provider_spend_audit_pkey": {
+      "definition": "PRIMARY KEY (id)",
+      "table": "provider_spend_audit"
+    },
+    "result_extraction_links_composition_ref_fkey": {
+      "definition": "FOREIGN KEY (composition_ref) REFERENCES retrieval_compositions(receipt_ref)",
+      "table": "result_extraction_links"
+    },
+    "result_extraction_links_pkey": {
+      "definition": "PRIMARY KEY (id)",
+      "table": "result_extraction_links"
+    },
+    "result_provenance_pkey": {
+      "definition": "PRIMARY KEY (id)",
+      "table": "result_provenance"
+    },
+    "result_provenance_result_id_fkey": {
+      "definition": "FOREIGN KEY (result_id) REFERENCES normalized_results(id)",
+      "table": "result_provenance"
+    },
+    "result_provenance_result_id_key": {
+      "definition": "UNIQUE (result_id)",
+      "table": "result_provenance"
+    },
+    "retrieval_compositions_pkey": {
+      "definition": "PRIMARY KEY (receipt_ref)",
+      "table": "retrieval_compositions"
+    },
+    "retrieval_compositions_source_fingerprint_key": {
+      "definition": "UNIQUE (source_fingerprint)",
+      "table": "retrieval_compositions"
+    },
+    "retrieval_requests_pkey": {
+      "definition": "PRIMARY KEY (id)",
+      "table": "retrieval_requests"
+    },
+    "retrieval_runs_pkey": {
+      "definition": "PRIMARY KEY (id)",
+      "table": "retrieval_runs"
+    },
+    "retrieval_runs_request_id_fkey": {
+      "definition": "FOREIGN KEY (request_id) REFERENCES retrieval_requests(id)",
+      "table": "retrieval_runs"
+    },
+    "retrieval_runs_request_id_key": {
+      "definition": "UNIQUE (request_id)",
+      "table": "retrieval_runs"
+    },
+    "retrieval_runs_search_run_id_key": {
+      "definition": "UNIQUE (search_run_id)",
+      "table": "retrieval_runs"
+    },
+    "retrieval_sessions_pkey": {
+      "definition": "PRIMARY KEY (id)",
+      "table": "retrieval_sessions"
+    },
+    "session_extracted_urls_pkey": {
+      "definition": "PRIMARY KEY (id)",
+      "table": "session_extracted_urls"
+    },
+    "session_extracted_urls_query_id_fkey": {
+      "definition": "FOREIGN KEY (query_id) REFERENCES session_queries(id)",
+      "table": "session_extracted_urls"
+    },
+    "session_extracted_urls_query_id_url_key": {
+      "definition": "UNIQUE (query_id, url)",
+      "table": "session_extracted_urls"
+    },
+    "session_queries_pkey": {
+      "definition": "PRIMARY KEY (id)",
+      "table": "session_queries"
+    },
+    "session_queries_session_id_fkey": {
+      "definition": "FOREIGN KEY (session_id) REFERENCES retrieval_sessions(id)",
+      "table": "session_queries"
+    },
+    "session_queries_session_id_ordinal_key": {
+      "definition": "UNIQUE (session_id, ordinal)",
+      "table": "session_queries"
+    },
+    "uq_delivery_intents_extraction_run_id": {
+      "definition": "UNIQUE (extraction_run_id)",
+      "table": "delivery_intents"
+    },
+    "uq_extraction_outcome_steps_plan_ordinal": {
+      "definition": "UNIQUE (plan_id, ordinal)",
+      "table": "extraction_outcome_steps"
+    },
+    "uq_provider_snapshot_attempt": {
+      "definition": "UNIQUE (related_attempt_id)",
+      "table": "provider_balance_snapshots"
+    },
+    "uq_provider_snapshot_reference": {
+      "definition": "UNIQUE (provider, provider_reference)",
+      "table": "provider_balance_snapshots"
+    },
+    "uq_result_extraction_links_composition_cluster": {
+      "definition": "UNIQUE (composition_ref, result_cluster_ref)",
+      "table": "result_extraction_links"
+    },
+    "uq_spend_audit_action_key": {
+      "definition": "UNIQUE (action, idempotency_key)",
+      "table": "provider_spend_audit"
+    }
+  },
+  "contract_sha256": "73c0c57f1c4899dd0b2d3f1a3e76b7493959b63993fb5f983763e0e5963da51b",
+  "format_version": 1,
+  "indexes": {
+    "alembic_version_pkc": {
+      "definition": "CREATE UNIQUE INDEX alembic_version_pkc ON public.alembic_version USING btree (version_num)",
+      "table": "alembic_version"
+    },
+    "authentication_scope_authority_receipts_pkey": {
+      "definition": "CREATE UNIQUE INDEX authentication_scope_authority_receipts_pkey ON public.authentication_scope_authority_receipts USING btree (receipt_ref)",
+      "table": "authentication_scope_authority_receipts"
+    },
+    "content_identities_pkey": {
+      "definition": "CREATE UNIQUE INDEX content_identities_pkey ON public.content_identities USING btree (content_hash)",
+      "table": "content_identities"
+    },
+    "delivery_intents_pkey": {
+      "definition": "CREATE UNIQUE INDEX delivery_intents_pkey ON public.delivery_intents USING btree (id)",
+      "table": "delivery_intents"
+    },
+    "delivery_intents_run_id_key": {
+      "definition": "CREATE UNIQUE INDEX delivery_intents_run_id_key ON public.delivery_intents USING btree (run_id)",
+      "table": "delivery_intents"
+    },
+    "extraction_artifact_identities_pkey": {
+      "definition": "CREATE UNIQUE INDEX extraction_artifact_identities_pkey ON public.extraction_artifact_identities USING btree (artifact_ref)",
+      "table": "extraction_artifact_identities"
+    },
+    "extraction_artifacts_pkey": {
+      "definition": "CREATE UNIQUE INDEX extraction_artifacts_pkey ON public.extraction_artifacts USING btree (id)",
+      "table": "extraction_artifacts"
+    },
+    "extraction_artifacts_run_id_key": {
+      "definition": "CREATE UNIQUE INDEX extraction_artifacts_run_id_key ON public.extraction_artifacts USING btree (run_id)",
+      "table": "extraction_artifacts"
+    },
+    "extraction_outcome_acceptances_pkey": {
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_acceptances_pkey ON public.extraction_outcome_acceptances USING btree (receipt_ref)",
+      "table": "extraction_outcome_acceptances"
+    },
+    "extraction_outcome_acceptances_plan_id_key": {
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_acceptances_plan_id_key ON public.extraction_outcome_acceptances USING btree (plan_id)",
+      "table": "extraction_outcome_acceptances"
+    },
+    "extraction_outcome_acceptances_receipt_ref_plan_id_key": {
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_acceptances_receipt_ref_plan_id_key ON public.extraction_outcome_acceptances USING btree (receipt_ref, plan_id)",
+      "table": "extraction_outcome_acceptances"
+    },
+    "extraction_outcome_activations_pkey": {
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_activations_pkey ON public.extraction_outcome_activations USING btree (receipt_ref)",
+      "table": "extraction_outcome_activations"
+    },
+    "extraction_outcome_artifacts_id_plan_id_key": {
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_artifacts_id_plan_id_key ON public.extraction_outcome_artifacts USING btree (id, plan_id)",
+      "table": "extraction_outcome_artifacts"
+    },
+    "extraction_outcome_artifacts_pkey": {
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_artifacts_pkey ON public.extraction_outcome_artifacts USING btree (id)",
+      "table": "extraction_outcome_artifacts"
+    },
+    "extraction_outcome_artifacts_plan_id_key": {
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_artifacts_plan_id_key ON public.extraction_outcome_artifacts USING btree (plan_id)",
+      "table": "extraction_outcome_artifacts"
+    },
+    "extraction_outcome_plans_extraction_run_id_key": {
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_plans_extraction_run_id_key ON public.extraction_outcome_plans USING btree (extraction_run_id)",
+      "table": "extraction_outcome_plans"
+    },
+    "extraction_outcome_plans_pkey": {
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_plans_pkey ON public.extraction_outcome_plans USING btree (id)",
+      "table": "extraction_outcome_plans"
+    },
+    "extraction_outcome_rejections_id_plan_id_key": {
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_rejections_id_plan_id_key ON public.extraction_outcome_rejections USING btree (id, plan_id)",
+      "table": "extraction_outcome_rejections"
+    },
+    "extraction_outcome_rejections_pkey": {
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_rejections_pkey ON public.extraction_outcome_rejections USING btree (id)",
+      "table": "extraction_outcome_rejections"
+    },
+    "extraction_outcome_rejections_plan_id_key": {
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_rejections_plan_id_key ON public.extraction_outcome_rejections USING btree (plan_id)",
+      "table": "extraction_outcome_rejections"
+    },
+    "extraction_outcome_steps_pkey": {
+      "definition": "CREATE UNIQUE INDEX extraction_outcome_steps_pkey ON public.extraction_outcome_steps USING btree (id)",
+      "table": "extraction_outcome_steps"
+    },
+    "extraction_runs_extraction_run_id_key": {
+      "definition": "CREATE UNIQUE INDEX extraction_runs_extraction_run_id_key ON public.extraction_runs USING btree (extraction_run_id)",
+      "table": "extraction_runs"
+    },
+    "extraction_runs_pkey": {
+      "definition": "CREATE UNIQUE INDEX extraction_runs_pkey ON public.extraction_runs USING btree (id)",
+      "table": "extraction_runs"
+    },
+    "extractor_attempts_pkey": {
+      "definition": "CREATE UNIQUE INDEX extractor_attempts_pkey ON public.extractor_attempts USING btree (id)",
+      "table": "extractor_attempts"
+    },
+    "extractor_attempts_run_id_ordinal_key": {
+      "definition": "CREATE UNIQUE INDEX extractor_attempts_run_id_ordinal_key ON public.extractor_attempts USING btree (run_id, ordinal)",
+      "table": "extractor_attempts"
+    },
+    "ix_delivery_intents_dispatch": {
+      "definition": "CREATE INDEX ix_delivery_intents_dispatch ON public.delivery_intents USING btree (destination, status, next_attempt_at)",
+      "table": "delivery_intents"
+    },
+    "ix_extraction_outcome_artifacts_artifact_ref": {
+      "definition": "CREATE INDEX ix_extraction_outcome_artifacts_artifact_ref ON public.extraction_outcome_artifacts USING btree (artifact_ref)",
+      "table": "extraction_outcome_artifacts"
+    },
+    "ix_provider_balance_snapshots_provider": {
+      "definition": "CREATE INDEX ix_provider_balance_snapshots_provider ON public.provider_balance_snapshots USING btree (provider)",
+      "table": "provider_balance_snapshots"
+    },
+    "ix_provider_spend_attempts_provider": {
+      "definition": "CREATE INDEX ix_provider_spend_attempts_provider ON public.provider_spend_attempts USING btree (provider)",
+      "table": "provider_spend_attempts"
+    },
+    "normalized_results_pkey": {
+      "definition": "CREATE UNIQUE INDEX normalized_results_pkey ON public.normalized_results USING btree (id)",
+      "table": "normalized_results"
+    },
+    "normalized_results_run_id_final_rank_key": {
+      "definition": "CREATE UNIQUE INDEX normalized_results_run_id_final_rank_key ON public.normalized_results USING btree (run_id, final_rank)",
+      "table": "normalized_results"
+    },
+    "provider_attempts_pkey": {
+      "definition": "CREATE UNIQUE INDEX provider_attempts_pkey ON public.provider_attempts USING btree (id)",
+      "table": "provider_attempts"
+    },
+    "provider_balance_snapshots_idempotency_key_key": {
+      "definition": "CREATE UNIQUE INDEX provider_balance_snapshots_idempotency_key_key ON public.provider_balance_snapshots USING btree (idempotency_key)",
+      "table": "provider_balance_snapshots"
+    },
+    "provider_balance_snapshots_pkey": {
+      "definition": "CREATE UNIQUE INDEX provider_balance_snapshots_pkey ON public.provider_balance_snapshots USING btree (id)",
+      "table": "provider_balance_snapshots"
+    },
+    "provider_spend_attempts_idempotency_key_key": {
+      "definition": "CREATE UNIQUE INDEX provider_spend_attempts_idempotency_key_key ON public.provider_spend_attempts USING btree (idempotency_key)",
+      "table": "provider_spend_attempts"
+    },
+    "provider_spend_attempts_pkey": {
+      "definition": "CREATE UNIQUE INDEX provider_spend_attempts_pkey ON public.provider_spend_attempts USING btree (id)",
+      "table": "provider_spend_attempts"
+    },
+    "provider_spend_audit_pkey": {
+      "definition": "CREATE UNIQUE INDEX provider_spend_audit_pkey ON public.provider_spend_audit USING btree (id)",
+      "table": "provider_spend_audit"
+    },
+    "result_extraction_links_pkey": {
+      "definition": "CREATE UNIQUE INDEX result_extraction_links_pkey ON public.result_extraction_links USING btree (id)",
+      "table": "result_extraction_links"
+    },
+    "result_provenance_pkey": {
+      "definition": "CREATE UNIQUE INDEX result_provenance_pkey ON public.result_provenance USING btree (id)",
+      "table": "result_provenance"
+    },
+    "result_provenance_result_id_key": {
+      "definition": "CREATE UNIQUE INDEX result_provenance_result_id_key ON public.result_provenance USING btree (result_id)",
+      "table": "result_provenance"
+    },
+    "retrieval_compositions_pkey": {
+      "definition": "CREATE UNIQUE INDEX retrieval_compositions_pkey ON public.retrieval_compositions USING btree (receipt_ref)",
+      "table": "retrieval_compositions"
+    },
+    "retrieval_compositions_source_fingerprint_key": {
+      "definition": "CREATE UNIQUE INDEX retrieval_compositions_source_fingerprint_key ON public.retrieval_compositions USING btree (source_fingerprint)",
+      "table": "retrieval_compositions"
+    },
+    "retrieval_requests_pkey": {
+      "definition": "CREATE UNIQUE INDEX retrieval_requests_pkey ON public.retrieval_requests USING btree (id)",
+      "table": "retrieval_requests"
+    },
+    "retrieval_runs_pkey": {
+      "definition": "CREATE UNIQUE INDEX retrieval_runs_pkey ON public.retrieval_runs USING btree (id)",
+      "table": "retrieval_runs"
+    },
+    "retrieval_runs_request_id_key": {
+      "definition": "CREATE UNIQUE INDEX retrieval_runs_request_id_key ON public.retrieval_runs USING btree (request_id)",
+      "table": "retrieval_runs"
+    },
+    "retrieval_runs_search_run_id_key": {
+      "definition": "CREATE UNIQUE INDEX retrieval_runs_search_run_id_key ON public.retrieval_runs USING btree (search_run_id)",
+      "table": "retrieval_runs"
+    },
+    "retrieval_sessions_pkey": {
+      "definition": "CREATE UNIQUE INDEX retrieval_sessions_pkey ON public.retrieval_sessions USING btree (id)",
+      "table": "retrieval_sessions"
+    },
+    "session_extracted_urls_pkey": {
+      "definition": "CREATE UNIQUE INDEX session_extracted_urls_pkey ON public.session_extracted_urls USING btree (id)",
+      "table": "session_extracted_urls"
+    },
+    "session_extracted_urls_query_id_url_key": {
+      "definition": "CREATE UNIQUE INDEX session_extracted_urls_query_id_url_key ON public.session_extracted_urls USING btree (query_id, url)",
+      "table": "session_extracted_urls"
+    },
+    "session_queries_pkey": {
+      "definition": "CREATE UNIQUE INDEX session_queries_pkey ON public.session_queries USING btree (id)",
+      "table": "session_queries"
+    },
+    "session_queries_session_id_ordinal_key": {
+      "definition": "CREATE UNIQUE INDEX session_queries_session_id_ordinal_key ON public.session_queries USING btree (session_id, ordinal)",
+      "table": "session_queries"
+    },
+    "uq_delivery_intents_extraction_run_id": {
+      "definition": "CREATE UNIQUE INDEX uq_delivery_intents_extraction_run_id ON public.delivery_intents USING btree (extraction_run_id)",
+      "table": "delivery_intents"
+    },
+    "uq_extraction_outcome_steps_plan_ordinal": {
+      "definition": "CREATE UNIQUE INDEX uq_extraction_outcome_steps_plan_ordinal ON public.extraction_outcome_steps USING btree (plan_id, ordinal)",
+      "table": "extraction_outcome_steps"
+    },
+    "uq_provider_snapshot_attempt": {
+      "definition": "CREATE UNIQUE INDEX uq_provider_snapshot_attempt ON public.provider_balance_snapshots USING btree (related_attempt_id)",
+      "table": "provider_balance_snapshots"
+    },
+    "uq_provider_snapshot_reference": {
+      "definition": "CREATE UNIQUE INDEX uq_provider_snapshot_reference ON public.provider_balance_snapshots USING btree (provider, provider_reference)",
+      "table": "provider_balance_snapshots"
+    },
+    "uq_result_extraction_links_composition_cluster": {
+      "definition": "CREATE UNIQUE INDEX uq_result_extraction_links_composition_cluster ON public.result_extraction_links USING btree (composition_ref, result_cluster_ref)",
+      "table": "result_extraction_links"
+    },
+    "uq_spend_audit_action_key": {
+      "definition": "CREATE UNIQUE INDEX uq_spend_audit_action_key ON public.provider_spend_audit USING btree (action, idempotency_key)",
+      "table": "provider_spend_audit"
+    }
+  },
+  "schema_head": "0007_extraction_outcomes",
+  "tables": [
+    "alembic_version",
+    "authentication_scope_authority_receipts",
+    "content_identities",
+    "delivery_intents",
+    "extraction_artifact_identities",
+    "extraction_artifacts",
+    "extraction_outcome_acceptances",
+    "extraction_outcome_activations",
+    "extraction_outcome_artifacts",
+    "extraction_outcome_plans",
+    "extraction_outcome_rejections",
+    "extraction_outcome_steps",
+    "extraction_runs",
+    "extractor_attempts",
+    "normalized_results",
+    "provider_attempts",
+    "provider_balance_snapshots",
+    "provider_spend_attempts",
+    "provider_spend_audit",
+    "result_extraction_links",
+    "result_provenance",
+    "retrieval_compositions",
+    "retrieval_requests",
+    "retrieval_runs",
+    "retrieval_sessions",
+    "session_extracted_urls",
+    "session_queries"
+  ]
+}

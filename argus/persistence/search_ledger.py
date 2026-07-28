@@ -14,10 +14,12 @@ from typing import Callable, Protocol
 
 from sqlalchemy import (
     Boolean,
+    BigInteger,
     CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     Index,
     String,
@@ -173,6 +175,10 @@ class DeliveryIntentRow(LedgerBase):
             "(run_id IS NULL AND extraction_run_id IS NOT NULL)",
             name="ck_delivery_intents_one_parent",
         ),
+        UniqueConstraint(
+            "extraction_run_id",
+            name="uq_delivery_intents_extraction_run_id",
+        ),
         Index(
             "ix_delivery_intents_dispatch",
             "destination",
@@ -186,7 +192,11 @@ class DeliveryIntentRow(LedgerBase):
         ForeignKey("retrieval_runs.id"), nullable=True, unique=True
     )
     extraction_run_id: Mapped[str | None] = mapped_column(
-        ForeignKey("extraction_runs.id"), nullable=True, unique=True
+        ForeignKey(
+            "extraction_runs.id",
+            name="fk_delivery_intents_extraction_run_id",
+        ),
+        nullable=True,
     )
     destination: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -273,6 +283,256 @@ class ExtractionArtifactRow(LedgerBase):
     archive_used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     cost: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+
+
+class ExtractionOutcomePlanRow(LedgerBase):
+    __tablename__ = "extraction_outcome_plans"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    plan_ref: Mapped[str] = mapped_column(String(128), nullable=False)
+    extraction_run_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, unique=True
+    )
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    normalized_url: Mapped[str] = mapped_column(Text, nullable=False)
+    access_scope: Mapped[str] = mapped_column(String(128), nullable=False)
+    mode: Mapped[str] = mapped_column(String(64), nullable=False)
+    plan_json: Mapped[str] = mapped_column(Text, nullable=False)
+    source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class AuthenticationScopeAuthorityReceiptRow(LedgerBase):
+    __tablename__ = "authentication_scope_authority_receipts"
+
+    receipt_ref: Mapped[str] = mapped_column(String(64), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    access_scope: Mapped[str] = mapped_column(String(128), nullable=False)
+    privacy_scope: Mapped[str] = mapped_column(String(128), nullable=False)
+    authentication_scope_fingerprint: Mapped[str] = mapped_column(
+        String(71),
+        nullable=False,
+    )
+    issued_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class ExtractionOutcomeStepRow(LedgerBase):
+    __tablename__ = "extraction_outcome_steps"
+    __table_args__ = (
+        UniqueConstraint(
+            "plan_id",
+            "ordinal",
+            name="uq_extraction_outcome_steps_plan_ordinal",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    plan_id: Mapped[str] = mapped_column(
+        ForeignKey("extraction_outcome_plans.id"), nullable=False
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    extractor: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision: Mapped[str] = mapped_column(String(32), nullable=False)
+    attempt_outcome: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    provenance_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    spend_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    policy_rule_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
+class ExtractionArtifactIdentityRow(LedgerBase):
+    __tablename__ = "extraction_artifact_identities"
+
+    artifact_ref: Mapped[str] = mapped_column(String(128), primary_key=True)
+    content_identity: Mapped[str] = mapped_column(String(128), nullable=False)
+    content_text: Mapped[str] = mapped_column(Text, nullable=False)
+    evaluation_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ExtractionOutcomeArtifactRow(LedgerBase):
+    __tablename__ = "extraction_outcome_artifacts"
+    __table_args__ = (
+        UniqueConstraint("id", "plan_id"),
+        Index(
+            "ix_extraction_outcome_artifacts_artifact_ref",
+            "artifact_ref",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    plan_id: Mapped[str] = mapped_column(
+        ForeignKey("extraction_outcome_plans.id"), nullable=False, unique=True
+    )
+    artifact_ref: Mapped[str] = mapped_column(
+        ForeignKey(
+            "extraction_artifact_identities.artifact_ref",
+            name="fk_extraction_outcome_artifacts_identity",
+        ),
+        nullable=False,
+    )
+    content_identity: Mapped[str] = mapped_column(String(128), nullable=False)
+    content_text: Mapped[str] = mapped_column(Text, nullable=False)
+    disposition: Mapped[str] = mapped_column(String(32), nullable=False)
+    quality_passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_complete: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    evaluation_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ExtractionOutcomeRejectionRow(LedgerBase):
+    __tablename__ = "extraction_outcome_rejections"
+    __table_args__ = (UniqueConstraint("id", "plan_id"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    plan_id: Mapped[str] = mapped_column(
+        ForeignKey("extraction_outcome_plans.id"), nullable=False, unique=True
+    )
+    rejection_ref: Mapped[str] = mapped_column(String(128), nullable=False)
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    recommended_action: Mapped[str] = mapped_column(String(64), nullable=False)
+    projection_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ExtractionOutcomeAcceptanceRow(LedgerBase):
+    __tablename__ = "extraction_outcome_acceptances"
+    __table_args__ = (UniqueConstraint("receipt_ref", "plan_id"),)
+
+    receipt_ref: Mapped[str] = mapped_column(String(128), primary_key=True)
+    plan_id: Mapped[str] = mapped_column(
+        ForeignKey("extraction_outcome_plans.id"), nullable=False, unique=True
+    )
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    artifact_disposition: Mapped[str] = mapped_column(String(32), nullable=False)
+    outcome_policy_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    projection_json: Mapped[str] = mapped_column(Text, nullable=False)
+    acceptance_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    accepted_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    scope: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class RetrievalCompositionRow(LedgerBase):
+    __tablename__ = "retrieval_compositions"
+
+    receipt_ref: Mapped[str] = mapped_column(String(128), primary_key=True)
+    retrieval_acceptance_ref: Mapped[str] = mapped_column(String(128), nullable=False)
+    requirement_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    retrieval_outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    artifact_outcome: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    composite_outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    projection_json: Mapped[str] = mapped_column(Text, nullable=False)
+    source_fingerprint: Mapped[str] = mapped_column(
+        String(64), nullable=False, unique=True
+    )
+    accepted_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class ResultExtractionLinkRow(LedgerBase):
+    __tablename__ = "result_extraction_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "composition_ref",
+            "result_cluster_ref",
+            name="uq_result_extraction_links_composition_cluster",
+        ),
+        CheckConstraint(
+            "(extraction_acceptance_ref IS NULL) = "
+            "(extraction_plan_id IS NULL)",
+            name="ck_result_extraction_links_acceptance_pair",
+        ),
+        CheckConstraint(
+            "(artifact_row_id IS NULL) = (artifact_plan_id IS NULL)",
+            name="ck_result_extraction_links_artifact_pair",
+        ),
+        CheckConstraint(
+            "(rejection_row_id IS NULL) = (rejection_plan_id IS NULL)",
+            name="ck_result_extraction_links_rejection_pair",
+        ),
+        CheckConstraint(
+            "artifact_plan_id IS NULL OR "
+            "artifact_plan_id = extraction_plan_id",
+            name="ck_result_extraction_links_artifact_same_plan",
+        ),
+        CheckConstraint(
+            "rejection_plan_id IS NULL OR "
+            "rejection_plan_id = extraction_plan_id",
+            name="ck_result_extraction_links_rejection_same_plan",
+        ),
+        CheckConstraint(
+            "artifact_row_id IS NULL OR "
+            "(artifact_plan_id IS NOT NULL AND "
+            "extraction_plan_id IS NOT NULL AND "
+            "extraction_acceptance_ref IS NOT NULL AND "
+            "artifact_plan_id = extraction_plan_id)",
+            name="ck_result_extraction_links_artifact_requires_acceptance",
+        ),
+        CheckConstraint(
+            "rejection_row_id IS NULL OR "
+            "(rejection_plan_id IS NOT NULL AND "
+            "extraction_plan_id IS NOT NULL AND "
+            "extraction_acceptance_ref IS NOT NULL AND "
+            "rejection_plan_id = extraction_plan_id)",
+            name="ck_result_extraction_links_rejection_requires_acceptance",
+        ),
+        ForeignKeyConstraint(
+            ["extraction_acceptance_ref", "extraction_plan_id"],
+            [
+                "extraction_outcome_acceptances.receipt_ref",
+                "extraction_outcome_acceptances.plan_id",
+            ],
+            match="FULL",
+            name="fk_result_extraction_links_acceptance_plan",
+        ),
+        ForeignKeyConstraint(
+            ["artifact_row_id", "artifact_plan_id"],
+            [
+                "extraction_outcome_artifacts.id",
+                "extraction_outcome_artifacts.plan_id",
+            ],
+            match="FULL",
+            name="fk_result_extraction_links_artifact_plan",
+        ),
+        ForeignKeyConstraint(
+            ["rejection_row_id", "rejection_plan_id"],
+            [
+                "extraction_outcome_rejections.id",
+                "extraction_outcome_rejections.plan_id",
+            ],
+            match="FULL",
+            name="fk_result_extraction_links_rejection_plan",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    composition_ref: Mapped[str] = mapped_column(
+        ForeignKey("retrieval_compositions.receipt_ref"), nullable=False
+    )
+    result_cluster_ref: Mapped[str] = mapped_column(String(128), nullable=False)
+    extraction_acceptance_ref: Mapped[str | None] = mapped_column(
+        String(128), nullable=True
+    )
+    extraction_plan_id: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+    artifact_row_id: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+    artifact_plan_id: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+    rejection_row_id: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+    rejection_plan_id: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+    reuse_origin: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
+class ExtractionOutcomeActivationRow(LedgerBase):
+    __tablename__ = "extraction_outcome_activations"
+
+    receipt_ref: Mapped[str] = mapped_column(String(128), primary_key=True)
+    activated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class RetrievalSessionRow(LedgerBase):
@@ -514,21 +774,433 @@ def _parse_optional_json_list(value: str | None):
     return parsed if isinstance(parsed, list) else {"__invalid_json__": value}
 
 
+def _extraction_projection_state(projection) -> dict:
+    """Canonical source facts and projection for S3 durable identity."""
+    from dataclasses import asdict
+
+    state = asdict(projection)
+    raw_url = state["plan"]["normalized_url"]
+    state["plan"]["normalized_url"] = _safe_extraction_source_url(raw_url)
+    state["normalized_url_identity"] = (
+        getattr(projection, "normalized_url_identity", None)
+        or "sha256:" + hashlib.sha256(raw_url.encode("utf-8")).hexdigest()
+    )
+    return _normalize_json_value(state)
+
+
+def _extraction_claim_state(claim) -> dict:
+    from dataclasses import asdict
+
+    state = asdict(claim)
+    state["plan_ref"] = claim.plan.plan_ref
+    raw_url = state["plan"]["normalized_url"]
+    state["plan"]["normalized_url"] = _safe_extraction_source_url(raw_url)
+    state["normalized_url_identity"] = (
+        "sha256:" + hashlib.sha256(raw_url.encode("utf-8")).hexdigest()
+    )
+    return _normalize_json_value(state)
+
+
+def _extraction_source_fingerprint(state: dict) -> str:
+    source = dict(state)
+    source.pop("outcome", None)
+    source.pop("artifact_disposition", None)
+    source.pop("rejection", None)
+    return acceptance_fingerprint(source)
+
+
+def _deserialize_extraction_projection(state: dict):
+    from decimal import Decimal
+
+    from argus.contracts import CanonicalOutcome
+    from argus.extraction.cache import ExtractionCacheIdentity
+    from argus.extraction.outcomes import (
+        ArtifactDisposition,
+        ArtifactEvaluation,
+        AuthenticationScope,
+        AttemptOutcome,
+        CacheDecision,
+        CacheOriginEvidence,
+        CacheOutcome,
+        ExtractionAcceptanceReceipt,
+        ExtractionCandidate,
+        ExtractionPlan,
+        ExtractionProvenance,
+        ExtractorDecision,
+        ExtractorExecutionDecision,
+        FinalizedExtractionProjection,
+        SpendEvidence,
+        TerminalCause,
+        TerminalCauseKind,
+    )
+    from argus.extraction.rejection import (
+        ExtractionRejection,
+        RejectionAction,
+        RejectionCode,
+    )
+
+    def provenance(value):
+        return ExtractionProvenance(**value)
+
+    def parse_artifact(artifact_state):
+        if artifact_state is None:
+            return None
+        return ArtifactEvaluation(
+            **{
+                **artifact_state,
+                "completeness_confidence": (
+                    Decimal(artifact_state["completeness_confidence"])
+                    if artifact_state["completeness_confidence"] is not None
+                    else None
+                ),
+                "completeness_signals": tuple(
+                    artifact_state["completeness_signals"]
+                ),
+                "provenance": provenance(artifact_state["provenance"]),
+            }
+        )
+
+    def parse_steps(step_states):
+        parsed = []
+        for step_state in step_states:
+            spend_state = step_state["spend"]
+            parsed.append(
+                ExtractorDecision(
+                    **{
+                        **step_state,
+                        "decision": ExtractorExecutionDecision(
+                            step_state["decision"]
+                        ),
+                        "attempt_outcome": (
+                            AttemptOutcome(step_state["attempt_outcome"])
+                            if step_state["attempt_outcome"] is not None
+                            else None
+                        ),
+                        "provenance": (
+                            provenance(step_state["provenance"])
+                            if step_state["provenance"] is not None
+                            else None
+                        ),
+                        "spend": (
+                            SpendEvidence(
+                                actual_usd=Decimal(
+                                    spend_state["actual_usd"]
+                                ),
+                                reserved_usd=Decimal(
+                                    spend_state["reserved_usd"]
+                                ),
+                                spend_attempt_ref=(
+                                    spend_state["spend_attempt_ref"]
+                                ),
+                            )
+                            if spend_state is not None
+                            else None
+                        ),
+                    }
+                )
+            )
+        return tuple(parsed)
+
+    def parse_rejection(rejection_state):
+        if rejection_state is None:
+            return None
+        return ExtractionRejection(
+            **{
+                **rejection_state,
+                "code": RejectionCode(rejection_state["code"]),
+                "recommended_action": RejectionAction(
+                    rejection_state["recommended_action"]
+                ),
+            }
+        )
+
+    plan_state = state["plan"]
+    authentication_scope_state = plan_state.get("authentication_scope")
+    plan = ExtractionPlan(
+        **{
+            **plan_state,
+            "authentication_scope": (
+                AuthenticationScope(**authentication_scope_state)
+                if isinstance(authentication_scope_state, dict)
+                else authentication_scope_state
+            ),
+            "candidates": tuple(
+                ExtractionCandidate(**candidate)
+                for candidate in plan_state["candidates"]
+            ),
+        }
+    )
+    artifact = parse_artifact(state["artifact"])
+    steps = parse_steps(state["steps"])
+    terminal_state = state["terminal_cause"]
+    terminal = None
+    if terminal_state is not None:
+        terminal = TerminalCause(
+            **{
+                **terminal_state,
+                "kind": TerminalCauseKind(terminal_state["kind"]),
+                "preflight_outcome": (
+                    CanonicalOutcome(terminal_state["preflight_outcome"])
+                    if terminal_state["preflight_outcome"] is not None
+                    else None
+                ),
+                "invoked_ordinals": tuple(terminal_state["invoked_ordinals"]),
+                "distinct_attempt_outcomes": tuple(
+                    AttemptOutcome(value)
+                    for value in terminal_state["distinct_attempt_outcomes"]
+                ),
+            }
+        )
+    rejection = parse_rejection(state["rejection"])
+    cache_state = state["cache_decision"]
+    origin_state = cache_state.get("origin_evidence")
+    origin = None
+    if origin_state is not None:
+        receipt_state = origin_state["acceptance_receipt"]
+        origin = CacheOriginEvidence(
+            **{
+                **origin_state,
+                "outcome": CanonicalOutcome(origin_state["outcome"]),
+                "artifact_disposition": ArtifactDisposition(
+                    origin_state["artifact_disposition"]
+                ),
+                "artifact": parse_artifact(origin_state["artifact"]),
+                "rejection": parse_rejection(origin_state["rejection"]),
+                "steps": parse_steps(origin_state["steps"]),
+                "acceptance_receipt": ExtractionAcceptanceReceipt(
+                    **receipt_state
+                ),
+            }
+        )
+    projection_state = dict(state)
+    return FinalizedExtractionProjection(
+        **{
+            **projection_state,
+            "outcome": CanonicalOutcome(state["outcome"]),
+            "artifact_disposition": ArtifactDisposition(
+                state["artifact_disposition"]
+            ),
+            "plan": plan,
+            "artifact": artifact,
+            "rejection": rejection,
+            "steps": steps,
+            "terminal_cause": terminal,
+            "cache_decision": CacheDecision(
+                **{
+                    **cache_state,
+                    "outcome": CacheOutcome(cache_state["outcome"]),
+                    "origin_evidence": origin,
+                    "current_identity": (
+                        ExtractionCacheIdentity(
+                            **cache_state["current_identity"]
+                        )
+                        if cache_state.get("current_identity") is not None
+                        else None
+                    ),
+                }
+            ),
+        }
+    )
+
+
+def _safe_extraction_source_url(value: str) -> str:
+    """Persist only a credential-free origin; identity is stored separately."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(value)
+    hostname = parts.hostname or ""
+    if ":" in hostname and not hostname.startswith("["):
+        hostname = f"[{hostname}]"
+    netloc = hostname
+    if parts.port is not None:
+        netloc = f"{netloc}:{parts.port}"
+    return urlunsplit((parts.scheme, netloc, "/", "", ""))
+
+
 def _safe_persisted_url(value: str) -> str:
+    """Legacy safe URL projection for non-S3 records that retain page paths."""
     from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
     parts = urlsplit(value)
     query = []
+    sensitive_markers = (
+        "token",
+        "key",
+        "secret",
+        "auth",
+        "signature",
+        "credential",
+        "password",
+        "session",
+        "code",
+        "jwt",
+        "sig",
+    )
     for key, item in parse_qsl(parts.query, keep_blank_values=True):
-        if any(
-            marker in key.lower()
-            for marker in ("token", "key", "secret", "auth", "signature")
-        ):
+        if any(marker in key.lower() for marker in sensitive_markers):
             item = "[redacted]"
         query.append((key, item))
-    return urlunsplit(
-        (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
+    hostname = parts.hostname or ""
+    if ":" in hostname and not hostname.startswith("["):
+        hostname = f"[{hostname}]"
+    netloc = hostname
+    if parts.port is not None:
+        netloc = f"{netloc}:{parts.port}"
+    fragment = (
+        "[redacted]"
+        if parts.fragment
+        and any(
+            marker in parts.fragment.lower()
+            for marker in sensitive_markers
+        )
+        else parts.fragment
     )
+    return urlunsplit(
+        (parts.scheme, netloc, parts.path, urlencode(query), fragment)
+    )
+
+
+def _persist_extraction_projection_rows(
+    session,
+    *,
+    projection,
+    state: dict,
+    plan_id: str,
+    now: datetime,
+) -> tuple[str, str]:
+    for step, step_state in zip(projection.steps, state["steps"]):
+        session.add(
+            ExtractionOutcomeStepRow(
+                id=uuid.uuid4().hex,
+                plan_id=plan_id,
+                ordinal=step.ordinal,
+                extractor=step.extractor,
+                decision=step.decision.value,
+                attempt_outcome=(
+                    step.attempt_outcome.value
+                    if step.attempt_outcome is not None
+                    else None
+                ),
+                latency_ms=step.latency_ms,
+                provenance_json=(
+                    _canonical_json(step_state["provenance"])
+                    if step.provenance is not None
+                    else None
+                ),
+                spend_json=(
+                    _canonical_json(step_state["spend"])
+                    if step.spend is not None
+                    else None
+                ),
+                policy_rule_ref=step.policy_rule_ref,
+            )
+        )
+    artifact = projection.artifact
+    if artifact is not None:
+        from argus.extraction.outcomes import ExtractionAcceptanceConflict
+
+        artifact_json = _canonical_json(state["artifact"])
+        identity_values = {
+            "artifact_ref": artifact.artifact_ref,
+            "content_identity": artifact.content_identity,
+            "content_text": artifact.text,
+            "evaluation_json": artifact_json,
+        }
+        dialect = session.get_bind().dialect.name
+        if dialect == "sqlite":
+            from sqlalchemy.dialects.sqlite import insert as dialect_insert
+        elif dialect == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert as dialect_insert
+        else:
+            dialect_insert = None
+        if dialect_insert is not None:
+            session.execute(
+                dialect_insert(ExtractionArtifactIdentityRow)
+                .values(**identity_values)
+                .on_conflict_do_nothing(index_elements=["artifact_ref"])
+            )
+        else:
+            if session.get(
+                ExtractionArtifactIdentityRow,
+                artifact.artifact_ref,
+            ) is None:
+                session.add(ExtractionArtifactIdentityRow(**identity_values))
+        canonical = session.get(
+            ExtractionArtifactIdentityRow,
+            artifact.artifact_ref,
+        )
+        if canonical is None:
+            session.flush()
+            canonical = session.get(
+                ExtractionArtifactIdentityRow,
+                artifact.artifact_ref,
+            )
+        if (
+            canonical.content_identity != artifact.content_identity
+            or canonical.content_text != artifact.text
+            or canonical.evaluation_json != artifact_json
+        ):
+            raise ExtractionAcceptanceConflict()
+        session.add(
+            ExtractionOutcomeArtifactRow(
+                id=uuid.uuid4().hex,
+                plan_id=plan_id,
+                artifact_ref=artifact.artifact_ref,
+                content_identity=artifact.content_identity,
+                content_text=artifact.text,
+                disposition=projection.artifact_disposition.value,
+                quality_passed=artifact.quality_passed,
+                is_complete=artifact.is_complete,
+                evaluation_json=artifact_json,
+            )
+        )
+    rejection = projection.rejection
+    if rejection is not None:
+        from argus.extraction.outcomes import ExtractionAcceptanceConflict
+
+        rejection_json = _canonical_json(state["rejection"])
+        rejection_ref = rejection.rejection_ref
+        reused_rejections = session.scalars(
+            select(ExtractionOutcomeRejectionRow).where(
+                ExtractionOutcomeRejectionRow.rejection_ref == rejection_ref
+            )
+        ).all()
+        if any(
+            existing.projection_json != rejection_json
+            for existing in reused_rejections
+        ):
+            raise ExtractionAcceptanceConflict()
+        session.add(
+            ExtractionOutcomeRejectionRow(
+                id=uuid.uuid4().hex,
+                plan_id=plan_id,
+                rejection_ref=rejection_ref,
+                code=rejection.code.value,
+                provider=rejection.provider,
+                recommended_action=rejection.recommended_action.value,
+                projection_json=rejection_json,
+            )
+        )
+    receipt_ref = uuid.uuid4().hex
+    scope = (
+        "sqlite_development"
+        if session.get_bind().dialect.name == "sqlite"
+        else "postgresql_authority"
+    )
+    session.add(
+        ExtractionOutcomeAcceptanceRow(
+            receipt_ref=receipt_ref,
+            plan_id=plan_id,
+            outcome=projection.outcome.value,
+            artifact_disposition=projection.artifact_disposition.value,
+            outcome_policy_version=projection.extraction_outcome_policy_version,
+            projection_json=_canonical_json(state),
+            acceptance_fingerprint=acceptance_fingerprint(state),
+            accepted_at=now,
+            scope=scope,
+        )
+    )
+    return receipt_ref, scope
 
 
 class SearchLedgerRepository(Protocol):
@@ -563,6 +1235,79 @@ class SqlAlchemySearchLedgerRepository:
     ):
         self.session_factory = session_factory
         self.clock = clock
+        self._extraction_finalization_locks: dict[str, threading.Lock] = {}
+        self._extraction_finalization_locks_guard = threading.Lock()
+
+    def issue_authentication_scope(
+        self,
+        *,
+        scope_ref: str,
+        access_scope: str,
+        privacy_scope: str,
+    ):
+        """Issue a durable opaque authority receipt for one auth scope."""
+        from argus.extraction.outcomes import (
+            AuthenticationScope,
+            AuthenticationScopeAuthorityReceipt,
+        )
+
+        for value in (scope_ref, access_scope, privacy_scope):
+            if (
+                not isinstance(value, str)
+                or not 1 <= len(value.encode("utf-8")) <= 128
+            ):
+                raise ValueError("authentication authority scope is invalid")
+        fingerprint = (
+            "sha256:" + hashlib.sha256(scope_ref.encode("utf-8")).hexdigest()
+        )
+        receipt_ref = "auth-" + uuid.uuid4().hex
+        issued_at = self.clock()
+        with self.session_factory.begin() as session:
+            session.add(
+                AuthenticationScopeAuthorityReceiptRow(
+                    receipt_ref=receipt_ref,
+                    scope="extraction",
+                    access_scope=access_scope,
+                    privacy_scope=privacy_scope,
+                    authentication_scope_fingerprint=fingerprint,
+                    issued_at=issued_at,
+                )
+            )
+        receipt = AuthenticationScopeAuthorityReceipt(
+            receipt_ref=receipt_ref,
+            scope="extraction",
+            access_scope=access_scope,
+            privacy_scope=privacy_scope,
+            authentication_scope_fingerprint=fingerprint,
+            issued_at=issued_at.isoformat(),
+        )
+        return AuthenticationScope(
+            fingerprint=receipt.authentication_scope_fingerprint,
+            authority_receipt_ref=receipt.receipt_ref,
+        )
+
+    def load_authentication_scope_authority_receipt(self, receipt_ref: str):
+        from argus.extraction.outcomes import (
+            AuthenticationScopeAuthorityReceipt,
+        )
+
+        with self.session_factory() as session:
+            row = session.get(
+                AuthenticationScopeAuthorityReceiptRow,
+                receipt_ref,
+            )
+            if row is None:
+                return None
+            return AuthenticationScopeAuthorityReceipt(
+                receipt_ref=row.receipt_ref,
+                scope=row.scope,
+                access_scope=row.access_scope,
+                privacy_scope=row.privacy_scope,
+                authentication_scope_fingerprint=(
+                    row.authentication_scope_fingerprint
+                ),
+                issued_at=row.issued_at.isoformat(),
+            )
 
     def accept(self, query: SearchQuery, response: SearchResponse) -> AcceptanceReceipt:
         serialized = serialize_acceptance(query, response)
@@ -884,6 +1629,556 @@ class SqlAlchemySearchLedgerRepository:
                 stored_fingerprint=run.acceptance_fingerprint,
                 state=state,
             )
+
+    def _extraction_finalization_lock(self, run_id: str) -> threading.Lock:
+        with self._extraction_finalization_locks_guard:
+            return self._extraction_finalization_locks.setdefault(
+                run_id,
+                threading.Lock(),
+            )
+
+    def finalize_extraction_once(self, claim, build_projection):
+        """Claim one run durably before invoking the #57 classifier."""
+        from argus.extraction.outcomes import (
+            AcceptedExtractionOutcome,
+            ExtractionAcceptanceConflict,
+            ExtractionAcceptanceReceipt,
+            FinalizedExtractionProjection,
+        )
+
+        claim_state = _extraction_claim_state(claim)
+        source_fingerprint = acceptance_fingerprint(claim_state)
+        run_lock = self._extraction_finalization_lock(claim.extraction_run_id)
+        with run_lock:
+            try:
+                with self.session_factory.begin() as session:
+                    existing = session.scalar(
+                        select(ExtractionOutcomePlanRow).where(
+                            ExtractionOutcomePlanRow.extraction_run_id
+                            == claim.extraction_run_id
+                        )
+                    )
+                    if existing is not None:
+                        if existing.source_fingerprint != source_fingerprint:
+                            raise ExtractionAcceptanceConflict()
+                        acceptance = session.scalar(
+                            select(ExtractionOutcomeAcceptanceRow).where(
+                                ExtractionOutcomeAcceptanceRow.plan_id
+                                == existing.id
+                            )
+                        )
+                        if acceptance is None:
+                            raise AcceptanceConflictError(
+                                "claimed extraction lacks committed acceptance"
+                            )
+                        projection = _deserialize_extraction_projection(
+                            _parse_json_value(acceptance.projection_json)
+                        )
+                        receipt = ExtractionAcceptanceReceipt(
+                            receipt_ref=acceptance.receipt_ref,
+                            accepted_at=acceptance.accepted_at.isoformat() + "Z",
+                            scope=acceptance.scope,
+                        )
+                        return AcceptedExtractionOutcome.accepted(
+                            projection,
+                            receipt,
+                        )
+
+                    now = self.clock()
+                    plan_id = uuid.uuid4().hex
+                    plan_state = claim_state["plan"]
+                    session.add(
+                        ExtractionOutcomePlanRow(
+                            id=plan_id,
+                            plan_ref=claim.plan.plan_ref,
+                            extraction_run_id=claim.extraction_run_id,
+                            request_id=claim.request_id,
+                            normalized_url=plan_state["normalized_url"],
+                            access_scope=claim.plan.access_scope,
+                            mode=claim.plan.mode,
+                            plan_json=_canonical_json(plan_state),
+                            source_fingerprint=source_fingerprint,
+                            created_at=now,
+                        )
+                    )
+                    session.flush()
+                    raw_projection = build_projection()
+                    raw_state = _extraction_projection_state(raw_projection)
+                    projection = _deserialize_extraction_projection(raw_state)
+                    state = _extraction_projection_state(projection)
+                    if (
+                        _extraction_source_fingerprint(state)
+                        != _extraction_source_fingerprint(claim_state)
+                    ):
+                        raise ExtractionAcceptanceConflict()
+                    receipt_ref, scope = _persist_extraction_projection_rows(
+                        session,
+                        projection=projection,
+                        state=state,
+                        plan_id=plan_id,
+                        now=now,
+                    )
+                receipt = ExtractionAcceptanceReceipt(
+                    receipt_ref=receipt_ref,
+                    accepted_at=now.isoformat() + "Z",
+                    scope=scope,
+                )
+                return AcceptedExtractionOutcome.accepted(projection, receipt)
+            except IntegrityError:
+                for _ in range(100):
+                    existing = self.load_extraction_outcome(
+                        claim.extraction_run_id
+                    )
+                    if existing is not None:
+                        existing_state = _extraction_projection_state(
+                            FinalizedExtractionProjection(
+                                extraction_outcome_policy_version=(
+                                    existing.extraction_outcome_policy_version
+                                ),
+                                outcome=existing.outcome,
+                                artifact_disposition=(
+                                    existing.artifact_disposition
+                                ),
+                                extraction_run_id=existing.extraction_run_id,
+                                request_id=existing.request_id,
+                                plan_ref=existing.plan_ref,
+                                plan=existing.plan,
+                                artifact=existing.artifact,
+                                rejection=existing.rejection,
+                                steps=existing.steps,
+                                terminal_cause=existing.terminal_cause,
+                                selected_extractor=existing.selected_extractor,
+                                cache_decision=existing.cache_decision,
+                                operation_latency_ms=(
+                                    existing.operation_latency_ms
+                                ),
+                                normalized_url_identity=(
+                                    existing.normalized_url_identity
+                                ),
+                            )
+                        )
+                        if (
+                            _extraction_source_fingerprint(existing_state)
+                            != _extraction_source_fingerprint(claim_state)
+                        ):
+                            raise ExtractionAcceptanceConflict()
+                        return existing
+                    time.sleep(0.01)
+                raise
+
+    def accept_extraction_outcome(self, projection):
+        """Atomically accept one immutable S3 extraction projection."""
+        from argus.extraction.outcomes import ExtractionAcceptanceReceipt
+
+        state = _extraction_projection_state(projection)
+        source_fingerprint = _extraction_source_fingerprint(state)
+        with self.session_factory.begin() as session:
+            existing = session.scalar(
+                select(ExtractionOutcomePlanRow).where(
+                    ExtractionOutcomePlanRow.extraction_run_id
+                    == projection.extraction_run_id
+                )
+            )
+            if existing is not None:
+                if existing.source_fingerprint != source_fingerprint:
+                    from argus.extraction.outcomes import (
+                        ExtractionAcceptanceConflict,
+                    )
+
+                    raise ExtractionAcceptanceConflict()
+                acceptance = session.scalar(
+                    select(ExtractionOutcomeAcceptanceRow).where(
+                        ExtractionOutcomeAcceptanceRow.plan_id == existing.id
+                    )
+                )
+                if acceptance is None:
+                    raise AcceptanceConflictError(
+                        f"extraction {projection.extraction_run_id!r} "
+                        "has incomplete durable outcome state"
+                    )
+                return ExtractionAcceptanceReceipt(
+                    receipt_ref=acceptance.receipt_ref,
+                    accepted_at=acceptance.accepted_at.isoformat() + "Z",
+                    scope=acceptance.scope,
+                )
+
+            now = self.clock()
+            plan_id = uuid.uuid4().hex
+            plan_state = state["plan"]
+            session.add(
+                ExtractionOutcomePlanRow(
+                    id=plan_id,
+                    plan_ref=projection.plan_ref,
+                    extraction_run_id=projection.extraction_run_id,
+                    request_id=projection.request_id,
+                    normalized_url=_safe_persisted_url(
+                        projection.plan.normalized_url
+                    ),
+                    access_scope=projection.plan.access_scope,
+                    mode=projection.plan.mode,
+                    plan_json=_canonical_json(plan_state),
+                    source_fingerprint=source_fingerprint,
+                    created_at=now,
+                )
+            )
+            session.flush()
+            receipt_ref, scope = _persist_extraction_projection_rows(
+                session,
+                projection=projection,
+                state=state,
+                plan_id=plan_id,
+                now=now,
+            )
+        return ExtractionAcceptanceReceipt(
+            receipt_ref=receipt_ref,
+            accepted_at=now.isoformat() + "Z",
+            scope=scope,
+        )
+
+    def load_extraction_outcome(self, extraction_run_id: str):
+        """Load the exact accepted S3 projection for an idempotent retry."""
+        from argus.extraction.outcomes import (
+            AcceptedExtractionOutcome,
+            ExtractionAcceptanceReceipt,
+        )
+
+        with self.session_factory() as session:
+            pair = session.execute(
+                select(
+                    ExtractionOutcomePlanRow,
+                    ExtractionOutcomeAcceptanceRow,
+                )
+                .join(
+                    ExtractionOutcomeAcceptanceRow,
+                    ExtractionOutcomeAcceptanceRow.plan_id
+                    == ExtractionOutcomePlanRow.id,
+                )
+                .where(
+                    ExtractionOutcomePlanRow.extraction_run_id
+                    == extraction_run_id
+                )
+            ).one_or_none()
+            if pair is None:
+                return None
+            _, acceptance = pair
+            state = _parse_json_value(acceptance.projection_json)
+            projection = _deserialize_extraction_projection(state)
+            receipt = ExtractionAcceptanceReceipt(
+                receipt_ref=acceptance.receipt_ref,
+                accepted_at=acceptance.accepted_at.isoformat() + "Z",
+                scope=acceptance.scope,
+            )
+            return AcceptedExtractionOutcome.accepted(projection, receipt)
+
+    def load_extraction_outcome_by_receipt(self, receipt_ref: str):
+        """Reload the exact durable accepted projection for cache/composition."""
+        with self.session_factory() as session:
+            return self._load_extraction_outcome_by_receipt_in_session(
+                session,
+                receipt_ref,
+            )
+
+    @staticmethod
+    def _load_extraction_outcome_by_receipt_in_session(session, receipt_ref):
+        from argus.extraction.outcomes import (
+            AcceptedExtractionOutcome,
+            ExtractionAcceptanceReceipt,
+        )
+
+        acceptance = session.get(ExtractionOutcomeAcceptanceRow, receipt_ref)
+        if acceptance is None:
+            return None
+        projection = _deserialize_extraction_projection(
+            _parse_json_value(acceptance.projection_json)
+        )
+        receipt = ExtractionAcceptanceReceipt(
+            receipt_ref=acceptance.receipt_ref,
+            accepted_at=acceptance.accepted_at.isoformat() + "Z",
+            scope=acceptance.scope,
+        )
+        return AcceptedExtractionOutcome.accepted(projection, receipt)
+
+    def accept_retrieval_composition(
+        self,
+        accepted_retrieval,
+        composition,
+        artifact_requirement,
+    ):
+        """Atomically persist one pure S3 composition and all selected links."""
+        from dataclasses import asdict
+
+        from argus.contracts import CanonicalOutcome
+        from argus.extraction.composition import (
+            CompositionAcceptanceReceipt,
+            InvalidArtifactRequirement,
+            RetrievalComposition,
+            compose_retrieval_evidence,
+        )
+
+        if (
+            not isinstance(composition, RetrievalComposition)
+            or composition.composite_outcome
+            is CanonicalOutcome.PERSISTENCE_FAILED
+        ):
+            raise ValueError("persistence-failed composition cannot be accepted")
+        if (
+            compose_retrieval_evidence(
+                accepted_retrieval,
+                composition.links,
+                artifact_requirement,
+            )
+            != composition
+        ):
+            raise InvalidArtifactRequirement(
+                "composition does not match its typed source evidence"
+            )
+        retrieval_receipt = accepted_retrieval.acceptance_receipt
+        retrieval_receipt_ref = getattr(
+            retrieval_receipt,
+            "receipt_ref",
+            retrieval_receipt,
+        )
+        if not isinstance(retrieval_receipt_ref, str):
+            raise ValueError("accepted retrieval requires a bounded receipt")
+        composition_state = asdict(composition)
+        for link_state in composition_state["links"]:
+            link_state.pop("accepted_outcome", None)
+        source_state = {
+            "retrieval_outcome": accepted_retrieval.outcome,
+            "result_cluster_refs": tuple(
+                accepted_retrieval.result_cluster_refs
+            ),
+            "retrieval_acceptance_ref": retrieval_receipt_ref,
+            "artifact_requirement": (
+                asdict(artifact_requirement)
+                if artifact_requirement is not None
+                else None
+            ),
+            "composition": composition_state,
+        }
+        source_state = _normalize_json_value(source_state)
+        fingerprint = acceptance_fingerprint(source_state)
+        with self.session_factory.begin() as session:
+            for link in composition.links:
+                if link.extraction_run_id is None:
+                    continue
+                extraction_receipt = getattr(
+                    link.acceptance_receipt,
+                    "receipt_ref",
+                    link.acceptance_receipt,
+                )
+                durable = (
+                    self._load_extraction_outcome_by_receipt_in_session(
+                        session,
+                        extraction_receipt,
+                    )
+                    if isinstance(extraction_receipt, str)
+                    else None
+                )
+                if durable != link.accepted_outcome:
+                    raise InvalidArtifactRequirement(
+                        "link does not match durable accepted extraction"
+                    )
+            existing = session.scalar(
+                select(RetrievalCompositionRow).where(
+                    RetrievalCompositionRow.source_fingerprint == fingerprint
+                )
+            )
+            if existing is not None:
+                return CompositionAcceptanceReceipt(
+                    receipt_ref=existing.receipt_ref,
+                    accepted_at=existing.accepted_at.isoformat() + "Z",
+                    scope="sqlite_development"
+                    if session.get_bind().dialect.name == "sqlite"
+                    else "postgresql_authority",
+                )
+            now = self.clock()
+            receipt_ref = uuid.uuid4().hex
+            composition_values = {
+                "receipt_ref": receipt_ref,
+                "retrieval_acceptance_ref": retrieval_receipt_ref,
+                "requirement_ref": (
+                    artifact_requirement.requirement_ref
+                    if artifact_requirement is not None
+                    else None
+                ),
+                "retrieval_outcome": composition.retrieval_outcome.value,
+                "artifact_outcome": (
+                    composition.artifact_outcome.value
+                    if composition.artifact_outcome is not None
+                    else None
+                ),
+                "composite_outcome": composition.composite_outcome.value,
+                "projection_json": _canonical_json(source_state),
+                "source_fingerprint": fingerprint,
+                "accepted_at": now,
+            }
+            dialect = session.get_bind().dialect.name
+            if dialect == "sqlite":
+                from sqlalchemy.dialects.sqlite import insert as dialect_insert
+            elif dialect == "postgresql":
+                from sqlalchemy.dialects.postgresql import insert as dialect_insert
+            else:
+                dialect_insert = None
+            if dialect_insert is not None:
+                inserted = session.execute(
+                    dialect_insert(RetrievalCompositionRow)
+                    .values(**composition_values)
+                    .on_conflict_do_nothing(
+                        index_elements=["source_fingerprint"]
+                    )
+                )
+                if inserted.rowcount == 0:
+                    existing = session.scalar(
+                        select(RetrievalCompositionRow).where(
+                            RetrievalCompositionRow.source_fingerprint
+                            == fingerprint
+                        )
+                    )
+                    if existing is None:
+                        raise AcceptanceConflictError(
+                            "composition uniqueness winner is not readable"
+                        )
+                    return CompositionAcceptanceReceipt(
+                        receipt_ref=existing.receipt_ref,
+                        accepted_at=existing.accepted_at.isoformat() + "Z",
+                        scope=(
+                            "sqlite_development"
+                            if dialect == "sqlite"
+                            else "postgresql_authority"
+                        ),
+                    )
+            else:
+                session.add(RetrievalCompositionRow(**composition_values))
+                session.flush()
+            for link in composition.links:
+                extraction_receipt = getattr(
+                    link.acceptance_receipt,
+                    "receipt_ref",
+                    link.acceptance_receipt,
+                )
+                extraction_plan_id = None
+                artifact_row_id = None
+                rejection_row_id = None
+                if link.extraction_run_id is None:
+                    extraction_receipt = None
+                elif not isinstance(extraction_receipt, str):
+                    raise ValueError(
+                        "extraction link requires its durable acceptance receipt"
+                    )
+                else:
+                    accepted_pair = session.execute(
+                        select(
+                            ExtractionOutcomeAcceptanceRow,
+                            ExtractionOutcomePlanRow,
+                        )
+                        .join(
+                            ExtractionOutcomePlanRow,
+                            ExtractionOutcomePlanRow.id
+                            == ExtractionOutcomeAcceptanceRow.plan_id,
+                        )
+                        .where(
+                            ExtractionOutcomeAcceptanceRow.receipt_ref
+                            == extraction_receipt
+                        )
+                    ).one_or_none()
+                    if (
+                        accepted_pair is None
+                        or accepted_pair[1].extraction_run_id
+                        != link.extraction_run_id
+                    ):
+                        raise InvalidArtifactRequirement(
+                            "extraction receipt is not bound to the linked run"
+                        )
+                    from argus.extraction.outcomes import (
+                        AcceptedExtractionOutcome,
+                        ExtractionAcceptanceReceipt,
+                    )
+
+                    durable_projection = _deserialize_extraction_projection(
+                        _parse_json_value(accepted_pair[0].projection_json)
+                    )
+                    durable_accepted = AcceptedExtractionOutcome.accepted(
+                        durable_projection,
+                        ExtractionAcceptanceReceipt(
+                            receipt_ref=accepted_pair[0].receipt_ref,
+                            accepted_at=(
+                                accepted_pair[0].accepted_at.isoformat() + "Z"
+                            ),
+                            scope=accepted_pair[0].scope,
+                        ),
+                    )
+                    if link.accepted_outcome != durable_accepted:
+                        raise InvalidArtifactRequirement(
+                            "link does not match durable accepted extraction"
+                        )
+                    extraction_plan_id = accepted_pair[1].id
+                    if link.artifact_ref is not None:
+                        artifact_row = session.scalar(
+                            select(ExtractionOutcomeArtifactRow).where(
+                                ExtractionOutcomeArtifactRow.plan_id
+                                == extraction_plan_id,
+                                ExtractionOutcomeArtifactRow.artifact_ref
+                                == link.artifact_ref,
+                            )
+                        )
+                        if (
+                            artifact_row is None
+                            or artifact_row.content_identity
+                            != link.artifact_identity
+                            or accepted_pair[1].access_scope
+                            != link.access_scope
+                        ):
+                            raise InvalidArtifactRequirement(
+                                "artifact is not bound to the accepted plan"
+                            )
+                        artifact_row_id = artifact_row.id
+                    if link.rejection_ref is not None:
+                        rejection_row = session.scalar(
+                            select(ExtractionOutcomeRejectionRow).where(
+                                ExtractionOutcomeRejectionRow.plan_id
+                                == extraction_plan_id,
+                                ExtractionOutcomeRejectionRow.rejection_ref
+                                == link.rejection_ref,
+                            )
+                        )
+                        if rejection_row is None:
+                            raise InvalidArtifactRequirement(
+                                "rejection is not bound to the accepted plan"
+                            )
+                        rejection_row_id = rejection_row.id
+                session.add(
+                    ResultExtractionLinkRow(
+                        id=uuid.uuid4().hex,
+                        composition_ref=receipt_ref,
+                        result_cluster_ref=link.result_cluster_ref,
+                        extraction_acceptance_ref=extraction_receipt,
+                        extraction_plan_id=extraction_plan_id,
+                        artifact_row_id=artifact_row_id,
+                        artifact_plan_id=(
+                            extraction_plan_id
+                            if artifact_row_id is not None
+                            else None
+                        ),
+                        rejection_row_id=rejection_row_id,
+                        rejection_plan_id=(
+                            extraction_plan_id
+                            if rejection_row_id is not None
+                            else None
+                        ),
+                        reuse_origin=link.reuse_origin,
+                    )
+                )
+        scope = (
+            "sqlite_development"
+            if self.session_factory.kw["bind"].dialect.name == "sqlite"
+            else "postgresql_authority"
+        )
+        return CompositionAcceptanceReceipt(
+            receipt_ref=receipt_ref,
+            accepted_at=now.isoformat() + "Z",
+            scope=scope,
+        )
 
     def record_extraction(
         self,

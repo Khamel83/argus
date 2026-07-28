@@ -2,6 +2,8 @@
 Extraction domain models.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -9,6 +11,11 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from argus.extraction.completeness import CompletenessResult
+    from argus.extraction.outcomes import (
+        ArtifactDisposition,
+        ExtractionAcceptanceReceipt,
+    )
+    from argus.extraction.rejection import ExtractionRejection
 
 
 class ExtractorName(str, Enum):
@@ -58,6 +65,11 @@ class ExtractedContent:
     completeness_result: Optional["CompletenessResult"] = None
     cache_hit: bool = False
     cache_source_extractor: Optional[str] = None
+    # Additive S3 projection fields. Legacy callers may ignore these while S7
+    # remains inactive.
+    rejection: ExtractionRejection | None = None
+    artifact_disposition: ArtifactDisposition | None = None
+    acceptance_receipt: ExtractionAcceptanceReceipt | None = None
 
     # Provenance metadata
     source_type: Optional[str] = None  # live|authenticated|residential|wayback|archive|paid_api|search_recovery

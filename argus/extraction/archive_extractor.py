@@ -1,20 +1,24 @@
 """
-Archive.is Extraction - Fetch content from archive.today/archive.is/archive.ph.
+Archive.is Extraction - look up content from archive.today/archive.is/archive.ph.
 
-Two approaches:
-1. Search for existing archive: GET /newest/{url}
-2. Submit URL for archiving: POST /submit/?url={url}
+Default extraction performs lookup only. Creating an external archive is a
+separate, explicitly authorized irreversible action.
 
 Rate limited to 1 request per 5 seconds.
 """
 
 import asyncio
+from dataclasses import dataclass
+from pathlib import Path
 import re
+import sqlite3
 import time
-from typing import Optional
+from typing import Optional, Protocol
+from urllib.parse import urlsplit
 
 import httpx
 
+from argus.contracts import CanonicalOutcome
 from argus.extraction.models import ExtractedContent, ExtractorName
 from argus.extraction.trafilatura_result import normalize_trafilatura_result
 from argus.logging import get_logger
@@ -29,6 +33,70 @@ ARCHIVE_NEWEST_URL = "https://archive.ph/newest/"
 _min_interval = 5.0
 _last_request_time = 0.0
 _lock = None
+_SAFE_AUTHORITY_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveCreationAuthorization:
+    """One-use authority for a caller-approved external archive creation."""
+
+    caller_policy_ref: str
+    authority_receipt: str
+    idempotency_key: str
+    bounded_target: str
+    profile: str
+
+
+class ArchiveCreationPolicyRejected(RuntimeError):
+    outcome = CanonicalOutcome.POLICY_REJECTED
+
+    def __init__(self):
+        super().__init__("external archive creation is not authorized")
+
+
+class ArchiveCreationAuthority(Protocol):
+    """Verify a receipt against the external authority that issued it."""
+
+    def verify(self, authorization: ArchiveCreationAuthorization) -> bool: ...
+
+
+class ArchiveCreationAuthorizationStore(Protocol):
+    """Durable atomic consume; the tuple must remain spent across restarts."""
+
+    def consume(
+        self,
+        *,
+        receipt: str,
+        idempotency_key: str,
+        target: str,
+    ) -> bool: ...
+
+
+class SQLiteArchiveCreationAuthorizationStore:
+    """Restart-durable atomic one-use archive authorization store."""
+
+    def __init__(self, path: str | Path):
+        self.path = str(path)
+        with sqlite3.connect(self.path) as connection:
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS archive_creation_consumptions ("
+                "receipt TEXT NOT NULL, "
+                "idempotency_key TEXT NOT NULL, "
+                "target_identity TEXT NOT NULL, "
+                "PRIMARY KEY (receipt, idempotency_key, target_identity))"
+            )
+
+    def consume(self, *, receipt: str, idempotency_key: str, target: str) -> bool:
+        import hashlib
+
+        target_identity = hashlib.sha256(target.encode("utf-8")).hexdigest()
+        with sqlite3.connect(self.path, timeout=5) as connection:
+            cursor = connection.execute(
+                "INSERT OR IGNORE INTO archive_creation_consumptions "
+                "(receipt, idempotency_key, target_identity) VALUES (?, ?, ?)",
+                (receipt, idempotency_key, target_identity),
+            )
+            return cursor.rowcount == 1
 
 
 def _get_lock():
@@ -73,7 +141,7 @@ async def _search_existing(url: str) -> Optional[str]:
         return None
 
 
-async def _submit_and_fetch(url: str) -> Optional[str]:
+async def _submit_authorized(url: str) -> Optional[str]:
     """
     Submit URL for archiving and wait for the result.
 
@@ -108,6 +176,74 @@ async def _submit_and_fetch(url: str) -> Optional[str]:
         return None
 
 
+async def _submit_and_fetch(
+    url: str,
+    authorization: ArchiveCreationAuthorization | None = None,
+) -> Optional[str]:
+    """Compatibility name that now enforces the explicit authorization seam."""
+    return await create_archive(url, authorization=authorization)
+
+
+def _validate_creation_authorization(
+    url: str,
+    authorization: ArchiveCreationAuthorization | None,
+) -> None:
+    if not isinstance(authorization, ArchiveCreationAuthorization):
+        raise ArchiveCreationPolicyRejected()
+    values = (
+        authorization.caller_policy_ref,
+        authorization.authority_receipt,
+        authorization.idempotency_key,
+    )
+    if any(_SAFE_AUTHORITY_REF.fullmatch(value) is None for value in values):
+        raise ArchiveCreationPolicyRejected()
+    if (
+        authorization.profile == "autonomous"
+        or not isinstance(authorization.profile, str)
+        or _SAFE_AUTHORITY_REF.fullmatch(authorization.profile) is None
+        or authorization.bounded_target != url
+        or len(url.encode("utf-8")) > 2048
+    ):
+        raise ArchiveCreationPolicyRejected()
+    parts = urlsplit(url)
+    if (
+        parts.scheme not in {"http", "https"}
+        or not parts.hostname
+        or parts.username is not None
+        or parts.password is not None
+    ):
+        raise ArchiveCreationPolicyRejected()
+
+
+async def create_archive(
+    url: str,
+    *,
+    authorization: ArchiveCreationAuthorization | None = None,
+    authority: ArchiveCreationAuthority | None = None,
+    authorization_store: ArchiveCreationAuthorizationStore | None = None,
+) -> Optional[str]:
+    """Create an external archive only under a fresh, bounded authority receipt."""
+    _validate_creation_authorization(url, authorization)
+    if authority is None or authorization_store is None:
+        raise ArchiveCreationPolicyRejected()
+    try:
+        verified = authority.verify(authorization) is True
+        consumed = (
+            verified
+            and authorization_store.consume(
+                receipt=authorization.authority_receipt,
+                idempotency_key=authorization.idempotency_key,
+                target=url,
+            )
+            is True
+        )
+    except Exception as error:
+        raise ArchiveCreationPolicyRejected() from error
+    if not verified or not consumed:
+        raise ArchiveCreationPolicyRejected()
+    return await _submit_authorized(url)
+
+
 async def _extract_archive(url: str) -> ExtractedContent:
     """
     Extract content from archive.is.
@@ -122,12 +258,11 @@ async def _extract_archive(url: str) -> ExtractedContent:
         # Step 1: Search for existing archive
         archive_url = await _search_existing(url)
 
-        # Step 2: If not found, submit for archiving
         if not archive_url:
-            archive_url = await _submit_and_fetch(url)
-
-        if not archive_url:
-            return ExtractedContent(url=url, error="archive_is: no archive found or created")
+            return ExtractedContent(
+                url=url,
+                error="archive_is: no existing archive found",
+            )
 
         logger.info("Archive.is found for %s: %s", url[:60], archive_url[:80])
 
@@ -172,5 +307,5 @@ async def _extract_archive(url: str) -> ExtractedContent:
 
 
 async def extract_archive_is(url: str) -> ExtractedContent:
-    """Public entry point for Archive.is extraction."""
+    """Lookup-only public extraction entry point."""
     return await _extract_archive(url)
