@@ -1263,7 +1263,14 @@ async def test_github_rate_limited_403_preserves_transport_evidence():
         },
     )
     response.request = MagicMock()
-    with patch("argus.providers.github.httpx.AsyncClient") as client_type:
+    with (
+        patch(
+            "argus.providers.normalization.datetime",
+            wraps=datetime,
+        ) as datetime_type,
+        patch("argus.providers.github.httpx.AsyncClient") as client_type,
+    ):
+        datetime_type.now.return_value = PROVIDER_FIXTURE_OBSERVED_AT
         client = client_type.return_value
         client.__aenter__ = AsyncMock(return_value=client)
         client.__aexit__ = AsyncMock(return_value=False)
