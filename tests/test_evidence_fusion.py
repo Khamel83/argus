@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 import itertools
 import math
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from datetime import date, datetime, timezone
 from fractions import Fraction
 from pathlib import Path
@@ -13,6 +13,9 @@ from pathlib import Path
 import pytest
 
 from argus.broker.fusion import (
+    PSL_DOMAIN_POLICY_VERSION,
+    PSL_SNAPSHOT_ID,
+    PSL_SNAPSHOT_SHA256,
     conservative_document_key,
     fusion_order_key,
     fuse_evidence,
@@ -41,7 +44,9 @@ from argus.broker.provider_evidence import (
     ResultObservation,
     SnippetEvidence,
     SnippetKind,
+    TemporalClaimKind,
     TranslationPrecision,
+    EvidenceKind,
 )
 from argus.contracts.outcomes import CanonicalOutcome
 from argus.models import (
@@ -68,7 +73,7 @@ def _plan(
         True,
         ExecutionPolicySnapshot(
             freshness_policy_version="freshness-v1",
-            domain_policy_version="domain-v1-psl-fixture",
+            domain_policy_version=PSL_DOMAIN_POLICY_VERSION,
             ranking_policy_version="ranking-v1",
         ),
         NOW,
@@ -83,7 +88,9 @@ def _publication(
     source: PublicationSource = PublicationSource.PROVIDER_FIELD,
     confidence: ContractConfidence = ContractConfidence.OFFICIAL_CONTRACT,
     field: str = "published_at",
-    reference: str | None = "fixture-publication-v1",
+    reference: str | None = "exa-search-contract",
+    parser_version: str | None = "iso8601-v1",
+    claim_kind: TemporalClaimKind = TemporalClaimKind.PUBLISHED,
 ) -> PublicationEvidence:
     return PublicationEvidence(
         published_at_utc=when,
@@ -93,6 +100,8 @@ def _publication(
         contract_confidence=confidence,
         raw_field_name=field,
         semantic_contract_ref=reference,
+        parser_version=parser_version,
+        claim_kind=claim_kind,
     )
 
 
@@ -104,6 +113,7 @@ def _observation(
     title: str | None = None,
     snippet: str | None = None,
     publication: PublicationEvidence | None = None,
+    source_kind: EvidenceKind = EvidenceKind.WEB_PAGE,
 ) -> ResultObservation:
     return ResultObservation(
         provider=provider,
@@ -115,6 +125,7 @@ def _observation(
             SnippetKind.PROVIDER_SNIPPET,
         ),
         publication=publication,
+        source_kind=source_kind,
         observed_at=NOW,
         egress=EgressType.DATACENTER,
         machine="test-node",
@@ -283,7 +294,7 @@ def test_disjoint_approved_claims_for_same_document_fail_closed():
     outcome = _fuse(
         plan,
         _batch(ProviderName.EXA, (_observation(ProviderName.EXA, 0, "https://x.test/a", publication=_publication(day=date(2026, 7, 1))),)),
-        _batch(ProviderName.PARALLEL, (_observation(ProviderName.PARALLEL, 0, "https://x.test/a", publication=_publication(day=date(2026, 7, 20))),)),
+        _batch(ProviderName.PARALLEL, (_observation(ProviderName.PARALLEL, 0, "https://x.test/a", publication=_publication(day=date(2026, 7, 20), reference="parallel-search-contract")),)),
     )
     assert outcome.ranked_result_clusters == ()
     assert {item.reason for item in outcome.filtered_observations} == {"conflicting_publication"}
@@ -309,6 +320,87 @@ def test_unverified_modified_indexed_and_result_text_claims_never_prove_freshnes
     assert outcome.filtered_observations[0].reason == "freshness_unproven"
 
 
+@pytest.mark.parametrize(
+    ("claim_kind", "field"),
+    [
+        (TemporalClaimKind.MODIFIED, "lastModified"),
+        (TemporalClaimKind.INDEXED, "indexedAt"),
+        (TemporalClaimKind.CREATED, "dateCreated"),
+        (TemporalClaimKind.CRAWLED, "lastCrawled"),
+    ],
+)
+def test_only_explicit_typed_published_claims_can_prove_freshness(
+    claim_kind,
+    field,
+):
+    plan = _plan(freshness=FreshnessWindow(requested_relative=FreshnessRelative.DAY))
+    outcome = _fuse(
+        plan,
+        _batch(
+            ProviderName.EXA,
+            (
+                _observation(
+                    ProviderName.EXA,
+                    0,
+                    "https://x.test/a",
+                    publication=_publication(claim_kind=claim_kind, field=field),
+                ),
+            ),
+        ),
+    )
+    assert outcome.ranked_result_clusters == ()
+    assert outcome.filtered_observations[0].reason == "freshness_unproven"
+
+
+@pytest.mark.parametrize(
+    ("plan_version", "contract_version", "reference", "parser_version"),
+    [
+        ("unknown-policy", "2026-07-27-v1", "exa-search-contract", "iso8601-v1"),
+        ("freshness-v1", "unknown-contract", "exa-search-contract", "iso8601-v1"),
+        ("freshness-v1", "2026-07-27-v1", "unknown-ref", "iso8601-v1"),
+        ("freshness-v1", "2026-07-27-v1", "exa-search-contract", "unknown-parser"),
+    ],
+)
+def test_freshness_registry_rejects_unknown_policy_contract_reference_or_parser(
+    plan_version,
+    contract_version,
+    reference,
+    parser_version,
+):
+    base = _plan(
+        freshness=FreshnessWindow(requested_relative=FreshnessRelative.DAY)
+    )
+    plan = replace(base, freshness_policy_version=plan_version)
+    claim = _publication(
+        reference=reference,
+        parser_version=parser_version,
+    )
+    batch = replace(
+        _batch(
+            ProviderName.EXA,
+            (
+                _observation(
+                    ProviderName.EXA,
+                    0,
+                    "https://x.test/a",
+                    publication=claim,
+                ),
+            ),
+        ),
+        provider_contract_version=contract_version,
+    )
+    outcome = _fuse(plan, batch)
+    assert outcome.ranked_result_clusters == ()
+    assert outcome.filtered_observations[0].reason == "freshness_unproven"
+
+
+def test_temporal_claim_kind_and_parser_version_are_closed_and_bounded():
+    with pytest.raises(TypeError):
+        replace(_publication(), claim_kind="published")  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        replace(_publication(), parser_version="x" * 129)
+
+
 def test_widened_translation_is_exactly_post_filtered():
     widened = ControlTranslation(
         "relative_only",
@@ -327,14 +419,32 @@ def test_widened_translation_is_exactly_post_filtered():
     assert outcome.filtered_observations[-1].reason == "out_of_range"
 
 
-def test_strict_exact_recognized_empty_is_proven_but_other_empty_is_unproven():
-    exact = ControlTranslation(
+def _exact_empty_translation(
+    *,
+    requested_relative: str = "day",
+    resolved_start: date = date(2026, 7, 27),
+    resolved_end: date = date(2026, 7, 27),
+    applied_start: date = date(2026, 7, 27),
+    applied_end: date = date(2026, 7, 27),
+    contract_ref: str = "successful-empty-v1",
+) -> ControlTranslation:
+    return ControlTranslation(
         "date_range",
         TranslationPrecision.EXACT,
         FilterStrength.STRICT_CONTRACT,
         "start_date/end_date",
         "2026-07-27/2026-07-27",
+        requested_relative=requested_relative,
+        resolved_start_date=resolved_start,
+        resolved_end_date=resolved_end,
+        applied_start_date=applied_start,
+        applied_end_date=applied_end,
+        successful_empty_contract_ref=contract_ref,
     )
+
+
+def test_strict_exact_recognized_empty_is_proven_but_other_empty_is_unproven():
+    exact = _exact_empty_translation()
     plan = _plan(freshness=FreshnessWindow(requested_relative=FreshnessRelative.DAY))
     strict = _fuse(plan, _batch(ProviderName.EXA, translation=exact, empty=True))
     weak = _fuse(plan, _batch(ProviderName.EXA))
@@ -342,6 +452,28 @@ def test_strict_exact_recognized_empty_is_proven_but_other_empty_is_unproven():
     assert strict.reason == "strict_empty"
     assert weak.outcome is CanonicalOutcome.EMPTY
     assert weak.reason == "freshness_unproven"
+
+
+@pytest.mark.parametrize(
+    "translation",
+    [
+        _exact_empty_translation(
+            applied_start=date(1999, 1, 1),
+            applied_end=date(1999, 1, 2),
+        ),
+        _exact_empty_translation(resolved_start=date(1999, 1, 1)),
+        _exact_empty_translation(requested_relative="week"),
+        _exact_empty_translation(contract_ref="unknown-empty-contract"),
+    ],
+)
+def test_strict_empty_rejects_mismatched_windows_and_unknown_contract(translation):
+    plan = _plan(freshness=FreshnessWindow(requested_relative=FreshnessRelative.DAY))
+    outcome = _fuse(
+        plan,
+        _batch(ProviderName.EXA, translation=translation, empty=True),
+    )
+    assert outcome.outcome is CanonicalOutcome.EMPTY
+    assert outcome.reason == "freshness_unproven"
 
 
 def test_document_key_normalizes_only_safe_proven_identity():
@@ -366,6 +498,26 @@ def test_document_key_normalizes_only_safe_proven_identity():
 )
 def test_document_key_preserves_weak_or_potentially_semantic_differences(left, right):
     assert conservative_document_key(left) != conservative_document_key(right)
+
+
+def test_provider_evidence_preserves_key_only_and_empty_query_grammar_end_to_end():
+    rows = (
+        _observation(ProviderName.EXA, 0, "https://example.test/a?flag"),
+        _observation(ProviderName.EXA, 1, "https://example.test/a?flag="),
+    )
+    batch = _batch(ProviderName.EXA, rows)
+    assert [item.url for item in batch.observations] == [
+        "https://example.test/a?flag",
+        "https://example.test/a?flag=",
+    ]
+
+    outcome = _fuse(_plan(), batch)
+
+    assert len(outcome.ranked_result_clusters) == 2
+    assert {item.cluster_sort_key for item in outcome.ranked_result_clusters} == {
+        "https://example.test/a?flag",
+        "https://example.test/a?flag=",
+    }
 
 
 def test_title_snippet_similarity_and_provider_canonical_hints_do_not_merge():
@@ -496,6 +648,30 @@ def test_all_five_base_tie_breaks_have_the_exact_declared_precedence():
     assert fusion_order_key(key_a) < fusion_order_key(key_b)
 
 
+def test_ranking_trace_records_every_eligible_cluster_and_complete_ordering_values():
+    rows = tuple(
+        _observation(ProviderName.EXA, rank, f"https://site{rank}.test/{rank}")
+        for rank in range(4)
+    )
+    outcome = _fuse(
+        _plan(limit=2),
+        _batch(ProviderName.EXA, rows),
+    )
+    assert len(outcome.ranked_result_clusters) == 2
+    assert len(outcome.ranking_trace.records) == 4
+    for index, record in enumerate(outcome.ranking_trace.records):
+        assert record.base_rank == index
+        assert record.score_numerator == 1
+        assert record.score_denominator == 61 + index
+        assert record.best_provider_rank == index
+        assert record.contributor_count == 1
+        assert record.smallest_provider is ProviderName.EXA
+        assert record.cluster_sort_key == f"https://site{index}.test/{index}"
+        assert record.contributions == (
+            RRFContribution(ProviderName.EXA, index, 1, 61 + index),
+        )
+
+
 def test_representative_selection_is_deterministic_and_keeps_fields_together():
     plan = _plan(limit=10)
     batches = (
@@ -548,6 +724,57 @@ def test_projection_uses_representative_and_attribution_without_mutating_outcome
         outcome.reason = "changed"  # type: ignore[misc]
 
 
+def test_computed_answer_is_typed_separate_and_satisfies_only_grounding_floor():
+    answer = _observation(
+        ProviderName.WOLFRAM,
+        0,
+        "https://www.wolframalpha.com/input?i=2%2B2",
+        title="2 + 2",
+        snippet="4",
+        source_kind=EvidenceKind.COMPUTED_ANSWER,
+    )
+    grounding = _fuse(
+        _plan(mode=SearchMode.GROUNDING),
+        _batch(ProviderName.WOLFRAM, (answer,)),
+    )
+    discovery = _fuse(
+        _plan(mode=SearchMode.DISCOVERY),
+        _batch(ProviderName.WOLFRAM, (answer,)),
+    )
+
+    assert grounding.outcome is CanonicalOutcome.SUCCESS
+    assert grounding.ranked_result_clusters == ()
+    assert len(grounding.computed_answers) == 1
+    assert grounding.computed_answers[0].eligible_for_grounding is True
+    assert grounding.evidence_floor_trace.eligible_computed_answers == 1
+    assert grounding.evidence_floor_trace.passed is True
+    assert discovery.outcome is CanonicalOutcome.EMPTY
+    assert discovery.computed_answers[0].eligible_for_grounding is False
+    assert project_search_results(grounding) == []
+    with pytest.raises(FrozenInstanceError):
+        grounding.computed_answers[0].disposition = "changed"  # type: ignore[misc]
+
+
+def test_freshness_scoped_computed_answer_does_not_satisfy_grounding_floor():
+    answer = _observation(
+        ProviderName.WOLFRAM,
+        0,
+        "https://www.wolframalpha.com/input?i=weather",
+        snippet="answer",
+        source_kind=EvidenceKind.COMPUTED_ANSWER,
+    )
+    outcome = _fuse(
+        _plan(
+            mode=SearchMode.GROUNDING,
+            freshness=FreshnessWindow(requested_relative=FreshnessRelative.DAY),
+        ),
+        _batch(ProviderName.WOLFRAM, (answer,)),
+    )
+    assert outcome.outcome is CanonicalOutcome.EMPTY
+    assert outcome.reason == "freshness_unproven"
+    assert outcome.computed_answers[0].disposition == "freshness_ineligible"
+
+
 @pytest.mark.parametrize("mode", [SearchMode.DISCOVERY, SearchMode.GROUNDING, SearchMode.RECOVERY])
 def test_non_research_modes_preserve_exact_base_order(mode):
     rows = tuple(
@@ -582,6 +809,38 @@ def test_research_runs_coverage_fill_and_relax_with_pinned_psl_site_keys():
         "relax",
         "relax",
     ]
+    decisions = {
+        item.cluster_sort_key: item
+        for item in outcome.site_diversity_trace.decisions
+    }
+    assert len(decisions) == 5
+    assert decisions["https://c.example.co.uk/2"].events == (
+        "defer_soft_cap",
+        "backfill_relaxed",
+    )
+    assert decisions["https://c.example.co.uk/2"].output_rank == 3
+    assert all(item.selected_site_count_after >= 1 for item in decisions.values())
+    assert outcome.site_diversity_trace.passed is True
+    assert outcome.site_diversity_trace.disposition == "floor_passed"
+
+
+def test_diversity_trace_records_candidates_omitted_by_result_limit():
+    rows = tuple(
+        _observation(ProviderName.EXA, rank, f"https://site{rank}.test/{rank}")
+        for rank in range(5)
+    )
+    outcome = _fuse(
+        _plan(mode=SearchMode.RESEARCH, limit=3),
+        _batch(ProviderName.EXA, rows),
+    )
+    assert len(outcome.site_diversity_trace.decisions) == 5
+    omitted = [
+        item
+        for item in outcome.site_diversity_trace.decisions
+        if item.output_rank is None
+    ]
+    assert [item.base_rank for item in omitted] == [3, 4]
+    assert all(item.events[-1] == "omit_result_limit" for item in omitted)
 
 
 def test_pinned_psl_includes_private_suffix_rules():
@@ -598,6 +857,25 @@ def test_pinned_psl_includes_private_suffix_rules():
         "foo.github.io",
         "bar.github.io",
     }
+    assert outcome.site_diversity_trace.psl_snapshot == PSL_SNAPSHOT_ID
+    assert (
+        outcome.site_diversity_trace.psl_snapshot_sha256
+        == PSL_SNAPSHOT_SHA256
+    )
+
+
+def test_domain_policy_must_bind_the_exact_pinned_psl_snapshot():
+    plan = replace(_plan(), domain_policy_version="domain-v1-unpinned")
+    outcome = _fuse(
+        plan,
+        _batch(
+            ProviderName.EXA,
+            (_observation(ProviderName.EXA, 0, "https://example.test/a"),),
+        ),
+    )
+    assert outcome.outcome is CanonicalOutcome.INVALID_REQUEST
+    assert outcome.reason == "domain_policy_unrecognized"
+    assert outcome.completed_phases == ()
 
 
 @pytest.mark.parametrize(
@@ -636,6 +914,79 @@ def test_bounds_are_checked_before_any_fusion_phase():
     assert outcome.completed_phases == ()
 
 
+@pytest.mark.parametrize(
+    "policy",
+    [
+        FusionPolicy(max_provider_batches=15),
+        FusionPolicy(max_observations_per_provider=51),
+        FusionPolicy(max_total_observations=701),
+        FusionPolicy(operation_deadline=math.nan),
+        FusionPolicy(operation_deadline=math.inf),
+    ],
+)
+def test_hard_ceilings_and_finite_deadline_cannot_be_loosened(policy):
+    outcome = _fuse(_plan(), policy=policy)
+    assert outcome.outcome is CanonicalOutcome.INVALID_REQUEST
+    assert outcome.reason == "fusion_policy_invalid"
+    assert outcome.completed_phases == ()
+
+
+def test_non_finite_monotonic_sample_fails_closed_as_timeout():
+    outcome = _fuse(
+        _plan(),
+        _batch(
+            ProviderName.EXA,
+            (_observation(ProviderName.EXA, 0, "https://x.test/a"),),
+        ),
+        policy=FusionPolicy(
+            operation_deadline=10.0,
+            monotonic=lambda: math.nan,
+        ),
+    )
+    assert outcome.outcome is CanonicalOutcome.TIMEOUT
+    assert outcome.reason == "fusion_clock_invalid"
+    assert outcome.completed_phases == ()
+
+
+def test_activatable_path_requires_deadline_and_positive_final_reserve():
+    missing = _fuse(_plan(), policy=FusionPolicy(activatable=True))
+    no_reserve = _fuse(
+        _plan(),
+        policy=FusionPolicy(
+            activatable=True,
+            operation_deadline=10.0,
+            publication_reserve_seconds=0.0,
+        ),
+    )
+    assert (missing.outcome, missing.reason) == (
+        CanonicalOutcome.INVALID_REQUEST,
+        "fusion_policy_invalid",
+    )
+    assert (no_reserve.outcome, no_reserve.reason) == (
+        CanonicalOutcome.INVALID_REQUEST,
+        "fusion_policy_invalid",
+    )
+
+
+def test_activatable_deadline_preserves_final_publication_reserve():
+    outcome = _fuse(
+        _plan(),
+        _batch(
+            ProviderName.EXA,
+            (_observation(ProviderName.EXA, 0, "https://x.test/a"),),
+        ),
+        policy=FusionPolicy(
+            activatable=True,
+            operation_deadline=10.0,
+            publication_reserve_seconds=1.0,
+            monotonic=lambda: 9.0,
+        ),
+    )
+    assert outcome.outcome is CanonicalOutcome.TIMEOUT
+    assert outcome.reason == "fusion_deadline_expired"
+    assert outcome.completed_phases == ()
+
+
 @pytest.mark.parametrize("expiry_call", range(1, 9))
 def test_deadline_is_checked_before_and_after_every_bounded_phase(expiry_call):
     calls = 0
@@ -652,7 +1003,7 @@ def test_deadline_is_checked_before_and_after_every_bounded_phase(expiry_call):
     )
     assert outcome.outcome is CanonicalOutcome.TIMEOUT
     assert outcome.reason == "fusion_deadline_expired"
-    assert len(outcome.completed_phases) == max(0, (expiry_call - 1) // 2)
+    assert len(outcome.completed_phases) == expiry_call // 2
 
 
 def test_fusion_module_has_no_network_import_or_async_function():

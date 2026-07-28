@@ -14,7 +14,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from typing import Awaitable, Mapping, Sequence, TypeVar
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
 from argus.models import ProviderName, ProviderTrace, SearchResult
 
@@ -82,6 +82,14 @@ class PublicationSource(str, Enum):
     PROVIDER_AGE = "provider_age"
     RESULT_TEXT = "result_text"
     NONE = "none"
+
+
+class TemporalClaimKind(str, Enum):
+    PUBLISHED = "published"
+    MODIFIED = "modified"
+    INDEXED = "indexed"
+    CREATED = "created"
+    CRAWLED = "crawled"
 
 
 class ContractConfidence(str, Enum):
@@ -209,16 +217,20 @@ def _safe_url(value: object) -> str | None:
         return None
     if parts.scheme not in {"http", "https"} or not parts.hostname or parts.username:
         return None
-    query = [
-        (key, item)
-        for key, item in parse_qsl(parts.query, keep_blank_values=True)
-        if not _SECRET_KEY.search(key)
-    ]
+    query_segments: list[str] = []
+    for segment in parts.query.split("&"):
+        raw_key = segment.partition("=")[0]
+        try:
+            decoded_key = unquote_plus(raw_key)
+        except (UnicodeError, ValueError):
+            decoded_key = raw_key
+        if not _SECRET_KEY.search(decoded_key):
+            query_segments.append(segment)
     netloc = parts.hostname
     if port is not None:
         netloc = f"{netloc}:{port}"
     return urlunsplit(
-        (parts.scheme, netloc, parts.path, urlencode(query, doseq=True), "")
+        (parts.scheme, netloc, parts.path, "&".join(query_segments), "")
     )
 
 
@@ -268,6 +280,8 @@ class PublicationEvidence:
     contract_confidence: ContractConfidence = ContractConfidence.UNVERIFIED
     raw_field_name: str | None = None
     semantic_contract_ref: str | None = None
+    parser_version: str | None = None
+    claim_kind: TemporalClaimKind = TemporalClaimKind.PUBLISHED
 
     def __post_init__(self) -> None:
         if not isinstance(self.precision, PublicationPrecision):
@@ -276,6 +290,8 @@ class PublicationEvidence:
             raise TypeError("publication source must be closed")
         if not isinstance(self.contract_confidence, ContractConfidence):
             raise TypeError("publication confidence must be closed")
+        if not isinstance(self.claim_kind, TemporalClaimKind):
+            raise TypeError("temporal claim kind must be closed")
         if self.published_at_utc is not None:
             if (
                 not isinstance(self.published_at_utc, datetime)
@@ -299,6 +315,10 @@ class PublicationEvidence:
             "semantic_contract_ref",
             _bounded_reference(self.semantic_contract_ref),
         )
+        parser_version = _bounded_reference(self.parser_version)
+        if self.parser_version is not None and parser_version is None:
+            raise ValueError("publication parser version must be bounded")
+        object.__setattr__(self, "parser_version", parser_version)
 
     @classmethod
     def from_raw(
@@ -308,6 +328,8 @@ class PublicationEvidence:
         raw_field_name: str,
         confidence: ContractConfidence,
         semantic_contract_ref: str | None = None,
+        parser_version: str | None = None,
+        claim_kind: TemporalClaimKind = TemporalClaimKind.PUBLISHED,
     ) -> PublicationEvidence | None:
         if not isinstance(value, str) or not value or len(value) > MAX_RAW_DATE:
             return None
@@ -323,6 +345,8 @@ class PublicationEvidence:
                     contract_confidence=confidence,
                     raw_field_name=field,
                     semantic_contract_ref=_bounded_reference(semantic_contract_ref),
+                    parser_version=parser_version,
+                    claim_kind=claim_kind,
                 )
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
             if parsed.tzinfo is None:
@@ -334,6 +358,8 @@ class PublicationEvidence:
                 contract_confidence=confidence,
                 raw_field_name=field,
                 semantic_contract_ref=_bounded_reference(semantic_contract_ref),
+                parser_version=parser_version,
+                claim_kind=claim_kind,
             )
         except ValueError:
             return None
@@ -389,6 +415,12 @@ class ControlTranslation:
     strength: FilterStrength
     provider_control: str | None = None
     provider_value: str | None = None
+    requested_relative: str | None = None
+    resolved_start_date: date | None = None
+    resolved_end_date: date | None = None
+    applied_start_date: date | None = None
+    applied_end_date: date | None = None
+    successful_empty_contract_ref: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.precision, TranslationPrecision):
@@ -423,6 +455,33 @@ class ControlTranslation:
             if not value or truncated:
                 raise ValueError("provider control value must be bounded and private")
             object.__setattr__(self, "provider_value", value)
+        if self.requested_relative not in {None, "day", "week", "month", "year"}:
+            raise ValueError("requested relative freshness must be closed")
+        for name in (
+            "resolved_start_date",
+            "resolved_end_date",
+            "applied_start_date",
+            "applied_end_date",
+        ):
+            value = getattr(self, name)
+            if value is not None and type(value) is not date:
+                raise TypeError("freshness translation windows must be dates")
+        for start_name, end_name in (
+            ("resolved_start_date", "resolved_end_date"),
+            ("applied_start_date", "applied_end_date"),
+        ):
+            start = getattr(self, start_name)
+            end = getattr(self, end_name)
+            if start is not None and end is not None and start > end:
+                raise ValueError("freshness translation window is reversed")
+        empty_ref = _bounded_reference(self.successful_empty_contract_ref)
+        if self.successful_empty_contract_ref is not None and empty_ref is None:
+            raise ValueError("successful-empty contract reference must be bounded")
+        object.__setattr__(
+            self,
+            "successful_empty_contract_ref",
+            empty_ref,
+        )
 
 
 @dataclass(frozen=True, slots=True)

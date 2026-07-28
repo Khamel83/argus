@@ -8,6 +8,7 @@ model.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from dataclasses import replace
 from typing import Any, Mapping
 
 from argus.broker.provider_evidence import (
@@ -216,6 +217,7 @@ def _publication(
                 raw_field_name=field_name,
                 confidence=item_confidence,
                 semantic_contract_ref=reference,
+                parser_version="iso8601-v1",
             )
     return None
 
@@ -456,10 +458,23 @@ def normalize_provider_response(
         )
     else:
         failure = None
+    normalized_request = request_evidence or ProviderRequestEvidence()
+    if (
+        failure is not None
+        and failure.category is FailureCategory.EMPTY
+        and normalized_request.freshness_translation is not None
+    ):
+        normalized_request = replace(
+            normalized_request,
+            freshness_translation=replace(
+                normalized_request.freshness_translation,
+                successful_empty_contract_ref="successful-empty-v1",
+            ),
+        )
     return ProviderSearchBatch(
         provider=provider,
         provider_contract_version=_CONTRACT_VERSION[provider],
-        request_evidence=request_evidence or ProviderRequestEvidence(),
+        request_evidence=normalized_request,
         response_evidence=response,
         observations=tuple(observations),
         failure=failure,

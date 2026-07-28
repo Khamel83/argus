@@ -188,6 +188,25 @@ def translate_freshness(
         strength,
         provider_control,
         provider_value,
+        requested_relative=(
+            freshness.requested_relative.value
+            if freshness.requested_relative is not None
+            else None
+        ),
+        resolved_start_date=freshness.start_date,
+        resolved_end_date=freshness.end_date,
+        applied_start_date=(
+            freshness.start_date
+            if precision is TranslationPrecision.EXACT
+            and strength is FilterStrength.STRICT_CONTRACT
+            else None
+        ),
+        applied_end_date=(
+            freshness.end_date
+            if precision is TranslationPrecision.EXACT
+            and strength is FilterStrength.STRICT_CONTRACT
+            else None
+        ),
     )
     if required and precision is TranslationPrecision.UNSUPPORTED:
         raise RequiredControlUnsupported(

@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from argus.broker.planning import FreshnessWindow
+from argus.broker.planning import FreshnessRelative, FreshnessWindow
 from argus.broker.provider_evidence import (
     ContractConfidence,
     ControlTranslation,
@@ -39,6 +39,7 @@ from argus.broker.provider_evidence import (
     ResultObservation,
     SnippetEvidence,
     SnippetKind,
+    TemporalClaimKind,
     TranslationPrecision,
     UsageEvidence,
     attempt_timeout_seconds,
@@ -1713,6 +1714,75 @@ def test_private_sentinels_are_scrubbed_and_all_projection_values_are_bounded():
     assert batch.observations[0].source_kind is EvidenceKind.UNKNOWN
 
 
+def test_safe_url_preserves_key_only_empty_duplicate_and_query_order_grammar():
+    observations = tuple(
+        ResultObservation(
+            provider=ProviderName.EXA,
+            provider_rank=rank,
+            url=url,
+            title="Result",
+            snippet=SnippetEvidence("text", SnippetKind.PROVIDER_SNIPPET),
+        )
+        for rank, url in enumerate(
+            (
+                "https://example.test/a?flag",
+                "https://example.test/a?flag=",
+                "https://example.test/a?k=1&k=2",
+                "https://example.test/a?k=2&k=1",
+            )
+        )
+    )
+    batch = ProviderSearchBatch(
+        provider=ProviderName.EXA,
+        provider_contract_version="2026-07-27-v1",
+        observations=observations,
+    )
+    assert tuple(item.url for item in batch.observations) == tuple(
+        item.url for item in observations
+    )
+
+
+def test_normalized_publication_has_explicit_kind_and_parser_version():
+    fixture = _load(FIXTURE_ROOT / ProviderName.EXA.value / "freshness.json")
+    publication = normalize_provider_response(
+        ProviderName.EXA,
+        fixture,
+        max_results=1,
+    ).observations[0].publication
+    assert publication is not None
+    assert publication.claim_kind is TemporalClaimKind.PUBLISHED
+    assert publication.parser_version == "iso8601-v1"
+
+
+def test_normalized_successful_empty_retains_exact_applied_window_contract():
+    freshness = FreshnessWindow(
+        requested_relative=FreshnessRelative.DAY,
+        start_date=date(2026, 7, 27),
+        end_date=date(2026, 7, 27),
+    )
+    translation = translate_freshness(
+        ProviderName.EXA,
+        freshness,
+        required=True,
+    )
+    batch = normalize_provider_response(
+        ProviderName.EXA,
+        {"results": []},
+        max_results=1,
+        request_evidence=ProviderRequestEvidence(
+            freshness_translation=translation,
+        ),
+    )
+    retained = batch.request_evidence.freshness_translation
+    assert retained is not None
+    assert retained.requested_relative == "day"
+    assert retained.resolved_start_date == date(2026, 7, 27)
+    assert retained.resolved_end_date == date(2026, 7, 27)
+    assert retained.applied_start_date == date(2026, 7, 27)
+    assert retained.applied_end_date == date(2026, 7, 27)
+    assert retained.successful_empty_contract_ref == "successful-empty-v1"
+
+
 def test_nested_private_values_are_never_stringified_at_normalization_seams():
     batches = [
         normalize_provider_response(
@@ -2049,6 +2119,11 @@ def test_all_provider_control_capabilities_are_closed_and_required_controls_fail
     )
     assert translation.precision is TranslationPrecision.EXACT
     assert translation.strength is FilterStrength.STRICT_CONTRACT
+    assert translation.requested_relative is None
+    assert translation.resolved_start_date == date(2026, 7, 1)
+    assert translation.resolved_end_date == date(2026, 7, 27)
+    assert translation.applied_start_date == date(2026, 7, 1)
+    assert translation.applied_end_date == date(2026, 7, 27)
     with pytest.raises(RequiredControlUnsupported):
         translate_freshness(
             ProviderName.SERPER,

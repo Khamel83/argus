@@ -3,87 +3,68 @@
 ## Result
 
 Implemented the inactive S4 fusion seam for normalized provider batches. The
-module is pure and synchronous: it performs no provider call, network update,
-spend, persistence, cache publication, deployment, or production activation.
-Legacy ranking and deduplication remain unchanged and selectable until S7.
+module remains pure and synchronous: it performs no provider call, network
+update, spend, persistence, cache publication, deployment, or production
+activation. Legacy ranking and deduplication remain unchanged until S7.
 
-## RED and GREEN
+## Strict RED to GREEN
 
-- Initial RED: the exact focused command failed collection with
-  `ModuleNotFoundError: No module named 'argus.broker.fusion'`.
-- Review REDs separately proved the private-PSL rule gap, missing normalized
-  provider-batch trace, missing five-key ordering helper, and missing
-  compatibility provenance before each correction.
-- Dedicated GREEN: `52 passed`.
-- Exact focused GREEN:
-  `158 passed` for `tests/test_evidence_fusion.py`, `tests/test_broker.py`, and
-  `tests/test_attribution.py`.
-- Final full repository GREEN: `1551 passed, 42 skipped`, with four existing
+- The initial Task 5 RED failed collection because `argus.broker.fusion` did
+  not exist.
+- The strict review RED failed collection for the missing pinned-PSL identity
+  and typed temporal claim kind. Subsequent RED assertions covered the closed
+  freshness/empty registries, exact applied windows, hard ceilings, non-finite
+  clocks, reserve-aware activation, lossless query grammar, computed answers,
+  complete ranking/diversity traces, and post-phase timeout semantics.
+- Corrected evidence/provider GREEN: `347 passed`.
+- Exact focused GREEN for `tests/test_evidence_fusion.py`,
+  `tests/test_broker.py`, and `tests/test_attribution.py`: `185 passed`.
+- Final full repository GREEN: `1581 passed, 42 skipped`, with four existing
   Starlette per-request-cookie deprecation warnings.
-- Ruff over all four changed Python paths and `git diff --check`: passed.
+- `ruff check` and `git diff --check`: passed.
 
-## Exact contract evidence
+## Contract evidence
 
-- Freshness proves inclusive day, week, 30-day month, 365-day year, explicit
-  date, and end-of-day timestamp edges. Date/month/year precision is converted
-  to its complete UTC interval; the complete interval must fit the request.
-- Approved proof requires provider-field/provider-age source, approved contract
-  confidence, a bounded semantic contract reference, and publication semantics.
-  Unverified, result-text, modified, indexed, missing, coarse-outside-window,
-  and disjoint same-document claims fail closed. Widened translations always
-  receive the exact broker post-filter.
-- A freshness empty is proven only by a recognized `EMPTY` batch with exact,
-  strict-contract translation. Other zero-result or fully rejected evidence is
-  `freshness_unproven`, not provider failure.
-- The v1 document key removes default ports/fragments, applies IDNA/lowercase
-  host handling, normalizes unreserved percent bytes and dot segments, and
-  preserves scheme, path case, trailing slash, query order, duplicates,
-  key-only/empty values, `www`, and tracking parameters. Similar text and weak
-  provider hints never merge.
-- RRF uses `Fraction(1, 60 + provider_rank + 1)`, one best contribution per
-  provider, exact numerator/denominator storage, retained observations/ranks,
-  and all five declared tie keys. The 7/11/29 vector is replayed over all six
-  provider-map permutations. Compatibility attribution is additive within
-  absolute tolerance `1e-15`.
-- Discovery, grounding, and recovery preserve base order. Research executes
-  coverage, two-per-site fill, then base-order relax. Site keys use the locally
-  packaged, uv-locked PSL snapshot including private rules such as `github.io`.
-  Floors scale exactly to `min(3, result_limit)` clusters and
-  `min(2, required_clusters)` sites.
-- Bounds are checked before phase work: at most 14 provider batches, 50
-  observations per provider, and 700 total observations. The eight fake-clock
-  expiry positions prove monotonic checks before and after normalize/filter,
-  cluster, rank, and diversify; expiry does not start the next phase.
-- `FusionOutcome`, clusters, contributions, provider batches, filter,
-  duplicate, ranking, diversity, floor, and phase traces are frozen snapshots.
-  The `SearchResult` projection derives its float score and preserves the
-  representative URL/title/snippet/provider plus egress, machine, source kind,
-  and observation time without mutating the outcome.
-- Static AST coverage rejects async functions, `await`, and network-client
-  imports. Provider-native responses and plaintext query copies never enter the
-  fusion interface or trace.
+- Freshness proof is authorized only by the closed
+  `(freshness_policy_version, provider, provider_contract_version,
+  semantic_contract_ref, parser_version)` registry. It additionally requires
+  typed `PUBLISHED` semantics, an approved provider source and confidence, and
+  rejects modified, updated, indexed, created, and crawled fields, including
+  camelCase variants.
+- Successful empty proof is separately version-authorized and requires an
+  actual normalized `EMPTY` response, exact strict translation, and equality
+  among the request's relative/resolved window, the applied provider window,
+  and the retrieval plan. A 1999 or otherwise mismatched window fails closed.
+- S2 URL sanitation retains raw safe query segments, preserving order,
+  duplicates, key-only parameters, and empty values. Fusion therefore keeps
+  `?flag` and `?flag=` as distinct document identities end to end.
+- The immutable 14-batch, 50-observation-per-provider, and 700-total ceilings
+  can only be tightened. Deadlines and clock samples must be finite;
+  activatable use requires an inherited absolute deadline and a positive
+  final-publication reserve. All eight before/after phase checks are covered,
+  and a completed phase is recorded before its post-phase expiry check.
+- Computed answers are retained as frozen typed artifacts, excluded from URL
+  clustering and RRF, and can satisfy only the grounding evidence floor when
+  no freshness constraint applies.
+- RRF trace records every eligible cluster before result limiting, all five
+  ordering values, and every per-provider exact-fraction contribution.
+  Diversity trace records every base candidate, including coverage, fill,
+  soft-cap defer, relaxed backfill, and result-limit omission, with site counts,
+  pass/disposition, and optional output rank.
+- Site keys use direct runtime dependency `tld==0.13.2`. Fusion verifies the
+  packaged PSL bytes against SHA-256
+  `abf32ce9987d505b89765d76f35760543851235508f1f426b5b259a2062b5f68`;
+  the immutable snapshot ID is bound to `domain_policy_version` and emitted in
+  the trace. Private suffix behavior such as `github.io` is covered.
 
-## Commit and boundaries
+## Boundaries and residual risks
 
-Planned local commit: `feat: fuse provider evidence deterministically`.
-Only the four Task 5 implementation/test paths and this report are staged.
-There is no push, PR, merge, deployment, production mutation, or external
-publication.
-
-## Residual risks
-
-- S2 currently carries one publication claim per observation. S4 detects
-  conflicting approved claims across observations sharing a proven document
-  key; a future plural per-observation claim shape must retain the same
-  fail-closed overlap rule.
-- S2 exposes no accepted Argus-verified redirect/canonical relation, so v1
-  search fusion intentionally merges only equal conservative keys. The
-  verified-canonical representative priority remains dormant until that typed
-  evidence exists.
-- The PSL implementation uses the `tld` package and its data already locked
-  transitively in `uv.lock`; a future dependency reorganization must make that
-  runtime dependency explicit or vendor the exact snapshot without changing
-  `domain_policy_version`.
-- S7 must pass the inherited absolute operation deadline in `FusionPolicy`.
-  Leaving it unset is supported only for isolated pure tests and inactive
-  compatibility use; this task does not activate the seam.
+- This correction changes only S2 evidence/control normalization, S4
+  fusion/models/tests, the direct PSL dependency/lock entry, and this report.
+- No push, PR, merge, deployment, production mutation, network/provider call,
+  spend, persistence, or external publication occurred.
+- S2 still carries one publication claim per observation. A future plural
+  claim shape must retain the same closed authorization and fail-closed
+  conflict rule.
+- S7 must explicitly construct the activatable reserve-aware `FusionPolicy`;
+  this task does not activate the seam.

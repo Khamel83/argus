@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import ipaddress
-import re
+import hashlib
+import importlib.metadata
+import importlib.resources
+import math
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
 from fractions import Fraction
@@ -22,10 +25,14 @@ from argus.broker.provider_evidence import (
     PublicationPrecision,
     PublicationSource,
     ResultObservation,
+    TemporalClaimKind,
     TranslationPrecision,
 )
 from argus.contracts.outcomes import CanonicalOutcome
 from argus.models import (
+    ClusterRankingRecord,
+    ComputedAnswerArtifact,
+    DiversityDecision,
     DiversitySelection,
     DuplicateRelation,
     EvidenceFloorTrace,
@@ -45,10 +52,6 @@ _UNRESERVED = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
 )
 _HEX = frozenset("0123456789abcdefABCDEF")
-_NON_PUBLICATION_FIELDS = re.compile(
-    r"(?:^|[_-])(?:modified|updated|indexed|crawled)(?:[_-]|$)",
-    re.IGNORECASE,
-)
 _APPROVED_CONFIDENCE = frozenset(
     {
         ContractConfidence.OFFICIAL_CONTRACT,
@@ -58,10 +61,51 @@ _APPROVED_CONFIDENCE = frozenset(
 )
 _PHASES = ("normalize_filter", "cluster", "rank", "diversify")
 
-# The `tld` package is locked by uv and reads its packaged PSL snapshot locally.
-# It performs no network update. The semantic snapshot identity remains owned
-# by RetrievalPlan.domain_policy_version.
-_PSL_SNAPSHOT = "domain-v1-psl-fixture"
+PSL_SNAPSHOT_SHA256 = (
+    "abf32ce9987d505b89765d76f35760543851235508f1f426b5b259a2062b5f68"
+)
+PSL_SNAPSHOT_ID = f"tld-0.13.2-psl-{PSL_SNAPSHOT_SHA256[:16]}"
+PSL_DOMAIN_POLICY_VERSION = f"domain-v1-{PSL_SNAPSHOT_ID}"
+_HARD_MAX_PROVIDER_BATCHES = 14
+_HARD_MAX_OBSERVATIONS_PER_PROVIDER = 50
+_HARD_MAX_TOTAL_OBSERVATIONS = 700
+
+_FRESHNESS_PROOF_REGISTRY = {
+    "freshness-v1": frozenset(
+        {
+            (
+                ProviderName.EXA,
+                "2026-07-27-v1",
+                "exa-search-contract",
+                "iso8601-v1",
+            ),
+            (
+                ProviderName.PARALLEL,
+                "2026-07-27-v1",
+                "parallel-search-contract",
+                "iso8601-v1",
+            ),
+            (
+                ProviderName.VALYU,
+                "2026-07-27-v1",
+                "valyu-search-contract",
+                "iso8601-v1",
+            ),
+        }
+    )
+}
+_SUCCESSFUL_EMPTY_REGISTRY = {
+    "freshness-v1": frozenset(
+        {
+            (provider, "2026-07-27-v1", "successful-empty-v1")
+            for provider in (
+                ProviderName.EXA,
+                ProviderName.PARALLEL,
+                ProviderName.VALYU,
+            )
+        }
+    )
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +119,22 @@ class _Candidate:
 class _Cluster:
     document_key: str
     observations: tuple[ResultObservation, ...]
+
+
+def _pinned_psl_is_verified() -> bool:
+    try:
+        version = importlib.metadata.version("tld")
+        snapshot = (
+            importlib.resources.files("tld")
+            .joinpath("res/effective_tld_names.dat.txt")
+            .read_bytes()
+        )
+    except (FileNotFoundError, ImportError, OSError):
+        return False
+    return (
+        version == "0.13.2"
+        and hashlib.sha256(snapshot).hexdigest() == PSL_SNAPSHOT_SHA256
+    )
 
 
 def _normalize_percent(value: str) -> str:
@@ -197,17 +257,36 @@ def _domain_allowed(plan: RetrievalPlan, document_key: str) -> bool:
 
 
 def _approved_publication(
+    plan: RetrievalPlan,
+    batch: ProviderSearchBatch,
     publication: PublicationEvidence | None,
 ) -> bool:
     if publication is None:
         return False
-    field = publication.raw_field_name or ""
+    contract = (
+        batch.provider,
+        batch.provider_contract_version,
+        publication.semantic_contract_ref,
+        publication.parser_version,
+    )
+    field_name = (publication.raw_field_name or "").lower()
+    non_publication_field = any(
+        marker in field_name
+        for marker in ("modified", "updated", "indexed", "created", "crawled")
+    )
     return (
-        publication.source
+        publication.claim_kind is TemporalClaimKind.PUBLISHED
+        and publication.source
         in {PublicationSource.PROVIDER_FIELD, PublicationSource.PROVIDER_AGE}
+        and not non_publication_field
         and publication.contract_confidence in _APPROVED_CONFIDENCE
         and publication.semantic_contract_ref is not None
-        and not _NON_PUBLICATION_FIELDS.search(field)
+        and publication.parser_version is not None
+        and contract
+        in _FRESHNESS_PROOF_REGISTRY.get(
+            plan.freshness_policy_version,
+            frozenset(),
+        )
     )
 
 
@@ -285,10 +364,12 @@ def _normalize_filter(
     tuple[_Candidate, ...],
     tuple[FilteredObservation, ...],
     dict[str, tuple[tuple[datetime, datetime], ...]],
+    tuple[ComputedAnswerArtifact, ...],
 ]:
     candidates: list[_Candidate] = []
     trace: list[FilteredObservation] = []
     claims: dict[str, list[tuple[datetime, datetime]]] = {}
+    computed_answers: list[ComputedAnswerArtifact] = []
     requested = _freshness_requested(plan)
     window = _window_interval(plan)
     for batch in sorted(batches, key=lambda item: item.provider.value):
@@ -296,14 +377,44 @@ def _normalize_filter(
             key = conservative_document_key(observation.url)
             reason = "eligible"
             interval = None
-            if key is None:
+            if observation.source_kind is EvidenceKind.COMPUTED_ANSWER:
+                eligible_answer = (
+                    plan.intent is SearchMode.GROUNDING
+                    and not requested
+                    and batch.provider in plan.candidate_providers
+                    and bool(observation.snippet.primary_text.strip())
+                )
+                if requested:
+                    disposition = "freshness_ineligible"
+                elif plan.intent is not SearchMode.GROUNDING:
+                    disposition = "mode_ineligible"
+                elif batch.provider not in plan.candidate_providers:
+                    disposition = "provider_ineligible"
+                elif not observation.snippet.primary_text.strip():
+                    disposition = "empty_answer"
+                else:
+                    disposition = "eligible_grounding"
+                computed_answers.append(
+                    ComputedAnswerArtifact(
+                        provider=observation.provider,
+                        provider_rank=observation.provider_rank,
+                        url=observation.url,
+                        title=observation.title,
+                        text=observation.snippet.primary_text,
+                        egress=observation.egress.value,
+                        machine=observation.machine,
+                        observed_at=observation.observed_at,
+                        eligible_for_grounding=eligible_answer,
+                        disposition=disposition,
+                    )
+                )
+                reason = "computed_answer_artifact"
+            elif key is None:
                 reason = "invalid_url"
-            elif observation.source_kind is EvidenceKind.COMPUTED_ANSWER:
-                reason = "non_url_rankable"
             elif not _domain_allowed(plan, key):
                 reason = "domain_ineligible"
             elif requested:
-                if _approved_publication(observation.publication):
+                if _approved_publication(plan, batch, observation.publication):
                     interval = _publication_interval(observation.publication)  # type: ignore[arg-type]
                 if interval is None:
                     reason = "freshness_unproven"
@@ -323,7 +434,12 @@ def _normalize_filter(
                     reason,
                 )
             )
-    return candidates, trace, {key: tuple(value) for key, value in claims.items()}
+    return (
+        tuple(candidates),
+        tuple(trace),
+        {key: tuple(value) for key, value in claims.items()},
+        tuple(computed_answers),
+    )
 
 
 def _claims_conflict(intervals: tuple[tuple[datetime, datetime], ...]) -> bool:
@@ -447,6 +563,19 @@ def _rank(
         )
     ranked.sort(key=fusion_order_key)
     ranked = [replace(item, base_rank=index) for index, item in enumerate(ranked)]
+    records = tuple(
+        ClusterRankingRecord(
+            cluster_sort_key=item.cluster_sort_key,
+            base_rank=item.base_rank,
+            score_numerator=item.score_numerator,
+            score_denominator=item.score_denominator,
+            best_provider_rank=item.best_provider_rank,
+            contributor_count=item.contributor_count,
+            smallest_provider=item.smallest_provider,
+            contributions=item.contributions,
+        )
+        for item in ranked
+    )
     trace = RankingTrace(
         plan.ranking_policy_version,
         policy.rrf_k,
@@ -459,6 +588,7 @@ def _rank(
             )
             for item in ranked
         ),
+        records,
     )
     return tuple(ranked), trace
 
@@ -466,6 +596,7 @@ def _rank(
 def _diversify(
     plan: RetrievalPlan,
     base: tuple[RankedResultCluster, ...],
+    computed_answers: tuple[ComputedAnswerArtifact, ...],
 ) -> tuple[
     tuple[RankedResultCluster, ...],
     SiteDiversityTrace,
@@ -474,11 +605,15 @@ def _diversify(
     required_clusters = min(3, plan.result_limit)
     required_sites = min(2, required_clusters)
     available_sites = len({item.site_key for item in base})
-    reasons: dict[str, str] = {}
+    events: dict[str, list[str]] = {
+        item.cluster_sort_key: [] for item in base
+    }
     if plan.intent is not SearchMode.RESEARCH:
         selected = list(base[: plan.result_limit])
         for item in selected:
-            reasons[item.cluster_sort_key] = "base_order"
+            events[item.cluster_sort_key].append("base_order")
+        for item in base[plan.result_limit :]:
+            events[item.cluster_sort_key].append("omit_result_limit")
         floor_clusters = (
             1 if plan.intent in {SearchMode.GROUNDING, SearchMode.RECOVERY} else 0
         )
@@ -493,7 +628,7 @@ def _diversify(
                 selected.append(item)
                 selected_keys.add(item.cluster_sort_key)
                 selected_sites.add(item.site_key)
-                reasons[item.cluster_sort_key] = "coverage"
+                events[item.cluster_sort_key].append("coverage")
             if len(selected_sites) == required_sites:
                 break
         counts: dict[str, int] = {}
@@ -504,57 +639,137 @@ def _diversify(
             if item.cluster_sort_key in selected_keys:
                 continue
             if len(selected) >= plan.result_limit:
-                break
+                events[item.cluster_sort_key].append("omit_result_limit")
+                continue
             if counts.get(item.site_key, 0) < 2:
                 selected.append(item)
                 selected_keys.add(item.cluster_sort_key)
                 counts[item.site_key] = counts.get(item.site_key, 0) + 1
-                reasons[item.cluster_sort_key] = "fill"
+                events[item.cluster_sort_key].append("fill")
             else:
                 deferred.append(item)
+                events[item.cluster_sort_key].append("defer_soft_cap")
         for item in deferred:
             if len(selected) >= plan.result_limit:
-                break
+                events[item.cluster_sort_key].append("omit_result_limit")
+                continue
             selected.append(item)
-            reasons[item.cluster_sort_key] = "relax"
+            selected_keys.add(item.cluster_sort_key)
+            counts[item.site_key] = counts.get(item.site_key, 0) + 1
+            events[item.cluster_sort_key].append("backfill_relaxed")
         floor_clusters, floor_sites, applied = required_clusters, required_sites, True
     output = tuple(
         replace(item, output_rank=index) for index, item in enumerate(selected)
     )
+    output_by_key = {item.cluster_sort_key: item for item in output}
     selections = tuple(
         DiversitySelection(
             item.cluster_sort_key,
             item.base_rank,
             item.output_rank,
             item.site_key,
-            reasons[item.cluster_sort_key],
+            (
+                "relax"
+                if "backfill_relaxed" in events[item.cluster_sort_key]
+                else events[item.cluster_sort_key][-1]
+            ),
             available_sites,
         )
         for item in output
     )
     actual_sites = len({item.site_key for item in output})
+    eligible_computed = sum(
+        item.eligible_for_grounding for item in computed_answers
+    )
+    floor_passed = (
+        (len(output) + eligible_computed) >= floor_clusters
+        and (actual_sites >= floor_sites or eligible_computed > 0)
+    )
+    decisions: list[DiversityDecision] = []
+    selected_so_far: set[str] = set()
+    per_site: dict[str, int] = {}
+    for item in sorted(
+        output,
+        key=lambda candidate: candidate.output_rank,
+    ):
+        before_sites = len(selected_so_far)
+        before_site = per_site.get(item.site_key, 0)
+        selected_so_far.add(item.site_key)
+        per_site[item.site_key] = before_site + 1
+        decisions.append(
+            DiversityDecision(
+                cluster_sort_key=item.cluster_sort_key,
+                base_rank=item.base_rank,
+                output_rank=item.output_rank,
+                site_key=item.site_key,
+                events=tuple(events[item.cluster_sort_key]),
+                selected_site_count_before=before_sites,
+                selected_site_count_after=len(selected_so_far),
+                site_selected_count_before=before_site,
+                site_selected_count_after=before_site + 1,
+            )
+        )
+    for item in base:
+        if item.cluster_sort_key in output_by_key:
+            continue
+        if not events[item.cluster_sort_key]:
+            events[item.cluster_sort_key].append("omit_result_limit")
+        decisions.append(
+            DiversityDecision(
+                cluster_sort_key=item.cluster_sort_key,
+                base_rank=item.base_rank,
+                output_rank=None,
+                site_key=item.site_key,
+                events=tuple(events[item.cluster_sort_key]),
+                selected_site_count_before=actual_sites,
+                selected_site_count_after=actual_sites,
+                site_selected_count_before=per_site.get(item.site_key, 0),
+                site_selected_count_after=per_site.get(item.site_key, 0),
+            )
+        )
+    decisions.sort(key=lambda item: item.base_rank)
     floor = EvidenceFloorTrace(
         floor_clusters,
         floor_sites,
         len(output),
         actual_sites,
-        len(output) >= floor_clusters and actual_sites >= floor_sites,
+        floor_passed,
+        eligible_computed,
+        "floor_passed" if floor_passed else "floor_unmet",
     )
     return (
         output,
         SiteDiversityTrace(
-            applied,
-            plan.domain_policy_version or _PSL_SNAPSHOT,
-            available_sites,
-            floor_sites,
-            selections,
+            applied=applied,
+            psl_snapshot=PSL_SNAPSHOT_ID,
+            psl_snapshot_sha256=PSL_SNAPSHOT_SHA256,
+            available_sites=available_sites,
+            required_sites=floor_sites,
+            selections=selections,
+            decisions=tuple(decisions),
+            selected_sites=actual_sites,
+            passed=floor_passed,
+            disposition="floor_passed" if floor_passed else "floor_unmet",
         ),
         floor,
     )
 
 
-def _strict_empty_proven(batch: ProviderSearchBatch) -> bool:
+def _strict_empty_proven(
+    plan: RetrievalPlan,
+    batch: ProviderSearchBatch,
+) -> bool:
     translation = batch.request_evidence.freshness_translation
+    requested_relative = (
+        plan.freshness.requested_relative.value
+        if plan.freshness.requested_relative is not None
+        else None
+    )
+    registry_key = (
+        batch.provider,
+        batch.provider_contract_version,
+        translation.successful_empty_contract_ref if translation else None,
+    )
     return (
         batch.failure is not None
         and batch.failure.category is FailureCategory.EMPTY
@@ -562,6 +777,16 @@ def _strict_empty_proven(batch: ProviderSearchBatch) -> bool:
         and translation is not None
         and translation.precision is TranslationPrecision.EXACT
         and translation.strength is FilterStrength.STRICT_CONTRACT
+        and translation.requested_relative == requested_relative
+        and translation.resolved_start_date == plan.freshness.start_date
+        and translation.resolved_end_date == plan.freshness.end_date
+        and translation.applied_start_date == plan.freshness.start_date
+        and translation.applied_end_date == plan.freshness.end_date
+        and registry_key
+        in _SUCCESSFUL_EMPTY_REGISTRY.get(
+            plan.freshness_policy_version,
+            frozenset(),
+        )
     )
 
 
@@ -576,17 +801,47 @@ def _validate_inputs(
         raise TypeError("fusion policy must be typed")
     if not isinstance(batches, tuple):
         raise TypeError("provider batches must be an immutable normalized tuple")
-    if (
+    invalid_numeric = (
         policy.rrf_k != 60
         or type(policy.max_provider_batches) is not int
         or policy.max_provider_batches <= 0
+        or policy.max_provider_batches > _HARD_MAX_PROVIDER_BATCHES
         or type(policy.max_observations_per_provider) is not int
         or policy.max_observations_per_provider <= 0
+        or policy.max_observations_per_provider
+        > _HARD_MAX_OBSERVATIONS_PER_PROVIDER
         or type(policy.max_total_observations) is not int
         or policy.max_total_observations <= 0
+        or policy.max_total_observations > _HARD_MAX_TOTAL_OBSERVATIONS
         or not callable(policy.monotonic)
+        or type(policy.activatable) is not bool
+        or isinstance(policy.publication_reserve_seconds, bool)
+        or not isinstance(policy.publication_reserve_seconds, (int, float))
+        or not math.isfinite(float(policy.publication_reserve_seconds))
+        or policy.publication_reserve_seconds < 0
+        or (
+            policy.operation_deadline is not None
+            and (
+                isinstance(policy.operation_deadline, bool)
+                or not isinstance(policy.operation_deadline, (int, float))
+                or not math.isfinite(float(policy.operation_deadline))
+            )
+        )
+        or (
+            policy.activatable
+            and (
+                policy.operation_deadline is None
+                or policy.publication_reserve_seconds <= 0
+            )
+        )
+    )
+    if invalid_numeric:
+        return "fusion_policy_invalid"
+    if (
+        plan.domain_policy_version != PSL_DOMAIN_POLICY_VERSION
+        or not _pinned_psl_is_verified()
     ):
-        raise ValueError("fusion policy must retain bounded v1 semantics")
+        return "domain_policy_unrecognized"
     if len(batches) > policy.max_provider_batches:
         return "fusion_input_bound_exceeded"
     if any(not isinstance(item, ProviderSearchBatch) for item in batches):
@@ -613,6 +868,7 @@ def _empty_outcome(
     diversity: SiteDiversityTrace | None = None,
     floor: EvidenceFloorTrace | None = None,
     provider_batches: tuple[ProviderSearchBatch, ...] = (),
+    computed_answers: tuple[ComputedAnswerArtifact, ...] = (),
 ) -> FusionOutcome:
     return FusionOutcome(
         outcome,
@@ -621,13 +877,23 @@ def _empty_outcome(
         duplicate_relations=relations,
         site_diversity_trace=diversity
         or SiteDiversityTrace(
-            False, plan.domain_policy_version, 0, 0, ()
+            applied=False,
+            psl_snapshot=PSL_SNAPSHOT_ID,
+            psl_snapshot_sha256=PSL_SNAPSHOT_SHA256,
+            available_sites=0,
+            required_sites=0,
+            selections=(),
+            decisions=(),
+            selected_sites=0,
+            passed=True,
+            disposition="not_evaluated",
         ),
         evidence_floor_trace=floor or EvidenceFloorTrace(0, 0, 0, 0, True),
         ranking_trace=ranking
         or RankingTrace(plan.ranking_policy_version, 60, (), ()),
         completed_phases=completed,
         provider_batches=provider_batches,
+        computed_answers=computed_answers,
     )
 
 
@@ -653,97 +919,36 @@ def fuse_evidence(
     ranking: RankingTrace | None = None
     diversity: SiteDiversityTrace | None = None
     floor: EvidenceFloorTrace | None = None
+    computed_answers: tuple[ComputedAnswerArtifact, ...] = ()
 
-    def expired() -> bool:
+    def deadline_failure() -> str | None:
         deadline = fusion_policy.operation_deadline
-        return deadline is not None and fusion_policy.monotonic() >= deadline
+        if deadline is None:
+            return None
+        try:
+            raw_sample = fusion_policy.monotonic()
+        except Exception:
+            return "fusion_clock_invalid"
+        if (
+            isinstance(raw_sample, bool)
+            or not isinstance(raw_sample, (int, float))
+            or not math.isfinite(float(raw_sample))
+        ):
+            return "fusion_clock_invalid"
+        effective_deadline = (
+            float(deadline) - float(fusion_policy.publication_reserve_seconds)
+        )
+        return (
+            "fusion_deadline_expired"
+            if float(raw_sample) >= effective_deadline
+            else None
+        )
 
-    if expired():
+    def timeout_outcome(reason: str) -> FusionOutcome:
         return _empty_outcome(
             retrieval_plan,
             CanonicalOutcome.TIMEOUT,
-            "fusion_deadline_expired",
-            provider_batches=provider_batches,
-        )
-    candidate_list, filtered_list, claims = _normalize_filter(
-        retrieval_plan, provider_batches
-    )
-    filtered = tuple(filtered_list)
-    if expired():
-        return _empty_outcome(
-            retrieval_plan,
-            CanonicalOutcome.TIMEOUT,
-            "fusion_deadline_expired",
-            filtered=filtered,
-            provider_batches=provider_batches,
-        )
-    completed += (_PHASES[0],)
-
-    if expired():
-        return _empty_outcome(
-            retrieval_plan,
-            CanonicalOutcome.TIMEOUT,
-            "fusion_deadline_expired",
-            completed=completed,
-            filtered=filtered,
-            provider_batches=provider_batches,
-        )
-    clusters, filtered, relations = _cluster(
-        tuple(candidate_list), filtered, claims
-    )
-    if expired():
-        return _empty_outcome(
-            retrieval_plan,
-            CanonicalOutcome.TIMEOUT,
-            "fusion_deadline_expired",
-            completed=completed,
-            filtered=filtered,
-            relations=relations,
-            provider_batches=provider_batches,
-        )
-    completed += (_PHASES[1],)
-
-    if expired():
-        return _empty_outcome(
-            retrieval_plan,
-            CanonicalOutcome.TIMEOUT,
-            "fusion_deadline_expired",
-            completed=completed,
-            filtered=filtered,
-            relations=relations,
-            provider_batches=provider_batches,
-        )
-    ranked, ranking = _rank(retrieval_plan, clusters, fusion_policy)
-    if expired():
-        return _empty_outcome(
-            retrieval_plan,
-            CanonicalOutcome.TIMEOUT,
-            "fusion_deadline_expired",
-            completed=completed,
-            filtered=filtered,
-            relations=relations,
-            ranking=ranking,
-            provider_batches=provider_batches,
-        )
-    completed += (_PHASES[2],)
-
-    if expired():
-        return _empty_outcome(
-            retrieval_plan,
-            CanonicalOutcome.TIMEOUT,
-            "fusion_deadline_expired",
-            completed=completed,
-            filtered=filtered,
-            relations=relations,
-            ranking=ranking,
-            provider_batches=provider_batches,
-        )
-    selected, diversity, floor = _diversify(retrieval_plan, ranked)
-    if expired():
-        return _empty_outcome(
-            retrieval_plan,
-            CanonicalOutcome.TIMEOUT,
-            "fusion_deadline_expired",
+            reason,
             completed=completed,
             filtered=filtered,
             relations=relations,
@@ -751,17 +956,74 @@ def fuse_evidence(
             diversity=diversity,
             floor=floor,
             provider_batches=provider_batches,
+            computed_answers=computed_answers,
         )
+
+    failure = deadline_failure()
+    if failure:
+        return timeout_outcome(failure)
+    candidate_list, filtered, claims, computed_answers = _normalize_filter(
+        retrieval_plan, provider_batches
+    )
+    completed += (_PHASES[0],)
+    failure = deadline_failure()
+    if failure:
+        return timeout_outcome(failure)
+
+    failure = deadline_failure()
+    if failure:
+        return timeout_outcome(failure)
+    clusters, filtered, relations = _cluster(candidate_list, filtered, claims)
+    completed += (_PHASES[1],)
+    failure = deadline_failure()
+    if failure:
+        return timeout_outcome(failure)
+
+    failure = deadline_failure()
+    if failure:
+        return timeout_outcome(failure)
+    ranked, ranking = _rank(retrieval_plan, clusters, fusion_policy)
+    completed += (_PHASES[2],)
+    failure = deadline_failure()
+    if failure:
+        return timeout_outcome(failure)
+
+    failure = deadline_failure()
+    if failure:
+        return timeout_outcome(failure)
+    selected, diversity, floor = _diversify(
+        retrieval_plan,
+        ranked,
+        computed_answers,
+    )
     completed += (_PHASES[3],)
+    failure = deadline_failure()
+    if failure:
+        return timeout_outcome(failure)
 
     if not selected:
         if _freshness_requested(retrieval_plan):
             reason = (
                 "strict_empty"
-                if any(_strict_empty_proven(batch) for batch in provider_batches)
+                if any(
+                    _strict_empty_proven(retrieval_plan, batch)
+                    for batch in provider_batches
+                )
                 else "freshness_unproven"
             )
             outcome = CanonicalOutcome.EMPTY
+        elif floor.passed and floor.eligible_computed_answers:
+            if any(
+                batch.failure is not None
+                and batch.failure.category is not FailureCategory.EMPTY
+                for batch in provider_batches
+            ):
+                reason, outcome = (
+                    "partial_provider_failure",
+                    CanonicalOutcome.DEGRADED,
+                )
+            else:
+                reason, outcome = "accepted", CanonicalOutcome.SUCCESS
         elif provider_batches and all(
             batch.failure is not None
             and batch.failure.category is not FailureCategory.EMPTY
@@ -794,6 +1056,7 @@ def fuse_evidence(
         ranking_trace=ranking,
         completed_phases=completed,
         provider_batches=provider_batches,
+        computed_answers=computed_answers,
     )
 
 

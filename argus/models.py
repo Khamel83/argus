@@ -117,6 +117,8 @@ class FusionPolicy:
     max_total_observations: int = 700
     operation_deadline: float | None = None
     monotonic: Callable[[], float] = time.monotonic
+    activatable: bool = False
+    publication_reserve_seconds: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +147,18 @@ class RRFContribution:
     provider_rank: int
     numerator: int
     denominator: int
+
+
+@dataclass(frozen=True, slots=True)
+class ClusterRankingRecord:
+    cluster_sort_key: str
+    base_rank: int
+    score_numerator: int
+    score_denominator: int
+    best_provider_rank: int
+    contributor_count: int
+    smallest_provider: ProviderName
+    contributions: tuple[RRFContribution, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,12 +196,30 @@ class DiversitySelection:
 
 
 @dataclass(frozen=True, slots=True)
+class DiversityDecision:
+    cluster_sort_key: str
+    base_rank: int
+    output_rank: int | None
+    site_key: str
+    events: tuple[str, ...]
+    selected_site_count_before: int
+    selected_site_count_after: int
+    site_selected_count_before: int
+    site_selected_count_after: int
+
+
+@dataclass(frozen=True, slots=True)
 class SiteDiversityTrace:
     applied: bool
     psl_snapshot: str
+    psl_snapshot_sha256: str
     available_sites: int
     required_sites: int
     selections: tuple[DiversitySelection, ...]
+    decisions: tuple[DiversityDecision, ...]
+    selected_sites: int
+    passed: bool
+    disposition: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +229,8 @@ class EvidenceFloorTrace:
     actual_clusters: int
     actual_sites: int
     passed: bool
+    eligible_computed_answers: int = 0
+    disposition: str = "floor_passed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,6 +239,21 @@ class RankingTrace:
     rrf_k: int
     base_order: tuple[str, ...]
     exact_scores: tuple[tuple[str, int, int], ...]
+    records: tuple[ClusterRankingRecord, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ComputedAnswerArtifact:
+    provider: ProviderName
+    provider_rank: int
+    url: str
+    title: str
+    text: str
+    egress: str
+    machine: str | None
+    observed_at: datetime
+    eligible_for_grounding: bool
+    disposition: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,10 +266,15 @@ class FusionOutcome:
     site_diversity_trace: SiteDiversityTrace = field(
         default_factory=lambda: SiteDiversityTrace(
             applied=False,
-            psl_snapshot="domain-v1-psl-fixture",
+            psl_snapshot="unverified",
+            psl_snapshot_sha256="",
             available_sites=0,
             required_sites=0,
             selections=(),
+            decisions=(),
+            selected_sites=0,
+            passed=True,
+            disposition="not_evaluated",
         )
     )
     evidence_floor_trace: EvidenceFloorTrace = field(
@@ -231,3 +285,4 @@ class FusionOutcome:
     )
     completed_phases: tuple[str, ...] = ()
     provider_batches: tuple[object, ...] = ()
+    computed_answers: tuple[ComputedAnswerArtifact, ...] = ()
