@@ -907,6 +907,7 @@ def test_postgresql_restore_verifier_uses_disposable_database(
     from sqlalchemy.engine import make_url
 
     from argus.recovery.database import (
+        EXPECTED_SCHEMA_HEAD,
         verify_argus_database,
         verify_restored_source_inventory,
     )
@@ -946,7 +947,7 @@ def test_postgresql_restore_verifier_uses_disposable_database(
             ),
         )
 
-        assert report["schema_head"] == "0007_extraction_outcomes"
+        assert report["schema_head"] == EXPECTED_SCHEMA_HEAD
         assert report["checks"]["argus_read_path"] is True
         assert verify_restored_source_inventory(
             scratch,
