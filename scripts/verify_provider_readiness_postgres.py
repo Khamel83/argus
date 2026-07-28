@@ -317,6 +317,40 @@ def main() -> None:
         raise RuntimeError(
             "matched settlement did not clear account uncertainty"
         )
+    legacy_spend = ProviderSpendRepository(first.repository.session_factory)
+    direct_reservation = legacy_spend.reserve(
+        provider=ProviderName.SEARCHAPI,
+        conservative_charge=0.1,
+        budget_limit=1.5,
+        caller_identity="postgres-ci-legacy",
+        caller_label="direct-settle",
+        idempotency_key=f"pg-direct-reserve-{suffix}",
+    )
+    direct_uncertain_modes = [
+        first.snapshot(
+            ProviderName.SEARCHAPI,
+            request_class=mode,
+        ).spend
+        for mode in ("discovery", "research", "recovery", "grounding")
+    ]
+    if direct_uncertain_modes != ["uncertain"] * 4:
+        raise RuntimeError("direct reserve did not protect account uncertainty")
+    legacy_spend.settle(
+        direct_reservation.attempt_id,
+        actual_charge=0.05,
+        outcome="success",
+    )
+    direct_settlement_modes = [
+        first.snapshot(
+            ProviderName.SEARCHAPI,
+            request_class=mode,
+        ).spend
+        for mode in ("discovery", "research", "recovery", "grounding")
+    ]
+    if direct_settlement_modes != ["available"] * 4:
+        raise RuntimeError(
+            "direct settlement did not reconcile account uncertainty"
+        )
     settle_race_blocked = verify_settle_authorize_race(
         first, second, contexts, suffix
     )
@@ -405,6 +439,7 @@ def main() -> None:
             "account_lock_grants": len(granted),
             "attested_fixture_probe_authorized": fixture_probe.allowed,
             "billable_probe_consumed": True,
+            "direct_settlement_modes": direct_settlement_modes,
             "settle_authorize_race_blocked": settle_race_blocked,
             "matched_uncertainty_modes": matched_modes,
             "terminal_account_modes": terminal_modes,

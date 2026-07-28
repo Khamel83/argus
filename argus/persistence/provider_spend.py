@@ -371,11 +371,15 @@ class ProviderSpendRepository:
             row.resolution_source = "argus"
             row.resolution_reference = None
             row.updated_at = self._db_now(session)
-            self._record_readiness_spend(
+            from argus.persistence.readiness import ProviderReadinessRepository
+
+            ProviderReadinessRepository(
+                sessionmaker(bind=session.get_bind(), expire_on_commit=False)
+            ).resolve_spend_in_session(
                 session,
-                row=row,
-                state=("exhausted" if outcome == "balance_exhausted" else "available"),
-                protected=outcome == "balance_exhausted",
+                attempt=row,
+                outcome=outcome,
+                evidence_ref=f"spend-settlement:{row.id}",
             )
             self._audit(
                 session,

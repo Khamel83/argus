@@ -1391,7 +1391,10 @@ def test_fixture_attestation_requires_exact_release_and_provider_contract():
 
 
 def test_fixture_attestation_hashes_full_request_shape_seam():
-    from argus.providers.fixture_attestation import build_fixture_attestation
+    from argus.providers.fixture_attestation import (
+        build_fixture_attestation,
+        verify_fixture_attestation,
+    )
 
     _, attestation = build_fixture_attestation(
         ProviderName.BRAVE,
@@ -1408,7 +1411,13 @@ def test_fixture_attestation_hashes_full_request_shape_seam():
         "providers/base.py",
         "providers/ddg_worker.py",
         "providers/normalization.py",
+        "providers/fixture_golden_contracts.py",
     } <= dependencies
+    assert len(attestation["golden_contract_sha256"]) == 64
+    assert not verify_fixture_attestation({
+        **attestation,
+        "golden_contract_sha256": "tampered",
+    })
 
 
 def test_fixture_harness_enforces_exact_outcomes_for_all_canonical_adapters():
@@ -1427,6 +1436,84 @@ def test_fixture_harness_enforces_exact_outcomes_for_all_canonical_adapters():
         assert summaries["malformed"]["failure"] == (
             FailureCategory.PARSE_ERROR.value
         )
+        assert summaries["success"]["golden_request_validated"] is True
+        assert summaries["success"]["golden_output_validated"] is True
+
+
+def test_golden_provider_contract_is_checked_separately_from_attestations():
+    from pathlib import Path
+
+    from argus.providers.fixture_golden_contracts import (
+        GOLDEN_PROVIDER_CONTRACTS,
+    )
+
+    assert set(GOLDEN_PROVIDER_CONTRACTS) == {
+        provider for provider in ProviderName if provider is not ProviderName.CACHE
+    }
+    for contract in GOLDEN_PROVIDER_CONTRACTS.values():
+        assert contract["provider_contract_version"] == ATTESTED_CONTRACT
+        assert set(contract["expected"]) == {
+            "success", "empty", "error", "malformed", "privacy"
+        }
+        assert contract["request"]["method"] in {"GET", "POST", "SUBPROCESS"}
+    generator = Path(
+        "scripts/generate_provider_fixture_attestations.py"
+    ).read_text()
+    assert generator.count("write_text(") == 1
+    assert "attestation_artifact_path().write_text" in generator
+
+
+def test_attestation_regeneration_rejects_wrong_outbound_query(monkeypatch):
+    from argus.providers.brave import BraveProvider
+    from scripts.generate_provider_fixture_attestations import (
+        generate_attestation_document,
+    )
+
+    original = BraveProvider.search
+
+    async def wrong_query(self, query):
+        query.query = "wrong-query"
+        return await original(self, query)
+
+    monkeypatch.setattr(BraveProvider, "search", wrong_query)
+    with pytest.raises(ValueError, match="golden request"):
+        generate_attestation_document()
+
+
+def test_attestation_regeneration_rejects_wrong_provider_contract(monkeypatch):
+    import argus.providers.normalization as normalization
+
+    from scripts.generate_provider_fixture_attestations import (
+        generate_attestation_document,
+    )
+
+    monkeypatch.setitem(
+        normalization._CONTRACT_VERSION,
+        ProviderName.BRAVE,
+        "wrong-contract",
+    )
+    with pytest.raises(ValueError, match="golden output"):
+        generate_attestation_document()
+
+
+def test_attestation_regeneration_rejects_wrong_normalized_title(monkeypatch):
+    import argus.providers.normalization as normalization
+
+    from scripts.generate_provider_fixture_attestations import (
+        generate_attestation_document,
+    )
+
+    original = normalization._fields
+
+    def wrong_title(provider, item):
+        url, title, snippet, kind = original(provider, item)
+        if provider is ProviderName.BRAVE:
+            title = "Wrong title"
+        return url, title, snippet, kind
+
+    monkeypatch.setattr(normalization, "_fields", wrong_title)
+    with pytest.raises(ValueError, match="golden output"):
+        generate_attestation_document()
 
 
 def test_fixture_harness_rejects_private_query_in_adapter_logs(monkeypatch):

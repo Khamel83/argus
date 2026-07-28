@@ -26,6 +26,10 @@ def _manifest_path() -> Path:
     return Path(__file__).with_name("fixture_contracts.json")
 
 
+def _golden_contract_path() -> Path:
+    return Path(__file__).with_name("fixture_golden_contracts.py")
+
+
 def attestation_artifact_path() -> Path:
     return Path(__file__).with_name("fixture_attestations.json")
 
@@ -46,6 +50,7 @@ def _shared_dependency_paths() -> tuple[Path, ...]:
         root / "providers" / "ddg_worker.py",
         root / "providers" / "normalization.py",
         root / "providers" / "fixture_harness.py",
+        root / "providers" / "fixture_golden_contracts.py",
         root / "providers" / "fixture_registry.py",
         Path(__file__),
     )
@@ -162,6 +167,7 @@ def verify_fixture_attestation(
             "shared_adapter_sha256": _shared_dependency_hash(),
             "shared_dependency_files": list(_shared_dependency_files()),
             "fixture_manifest_sha256": _sha256_file(_manifest_path()),
+            "golden_contract_sha256": _sha256_file(_golden_contract_path()),
         }
     except (
         AttributeError,

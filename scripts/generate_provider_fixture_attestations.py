@@ -12,6 +12,7 @@ from argus.models import ProviderName
 from argus.providers.fixture_attestation import (
     _adapter_search_hash,
     _content_ref,
+    _golden_contract_path,
     _manifest_path,
     _sha256_file,
     _shared_dependency_files,
@@ -20,6 +21,7 @@ from argus.providers.fixture_attestation import (
     default_release_revision,
 )
 from argus.providers.fixture_harness import run_fixture_cases
+from argus.providers.fixture_golden_contracts import GOLDEN_PROVIDER_CONTRACTS
 from argus.providers.fixture_registry import canonical_adapter
 
 
@@ -35,6 +37,20 @@ def generate_attestation_document(
             continue
         module_name, class_name, module, provider_class = canonical_adapter(provider)
         contract = manifest["providers"][provider.value]
+        golden = GOLDEN_PROVIDER_CONTRACTS[provider]
+        declared_contract = {
+            "contract_version": golden["provider_contract_version"],
+            "request_contract": golden["request_contract"],
+            "response_contract": golden["response_contract"],
+            "error_category": golden["expected"]["error"]["failure"],
+            "error_http_status": golden["expected"]["error"][
+                "failure_http_status"
+            ],
+        }
+        if contract != declared_contract:
+            raise ValueError(
+                f"{provider.value} manifest disagrees with golden contract"
+            )
         attestation = {
             "provider": provider.value,
             "release": release_revision,
@@ -45,6 +61,7 @@ def generate_attestation_document(
             "shared_adapter_sha256": _shared_dependency_hash(),
             "shared_dependency_files": list(_shared_dependency_files()),
             "fixture_manifest_sha256": _sha256_file(manifest_path),
+            "golden_contract_sha256": _sha256_file(_golden_contract_path()),
             "fixture_case_digest": run_fixture_cases(provider),
             "request_contract": str(contract["request_contract"]),
             "response_contract": str(contract["response_contract"]),

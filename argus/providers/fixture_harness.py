@@ -6,15 +6,21 @@ import asyncio
 import hashlib
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from unittest.mock import patch
 
 from argus.config import ProviderConfig, SearXNGConfig
 from argus.models import ProviderName, SearchQuery
+from argus.providers.fixture_golden_contracts import (
+    CREDENTIAL,
+    GOLDEN_PROVIDER_CONTRACTS,
+    QUERY,
+)
 from argus.providers.fixture_registry import canonical_adapter
 
 
-_SECRET = "fixture-private-query-value"
+_SECRET = QUERY
 _SENTINEL = "fixture-credential-sentinel"
 _SCENARIOS = ("success", "empty", "error", "malformed")
 
@@ -28,107 +34,65 @@ class _CaptureHandler(logging.Handler):
         self.messages.append(self.format(record))
 
 
-def _row(provider: ProviderName) -> dict[str, object]:
-    url = "https://example.com/fixture"
-    return {
-        ProviderName.DUCKDUCKGO: {
-            "href": url, "title": "Fixture", "body": "fixture snippet"
-        },
-        ProviderName.GITHUB: {
-            "html_url": url,
-            "full_name": "fixture/repository",
-            "description": "fixture snippet",
-        },
-        ProviderName.LINKUP: {
-            "url": url, "name": "Fixture", "content": "fixture snippet"
-        },
-        ProviderName.SERPER: {
-            "link": url, "title": "Fixture", "snippet": "fixture snippet"
-        },
-        ProviderName.SEARXNG: {
-            "url": url, "title": "Fixture", "content": "fixture snippet"
-        },
-        ProviderName.TAVILY: {
-            "url": url, "title": "Fixture", "content": "fixture snippet"
-        },
-        ProviderName.VALYU: {
-            "url": url, "title": "Fixture", "description": "fixture snippet"
-        },
-        ProviderName.BRAVE: {
-            "url": url, "title": "Fixture", "description": "fixture snippet"
-        },
-        ProviderName.PARALLEL: {
-            "url": url, "title": "Fixture", "excerpt": "fixture snippet"
-        },
-        ProviderName.EXA: {
-            "url": url, "title": "Fixture", "text": "fixture snippet"
-        },
-        ProviderName.SEARCHAPI: {
-            "link": url, "title": "Fixture", "snippet": "fixture snippet"
-        },
-        ProviderName.YOU: {
-            "url": url, "title": "Fixture", "description": "fixture snippet"
-        },
-        ProviderName.YAHOO: {
-            "url": url, "title": "Fixture", "snippet": "fixture snippet"
-        },
-    }.get(provider, {"url": url, "title": "Fixture"})
+def _plain(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_plain(item) for item in value]
+    return value
 
 
-def _payload(provider: ProviderName, rows: list[object]) -> dict[str, object]:
-    if provider is ProviderName.BRAVE:
-        return {"web": {"results": rows}}
-    if provider is ProviderName.GITHUB:
-        return {"items": rows}
-    if provider is ProviderName.SERPER:
-        return {"organic": rows}
-    if provider is ProviderName.YOU:
-        return {"results": {"web": rows}}
-    if provider is ProviderName.SEARCHAPI:
-        return {"organic_results": rows}
-    if provider is ProviderName.WOLFRAM:
-        return {"answer": "fixture answer"} if rows else {"empty": True}
-    return {"results": rows}
-
-
-def _yahoo_html(success: bool) -> str:
-    if not success:
-        return "<html><body>No results for fixture query</body></html>"
-    return (
-        '<div class="dd algo-sr"><div class="compTitle">'
-        '<a href="https://example.com/fixture"><h3>Fixture</h3></a>'
-        '</div><div class="compText">fixture snippet</div></div>'
-    )
+def _redact_fixture_credential(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _redact_fixture_credential(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact_fixture_credential(item) for item in value]
+    if isinstance(value, str):
+        return value.replace(_SENTINEL, CREDENTIAL)
+    return value
 
 
 @dataclass
 class _FakeResponse:
-    provider: ProviderName
     scenario: str
     status_code: int
     headers: dict[str, str]
+    response: object
 
     def json(self):
         if self.scenario == "malformed":
             raise ValueError("malformed fixture response")
-        rows = [] if self.scenario == "empty" else [_row(self.provider)]
-        return _payload(self.provider, rows)
+        if not isinstance(self.response, Mapping):
+            raise ValueError("fixture response is not JSON")
+        return _plain(self.response)
 
     @property
     def text(self) -> str:
         if self.scenario == "malformed":
             raise ValueError("malformed fixture response")
-        if self.provider is ProviderName.YAHOO:
-            return _yahoo_html(self.scenario == "success")
-        if self.provider is ProviderName.WOLFRAM:
-            return "fixture answer" if self.scenario == "success" else ""
-        return json.dumps(self.json())
+        if isinstance(self.response, str):
+            return self.response
+        return json.dumps(_plain(self.response))
 
 
 class _FakeClient:
-    def __init__(self, provider: ProviderName, scenario: str, **_kwargs):
+    def __init__(
+        self,
+        provider: ProviderName,
+        scenario: str,
+        contract: Mapping[str, object],
+        **kwargs,
+    ):
+        self.provider = provider
+        self.contract = contract
+        self.client_kwargs = kwargs
+        self.validation_error: str | None = None
+        responses = contract["responses"]
+        assert isinstance(responses, Mapping)
         self.response = _FakeResponse(
-            provider=provider,
             scenario=scenario,
             status_code=429 if scenario == "error" else (
                 501
@@ -136,6 +100,7 @@ class _FakeClient:
                 else 200
             ),
             headers={},
+            response=responses[scenario],
         )
 
     async def __aenter__(self):
@@ -144,27 +109,64 @@ class _FakeClient:
     async def __aexit__(self, *_args):
         return False
 
-    async def get(self, *_args, **_kwargs):
+    def _validate(self, method: str, url: object, kwargs: Mapping) -> None:
+        expected = self.contract["request"]
+        assert isinstance(expected, Mapping)
+        actual = {
+            "method": method,
+            "url": url,
+            "params": kwargs.get("params"),
+            "headers": kwargs.get("headers"),
+            "json": kwargs.get("json"),
+            "client_headers": self.client_kwargs.get("headers"),
+        }
+        normalized = _redact_fixture_credential(actual)
+        if normalized != _plain(expected):
+            self.validation_error = (
+                f"{self.provider.value} golden request contract mismatch"
+            )
+
+    async def get(self, url, **kwargs):
+        self._validate("GET", url, kwargs)
         return self.response
 
-    async def post(self, *_args, **_kwargs):
+    async def post(self, url, **kwargs):
+        self._validate("POST", url, kwargs)
         return self.response
 
 
 class _FakeProcess:
-    def __init__(self, provider: ProviderName, scenario: str):
+    def __init__(
+        self,
+        provider: ProviderName,
+        scenario: str,
+        contract: Mapping[str, object],
+        argv: tuple[object, ...],
+    ):
         self.provider = provider
         self.scenario = scenario
+        self.contract = contract
+        self.argv = argv
         self.returncode = 0
+        self.validation_error: str | None = None
 
-    async def communicate(self, _input):
+    async def communicate(self, input_bytes):
+        expected = self.contract["request"]
+        assert isinstance(expected, Mapping)
+        actual = {
+            "method": "SUBPROCESS",
+            "argv": ["<python>", *self.argv[1:]],
+            "stdin": json.loads(input_bytes),
+        }
+        if _redact_fixture_credential(actual) != _plain(expected):
+            self.validation_error = (
+                f"{self.provider.value} golden request contract mismatch"
+            )
         if self.scenario == "malformed":
             return b"not-json", b""
-        if self.scenario == "error":
-            payload = {"error": {"kind": "rate_limit"}}
-        else:
-            rows = [] if self.scenario == "empty" else [_row(self.provider)]
-            payload = _payload(self.provider, rows)
+        responses = self.contract["responses"]
+        assert isinstance(responses, Mapping)
+        payload = _plain(responses[self.scenario])
         return json.dumps(payload).encode(), b""
 
     def terminate(self):
@@ -193,14 +195,20 @@ def _provider_instance(provider: ProviderName):
 
 
 async def _execute_case(provider: ProviderName, scenario: str):
+    contract = GOLDEN_PROVIDER_CONTRACTS[provider]
     adapter = _provider_instance(provider)
     query = SearchQuery(query=_SECRET, max_results=1)
+    transports: list[_FakeClient | _FakeProcess] = []
 
     def fake_client(**kwargs):
-        return _FakeClient(provider, scenario, **kwargs)
+        transport = _FakeClient(provider, scenario, contract, **kwargs)
+        transports.append(transport)
+        return transport
 
-    async def fake_subprocess(*_args, **_kwargs):
-        return _FakeProcess(provider, scenario)
+    async def fake_subprocess(*args, **_kwargs):
+        transport = _FakeProcess(provider, scenario, contract, args)
+        transports.append(transport)
+        return transport
 
     capture = _CaptureHandler()
     argus_logger = logging.getLogger("argus")
@@ -224,7 +232,24 @@ async def _execute_case(provider: ProviderName, scenario: str):
                 fake_subprocess,
             ),
         ):
-            return await adapter.search(query), tuple(capture.messages)
+            batch = await adapter.search(query)
+            request = contract["request"]
+            assert isinstance(request, Mapping)
+            expected_transport_count = 1
+            if (
+                len(transports) != expected_transport_count
+                or any(item.validation_error for item in transports)
+            ):
+                detail = next(
+                    (
+                        item.validation_error
+                        for item in transports
+                        if item.validation_error
+                    ),
+                    f"{provider.value} golden request was not executed",
+                )
+                raise ValueError(detail)
+            return batch, tuple(capture.messages)
     finally:
         argus_logger.removeHandler(capture)
         argus_logger.setLevel(previous_level)
@@ -234,22 +259,11 @@ async def _execute_case(provider: ProviderName, scenario: str):
         provider_logger.propagate = previous_provider_propagate
 
 
-def _fixture_contract(provider: ProviderName) -> dict[str, object]:
-    from importlib.resources import files
-
-    document = json.loads(
-        files("argus.providers")
-        .joinpath("fixture_contracts.json")
-        .read_text(encoding="utf-8")
-    )
-    return document["providers"][provider.value]
-
-
 def run_fixture_case_summaries(
     provider: ProviderName,
 ) -> dict[str, dict[str, object]]:
     """Execute and enforce the declared outcome of every hermetic case."""
-    contract = _fixture_contract(provider)
+    contract = GOLDEN_PROVIDER_CONTRACTS[provider]
     summaries: dict[str, dict[str, object]] = {}
     for scenario in _SCENARIOS:
         batch, captured_logs = asyncio.run(_execute_case(provider, scenario))
@@ -271,30 +285,22 @@ def run_fixture_case_summaries(
                 "error": trace.error,
                 "credit_info": trace.credit_info,
             },
+            "golden_request_validated": True,
         }
-        if scenario == "success":
-            valid = batch.failure is None and len(batch.observations) == 1
-        elif scenario == "empty":
-            valid = (
-                batch.failure is not None
-                and batch.failure.category.value == "empty"
-                and not batch.observations
+        actual_output = {
+            "failure": summary["failure"],
+            "failure_http_status": summary["failure_http_status"],
+            "provider_contract_version": summary["provider_contract_version"],
+            "query_relation": summary["query_relation"],
+            "results": summary["safe_log"]["results"],
+        }
+        expected = contract["expected"]
+        assert isinstance(expected, Mapping)
+        if actual_output != _plain(expected[scenario]):
+            raise ValueError(
+                f"{provider.value} golden output contract mismatch for {scenario}"
             )
-        elif scenario == "error":
-            valid = (
-                batch.failure is not None
-                and batch.failure.category.value == contract["error_category"]
-                and batch.failure.http_status == contract["error_http_status"]
-                and not batch.observations
-            )
-        else:
-            valid = (
-                batch.failure is not None
-                and batch.failure.category.value == "parse_error"
-                and not batch.observations
-            )
-        if not valid:
-            raise ValueError(f"{provider.value} {scenario} fixture failed")
+        summary["golden_output_validated"] = True
         privacy_surface = json.dumps(
             {
                 "captured_logs": captured_logs,
@@ -307,7 +313,15 @@ def run_fixture_case_summaries(
         if _SECRET in privacy_surface or _SENTINEL in privacy_surface:
             raise ValueError(f"{provider.value} privacy fixture failed")
         summaries[scenario] = summary
-    summaries["privacy"] = {"private_query_absent": True}
+    expected = contract["expected"]
+    assert isinstance(expected, Mapping)
+    privacy = {
+        "private_query_absent": True,
+        "credential_sentinel_absent": True,
+    }
+    if privacy != _plain(expected["privacy"]):
+        raise ValueError(f"{provider.value} golden privacy contract mismatch")
+    summaries["privacy"] = privacy
     return summaries
 
 

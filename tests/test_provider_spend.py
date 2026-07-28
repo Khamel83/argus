@@ -60,6 +60,67 @@ def test_paid_attempt_reserves_before_external_work_and_settles_atomically(tmp_p
     }
 
 
+def test_direct_reserve_settle_reconciles_protected_readiness_account_wide(
+    tmp_path,
+):
+    from argus.broker.readiness import (
+        ProviderReadinessService,
+        ProviderRegistrationSpec,
+    )
+    from argus.persistence.provider_spend import ProviderSpendRepository
+    from argus.persistence.readiness import create_readiness_repository
+    from argus.providers.fixture_attestation import build_fixture_attestation
+
+    readiness = create_readiness_repository(
+        f"sqlite:///{tmp_path / 'direct-settle.db'}"
+    )
+    service = ProviderReadinessService(repository=readiness)
+    fixture_ref, attestation = build_fixture_attestation(
+        ProviderName.BRAVE,
+        release="argus-1.6.2",
+        provider_contract="2026-07-27-v1",
+    )
+    service.register_provider(ProviderRegistrationSpec(
+        provider=ProviderName.BRAVE,
+        enabled=True,
+        configuration_fingerprint="direct-settle-config",
+        credential_version_fingerprint="direct-settle-credential",
+        account_fingerprint="direct-settle-account",
+        budget_limit=10.0,
+        durable_spend_repository=True,
+        release_revision="argus-1.6.2",
+        contract_version="2026-07-27-v1",
+        fixture_evidence_ref=fixture_ref,
+        fixture_attestation=attestation,
+    ))
+    spend = ProviderSpendRepository(readiness.session_factory)
+    reservation = spend.reserve(
+        provider=ProviderName.BRAVE,
+        conservative_charge=1.0,
+        budget_limit=10.0,
+        caller_identity="legacy-direct",
+        caller_label="regression",
+        idempotency_key="legacy-direct:reserve",
+    )
+    assert [
+        service.snapshot(ProviderName.BRAVE, request_class=mode).spend
+        for mode in ("discovery", "research", "recovery", "grounding")
+    ] == ["uncertain"] * 4
+
+    settled = spend.settle(
+        reservation.attempt_id,
+        actual_charge=0.25,
+        outcome="success",
+    )
+
+    assert settled.status == "settled"
+    assert settled.attempt_id == reservation.attempt_id
+    for mode in ("discovery", "research", "recovery", "grounding"):
+        snapshot = service.snapshot(ProviderName.BRAVE, request_class=mode)
+        assert snapshot.spend == "available"
+        assert snapshot.execution_decision.code == "eligible"
+
+
 def test_unknown_outcome_never_expires_or_refunds_automatically(tmp_path):
     repository = _repository(tmp_path)
     reservation = repository.reserve(

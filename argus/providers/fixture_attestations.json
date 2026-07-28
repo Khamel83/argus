@@ -8,14 +8,15 @@
         "adapter_code_sha256": "51df5fabc181b46496eb5ffc8307933a442cc57e809fa687a0299cffe65d842e",
         "adapter_identity_sha256": "6ef422265ca6bb3b51e93a593f61e9a1d10492bc6ae596fd7a75538f8cb6ae6f",
         "adapter_module": "argus.providers.brave",
-        "fixture_case_digest": "7d15036b4c1983916f1713221c1336690472ec4a72fc6399a76fd0a78eb5ad7c",
+        "fixture_case_digest": "ad2e0f67b3b5542807fe9abf094b8953da2877ffd9ddc51b572315a8bd2d5183",
         "fixture_manifest_sha256": "20d8831ff484a79c2762621f0a7616090d45311b1d4f1610814cbf64ddc9e86d",
+        "golden_contract_sha256": "75827a9e2373f42217e57ae9809c777ea936095d76a74f2a7872c50b46047279",
         "provider": "brave",
         "provider_contract": "2026-07-27-v1",
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "aa3ccec8a3d496ec96358e7c29545afa8449a16db380f89e59652ca68985c8d1",
+        "shared_adapter_sha256": "9f6dd5f6a9dcf6bff8e51773a2b1e054b2e4328b469aa5e873da5acfd81c1de3",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -26,11 +27,12 @@
           "providers/ddg_worker.py",
           "providers/normalization.py",
           "providers/fixture_harness.py",
+          "providers/fixture_golden_contracts.py",
           "providers/fixture_registry.py",
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:47fca88c7d3026bef03cc2683175a28e079bb732dbb00b8f"
+      "evidence_ref": "attestation:e79b7411350f7c34f0a26d76f3f85d0ac4424d1e71b0fd7f"
     },
     "duckduckgo": {
       "attestation": {
@@ -38,14 +40,15 @@
         "adapter_code_sha256": "4eebfc344dc184b7fe423b7101fd1ad31c6fe57680c07be83d87cb3f906a1232",
         "adapter_identity_sha256": "01f885477086eaaefea2d3d334a393ec763531bed7f0669babafccae9f591037",
         "adapter_module": "argus.providers.duckduckgo",
-        "fixture_case_digest": "984feb89ae1f79352cf18d85a20a5158d70d43013e27b00486334ecb077ff762",
+        "fixture_case_digest": "b9c4a4c3671d41ff65f6167d2e86c96c221f6488952895b709b373dc6973ec24",
         "fixture_manifest_sha256": "20d8831ff484a79c2762621f0a7616090d45311b1d4f1610814cbf64ddc9e86d",
+        "golden_contract_sha256": "75827a9e2373f42217e57ae9809c777ea936095d76a74f2a7872c50b46047279",
         "provider": "duckduckgo",
         "provider_contract": "2026-07-27-v1",
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "aa3ccec8a3d496ec96358e7c29545afa8449a16db380f89e59652ca68985c8d1",
+        "shared_adapter_sha256": "9f6dd5f6a9dcf6bff8e51773a2b1e054b2e4328b469aa5e873da5acfd81c1de3",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -56,11 +59,12 @@
           "providers/ddg_worker.py",
           "providers/normalization.py",
           "providers/fixture_harness.py",
+          "providers/fixture_golden_contracts.py",
           "providers/fixture_registry.py",
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:09dd21d5f7190f60f6a64b74c335e6de47453e2e406c1279"
+      "evidence_ref": "attestation:8f9dd1d8210dfd9e923df9851ec91023b3a7e425c1c7921e"
     },
     "exa": {
       "attestation": {
@@ -68,14 +72,15 @@
         "adapter_code_sha256": "0a314a5f62d0aa774bbc26c8d738421d3b4bb62999cd2af0f18e1488fc22368e",
         "adapter_identity_sha256": "df4bb8e277852c0d89cc19f7e839ab3f2c516d23257a66de8b458aa935870945",
         "adapter_module": "argus.providers.exa",
-        "fixture_case_digest": "10dc2302d30d980262ab3d5216426bce2782686c08fda3721ac1196abe64385b",
+        "fixture_case_digest": "c1603131934d0ef11c15cd684946800ccb0f3303f08549ebea88e48fd2596ae4",
         "fixture_manifest_sha256": "20d8831ff484a79c2762621f0a7616090d45311b1d4f1610814cbf64ddc9e86d",
+        "golden_contract_sha256": "75827a9e2373f42217e57ae9809c777ea936095d76a74f2a7872c50b46047279",
         "provider": "exa",
         "provider_contract": "2026-07-27-v1",
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "aa3ccec8a3d496ec96358e7c29545afa8449a16db380f89e59652ca68985c8d1",
+        "shared_adapter_sha256": "9f6dd5f6a9dcf6bff8e51773a2b1e054b2e4328b469aa5e873da5acfd81c1de3",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -86,11 +91,12 @@
           "providers/ddg_worker.py",
           "providers/normalization.py",
           "providers/fixture_harness.py",
+          "providers/fixture_golden_contracts.py",
           "providers/fixture_registry.py",
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:6d1bbc28fc6e4f4e422347529f4b17413605027aa9354143"
+      "evidence_ref": "attestation:872443752550c1b17eea926f2fe19506d1c28331e475418e"
     },
     "github": {
       "attestation": {
@@ -98,14 +104,15 @@
         "adapter_code_sha256": "27041ab8e13085bbe4ade6e68e5f20e9ea2b8ebaaebef11ad1239c251fb7e00e",
         "adapter_identity_sha256": "c32f8d9e139aca2a1958dca85ad501d9bfae06812de10fdefcd98bc54732d05b",
         "adapter_module": "argus.providers.github",
-        "fixture_case_digest": "2eccf5ab3a46700e9d4440e982d18c28c5f431982599cd6ec0a1fe74556eb06f",
+        "fixture_case_digest": "54eb2c548e914b8f650196bf32502faed617a0051d10b8f7ee69f64f6c91509d",
         "fixture_manifest_sha256": "20d8831ff484a79c2762621f0a7616090d45311b1d4f1610814cbf64ddc9e86d",
+        "golden_contract_sha256": "75827a9e2373f42217e57ae9809c777ea936095d76a74f2a7872c50b46047279",
         "provider": "github",
         "provider_contract": "2026-07-27-v1",
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "aa3ccec8a3d496ec96358e7c29545afa8449a16db380f89e59652ca68985c8d1",
+        "shared_adapter_sha256": "9f6dd5f6a9dcf6bff8e51773a2b1e054b2e4328b469aa5e873da5acfd81c1de3",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -116,11 +123,12 @@
           "providers/ddg_worker.py",
           "providers/normalization.py",
           "providers/fixture_harness.py",
+          "providers/fixture_golden_contracts.py",
           "providers/fixture_registry.py",
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:e61182782789ef23e654509f747ed20585b308e78ed58535"
+      "evidence_ref": "attestation:c0bbff0da0cd32f8cd914af05c305f70c8f11eb9d9679ea6"
     },
     "linkup": {
       "attestation": {
@@ -128,14 +136,15 @@
         "adapter_code_sha256": "5b74edfc289b4a1afe459cf6b7fc76c8a19b30fab5278729cf8dcdcca98c5a32",
         "adapter_identity_sha256": "14b570dde73fdac17bf4aa36b4e881d9b6b431c5181021d0b08829e330b11e1c",
         "adapter_module": "argus.providers.linkup",
-        "fixture_case_digest": "bfe11d4f46aee8888945e6c0be787db437ee84d31518e42e5630ba05eefa55e5",
+        "fixture_case_digest": "1b2cffec57ada25c6880ee64b1666d7980998686a5e0043e11128cd0f2e3f254",
         "fixture_manifest_sha256": "20d8831ff484a79c2762621f0a7616090d45311b1d4f1610814cbf64ddc9e86d",
+        "golden_contract_sha256": "75827a9e2373f42217e57ae9809c777ea936095d76a74f2a7872c50b46047279",
         "provider": "linkup",
         "provider_contract": "2026-07-27-v1",
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "aa3ccec8a3d496ec96358e7c29545afa8449a16db380f89e59652ca68985c8d1",
+        "shared_adapter_sha256": "9f6dd5f6a9dcf6bff8e51773a2b1e054b2e4328b469aa5e873da5acfd81c1de3",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -146,11 +155,12 @@
           "providers/ddg_worker.py",
           "providers/normalization.py",
           "providers/fixture_harness.py",
+          "providers/fixture_golden_contracts.py",
           "providers/fixture_registry.py",
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:6dadea55d97007cdc79fd259017b47517690e0088ddaf804"
+      "evidence_ref": "attestation:9440d779357a82315d10f8e7dea61dbb8139506ddd02e819"
     },
     "parallel": {
       "attestation": {
@@ -158,14 +168,15 @@
         "adapter_code_sha256": "8f71a4c12ab85c3539fc9fa0c40d5f140834b251d3ce36f14277e280232c4755",
         "adapter_identity_sha256": "0dfb657afb5591114a54faea80e845eb42bc4997d0821b07d8127e6dee3626f7",
         "adapter_module": "argus.providers.parallel",
-        "fixture_case_digest": "7ecbb16e222f3b66047bc88eef924631afe53c2e384ff691ca2f1225fef569c2",
+        "fixture_case_digest": "6884d2a03d410723684f176cd4146a48a55e57bd82da4cb19f6dbca7eda5f940",
         "fixture_manifest_sha256": "20d8831ff484a79c2762621f0a7616090d45311b1d4f1610814cbf64ddc9e86d",
+        "golden_contract_sha256": "75827a9e2373f42217e57ae9809c777ea936095d76a74f2a7872c50b46047279",
         "provider": "parallel",
         "provider_contract": "2026-07-27-v1",
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "aa3ccec8a3d496ec96358e7c29545afa8449a16db380f89e59652ca68985c8d1",
+        "shared_adapter_sha256": "9f6dd5f6a9dcf6bff8e51773a2b1e054b2e4328b469aa5e873da5acfd81c1de3",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -176,11 +187,12 @@
           "providers/ddg_worker.py",
           "providers/normalization.py",
           "providers/fixture_harness.py",
+          "providers/fixture_golden_contracts.py",
           "providers/fixture_registry.py",
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:ff46240c6ea185886973b05b7f5bf774e9785345273861c4"
+      "evidence_ref": "attestation:fab16c587b7866041811761560d5c9f71ea528355cf63290"
     },
     "searchapi": {
       "attestation": {
@@ -188,14 +200,15 @@
         "adapter_code_sha256": "83731ff11a90ebd4ce1c245da2326331c2ad3b14ae04ef2f9c8f6906bb402131",
         "adapter_identity_sha256": "582e7a8faf39ebe139a5d238a41e2561efe910f7a0d164ff9534b1202c7b758c",
         "adapter_module": "argus.providers.searchapi",
-        "fixture_case_digest": "8f30eaa48bfee013c43e9aa23c83da4249d75fdf6f1f96de3ff5fafcf879a3a0",
+        "fixture_case_digest": "2482c8160d2fb5121efcbb4e30321b30b959d680fe38eb6dca60a3c58dc22593",
         "fixture_manifest_sha256": "20d8831ff484a79c2762621f0a7616090d45311b1d4f1610814cbf64ddc9e86d",
+        "golden_contract_sha256": "75827a9e2373f42217e57ae9809c777ea936095d76a74f2a7872c50b46047279",
         "provider": "searchapi",
         "provider_contract": "2026-07-27-v1",
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "aa3ccec8a3d496ec96358e7c29545afa8449a16db380f89e59652ca68985c8d1",
+        "shared_adapter_sha256": "9f6dd5f6a9dcf6bff8e51773a2b1e054b2e4328b469aa5e873da5acfd81c1de3",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -206,11 +219,12 @@
           "providers/ddg_worker.py",
           "providers/normalization.py",
           "providers/fixture_harness.py",
+          "providers/fixture_golden_contracts.py",
           "providers/fixture_registry.py",
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:9991cbfe2f3c68c7bb7ffc340700317824458859140249d3"
+      "evidence_ref": "attestation:73c61f1bded2c060276c0dc310da617fb101ea8d466cd1cb"
     },
     "searxng": {
       "attestation": {
@@ -218,14 +232,15 @@
         "adapter_code_sha256": "03da97e3be59cc0b72509f700342fd2257b09d45744a684671e0db5041f3ba00",
         "adapter_identity_sha256": "13f3b518581a47827fe790655a4185b8d3ac54044823d7d543c55a2d3f82ee23",
         "adapter_module": "argus.providers.searxng",
-        "fixture_case_digest": "9afdebf8b3eedf8884fd33e2c3c200efaf4c31e9e6fde90180392938acc31499",
+        "fixture_case_digest": "53a3695c73aee9c53073ced0d38d19f0e2791162ceb800bb17e913436c78543e",
         "fixture_manifest_sha256": "20d8831ff484a79c2762621f0a7616090d45311b1d4f1610814cbf64ddc9e86d",
+        "golden_contract_sha256": "75827a9e2373f42217e57ae9809c777ea936095d76a74f2a7872c50b46047279",
         "provider": "searxng",
         "provider_contract": "2026-07-27-v1",
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "aa3ccec8a3d496ec96358e7c29545afa8449a16db380f89e59652ca68985c8d1",
+        "shared_adapter_sha256": "9f6dd5f6a9dcf6bff8e51773a2b1e054b2e4328b469aa5e873da5acfd81c1de3",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -236,11 +251,12 @@
           "providers/ddg_worker.py",
           "providers/normalization.py",
           "providers/fixture_harness.py",
+          "providers/fixture_golden_contracts.py",
           "providers/fixture_registry.py",
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:610b49a600d6bf7b8b413c8769925eba8fff44f355d14b38"
+      "evidence_ref": "attestation:a8666b2a3cb50c0d4c59c9709090240271cd56c8a612fa54"
     },
     "serper": {
       "attestation": {
@@ -248,14 +264,15 @@
         "adapter_code_sha256": "3c57d292487dc6cb640aaa90cda05a8968610388efd44b0e07b910869a49f740",
         "adapter_identity_sha256": "608fcc552b3dcf1e801ecd34dd22af45a8dd9a579140a5df8c19dc3593778d08",
         "adapter_module": "argus.providers.serper",
-        "fixture_case_digest": "891c565d2aa7734edcdc5cf75395b8491d0112e9c928fe56e6524c220e1034e8",
+        "fixture_case_digest": "6bfb6bf0b2f564a7410c18600d75b3f9cf6fce9fe6176bae85e97eaf8c2b7f38",
         "fixture_manifest_sha256": "20d8831ff484a79c2762621f0a7616090d45311b1d4f1610814cbf64ddc9e86d",
+        "golden_contract_sha256": "75827a9e2373f42217e57ae9809c777ea936095d76a74f2a7872c50b46047279",
         "provider": "serper",
         "provider_contract": "2026-07-27-v1",
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "aa3ccec8a3d496ec96358e7c29545afa8449a16db380f89e59652ca68985c8d1",
+        "shared_adapter_sha256": "9f6dd5f6a9dcf6bff8e51773a2b1e054b2e4328b469aa5e873da5acfd81c1de3",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -266,11 +283,12 @@
           "providers/ddg_worker.py",
           "providers/normalization.py",
           "providers/fixture_harness.py",
+          "providers/fixture_golden_contracts.py",
           "providers/fixture_registry.py",
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:0bdd2e5c57797a5904aa75c971031e467163c1093291bcf7"
+      "evidence_ref": "attestation:952f0bb1aab6ab30368f68175377ed0a7d1c4ed5a699ac95"
     },
     "tavily": {
       "attestation": {
@@ -278,14 +296,15 @@
         "adapter_code_sha256": "1b9e70b2033d4fa48bb2221b368385664a0c4682195a520dd9980b073d4bd529",
         "adapter_identity_sha256": "7ed13429fdf733e0e31262a139fe7c361a70a5a38fee0fa3b476596ce901be79",
         "adapter_module": "argus.providers.tavily",
-        "fixture_case_digest": "f206155762cffce502d08ad5bf85e71b49fca3a7f4cd3953fe593abe445d20df",
+        "fixture_case_digest": "5f162544d1c39564557d43582b9ae3a83d274e73e6978cc3444588276631af94",
         "fixture_manifest_sha256": "20d8831ff484a79c2762621f0a7616090d45311b1d4f1610814cbf64ddc9e86d",
+        "golden_contract_sha256": "75827a9e2373f42217e57ae9809c777ea936095d76a74f2a7872c50b46047279",
         "provider": "tavily",
         "provider_contract": "2026-07-27-v1",
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "aa3ccec8a3d496ec96358e7c29545afa8449a16db380f89e59652ca68985c8d1",
+        "shared_adapter_sha256": "9f6dd5f6a9dcf6bff8e51773a2b1e054b2e4328b469aa5e873da5acfd81c1de3",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -296,11 +315,12 @@
           "providers/ddg_worker.py",
           "providers/normalization.py",
           "providers/fixture_harness.py",
+          "providers/fixture_golden_contracts.py",
           "providers/fixture_registry.py",
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:f1009c4ebefaaf4168d70c3595f94dab748e15debd3860f5"
+      "evidence_ref": "attestation:f06aa63d6fa319162a86d8b38be0e1215071dba7df799975"
     },
     "valyu": {
       "attestation": {
@@ -308,14 +328,15 @@
         "adapter_code_sha256": "04aecd0137c4cac70aa48911c8799755cf0d9407767754554cfd95d865774520",
         "adapter_identity_sha256": "b5d465413d59caea108b4a29b74bbe5866604b2c9a1d0868270821bdb08d543b",
         "adapter_module": "argus.providers.valyu",
-        "fixture_case_digest": "cfb1cb2fd8b4fa89b29d8b7eaa43e82fba87d5e778f4241a63fa9460298e28c5",
+        "fixture_case_digest": "6e5c9fb743afa434c3c0707ca0eb799d7c3d5cbb7878817eb95603bd205a05f5",
         "fixture_manifest_sha256": "20d8831ff484a79c2762621f0a7616090d45311b1d4f1610814cbf64ddc9e86d",
+        "golden_contract_sha256": "75827a9e2373f42217e57ae9809c777ea936095d76a74f2a7872c50b46047279",
         "provider": "valyu",
         "provider_contract": "2026-07-27-v1",
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "aa3ccec8a3d496ec96358e7c29545afa8449a16db380f89e59652ca68985c8d1",
+        "shared_adapter_sha256": "9f6dd5f6a9dcf6bff8e51773a2b1e054b2e4328b469aa5e873da5acfd81c1de3",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -326,11 +347,12 @@
           "providers/ddg_worker.py",
           "providers/normalization.py",
           "providers/fixture_harness.py",
+          "providers/fixture_golden_contracts.py",
           "providers/fixture_registry.py",
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:36b86c41f1e3b1c5d4a0ad2b8d8456f380c6699f43bc2d22"
+      "evidence_ref": "attestation:65b227ad579912d1a28e9d3777aff8e9c40facd4d0fc9edd"
     },
     "wolfram": {
       "attestation": {
@@ -338,14 +360,15 @@
         "adapter_code_sha256": "db2e1ea2ac8cdab7095a9aaeea37b1e6b02588a922d8ba07fe6492766691fb28",
         "adapter_identity_sha256": "5b973e85d6659565d01ef7c5cd3c9aaca2316b41b719c3958455c4d84095f4b5",
         "adapter_module": "argus.providers.wolfram",
-        "fixture_case_digest": "7bf38d06c1220b58653168040937839059fb7e98506d1dd67b6b879909f50d73",
+        "fixture_case_digest": "62f0cab454cad7aff677b10866ea8371a1670c3104c923b095e8d3aac10dab1e",
         "fixture_manifest_sha256": "20d8831ff484a79c2762621f0a7616090d45311b1d4f1610814cbf64ddc9e86d",
+        "golden_contract_sha256": "75827a9e2373f42217e57ae9809c777ea936095d76a74f2a7872c50b46047279",
         "provider": "wolfram",
         "provider_contract": "2026-07-27-v1",
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "aa3ccec8a3d496ec96358e7c29545afa8449a16db380f89e59652ca68985c8d1",
+        "shared_adapter_sha256": "9f6dd5f6a9dcf6bff8e51773a2b1e054b2e4328b469aa5e873da5acfd81c1de3",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -356,11 +379,12 @@
           "providers/ddg_worker.py",
           "providers/normalization.py",
           "providers/fixture_harness.py",
+          "providers/fixture_golden_contracts.py",
           "providers/fixture_registry.py",
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:ad502ba93e805cb05af994b83a89dbfc5d06157c8b9e8c59"
+      "evidence_ref": "attestation:c07258f479094a1cbed1a6053061d3bd76ca66c26936e7ee"
     },
     "yahoo": {
       "attestation": {
@@ -368,14 +392,15 @@
         "adapter_code_sha256": "d212ce27fc9a6d5e72733fe71ef675cc149e75b2c5e4cc8e03267b1e03169e0b",
         "adapter_identity_sha256": "eabcb02cb66732a07de28635b68cc2876524d526c4760edfa56fe44f01e84124",
         "adapter_module": "argus.providers.yahoo",
-        "fixture_case_digest": "7a43afd6fcad83e276b50d592fb87c57746453831819e0d300b78797aae2dd0f",
+        "fixture_case_digest": "49c92860c230fa64bf4002ad62be6ae346495b9a99dd2af08c1bbb84512e7090",
         "fixture_manifest_sha256": "20d8831ff484a79c2762621f0a7616090d45311b1d4f1610814cbf64ddc9e86d",
+        "golden_contract_sha256": "75827a9e2373f42217e57ae9809c777ea936095d76a74f2a7872c50b46047279",
         "provider": "yahoo",
         "provider_contract": "2026-07-27-v1",
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "aa3ccec8a3d496ec96358e7c29545afa8449a16db380f89e59652ca68985c8d1",
+        "shared_adapter_sha256": "9f6dd5f6a9dcf6bff8e51773a2b1e054b2e4328b469aa5e873da5acfd81c1de3",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -386,11 +411,12 @@
           "providers/ddg_worker.py",
           "providers/normalization.py",
           "providers/fixture_harness.py",
+          "providers/fixture_golden_contracts.py",
           "providers/fixture_registry.py",
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:adeb15bcb9825c55bd9ad592fa9e8a5801f2957b97da212b"
+      "evidence_ref": "attestation:6ce2283ebc16db2701266eff095cd898b75515d408e81598"
     },
     "you": {
       "attestation": {
@@ -398,14 +424,15 @@
         "adapter_code_sha256": "79c4b0dd3487bc85dd93b3686c31a2d87fb3070ec6220dcbd478aa774aa4a094",
         "adapter_identity_sha256": "a18e61af479fe0a55223f679fe395317d3039cb58c09ba8b61f731e36c51dafe",
         "adapter_module": "argus.providers.you",
-        "fixture_case_digest": "80fe6a119d02d8353071079c94a5f9be3f33f385c943e21dabf4e3a2b1e98ce4",
+        "fixture_case_digest": "d3f3ed53af077272a9744f3384c1d46172d5041b199f6c28e88186628d6812d7",
         "fixture_manifest_sha256": "20d8831ff484a79c2762621f0a7616090d45311b1d4f1610814cbf64ddc9e86d",
+        "golden_contract_sha256": "75827a9e2373f42217e57ae9809c777ea936095d76a74f2a7872c50b46047279",
         "provider": "you",
         "provider_contract": "2026-07-27-v1",
         "release": "argus-1.6.2",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
-        "shared_adapter_sha256": "aa3ccec8a3d496ec96358e7c29545afa8449a16db380f89e59652ca68985c8d1",
+        "shared_adapter_sha256": "9f6dd5f6a9dcf6bff8e51773a2b1e054b2e4328b469aa5e873da5acfd81c1de3",
         "shared_dependency_files": [
           "models.py",
           "config.py",
@@ -416,11 +443,12 @@
           "providers/ddg_worker.py",
           "providers/normalization.py",
           "providers/fixture_harness.py",
+          "providers/fixture_golden_contracts.py",
           "providers/fixture_registry.py",
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:8df1c78bca727f36d2e6ce1f08aee83d8a80b9273b9c948c"
+      "evidence_ref": "attestation:294bc835a62d5c017a84a29673d8f7aaf4a1f7af19932fc0"
     }
   },
   "release_revision": "argus-1.6.2",
