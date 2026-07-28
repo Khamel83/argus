@@ -15,11 +15,12 @@ from argus.recovery.operator import (
 
 
 EXPECTED_SCHEMA_HEAD = "0009_retrieval_evidence"
-# S6 is additive but deliberately inactive pending the S7/P1 activation gate.
-# Recovery therefore continues accepting only checked, pre-activation schema
-# manifests; it must not pretend that an ungenerated 0009 PG contract is safe.
 COMPATIBLE_SCHEMA_HEADS = frozenset(
-    {"0007_extraction_outcomes", "0008_provider_readiness"}
+    {
+        "0007_extraction_outcomes",
+        "0008_provider_readiness",
+        EXPECTED_SCHEMA_HEAD,
+    }
 )
 REQUIRED_TABLES = {
     "retrieval_requests",
@@ -57,9 +58,26 @@ READINESS_TABLES = {
     "provider_readiness_leases",
     "provider_readiness_alert_dedupe",
 }
+RETRIEVAL_EVIDENCE_TABLES = {
+    "retrieval_evidence_plans",
+    "retrieval_evidence_provider_batches",
+    "retrieval_evidence_provider_attempts",
+    "retrieval_evidence_observations",
+    "retrieval_evidence_clusters",
+    "retrieval_evidence_contributions",
+    "retrieval_evidence_readiness_decisions",
+    "retrieval_evidence_cache_lineage",
+    "retrieval_evidence_accounting",
+    "retrieval_evidence_trace_refs",
+    "accepted_retrieval_operations",
+    "retrieval_cache_publications",
+}
 REQUIRED_TABLES_BY_HEAD = {
     "0007_extraction_outcomes": REQUIRED_TABLES,
     "0008_provider_readiness": REQUIRED_TABLES | READINESS_TABLES,
+    EXPECTED_SCHEMA_HEAD: (
+        REQUIRED_TABLES | READINESS_TABLES | RETRIEVAL_EVIDENCE_TABLES
+    ),
 }
 COUNTED_TABLES = sorted(REQUIRED_TABLES - {"alembic_version"})
 REQUIRED_S3_COLUMNS = {
@@ -160,6 +178,7 @@ REQUIRED_S3_COLUMNS = {
 SCHEMA_CONTRACT_PATHS = {
     "0007_extraction_outcomes": Path(__file__).with_name("argus_schema_0007.json"),
     "0008_provider_readiness": Path(__file__).with_name("argus_schema_0008.json"),
+    EXPECTED_SCHEMA_HEAD: Path(__file__).with_name("argus_schema_0009.json"),
 }
 # Compatibility alias for recovery tooling that still targets the 0007 source
 # inventory. Verification itself selects the contract from the restored head.

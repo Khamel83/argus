@@ -89,6 +89,18 @@ jobs:
           ARGUS_DB_URL="$ARGUS_TEST_POSTGRES_URL" \
             uv run --python 3.12 alembic upgrade head
 
+      - name: Generate and verify PostgreSQL schema contract
+        run: |
+          uv run --python 3.12 \
+            python scripts/generate_argus_schema_contract.py \
+            --database-url "$ARGUS_TEST_POSTGRES_URL" \
+            --schema-head 0009_retrieval_evidence
+          uv run --python 3.12 \
+            python scripts/generate_argus_schema_contract.py \
+            --database-url "$ARGUS_TEST_POSTGRES_URL" \
+            --schema-head 0009_retrieval_evidence \
+            --check
+
       - name: Run PostgreSQL ledger contract
         run: |
           uv run --python 3.12 pytest \
@@ -99,8 +111,8 @@ jobs:
             tests/test_operation_ledger.py::test_postgresql_extraction_and_session_contract \
             tests/test_operation_ledger.py::test_postgresql_concurrent_session_creation_and_query_allocation \
             tests/test_operation_ledger.py::test_postgresql_concurrent_sanitized_session_url_inserts_are_idempotent \
-            tests/test_recovery_database.py::test_postgresql_restore_verifier_uses_disposable_database \
-            tests/test_recovery_database.py::test_postgresql_atlas_restore_inventory_detects_count_drift \
+            tests/test_recovery_database.py \
+            tests/test_schema_contract_generator.py \
             tests/test_postgres_provisioning.py \
             -v --tb=short
 
@@ -116,6 +128,13 @@ jobs:
         with:
           name: provider-readiness-postgres
           path: artifacts/provider-readiness-postgres.json
+          if-no-files-found: error
+
+      - name: Upload PostgreSQL schema contract
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: argus-schema-0009
+          path: argus/recovery/argus_schema_0009.json
           if-no-files-found: error
 
   production-config:

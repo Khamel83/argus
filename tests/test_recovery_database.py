@@ -244,6 +244,38 @@ def test_0008_contract_contains_all_readiness_authority_tables():
     assert len(manifest["contract_sha256"]) == 64
 
 
+def test_current_schema_head_has_complete_contract_registration():
+    from argus.recovery.database import (
+        COMPATIBLE_SCHEMA_HEADS,
+        EXPECTED_SCHEMA_HEAD,
+        REQUIRED_TABLES_BY_HEAD,
+        SCHEMA_CONTRACT_PATHS,
+    )
+
+    retrieval_evidence_tables = {
+        "retrieval_evidence_plans",
+        "retrieval_evidence_provider_batches",
+        "retrieval_evidence_provider_attempts",
+        "retrieval_evidence_observations",
+        "retrieval_evidence_clusters",
+        "retrieval_evidence_contributions",
+        "retrieval_evidence_readiness_decisions",
+        "retrieval_evidence_cache_lineage",
+        "retrieval_evidence_accounting",
+        "retrieval_evidence_trace_refs",
+        "accepted_retrieval_operations",
+        "retrieval_cache_publications",
+    }
+
+    assert EXPECTED_SCHEMA_HEAD in COMPATIBLE_SCHEMA_HEADS
+    assert retrieval_evidence_tables <= REQUIRED_TABLES_BY_HEAD[
+        EXPECTED_SCHEMA_HEAD
+    ]
+    assert SCHEMA_CONTRACT_PATHS[EXPECTED_SCHEMA_HEAD].name == (
+        "argus_schema_0009.json"
+    )
+
+
 def test_checked_contract_retains_migrated_server_defaults_and_deparser_output():
     from argus.recovery.database import expected_argus_schema_manifest
 
