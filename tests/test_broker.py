@@ -136,14 +136,59 @@ async def test_accepted_search_cache_hit_gets_fresh_durable_receipt(tmp_path):
     assert first.evidence.operation_id == first.response.search_run_id
     assert first.evidence.cache_decision.value == "miss"
     assert format(first.evidence.current_spend_usd, "f") == "0"
+    assert format(first.evidence.reserved_spend_usd, "f") == "0"
+    assert first.evidence.spend_accounting_source == "tier_zero_accepted_attempts"
+    assert first.evidence.spend_reconciliation == "settled"
+    assert first.evidence.spend_complete is True
     assert first.evidence.current_provider_calls == 1
+    assert first.evidence.cache_origin == "none"
+    assert first.evidence.origin_spend_complete is True
+    assert first.evidence.cache_eligible is True
+    assert first.evidence.cache_age_ms == 0
     assert second.evidence.operation_id == second.response.search_run_id
     assert second.evidence.cache_decision.value == "hit_eligible"
     assert format(second.evidence.current_spend_usd, "f") == "0"
+    assert format(second.evidence.reserved_spend_usd, "f") == "0"
+    assert second.evidence.spend_reconciliation == "settled"
     assert second.evidence.current_provider_calls == 0
+    assert second.evidence.cache_origin == first.receipt.receipt_ref
+    assert second.evidence.origin_spend_complete is False
     assert provider.calls == 1
     assert evidence.accepted_count() == 2
     assert evidence.publication_count() == 1
+
+
+def test_accepted_accounting_fails_closed_for_unknown_paid_charge_and_counts_batches():
+    from argus.broker.router import SearchBroker
+
+    traces = [
+        ProviderTrace(provider=ProviderName.DUCKDUCKGO, status="success"),
+        ProviderTrace(
+            provider=ProviderName.BRAVE,
+            status="error",
+            error="Authorization: Bearer should-never-leak",
+        ),
+        ProviderTrace(
+            provider=ProviderName.ARCHIVE,
+            status="error",
+            error="synthetic fallback timeout",
+        ),
+    ]
+
+    accounting = SearchBroker._accepted_execution_accounting(
+        traces,
+        invoked_providers=frozenset(
+            {ProviderName.DUCKDUCKGO, ProviderName.BRAVE}
+        ),
+    )
+
+    assert accounting.provider_calls == 2
+    assert accounting.complete is False
+    assert accounting.actual_usd is None
+    assert accounting.reserved_usd is None
+    assert accounting.accounting_source == "paid_attempt_accounting_incomplete"
+    assert accounting.reconciliation == "uncertain"
+    assert "should-never-leak" not in repr(accounting)
 
 
 @pytest.mark.asyncio

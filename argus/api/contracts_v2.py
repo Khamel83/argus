@@ -23,6 +23,33 @@ def _thaw(value):
     return value
 
 
+def _safe_v2_result(value):
+    result = _thaw(value)
+    if not isinstance(result, dict) or not isinstance(result.get("traces"), list):
+        return result
+    evidence = result.get("execution_evidence")
+    attempts = (
+        evidence.get("attempts")
+        if isinstance(evidence, dict) and isinstance(evidence.get("attempts"), list)
+        else []
+    )
+    safe_traces = []
+    for index, trace in enumerate(result["traces"]):
+        if not isinstance(trace, dict):
+            continue
+        safe = dict(trace)
+        attempt = attempts[index] if index < len(attempts) else None
+        if isinstance(attempt, dict):
+            safe["status"] = attempt.get("status", "unclassified_failure")
+            safe["error"] = attempt.get("reason_code")
+        else:
+            safe["status"] = "unclassified_failure"
+            safe["error"] = "unclassified_failure"
+        safe_traces.append(safe)
+    result["traces"] = safe_traces
+    return result
+
+
 class EvidenceHttpPresenter:
     """Render accepted facts without classifying or executing them."""
 
@@ -59,7 +86,7 @@ class EvidenceHttpPresenter:
                 "contract_version": operation.contract_version,
                 "outcome": operation.outcome.value,
                 "request_id": operation.request_id,
-                "result": _thaw(operation.result),
+                "result": _safe_v2_result(operation.result),
                 "error": None if error is None else asdict(error),
             },
         )

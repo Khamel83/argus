@@ -15,6 +15,7 @@ from argus.broker.budgets import PROVIDER_TIERS, BudgetTracker
 from argus.broker.accepted import (
     AcceptanceReceipt,
     AcceptedRetrieval,
+    AcceptedSearchAccounting,
     AcceptedSearchExecution,
     AcceptedSearchExecutionEvidence,
     CacheDecisionOutcome,
@@ -357,6 +358,40 @@ class SearchBroker:
                 )
         return format(total, "f")
 
+    @staticmethod
+    def _accepted_execution_accounting(
+        traces,
+        *,
+        invoked_providers: frozenset[ProviderName],
+    ) -> AcceptedSearchAccounting:
+        traced_providers = {trace.provider for trace in traces}
+        if not invoked_providers.issubset(traced_providers):
+            return AcceptedSearchAccounting(
+                provider_calls=len(invoked_providers),
+                actual_usd=None,
+                reserved_usd=None,
+                accounting_source="attempt_evidence_incomplete",
+                reconciliation="uncertain",
+                complete=False,
+            )
+        if any(PROVIDER_TIERS[provider] > 0 for provider in invoked_providers):
+            return AcceptedSearchAccounting(
+                provider_calls=len(invoked_providers),
+                actual_usd=None,
+                reserved_usd=None,
+                accounting_source="paid_attempt_accounting_incomplete",
+                reconciliation="uncertain",
+                complete=False,
+            )
+        return AcceptedSearchAccounting(
+            provider_calls=len(invoked_providers),
+            actual_usd=Decimal("0"),
+            reserved_usd=Decimal("0"),
+            accounting_source="tier_zero_accepted_attempts",
+            reconciliation="settled",
+            complete=True,
+        )
+
     def _accepted_response(
         self,
         accepted: AcceptedRetrieval,
@@ -507,7 +542,15 @@ class SearchBroker:
                         cache_decision=decision.outcome,
                         origin_spend_usd=Decimal(accepted.origin_spend_usd),
                         current_spend_usd=Decimal("0"),
+                        reserved_spend_usd=Decimal("0"),
+                        spend_accounting_source="cache_receipt_no_current_calls",
+                        spend_reconciliation="settled",
+                        spend_complete=True,
                         current_provider_calls=0,
+                        cache_origin=decision.origin_receipt_ref or "unknown",
+                        origin_spend_complete=False,
+                        cache_eligible=True,
+                        cache_age_ms=int((decision.age_seconds or 0) * 1000),
                     ),
                 )
 
@@ -675,6 +718,12 @@ class SearchBroker:
                 "degraded",
                 "proven_empty",
             } and bool(contributor_refs)
+            accounting = self._accepted_execution_accounting(
+                execution.traces,
+                invoked_providers=frozenset(
+                    ProviderName(provider) for provider in provider_batches
+                ),
+            )
             readiness = tuple(
                 (
                     {
@@ -734,12 +783,19 @@ class SearchBroker:
                     accepted_at=receipt.accepted_at,
                     acceptance_fingerprint=receipt.acceptance_fingerprint,
                     cache_decision=decision.outcome,
-                    origin_spend_usd=Decimal(accepted.origin_spend_usd),
-                    current_spend_usd=Decimal(accepted.origin_spend_usd),
-                    current_provider_calls=sum(
-                        trace.status not in {"skipped", "cache"}
-                        for trace in execution.traces
+                    origin_spend_usd=Decimal("0"),
+                    current_spend_usd=accounting.actual_usd,
+                    reserved_spend_usd=accounting.reserved_usd,
+                    spend_accounting_source=accounting.accounting_source,
+                    spend_reconciliation=accounting.reconciliation,
+                    spend_complete=accounting.complete,
+                    current_provider_calls=accounting.provider_calls,
+                    cache_origin=decision.origin_receipt_ref or "none",
+                    origin_spend_complete=(
+                        decision.outcome is CacheDecisionOutcome.MISS
                     ),
+                    cache_eligible=cacheable,
+                    cache_age_ms=int((decision.age_seconds or 0) * 1000),
                 ),
             )
 

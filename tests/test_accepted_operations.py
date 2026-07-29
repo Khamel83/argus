@@ -111,11 +111,13 @@ async def test_evidence_authority_never_calls_legacy_search_or_accept():
         accepted_at=datetime(2026, 7, 28, tzinfo=timezone.utc),
         acceptance_fingerprint="a" * 64,
     )
+    response = _search_response()
+    response.traces[0].error = "Authorization: Bearer should-never-leak"
     broker.search_accepted = AsyncMock(
         return_value=AcceptedSearchExecution(
             outcome=CanonicalOutcome.SUCCESS,
             reason="accepted",
-            response=_search_response(),
+            response=response,
             receipt=receipt,
             evidence=AcceptedSearchExecutionEvidence(
                 operation_id="run-accepted",
@@ -125,7 +127,15 @@ async def test_evidence_authority_never_calls_legacy_search_or_accept():
                 cache_decision=CacheDecisionOutcome.MISS,
                 origin_spend_usd=Decimal("0"),
                 current_spend_usd=Decimal("0"),
+                reserved_spend_usd=Decimal("0"),
+                spend_accounting_source="tier_zero_accepted_attempts",
+                spend_reconciliation="settled",
+                spend_complete=True,
                 current_provider_calls=1,
+                cache_origin="none",
+                origin_spend_complete=True,
+                cache_eligible=True,
+                cache_age_ms=0,
             ),
         )
     )
@@ -180,7 +190,16 @@ async def test_evidence_authority_never_calls_legacy_search_or_accept():
     assert execution_evidence["timing"]["wall_ms"]["availability"] == "unavailable"
     assert execution_evidence["cache"]["status"] == "miss"
     assert execution_evidence["cache"]["decision"] == "miss"
-    assert execution_evidence["cache"]["age_ms"]["availability"] == "unavailable"
+    assert execution_evidence["cache"]["age_ms"] == {
+        "availability": "available",
+        "source": "accepted_search_evidence.cache_age_ms",
+        "value": 0,
+    }
+    assert execution_evidence["cache"]["age_semantics"] == "no_cache_entry"
+    assert execution_evidence["cache"]["origin"] == "none"
+    assert execution_evidence["cache"]["origin_spend_usd"] == "0"
+    assert execution_evidence["cache"]["origin_spend_availability"] == "available"
+    assert execution_evidence["cache"]["eligible"] is True
     assert execution_evidence["spend"] == {
         "availability": "available",
         "actual_usd": {
@@ -198,6 +217,13 @@ async def test_evidence_authority_never_calls_legacy_search_or_accept():
             "source": "accepted_search_evidence.current_provider_calls",
             "value": 1,
         },
+        "reserved_usd": {
+            "availability": "available",
+            "source": "accepted_search_evidence.reserved_spend_usd",
+            "value": "0",
+        },
+        "accounting_source": "tier_zero_accepted_attempts",
+        "reconciliation": "settled",
     }
     assert execution_evidence["freshness"]["availability"] == (
         "observation_available"
@@ -210,6 +236,69 @@ async def test_evidence_authority_never_calls_legacy_search_or_accept():
         "accepted_at": "2026-07-28T00:00:00+00:00",
         "acceptance_fingerprint": "a" * 64,
     }
+    from argus.api.contracts_v2 import EvidenceHttpPresenter
+    from argus.api.presenters import LegacyHttpPresenter
+
+    v2_body = json.loads(EvidenceHttpPresenter().response(operation).body)
+    assert "should-never-leak" not in json.dumps(v2_body)
+    assert v2_body["result"]["traces"][0]["error"] is None
+    assert (
+        LegacyHttpPresenter().search(operation).traces[0].error
+        == "Authorization: Bearer should-never-leak"
+    )
+
+
+def test_search_execution_evidence_fails_closed_for_unknown_paid_spend():
+    from datetime import datetime, timezone
+    from decimal import Decimal
+
+    from argus.broker.accepted import (
+        AcceptanceReceipt,
+        AcceptedSearchExecutionEvidence,
+        CacheDecisionOutcome,
+    )
+    from argus.operations.accepted import _search_execution_evidence
+
+    response = _search_response()
+    response.traces[0].provider = ProviderName.BRAVE
+    response.traces[0].status = "error"
+    response.traces[0].error = "Authorization: Bearer should-never-leak"
+    receipt = AcceptanceReceipt(
+        receipt_ref="receipt:paid-unknown",
+        accepted_at=datetime(2026, 7, 28, tzinfo=timezone.utc),
+        acceptance_fingerprint="b" * 64,
+    )
+    accepted = AcceptedSearchExecutionEvidence(
+        operation_id="run-accepted",
+        receipt_ref=receipt.receipt_ref,
+        accepted_at=receipt.accepted_at,
+        acceptance_fingerprint=receipt.acceptance_fingerprint,
+        cache_decision=CacheDecisionOutcome.MISS,
+        origin_spend_usd=Decimal("0"),
+        current_spend_usd=None,
+        reserved_spend_usd=None,
+        spend_accounting_source="paid_attempt_accounting_incomplete",
+        spend_reconciliation="uncertain",
+        spend_complete=False,
+        current_provider_calls=1,
+        cache_origin="none",
+        origin_spend_complete=True,
+        cache_eligible=False,
+        cache_age_ms=0,
+    )
+
+    evidence = _search_execution_evidence(
+        response,
+        accepted_evidence=accepted,
+        acceptance_receipt=receipt,
+    )
+
+    assert evidence["spend"]["availability"] == "unavailable"
+    assert "actual_usd" not in evidence["spend"]
+    assert "reserved_usd" not in evidence["spend"]
+    assert evidence["spend"]["reconciliation"] == "uncertain"
+    assert evidence["spend"]["provider_calls"]["value"] == 1
+    assert "should-never-leak" not in json.dumps(evidence)
 
 
 @pytest.mark.asyncio

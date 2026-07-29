@@ -351,7 +351,7 @@ def _search_execution_evidence(
         persistence = _unavailable(
             "accepted search evidence is not bound to an acceptance receipt"
         )
-    if evidence_bound:
+    if evidence_bound and accepted_evidence.spend_complete:
         spend = {
             "availability": "available",
             "actual_usd": _available(
@@ -366,6 +366,25 @@ def _search_execution_evidence(
                 accepted_evidence.current_provider_calls,
                 source="accepted_search_evidence.current_provider_calls",
             ),
+            "reserved_usd": _available(
+                _decimal_text(accepted_evidence.reserved_spend_usd),
+                source="accepted_search_evidence.reserved_spend_usd",
+            ),
+            "accounting_source": accepted_evidence.spend_accounting_source,
+            "reconciliation": accepted_evidence.spend_reconciliation,
+        }
+        cache_decision = accepted_evidence.cache_decision.value
+    elif evidence_bound:
+        spend = {
+            **_unavailable(
+                "accepted provider spend accounting is incomplete"
+            ),
+            "provider_calls": _available(
+                accepted_evidence.current_provider_calls,
+                source="accepted_search_evidence.current_provider_calls",
+            ),
+            "accounting_source": accepted_evidence.spend_accounting_source,
+            "reconciliation": accepted_evidence.spend_reconciliation,
         }
         cache_decision = accepted_evidence.cache_decision.value
     else:
@@ -385,14 +404,52 @@ def _search_execution_evidence(
         "timing": {
             "component_ms": component_timing,
             "wall_ms": _unavailable(
-                "SearchResponse does not expose operation wall time"
+                "HTTP caller must measure wall time around the accepted request"
             ),
         },
         "cache": {
             "status": "hit" if response.cached else "miss",
             "source": "cached",
             "decision": cache_decision,
-            "age_ms": _unavailable("SearchResponse does not expose cache age"),
+            "age_ms": (
+                _available(
+                    accepted_evidence.cache_age_ms,
+                    source="accepted_search_evidence.cache_age_ms",
+                )
+                if evidence_bound
+                else _unavailable(
+                    "SearchResponse does not expose accepted cache age"
+                )
+            ),
+            "age_semantics": (
+                "no_cache_entry"
+                if evidence_bound
+                and accepted_evidence.cache_decision.value == "miss"
+                else "accepted_origin_age"
+                if evidence_bound
+                and accepted_evidence.cache_decision.value == "hit_eligible"
+                else "ineligible_origin_age"
+                if evidence_bound
+                else "unavailable"
+            ),
+            "origin": (
+                accepted_evidence.cache_origin if evidence_bound else None
+            ),
+            "origin_spend_usd": (
+                _decimal_text(accepted_evidence.origin_spend_usd)
+                if evidence_bound
+                and accepted_evidence.origin_spend_complete
+                else None
+            ),
+            "origin_spend_availability": (
+                "available"
+                if evidence_bound
+                and accepted_evidence.origin_spend_complete
+                else "unavailable"
+            ),
+            "eligible": (
+                accepted_evidence.cache_eligible if evidence_bound else None
+            ),
         },
         "spend": spend,
         "freshness": _freshness_from_observation(observation),
