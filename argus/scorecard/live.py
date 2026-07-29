@@ -18,6 +18,7 @@ from .bundle import (
     _validate_live_diagnostics,
     _validate_local_replay_provenance,
     _validate_provider_result_reconciliation,
+    _validate_search_outcome_reconciliation,
     derive_generation,
     write_bundle,
 )
@@ -307,6 +308,9 @@ def _compile_operation(
             try:
                 _validate_provider_result_reconciliation(
                     side, request["providers"], f"{case_id} provider evidence"
+                )
+                _validate_search_outcome_reconciliation(
+                    side, f"{case_id} provider evidence"
                 )
             except BundleError as exc:
                 raise LiveExecutionError(str(exc)) from exc

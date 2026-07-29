@@ -402,6 +402,14 @@ of emitted normalized results attributed to that provider. Every other attempt
 status, including `policy_skipped` and failures, must report zero and cannot
 supply a result.
 
+The canonical search outcome is derived from the complete provider trace, not
+trusted as a free-standing claim. Emitted results with only successful or empty
+attempts are `success`; emitted results alongside a degraded, skipped, or failed
+attempt are `degraded`. With no results, any successful-empty attempt yields
+`empty`, an entirely `policy_skipped` trace yields `policy_rejected`, and a
+unanimous direct request failure yields that failure. Other complete
+no-success traces yield `providers_failed`.
+
 Captured replay uses the same reconciliation rule for content. If content is
 present, exactly one `success` or `degraded` local extractor attempt contributes
 one retained document, and normalized `source_type` must name that extractor in

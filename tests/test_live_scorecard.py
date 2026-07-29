@@ -466,6 +466,79 @@ def _claim_paid_api_source_from_local_replay(sealed):
     extraction["candidate"]["content"]["source_type"] = "paid_api"
 
 
+def _claim_empty_when_all_providers_failed(sealed):
+    evidence = sealed["operations"][0]["candidate"]
+    evidence["outcome"] = "empty"
+    evidence["results"] = []
+    evidence["diagnostics"]["attempts"][0].update(
+        {"status": "failed", "reason": "provider unavailable", "result_count": 0}
+    )
+
+
+def _claim_providers_failed_for_successful_empty(sealed):
+    evidence = sealed["operations"][0]["candidate"]
+    evidence["outcome"] = "providers_failed"
+    evidence["results"] = []
+    evidence["diagnostics"]["attempts"][0].update(
+        {"status": "empty", "reason": "successful empty", "result_count": 0}
+    )
+
+
+def _canonical_empty(sealed):
+    evidence = sealed["operations"][0]["candidate"]
+    evidence["outcome"] = "empty"
+    evidence["results"] = []
+    evidence["diagnostics"]["attempts"][0].update(
+        {"status": "empty", "reason": "successful empty", "result_count": 0}
+    )
+
+
+def _canonical_providers_failed(sealed):
+    evidence = sealed["operations"][0]["candidate"]
+    evidence["outcome"] = "providers_failed"
+    evidence["results"] = []
+    evidence["diagnostics"]["attempts"][0].update(
+        {"status": "failed", "reason": "provider unavailable", "result_count": 0}
+    )
+
+
+def _canonical_policy_rejected(sealed):
+    evidence = sealed["operations"][0]["candidate"]
+    evidence["outcome"] = "policy_rejected"
+    evidence["results"] = []
+    evidence["diagnostics"]["attempts"][0].update(
+        {"status": "policy_skipped", "reason": "policy denied", "result_count": 0}
+    )
+
+
+def _canonical_mixed_degraded(sealed):
+    sealed["provider_snapshot"]["providers"].append(
+        {
+            "provider": "yahoo",
+            "tier": 0,
+            "fixture_contract_version": "live-v1",
+            "status": "ready",
+        }
+    )
+    operation = sealed["operations"][0]
+    operation["request"]["providers"].append("yahoo")
+    for side in ("baseline", "candidate"):
+        operation[side]["diagnostics"]["attempts"].append(
+            {
+                "name": "yahoo",
+                "kind": "provider",
+                "tier": 0,
+                "status": "empty" if side == "baseline" else "failed",
+                "reason": "successful empty"
+                if side == "baseline"
+                else "provider failed",
+                "result_count": 0,
+                "latency_ms": 1,
+            }
+        )
+    operation["candidate"]["outcome"] = "degraded"
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
@@ -512,6 +585,8 @@ def _claim_paid_api_source_from_local_replay(sealed):
         (_declare_external_extractor_as_replay_chain, "local captured replay"),
         (_claim_result_from_policy_skipped_provider, "provider result reconciliation"),
         (_claim_paid_api_source_from_local_replay, "local replay provenance"),
+        (_claim_empty_when_all_providers_failed, "search outcome"),
+        (_claim_providers_failed_for_successful_empty, "search outcome"),
     ],
 )
 def test_sealed_live_compiler_fails_closed(mutate, message, tmp_path):
@@ -520,6 +595,22 @@ def test_sealed_live_compiler_fails_closed(mutate, message, tmp_path):
 
     with pytest.raises(LiveExecutionError, match=message):
         _write_live_bundle(tmp_path / "live", sealed)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        _canonical_empty,
+        _canonical_providers_failed,
+        _canonical_policy_rejected,
+        _canonical_mixed_degraded,
+    ],
+)
+def test_search_outcome_reconciliation_accepts_canonical_distinctions(mutate, tmp_path):
+    sealed = _sealed()
+    mutate(sealed)
+
+    _write_live_bundle(tmp_path / "live", sealed)
 
 
 def _write_live_attempt(output: Path, run_id: str, *, unique_receipts: bool = True):

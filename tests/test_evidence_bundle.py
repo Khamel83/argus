@@ -438,10 +438,19 @@ def test_competitive_bundle_accepts_all_normalized_live_case_artifacts(tmp_path)
         "persistence_failed",
     ):
         canonical_failure = json.loads(json.dumps(payload))
+        canonical_search_diagnostics = json.loads(
+            json.dumps(search_failure_diagnostics)
+        )
+        canonical_search_diagnostics["attempts"][0].update(
+            {
+                "status": outcome,
+                "reason": f"{outcome} prevented results",
+            }
+        )
         canonical_failure["artifacts"]["searches/discovery-01.json"]["candidate"] = {
             "outcome": outcome,
             "results": [],
-            "diagnostics": search_failure_diagnostics,
+            "diagnostics": canonical_search_diagnostics,
         }
         canonical_failure["artifacts"]["extractions/javascript-live.json"][
             "candidate"
