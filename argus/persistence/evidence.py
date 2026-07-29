@@ -19,6 +19,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     select,
+    text,
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column, sessionmaker
@@ -275,6 +276,26 @@ class SqlAlchemyEvidenceRepository:
         accepted = evidence.accepted
         try:
             with self.session_factory.begin() as session:
+                if (
+                    evidence.cache_published
+                    and session.bind is not None
+                    and session.bind.dialect.name == "postgresql"
+                ):
+                    lock_key = int.from_bytes(
+                        hashlib.sha256(
+                            (
+                                f"{accepted.cache_fingerprint}\0"
+                                f"{accepted.execution_cohort}"
+                            ).encode()
+                        ).digest()[:8],
+                        "big",
+                    )
+                    if lock_key >= 2**63:
+                        lock_key -= 2**64
+                    session.execute(
+                        text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                        {"lock_key": lock_key},
+                    )
                 existing = session.scalar(
                     select(AcceptedOperationRow).where(
                         AcceptedOperationRow.operation_id == accepted.operation_id
@@ -486,8 +507,14 @@ class SqlAlchemyEvidenceRepository:
                         )
                     )
                     if prior_publication is not None:
-                        session.delete(prior_publication)
-                        session.flush()
+                        accepted_at = (
+                            accepted.acceptance_receipt.accepted_at.replace(
+                                tzinfo=None
+                            )
+                        )
+                        if prior_publication.published_at < accepted_at:
+                            session.delete(prior_publication)
+                            session.flush()
                     session.add(
                         RetrievalCachePublicationRow(
                             id=uuid.uuid4().hex,
