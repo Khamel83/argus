@@ -262,7 +262,15 @@ A baseline is not just a commit. Each immutable benchmark generation records:
 Baseline and candidate run close together to control web drift. Changing the
 corpus, evaluator, prompt, settings, topology class, or other fixed component
 starts a new benchmark generation. Results from different generations are not
-presented as one comparable score series.
+presented as one comparable score series. The sanitized configuration hash is
+itself a generation dimension, not merely an identity annotation. Baseline and
+candidate must start within 15 minutes and the synchronized comparison window
+must also finish within 15 minutes.
+
+The competitive input is closed: it must contain exactly the frozen 24 search
+ids plus four live-extraction ids, with each id appearing once under its
+declared mode. Missing, duplicate, extra, or mode-mismatched pairs invalidate
+the run before scoring.
 
 ## Evidence bundle
 
@@ -337,13 +345,16 @@ operator promise.
 ## Hermetic implementation boundary
 
 `scripts/run-scorecard.py --lane hermetic` is the pull-request lane. It reads
-only the frozen corpus and evaluator fixtures, evaluates both `free` and
-`budgeted` profiles independently, and writes a checksummed secret-free
-diagnostic bundle. It imports no provider, broker, HTTP, persistence, or
-deployment authority and cannot authorize runtime execution or promotion.
+frozen raw corpus inputs and separately frozen expected observations, executes
+the raw inputs through pure production contracts and the hermetic provider
+adapter harness, evaluates both `free` and `budgeted` profiles independently,
+and writes a checksummed secret-free diagnostic bundle. All transport is
+stubbed; it has no live network, persistence, spend, deployment, or promotion
+authority.
 
-`--lane live-config` writes the guarded live-run configuration only. A live
-competitive run is deliberately outside ordinary CI: it must execute through
+`scripts/run-live-scorecard.py` is the shared free/budgeted live runner. A live
+competitive run is deliberately outside ordinary CI: it executes all 24
+searches and four live extractions for both baseline and candidate through
 canonical HTTP with baseline and candidate close together under the same
 topology, profile, and provider snapshot. The free profile can be scheduled
 without a billable call. A budgeted run must first present an immutable,
@@ -357,18 +368,22 @@ The separately defined `.github/workflows/scorecard-live.yml` is the only
 repository workflow for weekly/manual live evidence. Scheduled execution is
 hard-coded to the `free` profile, tier 0, and a zero billable-call cap. Manual
 budgeted preparation runs in the protected `scorecard-budgeted` environment
-and validates the exact receipt digest, run id, derived generation, permitted
+validates the exact receipt digest, run id, derived generation, permitted
 providers, maximum tier, call-count cap, cost/credit cap, and individually
-named one-time-credit providers before a reservation step is reachable. The
-receipt is atomically marked consumed and its digest-addressed consumption
-ledger is restored across workflow runs; absence, mismatch, or reuse exits
-before reservation. Workflow artifacts and scorecard verdicts remain
-diagnostic-only and cannot deploy or promote a release.
+named one-time-credit providers. The canonical authority consumes the receipt
+atomically in its durable SQL audit repository before any provider reservation;
+process restart, cache eviction, or rerun cannot restore authority. Absence,
+mismatch, or reuse exits before reservation. Workflow artifacts and scorecard
+verdicts remain diagnostic-only and cannot deploy or promote a release.
 
-The hermetic lane derives gate results from executable actual-versus-expected
-frozen evidence, retains the normalized evidence for every gate and corpus
-case, and reads the same closed architecture inventory as the architecture
-boundary tests. It writes to a private sibling staging directory only after
+The hermetic lane derives gate results from executed raw inputs and compares
+them with a separate expected-observation file, retains normalized evidence for
+every gate and corpus case, and reads the same whole route/presenter inventory
+as the architecture boundary tests. Bundle preparation and verification both
+recompute stability, blinded-pair classification, deterministic counts, exact
+sign-test value, ordered verdict, and stability dependency; serialized claims
+are never treated as authority. It writes to a private sibling staging
+directory only after
 all typed identities, synchronized generation dimensions, normalized document
 schemas, safe paths, and secret/native-payload checks pass. Verification
 requires exact agreement between the manifest file set, regular files, and

@@ -55,6 +55,13 @@ class SearchRequest(BaseModel):
         return [p.lower() for p in v]
 
 
+class ScorecardAuthorizationConsumeRequest(BaseModel):
+    receipt_json: str = Field(..., min_length=2, max_length=16_384)
+    expected_sha256: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    run_id: str = Field(..., min_length=1, max_length=128)
+    generation: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+
+
 class SearchResultSchema(BaseModel):
     url: str
     title: str

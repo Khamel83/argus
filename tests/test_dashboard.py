@@ -106,7 +106,7 @@ def test_budget_fragment_returns_html_when_authed():
 def test_parallel_budget_status_identifies_monthly_recurring_tier():
     from argus.broker.budgets import BudgetTracker
     from argus.models import ProviderName
-    from argus.operations.provider_presentation import ProviderPresentationService
+    from argus.api.provider_operations import ProviderApplicationService
 
     broker = MagicMock()
     broker.budget_tracker = BudgetTracker()
@@ -119,8 +119,8 @@ def test_parallel_budget_status_identifies_monthly_recurring_tier():
         "authority": "provider_readiness",
     }
 
-    presentation = ProviderPresentationService(lambda: broker, MagicMock())
-    row = presentation.budget_state()[0]
+    presentation = ProviderApplicationService(lambda: broker, MagicMock())
+    row = presentation.budget_state().rows[0]
 
     assert row["provider"] == "parallel"
     assert row["tier"] == 1

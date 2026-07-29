@@ -1,4 +1,4 @@
-"""HTTP presentation service for provider diagnostics and guarded probes.
+"""HTTP application operations for provider diagnostics and guarded probes.
 
 Routes depend on this narrow operation surface rather than owning broker,
 provider, extraction, or persistence semantics directly.
@@ -7,6 +7,8 @@ provider, extraction, or persistence semantics directly.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Any
 
 from argus.broker.budgets import PROVIDER_TIERS
@@ -23,8 +25,65 @@ class ProbeRejected(RuntimeError):
     """A diagnostic probe was denied before provider execution."""
 
 
-class ProviderPresentationService:
-    """Own provider-facing presentation projections outside HTTP adapters."""
+class UnknownProviderError(ValueError):
+    """Only provider-name parsing failed."""
+
+
+@dataclass(frozen=True)
+class FixtureProviderFacts:
+    provider: str
+    available: bool
+    status: str
+    readiness: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class LiveProviderFacts:
+    provider: str
+    available: bool
+    status: str
+    trace: Mapping[str, Any]
+    sample_results: tuple[Mapping[str, Any], ...]
+
+
+@dataclass(frozen=True)
+class ProviderSpendFacts:
+    providers: tuple[Mapping[str, Any], ...]
+    operational: tuple[Mapping[str, Any], ...]
+
+
+@dataclass(frozen=True)
+class BudgetStateFacts:
+    rows: tuple[Mapping[str, Any], ...]
+
+
+@dataclass(frozen=True)
+class ProviderHealthFacts:
+    status: str
+    providers: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class CallerBudgetsFacts:
+    providers: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class HealthDetailFacts:
+    providers: Mapping[str, Any]
+    health_tracking: Mapping[str, Any]
+    browser: Mapping[str, Any]
+    recovery: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class AdminBudgetsFacts:
+    budgets: Mapping[str, Any]
+    token_balances: Mapping[str, Any]
+
+
+class ProviderApplicationService:
+    """Coordinate authority dependencies and return typed provider facts."""
 
     def __init__(
         self,
@@ -38,19 +97,24 @@ class ProviderPresentationService:
     def is_spend_conflict(exc: Exception) -> bool:
         return isinstance(exc, SpendConflictError)
 
-    def fixture_provider(self, provider: str) -> dict[str, Any]:
+    @staticmethod
+    def _provider_name(provider: str) -> ProviderName:
+        try:
+            return ProviderName(provider)
+        except ValueError as exc:
+            raise UnknownProviderError(provider) from exc
+
+    def fixture_provider(self, provider: str) -> FixtureProviderFacts:
         broker = self._broker_provider()
-        pname = ProviderName(provider)
+        pname = self._provider_name(provider)
         decision = broker.readiness_service.authorize_probe(pname, "fixture")
         readiness = broker.provider_readiness_projection(pname)
-        return {
-            "provider": provider,
-            "mode": "fixture",
-            "available": decision.allowed,
-            "status": "fixture_verified" if decision.allowed else "denied",
-            "readiness": readiness,
-            "sample_results": [],
-        }
+        return FixtureProviderFacts(
+            provider=provider,
+            available=decision.allowed,
+            status="fixture_verified" if decision.allowed else "denied",
+            readiness=readiness,
+        )
 
     async def live_provider(
         self,
@@ -60,9 +124,9 @@ class ProviderPresentationService:
         caller: str,
         idempotency_key: str | None,
         durable_receipt: str | None,
-    ) -> dict[str, Any]:
+    ) -> LiveProviderFacts:
         broker = self._broker_provider()
-        pname = ProviderName(provider)
+        pname = self._provider_name(provider)
         probe_query = SearchQuery(
             query=query_text,
             mode=SearchMode.DISCOVERY,
@@ -104,24 +168,23 @@ class ProviderPresentationService:
         )
         response = await broker.search(query)
         trace = response.traces[0] if response.traces else None
-        return {
-            "provider": provider,
-            "mode": "live",
-            "available": trace is not None,
-            "status": trace.status if trace else "no_trace",
-            "trace": {
+        return LiveProviderFacts(
+            provider=provider,
+            available=trace is not None,
+            status=trace.status if trace else "no_trace",
+            trace={
                 "status": trace.status if trace else "no_trace",
                 "results_count": trace.results_count if trace else 0,
                 "latency_ms": trace.latency_ms if trace else 0,
                 "error": trace.error if trace else None,
             },
-            "sample_results": [
+            sample_results=tuple(
                 {"url": r.url, "title": r.title, "snippet": r.snippet[:100]}
                 for r in response.results[:3]
-            ],
-        }
+            ),
+        )
 
-    def provider_spend(self) -> dict[str, Any]:
+    def provider_spend(self) -> ProviderSpendFacts:
         broker = self._broker_provider()
         repository = self._spend_repository_provider()
         providers = []
@@ -137,12 +200,9 @@ class ProviderPresentationService:
                     budget_limit=float(projection.get("budget_limit") or 0),
                 )
             )
-        return {
-            "providers": providers,
-            "non_authoritative_operational": {"providers": operational},
-        }
+        return ProviderSpendFacts(tuple(providers), tuple(operational))
 
-    def budget_state(self) -> list[dict[str, Any]]:
+    def budget_state(self) -> BudgetStateFacts:
         broker = self._broker_provider()
         rows = []
         for pname in ProviderName:
@@ -178,9 +238,9 @@ class ProviderPresentationService:
                 row["tier"],
             )
         )
-        return rows
+        return BudgetStateFacts(tuple(rows))
 
-    def provider_health(self, operational_status: Any) -> dict[str, Any]:
+    def provider_health(self, operational_status: Any) -> ProviderHealthFacts:
         from argus.operations.presentation import provider_display_state
 
         broker = self._broker_provider()
@@ -207,22 +267,21 @@ class ProviderPresentationService:
         ]
         healthy = any(state in {"healthy", "degraded"} for state in active_states)
         fully_healthy = healthy and all(state == "healthy" for state in active_states)
-        return {
-            "status": "ok" if fully_healthy else "degraded",
-            "providers": providers,
-        }
+        return ProviderHealthFacts(
+            status="ok" if fully_healthy else "degraded", providers=providers
+        )
 
-    def caller_budgets(self) -> dict[str, Any]:
+    def caller_budgets(self) -> CallerBudgetsFacts:
         broker = self._broker_provider()
-        return {
-            "providers": {
+        return CallerBudgetsFacts(
+            providers={
                 pname.value: broker.provider_budget_projection(pname)
                 for pname in ProviderName
                 if pname != ProviderName.CACHE
-            }
-        }
+            },
+        )
 
-    def health_detail(self) -> dict[str, Any]:
+    def health_detail(self) -> HealthDetailFacts:
         broker = self._broker_provider()
         provider_evidence = broker.operational_provider_evidence()
         providers = {
@@ -237,20 +296,17 @@ class ProviderPresentationService:
             else:
                 entry["best_egress"] = "local"
                 entry["egress_probes"] = {}
-        return {
-            "status": "ok",
-            "providers": providers,
-            "health_tracking": {
+        return HealthDetailFacts(
+            providers=providers,
+            health_tracking={
                 name: (provider_evidence.get(name) or {}).get("readiness", {})
                 for name in providers
             },
-            "runtime": {
-                "browser": browser_capability_status(),
-                "recovery": recovery_status_from_environment(),
-            },
-        }
+            browser=browser_capability_status(),
+            recovery=recovery_status_from_environment(),
+        )
 
-    def admin_budgets(self) -> dict[str, Any]:
+    def admin_budgets(self) -> AdminBudgetsFacts:
         broker = self._broker_provider()
         budget_info = {
             pname.value: broker.provider_budget_projection(pname)
@@ -260,7 +316,4 @@ class ProviderPresentationService:
         store = broker.budget_tracker._store
         if store:
             token_balances = store.get_all_token_balances()
-        return {
-            "budgets": budget_info,
-            "non_authoritative_operational": {"token_balances": token_balances},
-        }
+        return AdminBudgetsFacts(budgets=budget_info, token_balances=token_balances)

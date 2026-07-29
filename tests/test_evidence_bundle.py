@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from hashlib import sha256
 import json
 
@@ -9,16 +10,27 @@ import pytest
 
 from argus.scorecard.bundle import (
     BundleError,
+    _validate_competitive_documents,
+    _validate_stability_document,
     derive_generation,
     verify_bundle,
     write_bundle,
 )
+from argus.scorecard.corpus import COMPETITIVE_CASE_MODES
 from argus.scorecard.stability import HARD_GATES, evaluate_stability
 
 
 def _stability():
     profile = {
-        gate: {"status": "pass", "evidence": {"fixture": gate}} for gate in HARD_GATES
+        gate: {
+            "status": "pass",
+            "evidence": {
+                "schema": "normalized-gate-evidence-v2",
+                "fixture_id": gate,
+                "check": {"kind": gate, "passed": True, "observation_count": 1},
+            },
+        }
+        for gate in HARD_GATES
     }
     return evaluate_stability(
         {"free": profile, "budgeted": profile}, architecture_exceptions=()
@@ -49,6 +61,7 @@ def _payload():
         "topology": {"egress": "hermetic", "machine": "ci-fixture"},
         "profile": "hermetic",
         "provider_snapshot_sha256": provider_hash,
+        "sanitized_config_sha256": "f" * 64,
     }
     generation = derive_generation(dimensions)
     return {
@@ -57,7 +70,7 @@ def _payload():
         "candidate_identity": {
             "generation": generation,
             "commit": "9c209b2",
-            "image_digest": f"sha256:{'e' * 64}",
+            "image_digest": None,
             "sanitized_config_sha256": "f" * 64,
             "dimensions": dimensions,
             "started_at": "2026-07-29T00:00:00Z",
@@ -76,7 +89,24 @@ def _payload():
         "surface_equivalence": {
             "schema": "surface-equivalence-v1",
             "status": "pass",
-            "cases": ["success", "timeout"],
+            "cases": [
+                {
+                    "case_id": "success",
+                    "outcome": "success",
+                    "http_status": 200,
+                    "mcp_is_error": False,
+                    "cli_exit": 0,
+                    "python_error": False,
+                },
+                {
+                    "case_id": "timeout",
+                    "outcome": "timeout",
+                    "http_status": 504,
+                    "mcp_is_error": True,
+                    "cli_exit": 1,
+                    "python_error": True,
+                },
+            ],
         },
         "timing_receipts": {
             "schema": "normalized-timing-receipts-v1",
@@ -109,18 +139,41 @@ def _payload():
                 "case_id": "discovery-01",
                 "mode": "discovery",
                 "profile": "hermetic",
-                "input": {"query": "fixture"},
-                "actual": {"outcome": "success"},
-                "expected": {"outcome": "success"},
+                "input": {"query": "fixture", "raw_fixture_id": "discovery-01"},
+                "actual": {
+                    "outcome": "success",
+                    "result_count": 1,
+                    "domain_count": 1,
+                    "provenance_complete": True,
+                },
+                "expected": {
+                    "outcome": "success",
+                    "result_count": 1,
+                    "domain_count": 1,
+                    "provenance_complete": True,
+                },
                 "matched": True,
             },
             "extractions/static.json": {
                 "schema": "normalized-extraction-fixture-v1",
                 "case_id": "static",
                 "profile": "hermetic",
-                "input": {"fixture": "static"},
-                "actual": {"outcome": "success"},
-                "expected": {"outcome": "success"},
+                "input": {
+                    "raw_fixture_id": "static",
+                    "content_type": "text/html",
+                },
+                "actual": {
+                    "outcome": "success",
+                    "quality": "passing",
+                    "complete": True,
+                    "provenance_complete": True,
+                },
+                "expected": {
+                    "outcome": "success",
+                    "quality": "passing",
+                    "complete": True,
+                    "provenance_complete": True,
+                },
                 "matched": True,
             },
         },
@@ -331,3 +384,71 @@ def test_bundle_failure_leaves_no_final_or_private_staging_directory(tmp_path):
 
     assert not output.exists()
     assert not list(tmp_path.glob(".bundle.staging-*"))
+
+
+def test_bundle_recomputes_stability_and_rejects_fabricated_stable_claim():
+    document = json.loads(json.dumps(asdict(_stability())))
+    document["profiles"]["free"]["gates"]["authentication"]["status"] = "fail"
+    document["profiles"]["free"]["gates"]["authentication"]["evidence"]["check"][
+        "passed"
+    ] = False
+
+    with pytest.raises(BundleError, match="derivable"):
+        _validate_stability_document(document, "stable")
+
+
+@pytest.mark.parametrize("fabrication", ("classification", "count", "verdict"))
+def test_bundle_recomputes_competitive_claims_from_raw_blinded_pairs(fabrication):
+    pairs = [
+        {
+            "pair_id": pair_id,
+            "mode": mode,
+            "forward": "tie",
+            "reverse": "tie",
+            "classification": "tie",
+        }
+        for pair_id, mode in COMPETITIVE_CASE_MODES.items()
+    ]
+    metrics = {
+        "schema": "competitive-deterministic-metrics-v1",
+        "consistent_pairs": 28,
+        "decisive_pairs": 0,
+        "candidate_wins": 0,
+        "baseline_wins": 0,
+        "p_value": None,
+    }
+    verdict = {
+        "schema": "competitive-verdict-v1",
+        "verdict": "inconclusive",
+        "reason": "fewer than 8 decisive pairs",
+    }
+    if fabrication == "classification":
+        pairs[0]["classification"] = "candidate_win"
+    elif fabrication == "count":
+        metrics["candidate_wins"] = 1
+    else:
+        verdict["verdict"] = "competitive"
+
+    with pytest.raises(BundleError, match="derivable|invalid"):
+        _validate_competitive_documents(
+            metrics,
+            {"schema": "blinded-comparisons-v1", "pairs": pairs},
+            verdict,
+            list(COMPETITIVE_CASE_MODES),
+            verdict["verdict"],
+            _stability(),
+        )
+
+
+@pytest.mark.parametrize("hostile_key", ("apiKey", "api key"))
+def test_bundle_secret_scanner_normalizes_camel_and_spaced_keys(tmp_path, hostile_key):
+    payload = _payload()
+    payload["provider_snapshot"][hostile_key] = "forbidden"
+
+    with pytest.raises(BundleError, match="forbidden"):
+        write_bundle(
+            tmp_path / "secret-variant",
+            lane="hermetic",
+            stability=_stability(),
+            payload=payload,
+        )

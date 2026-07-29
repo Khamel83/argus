@@ -10,7 +10,15 @@ import sys
 
 import pytest
 
-from argus.scorecard.competitive import evaluate_competitive
+from argus.persistence.provider_spend import (
+    SpendConflictError,
+    create_provider_spend_repository,
+)
+from argus.scorecard.authorization import (
+    AuthorizationError,
+    validate_authorization_bytes,
+)
+from argus.scorecard.competitive import CompetitiveInputError, evaluate_competitive
 from argus.scorecard.corpus import load_corpus, validate_corpus
 from argus.scorecard.stability import HARD_GATES, evaluate_stability
 
@@ -207,7 +215,8 @@ def test_competitive_stability_rule_precedes_hostile_pair_parsing():
     assert verdict.pairs == ()
 
 
-def test_competitive_normalizes_missing_duplicate_unknown_and_malformed_cases():
+@pytest.mark.parametrize("mutation", ("missing", "duplicate", "unknown", "wrong-mode"))
+def test_competitive_rejects_any_noncanonical_28_pair_set(mutation):
     stable = evaluate_stability(
         {"free": _stable_profile(), "budgeted": _stable_profile()},
         architecture_exceptions=(),
@@ -230,24 +239,17 @@ def test_competitive_normalizes_missing_duplicate_unknown_and_malformed_cases():
         }
         for entry in corpus["live_extractions"]
     ]
-    missing_id = canonical.pop()["pair_id"]
-    canonical.append(dict(canonical[0]))
-    canonical.append(
-        {
-            "pair_id": "unknown-case",
-            "mode": "unknown-mode",
-            "forward": ["not-hashable"],
-            "reverse": {"native": "shape"},
-        }
-    )
+    if mutation == "missing":
+        canonical.pop()
+    elif mutation == "duplicate":
+        canonical[-1] = dict(canonical[0])
+    elif mutation == "unknown":
+        canonical[-1]["pair_id"] = "unknown-case"
+    else:
+        canonical[-1]["mode"] = "research"
 
-    verdict = evaluate_competitive(stable, canonical)
-
-    by_id = {pair.pair_id: pair for pair in verdict.pairs}
-    assert by_id[missing_id].classification == "unavailable"
-    assert by_id[canonical[0]["pair_id"]].classification == "malformed"
-    assert by_id["unknown-case"].classification == "malformed"
-    assert verdict.verdict == "inconclusive"
+    with pytest.raises(CompetitiveInputError):
+        evaluate_competitive(stable, canonical)
 
 
 @pytest.mark.parametrize(
@@ -314,7 +316,9 @@ def test_paired_evaluator_fixture_classification(fixture_name, expected):
     pair["pair_id"] = "discovery-01"
     pair["mode"] = "discovery"
 
-    verdict = evaluate_competitive(stable, [pair])
+    pairs = _canonical_pairs()
+    pairs[0] = pair
+    verdict = evaluate_competitive(stable, pairs)
 
     assert (
         next(
@@ -355,10 +359,13 @@ def test_hermetic_runner_fails_for_broken_fixtures_before_live_execution(tmp_pat
     broken = tmp_path / "fixtures"
     broken.mkdir()
     corpus = json.loads((FIXTURES / "corpus.json").read_text())
-    corpus["search_intents"][0]["expected_normalized_evidence"]["outcome"] = "wrong"
+    corpus["search_intents"][0]["hermetic_input"]["transport_outcome"] = "empty"
     (broken / "corpus.json").write_text(json.dumps(corpus), encoding="utf-8")
     (broken / "stability-evidence.json").write_bytes(
         (FIXTURES / "stability-evidence.json").read_bytes()
+    )
+    (broken / "hermetic-expected.json").write_bytes(
+        (FIXTURES / "hermetic-expected.json").read_bytes()
     )
 
     result = subprocess.run(
@@ -405,9 +412,13 @@ def test_live_workflow_is_free_only_on_schedule_and_budgeted_is_receipt_gated():
     assert "scheduled-free" in workflow
     assert "budgeted" in workflow
     assert "scorecard-budgeted" in workflow
-    receipt = workflow.index("validate-scorecard-authorization.py")
-    reservation = workflow.index("reserve-budget")
-    assert receipt < reservation
+    assert workflow.count("scripts/run-live-scorecard.py") == 2
+    assert "/api/admin/scorecard-authorizations/consume" not in workflow
+    assert "actions/cache" not in workflow
+    run_blocks = workflow.split("run:")[1:]
+    assert all(
+        "${{ inputs." not in block.split("\n      -", 1)[0] for block in run_blocks
+    )
     assert "diagnostic-only" in workflow
 
 
@@ -492,3 +503,53 @@ def test_budgeted_authorization_fails_closed_before_consumption(tmp_path):
     assert result.returncode != 0
     assert "run id" in result.stderr or "one-time" in result.stderr
     assert not (tmp_path / "consumed").exists()
+
+
+@pytest.mark.parametrize("hostile", ([["serper"]], [{"provider": "serper"}], [1]))
+def test_budgeted_authorization_rejects_hostile_one_time_provider_lists(hostile):
+    receipt = {
+        "schema": "scorecard-budget-authorization-v1",
+        "receipt_id": "receipt-hostile",
+        "run_id": "run-hostile",
+        "generation": "a" * 64,
+        "permitted_providers": ["serper"],
+        "maximum_tier": 3,
+        "call_count_cap": 28,
+        "cost_or_credit_cap": 1,
+        "one_time_credit_providers": hostile,
+        "issued_at": "2026-07-29T00:00:00Z",
+    }
+    encoded = (
+        json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode()
+    with pytest.raises(AuthorizationError):
+        validate_authorization_bytes(
+            encoded,
+            expected_sha256=__import__("hashlib").sha256(encoded).hexdigest(),
+            run_id="run-hostile",
+            generation="a" * 64,
+        )
+
+
+def test_scorecard_authorization_consumption_survives_repository_restart(tmp_path):
+    db_url = f"sqlite:///{tmp_path / 'spend.db'}"
+    first = create_provider_spend_repository(db_url)
+    durable_id = first.consume_scorecard_authorization(
+        receipt_id="receipt-durable",
+        receipt_sha256="a" * 64,
+        run_id="run-durable",
+        generation="b" * 64,
+        actor_identity="admin:test",
+        constraints={"maximum_tier": 1, "call_count_cap": 28},
+    )
+    restarted = create_provider_spend_repository(db_url)
+    with pytest.raises(SpendConflictError, match="already consumed"):
+        restarted.consume_scorecard_authorization(
+            receipt_id="receipt-durable",
+            receipt_sha256="a" * 64,
+            run_id="run-durable",
+            generation="b" * 64,
+            actor_identity="admin:test",
+            constraints={"maximum_tier": 1, "call_count_cap": 28},
+        )
+    assert durable_id.startswith("provider_spend_audit:")

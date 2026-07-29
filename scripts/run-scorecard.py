@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 from hashlib import sha256
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
+from time import perf_counter_ns
 from typing import Any
 
 
@@ -18,18 +19,28 @@ sys.path.insert(0, str(ROOT))
 
 from argus.scorecard.architecture import find_architecture_exceptions  # noqa: E402
 from argus.scorecard.bundle import derive_generation, write_bundle  # noqa: E402
+from argus.scorecard.competitive import classify_pair  # noqa: E402
 from argus.scorecard.corpus import load_corpus  # noqa: E402
 from argus.scorecard.stability import (  # noqa: E402
+    HARD_GATES,
     evaluate_stability,
     load_frozen_stability,
 )
+from argus.hermetic_scorecard import (  # noqa: E402
+    execute_extraction_fixture,
+    execute_search_fixture,
+    execute_surface_fixture,
+    load_expected_observations,
+)
+from argus.models import ProviderName  # noqa: E402
+from argus.providers.fixture_harness import run_fixture_case_summaries  # noqa: E402
 
 
 def _hash_file(path: Path) -> str:
     return sha256(path.read_bytes()).hexdigest()
 
 
-def _git_identity(repository_root: Path) -> tuple[str, str]:
+def _git_identity(repository_root: Path) -> str:
     try:
         commit = subprocess.check_output(
             ["git", "rev-parse", "HEAD"],
@@ -37,15 +48,9 @@ def _git_identity(repository_root: Path) -> tuple[str, str]:
             text=True,
             stderr=subprocess.DEVNULL,
         ).strip()
-        timestamp = subprocess.check_output(
-            ["git", "show", "-s", "--format=%cI", "HEAD"],
-            cwd=repository_root,
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
     except (OSError, subprocess.CalledProcessError) as exc:
         raise ValueError("unable to resolve immutable candidate git identity") from exc
-    return commit, timestamp
+    return commit
 
 
 def _live_configuration() -> dict[str, object]:
@@ -87,12 +92,15 @@ def _live_configuration() -> dict[str, object]:
     }
 
 
-def _evaluate_corpus(corpus: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+def _evaluate_corpus(
+    corpus: dict[str, Any],
+    expected_observations: dict[str, dict[str, Any]],
+) -> tuple[dict[str, Any], bool]:
     artifacts: dict[str, Any] = {}
     all_matched = True
     for case in corpus["search_intents"]:
-        actual = case["hermetic_input"]["normalized_evidence"]
-        expected = case["expected_normalized_evidence"]
+        actual = execute_search_fixture(case["hermetic_input"])
+        expected = expected_observations["searches"][case["id"]]
         matched = actual == expected
         all_matched &= matched
         artifacts[f"searches/{case['id']}.json"] = {
@@ -100,14 +108,17 @@ def _evaluate_corpus(corpus: dict[str, Any]) -> tuple[dict[str, Any], bool]:
             "case_id": case["id"],
             "mode": case["mode"],
             "profile": "hermetic",
-            "input": {"query": case["hermetic_input"]["query"]},
+            "input": {
+                "query": case["hermetic_input"]["query"],
+                "raw_fixture_id": case["id"],
+            },
             "actual": actual,
             "expected": expected,
             "matched": matched,
         }
     for case in corpus["hermetic_extractions"]:
-        actual = case["hermetic_input"]["normalized_evidence"]
-        expected = case["expected_normalized_evidence"]
+        actual = execute_extraction_fixture(case["hermetic_input"])
+        expected = expected_observations["extractions"][case["id"]]
         matched = actual == expected
         all_matched &= matched
         artifacts[f"extractions/{case['id']}.json"] = {
@@ -115,7 +126,7 @@ def _evaluate_corpus(corpus: dict[str, Any]) -> tuple[dict[str, Any], bool]:
             "case_id": case["id"],
             "profile": "hermetic",
             "input": {
-                "fixture": case["hermetic_input"]["fixture"],
+                "raw_fixture_id": case["hermetic_input"]["fixture"],
                 "content_type": case["hermetic_input"]["content_type"],
             },
             "actual": actual,
@@ -134,13 +145,46 @@ def run_hermetic(
     """Evaluate only frozen documents and publish the diagnostic bundle."""
     corpus_path = fixtures_root / "corpus.json"
     stability_path = fixtures_root / "stability-evidence.json"
+    expected_path = fixtures_root / "hermetic-expected.json"
+    started_at = datetime.now(timezone.utc)
+    timer_started = perf_counter_ns()
     corpus = load_corpus(corpus_path)
-    profile_evidence = load_frozen_stability(stability_path)
-    artifacts, corpus_matched = _evaluate_corpus(corpus)
+    expected_observations = load_expected_observations(expected_path)
+    if set(expected_observations["searches"]) != {
+        case["id"] for case in corpus["search_intents"]
+    } or set(expected_observations["extractions"]) != {
+        case["id"] for case in corpus["hermetic_extractions"]
+    }:
+        raise ValueError("independent expected observations are not corpus-closed")
+    provider_contracts = run_fixture_case_summaries(ProviderName.DUCKDUCKGO)
+    if not all(
+        provider_contracts[name]["golden_output_validated"]
+        for name in ("success", "empty", "error", "malformed")
+    ):
+        raise ValueError("raw provider fixture contract failed")
+    evaluator_expectations = {
+        "win.json": "candidate_win",
+        "loss.json": "baseline_win",
+        "tie.json": "tie",
+        "conflict.json": "ordering_conflict",
+        "catastrophic.json": "catastrophic_regression",
+        "malformed.json": "malformed",
+        "unavailable.json": "unavailable",
+    }
+    for name, expected in evaluator_expectations.items():
+        raw_pair = json.loads((fixtures_root / "evaluator" / name).read_text())
+        raw_pair.update(pair_id="discovery-01", mode="discovery")
+        if classify_pair(raw_pair).classification != expected:
+            raise ValueError(f"raw evaluator fixture failed: {name}")
+    artifacts, corpus_matched = _evaluate_corpus(corpus, expected_observations)
     if not corpus_matched:
         raise ValueError(
-            "frozen corpus fixture actual evidence does not match expected"
+            "raw corpus execution does not match expected normalized evidence"
         )
+    profile_evidence = load_frozen_stability(
+        stability_path,
+        observed_contracts={gate: corpus_matched for gate in HARD_GATES},
+    )
     exceptions = find_architecture_exceptions(repository_root)
     stability = evaluate_stability(
         profile_evidence,
@@ -150,7 +194,16 @@ def run_hermetic(
     provider_snapshot = {
         "schema": "normalized-provider-snapshot-v1",
         "profile": "hermetic",
-        "providers": [],
+        "providers": [
+            {
+                "provider": "duckduckgo",
+                "tier": 0,
+                "fixture_contract_version": provider_contracts["success"][
+                    "provider_contract_version"
+                ],
+                "status": "fixture_verified",
+            }
+        ],
     }
     provider_hash = sha256(
         (
@@ -160,6 +213,7 @@ def run_hermetic(
     corpus_hashes = {
         "corpus.json": _hash_file(corpus_path),
         "stability-evidence.json": _hash_file(stability_path),
+        "hermetic-expected.json": _hash_file(expected_path),
         **{
             f"evaluator/{path.name}": _hash_file(path)
             for path in sorted((fixtures_root / "evaluator").glob("*.json"))
@@ -172,6 +226,9 @@ def run_hermetic(
             if path.startswith("evaluator/")
         ).encode()
     ).hexdigest()
+    sanitized_config_sha256 = sha256(
+        b"autoload=false;secret-resolution=false;network=none"
+    ).hexdigest()
     dimensions = {
         "corpus_hashes": corpus_hashes,
         "evaluator": {
@@ -182,26 +239,39 @@ def run_hermetic(
         "topology": {"egress": "hermetic", "machine": "local-fixture"},
         "profile": "hermetic",
         "provider_snapshot_sha256": provider_hash,
+        "sanitized_config_sha256": sanitized_config_sha256,
     }
     generation = derive_generation(dimensions)
-    commit, timestamp = _git_identity(repository_root)
-    image_digest = os.environ.get(
-        "ARGUS_SCORECARD_IMAGE_DIGEST",
-        f"sha256:{sha256(f'hermetic-source:{commit}'.encode()).hexdigest()}",
-    )
+    commit = _git_identity(repository_root)
+    surface_inputs = [
+        {"outcome": outcome, "code": None}
+        for outcome in (
+            "success",
+            "degraded",
+            "empty",
+            "timeout",
+            "policy_rejected",
+            "authentication_rejected",
+            "providers_failed",
+        )
+    ]
+    surface_cases = [
+        {"case_id": f"surface-{index:02d}", **execute_surface_fixture(raw)}
+        for index, raw in enumerate(surface_inputs, 1)
+    ]
+    elapsed_ms = max(1, (perf_counter_ns() - timer_started) // 1_000_000)
+    finished_at = datetime.now(timezone.utc)
     payload = {
         "run_id": f"hermetic-{generation[:16]}",
         "generation": generation,
         "candidate_identity": {
             "generation": generation,
             "commit": commit,
-            "image_digest": image_digest,
-            "sanitized_config_sha256": sha256(
-                b"autoload=false;secret-resolution=false;network=none"
-            ).hexdigest(),
+            "image_digest": None,
+            "sanitized_config_sha256": sanitized_config_sha256,
             "dimensions": dimensions,
-            "started_at": timestamp,
-            "finished_at": timestamp,
+            "started_at": started_at.isoformat(),
+            "finished_at": finished_at.isoformat(),
         },
         "corpus": {
             "version": corpus["version"],
@@ -223,23 +293,15 @@ def run_hermetic(
         "surface_equivalence": {
             "schema": "surface-equivalence-v1",
             "status": profile_evidence["free"]["surface_equivalence"]["status"],
-            "cases": [
-                "success",
-                "degraded",
-                "empty",
-                "timeout",
-                "policy_rejected",
-                "authentication_rejected",
-                "providers_failed",
-            ],
+            "cases": surface_cases,
         },
         "timing_receipts": {
             "schema": "normalized-timing-receipts-v1",
             "operations": [
                 {
                     "operation_id": "frozen-fixture-evaluation",
-                    "wall_ms": 0,
-                    "component_ms": 0,
+                    "wall_ms": elapsed_ms,
+                    "component_ms": elapsed_ms,
                     "timeout_source": "none",
                     "cache_ms": 0,
                 }
@@ -256,7 +318,7 @@ def run_hermetic(
                 "schema": "hermetic-summary-v1",
                 "search_cases": len(corpus["search_intents"]),
                 "extraction_cases": len(corpus["hermetic_extractions"]),
-                "provider_execution": "none",
+                "provider_execution": "hermetic_adapter_contract",
                 "stability_verdict": stability.verdict,
             },
             **artifacts,

@@ -1,0 +1,199 @@
+{
+  "schema": "scorecard-hermetic-expected-v1",
+  "searches": {
+    "discovery-01": {
+      "outcome": "success",
+      "result_count": 1,
+      "domain_count": 1,
+      "provenance_complete": true
+    },
+    "discovery-02": {
+      "outcome": "success",
+      "result_count": 1,
+      "domain_count": 1,
+      "provenance_complete": true
+    },
+    "discovery-03": {
+      "outcome": "success",
+      "result_count": 1,
+      "domain_count": 1,
+      "provenance_complete": true
+    },
+    "discovery-04": {
+      "outcome": "success",
+      "result_count": 1,
+      "domain_count": 1,
+      "provenance_complete": true
+    },
+    "discovery-05": {
+      "outcome": "success",
+      "result_count": 1,
+      "domain_count": 1,
+      "provenance_complete": true
+    },
+    "discovery-06": {
+      "outcome": "success",
+      "result_count": 1,
+      "domain_count": 1,
+      "provenance_complete": true
+    },
+    "grounding-01": {
+      "outcome": "success",
+      "result_count": 1,
+      "domain_count": 1,
+      "provenance_complete": true
+    },
+    "grounding-02": {
+      "outcome": "success",
+      "result_count": 1,
+      "domain_count": 1,
+      "provenance_complete": true
+    },
+    "grounding-03": {
+      "outcome": "success",
+      "result_count": 1,
+      "domain_count": 1,
+      "provenance_complete": true
+    },
+    "grounding-04": {
+      "outcome": "success",
+      "result_count": 1,
+      "domain_count": 1,
+      "provenance_complete": true
+    },
+    "grounding-05": {
+      "outcome": "success",
+      "result_count": 1,
+      "domain_count": 1,
+      "provenance_complete": true
+    },
+    "grounding-06": {
+      "outcome": "empty",
+      "result_count": 0,
+      "domain_count": 0,
+      "provenance_complete": true
+    },
+    "recovery-01": {
+      "outcome": "success",
+      "result_count": 1,
+      "domain_count": 1,
+      "provenance_complete": true
+    },
+    "recovery-02": {
+      "outcome": "success",
+      "result_count": 1,
+      "domain_count": 1,
+      "provenance_complete": true
+    },
+    "recovery-03": {
+      "outcome": "success",
+      "result_count": 1,
+      "domain_count": 1,
+      "provenance_complete": true
+    },
+    "recovery-04": {
+      "outcome": "success",
+      "result_count": 1,
+      "domain_count": 1,
+      "provenance_complete": true
+    },
+    "recovery-05": {
+      "outcome": "success",
+      "result_count": 1,
+      "domain_count": 1,
+      "provenance_complete": true
+    },
+    "recovery-06": {
+      "outcome": "empty",
+      "result_count": 0,
+      "domain_count": 0,
+      "provenance_complete": true
+    },
+    "research-01": {
+      "outcome": "success",
+      "result_count": 3,
+      "domain_count": 2,
+      "provenance_complete": true
+    },
+    "research-02": {
+      "outcome": "success",
+      "result_count": 3,
+      "domain_count": 2,
+      "provenance_complete": true
+    },
+    "research-03": {
+      "outcome": "success",
+      "result_count": 3,
+      "domain_count": 2,
+      "provenance_complete": true
+    },
+    "research-04": {
+      "outcome": "success",
+      "result_count": 3,
+      "domain_count": 2,
+      "provenance_complete": true
+    },
+    "research-05": {
+      "outcome": "success",
+      "result_count": 3,
+      "domain_count": 2,
+      "provenance_complete": true
+    },
+    "research-06": {
+      "outcome": "empty",
+      "result_count": 0,
+      "domain_count": 0,
+      "provenance_complete": true
+    }
+  },
+  "extractions": {
+    "static": {
+      "outcome": "success",
+      "quality": "passing",
+      "complete": true,
+      "provenance_complete": true
+    },
+    "javascript": {
+      "outcome": "success",
+      "quality": "passing",
+      "complete": true,
+      "provenance_complete": true
+    },
+    "paywall": {
+      "outcome": "degraded",
+      "quality": "degraded",
+      "complete": false,
+      "provenance_complete": true
+    },
+    "malformed": {
+      "outcome": "extraction_failed",
+      "quality": "failed",
+      "complete": false,
+      "provenance_complete": true
+    },
+    "redirect": {
+      "outcome": "success",
+      "quality": "passing",
+      "complete": true,
+      "provenance_complete": true
+    },
+    "mirror": {
+      "outcome": "success",
+      "quality": "passing",
+      "complete": true,
+      "provenance_complete": true
+    },
+    "timeout": {
+      "outcome": "timeout",
+      "quality": "failed",
+      "complete": false,
+      "provenance_complete": true
+    },
+    "unsupported": {
+      "outcome": "extraction_failed",
+      "quality": "failed",
+      "complete": false,
+      "provenance_complete": true
+    }
+  }
+}

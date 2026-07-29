@@ -3,13 +3,14 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from argus.operations.provider_presentation import ProviderPresentationService
+from argus.api.provider_operations import ProviderApplicationService
+from argus.api.provider_presenters import present_provider_facts
 from argus.operations.status import OperationalStatusService
 
 router = APIRouter()
 
 
-def get_provider_presentation(request: Request) -> ProviderPresentationService:
+def get_provider_presentation(request: Request) -> ProviderApplicationService:
     return request.app.state.provider_presentation
 
 
@@ -70,11 +71,11 @@ async def capabilities(request: Request):
 
 @router.get("/provider-health")
 async def provider_health(
-    presentation: ProviderPresentationService = Depends(get_provider_presentation),
+    presentation: ProviderApplicationService = Depends(get_provider_presentation),
     operational: OperationalStatusService = Depends(get_operational_status),
 ):
     try:
-        return presentation.provider_health(operational)
+        return present_provider_facts(presentation.provider_health(operational))
     except Exception as exc:
         raise HTTPException(
             status_code=503,
@@ -84,10 +85,10 @@ async def provider_health(
 
 @router.get("/budgets")
 async def caller_budgets(
-    presentation: ProviderPresentationService = Depends(get_provider_presentation),
+    presentation: ProviderApplicationService = Depends(get_provider_presentation),
 ):
     try:
-        return presentation.caller_budgets()
+        return present_provider_facts(presentation.caller_budgets())
     except Exception as exc:
         raise HTTPException(
             status_code=503,
@@ -114,13 +115,13 @@ async def health():
 
 @router.get("/admin/health/detail")
 async def health_detail(
-    presentation: ProviderPresentationService = Depends(get_provider_presentation),
+    presentation: ProviderApplicationService = Depends(get_provider_presentation),
 ):
-    return presentation.health_detail()
+    return present_provider_facts(presentation.health_detail())
 
 
 @router.get("/admin/budgets")
 async def budgets(
-    presentation: ProviderPresentationService = Depends(get_provider_presentation),
+    presentation: ProviderApplicationService = Depends(get_provider_presentation),
 ):
-    return presentation.admin_budgets()
+    return present_provider_facts(presentation.admin_budgets())

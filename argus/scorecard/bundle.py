@@ -13,7 +13,18 @@ import shutil
 import tempfile
 from typing import Any, Mapping
 
-from .stability import HARD_GATES, REQUIRED_PROFILES, StabilityVerdict
+from .competitive import CompetitiveInputError, classify_pair, evaluate_competitive
+from .corpus import (
+    COMPETITIVE_CASE_MODES,
+    HERMETIC_EXTRACTION_CASE_IDS,
+    HERMETIC_SEARCH_CASE_IDS,
+)
+from .stability import (
+    HARD_GATES,
+    REQUIRED_PROFILES,
+    StabilityVerdict,
+    evaluate_stability,
+)
 
 
 class BundleError(ValueError):
@@ -66,6 +77,7 @@ _DIMENSION_FIELDS = {
     "topology",
     "profile",
     "provider_snapshot_sha256",
+    "sanitized_config_sha256",
 }
 
 
@@ -123,9 +135,10 @@ def _scan_safe(value: Any, location: str = "document") -> None:
         for key, nested in value.items():
             if not isinstance(key, str):
                 raise BundleError(f"non-string field at {location}")
-            normalized = key.lower().replace("-", "_")
-            if normalized in _FORBIDDEN_KEYS or normalized.endswith(
-                ("_password", "_credential", "_secret", "_api_key", "_auth_header")
+            normalized = re.sub(r"[^a-z0-9]", "", key.lower())
+            forbidden = {re.sub(r"[^a-z0-9]", "", item) for item in _FORBIDDEN_KEYS}
+            if normalized in forbidden or normalized.endswith(
+                ("password", "credential", "secret", "apikey", "authheader")
             ):
                 raise BundleError(f"forbidden sensitive field at {location}.{key}")
             _scan_safe(nested, f"{location}.{key}")
@@ -194,12 +207,14 @@ def _validate_dimensions(value: object) -> dict[str, Any]:
     if dimensions["profile"] not in {"hermetic", "free", "budgeted"}:
         raise BundleError("invalid scorecard profile")
     _sha256(dimensions["provider_snapshot_sha256"], "provider snapshot hash")
+    _sha256(dimensions["sanitized_config_sha256"], "dimension configuration hash")
     return {
         "corpus_hashes": checked_hashes,
         "evaluator": dict(evaluator),
         "topology": dict(topology),
         "profile": dimensions["profile"],
         "provider_snapshot_sha256": dimensions["provider_snapshot_sha256"],
+        "sanitized_config_sha256": dimensions["sanitized_config_sha256"],
     }
 
 
@@ -212,12 +227,16 @@ def _validate_identity(value: object, label: str, generation: str) -> dict[str, 
         identity["commit"]
     ):
         raise BundleError(f"{label} identity requires an immutable commit")
-    if not isinstance(identity["image_digest"], str) or not _IMAGE_DIGEST.fullmatch(
-        identity["image_digest"]
-    ):
+    dimensions = _validate_dimensions(identity["dimensions"])
+    image_digest = identity["image_digest"]
+    if dimensions["profile"] == "hermetic":
+        if image_digest is not None:
+            raise BundleError(f"{label} hermetic identity must omit image digest")
+    elif not isinstance(image_digest, str) or not _IMAGE_DIGEST.fullmatch(image_digest):
         raise BundleError(f"{label} identity requires an immutable image digest")
     _sha256(identity["sanitized_config_sha256"], "sanitized configuration hash")
-    dimensions = _validate_dimensions(identity["dimensions"])
+    if identity["sanitized_config_sha256"] != dimensions["sanitized_config_sha256"]:
+        raise BundleError(f"{label} configuration identity is not generation-bound")
     if derive_generation(dimensions) != generation:
         raise BundleError(f"{label} identity dimensions do not derive generation")
     started = _timestamp(identity["started_at"], f"{label} started_at")
@@ -260,6 +279,15 @@ def _validate_corpus(value: object, dimensions: Mapping[str, Any], generation: s
             or any(not isinstance(case_id, str) or not case_id for case_id in ids)
         ):
             raise BundleError(f"corpus {field} must contain unique case ids")
+    if corpus["version"] == "scorecard-v1":
+        expected_sets = {
+            "hermetic_search_case_ids": set(HERMETIC_SEARCH_CASE_IDS),
+            "hermetic_extraction_case_ids": set(HERMETIC_EXTRACTION_CASE_IDS),
+            "competitive_case_ids": set(COMPETITIVE_CASE_MODES),
+        }
+        for field, expected_ids in expected_sets.items():
+            if set(corpus[field]) != expected_ids:
+                raise BundleError(f"corpus {field} does not match canonical set")
     return dict(corpus)
 
 
@@ -274,6 +302,24 @@ def _validate_provider_snapshot(
         raise BundleError("provider snapshot profile mismatch")
     if not isinstance(snapshot["providers"], list):
         raise BundleError("provider snapshot providers must be a list")
+    for provider_value in snapshot["providers"]:
+        provider = _mapping(provider_value, "provider snapshot entry")
+        _exact_keys(
+            provider,
+            {"provider", "tier", "fixture_contract_version", "status"},
+            "provider snapshot entry",
+        )
+        if (
+            not isinstance(provider["provider"], str)
+            or not provider["provider"]
+            or isinstance(provider["tier"], bool)
+            or not isinstance(provider["tier"], int)
+            or provider["tier"] not in {0, 1, 3}
+            or not isinstance(provider["fixture_contract_version"], str)
+            or not provider["fixture_contract_version"]
+            or provider["status"] not in {"fixture_verified", "ready", "unready"}
+        ):
+            raise BundleError("provider snapshot entry is invalid")
     if (
         _hash_bytes(_canonical_bytes(snapshot))
         != dimensions["provider_snapshot_sha256"]
@@ -292,6 +338,32 @@ def _validate_surface(value: object) -> dict[str, Any]:
         raise BundleError("surface equivalence has invalid schema or status")
     if not isinstance(surface["cases"], list) or not surface["cases"]:
         raise BundleError("surface equivalence requires cases")
+    for case_value in surface["cases"]:
+        case = _mapping(case_value, "surface case")
+        _exact_keys(
+            case,
+            {
+                "case_id",
+                "outcome",
+                "http_status",
+                "mcp_is_error",
+                "cli_exit",
+                "python_error",
+            },
+            "surface case",
+        )
+        if (
+            not isinstance(case["case_id"], str)
+            or not case["case_id"]
+            or not isinstance(case["outcome"], str)
+            or isinstance(case["http_status"], bool)
+            or not isinstance(case["http_status"], int)
+            or isinstance(case["cli_exit"], bool)
+            or not isinstance(case["cli_exit"], int)
+            or not isinstance(case["mcp_is_error"], bool)
+            or not isinstance(case["python_error"], bool)
+        ):
+            raise BundleError("surface case values are invalid")
     return dict(surface)
 
 
@@ -321,6 +393,20 @@ def _validate_receipts(
                 raise BundleError("timing counters must be nonnegative integers")
         if operation["wall_ms"] > 120_000:
             raise BundleError("timing receipt exceeds bounded completion")
+        if (
+            not isinstance(operation["operation_id"], str)
+            or not operation["operation_id"]
+            or operation["timeout_source"]
+            not in {
+                "none",
+                "provider",
+                "extraction",
+                "operation",
+            }
+            or operation["component_ms"] > operation["wall_ms"]
+            or operation["cache_ms"] > operation["wall_ms"]
+        ):
+            raise BundleError("timing operation is inconsistent")
     persistence = _mapping(persistence, "persistence receipts")
     _exact_keys(
         persistence, {"schema", "status", "reason", "receipts"}, "persistence receipts"
@@ -337,6 +423,22 @@ def _validate_receipts(
             raise BundleError("hermetic persistence receipt must be not_applicable")
     elif persistence["status"] != "accepted" or not persistence["receipts"]:
         raise BundleError("competitive persistence receipts are required")
+    if lane != "hermetic":
+        for receipt_value in persistence["receipts"]:
+            receipt = _mapping(receipt_value, "persistence receipt")
+            _exact_keys(
+                receipt,
+                {"operation_id", "repository", "durable_id", "status"},
+                "persistence receipt",
+            )
+            if (
+                not all(
+                    isinstance(receipt[field], str) and receipt[field]
+                    for field in receipt
+                )
+                or receipt["status"] != "accepted"
+            ):
+                raise BundleError("persistence receipt is invalid")
     return dict(timing), dict(persistence)
 
 
@@ -379,6 +481,28 @@ def _validate_artifact(
             or artifact["matched"] is not True
         ):
             raise BundleError("invalid normalized search artifact")
+        raw_input = _mapping(artifact["input"], "search artifact input")
+        _exact_keys(raw_input, {"query", "raw_fixture_id"}, "search artifact input")
+        for label in ("actual", "expected"):
+            evidence = _mapping(artifact[label], f"search artifact {label}")
+            _exact_keys(
+                evidence,
+                {"outcome", "result_count", "domain_count", "provenance_complete"},
+                f"search artifact {label}",
+            )
+            if (
+                not isinstance(evidence["outcome"], str)
+                or any(
+                    isinstance(evidence[field], bool)
+                    or not isinstance(evidence[field], int)
+                    or evidence[field] < 0
+                    for field in ("result_count", "domain_count")
+                )
+                or not isinstance(evidence["provenance_complete"], bool)
+            ):
+                raise BundleError("search artifact evidence is invalid")
+        if artifact["actual"] != artifact["expected"]:
+            raise BundleError("search artifact does not match expected evidence")
     elif relative.startswith("extractions/"):
         _exact_keys(
             artifact,
@@ -391,6 +515,26 @@ def _validate_artifact(
             or artifact["matched"] is not True
         ):
             raise BundleError("invalid normalized extraction artifact")
+        raw_input = _mapping(artifact["input"], "extraction artifact input")
+        _exact_keys(
+            raw_input, {"raw_fixture_id", "content_type"}, "extraction artifact input"
+        )
+        for label in ("actual", "expected"):
+            evidence = _mapping(artifact[label], f"extraction artifact {label}")
+            _exact_keys(
+                evidence,
+                {"outcome", "quality", "complete", "provenance_complete"},
+                f"extraction artifact {label}",
+            )
+            if (
+                not isinstance(evidence["outcome"], str)
+                or evidence["quality"] not in {"passing", "degraded", "failed"}
+                or not isinstance(evidence["complete"], bool)
+                or not isinstance(evidence["provenance_complete"], bool)
+            ):
+                raise BundleError("extraction artifact evidence is invalid")
+        if artifact["actual"] != artifact["expected"]:
+            raise BundleError("extraction artifact does not match expected evidence")
     else:
         raise BundleError("artifact path is outside the allowlisted artifact schema")
     return dict(artifact)
@@ -408,14 +552,16 @@ def _validate_stability_document(value: object, manifest_verdict: object) -> Non
     if document["verdict"] != manifest_verdict:
         raise BundleError("manifest and stability verdicts differ")
     exceptions = document["architecture_exceptions"]
-    if not isinstance(exceptions, list) or any(
+    if not isinstance(exceptions, (list, tuple)) or any(
         not isinstance(exception, str) or not exception for exception in exceptions
     ):
         raise BundleError("architecture exception evidence is invalid")
     profiles = _mapping(document["profiles"], "stability profiles")
     if set(profiles) != set(REQUIRED_PROFILES):
         raise BundleError("stability document requires both profiles")
+    reconstructed: dict[str, dict[str, Any]] = {}
     for profile in REQUIRED_PROFILES:
+        reconstructed[profile] = {}
         profile_document = _mapping(profiles[profile], f"stability profile {profile}")
         _exact_keys(profile_document, {"verdict", "gates"}, "stability profile")
         if profile_document["verdict"] not in {"stable", "unstable"}:
@@ -441,6 +587,42 @@ def _validate_stability_document(value: object, manifest_verdict: object) -> Non
                 or not isinstance(gate_verdict["evidence"], Mapping)
             ):
                 raise BundleError("stability gate reason or evidence is invalid")
+            evidence = _mapping(gate_verdict["evidence"], "stability gate evidence")
+            _exact_keys(
+                evidence,
+                {"schema", "fixture_id", "check"},
+                "stability gate evidence",
+            )
+            check = _mapping(evidence["check"], "stability gate check")
+            _exact_keys(
+                check,
+                {"kind", "passed", "observation_count"},
+                "stability gate check",
+            )
+            if (
+                evidence["schema"] != "normalized-gate-evidence-v2"
+                or not isinstance(evidence["fixture_id"], str)
+                or not evidence["fixture_id"]
+                or check["kind"] != gate
+                or not isinstance(check["passed"], bool)
+                or isinstance(check["observation_count"], bool)
+                or not isinstance(check["observation_count"], int)
+                or check["observation_count"] <= 0
+                or check["passed"] != (gate_verdict["status"] == "pass")
+            ):
+                raise BundleError("stability gate evidence is inconsistent")
+            reconstructed[profile][gate] = dict(gate_verdict)
+    recomputed = evaluate_stability(
+        reconstructed,
+        architecture_exceptions=tuple(exceptions),
+    )
+    recomputed_document = asdict(recomputed)
+    if isinstance(exceptions, list):
+        recomputed_document["architecture_exceptions"] = list(
+            recomputed_document["architecture_exceptions"]
+        )
+    if recomputed_document != document:
+        raise BundleError("stability verdict is not derivable from serialized gates")
 
 
 def _validate_competitive_documents(
@@ -449,6 +631,7 @@ def _validate_competitive_documents(
     verdict_value: object,
     competitive_case_ids: list[str],
     manifest_verdict: object,
+    stability: StabilityVerdict,
 ) -> None:
     metrics = _mapping(metrics_value, "competitive deterministic metrics")
     _exact_keys(
@@ -492,6 +675,7 @@ def _validate_competitive_documents(
     if not isinstance(pairs, list) or len(pairs) != len(competitive_case_ids):
         raise BundleError("blinded comparison coverage is incomplete")
     seen: set[str] = set()
+    raw_pairs: list[dict[str, str]] = []
     for pair_value in pairs:
         pair = _mapping(pair_value, "blinded pair")
         _exact_keys(
@@ -512,6 +696,15 @@ def _validate_competitive_documents(
             for field in ("mode", "forward", "reverse", "classification")
         ):
             raise BundleError("blinded comparison values must be typed strings")
+        raw_pair = {
+            "pair_id": pair["pair_id"],
+            "mode": pair["mode"],
+            "forward": pair["forward"],
+            "reverse": pair["reverse"],
+        }
+        if classify_pair(raw_pair).classification != pair["classification"]:
+            raise BundleError("serialized pair classification is not derivable")
+        raw_pairs.append(raw_pair)
     verdict = _mapping(verdict_value, "competitive verdict")
     _exact_keys(verdict, {"schema", "verdict", "reason"}, "competitive verdict")
     if (
@@ -523,6 +716,26 @@ def _validate_competitive_documents(
         or not verdict["reason"]
     ):
         raise BundleError("competitive verdict document is invalid")
+    try:
+        computed = evaluate_competitive(stability, raw_pairs)
+    except CompetitiveInputError as exc:
+        raise BundleError(str(exc)) from exc
+    expected_metrics = {
+        "schema": "competitive-deterministic-metrics-v1",
+        "consistent_pairs": computed.consistent_pairs,
+        "decisive_pairs": computed.candidate_wins + computed.baseline_wins,
+        "candidate_wins": computed.candidate_wins,
+        "baseline_wins": computed.baseline_wins,
+        "p_value": computed.p_value,
+    }
+    if metrics != expected_metrics:
+        raise BundleError("competitive metrics are not derivable from raw pairs")
+    if verdict != {
+        "schema": "competitive-verdict-v1",
+        "verdict": computed.verdict,
+        "reason": computed.reason,
+    }:
+        raise BundleError("competitive verdict is not derivable from raw pairs")
 
 
 def _required_static_paths(lane: str) -> set[str]:
@@ -591,6 +804,22 @@ def _prepare_documents(
         )
         if baseline["dimensions"] != candidate["dimensions"]:
             raise BundleError("baseline and candidate dimensions are not synchronized")
+        baseline_started = datetime.fromisoformat(
+            baseline["started_at"].replace("Z", "+00:00")
+        )
+        candidate_started = datetime.fromisoformat(
+            candidate["started_at"].replace("Z", "+00:00")
+        )
+        synchronized_finish = max(
+            datetime.fromisoformat(baseline["finished_at"].replace("Z", "+00:00")),
+            datetime.fromisoformat(candidate["finished_at"].replace("Z", "+00:00")),
+        )
+        synchronized_start = min(baseline_started, candidate_started)
+        if (
+            abs((baseline_started - candidate_started).total_seconds()) > 900
+            or (synchronized_finish - synchronized_start).total_seconds() > 900
+        ):
+            raise BundleError("baseline and candidate exceeded synchronization window")
     corpus = _validate_corpus(payload["corpus"], candidate_dimensions, generation)
     provider_snapshot = _validate_provider_snapshot(
         payload["provider_snapshot"], candidate_dimensions
@@ -630,6 +859,7 @@ def _prepare_documents(
             for relative, artifact in validated_artifacts.items()
         },
     }
+    _validate_stability_document(asdict(stability), stability.verdict)
     if baseline is not None:
         documents["identities/baseline.json"] = baseline
         competitive = _mapping(payload["competitive"], "competitive evidence")
@@ -646,6 +876,7 @@ def _prepare_documents(
             competitive["verdict"].get("verdict")
             if isinstance(competitive["verdict"], Mapping)
             else None,
+            stability,
         )
         documents.update(
             {
@@ -926,6 +1157,20 @@ def verify_bundle(root: Path) -> dict[str, Any]:
             load_json("competitive/verdict.json"),
             corpus["competitive_case_ids"],
             manifest["competitive_verdict"],
+            evaluate_stability(
+                {
+                    profile: {
+                        gate: dict(verdict)
+                        for gate, verdict in profile_value["gates"].items()
+                    }
+                    for profile, profile_value in load_json("stability/gates.json")[
+                        "profiles"
+                    ].items()
+                },
+                architecture_exceptions=tuple(
+                    load_json("stability/gates.json")["architecture_exceptions"]
+                ),
+            ),
         )
 
     for relative in sorted(declared_set):

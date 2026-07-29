@@ -22,18 +22,16 @@
       ],
       "hermetic_input": {
         "query": "fixture query for discovery-01",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 1,
-          "domain_count": 1,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 1,
-        "domain_count": 1,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/discovery-01/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -57,18 +55,16 @@
       ],
       "hermetic_input": {
         "query": "fixture query for discovery-02",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 1,
-          "domain_count": 1,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 1,
-        "domain_count": 1,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/discovery-02/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -92,18 +88,16 @@
       ],
       "hermetic_input": {
         "query": "fixture query for discovery-03",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 1,
-          "domain_count": 1,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 1,
-        "domain_count": 1,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/discovery-03/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -127,18 +121,16 @@
       ],
       "hermetic_input": {
         "query": "fixture query for discovery-04",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 1,
-          "domain_count": 1,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 1,
-        "domain_count": 1,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/discovery-04/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -162,18 +154,16 @@
       ],
       "hermetic_input": {
         "query": "fixture query for discovery-05",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 1,
-          "domain_count": 1,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 1,
-        "domain_count": 1,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/discovery-05/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -197,18 +187,16 @@
       ],
       "hermetic_input": {
         "query": "fixture query for discovery-06",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 1,
-          "domain_count": 1,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 1,
-        "domain_count": 1,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/discovery-06/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -232,18 +220,16 @@
       ],
       "hermetic_input": {
         "query": "fixture query for grounding-01",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 1,
-          "domain_count": 1,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 1,
-        "domain_count": 1,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/grounding-01/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -267,18 +253,16 @@
       ],
       "hermetic_input": {
         "query": "fixture query for grounding-02",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 1,
-          "domain_count": 1,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 1,
-        "domain_count": 1,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/grounding-02/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -302,18 +286,16 @@
       ],
       "hermetic_input": {
         "query": "fixture query for grounding-03",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 1,
-          "domain_count": 1,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 1,
-        "domain_count": 1,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/grounding-03/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -337,18 +319,16 @@
       ],
       "hermetic_input": {
         "query": "fixture query for grounding-04",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 1,
-          "domain_count": 1,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 1,
-        "domain_count": 1,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/grounding-04/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -372,18 +352,16 @@
       ],
       "hermetic_input": {
         "query": "fixture query for grounding-05",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 1,
-          "domain_count": 1,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 1,
-        "domain_count": 1,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/grounding-05/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -407,18 +385,8 @@
       ],
       "hermetic_input": {
         "query": "fixture query for grounding-06",
-        "normalized_evidence": {
-          "outcome": "empty",
-          "result_count": 0,
-          "domain_count": 0,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "empty",
-        "result_count": 0,
-        "domain_count": 0,
-        "provenance_complete": true
+        "transport_outcome": "empty",
+        "results": []
       }
     },
     {
@@ -442,18 +410,16 @@
       ],
       "hermetic_input": {
         "query": "fixture query for recovery-01",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 1,
-          "domain_count": 1,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 1,
-        "domain_count": 1,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/recovery-01/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -477,18 +443,16 @@
       ],
       "hermetic_input": {
         "query": "fixture query for recovery-02",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 1,
-          "domain_count": 1,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 1,
-        "domain_count": 1,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/recovery-02/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -512,18 +476,16 @@
       ],
       "hermetic_input": {
         "query": "fixture query for recovery-03",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 1,
-          "domain_count": 1,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 1,
-        "domain_count": 1,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/recovery-03/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -547,18 +509,16 @@
       ],
       "hermetic_input": {
         "query": "fixture query for recovery-04",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 1,
-          "domain_count": 1,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 1,
-        "domain_count": 1,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/recovery-04/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -582,18 +542,16 @@
       ],
       "hermetic_input": {
         "query": "fixture query for recovery-05",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 1,
-          "domain_count": 1,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 1,
-        "domain_count": 1,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/recovery-05/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -617,18 +575,8 @@
       ],
       "hermetic_input": {
         "query": "fixture query for recovery-06",
-        "normalized_evidence": {
-          "outcome": "empty",
-          "result_count": 0,
-          "domain_count": 0,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "empty",
-        "result_count": 0,
-        "domain_count": 0,
-        "provenance_complete": true
+        "transport_outcome": "empty",
+        "results": []
       }
     },
     {
@@ -654,18 +602,30 @@
       ],
       "hermetic_input": {
         "query": "fixture query for research-01",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 3,
-          "domain_count": 2,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 3,
-        "domain_count": 2,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/research-01/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          },
+          {
+            "url": "https://fixture1.example/research-01/1",
+            "title": "Raw fixture 1",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          },
+          {
+            "url": "https://fixture0.example/research-01/2",
+            "title": "Raw fixture 2",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -690,18 +650,30 @@
       ],
       "hermetic_input": {
         "query": "fixture query for research-02",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 3,
-          "domain_count": 2,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 3,
-        "domain_count": 2,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/research-02/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          },
+          {
+            "url": "https://fixture1.example/research-02/1",
+            "title": "Raw fixture 1",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          },
+          {
+            "url": "https://fixture0.example/research-02/2",
+            "title": "Raw fixture 2",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -726,18 +698,30 @@
       ],
       "hermetic_input": {
         "query": "fixture query for research-03",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 3,
-          "domain_count": 2,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 3,
-        "domain_count": 2,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/research-03/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          },
+          {
+            "url": "https://fixture1.example/research-03/1",
+            "title": "Raw fixture 1",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          },
+          {
+            "url": "https://fixture0.example/research-03/2",
+            "title": "Raw fixture 2",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -763,18 +747,30 @@
       ],
       "hermetic_input": {
         "query": "fixture query for research-04",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 3,
-          "domain_count": 2,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 3,
-        "domain_count": 2,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/research-04/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          },
+          {
+            "url": "https://fixture1.example/research-04/1",
+            "title": "Raw fixture 1",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          },
+          {
+            "url": "https://fixture0.example/research-04/2",
+            "title": "Raw fixture 2",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -799,18 +795,30 @@
       ],
       "hermetic_input": {
         "query": "fixture query for research-05",
-        "normalized_evidence": {
-          "outcome": "success",
-          "result_count": 3,
-          "domain_count": 2,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "result_count": 3,
-        "domain_count": 2,
-        "provenance_complete": true
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/research-05/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          },
+          {
+            "url": "https://fixture1.example/research-05/1",
+            "title": "Raw fixture 1",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          },
+          {
+            "url": "https://fixture0.example/research-05/2",
+            "title": "Raw fixture 2",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
       }
     },
     {
@@ -835,18 +843,8 @@
       ],
       "hermetic_input": {
         "query": "fixture query for research-06",
-        "normalized_evidence": {
-          "outcome": "empty",
-          "result_count": 0,
-          "domain_count": 0,
-          "provenance_complete": true
-        }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "empty",
-        "result_count": 0,
-        "domain_count": 0,
-        "provenance_complete": true
+        "transport_outcome": "empty",
+        "results": []
       }
     }
   ],
@@ -861,18 +859,13 @@
       "hermetic_input": {
         "fixture": "static",
         "content_type": "text/html",
-        "normalized_evidence": {
-          "outcome": "success",
-          "quality": "passing",
-          "complete": true,
-          "provenance_complete": true
+        "transport_outcome": "success",
+        "text": "This is a frozen raw article fixture. It ends as a complete sentence.",
+        "provenance": {
+          "egress": "hermetic",
+          "machine": "fixture-harness",
+          "source_type": "frozen_raw"
         }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "quality": "passing",
-        "complete": true,
-        "provenance_complete": true
       }
     },
     {
@@ -885,18 +878,13 @@
       "hermetic_input": {
         "fixture": "javascript",
         "content_type": "text/html",
-        "normalized_evidence": {
-          "outcome": "success",
-          "quality": "passing",
-          "complete": true,
-          "provenance_complete": true
+        "transport_outcome": "success",
+        "text": "This is a frozen raw article fixture. It ends as a complete sentence.",
+        "provenance": {
+          "egress": "hermetic",
+          "machine": "fixture-harness",
+          "source_type": "frozen_raw"
         }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "quality": "passing",
-        "complete": true,
-        "provenance_complete": true
       }
     },
     {
@@ -909,18 +897,13 @@
       "hermetic_input": {
         "fixture": "paywall",
         "content_type": "text/html",
-        "normalized_evidence": {
-          "outcome": "degraded",
-          "quality": "degraded",
-          "complete": false,
-          "provenance_complete": true
+        "transport_outcome": "degraded",
+        "text": "This frozen raw article continues...",
+        "provenance": {
+          "egress": "hermetic",
+          "machine": "fixture-harness",
+          "source_type": "frozen_raw"
         }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "degraded",
-        "quality": "degraded",
-        "complete": false,
-        "provenance_complete": true
       }
     },
     {
@@ -933,18 +916,13 @@
       "hermetic_input": {
         "fixture": "malformed",
         "content_type": "text/html",
-        "normalized_evidence": {
-          "outcome": "extraction_failed",
-          "quality": "failed",
-          "complete": false,
-          "provenance_complete": true
+        "transport_outcome": "extraction_failed",
+        "text": "",
+        "provenance": {
+          "egress": "hermetic",
+          "machine": "fixture-harness",
+          "source_type": "frozen_raw"
         }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "extraction_failed",
-        "quality": "failed",
-        "complete": false,
-        "provenance_complete": true
       }
     },
     {
@@ -957,18 +935,13 @@
       "hermetic_input": {
         "fixture": "redirect",
         "content_type": "text/html",
-        "normalized_evidence": {
-          "outcome": "success",
-          "quality": "passing",
-          "complete": true,
-          "provenance_complete": true
+        "transport_outcome": "success",
+        "text": "This is a frozen raw article fixture. It ends as a complete sentence.",
+        "provenance": {
+          "egress": "hermetic",
+          "machine": "fixture-harness",
+          "source_type": "frozen_raw"
         }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "quality": "passing",
-        "complete": true,
-        "provenance_complete": true
       }
     },
     {
@@ -981,18 +954,13 @@
       "hermetic_input": {
         "fixture": "mirror",
         "content_type": "text/html",
-        "normalized_evidence": {
-          "outcome": "success",
-          "quality": "passing",
-          "complete": true,
-          "provenance_complete": true
+        "transport_outcome": "success",
+        "text": "This is a frozen raw article fixture. It ends as a complete sentence.",
+        "provenance": {
+          "egress": "hermetic",
+          "machine": "fixture-harness",
+          "source_type": "frozen_raw"
         }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "success",
-        "quality": "passing",
-        "complete": true,
-        "provenance_complete": true
       }
     },
     {
@@ -1005,18 +973,13 @@
       "hermetic_input": {
         "fixture": "timeout",
         "content_type": "text/html",
-        "normalized_evidence": {
-          "outcome": "timeout",
-          "quality": "failed",
-          "complete": false,
-          "provenance_complete": true
+        "transport_outcome": "timeout",
+        "text": "",
+        "provenance": {
+          "egress": "hermetic",
+          "machine": "fixture-harness",
+          "source_type": "frozen_raw"
         }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "timeout",
-        "quality": "failed",
-        "complete": false,
-        "provenance_complete": true
       }
     },
     {
@@ -1029,18 +992,13 @@
       "hermetic_input": {
         "fixture": "unsupported",
         "content_type": "text/html",
-        "normalized_evidence": {
-          "outcome": "extraction_failed",
-          "quality": "failed",
-          "complete": false,
-          "provenance_complete": true
+        "transport_outcome": "extraction_failed",
+        "text": "",
+        "provenance": {
+          "egress": "hermetic",
+          "machine": "fixture-harness",
+          "source_type": "frozen_raw"
         }
-      },
-      "expected_normalized_evidence": {
-        "outcome": "extraction_failed",
-        "quality": "failed",
-        "complete": false,
-        "provenance_complete": true
       }
     }
   ],

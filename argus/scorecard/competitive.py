@@ -20,6 +20,10 @@ VALID_EVALUATOR_VALUES = DECISIVE | {
 }
 
 
+class CompetitiveInputError(ValueError):
+    """The blinded comparison set is not the exact frozen 28-case corpus."""
+
+
 @dataclass(frozen=True)
 class PairVerdict:
     pair_id: str
@@ -75,6 +79,11 @@ def _classify(pair: object, *, expected_id: str | None = None) -> PairVerdict:
     return PairVerdict(pair_id, mode, classification)
 
 
+def classify_pair(pair: Mapping[str, Any]) -> PairVerdict:
+    """Classify one raw blinded pair without trusting serialized verdict fields."""
+    return _classify(pair)
+
+
 def exact_one_sided_sign_test(wins: int, losses: int) -> float:
     """Return P[X >= wins] for a fair-binomial exact one-sided sign test."""
     if (
@@ -95,27 +104,29 @@ def exact_one_sided_sign_test(wins: int, losses: int) -> float:
 
 
 def _normalize_pairs(pairs: Sequence[Mapping[str, Any]]) -> tuple[PairVerdict, ...]:
-    by_id: dict[str, list[object]] = {}
-    malformed_extras: list[PairVerdict] = []
+    if isinstance(pairs, (str, bytes)) or not isinstance(pairs, Sequence):
+        raise CompetitiveInputError("comparisons must be the exact frozen sequence")
+    if len(pairs) != len(COMPETITIVE_CASE_MODES):
+        raise CompetitiveInputError("comparisons must contain exactly 28 cases")
+    by_id: dict[str, Mapping[str, Any]] = {}
     for pair in pairs:
         if not isinstance(pair, Mapping):
-            malformed_extras.append(_classify(pair))
-            continue
+            raise CompetitiveInputError("every comparison must be an object")
         pair_id = pair.get("pair_id")
+        mode = pair.get("mode")
         if not isinstance(pair_id, str) or pair_id not in COMPETITIVE_CASE_MODES:
-            malformed_extras.append(_classify(pair))
-            continue
-        by_id.setdefault(pair_id, []).append(pair)
-    normalized: list[PairVerdict] = []
-    for case_id, mode in COMPETITIVE_CASE_MODES.items():
-        supplied = by_id.get(case_id, [])
-        if not supplied:
-            normalized.append(PairVerdict(case_id, mode, "unavailable"))
-        elif len(supplied) > 1:
-            normalized.append(PairVerdict(case_id, mode, "malformed"))
-        else:
-            normalized.append(_classify(supplied[0], expected_id=case_id))
-    return tuple(normalized + malformed_extras)
+            raise CompetitiveInputError("comparison id is outside the frozen corpus")
+        if pair_id in by_id:
+            raise CompetitiveInputError("duplicate comparison id")
+        if mode != COMPETITIVE_CASE_MODES[pair_id]:
+            raise CompetitiveInputError("comparison mode does not match frozen corpus")
+        by_id[pair_id] = pair
+    if set(by_id) != set(COMPETITIVE_CASE_MODES):
+        raise CompetitiveInputError("comparison coverage is not exactly closed")
+    return tuple(
+        _classify(by_id[case_id], expected_id=case_id)
+        for case_id in COMPETITIVE_CASE_MODES
+    )
 
 
 def evaluate_competitive(
@@ -135,9 +146,7 @@ def evaluate_competitive(
         )
 
     classified = _normalize_pairs(pairs)
-    canonical = tuple(
-        pair for pair in classified if pair.pair_id in COMPETITIVE_CASE_MODES
-    )
+    canonical = classified
     candidate_wins = sum(pair.classification == "candidate_win" for pair in canonical)
     baseline_wins = sum(pair.classification == "baseline_win" for pair in canonical)
     consistent = sum(

@@ -64,14 +64,14 @@ class TestSchemas:
 @pytest.mark.asyncio
 async def test_admin_provider_smoke_marks_query_operational_only():
     from argus.api.routes_admin import test_provider
-    from argus.operations.provider_presentation import ProviderPresentationService
+    from argus.api.provider_operations import ProviderApplicationService
 
     broker = MagicMock()
     broker.readiness_service.authorize_probe.return_value.allowed = True
     broker.provider_readiness_projection.return_value = {"state": "healthy"}
     request = MagicMock()
     request.state.caller_identity = "admin"
-    presentation = ProviderPresentationService(lambda: broker, MagicMock())
+    presentation = ProviderApplicationService(lambda: broker, MagicMock())
 
     result = await test_provider(
         ProviderTestRequest(provider="duckduckgo", query="argus"),
@@ -81,6 +81,27 @@ async def test_admin_provider_smoke_marks_query_operational_only():
 
     broker.search.assert_not_called()
     assert result["mode"] == "fixture"
+
+
+@pytest.mark.asyncio
+async def test_admin_provider_smoke_does_not_misclassify_unrelated_value_error():
+    from argus.api.routes_admin import test_provider
+    from argus.api.provider_operations import ProviderApplicationService
+
+    broker = MagicMock()
+    broker.readiness_service.authorize_probe.side_effect = ValueError(
+        "unrelated authority failure"
+    )
+    request = MagicMock()
+    request.state.caller_identity = "admin"
+    service = ProviderApplicationService(lambda: broker, MagicMock())
+
+    with pytest.raises(ValueError, match="unrelated authority"):
+        await test_provider(
+            ProviderTestRequest(provider="duckduckgo", query="argus"),
+            request,
+            service,
+        )
 
 
 # --- API Integration ---

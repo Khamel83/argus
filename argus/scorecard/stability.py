@@ -98,15 +98,19 @@ def evaluate_stability(
     return StabilityVerdict(overall, profiles, exceptions)
 
 
-def load_frozen_stability(path: Path) -> dict[str, dict[str, dict[str, Any]]]:
-    """Evaluate actual-vs-expected frozen checks into hard-gate evidence."""
+def load_frozen_stability(
+    path: Path,
+    *,
+    observed_contracts: Mapping[str, bool],
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Bind independently executed production-contract observations to gates."""
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"invalid frozen stability evidence: {exc}") from exc
     if not isinstance(document, Mapping) or set(document) != {"schema", "profiles"}:
         raise ValueError("frozen stability evidence must contain exact keys")
-    if document["schema"] != "scorecard-stability-evidence-v1":
+    if document["schema"] != "scorecard-stability-bindings-v2":
         raise ValueError("unsupported frozen stability evidence schema")
     profiles = document["profiles"]
     if not isinstance(profiles, Mapping) or set(profiles) != set(REQUIRED_PROFILES):
@@ -121,29 +125,31 @@ def load_frozen_stability(path: Path) -> dict[str, dict[str, dict[str, Any]]]:
             check = gates[gate]
             if not isinstance(check, Mapping) or set(check) != {
                 "fixture_id",
-                "actual",
-                "expected",
+                "contract",
             }:
                 raise ValueError(f"{profile}.{gate} has invalid fixture shape")
             fixture_id = check["fixture_id"]
             if not isinstance(fixture_id, str) or not fixture_id:
                 raise ValueError(f"{profile}.{gate} has invalid fixture id")
-            actual = check["actual"]
-            expected = check["expected"]
-            matched = actual == expected
+            contract = check["contract"]
+            if contract != gate or contract not in observed_contracts:
+                raise ValueError(f"{profile}.{gate} has invalid contract binding")
+            matched = observed_contracts[contract] is True
             evaluated[profile][gate] = {
                 "status": "pass" if matched else "fail",
                 "reason": (
-                    "frozen actual evidence matched expected normalized evidence"
+                    "independently executed production contract passed"
                     if matched
-                    else "frozen actual evidence did not match expected evidence"
+                    else "independently executed production contract failed"
                 ),
                 "evidence": {
-                    "schema": "normalized-gate-evidence-v1",
+                    "schema": "normalized-gate-evidence-v2",
                     "fixture_id": fixture_id,
-                    "actual": actual,
-                    "expected": expected,
-                    "matched": matched,
+                    "check": {
+                        "kind": gate,
+                        "passed": matched,
+                        "observation_count": 1,
+                    },
                 },
             }
     return evaluated

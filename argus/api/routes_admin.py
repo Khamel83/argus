@@ -7,18 +7,22 @@ from argus.api.schemas import (
     ProviderSnapshotRequest,
     ProviderTestRequest,
     SpendResolutionRequest,
+    ScorecardAuthorizationConsumeRequest,
 )
 from argus.models import ProviderName
-from argus.operations.provider_presentation import (
+from argus.api.provider_operations import (
     ProbeRejected,
-    ProviderPresentationService,
+    ProviderApplicationService,
+    UnknownProviderError,
 )
+from argus.api.provider_presenters import present_provider_facts
 from argus.workflows import WorkflowService
+from argus.scorecard.authorization import AuthorizationError, validate_authorization_bytes
 
 router = APIRouter(prefix="/admin")
 
 
-def get_provider_presentation(request: Request) -> ProviderPresentationService:
+def get_provider_presentation(request: Request) -> ProviderApplicationService:
     return request.app.state.provider_presentation
 
 
@@ -38,6 +42,54 @@ def get_search_repository(request: Request):
 async def maya_outbox_status(repository=Depends(get_search_repository)):
     """Return bounded delivery state without payloads or capture identifiers."""
     return repository.maya_outbox_status()
+
+
+@router.post("/scorecard-authorizations/consume")
+async def consume_scorecard_authorization(
+    payload: ScorecardAuthorizationConsumeRequest,
+    request: Request,
+    repository=Depends(get_spend_repository),
+):
+    """Validate and durably consume a scorecard receipt before reservations."""
+    encoded = payload.receipt_json.encode()
+    try:
+        receipt = validate_authorization_bytes(
+            encoded,
+            expected_sha256=payload.expected_sha256,
+            run_id=payload.run_id,
+            generation=payload.generation,
+        )
+        durable_id = repository.consume_scorecard_authorization(
+            receipt_id=receipt["receipt_id"],
+            receipt_sha256=payload.expected_sha256,
+            run_id=payload.run_id,
+            generation=payload.generation,
+            actor_identity=getattr(request.state, "caller_identity", "admin"),
+            constraints={
+                "permitted_providers": receipt["permitted_providers"],
+                "maximum_tier": receipt["maximum_tier"],
+                "call_count_cap": receipt["call_count_cap"],
+                "cost_or_credit_cap": receipt["cost_or_credit_cap"],
+                "one_time_credit_providers": receipt["one_time_credit_providers"],
+            },
+        )
+    except AuthorizationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        if request.app.state.provider_presentation.is_spend_conflict(exc):
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise
+    return {
+        "status": "consumed",
+        "durable_id": durable_id,
+        "constraints": {
+            "permitted_providers": receipt["permitted_providers"],
+            "maximum_tier": receipt["maximum_tier"],
+            "call_count_cap": receipt["call_count_cap"],
+            "cost_or_credit_cap": receipt["cost_or_credit_cap"],
+            "one_time_credit_providers": receipt["one_time_credit_providers"],
+        },
+    }
 
 
 @router.get("/maya-outbox/dead-letters")
@@ -65,19 +117,19 @@ async def recover_maya_dead_letter(
 async def test_provider(
     req: ProviderTestRequest,
     request: Request,
-    presentation: ProviderPresentationService = Depends(get_provider_presentation),
+    presentation: ProviderApplicationService = Depends(get_provider_presentation),
 ):
     try:
         if not req.live:
-            return presentation.fixture_provider(req.provider)
-        return await presentation.live_provider(
+            return present_provider_facts(presentation.fixture_provider(req.provider))
+        return present_provider_facts(await presentation.live_provider(
             provider=req.provider,
             query_text=req.query,
             caller=getattr(request.state, "caller_identity", "admin"),
             idempotency_key=req.idempotency_key,
             durable_receipt=req.durable_receipt,
-        )
-    except ValueError as exc:
+        ))
+    except UnknownProviderError as exc:
         raise HTTPException(
             status_code=400, detail=f"Unknown provider: {req.provider}"
         ) from exc
@@ -87,9 +139,9 @@ async def test_provider(
 
 @router.get("/provider-spend")
 async def provider_spend(
-    presentation: ProviderPresentationService = Depends(get_provider_presentation),
+    presentation: ProviderApplicationService = Depends(get_provider_presentation),
 ):
-    return presentation.provider_spend()
+    return present_provider_facts(presentation.provider_spend())
 
 
 @router.get("/provider-spend/attempts")

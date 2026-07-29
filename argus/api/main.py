@@ -47,7 +47,7 @@ from argus.operations.accepted import (
     AcceptedOperationRegistration,
     AcceptedOperationService,
 )
-from argus.operations.provider_presentation import ProviderPresentationService
+from argus.api.provider_operations import ProviderApplicationService
 from argus.persistence.search_ledger import (
     SearchLedgerRepository,
     create_search_ledger_repository,
@@ -764,7 +764,7 @@ def create_app(
         return current_spend_repository
 
     app.state.get_spend_repository = get_spend_repository
-    app.state.provider_presentation = ProviderPresentationService(
+    app.state.provider_presentation = ProviderApplicationService(
         app.state.get_broker,
         app.state.get_spend_repository,
     )

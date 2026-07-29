@@ -60,17 +60,47 @@ def validate_and_consume_authorization(
     generation: str,
     consumption_dir: Path,
 ) -> Mapping[str, Any]:
-    """Validate every field, then atomically consume the exact receipt once."""
+    """Legacy local validation wrapper; production consumption is SQL-backed."""
+    try:
+        encoded = receipt_path.read_bytes()
+    except OSError as exc:
+        raise AuthorizationError("authorization receipt is required") from exc
+    receipt = validate_authorization_bytes(
+        encoded,
+        expected_sha256=expected_sha256,
+        run_id=run_id,
+        generation=generation,
+    )
+    receipt_id = receipt["receipt_id"]
+    assert isinstance(receipt_id, str)
+    consumption_dir.mkdir(parents=True, exist_ok=True)
+    marker = consumption_dir / f"{receipt_id}-{expected_sha256}.consumed"
+    try:
+        descriptor = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as exc:
+        raise AuthorizationError("authorization receipt was already consumed") from exc
+    try:
+        os.write(descriptor, f"{run_id}\n{generation}\n".encode())
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    return receipt
+
+
+def validate_authorization_bytes(
+    encoded: bytes,
+    *,
+    expected_sha256: str,
+    run_id: str,
+    generation: str,
+) -> Mapping[str, Any]:
+    """Validate a receipt without granting or consuming execution authority."""
     if not _SHA256.fullmatch(expected_sha256):
         raise AuthorizationError("expected receipt SHA-256 is invalid")
     if not _IDENTIFIER.fullmatch(run_id):
         raise AuthorizationError("expected run id is invalid")
     if not _SHA256.fullmatch(generation):
         raise AuthorizationError("expected generation is invalid")
-    try:
-        encoded = receipt_path.read_bytes()
-    except OSError as exc:
-        raise AuthorizationError("authorization receipt is required") from exc
     if sha256(encoded).hexdigest() != expected_sha256:
         raise AuthorizationError("authorization receipt digest mismatch")
     try:
@@ -95,7 +125,14 @@ def validate_and_consume_authorization(
     _positive_int(receipt["call_count_cap"], "call count cap")
     _positive_int(receipt["cost_or_credit_cap"], "cost or credit cap")
     one_time = receipt["one_time_credit_providers"]
-    if not isinstance(one_time, list) or len(one_time) != len(set(one_time)):
+    if (
+        not isinstance(one_time, list)
+        or any(
+            not isinstance(provider, str) or not _IDENTIFIER.fullmatch(provider)
+            for provider in one_time
+        )
+        or len(one_time) != len(set(one_time))
+    ):
         raise AuthorizationError("one-time-credit providers must be unique")
     if any(provider not in _ONE_TIME_PROVIDERS for provider in one_time):
         raise AuthorizationError("unknown one-time-credit provider")
@@ -116,19 +153,4 @@ def validate_and_consume_authorization(
     if parsed.tzinfo is None:
         raise AuthorizationError("authorization issued_at requires a timezone")
 
-    consumption_dir.mkdir(parents=True, exist_ok=True)
-    marker = consumption_dir / f"{receipt_id}-{expected_sha256}.consumed"
-    try:
-        descriptor = os.open(
-            marker,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-            0o600,
-        )
-    except FileExistsError as exc:
-        raise AuthorizationError("authorization receipt was already consumed") from exc
-    try:
-        os.write(descriptor, f"{run_id}\n{generation}\n".encode())
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
     return receipt

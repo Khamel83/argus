@@ -19,7 +19,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from argus.api import usage as usage_queries
-from argus.operations.provider_presentation import ProviderPresentationService
+from argus.api.provider_operations import ProviderApplicationService
+from argus.api.provider_presenters import present_provider_facts
 
 router = APIRouter()
 
@@ -52,7 +53,7 @@ def _check_auth(request: Request) -> bool:
     return auth.matches_admin_token(cookie_val)
 
 
-def _get_presentation(request: Request) -> ProviderPresentationService:
+def _get_presentation(request: Request) -> ProviderApplicationService:
     return request.app.state.provider_presentation
 
 
@@ -132,7 +133,7 @@ async def dashboard(request: Request):
     if not _check_auth(request):
         return RedirectResponse(f"{ROOT_PATH}/dashboard/login", status_code=303)
 
-    budget_state = _get_presentation(request).budget_state()
+    budget_state = present_provider_facts(_get_presentation(request).budget_state())
     daily = usage_queries.get_daily_query_counts(days=30)
     machines = usage_queries.get_machine_summary(days=30)
     provider_activity = usage_queries.get_provider_activity(days=7)
@@ -167,7 +168,7 @@ async def dashboard(request: Request):
 async def budget_fragment(request: Request):
     if not _check_auth(request):
         return Response(status_code=401)
-    budget_state = _get_presentation(request).budget_state()
+    budget_state = present_provider_facts(_get_presentation(request).budget_state())
     exhausted = [b for b in budget_state if b["status"] == "exhausted"]
     over_pace = [b for b in budget_state if b["status"] == "over_pace"]
     return templates.TemplateResponse(

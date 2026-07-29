@@ -219,6 +219,47 @@ class ProviderSpendRepository:
     def __init__(self, factory: sessionmaker):
         self.session_factory = factory
 
+    def consume_scorecard_authorization(
+        self,
+        *,
+        receipt_id: str,
+        receipt_sha256: str,
+        run_id: str,
+        generation: str,
+        actor_identity: str,
+        constraints: dict,
+    ) -> str:
+        """Atomically consume one authorization in the authority's durable SQL."""
+        payload = {
+            "receipt_id": receipt_id,
+            "receipt_sha256": receipt_sha256,
+            "run_id": run_id,
+            "generation": generation,
+            "constraints": constraints,
+        }
+        request_hash = _fingerprint(payload)
+        try:
+            with self._transaction() as session:
+                session.add(
+                    SpendAuditRow(
+                        id=uuid.uuid4().hex,
+                        attempt_id=None,
+                        provider="scorecard",
+                        action="scorecard_authorization",
+                        actor_identity=actor_identity,
+                        idempotency_key=receipt_id,
+                        request_hash=request_hash,
+                        before_json=None,
+                        after_json=_canonical(payload),
+                        created_at=self._db_now(session),
+                    )
+                )
+        except IntegrityError as exc:
+            raise SpendConflictError(
+                "authorization receipt was already consumed"
+            ) from exc
+        return f"provider_spend_audit:scorecard_authorization:{receipt_id}"
+
     @staticmethod
     def _db_now(session) -> datetime:
         value = session.execute(text("SELECT CURRENT_TIMESTAMP")).scalar_one()

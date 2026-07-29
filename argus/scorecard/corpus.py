@@ -36,7 +36,6 @@ _INTENT_FIELDS = frozenset(
         "minimum_evidence_shape",
         "profiles",
         "hermetic_input",
-        "expected_normalized_evidence",
     }
 )
 _HERMETIC_EXTRACTION_FIELDS = frozenset(
@@ -45,7 +44,6 @@ _HERMETIC_EXTRACTION_FIELDS = frozenset(
         "kind",
         "profiles",
         "hermetic_input",
-        "expected_normalized_evidence",
     }
 )
 _LIVE_EXTRACTION_FIELDS = frozenset(
@@ -70,6 +68,19 @@ COMPETITIVE_CASE_MODES = {
     "javascript-live": "extraction",
     "moved-live": "extraction",
 }
+HERMETIC_SEARCH_CASE_IDS = tuple(
+    case_id for case_id, mode in COMPETITIVE_CASE_MODES.items() if mode in SEARCH_MODES
+)
+HERMETIC_EXTRACTION_CASE_IDS = (
+    "static",
+    "javascript",
+    "paywall",
+    "malformed",
+    "redirect",
+    "mirror",
+    "timeout",
+    "unsupported",
+)
 
 
 def load_corpus(path: Path) -> dict[str, Any]:
@@ -215,18 +226,24 @@ def validate_corpus(corpus: Mapping[str, Any]) -> None:
         )
         _exact_keys(
             hermetic_input,
-            {"query", "normalized_evidence"},
+            {"query", "transport_outcome", "results"},
             "hermetic search input",
         )
         _nonempty_string(hermetic_input["query"], "hermetic search query")
-        _search_evidence(
-            hermetic_input["normalized_evidence"],
-            f"search intent {intent_id} executable evidence",
-        )
-        _search_evidence(
-            intent["expected_normalized_evidence"],
-            f"search intent {intent_id} expected evidence",
-        )
+        if hermetic_input["transport_outcome"] not in OUTCOMES:
+            raise ValueError("hermetic search input has invalid transport outcome")
+        results = hermetic_input["results"]
+        if not isinstance(results, list):
+            raise ValueError("hermetic search results must be a list")
+        for result in results:
+            result = _mapping(result, "hermetic raw search result")
+            _exact_keys(
+                result,
+                {"url", "title", "snippet", "egress", "machine"},
+                "hermetic raw search result",
+            )
+            for field in result:
+                _nonempty_string(result[field], f"hermetic search result {field}")
     if set(mode_counts.values()) != {6}:
         raise ValueError("corpus must contain six intents for each search mode")
 
@@ -247,19 +264,25 @@ def validate_corpus(corpus: Mapping[str, Any]) -> None:
         )
         _exact_keys(
             hermetic_input,
-            {"fixture", "content_type", "normalized_evidence"},
+            {"fixture", "content_type", "transport_outcome", "text", "provenance"},
             "extraction input",
         )
         _nonempty_string(hermetic_input["fixture"], "extraction fixture")
         _nonempty_string(hermetic_input["content_type"], "extraction content type")
-        _extraction_evidence(
-            hermetic_input["normalized_evidence"],
-            f"hermetic extraction {case_id} executable evidence",
+        if hermetic_input["transport_outcome"] not in OUTCOMES:
+            raise ValueError("hermetic extraction has invalid transport outcome")
+        if not isinstance(hermetic_input["text"], str):
+            raise ValueError("hermetic extraction text must be a string")
+        provenance = _mapping(
+            hermetic_input["provenance"], "hermetic extraction provenance"
         )
-        _extraction_evidence(
-            entry["expected_normalized_evidence"],
-            f"hermetic extraction {case_id} expected evidence",
+        _exact_keys(
+            provenance,
+            {"egress", "machine", "source_type"},
+            "hermetic extraction provenance",
         )
+        for field in provenance:
+            _nonempty_string(provenance[field], f"extraction provenance {field}")
 
     live = corpus["live_extractions"]
     if not isinstance(live, list) or len(live) != 4:

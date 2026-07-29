@@ -6,11 +6,6 @@ import ast
 from pathlib import Path
 
 
-LEGACY_PRESENTATION_MODULES = (
-    "argus/api/routes_admin.py",
-    "argus/api/routes_dashboard.py",
-    "argus/api/routes_health.py",
-)
 FORBIDDEN_AUTHORITY_PREFIXES = (
     "argus.broker",
     "argus.extraction",
@@ -31,13 +26,15 @@ def _imports(path: Path) -> set[str]:
 
 
 def find_architecture_exceptions(repository_root: Path) -> tuple[str, ...]:
-    """Return actual remaining direct-authority modules from the closed inventory."""
+    """Scan the complete route/presenter surface for direct authority imports."""
     exceptions: list[str] = []
-    for relative in LEGACY_PRESENTATION_MODULES:
-        path = repository_root / relative
-        if not path.is_file():
-            exceptions.append(f"{relative}:missing")
-            continue
+    api_root = repository_root / "argus" / "api"
+    paths = {
+        *api_root.glob("routes_*.py"),
+        *api_root.glob("*present*.py"),
+    }
+    for path in sorted(paths):
+        relative = path.relative_to(repository_root).as_posix()
         imports = _imports(path)
         if any(
             module == prefix or module.startswith(f"{prefix}.")
