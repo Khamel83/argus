@@ -7,6 +7,7 @@ the closed competitive bundle contract.
 
 from __future__ import annotations
 
+from datetime import datetime
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -32,6 +33,9 @@ class LiveExecutionError(ValueError):
     """Sealed live input is incomplete, inconsistent, or not scoreable."""
 
 
+_LOCAL_CAPTURE_REPLAY_EXTRACTORS = frozenset(
+    {"trafilatura", "crawl4ai", "obscura", "playwright"}
+)
 _TOP_LEVEL_FIELDS = {
     "schema",
     "run_id",
@@ -39,6 +43,7 @@ _TOP_LEVEL_FIELDS = {
     "topology",
     "sanitized_config_sha256",
     "provider_snapshot",
+    "stability_binding",
     "baseline_identity",
     "candidate_identity",
     "captures",
@@ -133,6 +138,7 @@ def _compile_operation(
     evaluator: Mapping[str, Any],
     allowed_providers: set[str],
     topology: Mapping[str, Any],
+    identities: Mapping[str, Mapping[str, Any]],
 ) -> tuple[
     str, dict[str, Any], dict[str, str], list[dict[str, Any]], list[dict[str, Any]]
 ]:
@@ -149,17 +155,35 @@ def _compile_operation(
     if operation["mode"] == "extraction":
         _exact(
             request,
-            {"url", "snapshot_id", "url_sha256", "caller"},
+            {
+                "url",
+                "snapshot_id",
+                "url_sha256",
+                "capture_sha256",
+                "replay_chain",
+                "caller",
+            },
             f"{case_id} request",
         )
         capture = captures[case_id]
         if any(
             request[field] != capture[field]
-            for field in ("url", "snapshot_id", "url_sha256")
+            for field in ("url", "snapshot_id", "url_sha256", "capture_sha256")
         ):
             raise LiveExecutionError(
                 "extraction request does not match frozen snapshot"
             )
+        if (
+            not isinstance(request["replay_chain"], list)
+            or not request["replay_chain"]
+            or any(
+                not isinstance(extractor, str) or not extractor
+                for extractor in request["replay_chain"]
+            )
+            or len(request["replay_chain"]) != len(set(request["replay_chain"]))
+            or not set(request["replay_chain"]) <= _LOCAL_CAPTURE_REPLAY_EXTRACTORS
+        ):
+            raise LiveExecutionError("local captured replay chain is invalid")
     else:
         _exact(
             request,
@@ -172,6 +196,10 @@ def _compile_operation(
             request["free_only"] is not True
             or not isinstance(request["providers"], list)
             or not request["providers"]
+            or any(
+                not isinstance(provider, str) or not provider
+                for provider in request["providers"]
+            )
             or not set(request["providers"]) <= allowed_providers
         ):
             raise LiveExecutionError(
@@ -183,7 +211,7 @@ def _compile_operation(
     baseline = _mapping(operation["baseline"], f"{case_id} baseline")
     candidate = _mapping(operation["candidate"], f"{case_id} candidate")
     evidence_fields = (
-        {"outcome", "content", "diagnostics"}
+        {"outcome", "content", "capture_sha256", "diagnostics"}
         if operation["mode"] == "extraction"
         else {"outcome", "results", "diagnostics"}
     )
@@ -198,7 +226,10 @@ def _compile_operation(
             [side["content"]] if operation["mode"] == "extraction" else side["results"]
         )
         if operation["mode"] == "extraction" and side["content"] is not None:
-            if side["content"].get("url") != captures[case_id]["url"]:
+            if (
+                side["content"].get("url") != captures[case_id]["url"]
+                or side["capture_sha256"] != captures[case_id]["capture_sha256"]
+            ):
                 raise LiveExecutionError(
                     "extraction evidence must match the shared frozen capture"
                 )
@@ -220,22 +251,49 @@ def _compile_operation(
         )
     except BundleError as exc:
         raise LiveExecutionError(str(exc)) from exc
-    permitted_attempt_providers = (
-        set(request["providers"])
-        if operation["mode"] != "extraction"
-        else allowed_providers
-    )
-    for side in (baseline, candidate):
-        diagnostics = _mapping(side["diagnostics"], "diagnostics")
-        if any(
-            attempt.get("kind") == "provider"
-            and attempt.get("name") not in permitted_attempt_providers
-            for attempt in diagnostics["attempts"]
-            if isinstance(attempt, Mapping)
+    for side_name, side in (("baseline", baseline), ("candidate", candidate)):
+        freshness = _mapping(side["diagnostics"], "diagnostics")["freshness"]
+        identity = identities[side_name]
+        started = datetime.fromisoformat(identity["started_at"].replace("Z", "+00:00"))
+        finished = datetime.fromisoformat(
+            identity["finished_at"].replace("Z", "+00:00")
+        )
+        observed = datetime.fromisoformat(
+            freshness["observed_at"].replace("Z", "+00:00")
+        )
+        if not started <= observed <= finished or freshness["age_seconds"] != int(
+            (finished - observed).total_seconds()
         ):
             raise LiveExecutionError(
-                "provider diagnostics must match the sealed tier-zero request"
+                "freshness observation and age must match the identity execution window"
             )
+    for side in (baseline, candidate):
+        diagnostics = _mapping(side["diagnostics"], "diagnostics")
+        attempts = diagnostics["attempts"]
+        if operation["mode"] == "extraction":
+            if (
+                any(attempt["kind"] != "extractor" for attempt in attempts)
+                or {attempt["name"] for attempt in attempts}
+                != set(request["replay_chain"])
+                or diagnostics["spend"]["provider_calls"] != 0
+            ):
+                raise LiveExecutionError(
+                    "extraction diagnostics must match the local captured replay chain"
+                )
+        else:
+            if (
+                any(attempt["kind"] != "provider" for attempt in attempts)
+                or {attempt["name"] for attempt in attempts}
+                != set(request["providers"])
+                or any(
+                    result["provider"] not in request["providers"]
+                    for result in side["results"]
+                    if isinstance(result, Mapping)
+                )
+            ):
+                raise LiveExecutionError(
+                    "provider evidence must exactly represent the sealed request"
+                )
 
     evaluation = _mapping(operation["evaluation"], f"{case_id} evaluation")
     _exact(evaluation, {"forward", "reverse"}, f"{case_id} evaluation")
@@ -292,7 +350,9 @@ def compile_live_execution(
     *,
     sealed: Mapping[str, Any],
     corpus: Mapping[str, Any],
+    corpus_sha256: str,
     stability: StabilityVerdict,
+    stability_proof: Mapping[str, Any],
     surface_equivalence: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Compile sealed observations into a competitive bundle payload."""
@@ -306,6 +366,40 @@ def compile_live_execution(
     if surface_equivalence.get("status") != "pass":
         raise LiveExecutionError(
             "live compilation requires passing surface equivalence"
+        )
+    binding = _mapping(sealed["stability_binding"], "stability binding")
+    proof = _mapping(stability_proof, "verified stability proof")
+    binding_fields = {
+        "schema",
+        "manifest_sha256",
+        "generation",
+        "corpus_sha256",
+        "sanitized_config_sha256",
+        "candidate_commit",
+        "candidate_image_digest",
+    }
+    _exact(binding, binding_fields, "stability binding")
+    _exact(proof, binding_fields, "verified stability proof")
+    if (
+        binding != proof
+        or binding["schema"] != "verified-hermetic-stability-binding-v1"
+        or binding["corpus_sha256"] != corpus_sha256
+    ):
+        raise LiveExecutionError(
+            "sealed stability binding does not match the verified hermetic proof"
+        )
+    if corpus_sha256 != sha256(_canonical_bytes(corpus)).hexdigest():
+        raise LiveExecutionError(
+            "stability-bound corpus hash does not match loaded corpus content"
+        )
+    candidate = _mapping(sealed["candidate_identity"], "candidate identity")
+    if (
+        candidate.get("commit") != binding["candidate_commit"]
+        or candidate.get("image_digest") != binding["candidate_image_digest"]
+        or binding["candidate_image_digest"] is None
+    ):
+        raise LiveExecutionError(
+            "live candidate commit and image must match the stability binding"
         )
 
     evaluator = _mapping(sealed["evaluator"], "evaluator identity")
@@ -339,9 +433,21 @@ def compile_live_execution(
             "provider snapshot must contain only ready tier-zero providers"
         )
 
+    captures = _capture_index(sealed["captures"], corpus["live_extractions"])
     dimensions = {
         "corpus_hashes": {
-            "corpus.json": sha256(_canonical_bytes(corpus)).hexdigest(),
+            "corpus.json": corpus_sha256,
+            "stability/manifest.json": binding["manifest_sha256"],
+            "stability/generation.txt": sha256(
+                binding["generation"].encode()
+            ).hexdigest(),
+            "stability/sanitized-config.txt": sha256(
+                binding["sanitized_config_sha256"].encode()
+            ).hexdigest(),
+            **{
+                f"captures/{case_id}.bin": capture["capture_sha256"]
+                for case_id, capture in sorted(captures.items())
+            },
         },
         "evaluator": dict(evaluator),
         "topology": dict(_mapping(sealed["topology"], "topology")),
@@ -356,7 +462,6 @@ def compile_live_execution(
         generation = derive_generation(dimensions)
     except BundleError as exc:
         raise LiveExecutionError(str(exc)) from exc
-    captures = _capture_index(sealed["captures"], corpus["live_extractions"])
     expected = {
         **{case["id"]: case for case in corpus["search_intents"]},
         **{case["id"]: case for case in corpus["live_extractions"]},
@@ -370,6 +475,10 @@ def compile_live_execution(
     timings: list[dict[str, Any]] = []
     receipts: list[dict[str, Any]] = []
     seen: set[str] = set()
+    identities = {
+        "baseline": _mapping(sealed["baseline_identity"], "baseline identity"),
+        "candidate": _mapping(sealed["candidate_identity"], "candidate identity"),
+    }
     for raw in operations:
         case_id, artifact, pair, operation_timings, operation_receipts = (
             _compile_operation(
@@ -379,6 +488,7 @@ def compile_live_execution(
                 evaluator=evaluator,
                 allowed_providers=allowed_providers,
                 topology=topology,
+                identities=identities,
             )
         )
         if case_id in seen:
@@ -482,7 +592,9 @@ def write_live_execution_bundle(
     *,
     sealed: Mapping[str, Any],
     corpus: Mapping[str, Any],
+    corpus_sha256: str,
     stability: StabilityVerdict,
+    stability_proof: Mapping[str, Any],
     surface_equivalence: Mapping[str, Any],
 ) -> Path:
     """Compile and atomically write a sealed live execution bundle."""
@@ -490,7 +602,9 @@ def write_live_execution_bundle(
         payload = compile_live_execution(
             sealed=sealed,
             corpus=corpus,
+            corpus_sha256=corpus_sha256,
             stability=stability,
+            stability_proof=stability_proof,
             surface_equivalence=surface_equivalence,
         )
         return write_bundle(

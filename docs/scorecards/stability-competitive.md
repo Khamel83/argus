@@ -375,6 +375,30 @@ It copies normalized evidence into a checksummed competitive bundle and derives
 the verdict from the two serialized evaluator orders. It never calls a
 provider, extractor, evaluator, HTTP authority, or database.
 
+The hermetic bundle used by that compiler is not an arbitrary green bundle.
+After the candidate image exists, Homelab generates a fresh proof with
+`--lane hermetic --candidate-image-digest sha256:...`. The compiler verifies
+the proof bundle and requires the sealed `stability_binding` to match its
+manifest hash, hermetic generation, semantic corpus hash, sanitized
+configuration hash, candidate commit, and candidate image digest. Those proof
+dimensions are incorporated into the live generation. Ordinary pull-request
+hermetic bundles with `image_digest: null` remain valid diagnostic evidence but
+are explicitly rejected as live certification inputs. No digest is required or
+guessed before the candidate image has been built.
+
+Every extraction request names the shared `capture_sha256` and an exact local
+captured-replay chain. Both baseline and candidate normalized evidence repeat
+that capture identity, and each capture hash is part of the live generation.
+Search results and provider attempts are closed to the requested ready
+tier-zero providers; every requested provider must be represented. Extraction
+attempts must be exactly the declared local extractor chain, with no external
+provider calls.
+
+Freshness observations are side-specific: `observed_at` must fall within the
+corresponding baseline or candidate execution window, and `age_seconds` must be
+derivable from that identity's finish time. Serialized timing or age claims
+from an unrelated execution are rejected.
+
 The evaluator identity is explicit. `status: pinned` requires a non-empty model
 and immutable prompt/settings hashes. When no genuinely pinned evaluator is
 configured, `status: unavailable` requires `model: null`, a reason code, and
@@ -389,7 +413,9 @@ baseline/candidate identities. It writes a closed, checksummed
 `scorecard-bounded-inconclusive-residual-v1` receipt. The receipt records the
 two source manifest/checksum hashes and explicitly sets
 `can_authorize_deployment: false`; it is bounded residual-risk evidence, never a
-deployment authorization.
+deployment authorization. The two source runs must also have disjoint timing
+operation IDs and durable persistence receipt IDs; a renamed run ID is not
+independent evidence.
 
 The separately defined `.github/workflows/scorecard-live.yml` remains a
 diagnostic-only weekly/manual live configuration publication. It needs

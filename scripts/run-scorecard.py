@@ -49,6 +49,15 @@ def _hash_file(path: Path) -> str:
     return sha256(path.read_bytes()).hexdigest()
 
 
+def _hash_canonical_json(value: Any) -> str:
+    return sha256(
+        (
+            json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            + "\n"
+        ).encode()
+    ).hexdigest()
+
+
 def _git_identity(repository_root: Path) -> str:
     try:
         commit = subprocess.check_output(
@@ -194,6 +203,7 @@ def run_hermetic(
     *,
     fixtures_root: Path,
     repository_root: Path,
+    candidate_image_digest: str | None = None,
 ) -> tuple[Path, str]:
     """Evaluate only frozen documents and publish the diagnostic bundle."""
     corpus_path = fixtures_root / "corpus.json"
@@ -386,7 +396,7 @@ def run_hermetic(
         ).encode()
     ).hexdigest()
     corpus_hashes = {
-        "corpus.json": _hash_file(corpus_path),
+        "corpus.json": _hash_canonical_json(corpus),
         "stability-evidence.json": _hash_file(stability_path),
         "stability-expected.json": _hash_file(stability_expected_path),
         "hermetic-expected.json": _hash_file(expected_path),
@@ -429,7 +439,7 @@ def run_hermetic(
         "candidate_identity": {
             "generation": generation,
             "commit": commit,
-            "image_digest": None,
+            "image_digest": candidate_image_digest,
             "sanitized_config_sha256": sanitized_config_sha256,
             "dimensions": dimensions,
             "started_at": started_at.isoformat(),
@@ -528,7 +538,23 @@ def _verified_stability_inputs(bundle: Path):
         bundle / "stability" / "surface-equivalence.json",
         "surface equivalence",
     )
-    return stability, surface
+    candidate = _load_json_object(
+        bundle / "identities" / "candidate.json", "hermetic candidate identity"
+    )
+    if candidate["image_digest"] is None:
+        raise ValueError(
+            "legacy hermetic bundle lacks a candidate image digest and cannot certify live"
+        )
+    proof = {
+        "schema": "verified-hermetic-stability-binding-v1",
+        "manifest_sha256": _hash_file(bundle / "manifest.json"),
+        "generation": manifest["generation"],
+        "corpus_sha256": manifest["dimensions"]["corpus_hashes"]["corpus.json"],
+        "sanitized_config_sha256": manifest["dimensions"]["sanitized_config_sha256"],
+        "candidate_commit": candidate["commit"],
+        "candidate_image_digest": candidate["image_digest"],
+    }
+    return stability, surface, proof
 
 
 def main() -> int:
@@ -545,6 +571,7 @@ def main() -> int:
         default=ROOT / "tests" / "fixtures" / "scorecard",
     )
     parser.add_argument("--repository-root", type=Path, default=ROOT)
+    parser.add_argument("--candidate-image-digest")
     parser.add_argument("--input", type=Path)
     parser.add_argument("--stability-bundle", type=Path)
     parser.add_argument("--attempt-one", type=Path)
@@ -568,12 +595,17 @@ def main() -> int:
                 raise ValueError(
                     "competitive lane requires --input and --stability-bundle"
                 )
-            stability, surface = _verified_stability_inputs(args.stability_bundle)
+            stability, surface, proof = _verified_stability_inputs(
+                args.stability_bundle
+            )
+            live_corpus = load_corpus(args.fixtures_root / "corpus.json")
             output = write_live_execution_bundle(
                 args.output,
                 sealed=_load_json_object(args.input, "sealed live execution"),
-                corpus=load_corpus(args.fixtures_root / "corpus.json"),
+                corpus=live_corpus,
+                corpus_sha256=_hash_canonical_json(live_corpus),
                 stability=stability,
+                stability_proof=proof,
                 surface_equivalence=surface,
             )
             print(f"compiled sealed live execution into verified bundle: {output}")
@@ -594,6 +626,7 @@ def main() -> int:
             args.output,
             fixtures_root=args.fixtures_root,
             repository_root=args.repository_root,
+            candidate_image_digest=args.candidate_image_digest,
         )
     except (OSError, ValueError) as exc:
         print(f"scorecard fixture/configuration error: {exc}", file=sys.stderr)

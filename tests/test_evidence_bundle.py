@@ -322,6 +322,19 @@ def test_competitive_bundle_accepts_all_normalized_live_case_artifacts(tmp_path)
     }
     extraction_url = "https://example.com/article"
     extraction_url_sha256 = sha256(extraction_url.encode()).hexdigest()
+    extraction_diagnostics = json.loads(json.dumps(diagnostics))
+    extraction_diagnostics["attempts"] = [
+        {
+            "name": "trafilatura",
+            "kind": "extractor",
+            "tier": None,
+            "status": "success",
+            "reason": "captured_replay",
+            "result_count": 1,
+            "latency_ms": 1,
+        }
+    ]
+    extraction_diagnostics["spend"]["provider_calls"] = 0
     payload["artifacts"] = {
         **{
             f"searches/{case_id}.json": {
@@ -357,6 +370,8 @@ def test_competitive_bundle_accepts_all_normalized_live_case_artifacts(tmp_path)
                     "url": extraction_url,
                     "snapshot_id": f"snapshot-{case_id}",
                     "url_sha256": extraction_url_sha256,
+                    "capture_sha256": "a" * 64,
+                    "replay_chain": ["trafilatura"],
                     "caller": "scorecard-live",
                 },
                 "capture": {
@@ -369,12 +384,14 @@ def test_competitive_bundle_accepts_all_normalized_live_case_artifacts(tmp_path)
                 "baseline": {
                     "outcome": "success",
                     "content": extraction,
-                    "diagnostics": diagnostics,
+                    "capture_sha256": "a" * 64,
+                    "diagnostics": extraction_diagnostics,
                 },
                 "candidate": {
                     "outcome": "success",
                     "content": extraction,
-                    "diagnostics": diagnostics,
+                    "capture_sha256": "a" * 64,
+                    "diagnostics": extraction_diagnostics,
                 },
             }
             for case_id, mode in COMPETITIVE_CASE_MODES.items()
@@ -394,7 +411,8 @@ def test_competitive_bundle_accepts_all_normalized_live_case_artifacts(tmp_path)
     failure_payload["artifacts"]["extractions/javascript-live.json"]["candidate"] = {
         "outcome": "extraction_failed",
         "content": None,
-        "diagnostics": diagnostics,
+        "capture_sha256": "a" * 64,
+        "diagnostics": extraction_diagnostics,
     }
     failure_output = tmp_path / "competitive-failure"
     write_bundle(
@@ -422,7 +440,8 @@ def test_competitive_bundle_accepts_all_normalized_live_case_artifacts(tmp_path)
         ] = {
             "outcome": outcome,
             "content": None,
-            "diagnostics": diagnostics,
+            "capture_sha256": "a" * 64,
+            "diagnostics": extraction_diagnostics,
         }
         canonical_output = tmp_path / f"competitive-{outcome}"
         write_bundle(
@@ -453,7 +472,8 @@ def test_competitive_bundle_accepts_all_normalized_live_case_artifacts(tmp_path)
                     "machine": "homelab",
                     "source_type": "trafilatura",
                 },
-                "diagnostics": diagnostics,
+                "capture_sha256": "a" * 64,
+                "diagnostics": extraction_diagnostics,
             },
         ),
     ]

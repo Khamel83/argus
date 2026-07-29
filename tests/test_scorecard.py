@@ -14,6 +14,7 @@ from argus.scorecard.authorization import (
     AuthorizationError,
     validate_authorization_bytes,
 )
+from argus.scorecard.bundle import verify_bundle
 from argus.scorecard.competitive import CompetitiveInputError, evaluate_competitive
 from argus.scorecard.corpus import load_corpus, validate_corpus
 from argus.scorecard.stability import (
@@ -595,6 +596,61 @@ def test_scorecard_cli_exposes_network_free_compiler_and_residual_interfaces():
     assert "--stability-bundle" in completed.stdout
     assert "--attempt-one" in completed.stdout
     assert "--attempt-two" in completed.stdout
+    assert "--candidate-image-digest" in completed.stdout
+
+
+def test_hermetic_bundle_can_be_bound_to_post_build_candidate_digest(tmp_path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "run_scorecard_bound", ROOT / "scripts" / "run-scorecard.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    digest = f"sha256:{'a' * 64}"
+    output, verdict = module.run_hermetic(
+        tmp_path / "hermetic-bound",
+        fixtures_root=FIXTURES,
+        repository_root=ROOT,
+        candidate_image_digest=digest,
+    )
+
+    _, _, proof = module._verified_stability_inputs(output)
+
+    assert verdict == "stable"
+    assert proof["candidate_image_digest"] == digest
+    assert (
+        proof["candidate_commit"]
+        == subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
+
+
+def test_legacy_hermetic_bundle_remains_valid_but_cannot_certify_live(tmp_path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "run_scorecard_legacy", ROOT / "scripts" / "run-scorecard.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    output, verdict = module.run_hermetic(
+        tmp_path / "hermetic-legacy",
+        fixtures_root=FIXTURES,
+        repository_root=ROOT,
+    )
+
+    assert verdict == "stable"
+    assert verify_bundle(output)["lane"] == "hermetic"
+    with pytest.raises(ValueError, match="cannot certify live"):
+        module._verified_stability_inputs(output)
 
 
 def test_budgeted_authorization_receipt_is_exact_digest_bound():

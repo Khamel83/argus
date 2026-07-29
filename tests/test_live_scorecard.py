@@ -11,7 +11,11 @@ import pytest
 
 from argus.scorecard.bundle import verify_bundle
 from argus.scorecard.corpus import load_corpus
-from argus.scorecard.live import LiveExecutionError, write_live_execution_bundle
+from argus.scorecard.live import (
+    LiveExecutionError,
+    compile_live_execution,
+    write_live_execution_bundle,
+)
 from argus.scorecard.residual import (
     ResidualError,
     verify_bounded_inconclusive_residual,
@@ -21,6 +25,21 @@ from argus.scorecard.stability import HARD_GATES, evaluate_stability
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "scorecard"
+
+
+def _stability_binding(sealed):
+    corpus = load_corpus(FIXTURES / "corpus.json")
+    return {
+        "schema": "verified-hermetic-stability-binding-v1",
+        "manifest_sha256": "1" * 64,
+        "generation": "2" * 64,
+        "corpus_sha256": sha256(
+            (json.dumps(corpus, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        ).hexdigest(),
+        "sanitized_config_sha256": "3" * 64,
+        "candidate_commit": sealed["candidate_identity"]["commit"],
+        "candidate_image_digest": sealed["candidate_identity"]["image_digest"],
+    }
 
 
 def _stability():
@@ -58,6 +77,11 @@ def _surface():
 
 
 def _diagnostics(operation_id: str):
+    observed_at = (
+        "2026-07-29T00:00:10Z"
+        if operation_id.startswith("baseline-")
+        else "2026-07-29T00:00:11Z"
+    )
     return {
         "timing": {
             "operation_id": operation_id,
@@ -92,7 +116,7 @@ def _diagnostics(operation_id: str):
             "eligible": True,
         },
         "freshness": {
-            "observed_at": "2026-07-29T00:00:05Z",
+            "observed_at": observed_at,
             "age_seconds": 0,
             "window_seconds": 3600,
             "status": "fresh",
@@ -159,13 +183,14 @@ def _sealed():
     captures = []
     for extraction in corpus["live_extractions"]:
         case_id = extraction["id"]
+        capture_sha256 = sha256(f"capture:{case_id}".encode()).hexdigest()
         captures.append(
             {
                 "case_id": case_id,
                 "snapshot_id": extraction["snapshot_id"],
                 "url": extraction["url"],
                 "url_sha256": extraction["url_sha256"],
-                "capture_sha256": sha256(f"capture:{case_id}".encode()).hexdigest(),
+                "capture_sha256": capture_sha256,
             }
         )
         content = {
@@ -187,21 +212,39 @@ def _sealed():
                     "url": extraction["url"],
                     "snapshot_id": extraction["snapshot_id"],
                     "url_sha256": extraction["url_sha256"],
+                    "capture_sha256": capture_sha256,
+                    "replay_chain": ["trafilatura"],
                     "caller": "scorecard-live",
                 },
                 "baseline": {
                     "outcome": "success",
                     "content": content,
+                    "capture_sha256": capture_sha256,
                     "diagnostics": _diagnostics(f"baseline-{case_id}"),
                 },
                 "candidate": {
                     "outcome": "success",
                     "content": content,
+                    "capture_sha256": capture_sha256,
                     "diagnostics": _diagnostics(f"candidate-{case_id}"),
                 },
                 "evaluation": {"forward": "unavailable", "reverse": "unavailable"},
             }
         )
+        for side in ("baseline", "candidate"):
+            diagnostics = operations[-1][side]["diagnostics"]
+            diagnostics["attempts"] = [
+                {
+                    "name": "trafilatura",
+                    "kind": "extractor",
+                    "tier": None,
+                    "status": "success",
+                    "reason": "captured_replay",
+                    "result_count": 1,
+                    "latency_ms": 4,
+                }
+            ]
+            diagnostics["spend"]["provider_calls"] = 0
     return {
         "schema": "sealed-scorecard-live-execution-v1",
         "run_id": "free-live-001",
@@ -232,16 +275,24 @@ def _sealed():
     }
 
 
+def _write_live_bundle(output: Path, sealed):
+    binding = _stability_binding(sealed)
+    sealed["stability_binding"] = binding
+    return write_live_execution_bundle(
+        output,
+        sealed=sealed,
+        corpus=load_corpus(FIXTURES / "corpus.json"),
+        corpus_sha256=binding["corpus_sha256"],
+        stability=_stability(),
+        stability_proof=binding,
+        surface_equivalence=_surface(),
+    )
+
+
 def test_sealed_live_compiler_writes_exact_offline_bundle(tmp_path):
     output = tmp_path / "live"
 
-    write_live_execution_bundle(
-        output,
-        sealed=_sealed(),
-        corpus=load_corpus(FIXTURES / "corpus.json"),
-        stability=_stability(),
-        surface_equivalence=_surface(),
-    )
+    _write_live_bundle(output, _sealed())
 
     manifest = verify_bundle(output)
     assert manifest["lane"] == "competitive"
@@ -257,6 +308,76 @@ def test_sealed_live_compiler_writes_exact_offline_bundle(tmp_path):
     assert len(list((output / "artifacts" / "extractions").glob("*.json"))) == 4
 
 
+def test_live_compiler_rejects_unrelated_green_stability_proof():
+    sealed = _sealed()
+    binding = _stability_binding(sealed)
+    sealed["stability_binding"] = binding
+    unrelated = deepcopy(binding)
+    unrelated["candidate_commit"] = "7" * 40
+
+    with pytest.raises(LiveExecutionError, match="stability binding"):
+        compile_live_execution(
+            sealed=sealed,
+            corpus=load_corpus(FIXTURES / "corpus.json"),
+            corpus_sha256=binding["corpus_sha256"],
+            stability=_stability(),
+            stability_proof=unrelated,
+            surface_equivalence=_surface(),
+        )
+
+
+def test_live_compiler_rejects_corpus_hash_unrelated_to_loaded_corpus():
+    sealed = _sealed()
+    binding = _stability_binding(sealed)
+    binding["corpus_sha256"] = "4" * 64
+    sealed["stability_binding"] = binding
+
+    with pytest.raises(LiveExecutionError, match="corpus content"):
+        compile_live_execution(
+            sealed=sealed,
+            corpus=load_corpus(FIXTURES / "corpus.json"),
+            corpus_sha256=binding["corpus_sha256"],
+            stability=_stability(),
+            stability_proof=binding,
+            surface_equivalence=_surface(),
+        )
+
+
+def test_capture_identity_changes_generation_and_blocks_residual(tmp_path):
+    first_sealed = _sealed()
+    second_sealed = _sealed()
+    first_sealed["run_id"] = "free-live-capture-001"
+    second_sealed["run_id"] = "free-live-capture-002"
+    for identity in ("baseline_identity", "candidate_identity"):
+        second_sealed[identity]["started_at"] = "2026-07-29T00:01:00Z"
+        second_sealed[identity]["finished_at"] = "2026-07-29T00:01:10Z"
+    for operation in second_sealed["operations"]:
+        for side in ("baseline", "candidate"):
+            operation[side]["diagnostics"]["freshness"]["observed_at"] = (
+                "2026-07-29T00:01:10Z"
+            )
+    changed = "e" * 64
+    second_sealed["captures"][0]["capture_sha256"] = changed
+    extraction = next(
+        operation
+        for operation in second_sealed["operations"]
+        if operation["case_id"] == second_sealed["captures"][0]["case_id"]
+    )
+    extraction["request"]["capture_sha256"] = changed
+    extraction["baseline"]["capture_sha256"] = changed
+    extraction["candidate"]["capture_sha256"] = changed
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _write_live_bundle(first, first_sealed)
+    _write_live_bundle(second, second_sealed)
+
+    assert verify_bundle(first)["generation"] != verify_bundle(second)["generation"]
+    with pytest.raises(ResidualError, match="generation"):
+        write_bounded_inconclusive_residual(
+            tmp_path / "residual", first_bundle=first, second_bundle=second
+        )
+
+
 def test_sealed_live_compiler_accepts_a_genuinely_pinned_evaluator(tmp_path):
     sealed = _sealed()
     sealed["evaluator"] = {
@@ -269,17 +390,64 @@ def test_sealed_live_compiler_accepts_a_genuinely_pinned_evaluator(tmp_path):
     for operation in sealed["operations"]:
         operation["evaluation"] = {"forward": "tie", "reverse": "tie"}
 
-    write_live_execution_bundle(
-        tmp_path / "live",
-        sealed=sealed,
-        corpus=load_corpus(FIXTURES / "corpus.json"),
-        stability=_stability(),
-        surface_equivalence=_surface(),
-    )
+    _write_live_bundle(tmp_path / "live", sealed)
 
     manifest = verify_bundle(tmp_path / "live")
     assert manifest["dimensions"]["evaluator"]["status"] == "pinned"
     assert manifest["competitive_verdict"] == "inconclusive"
+
+
+def _add_unrepresented_requested_provider(sealed):
+    sealed["provider_snapshot"]["providers"].append(
+        {
+            "provider": "yahoo",
+            "tier": 0,
+            "fixture_contract_version": "live-v1",
+            "status": "ready",
+        }
+    )
+    sealed["operations"][0]["request"]["providers"].append("yahoo")
+
+
+def _inject_external_extraction_attempt(sealed):
+    extraction = next(
+        operation
+        for operation in sealed["operations"]
+        if operation["mode"] == "extraction"
+    )
+    extraction["candidate"]["diagnostics"]["attempts"] = [
+        {
+            "name": "jina",
+            "kind": "provider",
+            "tier": 0,
+            "status": "success",
+            "reason": "external_call",
+            "result_count": 1,
+            "latency_ms": 4,
+        }
+    ]
+    extraction["candidate"]["diagnostics"]["spend"]["provider_calls"] = 1
+
+
+def _declare_external_extractor_as_replay_chain(sealed):
+    extraction = next(
+        operation
+        for operation in sealed["operations"]
+        if operation["mode"] == "extraction"
+    )
+    extraction["request"]["replay_chain"] = ["jina"]
+    for side in ("baseline", "candidate"):
+        extraction[side]["diagnostics"]["attempts"] = [
+            {
+                "name": "jina",
+                "kind": "extractor",
+                "tier": None,
+                "status": "success",
+                "reason": "external_reader",
+                "result_count": 1,
+                "latency_ms": 4,
+            }
+        ]
 
 
 @pytest.mark.parametrize(
@@ -306,11 +474,26 @@ def test_sealed_live_compiler_accepts_a_genuinely_pinned_evaluator(tmp_path):
             "zero spend",
         ),
         (
+            lambda sealed: sealed["operations"][0]["candidate"]["diagnostics"][
+                "freshness"
+            ].update({"observed_at": "2026-07-30T00:00:00Z"}),
+            "freshness observation",
+        ),
+        (
             lambda sealed: sealed["operations"][0]["evaluation"].update(
                 {"forward": "tie"}
             ),
             "both orders unavailable",
         ),
+        (
+            lambda sealed: sealed["operations"][0]["candidate"]["results"][0].update(
+                {"provider": "brave"}
+            ),
+            "provider evidence",
+        ),
+        (_add_unrepresented_requested_provider, "provider evidence"),
+        (_inject_external_extraction_attempt, "local captured replay"),
+        (_declare_external_extractor_as_replay_chain, "local captured replay"),
     ],
 )
 def test_sealed_live_compiler_fails_closed(mutate, message, tmp_path):
@@ -318,29 +501,32 @@ def test_sealed_live_compiler_fails_closed(mutate, message, tmp_path):
     mutate(sealed)
 
     with pytest.raises(LiveExecutionError, match=message):
-        write_live_execution_bundle(
-            tmp_path / "live",
-            sealed=sealed,
-            corpus=load_corpus(FIXTURES / "corpus.json"),
-            stability=_stability(),
-            surface_equivalence=_surface(),
-        )
+        _write_live_bundle(tmp_path / "live", sealed)
 
 
-def _write_live_attempt(output: Path, run_id: str):
+def _write_live_attempt(output: Path, run_id: str, *, unique_receipts: bool = True):
     sealed = _sealed()
     sealed["run_id"] = run_id
     if run_id.endswith("002"):
         for identity in ("baseline_identity", "candidate_identity"):
             sealed[identity]["started_at"] = "2026-07-29T00:01:00Z"
             sealed[identity]["finished_at"] = "2026-07-29T00:01:10Z"
-    write_live_execution_bundle(
-        output,
-        sealed=sealed,
-        corpus=load_corpus(FIXTURES / "corpus.json"),
-        stability=_stability(),
-        surface_equivalence=_surface(),
-    )
+        for operation in sealed["operations"]:
+            for side in ("baseline", "candidate"):
+                operation[side]["diagnostics"]["freshness"]["observed_at"] = (
+                    "2026-07-29T00:01:10Z"
+                )
+        if unique_receipts:
+            for operation in sealed["operations"]:
+                for side in ("baseline", "candidate"):
+                    diagnostics = operation[side]["diagnostics"]
+                    diagnostics["timing"]["operation_id"] = (
+                        f"{run_id}-{diagnostics['timing']['operation_id']}"
+                    )
+                    diagnostics["persistence"]["durable_id"] = (
+                        f"{run_id}-{diagnostics['persistence']['durable_id']}"
+                    )
+    _write_live_bundle(output, sealed)
 
 
 def test_two_inconclusive_bundles_form_a_bounded_verified_residual(tmp_path):
@@ -378,6 +564,20 @@ def test_residual_rejects_reusing_one_execution(tmp_path):
         )
 
 
+def test_residual_rejects_overlapping_operation_and_persistence_ids(tmp_path):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _write_live_attempt(first, "free-live-overlap-001")
+    _write_live_attempt(second, "free-live-overlap-002", unique_receipts=False)
+
+    with pytest.raises(ResidualError, match="disjoint"):
+        write_bounded_inconclusive_residual(
+            tmp_path / "residual",
+            first_bundle=first,
+            second_bundle=second,
+        )
+
+
 def test_residual_rejects_attempts_in_reverse_chronological_order(tmp_path):
     first = tmp_path / "first"
     second = tmp_path / "second"
@@ -388,14 +588,21 @@ def test_residual_rejects_attempts_in_reverse_chronological_order(tmp_path):
     for identity in ("baseline_identity", "candidate_identity"):
         second_sealed[identity]["started_at"] = "2026-07-28T23:59:00Z"
         second_sealed[identity]["finished_at"] = "2026-07-28T23:59:10Z"
+    for operation in second_sealed["operations"]:
+        for side in ("baseline", "candidate"):
+            operation[side]["diagnostics"]["freshness"]["observed_at"] = (
+                "2026-07-28T23:59:10Z"
+            )
+            operation_id = operation[side]["diagnostics"]["timing"]["operation_id"]
+            durable_id = operation[side]["diagnostics"]["persistence"]["durable_id"]
+            operation[side]["diagnostics"]["timing"]["operation_id"] = (
+                f"reverse-{operation_id}"
+            )
+            operation[side]["diagnostics"]["persistence"]["durable_id"] = (
+                f"reverse-{durable_id}"
+            )
     for output, sealed in ((first, first_sealed), (second, second_sealed)):
-        write_live_execution_bundle(
-            output,
-            sealed=sealed,
-            corpus=load_corpus(FIXTURES / "corpus.json"),
-            stability=_stability(),
-            surface_equivalence=_surface(),
-        )
+        _write_live_bundle(output, sealed)
 
     with pytest.raises(ResidualError, match="consecutive"):
         write_bounded_inconclusive_residual(

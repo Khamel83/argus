@@ -86,6 +86,9 @@ _SUCCESS_LIKE_OUTCOMES = {
     CanonicalOutcome.SUCCESS.value,
     CanonicalOutcome.DEGRADED.value,
 }
+_LOCAL_CAPTURE_REPLAY_EXTRACTORS = frozenset(
+    {"trafilatura", "crawl4ai", "obscura", "playwright"}
+)
 
 
 def _canonical_bytes(value: Any) -> bytes:
@@ -258,8 +261,11 @@ def _validate_identity(value: object, label: str, generation: str) -> dict[str, 
     dimensions = _validate_dimensions(identity["dimensions"])
     image_digest = identity["image_digest"]
     if dimensions["profile"] == "hermetic":
-        if image_digest is not None:
-            raise BundleError(f"{label} hermetic identity must omit image digest")
+        if image_digest is not None and (
+            not isinstance(image_digest, str)
+            or not _IMAGE_DIGEST.fullmatch(image_digest)
+        ):
+            raise BundleError(f"{label} hermetic image digest is invalid")
     elif not isinstance(image_digest, str) or not _IMAGE_DIGEST.fullmatch(image_digest):
         raise BundleError(f"{label} identity requires an immutable image digest")
     _sha256(identity["sanitized_config_sha256"], "sanitized configuration hash")
@@ -519,7 +525,10 @@ def _validate_normalized_search_evidence(value: object, label: str) -> None:
 
 def _validate_normalized_extraction_evidence(value: object, label: str) -> None:
     evidence = _mapping(value, label)
-    _exact_keys(evidence, {"outcome", "content", "diagnostics"}, label)
+    _exact_keys(
+        evidence, {"outcome", "content", "capture_sha256", "diagnostics"}, label
+    )
+    _sha256(evidence["capture_sha256"], f"{label} capture hash")
     outcome = evidence["outcome"]
     if outcome not in _NORMALIZED_OUTCOMES:
         raise BundleError(f"{label} is invalid")
@@ -782,6 +791,21 @@ def _validate_artifact(
         _validate_normalized_search_evidence(
             artifact["candidate"], "competitive candidate search evidence"
         )
+        for side in ("baseline", "candidate"):
+            evidence = artifact[side]
+            attempts = evidence["diagnostics"]["attempts"]
+            if (
+                any(attempt["kind"] != "provider" for attempt in attempts)
+                or {attempt["name"] for attempt in attempts}
+                != set(request["providers"])
+                or any(
+                    result["provider"] not in request["providers"]
+                    for result in evidence["results"]
+                )
+            ):
+                raise BundleError(
+                    "competitive provider evidence does not match request"
+                )
     elif lane == "competitive" and relative.startswith("extractions/"):
         _exact_keys(
             artifact,
@@ -815,7 +839,14 @@ def _validate_artifact(
         }
         _exact_keys(
             request,
-            {"url", "snapshot_id", "url_sha256", "caller"},
+            {
+                "url",
+                "snapshot_id",
+                "url_sha256",
+                "capture_sha256",
+                "replay_chain",
+                "caller",
+            },
             "competitive extraction request",
         )
         _exact_keys(capture, expected_capture_keys, "competitive extraction capture")
@@ -834,10 +865,20 @@ def _validate_artifact(
                 "url": capture["url"],
                 "snapshot_id": capture["snapshot_id"],
                 "url_sha256": capture["url_sha256"],
+                "capture_sha256": capture["capture_sha256"],
+                "replay_chain": request.get("replay_chain"),
                 "caller": request.get("caller"),
             }
             or not isinstance(request["caller"], str)
             or not request["caller"]
+            or not isinstance(request["replay_chain"], list)
+            or not request["replay_chain"]
+            or any(
+                not isinstance(extractor, str) or not extractor
+                for extractor in request["replay_chain"]
+            )
+            or len(request["replay_chain"]) != len(set(request["replay_chain"]))
+            or not set(request["replay_chain"]) <= _LOCAL_CAPTURE_REPLAY_EXTRACTORS
         ):
             raise BundleError("competitive extraction snapshot is inconsistent")
         _validate_normalized_extraction_evidence(
@@ -846,6 +887,23 @@ def _validate_artifact(
         _validate_normalized_extraction_evidence(
             artifact["candidate"], "competitive candidate extraction evidence"
         )
+        if any(
+            artifact[side]["capture_sha256"] != capture["capture_sha256"]
+            for side in ("baseline", "candidate")
+        ):
+            raise BundleError("competitive extraction evidence capture mismatch")
+        for side in ("baseline", "candidate"):
+            diagnostics = artifact[side]["diagnostics"]
+            attempts = diagnostics["attempts"]
+            if (
+                any(attempt["kind"] != "extractor" for attempt in attempts)
+                or {attempt["name"] for attempt in attempts}
+                != set(request["replay_chain"])
+                or diagnostics["spend"]["provider_calls"] != 0
+            ):
+                raise BundleError(
+                    "competitive extraction evidence is not local captured replay"
+                )
     elif lane == "hermetic" and relative.startswith("searches/"):
         _exact_keys(
             artifact,

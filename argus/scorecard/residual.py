@@ -34,6 +34,8 @@ _ATTEMPT_FIELDS = {
     "run_id",
     "manifest_sha256",
     "checksums_sha256",
+    "operation_ids_sha256",
+    "durable_ids_sha256",
     "verdict",
 }
 _IDENTITY_FIELDS = {"commit", "image_digest", "generation"}
@@ -81,6 +83,12 @@ def _source(bundle: Path, ordinal: int) -> dict[str, Any]:
         )
     candidate = _load(bundle / "identities" / "candidate.json", "candidate identity")
     baseline = _load(bundle / "identities" / "baseline.json", "baseline identity")
+    timing = _load(bundle / "stability" / "timing-receipts.json", "timing receipts")
+    persistence = _load(
+        bundle / "stability" / "persistence-receipts.json", "persistence receipts"
+    )
+    operation_ids = {operation["operation_id"] for operation in timing["operations"]}
+    durable_ids = {receipt["durable_id"] for receipt in persistence["receipts"]}
     return {
         "manifest": manifest,
         "candidate": candidate,
@@ -90,8 +98,16 @@ def _source(bundle: Path, ordinal: int) -> dict[str, Any]:
             "run_id": manifest["run_id"],
             "manifest_sha256": _hash(bundle / "manifest.json"),
             "checksums_sha256": _hash(bundle / "checksums.sha256"),
+            "operation_ids_sha256": sha256(
+                _canonical_bytes(sorted(operation_ids))
+            ).hexdigest(),
+            "durable_ids_sha256": sha256(
+                _canonical_bytes(sorted(durable_ids))
+            ).hexdigest(),
             "verdict": manifest["competitive_verdict"],
         },
+        "operation_ids": operation_ids,
+        "durable_ids": durable_ids,
     }
 
 
@@ -112,6 +128,13 @@ def _derive(first_bundle: Path, second_bundle: Path) -> dict[str, Any]:
         raise ResidualError("bounded residual attempts must share one generation")
     if first["manifest"]["dimensions"] != second["manifest"]["dimensions"]:
         raise ResidualError("bounded residual dimensions must be immutable")
+    if (
+        first["operation_ids"] & second["operation_ids"]
+        or first["durable_ids"] & second["durable_ids"]
+    ):
+        raise ResidualError(
+            "bounded residual operation and persistence ids must be disjoint"
+        )
     for label in ("candidate", "baseline"):
         if _identity_projection(first[label]) != _identity_projection(second[label]):
             raise ResidualError(f"bounded residual {label} identity changed")
