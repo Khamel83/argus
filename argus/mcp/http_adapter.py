@@ -119,9 +119,7 @@ class HttpMcpAdapter:
             or selection.contract_version != "2.0"
             or selection.base_path != "/api/v2"
         ):
-            return _adapter_unready(
-                "Argus HTTP contract discovery is unavailable"
-            )
+            return _adapter_unready("Argus HTTP contract discovery is unavailable")
         try:
             return await self._client.request_v2(
                 path,
@@ -129,9 +127,7 @@ class HttpMcpAdapter:
                 token=token,
             )
         except AuthorityRequestError:
-            return _adapter_unready(
-                "Argus HTTP execution authority is unavailable"
-            )
+            return _adapter_unready("Argus HTTP execution authority is unavailable")
 
     async def search_web_v2(
         self,
@@ -336,13 +332,10 @@ class HttpMcpAdapter:
         )
         lines = ["## Search Provider Health", ""]
         for provider, status in (response.get("providers") or {}).items():
-            lines.append(
-                f"- **{provider}**: {provider_display_state(status)}"
-            )
+            lines.append(f"- **{provider}**: {provider_display_state(status)}")
             if not status.get("state") and status.get("effective_status"):
                 lines.append(
-                    "  - legacy_effective_status="
-                    f"{status['effective_status']}"
+                    f"  - legacy_effective_status={status['effective_status']}"
                 )
             lines.extend(f"  - {failure}" for failure in nested_status_failures(status))
         return "\n".join(lines)

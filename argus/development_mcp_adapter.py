@@ -115,8 +115,7 @@ def build_development_mcp_backend() -> LocalMcpAdapter:
 
     if adapter_execution_mode() != "standalone":
         raise AuthorityConfigurationError(
-            "Development MCP standalone backend requires "
-            "ARGUS_MCP_STANDALONE=true"
+            "Development MCP standalone backend requires ARGUS_MCP_STANDALONE=true"
         )
 
     from argus.broker.router import create_broker

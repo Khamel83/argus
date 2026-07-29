@@ -211,19 +211,21 @@ async def test_paid_mcp_live_probe_requires_reservation_and_has_no_fallback():
         release="argus-1.6.2",
         provider_contract="2026-07-27-v1",
     )
-    broker.readiness_service.register_provider(ProviderRegistrationSpec(
-        provider=ProviderName.BRAVE,
-        enabled=True,
-        configuration_fingerprint="test-config",
-        credential_version_fingerprint="test-credential",
-        account_fingerprint="test-account",
-        budget_limit=10.0,
-        durable_spend_repository=True,
-        release_revision="argus-1.6.2",
-        contract_version="2026-07-27-v1",
-        fixture_evidence_ref=fixture_ref,
-        fixture_attestation=fixture_attestation,
-    ))
+    broker.readiness_service.register_provider(
+        ProviderRegistrationSpec(
+            provider=ProviderName.BRAVE,
+            enabled=True,
+            configuration_fingerprint="test-config",
+            credential_version_fingerprint="test-credential",
+            account_fingerprint="test-account",
+            budget_limit=10.0,
+            durable_spend_repository=True,
+            release_revision="argus-1.6.2",
+            contract_version="2026-07-27-v1",
+            fixture_evidence_ref=fixture_ref,
+            fixture_attestation=fixture_attestation,
+        )
+    )
 
     await test_provider_mcp(
         broker,
@@ -300,9 +302,7 @@ def test_durable_budget_renderers_include_uncertainty_and_provider_freshness(
     )
     broker = SimpleNamespace(
         spend_repository=repository,
-        budget_tracker=SimpleNamespace(
-            get_budget_limit=lambda provider: 10.0
-        ),
+        budget_tracker=SimpleNamespace(get_budget_limit=lambda provider: 10.0),
         provider_budget_projection=lambda provider: repository.provider_summary(
             provider, budget_limit=10.0
         ),

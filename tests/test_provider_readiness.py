@@ -18,9 +18,7 @@ def _service(tmp_path):
     from argus.broker.readiness import ProviderReadinessService
     from argus.persistence.readiness import create_readiness_repository
 
-    repository = create_readiness_repository(
-        f"sqlite:///{tmp_path / 'readiness.db'}"
-    )
+    repository = create_readiness_repository(f"sqlite:///{tmp_path / 'readiness.db'}")
     return ProviderReadinessService(repository=repository), repository
 
 
@@ -157,9 +155,7 @@ def test_authority_clock_rejects_future_skew_and_expires_to_unknown(tmp_path):
     future = _observation(
         ProviderName.BRAVE, "reachability", "reachable", receipt="future"
     )
-    object.__setattr__(
-        future, "observed_at", datetime.now(UTC) + timedelta(seconds=31)
-    )
+    object.__setattr__(future, "observed_at", datetime.now(UTC) + timedelta(seconds=31))
     with pytest.raises(ValueError, match="future"):
         service.record_observation(future)
 
@@ -264,7 +260,8 @@ def test_exact_expiry_model_and_persistence_reject_100_year_reachability(
             evidence_ref="exact-expiry-persistence-100-year",
         )
     assert [
-        row for row in repository.observations(ProviderName.BRAVE)
+        row
+        for row in repository.observations(ProviderName.BRAVE)
         if row.evidence_ref == "exact-expiry-persistence-100-year"
     ] == []
 
@@ -329,9 +326,7 @@ def test_persistence_rejects_forged_exact_expiry_before_mutating_sqlite_state(
         expires_at=database_now + timedelta(days=1),
     )
     before_observations = repository.observations(ProviderName.BRAVE)
-    before_snapshot = repository.read_snapshot(
-        ProviderName.BRAVE, scope.fingerprint()
-    )
+    before_snapshot = repository.read_snapshot(ProviderName.BRAVE, scope.fingerprint())
 
     object.__setattr__(
         observation, "observed_at", observation.observed_at.replace(tzinfo=None)
@@ -344,7 +339,10 @@ def test_persistence_rejects_forged_exact_expiry_before_mutating_sqlite_state(
         )
 
     assert repository.observations(ProviderName.BRAVE) == before_observations
-    assert repository.read_snapshot(ProviderName.BRAVE, scope.fingerprint()) == before_snapshot
+    assert (
+        repository.read_snapshot(ProviderName.BRAVE, scope.fingerprint())
+        == before_snapshot
+    )
 
 
 @pytest.mark.parametrize(
@@ -392,7 +390,10 @@ def test_persistence_rejects_forged_exact_expiry_before_mutating_sqlite_state(
     ],
 )
 def test_persistence_rejects_forged_exact_expiry_invariants(
-    tmp_path, producer_offset, mutation, message,
+    tmp_path,
+    producer_offset,
+    mutation,
+    message,
 ):
     from argus.broker.readiness import ProviderObservation, ReadinessScope
 
@@ -446,7 +447,8 @@ def test_persistence_allows_exact_expiry_at_producer_one_year_boundary(tmp_path)
     )
 
     assert [
-        row for row in repository.observations(ProviderName.BRAVE)
+        row
+        for row in repository.observations(ProviderName.BRAVE)
         if row.evidence_ref == "exact-one-year"
     ]
 
@@ -544,9 +546,7 @@ def test_probe_authorization_is_closed_and_routine_diagnostics_are_no_spend(tmp_
     assert service.authorize_probe(ProviderName.BRAVE, "local_component").allowed
     assert not service.authorize_probe(ProviderName.BRAVE, "billable_search").allowed
     assert not service.authorize_probe(ProviderName.BRAVE, "unknown").allowed
-    assert not service.authorize_probe(
-        ProviderName.BRAVE, "no_spend_account"
-    ).allowed
+    assert not service.authorize_probe(ProviderName.BRAVE, "no_spend_account").allowed
     allowed = service.authorize_probe(
         ProviderName.BRAVE,
         "no_spend_account",
@@ -701,9 +701,10 @@ def test_completion_is_idempotent_and_terminal_exhaustion_survives_restart(tmp_p
         evidence_ref="receipt-exhausted",
     )
     restarted = create_readiness_repository(url)
-    assert restarted.spend_state(
-        ProviderName.SERPER, account_fingerprint="account:v1"
-    ) == "exhausted"
+    assert (
+        restarted.spend_state(ProviderName.SERPER, account_fingerprint="account:v1")
+        == "exhausted"
+    )
     assert restarted.emit_operator_alert_once(
         ProviderName.SERPER,
         account_fingerprint="account:v1",
@@ -727,13 +728,15 @@ def test_recurring_exhaustion_resets_only_at_documented_boundary(tmp_path):
         evidence_ref="monthly-reset",
     )
     repository.advance_authority_clock_for_test(timedelta(minutes=59))
-    assert repository.spend_state(
-        ProviderName.BRAVE, account_fingerprint="account:v1"
-    ) == "exhausted"
+    assert (
+        repository.spend_state(ProviderName.BRAVE, account_fingerprint="account:v1")
+        == "exhausted"
+    )
     repository.advance_authority_clock_for_test(timedelta(minutes=2))
-    assert repository.spend_state(
-        ProviderName.BRAVE, account_fingerprint="account:v1"
-    ) == "unknown"
+    assert (
+        repository.spend_state(ProviderName.BRAVE, account_fingerprint="account:v1")
+        == "unknown"
+    )
 
 
 def test_catalog_contains_all_14_real_providers_and_registration_is_explicit(tmp_path):
@@ -807,9 +810,7 @@ def test_alembic_0008_is_additive_and_refuses_evidence_destroying_downgrade(
         )
     with pytest.raises(RuntimeError, match="evidence"):
         command.downgrade(config, "0007_extraction_outcomes")
-    assert "provider_readiness_observations" in set(
-        inspect(engine).get_table_names()
-    )
+    assert "provider_readiness_observations" in set(inspect(engine).get_table_names())
 
 
 def _exact_scope(
@@ -874,7 +875,8 @@ def _registration(
                 "response_contract": "provider-batch-v1",
                 "provider_contract": contract,
             }
-            if fixture and release and contract else None
+            if fixture and release and contract
+            else None
         )
 
     return ProviderRegistrationSpec(
@@ -928,9 +930,7 @@ def test_registration_persists_all_issues_and_never_calls_adapter_availability(
         "missing_spend_repository",
         "incompatible_fixture_release",
     )
-    restarted = ProviderReadinessService(
-        repository=create_readiness_repository(url)
-    )
+    restarted = ProviderReadinessService(repository=create_readiness_repository(url))
     assert restarted.registration(ProviderName.BRAVE).issues == decision.issues
 
 
@@ -1038,9 +1038,9 @@ def test_startup_materializes_all_search_mode_scopes(tmp_path):
 
     for request_class in ("discovery", "research", "recovery", "grounding"):
         scope = _exact_scope(request_class=request_class)
-        assert repository.get_snapshot(
-            ProviderName.BRAVE, scope.fingerprint()
-        ) is not None
+        assert (
+            repository.get_snapshot(ProviderName.BRAVE, scope.fingerprint()) is not None
+        )
         rendered = service.snapshot_for_scope(ProviderName.BRAVE, scope)
         assert rendered.compatibility == "compatible"
         assert rendered.reachability == "unknown"
@@ -1066,22 +1066,24 @@ def test_different_modes_share_one_provider_account_budget_lock(tmp_path):
 
     def authorize(service, mode, owner):
         barrier.wait()
-        results.append(service.authorize_execution(
-            ExecutionContext(
-                provider=ProviderName.BRAVE,
-                tier=1,
-                plan_providers=(ProviderName.BRAVE,),
-                free_only=False,
-                caller_tier_cap=1,
-                scope=_exact_scope(request_class=mode),
-                plan_id=f"plan:{mode}",
-                caller_identity="test",
-                idempotency_key=f"request:{mode}",
-            ),
-            owner=owner,
-            conservative_charge=1.0,
-            execution_timeout_seconds=30,
-        ))
+        results.append(
+            service.authorize_execution(
+                ExecutionContext(
+                    provider=ProviderName.BRAVE,
+                    tier=1,
+                    plan_providers=(ProviderName.BRAVE,),
+                    free_only=False,
+                    caller_tier_cap=1,
+                    scope=_exact_scope(request_class=mode),
+                    plan_id=f"plan:{mode}",
+                    caller_identity="test",
+                    idempotency_key=f"request:{mode}",
+                ),
+                owner=owner,
+                conservative_charge=1.0,
+                execution_timeout_seconds=30,
+            )
+        )
 
     threads = [
         Thread(target=authorize, args=(first, "discovery", "worker-1")),
@@ -1109,10 +1111,12 @@ def test_terminal_spend_survives_credential_rotation_for_account_all_modes(
         evidence_ref="provider:terminal:v1",
     )
 
-    service.register_provider(_registration(
-        provider=ProviderName.SERPER,
-        credential="secret-version:v2",
-    ))
+    service.register_provider(
+        _registration(
+            provider=ProviderName.SERPER,
+            credential="secret-version:v2",
+        )
+    )
 
     for mode in ("discovery", "research", "recovery", "grounding"):
         scope = _exact_scope(
@@ -1124,14 +1128,17 @@ def test_terminal_spend_survives_credential_rotation_for_account_all_modes(
             "exhausted"
         )
 
-    service.register_provider(_registration(
-        provider=ProviderName.SERPER,
-        account="account:v2",
-        credential="secret-version:v3",
-    ))
-    assert service.snapshot(
-        ProviderName.SERPER, request_class="discovery"
-    ).spend == "available"
+    service.register_provider(
+        _registration(
+            provider=ProviderName.SERPER,
+            account="account:v2",
+            credential="secret-version:v3",
+        )
+    )
+    assert (
+        service.snapshot(ProviderName.SERPER, request_class="discovery").spend
+        == "available"
+    )
 
 
 def test_completion_materializes_evidence_on_authorized_mode_only(tmp_path):
@@ -1180,11 +1187,15 @@ def test_fixture_attestation_change_replaces_compatibility_evidence(tmp_path):
     assert service.run_fixture_probe(ProviderName.BRAVE).allowed
 
     changed = _registration(fixture="attestation:manifest:v2")
-    object.__setattr__(changed, "fixture_attestation", {
-        **dict(changed.fixture_attestation or {}),
-        "fixture_case_digest": "cases-v2",
-        "provider_contract": "wrong-contract",
-    })
+    object.__setattr__(
+        changed,
+        "fixture_attestation",
+        {
+            **dict(changed.fixture_attestation or {}),
+            "fixture_case_digest": "cases-v2",
+            "provider_contract": "wrong-contract",
+        },
+    )
     service.register_provider(changed)
 
     snapshot = service.snapshot(
@@ -1198,11 +1209,13 @@ def test_cancellation_is_termination_indeterminate_even_for_free_provider(tmp_pa
     from argus.broker.readiness import ExecutionContext
 
     service, repository = _service(tmp_path)
-    service.register_provider(_registration(
-        provider=ProviderName.YAHOO,
-        account="not-applicable-account",
-        budget=None,
-    ))
+    service.register_provider(
+        _registration(
+            provider=ProviderName.YAHOO,
+            account="not-applicable-account",
+            budget=None,
+        )
+    )
     context = ExecutionContext(
         provider=ProviderName.YAHOO,
         tier=0,
@@ -1236,10 +1249,12 @@ def test_cancellation_is_termination_indeterminate_even_for_free_provider(tmp_pa
         "termination_indeterminate"
     )
     replacement = service.authorize_execution(
-        ExecutionContext(**{
-            **context.as_dict(),
-            "idempotency_key": "request:yahoo:2",
-        }),
+        ExecutionContext(
+            **{
+                **context.as_dict(),
+                "idempotency_key": "request:yahoo:2",
+            }
+        ),
         owner="worker-2",
         conservative_charge=0.0,
         execution_timeout_seconds=30,
@@ -1251,11 +1266,13 @@ def test_expired_unresolved_execution_still_blocks_replacement(tmp_path):
     from argus.broker.readiness import ExecutionContext
 
     service, repository = _service(tmp_path)
-    service.register_provider(_registration(
-        provider=ProviderName.YAHOO,
-        account="not-applicable-account",
-        budget=None,
-    ))
+    service.register_provider(
+        _registration(
+            provider=ProviderName.YAHOO,
+            account="not-applicable-account",
+            budget=None,
+        )
+    )
     _ready(service, ProviderName.YAHOO)
     context = ExecutionContext(
         provider=ProviderName.YAHOO,
@@ -1289,10 +1306,12 @@ def test_expired_unresolved_execution_still_blocks_replacement(tmp_path):
 
     repository.advance_authority_clock_for_test(timedelta(seconds=2))
     denied = service.authorize_execution(
-        ExecutionContext(**{
-            **context.as_dict(),
-            "idempotency_key": "request:unresolved:2",
-        }),
+        ExecutionContext(
+            **{
+                **context.as_dict(),
+                "idempotency_key": "request:unresolved:2",
+            }
+        ),
         owner="worker-2",
         conservative_charge=0.0,
         execution_timeout_seconds=1,
@@ -1336,9 +1355,10 @@ def test_uncertain_paid_execution_blocks_other_account_modes_until_reconciled(
     )
 
     for mode in ("discovery", "research", "recovery", "grounding"):
-        assert service.snapshot(
-            ProviderName.BRAVE, request_class=mode
-        ).spend == "uncertain"
+        assert (
+            service.snapshot(ProviderName.BRAVE, request_class=mode).spend
+            == "uncertain"
+        )
     denied = service.authorize_execution(
         ExecutionContext(
             **{
@@ -1387,9 +1407,10 @@ def test_matching_successful_settlement_clears_uncertain_account_all_modes(
         charge_known=False,
         evidence_ref="execution:matched-uncertain",
     )
-    assert service.snapshot(
-        ProviderName.BRAVE, request_class="research"
-    ).spend == "uncertain"
+    assert (
+        service.snapshot(ProviderName.BRAVE, request_class="research").spend
+        == "uncertain"
+    )
 
     service.complete_execution(
         authorization,
@@ -1406,7 +1427,8 @@ def test_matching_successful_settlement_clears_uncertain_account_all_modes(
 
 
 def test_settlement_uses_same_provider_budget_lock_as_authorization(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     from argus.broker.readiness import ExecutionContext
 
@@ -1468,21 +1490,24 @@ def test_active_receipts_are_protected_before_overflow_compaction(tmp_path):
     )
     for mode_index in range(5):
         for dimension, state in dimensions:
-            service.record_observation(_observation(
-                ProviderName.BRAVE,
-                dimension,
-                state,
-                receipt=f"active:{mode_index}:{dimension}",
-                request_class=f"mode-{mode_index}",
-                ttl_seconds=None,
-            ))
+            service.record_observation(
+                _observation(
+                    ProviderName.BRAVE,
+                    dimension,
+                    state,
+                    receipt=f"active:{mode_index}:{dimension}",
+                    request_class=f"mode-{mode_index}",
+                    ttl_seconds=None,
+                )
+            )
 
     with repository.session_factory() as session:
-        active = session.scalar(select(ProviderReadinessEvidenceRefRow).where(
-            ProviderReadinessEvidenceRefRow.provider == "brave",
-            ProviderReadinessEvidenceRefRow.evidence_ref
-            == "active:0:registration",
-        ))
+        active = session.scalar(
+            select(ProviderReadinessEvidenceRefRow).where(
+                ProviderReadinessEvidenceRefRow.provider == "brave",
+                ProviderReadinessEvidenceRefRow.evidence_ref == "active:0:registration",
+            )
+        )
         assert active is not None
         assert active.protected is True
     assert any(
@@ -1490,30 +1515,37 @@ def test_active_receipts_are_protected_before_overflow_compaction(tmp_path):
         for row in repository.observations(ProviderName.BRAVE)
     )
     stale_scope = _exact_scope(request_class="mode-0")
-    failed_closed = service.snapshot_for_scope(
-        ProviderName.BRAVE, stale_scope
-    )
+    failed_closed = service.snapshot_for_scope(ProviderName.BRAVE, stale_scope)
     assert failed_closed.configuration.issues == ("evidence_overflow",)
     assert failed_closed.execution_decision.code == "unavailable"
     assert failed_closed.protected_evidence_count == 7
     assert any(
-        receipt.startswith("overflow:")
-        for receipt in failed_closed.evidence_receipts
+        receipt.startswith("overflow:") for receipt in failed_closed.evidence_receipts
     )
     with repository.session_factory() as session:
-        evidence_count = len(list(session.scalars(
-            select(ProviderReadinessEvidenceRefRow).where(
-                ProviderReadinessEvidenceRefRow.provider == "brave",
+        evidence_count = len(
+            list(
+                session.scalars(
+                    select(ProviderReadinessEvidenceRefRow).where(
+                        ProviderReadinessEvidenceRefRow.provider == "brave",
+                    )
+                )
             )
-        )))
-        overflow_audit = session.scalar(select(SpendAuditRow).where(
-            SpendAuditRow.provider == "brave",
-            SpendAuditRow.action == "readiness_overflow",
-        ))
-        archived_evidence = list(session.scalars(select(SpendAuditRow).where(
-            SpendAuditRow.provider == "brave",
-            SpendAuditRow.action == "readiness_evidence_archive",
-        )))
+        )
+        overflow_audit = session.scalar(
+            select(SpendAuditRow).where(
+                SpendAuditRow.provider == "brave",
+                SpendAuditRow.action == "readiness_overflow",
+            )
+        )
+        archived_evidence = list(
+            session.scalars(
+                select(SpendAuditRow).where(
+                    SpendAuditRow.provider == "brave",
+                    SpendAuditRow.action == "readiness_evidence_archive",
+                )
+            )
+        )
     assert evidence_count <= 32
     assert overflow_audit is not None
     overflow_payload = __import__("json").loads(overflow_audit.after_json)
@@ -1538,11 +1570,13 @@ def test_next_reset_does_not_exclude_current_period_spend(tmp_path):
 
     service, _ = _service(tmp_path)
     now = service.repository.authority_now()
-    service.register_provider(replace(
-        _registration(budget=2.0),
-        budget_period_started_at=now - timedelta(days=1),
-        budget_next_reset_at=now + timedelta(days=29),
-    ))
+    service.register_provider(
+        replace(
+            _registration(budget=2.0),
+            budget_period_started_at=now - timedelta(days=1),
+            budget_next_reset_at=now + timedelta(days=29),
+        )
+    )
     first = service.authorize_execution(
         ExecutionContext(
             provider=ProviderName.BRAVE,
@@ -1632,10 +1666,12 @@ def test_paid_probe_owns_exact_attempt_and_final_result_receipt(tmp_path):
     )
 
     with repository.session_factory() as session:
-        result = session.scalar(select(SpendAuditRow).where(
-            SpendAuditRow.action == "probe_result",
-            SpendAuditRow.attempt_id == decision.attempt_id,
-        ))
+        result = session.scalar(
+            select(SpendAuditRow).where(
+                SpendAuditRow.action == "probe_result",
+                SpendAuditRow.attempt_id == decision.attempt_id,
+            )
+        )
         assert result is not None
         assert "success" in result.after_json
     replay = service.authorize_probe(
@@ -1655,11 +1691,7 @@ def test_paid_probe_owns_exact_attempt_and_final_result_receipt(tmp_path):
 
 @pytest.mark.parametrize(
     "provider",
-    tuple(
-        provider
-        for provider in ProviderName
-        if is_adapter_provider(provider)
-    ),
+    tuple(provider for provider in ProviderName if is_adapter_provider(provider)),
 )
 def test_fixture_attestation_executes_all_cases_and_recomputes_content(
     provider,
@@ -1758,10 +1790,12 @@ def test_fixture_attestation_hashes_full_request_shape_seam():
         "providers/fixture_golden_contracts.py",
     } <= dependencies
     assert len(attestation["golden_contract_sha256"]) == 64
-    assert not verify_fixture_attestation({
-        **attestation,
-        "golden_contract_sha256": "tampered",
-    })
+    assert not verify_fixture_attestation(
+        {
+            **attestation,
+            "golden_contract_sha256": "tampered",
+        }
+    )
 
 
 def test_fixture_harness_enforces_exact_outcomes_for_all_canonical_adapters():
@@ -1777,9 +1811,7 @@ def test_fixture_harness_enforces_exact_outcomes_for_all_canonical_adapters():
         assert summaries["empty"]["observations"] == 0
         assert summaries["empty"]["failure"] == FailureCategory.EMPTY.value
         assert summaries["error"]["failure"] == "rate_limited"
-        assert summaries["malformed"]["failure"] == (
-            FailureCategory.PARSE_ERROR.value
-        )
+        assert summaries["malformed"]["failure"] == (FailureCategory.PARSE_ERROR.value)
         assert summaries["success"]["golden_request_validated"] is True
         assert summaries["success"]["golden_output_validated"] is True
 
@@ -1797,12 +1829,14 @@ def test_golden_provider_contract_is_checked_separately_from_attestations():
     for contract in GOLDEN_PROVIDER_CONTRACTS.values():
         assert contract["provider_contract_version"] == ATTESTED_CONTRACT
         assert set(contract["expected"]) == {
-            "success", "empty", "error", "malformed", "privacy"
+            "success",
+            "empty",
+            "error",
+            "malformed",
+            "privacy",
         }
         assert contract["request"]["method"] in {"GET", "POST", "SUBPROCESS"}
-    generator = Path(
-        "scripts/generate_provider_fixture_attestations.py"
-    ).read_text()
+    generator = Path("scripts/generate_provider_fixture_attestations.py").read_text()
     assert generator.count("write_text(") == 1
     assert "attestation_artifact_path().write_text" in generator
 
@@ -1931,11 +1965,15 @@ def test_golden_transport_rejects_ddg_env_query_leak(monkeypatch):
             env={"FIXTURE_QUERY": query.query},
             limit=1_048_576,
         )
-        await process.communicate(json.dumps({
-            "query": query.query,
-            "max_results": 1,
-            "timelimit": None,
-        }).encode())
+        await process.communicate(
+            json.dumps(
+                {
+                    "query": query.query,
+                    "max_results": 1,
+                    "timelimit": None,
+                }
+            ).encode()
+        )
         return await original(self, query)
 
     monkeypatch.setattr(DuckDuckGoProvider, "search", leaking_subprocess)
@@ -1966,11 +2004,15 @@ def test_golden_transport_rejects_undeclared_ddg_env(monkeypatch):
             env={"FIXTURE_MODE": "unexpected"},
             limit=1_048_576,
         )
-        await process.communicate(json.dumps({
-            "query": query.query,
-            "max_results": 1,
-            "timelimit": None,
-        }).encode())
+        await process.communicate(
+            json.dumps(
+                {
+                    "query": query.query,
+                    "max_results": 1,
+                    "timelimit": None,
+                }
+            ).encode()
+        )
         return await original(self, query)
 
     monkeypatch.setattr(DuckDuckGoProvider, "search", undeclared_env)
@@ -2038,9 +2080,7 @@ def test_monkeypatched_canonical_adapter_fails_checked_attestation(monkeypatch):
         raise AssertionError("changed adapter")
 
     monkeypatch.setattr(BraveProvider, "search", changed_search)
-    assert not verify_fixture_attestation(
-        attestation, evidence_ref=evidence_ref
-    )
+    assert not verify_fixture_attestation(attestation, evidence_ref=evidence_ref)
     assert BraveProvider(ProviderConfig(enabled=True, api_key="fixture"))
 
 
@@ -2087,9 +2127,7 @@ def test_postgres_verifier_checks_exact_expiry_rejections_without_writes(tmp_pat
     _, repository = _service(tmp_path)
     scope = ReadinessScope(account_fingerprint="account:v1")
 
-    assert verify_exact_expiry_boundary_rejections(
-        repository, scope, "sqlite-test"
-    )
+    assert verify_exact_expiry_boundary_rejections(repository, scope, "sqlite-test")
 
 
 def test_authoritative_zero_reconciliation_clears_terminal_account_all_modes(
@@ -2136,9 +2174,10 @@ def test_authoritative_zero_reconciliation_clears_terminal_account_all_modes(
     )
 
     for mode in ("discovery", "research", "recovery", "grounding"):
-        assert service.snapshot(
-            ProviderName.SERPER, request_class=mode
-        ).spend == "available"
+        assert (
+            service.snapshot(ProviderName.SERPER, request_class=mode).spend
+            == "available"
+        )
 
 
 @pytest.mark.parametrize(
@@ -2160,11 +2199,13 @@ def test_budget_period_boundaries_use_database_time_and_fail_implausible(
     service, _ = _service(tmp_path)
     now = service.repository.authority_now()
     with pytest.raises(ValueError, match="budget"):
-        service.register_provider(replace(
-            _registration(),
-            budget_period_started_at=now + start_delta,
-            budget_next_reset_at=now + reset_delta,
-        ))
+        service.register_provider(
+            replace(
+                _registration(),
+                budget_period_started_at=now + start_delta,
+                budget_next_reset_at=now + reset_delta,
+            )
+        )
 
 
 def test_protected_evidence_overflow_is_bounded_and_unavailable(tmp_path):
@@ -2192,14 +2233,20 @@ def test_protected_evidence_overflow_is_bounded_and_unavailable(tmp_path):
     assert snapshot.execution_decision.code == "unavailable"
     assert repository.evidence_ref_count(ProviderName.BRAVE) == 32
     with repository.session_factory() as session:
-        overflow = session.scalar(select(SpendAuditRow).where(
-            SpendAuditRow.provider == "brave",
-            SpendAuditRow.action == "readiness_overflow",
-        ))
-        archive = list(session.scalars(select(SpendAuditRow).where(
-            SpendAuditRow.provider == "brave",
-            SpendAuditRow.action == "readiness_evidence_archive",
-        )))
+        overflow = session.scalar(
+            select(SpendAuditRow).where(
+                SpendAuditRow.provider == "brave",
+                SpendAuditRow.action == "readiness_overflow",
+            )
+        )
+        archive = list(
+            session.scalars(
+                select(SpendAuditRow).where(
+                    SpendAuditRow.provider == "brave",
+                    SpendAuditRow.action == "readiness_evidence_archive",
+                )
+            )
+        )
     payload = __import__("json").loads(overflow.after_json)
     assert payload["protected_count"] == len(archive)
     assert payload["protected_count"] >= 40
@@ -2445,25 +2492,29 @@ def test_terminal_failure_and_uncertain_charge_materialize_in_completion_transac
     )
 
     for mode in ("discovery", "research", "recovery", "grounding"):
-        snapshot = service.snapshot(
-            ProviderName.SERPER, request_class=mode
-        )
+        snapshot = service.snapshot(ProviderName.SERPER, request_class=mode)
         assert snapshot.spend == "exhausted"
         assert snapshot.execution_decision.code == "spend_blocked"
     restarted, _ = _service(tmp_path)
-    restarted.register_provider(_registration(
-        provider=ProviderName.SERPER,
-        credential="secret-version:v2",
-    ))
+    restarted.register_provider(
+        _registration(
+            provider=ProviderName.SERPER,
+            credential="secret-version:v2",
+        )
+    )
     for mode in ("discovery", "research", "recovery", "grounding"):
-        assert restarted.snapshot(
-            ProviderName.SERPER, request_class=mode
-        ).spend == "exhausted"
-    assert repository.emit_operator_alert_once(
-        ProviderName.SERPER,
-        account_fingerprint="account:v1",
-        alert_kind="exhaustion_without_refresh",
-    ) is False
+        assert (
+            restarted.snapshot(ProviderName.SERPER, request_class=mode).spend
+            == "exhausted"
+        )
+    assert (
+        repository.emit_operator_alert_once(
+            ProviderName.SERPER,
+            account_fingerprint="account:v1",
+            alert_kind="exhaustion_without_refresh",
+        )
+        is False
+    )
 
     from argus.persistence.provider_spend import ProviderSpendRepository
 
@@ -2477,10 +2528,13 @@ def test_terminal_failure_and_uncertain_charge_materialize_in_completion_transac
         idempotency_key="resolve:serper",
     )
     assert resolved.status == "resolved"
-    assert service.snapshot_for_scope(
-        ProviderName.SERPER,
-        _exact_scope(provider=ProviderName.SERPER),
-    ).spend == "exhausted"
+    assert (
+        service.snapshot_for_scope(
+            ProviderName.SERPER,
+            _exact_scope(provider=ProviderName.SERPER),
+        ).spend
+        == "exhausted"
+    )
 
 
 def test_execution_outcome_updates_exact_request_class_only(tmp_path):
@@ -2511,10 +2565,7 @@ def test_postgres_ci_persists_sanitized_readiness_evidence_artifact():
 
     workflow = Path(".github/workflows/ci.yml").read_text()
     assert "scripts/verify_provider_readiness_postgres.py" in workflow
-    assert (
-        "scripts/generate_provider_fixture_attestations.py --check"
-        in workflow
-    )
+    assert "scripts/generate_provider_fixture_attestations.py --check" in workflow
     assert "provider-readiness-postgres.json" in workflow
     assert "actions/upload-artifact@" in workflow
 
@@ -2591,10 +2642,14 @@ def test_real_postgres_atomic_authorization_and_materialized_recovery():
 
     def authorize(service, owner):
         barrier.wait()
-        results.append(service.authorize_execution(
-            context, owner=owner, conservative_charge=1.0,
-            execution_timeout_seconds=30,
-        ))
+        results.append(
+            service.authorize_execution(
+                context,
+                owner=owner,
+                conservative_charge=1.0,
+                execution_timeout_seconds=30,
+            )
+        )
 
     workers = [
         Thread(target=authorize, args=(first, "pg-worker-1")),
@@ -2605,7 +2660,10 @@ def test_real_postgres_atomic_authorization_and_materialized_recovery():
     for worker in workers:
         worker.join()
     assert sum(result.allowed for result in results) == 1
-    assert first.snapshot_for_scope(
-        ProviderName.SEARCHAPI,
-        _exact_scope(provider=ProviderName.SEARCHAPI),
-    ).execution_decision.code == "eligible"
+    assert (
+        first.snapshot_for_scope(
+            ProviderName.SEARCHAPI,
+            _exact_scope(provider=ProviderName.SEARCHAPI),
+        ).execution_decision.code
+        == "eligible"
+    )

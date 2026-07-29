@@ -192,9 +192,11 @@ def test_capabilities_advertise_v2_only_after_complete_registration(monkeypatch)
     )
     service._evidence_repository = MagicMock()
     try:
-        evidence = TestClient(
-            create_app(accepted_operation_service=service)
-        ).get("/api/capabilities").json()
+        evidence = (
+            TestClient(create_app(accepted_operation_service=service))
+            .get("/api/capabilities")
+            .json()
+        )
     finally:
         reset_config()
 
