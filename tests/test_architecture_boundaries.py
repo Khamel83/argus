@@ -70,9 +70,7 @@ def _imports(path: Path, *, package: str | None = None) -> set[str]:
                 )
             if node.module is not None:
                 imported.add(module)
-            imported.update(
-                f"{module}.{alias.name}" for alias in node.names
-            )
+            imported.update(f"{module}.{alias.name}" for alias in node.names)
     return imported
 
 
@@ -127,6 +125,7 @@ def test_transport_adapter_inventory_has_only_closed_legacy_exceptions():
     non_adapters = {
         ROOT / "argus/mcp/__init__.py",
         ROOT / "argus/mcp/capabilities.py",
+        ROOT / "argus/mcp/sessions.py",
         ROOT / "argus/cli/__init__.py",
         ROOT / "argus/workflows/__init__.py",
         ROOT / "argus/workflows/models.py",

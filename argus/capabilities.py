@@ -30,6 +30,7 @@ def _thaw(value):
 @dataclass(frozen=True, slots=True)
 class ReleaseCapabilityManifest:
     snapshot: Mapping[str, object]
+    mcp_transport: Mapping[str, object]
 
     def as_dict(self) -> dict[str, object]:
         return _thaw(self.snapshot)
@@ -42,6 +43,28 @@ _HTTP_V2_REGISTRATIONS = frozenset(
         "v2_presenter",
         "v2_routes",
         "transport_security",
+    }
+)
+
+MCP_TRANSPORT_DESCRIPTOR = _freeze(
+    {
+        "endpoint": "/mcp",
+        "protocol_versions": (
+            "2024-11-05",
+            "2025-03-26",
+            "2025-06-18",
+            "2025-11-25",
+        ),
+        "methods": ("POST", "GET", "DELETE", "OPTIONS"),
+        "post_content_type": "application/json",
+        "post_accept": ("application/json", "text/event-stream"),
+        "get_accept": "text/event-stream",
+        "max_request_body_bytes": 4 * 1024 * 1024,
+        "notification_status": 202,
+        "session_idle_timeout_seconds": 30 * 60,
+        "max_active_sessions": 256,
+        "session_id_max_characters": 128,
+        "legacy_sse_paths": ("/sse", "/messages/"),
     }
 )
 
@@ -71,4 +94,18 @@ def http_capability_manifest(
         }
     else:
         snapshot = {}
-    return ReleaseCapabilityManifest(snapshot=_freeze(snapshot))
+    return ReleaseCapabilityManifest(
+        snapshot=_freeze(snapshot),
+        mcp_transport=MCP_TRANSPORT_DESCRIPTOR,
+    )
+
+
+def validate_mcp_transport_registration(
+    registration: Mapping[str, object],
+) -> None:
+    """Fail closed when the listener does not match the release descriptor."""
+    expected = MCP_TRANSPORT_DESCRIPTOR
+    if _freeze(registration) != expected:
+        raise CapabilityManifestError(
+            "MCP transport registration does not match the release manifest"
+        )
