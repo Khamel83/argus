@@ -274,7 +274,7 @@ def test_search_execution_evidence_fails_closed_for_unknown_paid_spend():
         accepted_at=receipt.accepted_at,
         acceptance_fingerprint=receipt.acceptance_fingerprint,
         cache_decision=CacheDecisionOutcome.MISS,
-        origin_spend_usd=Decimal("0"),
+        origin_spend_usd=Decimal("1"),
         current_spend_usd=None,
         reserved_spend_usd=None,
         spend_accounting_source="paid_attempt_accounting_incomplete",
@@ -282,7 +282,7 @@ def test_search_execution_evidence_fails_closed_for_unknown_paid_spend():
         spend_complete=False,
         current_provider_calls=1,
         cache_origin="none",
-        origin_spend_complete=True,
+        origin_spend_complete=False,
         cache_eligible=False,
         cache_age_ms=0,
     )
@@ -298,6 +298,8 @@ def test_search_execution_evidence_fails_closed_for_unknown_paid_spend():
     assert "reserved_usd" not in evidence["spend"]
     assert evidence["spend"]["reconciliation"] == "uncertain"
     assert evidence["spend"]["provider_calls"]["value"] == 1
+    assert evidence["cache"]["origin_spend_usd"] is None
+    assert evidence["cache"]["origin_spend_availability"] == "unavailable"
     assert "should-never-leak" not in json.dumps(evidence)
 
 
@@ -667,6 +669,9 @@ async def test_archive_fallback_is_cancelled_at_operation_deadline(tmp_path):
     assert execution.outcome is CanonicalOutcome.TIMEOUT
     assert execution.reason == "operation_deadline"
     assert cancelled is True
+    assert execution.evidence.current_provider_calls == 1
+    assert len(captured.invoked_attempts) == 1
+    assert captured.invoked_attempts[0].provider is ProviderName.ARCHIVE
     assert captured.fusion is None
     assert evidence.accepted_count() == 1
 

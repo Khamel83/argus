@@ -158,7 +158,10 @@ async def test_accepted_search_cache_hit_gets_fresh_durable_receipt(tmp_path):
     assert evidence.publication_count() == 1
 
 
-def test_accepted_accounting_fails_closed_for_unknown_paid_charge_and_counts_batches():
+def test_accepted_accounting_fails_closed_for_paid_charge_and_counts_invocations():
+    from decimal import Decimal
+
+    from argus.broker.execution import ProviderInvocationEvidence
     from argus.broker.router import SearchBroker
 
     traces = [
@@ -177,8 +180,15 @@ def test_accepted_accounting_fails_closed_for_unknown_paid_charge_and_counts_bat
 
     accounting = SearchBroker._accepted_execution_accounting(
         traces,
-        invoked_providers=frozenset(
-            {ProviderName.DUCKDUCKGO, ProviderName.BRAVE}
+        invoked_attempts=(
+            ProviderInvocationEvidence(
+                provider=ProviderName.DUCKDUCKGO,
+                attempt_id="attempt-ddg",
+            ),
+            ProviderInvocationEvidence(
+                provider=ProviderName.BRAVE,
+                attempt_id="attempt-brave",
+            ),
         ),
     )
 
@@ -189,6 +199,12 @@ def test_accepted_accounting_fails_closed_for_unknown_paid_charge_and_counts_bat
     assert accounting.accounting_source == "paid_attempt_accounting_incomplete"
     assert accounting.reconciliation == "uncertain"
     assert "should-never-leak" not in repr(accounting)
+    origin_spend, origin_complete = SearchBroker._accepted_origin_spend(
+        accounting,
+        durable_origin_spend=Decimal("1"),
+    )
+    assert origin_spend == Decimal("1")
+    assert origin_complete is False
 
 
 @pytest.mark.asyncio
@@ -2466,6 +2482,7 @@ async def test_remote_exception_settles_typed_failure_never_success():
     from unittest.mock import patch
 
     from argus.broker.reachability import ReachabilityMatrix
+    from argus.broker.router import SearchBroker
     from argus.config import EgressNode
 
     matrix = ReachabilityMatrix()
@@ -2493,6 +2510,17 @@ async def test_remote_exception_settles_typed_failure_never_success():
         )
 
     assert outcome.traces[0].status == "error"
+    assert len(outcome.invoked_attempts) == 1
+    assert outcome.invoked_attempts[0].provider is ProviderName.YAHOO
+    assert outcome.invoked_attempts[0].attempt_id
+    accounting = SearchBroker._accepted_execution_accounting(
+        outcome.traces,
+        invoked_attempts=outcome.invoked_attempts,
+    )
+    assert accounting.provider_calls == 1
+    assert accounting.complete is True
+    assert accounting.actual_usd == 0
+    assert accounting.reserved_usd == 0
     lease = executor._readiness.repository.latest_lease(ProviderName.YAHOO)
     assert lease is not None
     assert lease.outcome == "provider_unavailable"
