@@ -218,6 +218,7 @@ def test_session_update_failure_is_separate_from_receipt_bound_outcome():
 
 @pytest.mark.asyncio
 async def test_extraction_presenter_preserves_accepted_preflight_outcome():
+    from argus.api.presenters import LegacyHttpPresenter
     from argus.extraction.models import ExtractedContent
     from argus.operations.accepted import AcceptedOperationService
 
@@ -241,6 +242,7 @@ async def test_extraction_presenter_preserves_accepted_preflight_outcome():
 
     assert operation.outcome is CanonicalOutcome.POLICY_REJECTED
     assert operation.error.status == 403
+    assert LegacyHttpPresenter().extract(operation).error == "policy_rejected"
 
 
 @pytest.mark.asyncio
@@ -746,6 +748,7 @@ def _replay_valid_fixture_through_production(evidence, database_path):
                         raw_rank=contribution["provider_rank"],
                     )
                 )
+        results.sort(key=lambda item: item.raw_rank)
         trace = ProviderTrace(
             provider=provider,
             status="success" if results else "error",
@@ -919,7 +922,6 @@ async def _replay_fixture_through_accepted_authority(
     envelope,
     database_path,
 ):
-    from dataclasses import replace
     from datetime import datetime, timezone
 
     from argus.api.contracts_v2 import EvidenceHttpPresenter
@@ -931,24 +933,51 @@ async def _replay_fixture_through_accepted_authority(
         acceptance_fingerprint,
         execution_cohort,
     )
-    from argus.broker.execution import ProviderExecutionOutcome
-    from argus.broker.provider_evidence import LegacyProviderBatchAdapter
     from argus.broker.router import SearchBroker
-    from argus.models import SearchQuery
+    from argus.models import ProviderStatus, SearchQuery
     from argus.operations.accepted import (
         AcceptedOperationRegistration,
         AcceptedOperationService,
     )
-    from argus.persistence.evidence import SqlAlchemyEvidenceRepository
+    from argus.persistence.evidence import (
+        AcceptedOperationRow,
+        RetrievalEvidenceAttemptRow,
+        RetrievalEvidenceBatchRow,
+        RetrievalEvidenceReadinessRow,
+        SqlAlchemyEvidenceRepository,
+    )
     from argus.persistence.search_ledger import create_search_ledger_repository
+    from argus.providers.base import ProbeCapability
+    from sqlalchemy import select
 
     evidence = envelope["result"]["evidence"]
     provider_names = tuple(
         ProviderName(value) for value in evidence["plan"]["candidate_providers"]
     )
-    batches = {}
-    traces = []
-    provider_results = {}
+    providers = {}
+
+    class FixtureProvider:
+        probe_capability = ProbeCapability.ASYNC_NATIVE
+
+        def __init__(self, provider, results, trace):
+            self.name = provider
+            self.results = results
+            self.trace = trace
+
+        def is_available(self):
+            return True
+
+        def status(self):
+            return ProviderStatus.ENABLED
+
+        async def search(self, _query):
+            return list(self.results), ProviderTrace(
+                provider=self.trace.provider,
+                status=self.trace.status,
+                results_count=len(self.results),
+                error=self.trace.error,
+            )
+
     for attempt in evidence["provider_attempts"]:
         provider = ProviderName(attempt["provider"])
         results = []
@@ -971,6 +1000,7 @@ async def _replay_fixture_through_accepted_authority(
                         raw_rank=contribution["provider_rank"],
                     )
                 )
+        results.sort(key=lambda item: item.raw_rank)
         trace = ProviderTrace(
             provider=provider,
             status="success" if attempt["outcome"] == "success" else "error",
@@ -981,25 +1011,7 @@ async def _replay_fixture_through_accepted_authority(
                 else attempt["outcome"]
             ),
         )
-        batch = LegacyProviderBatchAdapter.from_legacy((results, trace))
-        batches[provider.value] = replace(
-            batch,
-            request_evidence=replace(
-                batch.request_evidence,
-                attempt_id=attempt["attempt_id"],
-            ),
-        )
-        traces.append(trace)
-        provider_results[provider.value] = results
-
-    class FixtureExecutor:
-        async def execute(self, *_args, **_kwargs):
-            return ProviderExecutionOutcome(
-                traces=list(traces),
-                provider_results=dict(provider_results),
-                live_providers_used=len(batches),
-                provider_batches=dict(batches),
-            )
+        providers[provider] = FixtureProvider(provider, results, trace)
 
     ledger = create_search_ledger_repository(
         f"sqlite:///{database_path}",
@@ -1007,9 +1019,8 @@ async def _replay_fixture_through_accepted_authority(
     )
     repository = SqlAlchemyEvidenceRepository(ledger.session_factory)
     broker = SearchBroker(
-        providers={},
+        providers=providers,
         spend_repository=MagicMock(),
-        executor=FixtureExecutor(),
     )
     request = SearchRequest(
         query=f"fixture {evidence['request']['request_id']}",
@@ -1039,7 +1050,10 @@ async def _replay_fixture_through_accepted_authority(
                 "snippet": "fixture cached evidence",
                 "domain": cluster["site_key"],
                 "provider": cluster["contributions"][0]["provider"],
-                "score": 1.0,
+                "score": (
+                    cluster["exact_score"]["numerator"]
+                    / cluster["exact_score"]["denominator"]
+                ),
             }
             for cluster in evidence["fusion"]["clusters"]
         )
@@ -1117,11 +1131,81 @@ async def _replay_fixture_through_accepted_authority(
     assert rendered["outcome"] == expected.value
     assert rendered["request_id"] == evidence["request"]["request_id"]
     if expected in {CanonicalOutcome.SUCCESS, CanonicalOutcome.DEGRADED}:
-        assert {
-            item["url"] for item in rendered["result"]["results"]
-        } == {
-            cluster["url"] for cluster in evidence["fusion"]["clusters"]
+        expected_results = sorted(
+            envelope["result"]["caller_result"]["results"],
+            key=lambda item: item["rank"],
+        )
+        actual_results = rendered["result"]["results"]
+        assert [item["url"] for item in actual_results] == [
+            item["url"] for item in expected_results
+        ], (actual_results, expected_results)
+        assert [item["title"] for item in actual_results] == [
+            item["title"] for item in expected_results
+        ]
+        clusters = sorted(
+            evidence["fusion"]["clusters"],
+            key=lambda item: item["output_rank"],
+        )
+        assert [item["provider"] for item in actual_results] == [
+            item["smallest_provider"] for item in clusters
+        ]
+        assert [item["score"] for item in actual_results] == pytest.approx(
+            [
+                item["exact_score"]["numerator"]
+                / item["exact_score"]["denominator"]
+                for item in clusters
+            ]
+        )
+        expected_trace_status = {
+            item["provider"]: (
+                "success" if item["outcome"] == "success" else "error"
+            )
+            for item in evidence["provider_attempts"]
         }
+        actual_trace_status = {
+            item["provider"]: item["status"]
+            for item in rendered["result"]["traces"]
+            if item["provider"] in expected_trace_status
+        }
+        assert actual_trace_status == expected_trace_status
+
+    if expected is not CanonicalOutcome.PERSISTENCE_FAILED:
+        with ledger.session_factory() as session:
+            accepted_row = session.scalar(select(AcceptedOperationRow))
+            batch_rows = list(
+                session.scalars(select(RetrievalEvidenceBatchRow))
+            )
+            attempt_rows = list(
+                session.scalars(select(RetrievalEvidenceAttemptRow))
+            )
+            readiness_rows = list(
+                session.scalars(select(RetrievalEvidenceReadinessRow))
+            )
+        assert accepted_row is not None
+        assert accepted_row.receipt_ref == (
+            rendered["result"]["acceptance_receipt"]["receipt_ref"]
+        )
+        assert accepted_row.acceptance_fingerprint == (
+            rendered["result"]["acceptance_receipt"][
+                "acceptance_fingerprint"
+            ]
+        )
+        attempted_providers = {
+            item["provider"] for item in evidence["provider_attempts"]
+        }
+        assert {row.provider for row in batch_rows} == attempted_providers
+        assert len(attempt_rows) == len(attempted_providers)
+        assert all(row.attempt_ref for row in attempt_rows)
+        readiness = {
+            row.provider: json.loads(row.decision_json)
+            for row in readiness_rows
+        }
+        for provider in attempted_providers:
+            assert readiness[provider]["config_status"] == "enabled"
+            assert (
+                readiness[provider]["health"]["registration"]
+                == "registered"
+            )
 
 
 @pytest.mark.asyncio

@@ -47,12 +47,9 @@ class LegacyHttpPresenter:
         return SearchResponse.model_validate(result)
 
     def extract(self, operation: AcceptedOperation) -> ExtractResponse:
-        # V1 historically returned a typed rejection in a 200 response when
-        # all extractors failed. Preserve that wire contract while V2 exposes
-        # the canonical failure status.
-        if (
-            operation.outcome.value == "extraction_failed"
-            and operation.result is not None
-        ):
+        # V1 historically returned every completed extractor projection as a
+        # typed 200 body, including policy and readiness rejections. V2 alone
+        # owns canonical non-2xx status projection.
+        if operation.result is not None:
             return ExtractResponse.model_validate(_thaw(operation.result))
         return ExtractResponse.model_validate(self._result(operation))
