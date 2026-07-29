@@ -445,6 +445,7 @@ class ProviderExecutor:
                     query,
                     provider,
                     pname,
+                    attempt_id=authorization.attempt_id,
                     scope=authorization.scope,
                     plan=plan,
                     provider_phase_deadline=provider_phase_deadline,
@@ -504,6 +505,7 @@ class ProviderExecutor:
         provider: BaseProvider,
         provider_name: ProviderName,
         *,
+        attempt_id: str | None = None,
         scope=None,
         plan: RetrievalPlan | None = None,
         provider_phase_deadline: float | None = None,
@@ -515,6 +517,8 @@ class ProviderExecutor:
                 request_class=query.mode.value,
             )
         metadata = dict(query.metadata)
+        if attempt_id is not None:
+            metadata["_provider_attempt_id"] = attempt_id
         if plan is not None:
             metadata["_retrieval_plan"] = plan
             metadata["_freshness_window"] = plan.freshness

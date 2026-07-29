@@ -12,7 +12,7 @@ from argus.models import (
     SearchQuery,
     SearchResult,
 )
-from argus.providers.base import ProbeCapability
+from argus.providers.base import BaseProvider, ProbeCapability
 from tests.planning_helpers import execute_with_plan
 
 
@@ -536,6 +536,48 @@ async def test_executor_preserves_normalized_batch_and_projects_only_at_compatib
     assert executor._readiness.snapshot(
         ProviderName.YAHOO, request_class="discovery"
     ).usability == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_executor_passes_readiness_attempt_id_to_native_provider_batch():
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.broker.provider_evidence import ProviderSearchBatch
+
+    class NativeBatchProvider(BaseProvider):
+        @property
+        def name(self):
+            return ProviderName.YAHOO
+
+        def is_available(self):
+            return True
+
+        def status(self):
+            return ProviderStatus.ENABLED
+
+        async def search(self, query):
+            return ProviderSearchBatch(
+                provider=self.name,
+                provider_contract_version="fixture-v1",
+                request_evidence=self._request_evidence(query),
+            )
+
+    executor = ProviderExecutor(
+        providers={ProviderName.YAHOO: NativeBatchProvider()},
+        health_tracker=HealthTracker(),
+        budget_tracker=BudgetTracker(),
+    )
+
+    outcome = await execute_with_plan(
+        executor,
+        SearchQuery(query="authority attempt", providers=[ProviderName.YAHOO]),
+        [ProviderName.YAHOO],
+    )
+
+    attempt_id = outcome.provider_batches["yahoo"].request_evidence.attempt_id
+    assert attempt_id
+    assert attempt_id != "yahoo-attempt"
 
 
 @pytest.mark.asyncio
