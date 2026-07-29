@@ -32,6 +32,7 @@ MCP_ADAPTERS = {
     ROOT / "argus/mcp/v2_tools.py",
 }
 MCP_ROOT = ROOT / "argus/mcp"
+SCORECARD_ROOT = ROOT / "argus/scorecard"
 EXPECTED_ADAPTERS = {
     *PORTED_HTTP_MODULES,
     *LEGACY_ADAPTER_EXCEPTIONS,
@@ -997,3 +998,27 @@ def test_import_parser_resolves_relative_reexport_seams(tmp_path):
         "argus.extraction.extractor",
         "argus.api.routes_search",
     }
+
+
+def test_scorecard_is_diagnostic_only_and_has_no_execution_authority_imports():
+    forbidden = {
+        "argus.api",
+        "argus.broker",
+        "argus.providers",
+        "argus.extraction",
+        "argus.persistence",
+        "argus.workflows",
+        "argus.authority",
+    }
+    scorecard_modules = tuple(SCORECARD_ROOT.glob("*.py"))
+
+    assert scorecard_modules
+    for path in scorecard_modules:
+        violations = {
+            module
+            for module in _imports(path)
+            if any(
+                module == name or module.startswith(f"{name}.") for name in forbidden
+            )
+        }
+        assert not violations, f"{path.relative_to(ROOT)}: {sorted(violations)}"

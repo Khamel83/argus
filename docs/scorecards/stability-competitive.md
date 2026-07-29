@@ -334,6 +334,25 @@ not fresh. Each canary schedule records its interval and evidence TTL; the next
 run must occur before expiry, so “recurrently” never becomes an unbounded
 operator promise.
 
+## Hermetic implementation boundary
+
+`scripts/run-scorecard.py --lane hermetic` is the pull-request lane. It reads
+only the frozen corpus and evaluator fixtures, evaluates both `free` and
+`budgeted` profiles independently, and writes a checksummed secret-free
+diagnostic bundle. It imports no provider, broker, HTTP, persistence, or
+deployment authority and cannot authorize runtime execution or promotion.
+
+`--lane live-config` writes the guarded live-run configuration only. A live
+competitive run is deliberately outside ordinary CI: it must execute through
+canonical HTTP with baseline and candidate close together under the same
+topology, profile, and provider snapshot. The free profile can be scheduled
+without a billable call. A budgeted run must first present an immutable,
+single-use authorization receipt for the exact run id and generation naming
+permitted providers, maximum tier, call-count cap, and cost/credit cap;
+one-time-credit providers remain disabled unless individually named. Absence,
+reuse, or mismatch fails before reservation. These requirements are a human
+promotion boundary, not an authorization supplied by a scorecard verdict.
+
 ## Explicit non-goals
 
 - No external-search-engine parity claim.
