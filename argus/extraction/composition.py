@@ -127,9 +127,7 @@ class ResultExtractionLink:
             extraction_outcome=accepted_outcome.outcome,
             artifact_disposition=accepted_outcome.artifact_disposition,
             artifact_ref=artifact.artifact_ref if artifact is not None else None,
-            rejection_ref=(
-                rejection.rejection_ref if rejection is not None else None
-            ),
+            rejection_ref=(rejection.rejection_ref if rejection is not None else None),
             acceptance_receipt=accepted_outcome.acceptance_receipt,
             required=required,
             eligible_path=eligible_path,
@@ -200,17 +198,17 @@ def _validate_requirement_shape(requirement: ArtifactRequirement) -> None:
     if not isinstance(selections, tuple) or len(selections) > _MAX_LINKS:
         raise _invalid("artifact selections exceed the bounded maximum")
     selection_refs = [selection.result_cluster_ref for selection in selections]
-    if (
-        len(set(selection_refs)) != len(selection_refs)
-        or any(not _safe_ref(reference) for reference in selection_refs)
+    if len(set(selection_refs)) != len(selection_refs) or any(
+        not _safe_ref(reference) for reference in selection_refs
     ):
         raise _invalid("artifact selection references must be unique and bounded")
     for selection in selections:
-        if (
-            type(selection.required) is not bool
-            or selection.minimum_disposition
-            not in {ArtifactDisposition.USABLE, ArtifactDisposition.PARTIAL}
-        ):
+        if type(
+            selection.required
+        ) is not bool or selection.minimum_disposition not in {
+            ArtifactDisposition.USABLE,
+            ArtifactDisposition.PARTIAL,
+        }:
             raise _invalid("artifact selection minimum is invalid")
     floor = requirement.aggregate_floor
     if (
@@ -281,16 +279,11 @@ def _validate_requirement(
                 )
         else:
             accepted = link.accepted_outcome
-            if (
-                not isinstance(accepted, AcceptedExtractionOutcome)
-                or not isinstance(
-                    link.acceptance_receipt,
-                    ExtractionAcceptanceReceipt,
-                )
+            if not isinstance(accepted, AcceptedExtractionOutcome) or not isinstance(
+                link.acceptance_receipt,
+                ExtractionAcceptanceReceipt,
             ):
-                raise _invalid(
-                    "run-bearing link requires its typed accepted outcome"
-                )
+                raise _invalid("run-bearing link requires its typed accepted outcome")
             expected = ResultExtractionLink.from_accepted(
                 link_ref=link.link_ref,
                 result_cluster_ref=link.result_cluster_ref,
@@ -310,12 +303,12 @@ def _validate_requirement(
             link.reuse_origin,
         ):
             if reference is not None and not _safe_ref(reference):
-                raise _invalid("result extraction link has an invalid bounded reference")
+                raise _invalid(
+                    "result extraction link has an invalid bounded reference"
+                )
         if any(not _safe_ref(version) for version in link.policy_versions):
             raise _invalid("artifact policy versions must be bounded")
-        artifact_exists = (
-            link.artifact_disposition is not ArtifactDisposition.NONE
-        )
+        artifact_exists = link.artifact_disposition is not ArtifactDisposition.NONE
         if artifact_exists != bool(
             link.artifact_ref
             and link.artifact_identity
@@ -382,10 +375,7 @@ def _meets(
     link: ResultExtractionLink,
     minimum: ArtifactDisposition,
 ) -> bool:
-    return (
-        _DISPOSITION_RANK[link.artifact_disposition]
-        >= _DISPOSITION_RANK[minimum]
-    )
+    return _DISPOSITION_RANK[link.artifact_disposition] >= _DISPOSITION_RANK[minimum]
 
 
 def compose_retrieval_evidence(
@@ -460,17 +450,23 @@ def compose_retrieval_evidence(
         not in {CanonicalOutcome.SUCCESS, CanonicalOutcome.DEGRADED}
     )
 
-    if accepted_retrieval.acceptance_receipt is None or any(
-        link.extraction_run_id is not None and link.acceptance_receipt is None
-        for link in links
+    if (
+        accepted_retrieval.acceptance_receipt is None
+        or any(
+            link.extraction_run_id is not None and link.acceptance_receipt is None
+            for link in links
+        )
+        or any(
+            link.extraction_outcome is CanonicalOutcome.PERSISTENCE_FAILED
+            for link in links
+        )
     ):
         artifact_outcome = CanonicalOutcome.PERSISTENCE_FAILED
         composite = CanonicalOutcome.PERSISTENCE_FAILED
         reason = "durable_acceptance_missing"
     else:
         required_met = all(
-            not selection.required
-            or _meets(link, selection.minimum_disposition)
+            not selection.required or _meets(link, selection.minimum_disposition)
             for link in links
             for selection in (selection_by_ref[link.result_cluster_ref],)
         )
@@ -509,9 +505,7 @@ def compose_retrieval_evidence(
                 for link in links
             )
             artifact_outcome = (
-                CanonicalOutcome.DEGRADED
-                if degraded
-                else CanonicalOutcome.SUCCESS
+                CanonicalOutcome.DEGRADED if degraded else CanonicalOutcome.SUCCESS
             )
             composite = (
                 CanonicalOutcome.DEGRADED

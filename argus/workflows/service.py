@@ -17,33 +17,69 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from argus.broker.dedupe import normalize_url
-from argus.broker.router import SearchBroker
-from argus.corpus import CorpusPaths, describe_corpus_paths, get_corpus_paths, mirror_legacy_docs_cache
-from argus.extraction import extract_url
+from argus.corpus import (
+    CorpusPaths,
+    describe_corpus_paths,
+    get_corpus_paths,
+    mirror_legacy_docs_cache,
+)
+from argus.contracts import AcceptedOperation, CanonicalOutcome
 from argus.logging import get_logger
-from argus.models import SearchMode, SearchQuery
-from argus.persistence.db import WorkflowPersistenceGateway
 from argus.workflows.models import (
     CitationRef,
+    WorkflowAggregateArtifactFloor,
+    WorkflowArtifactDisposition,
+    WorkflowArtifactRequirement,
+    WorkflowArtifactSelection,
+    WorkflowResultExtractionLink,
     StoredDocument,
     SummarySection,
+    WorkflowEvidenceView,
     WorkflowArtifact,
     WorkflowKind,
     WorkflowResult,
     WorkflowStatus,
+    compose_workflow_evidence,
 )
 from argus.workflows.summarizer import get_summarizer
 
 logger = get_logger("workflows")
 
 _STATIC_SUFFIXES = {
-    ".css", ".js", ".map", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
-    ".pdf", ".zip", ".gz", ".tgz", ".json", ".xml", ".txt", ".rss", ".atom",
+    ".css",
+    ".js",
+    ".map",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".svg",
+    ".ico",
+    ".pdf",
+    ".zip",
+    ".gz",
+    ".tgz",
+    ".json",
+    ".xml",
+    ".txt",
+    ".rss",
+    ".atom",
 }
 _HIGH_VALUE_KEYWORDS = (
-    "docs", "doc", "guide", "guides", "reference", "api", "manual",
-    "tutorial", "learn", "kb", "knowledge", "blog", "article", "faq",
+    "docs",
+    "doc",
+    "guide",
+    "guides",
+    "reference",
+    "api",
+    "manual",
+    "tutorial",
+    "learn",
+    "kb",
+    "knowledge",
+    "blog",
+    "article",
+    "faq",
 )
 
 
@@ -83,6 +119,7 @@ def _slug_from_url(url: str) -> str:
     parsed = urlparse(url)
     seed = f"{parsed.netloc}{parsed.path}".strip("/") or parsed.netloc or "target"
     from argus.corpus.paths import slugify
+
     return slugify(seed, default="target")
 
 
@@ -99,6 +136,12 @@ def _same_site(url: str, root_domain: str) -> bool:
     if not parsed.scheme.startswith("http"):
         return False
     return _domain_root(parsed.netloc) == root_domain
+
+
+def _normal_url(url: str) -> str:
+    """Stable local dedupe key; execution authority remains injected."""
+    parsed = urlparse(url)
+    return parsed._replace(fragment="").geturl().rstrip("/").lower()
 
 
 def _looks_like_html(url: str) -> bool:
@@ -144,20 +187,19 @@ class WorkflowService:
 
     def __init__(
         self,
-        broker: SearchBroker,
+        accepted_operations,
+        evidence_gateway,
         *,
         corpus_paths: CorpusPaths | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
         caller: str = "workflows",
-        authority_capability: object | None = None,
     ):
-        self._broker = broker
+        self._accepted_operations = accepted_operations
+        self._evidence_gateway = evidence_gateway
         self._paths = corpus_paths or get_corpus_paths()
         self._runs: dict[str, WorkflowResult] = {}
-        self._persistence = WorkflowPersistenceGateway()
         self._progress = progress_callback
         self._caller = caller or "workflows"
-        self._authority_capability = authority_capability
 
     def _report(self, current: int, total: int, message: str) -> None:
         if self._progress:
@@ -166,13 +208,52 @@ class WorkflowService:
             except Exception:
                 pass
 
-    async def _extract(self, url: str):
-        if self._authority_capability is not None:
-            return await extract_url(
-                url,
-                authority_capability=self._authority_capability,
-            )
-        return await extract_url(url)
+    async def _operation_search(self, *, query: str, mode: str, max_results: int):
+        request = type(
+            "WorkflowSearchRequest",
+            (),
+            {
+                "query": query,
+                "mode": mode,
+                "max_results": max_results,
+                "providers": None,
+                "free_only": False,
+                "caller": self._caller,
+                "session_id": None,
+                "include_attribution": False,
+            },
+        )()
+        return await self._accepted_operations.search(
+            request,
+            principal=self._caller,
+            request_id=uuid.uuid4().hex,
+        )
+
+    async def _operation_recover(
+        self, *, url: str, title: str | None, domain: str | None
+    ):
+        request = type(
+            "WorkflowRecoverRequest",
+            (),
+            {"url": url, "title": title, "domain": domain},
+        )()
+        return await self._accepted_operations.recover(
+            request,
+            principal=self._caller,
+            request_id=uuid.uuid4().hex,
+        )
+
+    async def _operation_extract(self, url: str):
+        request = type(
+            "WorkflowExtractRequest",
+            (),
+            {"url": url, "domain": None, "mode": "default"},
+        )()
+        return await self._accepted_operations.extract(
+            request,
+            principal=self._caller,
+            request_id=uuid.uuid4().hex,
+        )
 
     def get_paths(self) -> dict[str, Any]:
         return describe_corpus_paths()
@@ -213,7 +294,15 @@ class WorkflowService:
             caller_identity=caller_identity,
             caller_label=caller_label,
         )
-        asyncio.create_task(self._execute_run(run.run_id, self._recover_article_impl, url=url, title=title, domain=domain))
+        asyncio.create_task(
+            self._execute_run(
+                run.run_id,
+                self._recover_article_impl,
+                url=url,
+                title=title,
+                domain=domain,
+            )
+        )
         return run
 
     async def start_capture_site(
@@ -323,48 +412,20 @@ class WorkflowService:
         Performs a search, extracts up to ``max_search_results`` pages, and uses the
         LLMSummarizer to synthesize a concise answer.
         """
-        # Perform search
-        search_result = await self._broker.search(
-            SearchQuery(
-                query=query,
-                mode=SearchMode.DISCOVERY,
-                max_results=max_search_results,
-                free_only=False,
-                caller=self._caller_for_run(run),
-                metadata={"caller_label": run.metadata.get("caller_label", "")},
-            )
+        operation = await self._operation_search(
+            query=query,
+            mode="discovery",
+            max_results=max_search_results,
         )
-
-        docs: list[StoredDocument] = []
-        citations: list[CitationRef] = []
-        for result in search_result.results[:max_search_results]:
-            try:
-                extracted = await self._extract(result.url)
-            except Exception:
-                continue
-            doc_id = str(uuid.uuid4())
-            doc = StoredDocument(
-                id=doc_id,
-                url=result.url,
-                title=extracted.title or result.title,
-                artifact_path="",
-                word_count=len(extracted.text.split()) if extracted.text else 0,
-                domain=result.url.split("/")[2] if "//" in result.url else "",
-                metadata={"lead_text": (extracted.text or "")[:3000]},
-            )
-            docs.append(doc)
-            citation_ref = CitationRef(
-                id=doc_id,
-                title=result.title,
-                url=result.url,
-                artifact_path="",
-            )
-            citations.append(citation_ref)
-
-        run.documents = docs
-        run.citations = citations
-
-        # Summarize using LLM
+        docs, citations = await self._compose_search_documents(
+            run,
+            operation,
+            max_results=max_search_results,
+            section="search-results",
+            role="source",
+            source_type="web",
+        )
+        run.documents, run.citations = docs, citations
         summarizer = get_summarizer("llm")
         sections = await summarizer.summarize(
             title=query,
@@ -382,6 +443,148 @@ class WorkflowService:
         )
         return run
 
+    async def _compose_search_documents(
+        self,
+        run: WorkflowResult,
+        operation: AcceptedOperation,
+        *,
+        max_results: int,
+        section: str,
+        role: str,
+        source_type: str,
+    ) -> tuple[list[StoredDocument], list[CitationRef]]:
+        """Compose only accepted extraction evidence for an accepted search."""
+        view = WorkflowEvidenceView.from_operation(operation, max_results=max_results)
+        result = operation.result
+        if result is None:
+            raise RuntimeError(f"workflow_search_{operation.outcome.value}")
+        selected = tuple(result["results"][:max_results])
+        requirement = WorkflowArtifactRequirement(
+            requirement_ref=f"workflow-{view.acceptance_receipt}",
+            selections=tuple(
+                WorkflowArtifactSelection(
+                    result_cluster_ref=cluster_ref,
+                    required=ordinal == 0,
+                    minimum_disposition=WorkflowArtifactDisposition.PARTIAL,
+                )
+                for ordinal, cluster_ref in enumerate(view.result_cluster_refs)
+            ),
+            aggregate_floor=WorkflowAggregateArtifactFloor(
+                count=1 if view.result_cluster_refs else 0,
+                minimum_disposition=WorkflowArtifactDisposition.PARTIAL,
+            ),
+            max_extractions=len(view.result_cluster_refs),
+            deadline_ms=30_000,
+            spend_policy_ref="workflow-extraction-v1",
+        )
+        links: list[WorkflowResultExtractionLink] = []
+        outcomes = []
+        for ordinal, (cluster_ref, search_result) in enumerate(
+            zip(view.result_cluster_refs, selected, strict=True)
+        ):
+            try:
+                extracted = await self._operation_extract(str(search_result["url"]))
+            except Exception:
+                extracted = None
+            typed = None
+            if extracted is not None and extracted.result is not None:
+                run_value = extracted.result.get("extraction_run_id")
+                if isinstance(run_value, str):
+                    typed = self._evidence_gateway.load_accepted_extraction_outcome(
+                        run_value
+                    )
+            if typed is not None:
+                links.append(
+                    WorkflowResultExtractionLink.from_accepted(
+                        link_ref=f"{view.acceptance_receipt}-{ordinal}",
+                        result_cluster_ref=cluster_ref,
+                        accepted_outcome=typed,
+                        required=ordinal == 0,
+                    )
+                )
+                outcomes.append((search_result, typed))
+            else:
+                links.append(
+                    WorkflowResultExtractionLink(
+                        link_ref=f"{view.acceptance_receipt}-{ordinal}",
+                        result_cluster_ref=cluster_ref,
+                        extraction_run_id=None,
+                        extraction_outcome=(
+                            extracted.outcome
+                            if extracted is not None
+                            else CanonicalOutcome.PERSISTENCE_FAILED
+                        ),
+                        artifact_disposition=WorkflowArtifactDisposition.NONE,
+                        artifact_ref=None,
+                        rejection_ref=None,
+                        acceptance_receipt=None,
+                        required=ordinal == 0,
+                        eligible_path=(
+                            extracted is not None
+                            and extracted.outcome is not CanonicalOutcome.UNREADY
+                        ),
+                        attempted=False,
+                    )
+                )
+        composition = compose_workflow_evidence(view, tuple(links), requirement)
+        run.metadata["composition"] = {
+            "outcome": composition.composite_outcome.value,
+            "trace": list(composition.composition_trace),
+        }
+        receipt = self._evidence_gateway.accept_retrieval_composition(
+            view, composition, requirement
+        )
+        run.metadata["composition_receipt_ref"] = receipt.receipt_ref
+        if composition.composite_outcome not in {
+            CanonicalOutcome.SUCCESS,
+            CanonicalOutcome.DEGRADED,
+        }:
+            raise RuntimeError(
+                f"workflow_composition_{composition.composite_outcome.value}"
+            )
+        documents: list[StoredDocument] = []
+        citations: list[CitationRef] = []
+        output_dir = Path(run.snapshot_dir) / section
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for ordinal, (search_result, accepted) in enumerate(outcomes, start=1):
+            artifact = accepted.artifact
+            if artifact is None or accepted.artifact_disposition not in {
+                WorkflowArtifactDisposition.USABLE,
+                WorkflowArtifactDisposition.PARTIAL,
+            }:
+                continue
+            document = self._store_document(
+                output_dir,
+                citation_id=f"S{ordinal}",
+                url=str(search_result["url"]),
+                title=artifact.title or str(search_result.get("title") or ""),
+                text=artifact.text,
+                word_count=artifact.word_count,
+                domain=urlparse(str(search_result["url"]))
+                .netloc.lower()
+                .lstrip("www."),
+                role=role,
+                source_type=source_type,
+                extractor=accepted.selected_extractor,
+                metadata={
+                    "artifact_disposition": accepted.artifact_disposition.value,
+                    "lead_text": _lead_text(artifact.text),
+                    "quality_passed": artifact.quality_passed,
+                    "is_complete": artifact.is_complete,
+                },
+            )
+            documents.append(document)
+            citations.append(
+                CitationRef(
+                    id=document.id,
+                    title=document.title,
+                    url=document.url,
+                    artifact_path=document.artifact_path,
+                    note=source_type,
+                )
+            )
+        return documents, citations
+
     async def recover_article(
         self,
         *,
@@ -397,7 +600,9 @@ class WorkflowService:
             caller_identity=caller_identity,
             caller_label=caller_label,
         )
-        return await self._execute_run(run.run_id, self._recover_article_impl, url=url, title=title, domain=domain)
+        return await self._execute_run(
+            run.run_id, self._recover_article_impl, url=url, title=title, domain=domain
+        )
 
     async def capture_site(
         self,
@@ -454,7 +659,11 @@ class WorkflowService:
         caller_label: str = "",
     ) -> WorkflowResult:
         run_id = uuid.uuid4().hex[:12]
-        slug = _slug_from_url(target) if target.startswith(("http://", "https://")) else _slug_from_url(f"https://{target}")
+        slug = (
+            _slug_from_url(target)
+            if target.startswith(("http://", "https://"))
+            else _slug_from_url(f"https://{target}")
+        )
         snapshot_dir = self._paths.snapshots_dir / kind.value / slug / run_id
         snapshot_dir.mkdir(parents=True, exist_ok=True)
         run = WorkflowResult(
@@ -486,50 +695,44 @@ class WorkflowService:
         except Exception as exc:
             logger.exception("Workflow %s failed", run.run_id)
             run.status = WorkflowStatus.FAILED
-            run.error = str(exc)
+            run.error = type(exc).__name__
         finally:
             run.finished_at = datetime.now(tz=None)
             self._write_run_state(run)
         return run
 
-    async def _recover_article_impl(self, run: WorkflowResult, *, url: str, title: str | None, domain: str | None):
+    async def _recover_article_impl(
+        self, run: WorkflowResult, *, url: str, title: str | None, domain: str | None
+    ):
         self._report(0, 3, "Searching for recovery candidates...")
-        query_parts = [url]
-        if title:
-            query_parts.append(title)
-        if domain:
-            query_parts.append(domain)
-        resp = await self._broker.search(
-            SearchQuery(
-                query=" ".join(query_parts),
-                mode=SearchMode.RECOVERY,
-                max_results=10,
-                caller=self._caller_for_run(run),
-                metadata={"caller_label": run.metadata.get("caller_label", "")},
-            )
-        )
+        operation = await self._operation_recover(url=url, title=title, domain=domain)
+        view = WorkflowEvidenceView.from_operation(operation, max_results=8)
+        accepted_results = operation.result["results"] if operation.result else ()
         candidates = []
-        seen = {normalize_url(url)}
-        for result in resp.results:
-            normalized = normalize_url(result.url)
+        seen = {_normal_url(url)}
+        for result in accepted_results:
+            normalized = _normal_url(str(result["url"]))
             if normalized in seen:
                 continue
             seen.add(normalized)
-            candidates.append(result.url)
+            candidates.append(str(result["url"]))
 
         if not candidates:
             raise ValueError("No recovery candidates found")
 
-        documents, citations = await self._capture_explicit_urls(
+        documents, citations = await self._compose_search_documents(
             run,
-            candidates[:8],
+            operation,
+            max_results=min(8, len(view.result_cluster_refs)),
             section="recovered-sources",
             role="recovered_source",
             source_type="recovery_candidate",
         )
         self._report(1, 3, f"Extracted {len(documents)} candidate pages")
         if not documents:
-            raise ValueError("Recovery candidates were found but none could be extracted")
+            raise ValueError(
+                "Recovery candidates were found but none could be extracted"
+            )
 
         best = max(
             documents,
@@ -541,7 +744,7 @@ class WorkflowService:
         )
         run.metadata["recovered_url"] = best.url
         run.metadata["candidate_count"] = len(documents)
-        run.metadata["search_run_id"] = resp.search_run_id
+        run.metadata["search_run_id"] = operation.request_id
 
         prompt = f"Recover a dead article for {title or url}"
         sections = await get_summarizer().summarize(
@@ -579,7 +782,9 @@ class WorkflowService:
         hard_page_limit: int,
     ):
         self._report(0, 4, "Discovering site URLs...")
-        candidates = await self._discover_site_urls(url, soft_page_limit=soft_page_limit, hard_page_limit=hard_page_limit)
+        candidates = await self._discover_site_urls(
+            url, soft_page_limit=soft_page_limit, hard_page_limit=hard_page_limit
+        )
         self._report(1, 4, f"Discovered {len(candidates)} URLs, extracting content...")
         documents, citations = await self._capture_explicit_urls(
             run,
@@ -618,7 +823,12 @@ class WorkflowService:
         run.summary_sections = sections
 
         current_dir = self._paths.research_dir / "sites" / _slug_from_url(url)
-        self._finalize_run(run, title=f"Site Capture: {url}", report_name="SUMMARY.md", current_dir=current_dir)
+        self._finalize_run(
+            run,
+            title=f"Site Capture: {url}",
+            report_name="SUMMARY.md",
+            current_dir=current_dir,
+        )
 
     async def _build_research_pack_impl(
         self,
@@ -645,7 +855,11 @@ class WorkflowService:
             soft_page_limit=50,
             hard_page_limit=120,
         )
-        self._report(2, 4, f"Captured {len(official_docs)} official docs, searching for external research...")
+        self._report(
+            2,
+            4,
+            f"Captured {len(official_docs)} official docs, searching for external research...",
+        )
         research_urls = await self._discover_research_urls(
             topic,
             official_url=official,
@@ -662,7 +876,9 @@ class WorkflowService:
             soft_page_limit=max_research_pages,
             hard_page_limit=max_research_pages,
         )
-        self._report(3, 4, f"Captured {len(research_docs)} external pages, generating summary...")
+        self._report(
+            3, 4, f"Captured {len(research_docs)} external pages, generating summary..."
+        )
         documents = official_docs + research_docs
         citations = official_citations + research_citations
         if not documents:
@@ -708,19 +924,19 @@ class WorkflowService:
     async def _discover_official_docs_url(
         self, topic: str, *, run: WorkflowResult
     ) -> str | None:
-        resp = await self._broker.search(
-            SearchQuery(
-                query=f"{topic} official docs",
-                mode=SearchMode.DISCOVERY,
-                max_results=8,
-                caller=self._caller_for_run(run),
-                metadata={"caller_label": run.metadata.get("caller_label", "")},
-            )
+        operation = await self._operation_search(
+            query=f"{topic} official docs", mode="discovery", max_results=8
         )
-        for result in resp.results:
-            if any(keyword in result.url.lower() for keyword in ("/docs", "docs.", "/reference", "/api")):
-                return result.url
-        return resp.results[0].url if resp.results else None
+        result = operation.result or {}
+        results = result.get("results", ())
+        for item in results:
+            url = str(item["url"])
+            if any(
+                keyword in url.lower()
+                for keyword in ("/docs", "docs.", "/reference", "/api")
+            ):
+                return url
+        return str(results[0]["url"]) if results else None
 
     async def _discover_research_urls(
         self,
@@ -731,25 +947,23 @@ class WorkflowService:
         run: WorkflowResult,
     ) -> list[str]:
         official_root = _domain_root(urlparse(official_url).netloc)
-        resp = await self._broker.search(
-            SearchQuery(
-                query=f"{topic} documentation tutorial guide comparison best practices",
-                mode=SearchMode.RESEARCH,
-                max_results=max(limit * 2, 20),
-                caller=self._caller_for_run(run),
-                metadata={"caller_label": run.metadata.get("caller_label", "")},
-            )
+        operation = await self._operation_search(
+            query=f"{topic} documentation tutorial guide comparison best practices",
+            mode="research",
+            max_results=max(limit * 2, 20),
         )
+        results = (operation.result or {}).get("results", ())
         urls: list[str] = []
         seen: set[str] = set()
-        for result in resp.results:
-            normalized = normalize_url(result.url)
+        for result in results:
+            result_url = str(result["url"])
+            normalized = _normal_url(result_url)
             if normalized in seen:
                 continue
             seen.add(normalized)
-            if _domain_root(urlparse(result.url).netloc) == official_root:
+            if _domain_root(urlparse(result_url).netloc) == official_root:
                 continue
-            urls.append(result.url)
+            urls.append(result_url)
             if len(urls) >= limit:
                 break
         return urls
@@ -765,7 +979,9 @@ class WorkflowService:
         soft_page_limit: int,
         hard_page_limit: int,
     ) -> tuple[list[StoredDocument], list[CitationRef]]:
-        candidates = await self._discover_site_urls(url, soft_page_limit=soft_page_limit, hard_page_limit=hard_page_limit)
+        candidates = await self._discover_site_urls(
+            url, soft_page_limit=soft_page_limit, hard_page_limit=hard_page_limit
+        )
         return await self._capture_explicit_urls(
             run,
             candidates,
@@ -797,44 +1013,24 @@ class WorkflowService:
             if hard_page_limit is not None and len(documents) >= hard_page_limit:
                 break
             if i > 0 and i % 5 == 0:
-                self._report(i, len(urls), f"Extracting page {i}/{len(urls)}: {candidate_url[:60]}")
-            result = await self._extract(candidate_url)
-            if result.error or not result.text:
-                continue
-            if result.word_count < 60:
-                continue
-
-            citation_id = f"S{citation_start + len(citations) + 1}"
-            stored = self._store_document(
-                output_dir,
-                citation_id=citation_id,
-                url=candidate_url,
-                title=result.title or candidate_url,
-                text=result.text,
-                word_count=result.word_count,
-                domain=urlparse(candidate_url).netloc.lower().lstrip("www."),
+                self._report(
+                    i,
+                    len(urls),
+                    f"Extracting page {i}/{len(urls)}: {candidate_url[:60]}",
+                )
+            operation = await self._operation_search(
+                query=candidate_url, mode="discovery", max_results=1
+            )
+            captured, captured_citations = await self._compose_search_documents(
+                run,
+                operation,
+                max_results=1,
+                section=section,
                 role=role,
                 source_type=source_type,
-                extractor=result.extractor.value if result.extractor else None,
-                egress=result.egress,
-                machine=result.machine,
-                metadata={
-                    "lead_text": _lead_text(result.text),
-                    "quality_passed": getattr(result, "quality_passed", True),
-                    "is_complete": getattr(result.completeness_result, "is_complete", None),
-                    "completeness_confidence": getattr(result.completeness_result, "confidence", None),
-                },
             )
-            documents.append(stored)
-            citations.append(
-                CitationRef(
-                    id=stored.id,
-                    title=stored.title,
-                    url=stored.url,
-                    artifact_path=stored.artifact_path,
-                    note=source_type,
-                )
-            )
+            documents.extend(captured)
+            citations.extend(captured_citations)
 
             if soft_page_limit is not None and len(documents) >= soft_page_limit:
                 break
@@ -842,29 +1038,35 @@ class WorkflowService:
         documents.sort(key=lambda item: item.word_count, reverse=True)
         return documents, citations
 
-    async def _discover_site_urls(self, root_url: str, *, soft_page_limit: int, hard_page_limit: int) -> list[str]:
+    async def _discover_site_urls(
+        self, root_url: str, *, soft_page_limit: int, hard_page_limit: int
+    ) -> list[str]:
         root_domain = _domain_root(urlparse(root_url).netloc)
-        discovered: dict[str, tuple[str, int]] = {normalize_url(root_url): (root_url, 100)}
+        discovered: dict[str, tuple[str, int]] = {
+            _normal_url(root_url): (root_url, 100)
+        }
 
         sitemap_urls = await self._load_sitemap_urls(root_url)
         for url in sitemap_urls:
             if _same_site(url, root_domain) and _looks_like_html(url):
-                discovered[normalize_url(url)] = (url, _score_site_url(url, root_url))
+                discovered[_normal_url(url)] = (url, _score_site_url(url, root_url))
 
         queue: list[str] = [root_url]
         visited: set[str] = set()
         while queue and len(visited) < min(soft_page_limit, 25):
             current = queue.pop(0)
-            normalized = normalize_url(current)
+            normalized = _normal_url(current)
             if normalized in visited:
                 continue
             visited.add(normalized)
             links = await self._fetch_links(current)
             for link in links:
                 absolute = urljoin(current, link)
-                if not _same_site(absolute, root_domain) or not _looks_like_html(absolute):
+                if not _same_site(absolute, root_domain) or not _looks_like_html(
+                    absolute
+                ):
                     continue
-                normalized_link = normalize_url(absolute)
+                normalized_link = _normal_url(absolute)
                 score = _score_site_url(absolute, root_url)
                 previous = discovered.get(normalized_link)
                 if previous is None or score > previous[1]:
@@ -902,7 +1104,9 @@ class WorkflowService:
     async def _fetch_links(self, url: str) -> list[str]:
         try:
             async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
-                resp = await client.get(url, headers={"User-Agent": "ArgusSiteCapture/1.0"})
+                resp = await client.get(
+                    url, headers={"User-Agent": "ArgusSiteCapture/1.0"}
+                )
                 resp.raise_for_status()
             parser = _LinkParser()
             parser.feed(resp.text)
@@ -929,7 +1133,9 @@ class WorkflowService:
     ) -> StoredDocument:
         from argus.corpus.paths import slugify
 
-        filename = f"{citation_id.lower()}-{slugify(title or url, default='document')}.md"
+        filename = (
+            f"{citation_id.lower()}-{slugify(title or url, default='document')}.md"
+        )
         artifact_path = destination / filename
         artifact_path.write_text(
             "\n".join(
@@ -952,7 +1158,10 @@ class WorkflowService:
             encoding="utf-8",
         )
         metadata_path = artifact_path.with_suffix(".json")
-        metadata_path.write_text(json.dumps(metadata, indent=2, default=_json_default) + "\n", encoding="utf-8")
+        metadata_path.write_text(
+            json.dumps(metadata, indent=2, default=_json_default) + "\n",
+            encoding="utf-8",
+        )
         return StoredDocument(
             id=citation_id,
             url=url,
@@ -984,11 +1193,20 @@ class WorkflowService:
         run.report_path = str(report_path)
         run.manifest_path = str(manifest_path)
         run.artifacts = [
-            WorkflowArtifact(kind="report", path=str(report_path), description="Human-readable workflow report"),
-            WorkflowArtifact(kind="manifest", path=str(manifest_path), description="Structured workflow manifest"),
+            WorkflowArtifact(
+                kind="report",
+                path=str(report_path),
+                description="Human-readable workflow report",
+            ),
+            WorkflowArtifact(
+                kind="manifest",
+                path=str(manifest_path),
+                description="Structured workflow manifest",
+            ),
         ]
         manifest_path.write_text(
-            json.dumps(self._serialize_run(run), indent=2, default=_json_default) + "\n",
+            json.dumps(self._serialize_run(run), indent=2, default=_json_default)
+            + "\n",
             encoding="utf-8",
         )
 
@@ -999,14 +1217,22 @@ class WorkflowService:
         if docs_cache_dir is not None:
             self._write_docs_cache_dir(docs_cache_dir, title=title, run=run)
             if docs_cache_url:
-                self._update_docs_cache_index(docs_cache_dir.name, docs_cache_url, docs_cache_dir)
+                self._update_docs_cache_index(
+                    docs_cache_dir.name, docs_cache_url, docs_cache_dir
+                )
 
         self._write_run_state(run)
 
-    def _write_docs_cache_dir(self, docs_cache_dir: Path, *, title: str, run: WorkflowResult) -> None:
+    def _write_docs_cache_dir(
+        self, docs_cache_dir: Path, *, title: str, run: WorkflowResult
+    ) -> None:
         docs_cache_dir.mkdir(parents=True, exist_ok=True)
         readme = docs_cache_dir / "README.md"
-        official_docs = [document for document in run.documents if document.source_type == "official_docs"]
+        official_docs = [
+            document
+            for document in run.documents
+            if document.source_type == "official_docs"
+        ]
         lines = [
             f"# {title}",
             "",
@@ -1118,11 +1344,19 @@ class WorkflowService:
             snapshot_dir=payload.get("snapshot_dir", ""),
             report_path=payload.get("report_path"),
             manifest_path=payload.get("manifest_path"),
-            artifacts=[WorkflowArtifact(**artifact) for artifact in payload.get("artifacts", [])],
-            documents=[StoredDocument(**document) for document in payload.get("documents", [])],
-            citations=[CitationRef(**citation) for citation in payload.get("citations", [])],
+            artifacts=[
+                WorkflowArtifact(**artifact)
+                for artifact in payload.get("artifacts", [])
+            ],
+            documents=[
+                StoredDocument(**document) for document in payload.get("documents", [])
+            ],
+            citations=[
+                CitationRef(**citation) for citation in payload.get("citations", [])
+            ],
             summary_sections=[
-                SummarySection(**section) for section in payload.get("summary_sections", [])
+                SummarySection(**section)
+                for section in payload.get("summary_sections", [])
             ],
             metadata=payload.get("metadata", {}),
             error=payload.get("error"),
@@ -1136,4 +1370,3 @@ class WorkflowService:
             json.dumps(payload, indent=2, default=_json_default) + "\n",
             encoding="utf-8",
         )
-        self._persistence.record_run_state(payload)

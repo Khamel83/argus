@@ -435,8 +435,7 @@ class ResultExtractionLinkRow(LedgerBase):
             name="uq_result_extraction_links_composition_cluster",
         ),
         CheckConstraint(
-            "(extraction_acceptance_ref IS NULL) = "
-            "(extraction_plan_id IS NULL)",
+            "(extraction_acceptance_ref IS NULL) = (extraction_plan_id IS NULL)",
             name="ck_result_extraction_links_acceptance_pair",
         ),
         CheckConstraint(
@@ -448,13 +447,11 @@ class ResultExtractionLinkRow(LedgerBase):
             name="ck_result_extraction_links_rejection_pair",
         ),
         CheckConstraint(
-            "artifact_plan_id IS NULL OR "
-            "artifact_plan_id = extraction_plan_id",
+            "artifact_plan_id IS NULL OR artifact_plan_id = extraction_plan_id",
             name="ck_result_extraction_links_artifact_same_plan",
         ),
         CheckConstraint(
-            "rejection_plan_id IS NULL OR "
-            "rejection_plan_id = extraction_plan_id",
+            "rejection_plan_id IS NULL OR rejection_plan_id = extraction_plan_id",
             name="ck_result_extraction_links_rejection_same_plan",
         ),
         CheckConstraint(
@@ -510,21 +507,11 @@ class ResultExtractionLinkRow(LedgerBase):
     extraction_acceptance_ref: Mapped[str | None] = mapped_column(
         String(128), nullable=True
     )
-    extraction_plan_id: Mapped[str | None] = mapped_column(
-        String(32), nullable=True
-    )
-    artifact_row_id: Mapped[str | None] = mapped_column(
-        String(32), nullable=True
-    )
-    artifact_plan_id: Mapped[str | None] = mapped_column(
-        String(32), nullable=True
-    )
-    rejection_row_id: Mapped[str | None] = mapped_column(
-        String(32), nullable=True
-    )
-    rejection_plan_id: Mapped[str | None] = mapped_column(
-        String(32), nullable=True
-    )
+    extraction_plan_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    artifact_row_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    artifact_plan_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    rejection_row_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    rejection_plan_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     reuse_origin: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
@@ -853,9 +840,7 @@ def _deserialize_extraction_projection(state: dict):
                     if artifact_state["completeness_confidence"] is not None
                     else None
                 ),
-                "completeness_signals": tuple(
-                    artifact_state["completeness_signals"]
-                ),
+                "completeness_signals": tuple(artifact_state["completeness_signals"]),
                 "provenance": provenance(artifact_state["provenance"]),
             }
         )
@@ -868,9 +853,7 @@ def _deserialize_extraction_projection(state: dict):
                 ExtractorDecision(
                     **{
                         **step_state,
-                        "decision": ExtractorExecutionDecision(
-                            step_state["decision"]
-                        ),
+                        "decision": ExtractorExecutionDecision(step_state["decision"]),
                         "attempt_outcome": (
                             AttemptOutcome(step_state["attempt_outcome"])
                             if step_state["attempt_outcome"] is not None
@@ -883,15 +866,9 @@ def _deserialize_extraction_projection(state: dict):
                         ),
                         "spend": (
                             SpendEvidence(
-                                actual_usd=Decimal(
-                                    spend_state["actual_usd"]
-                                ),
-                                reserved_usd=Decimal(
-                                    spend_state["reserved_usd"]
-                                ),
-                                spend_attempt_ref=(
-                                    spend_state["spend_attempt_ref"]
-                                ),
+                                actual_usd=Decimal(spend_state["actual_usd"]),
+                                reserved_usd=Decimal(spend_state["reserved_usd"]),
+                                spend_attempt_ref=(spend_state["spend_attempt_ref"]),
                             )
                             if spend_state is not None
                             else None
@@ -967,9 +944,7 @@ def _deserialize_extraction_projection(state: dict):
                 "artifact": parse_artifact(origin_state["artifact"]),
                 "rejection": parse_rejection(origin_state["rejection"]),
                 "steps": parse_steps(origin_state["steps"]),
-                "acceptance_receipt": ExtractionAcceptanceReceipt(
-                    **receipt_state
-                ),
+                "acceptance_receipt": ExtractionAcceptanceReceipt(**receipt_state),
             }
         )
     projection_state = dict(state)
@@ -977,9 +952,7 @@ def _deserialize_extraction_projection(state: dict):
         **{
             **projection_state,
             "outcome": CanonicalOutcome(state["outcome"]),
-            "artifact_disposition": ArtifactDisposition(
-                state["artifact_disposition"]
-            ),
+            "artifact_disposition": ArtifactDisposition(state["artifact_disposition"]),
             "plan": plan,
             "artifact": artifact,
             "rejection": rejection,
@@ -991,9 +964,7 @@ def _deserialize_extraction_projection(state: dict):
                     "outcome": CacheOutcome(cache_state["outcome"]),
                     "origin_evidence": origin,
                     "current_identity": (
-                        ExtractionCacheIdentity(
-                            **cache_state["current_identity"]
-                        )
+                        ExtractionCacheIdentity(**cache_state["current_identity"])
                         if cache_state.get("current_identity") is not None
                         else None
                     ),
@@ -1049,15 +1020,10 @@ def _safe_persisted_url(value: str) -> str:
     fragment = (
         "[redacted]"
         if parts.fragment
-        and any(
-            marker in parts.fragment.lower()
-            for marker in sensitive_markers
-        )
+        and any(marker in parts.fragment.lower() for marker in sensitive_markers)
         else parts.fragment
     )
-    return urlunsplit(
-        (parts.scheme, netloc, parts.path, urlencode(query), fragment)
-    )
+    return urlunsplit((parts.scheme, netloc, parts.path, urlencode(query), fragment))
 
 
 def _persist_extraction_projection_rows(
@@ -1120,10 +1086,13 @@ def _persist_extraction_projection_rows(
                 .on_conflict_do_nothing(index_elements=["artifact_ref"])
             )
         else:
-            if session.get(
-                ExtractionArtifactIdentityRow,
-                artifact.artifact_ref,
-            ) is None:
+            if (
+                session.get(
+                    ExtractionArtifactIdentityRow,
+                    artifact.artifact_ref,
+                )
+                is None
+            ):
                 session.add(ExtractionArtifactIdentityRow(**identity_values))
         canonical = session.get(
             ExtractionArtifactIdentityRow,
@@ -1166,8 +1135,7 @@ def _persist_extraction_projection_rows(
             )
         ).all()
         if any(
-            existing.projection_json != rejection_json
-            for existing in reused_rejections
+            existing.projection_json != rejection_json for existing in reused_rejections
         ):
             raise ExtractionAcceptanceConflict()
         session.add(
@@ -1252,14 +1220,9 @@ class SqlAlchemySearchLedgerRepository:
         )
 
         for value in (scope_ref, access_scope, privacy_scope):
-            if (
-                not isinstance(value, str)
-                or not 1 <= len(value.encode("utf-8")) <= 128
-            ):
+            if not isinstance(value, str) or not 1 <= len(value.encode("utf-8")) <= 128:
                 raise ValueError("authentication authority scope is invalid")
-        fingerprint = (
-            "sha256:" + hashlib.sha256(scope_ref.encode("utf-8")).hexdigest()
-        )
+        fingerprint = "sha256:" + hashlib.sha256(scope_ref.encode("utf-8")).hexdigest()
         receipt_ref = "auth-" + uuid.uuid4().hex
         issued_at = self.clock()
         with self.session_factory.begin() as session:
@@ -1303,9 +1266,7 @@ class SqlAlchemySearchLedgerRepository:
                 scope=row.scope,
                 access_scope=row.access_scope,
                 privacy_scope=row.privacy_scope,
-                authentication_scope_fingerprint=(
-                    row.authentication_scope_fingerprint
-                ),
+                authentication_scope_fingerprint=(row.authentication_scope_fingerprint),
                 issued_at=row.issued_at.isoformat(),
             )
 
@@ -1663,8 +1624,7 @@ class SqlAlchemySearchLedgerRepository:
                             raise ExtractionAcceptanceConflict()
                         acceptance = session.scalar(
                             select(ExtractionOutcomeAcceptanceRow).where(
-                                ExtractionOutcomeAcceptanceRow.plan_id
-                                == existing.id
+                                ExtractionOutcomeAcceptanceRow.plan_id == existing.id
                             )
                         )
                         if acceptance is None:
@@ -1706,10 +1666,9 @@ class SqlAlchemySearchLedgerRepository:
                     raw_state = _extraction_projection_state(raw_projection)
                     projection = _deserialize_extraction_projection(raw_state)
                     state = _extraction_projection_state(projection)
-                    if (
-                        _extraction_source_fingerprint(state)
-                        != _extraction_source_fingerprint(claim_state)
-                    ):
+                    if _extraction_source_fingerprint(
+                        state
+                    ) != _extraction_source_fingerprint(claim_state):
                         raise ExtractionAcceptanceConflict()
                     receipt_ref, scope = _persist_extraction_projection_rows(
                         session,
@@ -1726,9 +1685,7 @@ class SqlAlchemySearchLedgerRepository:
                 return AcceptedExtractionOutcome.accepted(projection, receipt)
             except IntegrityError:
                 for _ in range(100):
-                    existing = self.load_extraction_outcome(
-                        claim.extraction_run_id
-                    )
+                    existing = self.load_extraction_outcome(claim.extraction_run_id)
                     if existing is not None:
                         existing_state = _extraction_projection_state(
                             FinalizedExtractionProjection(
@@ -1736,9 +1693,7 @@ class SqlAlchemySearchLedgerRepository:
                                     existing.extraction_outcome_policy_version
                                 ),
                                 outcome=existing.outcome,
-                                artifact_disposition=(
-                                    existing.artifact_disposition
-                                ),
+                                artifact_disposition=(existing.artifact_disposition),
                                 extraction_run_id=existing.extraction_run_id,
                                 request_id=existing.request_id,
                                 plan_ref=existing.plan_ref,
@@ -1749,18 +1704,15 @@ class SqlAlchemySearchLedgerRepository:
                                 terminal_cause=existing.terminal_cause,
                                 selected_extractor=existing.selected_extractor,
                                 cache_decision=existing.cache_decision,
-                                operation_latency_ms=(
-                                    existing.operation_latency_ms
-                                ),
+                                operation_latency_ms=(existing.operation_latency_ms),
                                 normalized_url_identity=(
                                     existing.normalized_url_identity
                                 ),
                             )
                         )
-                        if (
-                            _extraction_source_fingerprint(existing_state)
-                            != _extraction_source_fingerprint(claim_state)
-                        ):
+                        if _extraction_source_fingerprint(
+                            existing_state
+                        ) != _extraction_source_fingerprint(claim_state):
                             raise ExtractionAcceptanceConflict()
                         return existing
                     time.sleep(0.01)
@@ -1811,9 +1763,7 @@ class SqlAlchemySearchLedgerRepository:
                     plan_ref=projection.plan_ref,
                     extraction_run_id=projection.extraction_run_id,
                     request_id=projection.request_id,
-                    normalized_url=_safe_persisted_url(
-                        projection.plan.normalized_url
-                    ),
+                    normalized_url=_safe_persisted_url(projection.plan.normalized_url),
                     access_scope=projection.plan.access_scope,
                     mode=projection.plan.mode,
                     plan_json=_canonical_json(plan_state),
@@ -1853,10 +1803,7 @@ class SqlAlchemySearchLedgerRepository:
                     ExtractionOutcomeAcceptanceRow.plan_id
                     == ExtractionOutcomePlanRow.id,
                 )
-                .where(
-                    ExtractionOutcomePlanRow.extraction_run_id
-                    == extraction_run_id
-                )
+                .where(ExtractionOutcomePlanRow.extraction_run_id == extraction_run_id)
             ).one_or_none()
             if pair is None:
                 return None
@@ -1869,6 +1816,10 @@ class SqlAlchemySearchLedgerRepository:
                 scope=acceptance.scope,
             )
             return AcceptedExtractionOutcome.accepted(projection, receipt)
+
+    def load_accepted_extraction_outcome(self, extraction_run_id: str):
+        """Workflow-only typed outcome loader; never returns raw extractor state."""
+        return self.load_extraction_outcome(extraction_run_id)
 
     def load_extraction_outcome_by_receipt(self, receipt_ref: str):
         """Reload the exact durable accepted projection for cache/composition."""
@@ -1917,8 +1868,7 @@ class SqlAlchemySearchLedgerRepository:
 
         if (
             not isinstance(composition, RetrievalComposition)
-            or composition.composite_outcome
-            is CanonicalOutcome.PERSISTENCE_FAILED
+            or composition.composite_outcome is CanonicalOutcome.PERSISTENCE_FAILED
         ):
             raise ValueError("persistence-failed composition cannot be accepted")
         if (
@@ -1945,9 +1895,7 @@ class SqlAlchemySearchLedgerRepository:
             link_state.pop("accepted_outcome", None)
         source_state = {
             "retrieval_outcome": accepted_retrieval.outcome,
-            "result_cluster_refs": tuple(
-                accepted_retrieval.result_cluster_refs
-            ),
+            "result_cluster_refs": tuple(accepted_retrieval.result_cluster_refs),
             "retrieval_acceptance_ref": retrieval_receipt_ref,
             "artifact_requirement": (
                 asdict(artifact_requirement)
@@ -2024,15 +1972,12 @@ class SqlAlchemySearchLedgerRepository:
                 inserted = session.execute(
                     dialect_insert(RetrievalCompositionRow)
                     .values(**composition_values)
-                    .on_conflict_do_nothing(
-                        index_elements=["source_fingerprint"]
-                    )
+                    .on_conflict_do_nothing(index_elements=["source_fingerprint"])
                 )
                 if inserted.rowcount == 0:
                     existing = session.scalar(
                         select(RetrievalCompositionRow).where(
-                            RetrievalCompositionRow.source_fingerprint
-                            == fingerprint
+                            RetrievalCompositionRow.source_fingerprint == fingerprint
                         )
                     )
                     if existing is None:
@@ -2084,8 +2029,7 @@ class SqlAlchemySearchLedgerRepository:
                     ).one_or_none()
                     if (
                         accepted_pair is None
-                        or accepted_pair[1].extraction_run_id
-                        != link.extraction_run_id
+                        or accepted_pair[1].extraction_run_id != link.extraction_run_id
                     ):
                         raise InvalidArtifactRequirement(
                             "extraction receipt is not bound to the linked run"
@@ -2124,10 +2068,8 @@ class SqlAlchemySearchLedgerRepository:
                         )
                         if (
                             artifact_row is None
-                            or artifact_row.content_identity
-                            != link.artifact_identity
-                            or accepted_pair[1].access_scope
-                            != link.access_scope
+                            or artifact_row.content_identity != link.artifact_identity
+                            or accepted_pair[1].access_scope != link.access_scope
                         ):
                             raise InvalidArtifactRequirement(
                                 "artifact is not bound to the accepted plan"
@@ -2156,15 +2098,11 @@ class SqlAlchemySearchLedgerRepository:
                         extraction_plan_id=extraction_plan_id,
                         artifact_row_id=artifact_row_id,
                         artifact_plan_id=(
-                            extraction_plan_id
-                            if artifact_row_id is not None
-                            else None
+                            extraction_plan_id if artifact_row_id is not None else None
                         ),
                         rejection_row_id=rejection_row_id,
                         rejection_plan_id=(
-                            extraction_plan_id
-                            if rejection_row_id is not None
-                            else None
+                            extraction_plan_id if rejection_row_id is not None else None
                         ),
                         reuse_origin=link.reuse_origin,
                     )
@@ -3017,6 +2955,7 @@ def create_search_ledger_repository(
     # Register S6 tables with development SQLite schema creation. This import
     # only declares metadata; it does not activate retrieval evidence writes.
     from argus.persistence import evidence as _retrieval_evidence  # noqa: F401
+
     is_sqlite = url.startswith("sqlite:")
     if is_sqlite and url.startswith("sqlite:///"):
         path = url.removeprefix("sqlite:///")

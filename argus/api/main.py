@@ -103,7 +103,8 @@ def _build_broker_provider(
 
 
 def _build_workflow_provider(
-    broker_provider: Callable[[], SearchBroker],
+    accepted_operations_provider: Callable[[], AcceptedOperationService],
+    evidence_gateway_provider: Callable[[], SearchLedgerRepository],
 ) -> Callable[[], WorkflowService]:
     current: WorkflowService | None = None
 
@@ -111,8 +112,8 @@ def _build_workflow_provider(
         nonlocal current
         if current is None:
             current = WorkflowService(
-                broker_provider(),
-                authority_capability=_HTTP_API_AUTHORITY_CAPABILITY,
+                accepted_operations_provider(),
+                evidence_gateway_provider(),
             )
         return current
 
@@ -766,7 +767,10 @@ def create_app(
         return current_spend_repository
 
     app.state.get_spend_repository = get_spend_repository
-    app.state.get_workflows = _build_workflow_provider(app.state.get_broker)
+    app.state.get_workflows = _build_workflow_provider(
+        app.state.get_accepted_operation_service,
+        app.state.get_search_repository,
+    )
     app.state.rate_limiter = rate_limiter or _build_rate_limiter()
     app.state.auth_config = auth_config
 
@@ -884,9 +888,7 @@ def create_app(
                         request_id=getattr(
                             request.state,
                             "request_id",
-                            safe_correlation_id(
-                                request.headers.get("x-request-id")
-                            ),
+                            safe_correlation_id(request.headers.get("x-request-id")),
                         ),
                         detail="Request admission is rate limited",
                         code="rate_limited",
@@ -954,9 +956,7 @@ def create_app(
 
     @app.middleware("http")
     async def transport_security_middleware(request: Request, call_next):
-        rejection = await request.app.state.transport_security_guard.rejection(
-            request
-        )
+        rejection = await request.app.state.transport_security_guard.rejection(request)
         if rejection is not None:
             return rejection
         try:
