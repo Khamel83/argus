@@ -450,9 +450,9 @@ def _declare_external_extractor_as_replay_chain(sealed):
         ]
 
 
-def _claim_result_from_policy_skipped_provider(sealed):
+def _claim_result_from_skipped_provider(sealed):
     attempt = sealed["operations"][0]["candidate"]["diagnostics"]["attempts"][0]
-    attempt["status"] = "policy_skipped"
+    attempt["status"] = "skipped"
     attempt["reason"] = "policy denied execution"
     attempt["result_count"] = 0
 
@@ -471,7 +471,7 @@ def _claim_empty_when_all_providers_failed(sealed):
     evidence["outcome"] = "empty"
     evidence["results"] = []
     evidence["diagnostics"]["attempts"][0].update(
-        {"status": "failed", "reason": "provider unavailable", "result_count": 0}
+        {"status": "error", "reason": "provider unavailable", "result_count": 0}
     )
 
 
@@ -481,6 +481,28 @@ def _claim_providers_failed_for_successful_empty(sealed):
     evidence["results"] = []
     evidence["diagnostics"]["attempts"][0].update(
         {"status": "empty", "reason": "successful empty", "result_count": 0}
+    )
+
+
+def _invent_provider_attempt_status(sealed):
+    evidence = sealed["operations"][0]["candidate"]
+    evidence["outcome"] = "providers_failed"
+    evidence["results"] = []
+    evidence["diagnostics"]["attempts"][0].update(
+        {"status": "invented_status", "reason": "invented", "result_count": 0}
+    )
+
+
+def _invent_extractor_attempt_status(sealed):
+    evidence = next(
+        operation["candidate"]
+        for operation in sealed["operations"]
+        if operation["mode"] == "extraction"
+    )
+    evidence["outcome"] = "extraction_failed"
+    evidence["content"] = None
+    evidence["diagnostics"]["attempts"][0].update(
+        {"status": "invented_status", "reason": "invented", "result_count": 0}
     )
 
 
@@ -498,7 +520,7 @@ def _canonical_providers_failed(sealed):
     evidence["outcome"] = "providers_failed"
     evidence["results"] = []
     evidence["diagnostics"]["attempts"][0].update(
-        {"status": "failed", "reason": "provider unavailable", "result_count": 0}
+        {"status": "error", "reason": "provider unavailable", "result_count": 0}
     )
 
 
@@ -507,7 +529,7 @@ def _canonical_policy_rejected(sealed):
     evidence["outcome"] = "policy_rejected"
     evidence["results"] = []
     evidence["diagnostics"]["attempts"][0].update(
-        {"status": "policy_skipped", "reason": "policy denied", "result_count": 0}
+        {"status": "skipped", "reason": "policy denied", "result_count": 0}
     )
 
 
@@ -528,7 +550,7 @@ def _canonical_mixed_degraded(sealed):
                 "name": "yahoo",
                 "kind": "provider",
                 "tier": 0,
-                "status": "empty" if side == "baseline" else "failed",
+                "status": "empty" if side == "baseline" else "error",
                 "reason": "successful empty"
                 if side == "baseline"
                 else "provider failed",
@@ -537,6 +559,28 @@ def _canonical_mixed_degraded(sealed):
             }
         )
     operation["candidate"]["outcome"] = "degraded"
+
+
+def _canonical_cache_success(sealed):
+    diagnostics = sealed["operations"][0]["candidate"]["diagnostics"]
+    diagnostics["attempts"][0].update(
+        {"status": "cache", "reason": "eligible cache hit"}
+    )
+    diagnostics["spend"]["provider_calls"] = 0
+    diagnostics["cache"].update({"status": "hit", "age_ms": 1})
+
+
+def _canonical_quality_failed_extraction(sealed):
+    evidence = next(
+        operation["candidate"]
+        for operation in sealed["operations"]
+        if operation["mode"] == "extraction"
+    )
+    evidence["outcome"] = "extraction_failed"
+    evidence["content"] = None
+    evidence["diagnostics"]["attempts"][0].update(
+        {"status": "quality_failed", "reason": "too_short", "result_count": 0}
+    )
 
 
 @pytest.mark.parametrize(
@@ -583,10 +627,12 @@ def _canonical_mixed_degraded(sealed):
         (_add_unrepresented_requested_provider, "provider evidence"),
         (_inject_external_extraction_attempt, "local captured replay"),
         (_declare_external_extractor_as_replay_chain, "local captured replay"),
-        (_claim_result_from_policy_skipped_provider, "provider result reconciliation"),
+        (_claim_result_from_skipped_provider, "provider result reconciliation"),
         (_claim_paid_api_source_from_local_replay, "local replay provenance"),
         (_claim_empty_when_all_providers_failed, "search outcome"),
         (_claim_providers_failed_for_successful_empty, "search outcome"),
+        (_invent_provider_attempt_status, "provider attempt status"),
+        (_invent_extractor_attempt_status, "extractor attempt status"),
     ],
 )
 def test_sealed_live_compiler_fails_closed(mutate, message, tmp_path):
@@ -607,6 +653,17 @@ def test_sealed_live_compiler_fails_closed(mutate, message, tmp_path):
     ],
 )
 def test_search_outcome_reconciliation_accepts_canonical_distinctions(mutate, tmp_path):
+    sealed = _sealed()
+    mutate(sealed)
+
+    _write_live_bundle(tmp_path / "live", sealed)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [_canonical_cache_success, _canonical_quality_failed_extraction],
+)
+def test_live_compiler_accepts_runtime_edge_attempt_statuses(mutate, tmp_path):
     sealed = _sealed()
     mutate(sealed)
 

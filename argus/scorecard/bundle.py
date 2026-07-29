@@ -90,17 +90,12 @@ _SUCCESS_LIKE_OUTCOMES = {
 _LOCAL_CAPTURE_REPLAY_EXTRACTORS = frozenset(
     {"trafilatura", "crawl4ai", "obscura", "playwright"}
 )
-_RESULT_SUPPLYING_ATTEMPT_STATUSES = frozenset({"success", "degraded"})
-_DIRECT_SEARCH_FAILURE_STATUSES = frozenset(
-    {
-        "invalid_request",
-        "authentication_rejected",
-        "policy_rejected",
-        "timeout",
-        "persistence_failed",
-        "unready",
-    }
+_PROVIDER_ATTEMPT_STATUSES = frozenset(
+    {"success", "empty", "error", "skipped", "cache"}
 )
+_EXTRACTOR_ATTEMPT_STATUSES = frozenset({"success", "failed", "quality_failed"})
+_PROVIDER_RESULT_SUPPLYING_STATUSES = frozenset({"success", "cache"})
+_EXTRACTOR_RESULT_SUPPLYING_STATUSES = frozenset({"success"})
 
 
 def _canonical_bytes(value: Any) -> bytes:
@@ -598,7 +593,7 @@ def _validate_provider_result_reconciliation(
     emitted = Counter(result["provider"] for result in evidence["results"])
     traced: Counter[str] = Counter()
     for attempt in evidence["diagnostics"]["attempts"]:
-        if attempt["status"] in _RESULT_SUPPLYING_ATTEMPT_STATUSES:
+        if attempt["status"] in _PROVIDER_RESULT_SUPPLYING_STATUSES:
             traced[attempt["name"]] += attempt["result_count"]
         elif attempt["result_count"] != 0:
             raise BundleError(
@@ -613,7 +608,7 @@ def _validate_local_replay_provenance(
 ) -> None:
     traced: Counter[str] = Counter()
     for attempt in evidence["diagnostics"]["attempts"]:
-        if attempt["status"] in _RESULT_SUPPLYING_ATTEMPT_STATUSES:
+        if attempt["status"] in _EXTRACTOR_RESULT_SUPPLYING_STATUSES:
             traced[attempt["name"]] += attempt["result_count"]
         elif attempt["result_count"] != 0:
             raise BundleError(f"{label} non-supplying local extractor reported content")
@@ -639,15 +634,13 @@ def _validate_search_outcome_reconciliation(
     if evidence["results"]:
         expected = (
             "degraded"
-            if any(status not in {"success", "empty"} for status in statuses)
+            if any(status in {"error", "skipped"} for status in statuses)
             else "success"
         )
-    elif any(status in {"success", "degraded", "empty"} for status in statuses):
+    elif any(status in {"success", "empty", "cache"} for status in statuses):
         expected = "empty"
-    elif all(status == "policy_skipped" for status in statuses):
+    elif all(status == "skipped" for status in statuses):
         expected = "policy_rejected"
-    elif len(set(statuses)) == 1 and statuses[0] in _DIRECT_SEARCH_FAILURE_STATUSES:
-        expected = statuses[0]
     else:
         expected = "providers_failed"
     if evidence["outcome"] != expected:
@@ -729,6 +722,13 @@ def _validate_live_diagnostics(value: object, label: str) -> None:
             )
         ):
             raise BundleError(f"{label} attempt is invalid")
+        statuses = (
+            _PROVIDER_ATTEMPT_STATUSES
+            if attempt["kind"] == "provider"
+            else _EXTRACTOR_ATTEMPT_STATUSES
+        )
+        if attempt["status"] not in statuses:
+            raise BundleError(f"{label} {attempt['kind']} attempt status is invalid")
     spend = _mapping(diagnostics["spend"], f"{label} spend")
     _exact_keys(
         spend,

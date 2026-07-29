@@ -397,24 +397,25 @@ provider calls.
 Provider `result_count` has one exact meaning: the number of normalized results
 from that attempt retained after within-provider and retry deduplication.
 Duplicates discarded before emission are not counted. For each requested
-provider, the sum across `success` or `degraded` attempts must equal the number
-of emitted normalized results attributed to that provider. Every other attempt
-status, including `policy_skipped` and failures, must report zero and cannot
-supply a result.
+provider, the sum across `success` or `cache` attempts must equal the number of
+emitted normalized results attributed to that provider. Every other attempt
+status must report zero and cannot supply a result. Provider status is closed
+to the runtime trace vocabulary: `success`, `empty`, `error`, `skipped`, or
+`cache`.
 
 The canonical search outcome is derived from the complete provider trace, not
-trusted as a free-standing claim. Emitted results with only successful or empty
-attempts are `success`; emitted results alongside a degraded, skipped, or failed
-attempt are `degraded`. With no results, any successful-empty attempt yields
-`empty`, an entirely `policy_skipped` trace yields `policy_rejected`, and a
-unanimous direct request failure yields that failure. Other complete
-no-success traces yield `providers_failed`.
+trusted as a free-standing claim. Emitted results with only successful, empty,
+or cache attempts are `success`; emitted results alongside a skipped or error
+attempt are `degraded`. With no results, any successful-empty or cache attempt
+yields `empty`, an entirely skipped trace yields `policy_rejected`, and other
+complete no-success traces yield `providers_failed`.
 
 Captured replay uses the same reconciliation rule for content. If content is
-present, exactly one `success` or `degraded` local extractor attempt contributes
-one retained document, and normalized `source_type` must name that extractor in
-the declared replay chain. Paid API, external reader, phantom, or multiply
-claimed source provenance is rejected.
+present, exactly one `success` local extractor attempt contributes one retained
+document, and normalized `source_type` must name that extractor in the declared
+replay chain. Extractor status is closed to the runtime attempt vocabulary:
+`success`, `failed`, or `quality_failed`. Paid API, external reader, phantom, or
+multiply claimed source provenance is rejected.
 
 Freshness observations are side-specific: `observed_at` must fall within the
 corresponding baseline or candidate execution window, and `age_seconds` must be
