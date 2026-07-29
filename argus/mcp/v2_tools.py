@@ -10,10 +10,22 @@ from typing import Annotated, Any, Literal
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.fastmcp.tools.base import Tool
 from mcp.types import CallToolResult, TextContent
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    model_validator,
+)
+
+from argus.contracts import (
+    CanonicalOutcome,
+    http_status_for,
+    is_success_like,
+    mcp_is_error_for,
+)
 
 _TEXT_LIMIT = 64 * 1024
-_SUCCESS_LIKE = frozenset({"success", "degraded", "empty"})
 _OUTCOMES = Literal[
     "success",
     "degraded",
@@ -54,6 +66,25 @@ class V2Envelope(BaseModel):
     request_id: str
     result: dict[str, Any] | None
     error: V2Problem | None
+
+    @model_validator(mode="after")
+    def validate_result_error_invariants(self):
+        outcome = CanonicalOutcome(self.outcome)
+        if is_success_like(outcome):
+            if self.result is None or self.error is not None:
+                raise ValueError(
+                    f"outcome {outcome.value} requires result and forbids error"
+                )
+            return self
+        if self.result is not None or self.error is None:
+            raise ValueError(
+                f"outcome {outcome.value} forbids result and requires error"
+            )
+        if self.error.status != http_status_for(outcome, self.error.code):
+            raise ValueError(
+                f"outcome {outcome.value} error status/code is inconsistent"
+            )
+        return self
 
 
 V2ToolResult = Annotated[CallToolResult, V2Envelope]
@@ -111,8 +142,7 @@ def _search_text(result: Mapping[str, Any]) -> str:
     if warnings:
         lines.extend(
             [
-                "**Budget warnings:** "
-                + "; ".join(str(item) for item in warnings),
+                "**Budget warnings:** " + "; ".join(str(item) for item in warnings),
                 "",
             ]
         )
@@ -154,37 +184,49 @@ def _extract_text(result: Mapping[str, Any]) -> str:
 
 def _result(tool_name: str, envelope: Mapping[str, Any]) -> CallToolResult:
     validated = V2Envelope.model_validate(envelope)
-    outcome = validated.outcome
+    outcome = CanonicalOutcome(validated.outcome)
     result = validated.result
-    if outcome in _SUCCESS_LIKE and result is not None:
+    if is_success_like(outcome) and result is not None:
         text = (
             _extract_text(result)
             if tool_name == "extract_content_v2"
             else _search_text(result)
         )
-        if outcome != "success":
-            text = f"[Argus outcome: {outcome}]\n{text}"
+        if outcome is not CanonicalOutcome.SUCCESS:
+            text = f"[Argus outcome: {outcome.value}]\n{text}"
     else:
         problem = validated.error
         detail = problem.detail if problem is not None else "Operation unavailable"
         text = (
-            f"Argus {tool_name} outcome: {outcome}\n"
+            f"Argus {tool_name} outcome: {outcome.value}\n"
             f"Request ID: {validated.request_id}\n"
             f"Error: {detail}"
         )
     return CallToolResult(
         content=[TextContent(type="text", text=_bounded(text))],
         structuredContent=dict(envelope),
-        isError=outcome not in _SUCCESS_LIKE,
+        isError=mcp_is_error_for(outcome),
     )
+
+
+def _pinned_tool_manager(mcp):
+    from argus.capabilities import CapabilityManifestError
+
+    manager = getattr(mcp, "_tool_manager", None)
+    if (
+        manager is None
+        or not isinstance(getattr(manager, "_tools", None), dict)
+        or not callable(getattr(manager, "list_tools", None))
+    ):
+        raise CapabilityManifestError(
+            "Pinned MCP SDK tool manager registration is unavailable"
+        )
+    return manager
 
 
 def _register(mcp, fn) -> None:
     tool = _BoundedSchemaTool.from_function(fn)
-    manager = getattr(mcp, "_tool_manager", None)
-    if manager is None:
-        mcp.tool()(fn)
-        return
+    manager = _pinned_tool_manager(mcp)
     if tool.name in manager._tools:
         raise RuntimeError(f"duplicate MCP tool registration: {tool.name}")
     manager._tools[tool.name] = tool
@@ -201,9 +243,7 @@ def register_v2_tools(
 
     async def search_web_v2(
         query: Annotated[str, Field(min_length=1, max_length=500)],
-        mode: Literal[
-            "recovery", "discovery", "grounding", "research"
-        ] = "discovery",
+        mode: Literal["recovery", "discovery", "grounding", "research"] = "discovery",
         max_results: Annotated[int, Field(ge=1, le=50)] = 10,
         session_id: Annotated[str | None, Field(max_length=128)] = None,
         include_attribution: bool = False,
@@ -293,16 +333,9 @@ def actual_v2_tool_registration(mcp) -> dict[str, object]:
     """Describe the actual bound pinned-SDK schemas for startup validation."""
     from argus.capabilities import MCP_V2_TOOL_DESCRIPTOR
 
-    manager = getattr(mcp, "_tool_manager", None)
-    if manager is None:
-        return {
-            key: value
-            for key, value in MCP_V2_TOOL_DESCRIPTOR.items()
-        }
+    manager = _pinned_tool_manager(mcp)
     by_name = {
-        tool.name: tool
-        for tool in manager.list_tools()
-        if tool.name.endswith("_v2")
+        tool.name: tool for tool in manager.list_tools() if tool.name.endswith("_v2")
     }
     names = tuple(by_name)
     return {

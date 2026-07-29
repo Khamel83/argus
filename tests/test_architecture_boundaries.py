@@ -50,6 +50,12 @@ FORBIDDEN = {
     "argus.broker.ranking",
     "argus.broker.dedupe",
 }
+MCP_FORBIDDEN = {
+    "argus.broker",
+    "argus.extraction",
+    "argus.persistence",
+    "argus.provider_controls",
+}
 
 
 def _module_package(path: Path) -> str:
@@ -169,6 +175,45 @@ def test_contract_kernel_does_not_import_the_throwaway_prototype():
     imported = _imports(outcomes)
     assert not any(module.startswith("docs.prototypes") for module in imported)
     assert "jsonschema" not in imported
+
+
+@pytest.mark.parametrize("path", tuple(sorted(MCP_ADAPTERS)))
+def test_mcp_modules_have_no_execution_authority_imports_or_invocations(path):
+    imported = _imports(path)
+    violations = {
+        module
+        for module in imported
+        if any(
+            module == forbidden or module.startswith(f"{forbidden}.")
+            for forbidden in MCP_FORBIDDEN
+        )
+    }
+    assert not violations, f"{path.relative_to(ROOT)}: {sorted(violations)}"
+
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    forbidden_calls = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        function = node.func
+        if isinstance(function, ast.Name) and function.id in {
+            "create_broker",
+            "extract_url",
+            "create_search_ledger_repository",
+        }:
+            forbidden_calls.append(function.id)
+        if isinstance(function, ast.Attribute):
+            owner = function.value
+            if isinstance(owner, ast.Name) and owner.id in {"broker", "readiness"}:
+                forbidden_calls.append(f"{owner.id}.{function.attr}")
+            if isinstance(owner, ast.Attribute) and owner.attr in {
+                "broker",
+                "readiness_service",
+            }:
+                forbidden_calls.append(f"{owner.attr}.{function.attr}")
+    assert not forbidden_calls, (
+        f"{path.relative_to(ROOT)}: direct authority calls {forbidden_calls}"
+    )
 
 
 def test_import_parser_resolves_relative_reexport_seams(tmp_path):

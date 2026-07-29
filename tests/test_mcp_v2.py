@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
+import sys
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
@@ -19,6 +21,24 @@ V2_NAMES = (
     "expand_links_v2",
     "extract_content_v2",
 )
+V1_SCHEMA_DIGESTS = {
+    "search_web": (
+        "9a9a980419b13d9c9c3862376b631c38a9aeea0f29f50ecf5b42055707903249",
+        "30a5b813599d72ad35d1e428b7f151186c6cb52b5b1c6ebb1220d1222a5afbc9",
+    ),
+    "recover_url": (
+        "8388f2e1661488071cea18b5a67e2d7d80f796466fb467f9e3b3f9dd20e0dc18",
+        "a3820f7ee164918ce2f5edc08dc88b615e4d64e0344cf86668b9b841f7c88c6f",
+    ),
+    "expand_links": (
+        "0f2dd39b7fd78cd131d7b9c30f0e080c8d1d08564e0d6a66638e75140e63e504",
+        "a8964ce04df285f5191d38a8e2b3a99f0d58be9d04296f00e193bcdf0e14dd7e",
+    ),
+    "extract_content": (
+        "e732ac17d12cb41d979366b714d213622887aac448c1b90e310d3e72f8668f9b",
+        "3192284eacf752ff4cf63ad79f16b54c03251529ff8186a00d3a5ab082a6ffd7",
+    ),
+}
 
 
 def _plain(value):
@@ -27,6 +47,36 @@ def _plain(value):
     if isinstance(value, tuple):
         return [_plain(child) for child in value]
     return value
+
+
+def _schema_digest(schema):
+    return hashlib.sha256(
+        json.dumps(schema, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _capture_real_mcp_server(monkeypatch, backend):
+    from mcp.server.fastmcp import FastMCP
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    import argus.mcp.server as server
+
+    created = []
+
+    def factory(*args, **kwargs):
+        kwargs["transport_security"] = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=["testserver"],
+        )
+        instance = FastMCP(*args, **kwargs)
+        instance.run = lambda **_kwargs: None
+        created.append(instance)
+        return instance
+
+    monkeypatch.setattr("mcp.server.fastmcp.FastMCP", factory)
+    monkeypatch.setattr(server, "build_mcp_backend", lambda: backend)
+    server.serve_mcp(transport="stdio")
+    return created[0]
 
 
 def _success_envelope(result: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -40,6 +90,8 @@ def _success_envelope(result: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def _outcome_envelope(outcome: str) -> dict[str, Any]:
+    from argus.contracts import CanonicalOutcome, http_status_for
+
     if outcome in {"success", "degraded", "empty"}:
         envelope = _success_envelope()
         envelope["outcome"] = outcome
@@ -52,7 +104,7 @@ def _outcome_envelope(outcome: str) -> dict[str, Any]:
         "error": {
             "type": f"urn:argus:problem:{outcome}",
             "title": outcome.replace("_", " ").title(),
-            "status": 503,
+            "status": http_status_for(CanonicalOutcome(outcome), outcome),
             "detail": "Safe bounded failure",
             "instance": "urn:argus:request:request-mcp-v2",
             "code": outcome,
@@ -236,10 +288,13 @@ async def test_shared_authority_reader_accepts_chunked_body_through_11_mib(offse
         transport=httpx.MockTransport(handler),
     )
 
-    assert await client.request_v2(
-        "/api/v2/search",
-        payload={"query": "bounded"},
-    ) == envelope
+    assert (
+        await client.request_v2(
+            "/api/v2/search",
+            payload={"query": "bounded"},
+        )
+        == envelope
+    )
     assert stream.yielded == 2
     assert stream.closed is True
 
@@ -309,28 +364,32 @@ async def test_v2_tools_register_exact_schemas_and_return_exact_envelope():
         caller_token=lambda: "scoped",
     )
     registered = {
-        tool.name: tool
-        for tool in await mcp.list_tools()
-        if tool.name.endswith("_v2")
+        tool.name: tool for tool in await mcp.list_tools() if tool.name.endswith("_v2")
     }
 
     assert tuple(registered) == V2_NAMES
     for name, tool in registered.items():
         expected = MCP_V2_TOOL_DESCRIPTOR["schemas"][name]
-        assert hashlib.sha256(
-            json.dumps(
-                tool.inputSchema,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode()
-        ).hexdigest() == expected["input_sha256"]
-        assert hashlib.sha256(
-            json.dumps(
-                tool.outputSchema,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode()
-        ).hexdigest() == expected["output_sha256"]
+        assert (
+            hashlib.sha256(
+                json.dumps(
+                    tool.inputSchema,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
+            == expected["input_sha256"]
+        )
+        assert (
+            hashlib.sha256(
+                json.dumps(
+                    tool.outputSchema,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
+            == expected["output_sha256"]
+        )
 
     result = await mcp.call_tool(
         "search_web_v2",
@@ -405,9 +464,7 @@ def test_complete_mcp_release_descriptor_is_immutable_and_fail_closed():
         MCP_V2_TOOL_DESCRIPTOR,
     )
     for field in ("transport_version", "tool_contract_version", "tools", "schemas"):
-        mutated = deepcopy(
-            _plain(MCP_V2_TOOL_DESCRIPTOR)
-        )
+        mutated = deepcopy(_plain(MCP_V2_TOOL_DESCRIPTOR))
         mutated[field] = "mismatch"
         with pytest.raises(Exception, match="release manifest"):
             validate_complete_mcp_registration(
@@ -527,8 +584,403 @@ def test_v2_is_error_is_false_only_for_success_degraded_and_empty(outcome):
     rendered = _result("search_web_v2", envelope)
 
     assert rendered.structuredContent == envelope
-    assert rendered.isError is (
-        outcome not in {"success", "degraded", "empty"}
-    )
+    assert rendered.isError is (outcome not in {"success", "degraded", "empty"})
     if outcome in {"degraded", "empty"}:
         assert f"Argus outcome: {outcome}" in rendered.content[0].text
+
+
+def test_standalone_development_registers_only_usable_v1_tools(monkeypatch):
+    from argus.mcp.local_adapter import LocalMcpAdapter
+
+    registered = _capture_real_mcp_server(
+        monkeypatch,
+        LocalMcpAdapter(object()),
+    )
+    names = {tool.name for tool in registered._tool_manager.list_tools()}
+    assert {
+        "search_web",
+        "recover_url",
+        "expand_links",
+        "extract_content",
+    }.issubset(names)
+    assert not any(name.endswith("_v2") for name in names)
+
+
+@pytest.mark.asyncio
+async def test_real_v1_registrations_replay_exact_schema_and_result_goldens(
+    monkeypatch,
+):
+    from argus.mcp.http_adapter import HttpMcpAdapter
+
+    expected = {
+        "search_web": "frozen-search",
+        "recover_url": "frozen-recovery",
+        "expand_links": "frozen-expansion",
+        "extract_content": "frozen-extraction",
+    }
+
+    class ReplayBackend(HttpMcpAdapter):
+        def __init__(self):
+            pass
+
+        async def search_web(self, **_kwargs):
+            return expected["search_web"]
+
+        async def recover_url(self, *_args, **_kwargs):
+            return expected["recover_url"]
+
+        async def expand_links(self, *_args, **_kwargs):
+            return expected["expand_links"]
+
+        async def extract_content(self, *_args, **_kwargs):
+            return expected["extract_content"]
+
+        async def search_health(self, **_kwargs):
+            return "healthy"
+
+        async def search_budgets(self, **_kwargs):
+            return "budgets"
+
+    registered = _capture_real_mcp_server(monkeypatch, ReplayBackend())
+    tools = {tool.name: tool for tool in registered._tool_manager.list_tools()}
+    arguments = {
+        "search_web": {"query": "canonical"},
+        "recover_url": {"url": "https://example.com/gone"},
+        "expand_links": {"query": "canonical"},
+        "extract_content": {"url": "https://example.com/article"},
+    }
+
+    for name, text in expected.items():
+        input_digest, output_digest = V1_SCHEMA_DIGESTS[name]
+        assert _schema_digest(tools[name].parameters) == input_digest
+        assert _schema_digest(tools[name].output_schema) == output_digest
+        content, structured_content = await registered.call_tool(
+            name,
+            arguments[name],
+        )
+        assert content[0].model_dump(exclude_none=True) == {
+            "type": "text",
+            "text": text,
+        }
+        assert structured_content == {"result": text}
+
+
+def test_real_listener_schema_rejection_is_bounded_and_never_calls_backend(
+    monkeypatch,
+):
+    from fastapi.testclient import TestClient
+
+    from argus.mcp.http_adapter import HttpMcpAdapter
+
+    sentinel = "REJECTED-" + ("private" * 100)
+
+    class CountingBackend(HttpMcpAdapter):
+        def __init__(self):
+            self.v2_calls = 0
+
+        async def search_web_v2(self, **_kwargs):
+            self.v2_calls += 1
+            pytest.fail("schema-invalid calls must not reach the backend")
+
+        async def search_health(self, **_kwargs):
+            return "healthy"
+
+        async def search_budgets(self, **_kwargs):
+            return "budgets"
+
+    backend = CountingBackend()
+    registered = _capture_real_mcp_server(monkeypatch, backend)
+    with TestClient(registered.streamable_http_app()) as client:
+        initialized = client.post(
+            "/mcp",
+            headers={
+                "content-type": "application/json",
+                "accept": "application/json, text/event-stream",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": "fixture", "version": "1"},
+                },
+            },
+        )
+        headers = {
+            "content-type": "application/json",
+            "accept": "application/json, text/event-stream",
+            "mcp-session-id": initialized.headers["mcp-session-id"],
+            "mcp-protocol-version": "2025-11-25",
+        }
+        response = client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "search_web_v2",
+                    "arguments": {
+                        "query": sentinel,
+                        "max_results": 51,
+                    },
+                },
+            },
+        )
+
+    event_data = next(
+        line.removeprefix("data: ")
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    )
+    result = json.loads(event_data)["result"]
+    assert response.status_code == 200
+    assert result["isError"] is True
+    assert "structuredContent" not in result
+    assert sentinel not in result["content"][0]["text"]
+    assert len(result["content"][0]["text"].encode()) <= 256
+    assert backend.v2_calls == 0
+
+
+def test_missing_pinned_sdk_tool_manager_fails_closed():
+    from argus.capabilities import CapabilityManifestError
+    from argus.mcp.v2_tools import (
+        actual_v2_tool_registration,
+        register_v2_tools,
+    )
+
+    class ManagerlessMcp:
+        def tool(self):
+            return lambda function: function
+
+    mcp = ManagerlessMcp()
+    with pytest.raises(CapabilityManifestError, match="tool manager"):
+        register_v2_tools(
+            mcp,
+            object(),
+            caller_identity=lambda: "principal",
+            caller_token=lambda: None,
+        )
+    with pytest.raises(CapabilityManifestError, match="tool manager"):
+        actual_v2_tool_registration(mcp)
+
+
+@pytest.mark.parametrize(
+    "envelope",
+    (
+        {
+            "contract_version": "2.0",
+            "outcome": "success",
+            "request_id": "request-invariant",
+            "result": None,
+            "error": None,
+        },
+        {
+            "contract_version": "2.0",
+            "outcome": "empty",
+            "request_id": "request-invariant",
+            "result": {"accepted": True},
+            "error": {
+                "type": "urn:argus:problem:unready",
+                "title": "Unready",
+                "status": 503,
+                "detail": "Invalid mixed envelope",
+                "instance": "urn:argus:request:request-invariant",
+                "code": "unready",
+                "retryable": False,
+                "retry_after_seconds": None,
+            },
+        },
+        {
+            "contract_version": "2.0",
+            "outcome": "unready",
+            "request_id": "request-invariant",
+            "result": None,
+            "error": None,
+        },
+        {
+            "contract_version": "2.0",
+            "outcome": "unready",
+            "request_id": "request-invariant",
+            "result": {"must": "be absent on failures"},
+            "error": {
+                "type": "urn:argus:problem:unready",
+                "title": "Unready",
+                "status": 503,
+                "detail": "Invalid mixed envelope",
+                "instance": "urn:argus:request:request-invariant",
+                "code": "unready",
+                "retryable": False,
+                "retry_after_seconds": None,
+            },
+        },
+    ),
+)
+def test_mcp_v2_rejects_http_envelopes_that_violate_result_error_invariants(
+    envelope,
+):
+    from pydantic import ValidationError
+
+    from argus.mcp.v2_tools import _result
+
+    with pytest.raises(ValidationError, match="outcome"):
+        _result("search_web_v2", envelope)
+
+
+def _mutate_leaf(document, path):
+    mutated = deepcopy(document)
+    target = mutated
+    for part in path[:-1]:
+        target = target[part]
+    leaf = target[path[-1]]
+    if isinstance(leaf, bool):
+        target[path[-1]] = not leaf
+    elif isinstance(leaf, int):
+        target[path[-1]] = leaf + 1
+    else:
+        target[path[-1]] = f"{leaf}-mutated"
+    return mutated
+
+
+def _leaf_paths(value, prefix=()):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            yield from _leaf_paths(child, (*prefix, key))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            yield from _leaf_paths(child, (*prefix, index))
+    else:
+        yield prefix
+
+
+def test_http_and_mcp_independently_reject_every_release_descriptor_mutation(
+    tmp_path,
+):
+    from argus.capabilities import (
+        MCP_RELEASE_DESCRIPTOR_PATH,
+        MCP_TRANSPORT_DESCRIPTOR,
+        MCP_V2_TOOL_DESCRIPTOR,
+        CapabilityManifestError,
+        http_capability_manifest,
+        validate_complete_mcp_registration,
+    )
+
+    registrations = {
+        "accepted_service",
+        "legacy_presenter",
+        "v2_presenter",
+        "v2_routes",
+        "transport_security",
+    }
+    release = json.loads(MCP_RELEASE_DESCRIPTOR_PATH.read_text())
+    validate_complete_mcp_registration(
+        MCP_TRANSPORT_DESCRIPTOR,
+        MCP_V2_TOOL_DESCRIPTOR,
+    )
+
+    for index, path in enumerate(_leaf_paths(release)):
+        candidate = tmp_path / f"mutated-{index}.json"
+        candidate.write_text(json.dumps(_mutate_leaf(release, path)))
+        capability = http_capability_manifest(
+            evidence_enabled=True,
+            registrations=registrations,
+            release_descriptor_path=candidate,
+        ).as_dict()
+        assert capability["mcp_contract"]["argus_tool_contract_versions"] == ["1"], path
+        with pytest.raises(
+            CapabilityManifestError,
+            match="release .*descriptor",
+        ):
+            validate_complete_mcp_registration(
+                MCP_TRANSPORT_DESCRIPTOR,
+                MCP_V2_TOOL_DESCRIPTOR,
+                release_descriptor_path=candidate,
+            )
+
+    http_process = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+from pathlib import Path
+from argus.capabilities import http_capability_manifest
+
+registrations = {
+    "accepted_service",
+    "legacy_presenter",
+    "v2_presenter",
+    "v2_routes",
+    "transport_security",
+}
+valid = http_capability_manifest(
+    evidence_enabled=True,
+    registrations=registrations,
+).as_dict()
+assert valid["mcp_contract"]["argus_tool_contract_versions"] == ["1", "2.0"]
+for candidate in sorted(Path(sys.argv[1]).glob("mutated-*.json")):
+    manifest = http_capability_manifest(
+        evidence_enabled=True,
+        registrations=registrations,
+        release_descriptor_path=candidate,
+    ).as_dict()
+    assert manifest["mcp_contract"]["argus_tool_contract_versions"] == ["1"]
+""",
+            str(tmp_path),
+        ],
+        cwd=MCP_RELEASE_DESCRIPTOR_PATH.parents[2],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert http_process.returncode == 0, http_process.stderr
+
+    mcp_process = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+from pathlib import Path
+from mcp.server.fastmcp import FastMCP
+from argus.capabilities import (
+    CapabilityManifestError,
+    MCP_TRANSPORT_DESCRIPTOR,
+    validate_complete_mcp_registration,
+)
+from argus.mcp.v2_tools import (
+    actual_v2_tool_registration,
+    register_v2_tools,
+)
+
+mcp = FastMCP("release-validation")
+register_v2_tools(
+    mcp,
+    object(),
+    caller_identity=lambda: "principal",
+    caller_token=lambda: None,
+)
+registration = actual_v2_tool_registration(mcp)
+validate_complete_mcp_registration(MCP_TRANSPORT_DESCRIPTOR, registration)
+for candidate in sorted(Path(sys.argv[1]).glob("mutated-*.json")):
+    try:
+        validate_complete_mcp_registration(
+            MCP_TRANSPORT_DESCRIPTOR,
+            registration,
+            release_descriptor_path=candidate,
+        )
+    except CapabilityManifestError:
+        continue
+    raise AssertionError(f"accepted mutated descriptor: {candidate}")
+""",
+            str(tmp_path),
+        ],
+        cwd=MCP_RELEASE_DESCRIPTOR_PATH.parents[2],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert mcp_process.returncode == 0, mcp_process.stderr

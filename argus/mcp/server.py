@@ -933,10 +933,11 @@ def build_mcp_backend(environ=None):
             HttpAuthorityClient(authority_client_config(environ, adapter="mcp"))
         )
     if mode == "standalone":
-        from argus.broker.router import create_broker
-        from argus.mcp.local_adapter import LocalMcpAdapter
+        from argus.development_mcp_adapter import (
+            build_development_mcp_backend,
+        )
 
-        return LocalMcpAdapter(create_broker())
+        return build_development_mcp_backend()
     raise AuthorityConfigurationError(
         "MCP requires ARGUS_AUTHORITY_URL and authority authentication; "
         "development standalone mode requires ARGUS_MCP_STANDALONE=true"
@@ -1074,138 +1075,19 @@ def serve_mcp(
         """Read durable provider budgets from the HTTP authority."""
         return await backend.search_budgets(token=_mcp_caller_token())
 
-    from argus.mcp.v2_tools import register_v2_tools
+    from argus.mcp.http_adapter import HttpMcpAdapter
+    from argus.development_mcp_adapter import LocalMcpAdapter
 
-    register_v2_tools(
-        mcp,
-        backend,
-        caller_identity=_mcp_caller_identity,
-        caller_token=_mcp_caller_token,
-    )
+    v2_registered = isinstance(backend, HttpMcpAdapter)
+    if v2_registered:
+        from argus.mcp.v2_tools import register_v2_tools
 
-    from argus.mcp.local_adapter import LocalMcpAdapter
-
-    if isinstance(backend, LocalMcpAdapter):
-        from argus.mcp import resources, tools
-        from mcp.server.fastmcp import Context as McpContext
-
-        @mcp.tool()
-        async def valyu_answer(query: str, fast_mode: bool = False) -> str:
-            return await tools.valyu_answer(query, fast_mode=fast_mode)
-
-        @mcp.tool()
-        def argus_paths() -> str:
-            return tools.argus_paths()
-
-        @mcp.tool()
-        async def recover_dead_article(
-            url: str,
-            title: str = None,
-            domain: str = None,
-            caller: str = "mcp",
-            ctx: McpContext = None,
-        ) -> str:
-            return await tools.recover_dead_article(
-                backend.broker,
-                url,
-                title,
-                domain,
-                ctx=ctx,
-                caller_identity=_mcp_caller_identity(),
-                caller_label=caller,
-            )
-
-        @mcp.tool()
-        async def capture_site(
-            url: str,
-            soft_page_limit: int = 75,
-            hard_page_limit: int = 200,
-            caller: str = "mcp",
-            ctx: McpContext = None,
-        ) -> str:
-            return await tools.capture_site(
-                backend.broker,
-                url,
-                soft_page_limit=soft_page_limit,
-                hard_page_limit=hard_page_limit,
-                ctx=ctx,
-                caller_identity=_mcp_caller_identity(),
-                caller_label=caller,
-            )
-
-        @mcp.tool()
-        async def build_research_pack(
-            topic: str,
-            official_url: str = None,
-            max_research_pages: int = 40,
-            response_format: str = "markdown",
-            caller: str = "mcp",
-            ctx: McpContext = None,
-        ) -> str:
-            return await tools.build_research_pack(
-                backend.broker,
-                topic,
-                official_url=official_url,
-                max_research_pages=max_research_pages,
-                response_format=response_format,
-                ctx=ctx,
-                caller_identity=_mcp_caller_identity(),
-                caller_label=caller,
-            )
-
-        @mcp.tool()
-        def read_pack_file(
-            path: str,
-            max_bytes: int = 262144,
-            offset: int = 0,
-        ) -> str:
-            return tools.read_pack_file(
-                path,
-                max_bytes=max_bytes,
-                offset=offset,
-            )
-
-        @mcp.tool()
-        async def test_provider(
-            provider: str,
-            query: str = "argus",
-            live: bool = False,
-            idempotency_key: str | None = None,
-            durable_receipt: str | None = None,
-            spend_reserved: bool = False,
-        ) -> str:
-            return await tools.test_provider_mcp(
-                backend.broker,
-                provider,
-                query,
-                caller_identity=_mcp_caller_identity(),
-                caller_label="mcp-admin-smoke",
-                live=live,
-                idempotency_key=idempotency_key,
-                durable_receipt=durable_receipt,
-                spend_reserved=spend_reserved,
-            )
-
-        @mcp.tool()
-        def cookie_health() -> str:
-            return tools.cookie_health()
-
-        @mcp.resource("argus://providers/status")
-        def provider_status() -> str:
-            return resources.provider_status_resource(backend.broker)
-
-        @mcp.resource("argus://providers/budgets")
-        def provider_budgets() -> str:
-            return resources.provider_budgets_resource(backend.broker)
-
-        @mcp.resource("argus://policies/current")
-        def routing_policies() -> str:
-            return resources.routing_policies_resource(backend.broker)
-
-        @mcp.resource("argus://corpus/paths")
-        def corpus_paths() -> str:
-            return resources.corpus_paths_resource()
-    else:
+        register_v2_tools(
+            mcp,
+            backend,
+            caller_identity=_mcp_caller_identity,
+            caller_token=_mcp_caller_token,
+        )
 
         @mcp.tool()
         async def recover_dead_article(
@@ -1254,23 +1136,41 @@ def serve_mcp(
                 token=_mcp_caller_token(),
             )
 
+    if isinstance(backend, LocalMcpAdapter):
+        from argus.development_mcp_tools import register_standalone_tools
+
+        register_standalone_tools(
+            mcp,
+            backend,
+            caller_identity=_mcp_caller_identity,
+        )
+
     from argus.capabilities import (
         CapabilityManifestError,
         validate_complete_mcp_registration,
+        validate_mcp_transport_registration,
         validate_mcp_tool_registration,
     )
-    from argus.mcp.v2_tools import actual_v2_tool_registration
 
-    tool_registration = actual_v2_tool_registration(mcp)
+    tool_registration = None
+    if v2_registered:
+        from argus.mcp.v2_tools import actual_v2_tool_registration
+
+        tool_registration = actual_v2_tool_registration(mcp)
     if transport == "stdio":
-        validate_mcp_tool_registration(tool_registration)
+        if tool_registration is not None:
+            validate_mcp_tool_registration(tool_registration)
         logger.info("Starting Argus MCP server (%s)", transport)
         mcp.run(transport=transport)
         return
-    validate_complete_mcp_registration(
-        _mcp_transport_registration(mcp),
-        tool_registration,
-    )
+    transport_registration = _mcp_transport_registration(mcp)
+    if tool_registration is None:
+        validate_mcp_transport_registration(transport_registration)
+    else:
+        validate_complete_mcp_registration(
+            transport_registration,
+            tool_registration,
+        )
     logger.info(
         "Starting Argus MCP server (%s)%s",
         transport,
