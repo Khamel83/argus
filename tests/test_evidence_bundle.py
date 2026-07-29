@@ -54,9 +54,11 @@ def _payload():
             "stability-evidence.json": "b" * 64,
         },
         "evaluator": {
+            "status": "pinned",
             "model": "frozen-fixture-evaluator-v1",
             "prompt_sha256": "c" * 64,
             "settings_sha256": "d" * 64,
+            "reason_code": None,
         },
         "topology": {"egress": "hermetic", "machine": "ci-fixture"},
         "profile": "hermetic",
@@ -272,14 +274,76 @@ def test_competitive_bundle_accepts_all_normalized_live_case_artifacts(tmp_path)
         "machine": "homelab",
         "source_type": "trafilatura",
     }
+    diagnostics = {
+        "timing": {
+            "operation_id": "competitive-operation",
+            "wall_ms": 1,
+            "component_ms": 1,
+            "timeout_source": "none",
+            "cache_ms": 0,
+        },
+        "attempts": [
+            {
+                "name": "duckduckgo",
+                "kind": "provider",
+                "tier": 0,
+                "status": "success",
+                "reason": "completed",
+                "result_count": 1,
+                "latency_ms": 1,
+            }
+        ],
+        "spend": {
+            "provider_calls": 1,
+            "reserved_usd": 0,
+            "actual_usd": 0,
+            "accounting_source": "authority",
+            "reconciliation": "settled",
+        },
+        "cache": {
+            "status": "miss",
+            "age_ms": 0,
+            "origin": "authority",
+            "origin_spend_usd": 0,
+            "eligible": True,
+        },
+        "freshness": {
+            "observed_at": "2026-07-29T00:00:00Z",
+            "age_seconds": 0,
+            "window_seconds": 3600,
+            "status": "fresh",
+            "reason": "within_window",
+        },
+        "persistence": {
+            "repository": "postgresql",
+            "durable_id": "receipt-competitive-operation",
+            "status": "accepted",
+        },
+    }
+    extraction_url = "https://example.com/article"
+    extraction_url_sha256 = sha256(extraction_url.encode()).hexdigest()
     payload["artifacts"] = {
         **{
             f"searches/{case_id}.json": {
                 "schema": "normalized-competitive-search-v1",
                 "case_id": case_id,
                 "mode": mode,
-                "baseline": {"outcome": "success", "results": [search_result]},
-                "candidate": {"outcome": "success", "results": [search_result]},
+                "request": {
+                    "query": f"literal {case_id}",
+                    "free_only": True,
+                    "providers": ["duckduckgo"],
+                    "caller": "scorecard-live",
+                },
+                "baseline": {
+                    "outcome": "success",
+                    "results": [search_result],
+                    "diagnostics": diagnostics,
+                },
+                "candidate": {
+                    "outcome": "success",
+                    "results": [search_result],
+                    "diagnostics": diagnostics,
+                },
             }
             for case_id, mode in COMPETITIVE_CASE_MODES.items()
             if mode != "extraction"
@@ -289,8 +353,29 @@ def test_competitive_bundle_accepts_all_normalized_live_case_artifacts(tmp_path)
                 "schema": "normalized-competitive-extraction-v1",
                 "case_id": case_id,
                 "mode": "extraction",
-                "baseline": {"outcome": "success", "content": extraction},
-                "candidate": {"outcome": "success", "content": extraction},
+                "request": {
+                    "url": extraction_url,
+                    "snapshot_id": f"snapshot-{case_id}",
+                    "url_sha256": extraction_url_sha256,
+                    "caller": "scorecard-live",
+                },
+                "capture": {
+                    "case_id": case_id,
+                    "snapshot_id": f"snapshot-{case_id}",
+                    "url": extraction_url,
+                    "url_sha256": extraction_url_sha256,
+                    "capture_sha256": "a" * 64,
+                },
+                "baseline": {
+                    "outcome": "success",
+                    "content": extraction,
+                    "diagnostics": diagnostics,
+                },
+                "candidate": {
+                    "outcome": "success",
+                    "content": extraction,
+                    "diagnostics": diagnostics,
+                },
             }
             for case_id, mode in COMPETITIVE_CASE_MODES.items()
             if mode == "extraction"
@@ -309,6 +394,7 @@ def test_competitive_bundle_accepts_all_normalized_live_case_artifacts(tmp_path)
     failure_payload["artifacts"]["extractions/javascript-live.json"]["candidate"] = {
         "outcome": "extraction_failed",
         "content": None,
+        "diagnostics": diagnostics,
     }
     failure_output = tmp_path / "competitive-failure"
     write_bundle(
@@ -329,12 +415,14 @@ def test_competitive_bundle_accepts_all_normalized_live_case_artifacts(tmp_path)
         canonical_failure["artifacts"]["searches/discovery-01.json"]["candidate"] = {
             "outcome": outcome,
             "results": [],
+            "diagnostics": diagnostics,
         }
         canonical_failure["artifacts"]["extractions/javascript-live.json"][
             "candidate"
         ] = {
             "outcome": outcome,
             "content": None,
+            "diagnostics": diagnostics,
         }
         canonical_output = tmp_path / f"competitive-{outcome}"
         write_bundle(
@@ -348,7 +436,7 @@ def test_competitive_bundle_accepts_all_normalized_live_case_artifacts(tmp_path)
     contradictions = [
         (
             "searches/discovery-01.json",
-            {"outcome": "success", "results": []},
+            {"outcome": "success", "results": [], "diagnostics": diagnostics},
         ),
         (
             "extractions/javascript-live.json",
@@ -365,6 +453,7 @@ def test_competitive_bundle_accepts_all_normalized_live_case_artifacts(tmp_path)
                     "machine": "homelab",
                     "source_type": "trafilatura",
                 },
+                "diagnostics": diagnostics,
             },
         ),
     ]
@@ -638,3 +727,55 @@ def test_bundle_secret_scanner_normalizes_camel_and_spaced_keys(tmp_path, hostil
             stability=_stability(),
             payload=payload,
         )
+
+
+def test_evaluator_identity_can_truthfully_record_pinned_or_unavailable():
+    payload = _payload()
+    unavailable = payload["candidate_identity"]["dimensions"]
+    unavailable["evaluator"] = {
+        "status": "unavailable",
+        "model": None,
+        "prompt_sha256": "c" * 64,
+        "settings_sha256": "d" * 64,
+        "reason_code": "pinned_evaluator_not_configured",
+    }
+
+    generation = derive_generation(unavailable)
+
+    assert len(generation) == 64
+    pinned = json.loads(json.dumps(unavailable))
+    pinned["evaluator"] = {
+        "status": "pinned",
+        "model": "example/evaluator:free",
+        "prompt_sha256": "c" * 64,
+        "settings_sha256": "d" * 64,
+        "reason_code": None,
+    }
+    assert derive_generation(pinned) != generation
+
+
+@pytest.mark.parametrize(
+    "evaluator",
+    (
+        {
+            "status": "unavailable",
+            "model": "invented/model",
+            "prompt_sha256": "c" * 64,
+            "settings_sha256": "d" * 64,
+            "reason_code": "unavailable",
+        },
+        {
+            "status": "pinned",
+            "model": None,
+            "prompt_sha256": "c" * 64,
+            "settings_sha256": "d" * 64,
+            "reason_code": None,
+        },
+    ),
+)
+def test_evaluator_identity_rejects_contradictory_status(evaluator):
+    dimensions = _payload()["candidate_identity"]["dimensions"]
+    dimensions["evaluator"] = evaluator
+
+    with pytest.raises(BundleError, match="evaluator"):
+        derive_generation(dimensions)

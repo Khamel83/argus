@@ -199,10 +199,31 @@ def _validate_dimensions(value: object) -> dict[str, Any]:
     }
     evaluator = _mapping(dimensions["evaluator"], "evaluator identity")
     _exact_keys(
-        evaluator, {"model", "prompt_sha256", "settings_sha256"}, "evaluator identity"
+        evaluator,
+        {
+            "status",
+            "model",
+            "prompt_sha256",
+            "settings_sha256",
+            "reason_code",
+        },
+        "evaluator identity",
     )
-    if not isinstance(evaluator["model"], str) or not evaluator["model"]:
-        raise BundleError("evaluator model is required")
+    if evaluator["status"] == "pinned":
+        if not isinstance(evaluator["model"], str) or not evaluator["model"]:
+            raise BundleError("pinned evaluator model is required")
+        if evaluator["reason_code"] is not None:
+            raise BundleError("pinned evaluator cannot have a reason code")
+    elif evaluator["status"] == "unavailable":
+        if evaluator["model"] is not None:
+            raise BundleError("unavailable evaluator cannot name a model")
+        if (
+            not isinstance(evaluator["reason_code"], str)
+            or not evaluator["reason_code"]
+        ):
+            raise BundleError("unavailable evaluator reason code is required")
+    else:
+        raise BundleError("evaluator status must be pinned or unavailable")
     _sha256(evaluator["prompt_sha256"], "evaluator prompt hash")
     _sha256(evaluator["settings_sha256"], "evaluator settings hash")
     topology = _mapping(dimensions["topology"], "topology identity")
@@ -451,7 +472,7 @@ def _validate_receipts(
 
 def _validate_normalized_search_evidence(value: object, label: str) -> None:
     evidence = _mapping(value, label)
-    _exact_keys(evidence, {"outcome", "results"}, label)
+    _exact_keys(evidence, {"outcome", "results", "diagnostics"}, label)
     outcome = evidence["outcome"]
     results = evidence["results"]
     if outcome not in _NORMALIZED_OUTCOMES or not isinstance(results, list):
@@ -493,17 +514,19 @@ def _validate_normalized_search_evidence(value: object, label: str) -> None:
             or not isinstance(result["score"], (int, float))
         ):
             raise BundleError(f"{label} result is invalid")
+    _validate_live_diagnostics(evidence["diagnostics"], f"{label} diagnostics")
 
 
 def _validate_normalized_extraction_evidence(value: object, label: str) -> None:
     evidence = _mapping(value, label)
-    _exact_keys(evidence, {"outcome", "content"}, label)
+    _exact_keys(evidence, {"outcome", "content", "diagnostics"}, label)
     outcome = evidence["outcome"]
     if outcome not in _NORMALIZED_OUTCOMES:
         raise BundleError(f"{label} is invalid")
     if evidence["content"] is None:
         if outcome in _SUCCESS_LIKE_OUTCOMES:
             raise BundleError(f"{label} success-like outcome requires content")
+        _validate_live_diagnostics(evidence["diagnostics"], f"{label} diagnostics")
         return
     if outcome not in _SUCCESS_LIKE_OUTCOMES:
         raise BundleError(f"{label} non-success outcome forbids content")
@@ -544,6 +567,161 @@ def _validate_normalized_extraction_evidence(value: object, label: str) -> None:
         or content["word_count"] < 0
     ):
         raise BundleError(f"{label} content is invalid")
+    _validate_live_diagnostics(evidence["diagnostics"], f"{label} diagnostics")
+
+
+def _validate_live_diagnostics(value: object, label: str) -> None:
+    diagnostics = _mapping(value, label)
+    _exact_keys(
+        diagnostics,
+        {"timing", "attempts", "spend", "cache", "freshness", "persistence"},
+        label,
+    )
+    timing = _mapping(diagnostics["timing"], f"{label} timing")
+    _exact_keys(
+        timing,
+        {"operation_id", "wall_ms", "component_ms", "timeout_source", "cache_ms"},
+        f"{label} timing",
+    )
+    for field in ("wall_ms", "component_ms", "cache_ms"):
+        if (
+            isinstance(timing[field], bool)
+            or not isinstance(timing[field], int)
+            or timing[field] < 0
+        ):
+            raise BundleError(f"{label} timing is invalid")
+    if (
+        not isinstance(timing["operation_id"], str)
+        or not timing["operation_id"]
+        or timing["wall_ms"] > 120_000
+        or timing["component_ms"] > timing["wall_ms"]
+        or timing["cache_ms"] > timing["wall_ms"]
+        or timing["timeout_source"]
+        not in {"none", "provider", "extraction", "operation"}
+    ):
+        raise BundleError(f"{label} timing is inconsistent")
+    attempts = diagnostics["attempts"]
+    if not isinstance(attempts, list) or not attempts:
+        raise BundleError(f"{label} attempts are required")
+    for raw_attempt in attempts:
+        attempt = _mapping(raw_attempt, f"{label} attempt")
+        _exact_keys(
+            attempt,
+            {
+                "name",
+                "kind",
+                "tier",
+                "status",
+                "reason",
+                "result_count",
+                "latency_ms",
+            },
+            f"{label} attempt",
+        )
+        if (
+            not isinstance(attempt["name"], str)
+            or not attempt["name"]
+            or attempt["kind"] not in {"provider", "extractor"}
+            or (
+                attempt["kind"] == "provider"
+                and (
+                    isinstance(attempt["tier"], bool)
+                    or not isinstance(attempt["tier"], int)
+                    or attempt["tier"] != 0
+                )
+            )
+            or (attempt["kind"] == "extractor" and attempt["tier"] is not None)
+            or not isinstance(attempt["status"], str)
+            or not attempt["status"]
+            or not isinstance(attempt["reason"], str)
+            or not attempt["reason"]
+            or any(
+                isinstance(attempt[field], bool)
+                or not isinstance(attempt[field], int)
+                or attempt[field] < 0
+                for field in ("result_count", "latency_ms")
+            )
+        ):
+            raise BundleError(f"{label} attempt is invalid")
+    spend = _mapping(diagnostics["spend"], f"{label} spend")
+    _exact_keys(
+        spend,
+        {
+            "provider_calls",
+            "reserved_usd",
+            "actual_usd",
+            "accounting_source",
+            "reconciliation",
+        },
+        f"{label} spend",
+    )
+    if (
+        isinstance(spend["provider_calls"], bool)
+        or not isinstance(spend["provider_calls"], int)
+        or spend["provider_calls"] < 0
+        or spend["reserved_usd"] != 0
+        or spend["actual_usd"] != 0
+        or not isinstance(spend["accounting_source"], str)
+        or not spend["accounting_source"]
+        or spend["reconciliation"] != "settled"
+    ):
+        raise BundleError(f"{label} must prove zero spend")
+    cache = _mapping(diagnostics["cache"], f"{label} cache")
+    _exact_keys(
+        cache,
+        {"status", "age_ms", "origin", "origin_spend_usd", "eligible"},
+        f"{label} cache",
+    )
+    if (
+        cache["status"] not in {"hit", "miss", "bypass"}
+        or isinstance(cache["age_ms"], bool)
+        or not isinstance(cache["age_ms"], int)
+        or cache["age_ms"] < 0
+        or not isinstance(cache["origin"], str)
+        or not cache["origin"]
+        or cache["origin_spend_usd"] != 0
+        or not isinstance(cache["eligible"], bool)
+    ):
+        raise BundleError(f"{label} cache evidence is invalid")
+    freshness = _mapping(diagnostics["freshness"], f"{label} freshness")
+    _exact_keys(
+        freshness,
+        {
+            "observed_at",
+            "age_seconds",
+            "window_seconds",
+            "status",
+            "reason",
+        },
+        f"{label} freshness",
+    )
+    _timestamp(freshness["observed_at"], f"{label} freshness observed_at")
+    if (
+        any(
+            isinstance(freshness[field], bool)
+            or not isinstance(freshness[field], int)
+            or freshness[field] < 0
+            for field in ("age_seconds", "window_seconds")
+        )
+        or freshness["status"] != "fresh"
+        or freshness["age_seconds"] > freshness["window_seconds"]
+        or not isinstance(freshness["reason"], str)
+        or not freshness["reason"]
+    ):
+        raise BundleError(f"{label} freshness evidence is invalid")
+    persistence = _mapping(diagnostics["persistence"], f"{label} persistence")
+    _exact_keys(
+        persistence,
+        {"repository", "durable_id", "status"},
+        f"{label} persistence",
+    )
+    if (
+        persistence["repository"] != "postgresql"
+        or not isinstance(persistence["durable_id"], str)
+        or not persistence["durable_id"]
+        or persistence["status"] != "accepted"
+    ):
+        raise BundleError(f"{label} persistence receipt is invalid")
 
 
 def _validate_artifact(
@@ -567,7 +745,7 @@ def _validate_artifact(
     elif lane == "competitive" and relative.startswith("searches/"):
         _exact_keys(
             artifact,
-            {"schema", "case_id", "mode", "baseline", "candidate"},
+            {"schema", "case_id", "mode", "request", "baseline", "candidate"},
             "competitive search artifact",
         )
         case_id = artifact["case_id"]
@@ -578,6 +756,26 @@ def _validate_artifact(
             or artifact["mode"] == "extraction"
         ):
             raise BundleError("invalid normalized competitive search artifact")
+        request = _mapping(artifact["request"], "competitive search request")
+        _exact_keys(
+            request,
+            {"query", "free_only", "providers", "caller"},
+            "competitive search request",
+        )
+        if (
+            not isinstance(request["query"], str)
+            or not request["query"]
+            or request["free_only"] is not True
+            or not isinstance(request["providers"], list)
+            or not request["providers"]
+            or any(
+                not isinstance(provider, str) or not provider
+                for provider in request["providers"]
+            )
+            or not isinstance(request["caller"], str)
+            or not request["caller"]
+        ):
+            raise BundleError("competitive search request is invalid")
         _validate_normalized_search_evidence(
             artifact["baseline"], "competitive baseline search evidence"
         )
@@ -587,7 +785,15 @@ def _validate_artifact(
     elif lane == "competitive" and relative.startswith("extractions/"):
         _exact_keys(
             artifact,
-            {"schema", "case_id", "mode", "baseline", "candidate"},
+            {
+                "schema",
+                "case_id",
+                "mode",
+                "request",
+                "capture",
+                "baseline",
+                "candidate",
+            },
             "competitive extraction artifact",
         )
         case_id = artifact["case_id"]
@@ -598,6 +804,42 @@ def _validate_artifact(
             or artifact["mode"] != "extraction"
         ):
             raise BundleError("invalid normalized competitive extraction artifact")
+        request = _mapping(artifact["request"], "competitive extraction request")
+        capture = _mapping(artifact["capture"], "competitive extraction capture")
+        expected_capture_keys = {
+            "case_id",
+            "snapshot_id",
+            "url",
+            "url_sha256",
+            "capture_sha256",
+        }
+        _exact_keys(
+            request,
+            {"url", "snapshot_id", "url_sha256", "caller"},
+            "competitive extraction request",
+        )
+        _exact_keys(capture, expected_capture_keys, "competitive extraction capture")
+        if (
+            capture["case_id"] != case_id
+            or any(
+                not isinstance(capture[field], str) or not capture[field]
+                for field in ("snapshot_id", "url")
+            )
+            or _sha256(capture["url_sha256"], "capture URL hash")
+            != _hash_bytes(capture["url"].encode())
+            or _sha256(capture["capture_sha256"], "capture content hash")
+            != capture["capture_sha256"]
+            or request
+            != {
+                "url": capture["url"],
+                "snapshot_id": capture["snapshot_id"],
+                "url_sha256": capture["url_sha256"],
+                "caller": request.get("caller"),
+            }
+            or not isinstance(request["caller"], str)
+            or not request["caller"]
+        ):
+            raise BundleError("competitive extraction snapshot is inconsistent")
         _validate_normalized_extraction_evidence(
             artifact["baseline"], "competitive baseline extraction evidence"
         )

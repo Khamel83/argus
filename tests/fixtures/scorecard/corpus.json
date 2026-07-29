@@ -20,6 +20,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "Python asyncio official documentation",
       "hermetic_input": {
         "query": "fixture query for discovery-01",
         "transport_outcome": "success",
@@ -53,6 +54,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "Python asyncio related guides event loop tasks queues",
       "hermetic_input": {
         "query": "fixture query for discovery-02",
         "transport_outcome": "success",
@@ -86,6 +88,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "Mercury programming language official project",
       "hermetic_input": {
         "query": "fixture query for discovery-03",
         "transport_outcome": "success",
@@ -119,6 +122,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "RFC 9110 HTTP field parsing specialist analysis",
       "hermetic_input": {
         "query": "fixture query for discovery-04",
         "transport_outcome": "success",
@@ -152,6 +156,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "SQLite write-ahead logging official documentation",
       "hermetic_input": {
         "query": "fixture query for discovery-05",
         "transport_outcome": "success",
@@ -185,6 +190,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "RFC 9110 HTTP semantics canonical source",
       "hermetic_input": {
         "query": "fixture query for discovery-06",
         "transport_outcome": "success",
@@ -218,6 +224,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "NIST exact speed of light in vacuum",
       "hermetic_input": {
         "query": "fixture query for grounding-01",
         "transport_outcome": "success",
@@ -251,6 +258,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "one astronomical unit in kilometres authoritative conversion",
       "hermetic_input": {
         "query": "fixture query for grounding-02",
         "transport_outcome": "success",
@@ -284,6 +292,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "current stable Python release python.org",
       "hermetic_input": {
         "query": "fixture query for grounding-03",
         "transport_outcome": "success",
@@ -317,6 +326,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "PostgreSQL multiversion concurrency control official documentation",
       "hermetic_input": {
         "query": "fixture query for grounding-04",
         "transport_outcome": "success",
@@ -350,6 +360,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "HTTP 103 Early Hints benefits limitations evidence",
       "hermetic_input": {
         "query": "fixture query for grounding-05",
         "transport_outcome": "success",
@@ -383,6 +394,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "RFC number for the nonexistent Hypertext Coffee Transfer Protocol version 9",
       "hermetic_input": {
         "query": "fixture query for grounding-06",
         "transport_outcome": "empty",
@@ -408,6 +420,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "site:docs.python.org distutils removed replacement packaging",
       "hermetic_input": {
         "query": "fixture query for recovery-01",
         "transport_outcome": "success",
@@ -441,6 +454,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "webcache.googleusercontent.com retired cached page archive replacement",
       "hermetic_input": {
         "query": "fixture query for recovery-02",
         "transport_outcome": "success",
@@ -474,6 +488,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "Pydantic project formerly named pydantic-core rename canonical repository",
       "hermetic_input": {
         "query": "fixture query for recovery-03",
         "transport_outcome": "success",
@@ -507,6 +522,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "W3C HTML 4.01 specification archived canonical copy",
       "hermetic_input": {
         "query": "fixture query for recovery-04",
         "transport_outcome": "success",
@@ -540,6 +556,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "http://www.w3.org/TR/html401 canonical HTTPS destination",
       "hermetic_input": {
         "query": "fixture query for recovery-05",
         "transport_outcome": "success",
@@ -573,6 +590,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "example.invalid discontinued project canonical successor",
       "hermetic_input": {
         "query": "fixture query for recovery-06",
         "transport_outcome": "empty",
@@ -600,6 +618,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "SQLite WAL concurrency behavior benchmarks independent analysis",
       "hermetic_input": {
         "query": "fixture query for research-01",
         "transport_outcome": "success",
@@ -648,6 +667,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "current Python security releases support status",
       "hermetic_input": {
         "query": "fixture query for research-02",
         "transport_outcome": "success",
@@ -696,6 +716,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "HTTP/3 performance evidence advantages limitations",
       "hermetic_input": {
         "query": "fixture query for research-03",
         "transport_outcome": "success",
@@ -745,6 +766,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "PostgreSQL logical replication official documentation practical guide",
       "hermetic_input": {
         "query": "fixture query for research-04",
         "transport_outcome": "success",
@@ -793,6 +815,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "CRDT delta state synchronization specialist research",
       "hermetic_input": {
         "query": "fixture query for research-05",
         "transport_outcome": "success",
@@ -841,6 +864,7 @@
         "free",
         "budgeted"
       ],
+      "live_query": "nonexistent RFC 99999 implementation evidence",
       "hermetic_input": {
         "query": "fixture query for research-06",
         "transport_outcome": "empty",
@@ -1012,7 +1036,7 @@
         "budgeted"
       ],
       "snapshot_id": "snapshot-primary-docs-v1",
-      "snapshot_sha256": "eb33d36da592855b5796694f3ce252b91bcbc19ea06f926195e4f54065760e27",
+      "url_sha256": "eb33d36da592855b5796694f3ce252b91bcbc19ea06f926195e4f54065760e27",
       "url": "https://docs.python.org/3/library/asyncio.html"
     },
     {
@@ -1024,7 +1048,7 @@
         "budgeted"
       ],
       "snapshot_id": "snapshot-long-form-v1",
-      "snapshot_sha256": "b1b13a12aee75c6ecc20fb910c724cdfd1e4d841add5e14d1dd4a2006727a9ad",
+      "url_sha256": "b1b13a12aee75c6ecc20fb910c724cdfd1e4d841add5e14d1dd4a2006727a9ad",
       "url": "https://www.rfc-editor.org/rfc/rfc9110.html"
     },
     {
@@ -1036,7 +1060,7 @@
         "budgeted"
       ],
       "snapshot_id": "snapshot-javascript-live-v1",
-      "snapshot_sha256": "036cd5a07f8352549e40761ab737dfd322cc36903e9c0019e869305cce448f04",
+      "url_sha256": "036cd5a07f8352549e40761ab737dfd322cc36903e9c0019e869305cce448f04",
       "url": "https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API"
     },
     {
@@ -1048,7 +1072,7 @@
         "budgeted"
       ],
       "snapshot_id": "snapshot-moved-live-v1",
-      "snapshot_sha256": "59d2eeb2b982a45ae87ad4e384671ed040cc17fec0751b51ada57666826841c0",
+      "url_sha256": "59d2eeb2b982a45ae87ad4e384671ed040cc17fec0751b51ada57666826841c0",
       "url": "https://www.rfc-editor.org/rfc/rfc2616"
     }
   ]

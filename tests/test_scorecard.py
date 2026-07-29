@@ -68,6 +68,18 @@ def test_frozen_corpus_has_the_declared_search_and_extraction_coverage():
     assert len(corpus["hermetic_extractions"]) == 8
     assert len(corpus["live_extractions"]) == 4
     assert all(entry["profiles"] for entry in corpus["search_intents"])
+    assert all(
+        entry["live_query"]
+        and entry["live_query"] != entry["hermetic_input"]["query"]
+        and "fixture query" not in entry["live_query"].lower()
+        for entry in corpus["search_intents"]
+    )
+    assert all(
+        __import__("hashlib").sha256(entry["url"].encode()).hexdigest()
+        == entry["url_sha256"]
+        for entry in corpus["live_extractions"]
+    )
+    assert all("snapshot_sha256" not in entry for entry in corpus["live_extractions"])
 
 
 def test_corpus_rejects_an_intent_without_its_evidence_contract():
@@ -99,8 +111,20 @@ def test_corpus_rejects_an_intent_without_its_evidence_contract():
             "evidence",
         ),
         (
-            lambda corpus: corpus["live_extractions"][0].pop("snapshot_sha256", None),
+            lambda corpus: corpus["live_extractions"][0].pop("url_sha256", None),
             "exact keys",
+        ),
+        (
+            lambda corpus: corpus["search_intents"][0].update(
+                {"live_query": "fixture query for discovery-01"}
+            ),
+            "literal live query",
+        ),
+        (
+            lambda corpus: corpus["live_extractions"][0].update(
+                {"url_sha256": "0" * 64}
+            ),
+            "URL hash",
         ),
     ),
 )
@@ -545,6 +569,32 @@ def test_live_configuration_declares_exact_receipt_contract():
         "one_time_credit_providers",
         "issued_at",
     ]
+    assert len(configuration["cases"]) == 28
+    assert all(
+        "query" in case
+        for case in configuration["cases"]
+        if case["mode"] != "extraction"
+    )
+    assert all(
+        {"url", "url_sha256", "snapshot_id"} <= set(case)
+        for case in configuration["cases"]
+        if case["mode"] == "extraction"
+    )
+
+
+def test_scorecard_cli_exposes_network_free_compiler_and_residual_interfaces():
+    completed = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "run-scorecard.py"), "--help"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "{hermetic,live-config,competitive,residual}" in completed.stdout
+    assert "--input" in completed.stdout
+    assert "--stability-bundle" in completed.stdout
+    assert "--attempt-one" in completed.stdout
+    assert "--attempt-two" in completed.stdout
 
 
 def test_budgeted_authorization_receipt_is_exact_digest_bound():
