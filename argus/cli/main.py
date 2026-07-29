@@ -5,7 +5,8 @@ Argus CLI — command-line interface to the search broker.
 import asyncio
 import json
 import os
-import sys
+import secrets
+import time
 
 import click
 
@@ -48,6 +49,135 @@ def _emit_json(payload):
     click.echo(json.dumps(payload, indent=2))
 
 
+def _cli_unready(detail: str):
+    """Return the one bounded v2 shape available before execution starts."""
+    request_id = f"cli-{secrets.token_hex(8)}"
+    return {
+        "contract_version": "2.0",
+        "outcome": "unready",
+        "request_id": request_id,
+        "result": None,
+        "error": {
+            "type": "urn:argus:problem:unready",
+            "title": "Unready",
+            "status": 503,
+            "detail": detail,
+            "instance": f"urn:argus:request:{request_id}",
+            "code": "unready",
+            "retryable": False,
+            "retry_after_seconds": None,
+        },
+    }
+
+
+def _negotiated_http_request(authority, route: str, payload: dict):
+    """Execute exactly one request against the discovered contract family."""
+    from argus.contracts import validate_v2_envelope
+
+    try:
+        selection = _run(
+            authority.resolve_http_contract(
+                None,
+                time.monotonic,
+            )
+        )
+    except Exception:
+        return "v2", _cli_unready("Argus HTTP contract discovery is unavailable")
+
+    if selection.outcome != "ready":
+        return "v2", _cli_unready("Argus HTTP contract discovery is unavailable")
+    if selection.contract_version == "2.0" and selection.base_path == "/api/v2":
+        try:
+            response = _run(
+                authority.request_v2(
+                    f"{selection.base_path}{route}",
+                    payload=payload,
+                )
+            )
+            validate_v2_envelope(response)
+            return "v2", response
+        except Exception:
+            return "v2", _cli_unready("Argus HTTP execution authority is unavailable")
+    if selection.contract_version == "1" and selection.base_path == "/api":
+        try:
+            return "v1", _run(
+                authority.request(
+                    "POST",
+                    f"{selection.base_path}{route}",
+                    payload=payload,
+                )
+            )
+        except Exception:
+            return "v2", _cli_unready("Argus HTTP execution authority is unavailable")
+    return "v2", _cli_unready("Argus HTTP contract discovery is unavailable")
+
+
+def _finish_v2(envelope: dict, as_json: bool) -> None:
+    """Write one envelope, then map its canonical outcome to the CLI status."""
+    if as_json:
+        _emit_json(envelope)
+    outcome = envelope.get("outcome")
+    if outcome not in {"success", "degraded", "empty"}:
+        error = envelope.get("error") or {}
+        code = error.get("code") or outcome or "operation_failed"
+        detail = error.get("detail") or code
+        click.echo(f"Argus operation failed ({code}): {detail}", err=True)
+        raise click.exceptions.Exit(1)
+
+
+def _print_v2_search(envelope: dict, query: str, mode: str, as_json: bool) -> None:
+    """Preserve legacy search text while exposing v2 evidence identity."""
+    if as_json:
+        _finish_v2(envelope, as_json=True)
+        return
+    result = envelope.get("result") or {}
+    click.echo(f"Query: {result.get('query', query)}")
+    click.echo(
+        f"Mode: {result.get('mode', mode)} | "
+        f"Results: {result.get('total_results', 0)} | "
+        f"Cached: {result.get('cached', False)}"
+    )
+    click.echo(f"Run ID: {result.get('search_run_id')}")
+    click.echo(f"Outcome: {envelope.get('outcome', 'unready')}")
+    click.echo(f"Request ID: {envelope.get('request_id', 'unknown')}")
+    click.echo("Evidence: " + ("available" if result else "unavailable"))
+    if result.get("session_id"):
+        click.echo(f"Session: {result['session_id']}")
+    click.echo()
+    for index, item in enumerate(result.get("results") or [], 1):
+        provider = f" [{item['provider']}]" if item.get("provider") else ""
+        click.echo(f"  {index}. {item.get('title', '')}{provider}")
+        click.echo(f"     {item.get('url', '')}")
+        if item.get("snippet"):
+            click.echo(f"     {item['snippet'][:120]}")
+        click.echo()
+    _finish_v2(envelope, as_json=False)
+
+
+def _print_v2_extract(envelope: dict, as_json: bool) -> None:
+    """Preserve legacy extraction text while exposing v2 evidence identity."""
+    if as_json:
+        _finish_v2(envelope, as_json=True)
+        return
+    result = envelope.get("result") or {}
+    if result.get("title"):
+        click.echo(f"Title: {result['title']}")
+    if result.get("author"):
+        click.echo(f"Author: {result['author']}")
+    if result.get("date"):
+        click.echo(f"Date: {result['date']}")
+    click.echo(
+        f"Words: {result.get('word_count', 0)} | "
+        f"Extractor: {result.get('extractor') or 'unknown'}"
+    )
+    click.echo(f"Outcome: {envelope.get('outcome', 'unready')}")
+    click.echo(f"Request ID: {envelope.get('request_id', 'unknown')}")
+    click.echo("Evidence: " + ("available" if result else "unavailable"))
+    click.echo()
+    click.echo(result.get("text") or "")
+    _finish_v2(envelope, as_json=False)
+
+
 def _http_authority_client():
     """Return the configured HTTP authority client for remote/production CLI."""
     from argus.authority import (
@@ -69,6 +199,16 @@ def _http_authority_client():
             "Production CLI requires ARGUS_AUTHORITY_URL and authority authentication"
         )
     return None
+
+
+def _require_http_authority():
+    """Require the sole execution authority for every CLI retrieval operation."""
+    authority = _http_authority_client()
+    if authority is None:
+        raise click.ClickException(
+            "CLI retrieval requires ARGUS_AUTHORITY_URL and authority authentication"
+        )
+    return authority
 
 
 def _workflow_to_dict(result):
@@ -259,135 +399,58 @@ def search(
       research    Deep multi-provider search for research tasks
     """
     authority = _http_authority_client()
-    if authority is not None:
-        request = {
-            "query": query,
-            "mode": mode,
-            "max_results": max_results,
-            "include_attribution": attribution,
-            "free_only": free_only,
-            "caller": caller,
-        }
-        if providers:
-            request["providers"] = [item.strip() for item in providers.split(",")]
-        if session:
-            request["session_id"] = session
-        response = _run(authority.search(request))
-        if as_json:
-            output = dict(response)
-            output["run_id"] = output.pop("search_run_id", None)
-            _emit_json(output)
-            return
-        click.echo(f"Query: {response.get('query', query)}")
-        click.echo(
-            f"Mode: {response.get('mode', mode)} | "
-            f"Results: {response.get('total_results', 0)} | "
-            f"Cached: {response.get('cached', False)}"
+    if authority is None:
+        from argus import standalone_cli
+
+        return standalone_cli.search(
+            query=query,
+            mode=mode,
+            max_results=max_results,
+            providers=providers,
+            as_json=as_json,
+            session=session,
+            attribution=attribution,
+            free_only=free_only,
+            caller=caller,
         )
-        click.echo(f"Run ID: {response.get('search_run_id')}")
-        if response.get("session_id"):
-            click.echo(f"Session: {response['session_id']}")
-        click.echo()
-        for index, result in enumerate(response.get("results") or [], 1):
-            provider = f" [{result['provider']}]" if result.get("provider") else ""
-            click.echo(f"  {index}. {result.get('title', '')}{provider}")
-            click.echo(f"     {result.get('url', '')}")
-            if result.get("snippet"):
-                click.echo(f"     {result['snippet'][:120]}")
-            click.echo()
-        return
-
-    from argus.broker.router import create_broker
-    from argus.models import ProviderName, SearchMode, SearchQuery
-
-    broker = create_broker()
-    override = (
-        [ProviderName(item.strip()) for item in providers.split(",")]
-        if providers
-        else None
-    )
-    q = SearchQuery(
-        query=query,
-        mode=SearchMode(mode),
-        max_results=max_results,
-        providers=override,
-        free_only=free_only,
-        caller=caller,
-    )
-
+    request = {
+        "query": query,
+        "mode": mode,
+        "max_results": max_results,
+        "include_attribution": attribution,
+        "free_only": free_only,
+        "caller": caller,
+    }
+    if providers:
+        request["providers"] = [item.strip() for item in providers.split(",")]
     if session:
-        resp, sid = _run(
-            broker.search_with_session(
-                q,
-                session_id=session,
-                compute_attribution=attribution,
-            )
-        )
-        session_id = sid
-    else:
-        resp = _run(broker.search(q, compute_attribution=attribution))
-        session_id = None
-
+        request["session_id"] = session
+    version, response = _negotiated_http_request(authority, "/search", request)
+    if version == "v2":
+        _print_v2_search(response, query, mode, as_json)
+        return
     if as_json:
-        data = {
-            "query": resp.query,
-            "mode": resp.mode.value,
-            "results": [
-                {
-                    "url": r.url,
-                    "title": r.title,
-                    "snippet": r.snippet,
-                    "provider": r.provider.value if r.provider else None,
-                    "score": r.score,
-                    "score_attribution": r.score_attribution if attribution else None,
-                    "egress": r.metadata.get("egress") if r.metadata else None,
-                    "machine": r.metadata.get("machine") if r.metadata else None,
-                }
-                for r in resp.results
-            ],
-            "total_results": resp.total_results,
-            "cached": resp.cached,
-            "run_id": resp.search_run_id,
-        }
-        if session_id:
-            data["session_id"] = session_id
-        click.echo(json.dumps(data, indent=2))
-    else:
-        click.echo(f"Query: {resp.query}")
-        click.echo(
-            f"Mode: {resp.mode.value} | Results: {resp.total_results} | Cached: {resp.cached}"
-        )
-        click.echo(f"Run ID: {resp.search_run_id}")
-        if session_id:
-            click.echo(f"Session: {session_id}")
+        output = dict(response)
+        output["run_id"] = output.pop("search_run_id", None)
+        _emit_json(output)
+        return
+    click.echo(f"Query: {response.get('query', query)}")
+    click.echo(
+        f"Mode: {response.get('mode', mode)} | "
+        f"Results: {response.get('total_results', 0)} | "
+        f"Cached: {response.get('cached', False)}"
+    )
+    click.echo(f"Run ID: {response.get('search_run_id')}")
+    if response.get("session_id"):
+        click.echo(f"Session: {response['session_id']}")
+    click.echo()
+    for index, result in enumerate(response.get("results") or [], 1):
+        provider = f" [{result['provider']}]" if result.get("provider") else ""
+        click.echo(f"  {index}. {result.get('title', '')}{provider}")
+        click.echo(f"     {result.get('url', '')}")
+        if result.get("snippet"):
+            click.echo(f"     {result['snippet'][:120]}")
         click.echo()
-        for i, r in enumerate(resp.results, 1):
-            provider = f" [{r.provider.value}]" if r.provider else ""
-            click.echo(f"  {i}. {r.title}{provider}")
-            click.echo(f"     {r.url}")
-            if r.snippet:
-                click.echo(f"     {r.snippet[:120]}")
-            if attribution and r.score_attribution:
-                parts = "  ".join(
-                    f"{p}: {v:.4f}"
-                    for p, v in sorted(r.score_attribution.items(), key=lambda x: -x[1])
-                )
-                click.echo(f"     score: {r.score:.4f}  [{parts}]")
-            click.echo()
-
-        if resp.traces:
-            click.echo("Provider traces:")
-            for t in resp.traces:
-                click.echo(
-                    f"  {t.provider.value}: {t.status} ({t.results_count} results, {t.latency_ms}ms)"
-                )
-                if t.error:
-                    click.echo(f"    Error: {t.error}")
-
-        if resp.budget_warnings:
-            click.echo("Budget warnings:")
-            for w in resp.budget_warnings:
-                click.echo(f"  {w}")
 
 
 @cli.command()
@@ -406,73 +469,45 @@ def search(
 def extract(url, domain, mode, as_json):
     """Extract clean text content from a URL."""
     authority = _http_authority_client()
-    if authority is not None:
-        result = _run(
-            authority.request(
-                "POST",
-                "/api/extract",
-                payload={
-                    "url": url,
-                    "domain": domain,
-                    "mode": mode,
-                    "caller": "cli",
-                },
-            )
+    if authority is None:
+        from argus import standalone_cli
+
+        return standalone_cli.extract(
+            url=url,
+            domain=domain,
+            mode=mode,
+            as_json=as_json,
         )
-        if result.get("error"):
-            raise click.ClickException("Extraction failed")
-        if as_json:
-            _emit_json(result)
-            return
-        if result.get("title"):
-            click.echo(f"Title: {result['title']}")
-        if result.get("author"):
-            click.echo(f"Author: {result['author']}")
-        if result.get("date"):
-            click.echo(f"Date: {result['date']}")
-        click.echo(
-            f"Words: {result.get('word_count', 0)} | "
-            f"Extractor: {result.get('extractor') or 'unknown'}"
-        )
-        click.echo()
-        click.echo(result.get("text") or "")
-        return
-
-    from argus.extraction import extract_url
-
-    result = _run(extract_url(url, domain=domain, mode=mode, caller="cli"))
-
-    if result.error:
-        click.echo(f"Error: {result.error}", err=True)
-        sys.exit(1)
-
-    if as_json:
-        data = {
-            "url": result.url,
-            "title": result.title,
-            "text": result.text,
-            "author": result.author,
-            "date": result.date,
-            "word_count": result.word_count,
-            "extractor": result.extractor.value if result.extractor else None,
+    version, result = _negotiated_http_request(
+        authority,
+        "/extract",
+        {
+            "url": url,
+            "domain": domain,
             "mode": mode,
-            "egress": result.egress,
-            "machine": result.machine,
-            "source_type": result.source_type,
-        }
-        click.echo(json.dumps(data, indent=2))
-    else:
-        if result.title:
-            click.echo(f"Title: {result.title}")
-        if result.author:
-            click.echo(f"Author: {result.author}")
-        if result.date:
-            click.echo(f"Date: {result.date}")
-        click.echo(
-            f"Words: {result.word_count} | Extractor: {result.extractor.value if result.extractor else 'unknown'}"
-        )
-        click.echo()
-        click.echo(result.text)
+            "caller": "cli",
+        },
+    )
+    if version == "v2":
+        _print_v2_extract(result, as_json)
+        return
+    if as_json:
+        _emit_json(result)
+        return
+    if result.get("error"):
+        raise click.ClickException("Extraction failed")
+    if result.get("title"):
+        click.echo(f"Title: {result['title']}")
+    if result.get("author"):
+        click.echo(f"Author: {result['author']}")
+    if result.get("date"):
+        click.echo(f"Date: {result['date']}")
+    click.echo(
+        f"Words: {result.get('word_count', 0)} | "
+        f"Extractor: {result.get('extractor') or 'unknown'}"
+    )
+    click.echo()
+    click.echo(result.get("text") or "")
 
 
 @cli.command(name="recover-article")
@@ -482,29 +517,20 @@ def extract(url, domain, mode, as_json):
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def recover_article(url, title, domain, as_json):
     """Recover a dead article into a citation-backed local report."""
-    authority = _http_authority_client()
-    if authority is not None:
-        result = _run(
-            authority.request(
-                "POST",
-                "/api/workflows/recover-article",
-                payload={
-                    "url": url,
-                    "title": title,
-                    "domain": domain,
-                    "caller": "cli",
-                },
-            )
+    authority = _require_http_authority()
+    result = _run(
+        authority.request(
+            "POST",
+            "/api/workflows/recover-article",
+            payload={
+                "url": url,
+                "title": title,
+                "domain": domain,
+                "caller": "cli",
+            },
         )
-        _print_workflow_payload(result, as_json)
-        return
-
-    from argus.broker.router import create_broker
-    from argus.workflows import WorkflowService
-
-    service = WorkflowService(create_broker())
-    result = _run(service.recover_article(url=url, title=title, domain=domain))
-    _print_workflow_result(result, as_json)
+    )
+    _print_workflow_payload(result, as_json)
 
 
 @cli.command(name="recover-url")
@@ -515,63 +541,47 @@ def recover_article(url, title, domain, as_json):
 def recover_url(url, title, domain, as_json):
     """Recover a dead or moved URL."""
     authority = _http_authority_client()
-    if authority is not None:
-        response = _run(
-            authority.request(
-                "POST",
-                "/api/recover-url",
-                payload={
-                    "url": url,
-                    "title": title,
-                    "domain": domain,
-                },
-            )
+    if authority is None:
+        from argus import standalone_cli
+
+        return standalone_cli.recover_url(
+            url=url,
+            title=title,
+            domain=domain,
+            as_json=as_json,
         )
-        if as_json:
-            _emit_json(
-                {
-                    "url": url,
-                    "results": response.get("results") or [],
-                }
-            )
-            return
-        click.echo(f"Recovery for: {url}")
-        click.echo(f"Results: {response.get('total_results', 0)}")
-        for index, result in enumerate(response.get("results") or [], 1):
-            click.echo(f"  {index}. {result.get('title', '')}")
-            click.echo(f"     {result.get('url', '')}")
-        return
-
-    from argus.broker.router import create_broker
-    from argus.models import SearchMode, SearchQuery
-
-    broker = create_broker()
-    query_parts = [url]
-    if title:
-        query_parts.append(title)
-    if domain:
-        query_parts.append(domain)
-
-    q = SearchQuery(
-        query=" ".join(query_parts), mode=SearchMode.RECOVERY, max_results=10
-    )
-    resp = _run(broker.search(q))
-
-    if as_json:
-        data = {
+    version, response = _negotiated_http_request(
+        authority,
+        "/recover-url",
+        {
             "url": url,
-            "results": [
-                {"url": r.url, "title": r.title, "snippet": r.snippet}
-                for r in resp.results
-            ],
-        }
-        click.echo(json.dumps(data, indent=2))
-    else:
+            "title": title,
+            "domain": domain,
+        },
+    )
+    if version == "v2":
+        if as_json:
+            _finish_v2(response, as_json=True)
+            return
+        result = response.get("result") or {}
         click.echo(f"Recovery for: {url}")
-        click.echo(f"Results: {resp.total_results}")
-        for i, r in enumerate(resp.results, 1):
-            click.echo(f"  {i}. {r.title}")
-            click.echo(f"     {r.url}")
+        click.echo(f"Results: {result.get('total_results', 0)}")
+        click.echo(f"Outcome: {response.get('outcome', 'unready')}")
+        click.echo(f"Request ID: {response.get('request_id', 'unknown')}")
+        click.echo("Evidence: " + ("available" if result else "unavailable"))
+        for index, item in enumerate(result.get("results") or [], 1):
+            click.echo(f"  {index}. {item.get('title', '')}")
+            click.echo(f"     {item.get('url', '')}")
+        _finish_v2(response, as_json=False)
+        return
+    if as_json:
+        _emit_json({"url": url, "results": response.get("results") or []})
+        return
+    click.echo(f"Recovery for: {url}")
+    click.echo(f"Results: {response.get('total_results', 0)}")
+    for index, result in enumerate(response.get("results") or [], 1):
+        click.echo(f"  {index}. {result.get('title', '')}")
+        click.echo(f"     {result.get('url', '')}")
 
 
 @cli.command(name="capture-site")
@@ -581,35 +591,20 @@ def recover_url(url, title, domain, as_json):
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def capture_site(url, soft_page_limit, hard_page_limit, as_json):
     """Capture the important parts of a site and summarize them with references."""
-    authority = _http_authority_client()
-    if authority is not None:
-        result = _run(
-            authority.request(
-                "POST",
-                "/api/workflows/capture-site",
-                payload={
-                    "url": url,
-                    "soft_page_limit": soft_page_limit,
-                    "hard_page_limit": hard_page_limit,
-                    "caller": "cli",
-                },
-            )
-        )
-        _print_workflow_payload(result, as_json)
-        return
-
-    from argus.broker.router import create_broker
-    from argus.workflows import WorkflowService
-
-    service = WorkflowService(create_broker())
+    authority = _require_http_authority()
     result = _run(
-        service.capture_site(
-            url=url,
-            soft_page_limit=soft_page_limit,
-            hard_page_limit=hard_page_limit,
+        authority.request(
+            "POST",
+            "/api/workflows/capture-site",
+            payload={
+                "url": url,
+                "soft_page_limit": soft_page_limit,
+                "hard_page_limit": hard_page_limit,
+                "caller": "cli",
+            },
         )
     )
-    _print_workflow_result(result, as_json)
+    _print_workflow_payload(result, as_json)
 
 
 @cli.command(name="build-research-pack")
@@ -621,150 +616,65 @@ def capture_site(url, soft_page_limit, hard_page_limit, as_json):
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def build_research_pack(topic, official_url, max_research_pages, as_json):
     """Build a local pack with official docs plus external research."""
-    authority = _http_authority_client()
-    if authority is not None:
-        result = _run(
-            authority.request(
-                "POST",
-                "/api/workflows/build-research-pack",
-                payload={
-                    "topic": topic,
-                    "official_url": official_url,
-                    "max_research_pages": max_research_pages,
-                    "caller": "cli",
-                },
-            )
-        )
-        _print_workflow_payload(result, as_json)
-        return
-
-    from argus.broker.router import create_broker
-    from argus.workflows import WorkflowService
-
-    service = WorkflowService(create_broker())
+    authority = _require_http_authority()
     result = _run(
-        service.build_research_pack(
-            topic=topic,
-            official_url=official_url,
-            max_research_pages=max_research_pages,
+        authority.request(
+            "POST",
+            "/api/workflows/build-research-pack",
+            payload={
+                "topic": topic,
+                "official_url": official_url,
+                "max_research_pages": max_research_pages,
+                "caller": "cli",
+            },
         )
     )
-    _print_workflow_result(result, as_json)
+    _print_workflow_payload(result, as_json)
 
 
 @cli.command()
 def health():
     """Show provider health status."""
     authority = _http_authority_client()
-    if authority is not None:
-        response = _run(authority.request("GET", "/api/provider-health"))
-        for provider, status in (response.get("providers") or {}).items():
-            raw = provider_display_state(status)
-            click.echo(f"  {provider:12s} {_STATUS_DISPLAY.get(raw, raw)}")
-            for failure in nested_status_failures(status):
-                click.echo(f"    - {failure}")
-        return
+    if authority is None:
+        from argus import standalone_cli
 
-    from argus.broker.router import create_broker
-    from argus.models import ProviderName
-
-    broker = create_broker()
-    for pname in ProviderName:
-        status = broker.get_provider_status(pname)
-        effective = status["effective_status"]
-        raw = effective if isinstance(effective, str) else effective.value
-        click.echo(f"  {pname.value:12s} {_STATUS_DISPLAY.get(raw, raw)}")
-    click.echo()
+        standalone_cli.require_nonproduction()
+        return standalone_cli.health()
+    response = _run(authority.request("GET", "/api/provider-health"))
+    for provider, status in (response.get("providers") or {}).items():
+        raw = provider_display_state(status)
+        click.echo(f"  {provider:12s} {_STATUS_DISPLAY.get(raw, raw)}")
+        for failure in nested_status_failures(status):
+            click.echo(f"    - {failure}")
 
 
 @cli.command()
 def budgets():
     """Show provider budget status."""
     authority = _http_authority_client()
-    if authority is not None:
-        response = _run(authority.request("GET", "/api/budgets"))
-        click.echo("Provider budgets:")
-        for provider, summary in (response.get("providers") or {}).items():
-            click.echo(
-                f"  {provider:12s} remaining={budget_remaining(summary.get('remaining'))} "
-                f"estimated={summary.get('argus_estimated_charge')} "
-                f"uncertain={summary.get('uncertain_charge')}"
-            )
-        return
+    if authority is None:
+        from argus import standalone_cli
 
-    from argus.broker.router import create_broker
-    from argus.models import ProviderName
-
-    broker = create_broker()
+        standalone_cli.require_nonproduction()
+        return standalone_cli.budgets()
+    response = _run(authority.request("GET", "/api/budgets"))
     click.echo("Provider budgets:")
-    for pname in ProviderName:
-        summary = broker.provider_budget_projection(pname)
-        snapshot = summary.get("provider_snapshot")
-        snapshot_text = (
-            f" provider_observed_at={snapshot['observed_at']}" if snapshot else ""
-        )
+    for provider, summary in (response.get("providers") or {}).items():
         click.echo(
-            f"  {pname.value:12s} remaining={budget_remaining(summary['remaining'])} "
-            f"estimated={summary['argus_estimated_charge']} "
-            f"uncertain={summary['uncertain_charge']}{snapshot_text}"
+            f"  {provider:12s} remaining={budget_remaining(summary.get('remaining'))} "
+            f"estimated={summary.get('argus_estimated_charge')} "
+            f"uncertain={summary.get('uncertain_charge')}"
         )
-
-    # Token balances
-    store = broker.budget_tracker._store
-    if store:
-        balances = store.get_all_token_balances()
-        if balances:
-            click.echo()
-            click.echo("Token balances:")
-            for service, info in balances.items():
-                click.echo(f"  {service:12s} balance={info['balance']:,.0f} tokens")
 
 
 @cli.command("check-balances")
 def check_balances():
-    """Probe all providers for live credit/balance info and cache results."""
-    from argus.broker.router import create_broker
-    from argus.broker.balance_check import check_all_balances, persist_balances
+    """Probe balances through the standalone compatibility boundary."""
+    from argus import standalone_cli
 
-    broker = create_broker()
-
-    # Collect API keys from provider configs
-    api_keys = {}
-    for pname, provider in broker._providers.items():
-        cfg = provider._config if hasattr(provider, "_config") else None
-        if cfg and getattr(cfg, "api_key", None):
-            api_keys[pname] = cfg.api_key
-
-    if not api_keys:
-        click.echo("No API keys configured. Nothing to check.")
-        return
-
-    click.echo(f"Checking balances for {len(api_keys)} providers...")
-    balances = asyncio.get_event_loop().run_until_complete(check_all_balances(api_keys))
-
-    store = broker.budget_tracker._store
-    persist_balances(balances, store)
-
-    click.echo()
-    for b in balances:
-        if b.error:
-            click.echo(f"  {b.provider.value:12s} ERROR: {b.error}")
-        elif b.remaining is not None:
-            if b.unit == "usd":
-                limit_str = f"/${b.limit:,.2f}" if b.limit else ""
-                remaining = f"${b.remaining:,.2f}"
-            else:
-                limit_str = f"/{b.limit:.0f}" if b.limit else ""
-                remaining = f"{b.remaining:.0f}"
-            click.echo(
-                f"  {b.provider.value:12s} {remaining} {b.unit} remaining {limit_str} (via {b.source})"
-            )
-        else:
-            click.echo(f"  {b.provider.value:12s} no credit data available")
-
-    if store:
-        click.echo(f"\nCached to {broker.budget_tracker._store._db_path}")
-    click.echo("\nRun 'argus budgets' to see combined status.")
+    standalone_cli.require_nonproduction()
+    return standalone_cli.check_balances()
 
 
 @cli.command()
@@ -773,19 +683,11 @@ def check_balances():
     "--balance", "-b", required=True, type=float, help="Current token balance"
 )
 def set_balance(service, balance):
-    """Set a token balance for an extraction service."""
-    from argus.broker.router import create_broker
+    """Set a standalone extraction-service token balance."""
+    from argus import standalone_cli
 
-    broker = create_broker()
-    store = broker.budget_tracker._store
-    if store is None:
-        click.echo(
-            "Budget persistence not enabled. Set ARGUS_BUDGET_DB_PATH in .env", err=True
-        )
-        sys.exit(1)
-
-    store.set_token_balance(service, balance)
-    click.echo(f"Set {service} balance to {balance:,.0f} tokens")
+    standalone_cli.require_nonproduction()
+    return standalone_cli.set_balance(service=service, balance=balance)
 
 
 @cli.command()
@@ -798,76 +700,18 @@ def set_balance(service, balance):
 def test_provider(
     provider, query, live, idempotency_key, durable_receipt, spend_reserved
 ):
-    """Smoke-test a single provider."""
-    from argus.broker.router import create_broker
-    from argus.broker.budgets import PROVIDER_TIERS
-    from argus.broker.execution import conservative_charge_estimate
-    from argus.broker.readiness import ProbeAuthorization
-    from argus.models import ProviderName, SearchMode, SearchQuery
+    """Smoke-test a provider through the standalone compatibility boundary."""
+    from argus import standalone_cli
 
-    broker = create_broker()
-
-    try:
-        pname = ProviderName(provider)
-    except ValueError:
-        click.echo(f"Unknown provider: {provider}", err=True)
-        sys.exit(1)
-
-    click.echo(f"Testing {pname.value}...")
-    if not live:
-        decision = broker.readiness_service.authorize_probe(pname, "fixture")
-        snapshot = broker.provider_readiness_projection(pname)
-        click.echo(
-            f"  Fixture: {'verified' if decision.allowed else 'denied'} "
-            f"(readiness={snapshot['state']})"
-        )
-        return
-    q = SearchQuery(
+    standalone_cli.require_nonproduction()
+    return standalone_cli.test_provider(
+        provider=provider,
         query=query,
-        mode=SearchMode.DISCOVERY,
-        max_results=3,
-        providers=[pname],
-        caller="local-cli",
-        user_visible=False,
+        live=live,
+        idempotency_key=idempotency_key,
+        durable_receipt=durable_receipt,
+        spend_reserved=spend_reserved,
     )
-    authorization = ProbeAuthorization(
-        workflow="explicit_validation", provider=pname,
-        named_quota="free_provider_request" if PROVIDER_TIERS[pname] == 0 else None,
-        idempotency_key=idempotency_key, durable_receipt=durable_receipt,
-        conservative_charge=(
-            conservative_charge_estimate(pname, q)
-            if PROVIDER_TIERS[pname] > 0 else None
-        ),
-    )
-    kind = "no_money_quota" if PROVIDER_TIERS[pname] == 0 else "billable_search"
-    decision = broker.readiness_service.authorize_probe(pname, kind, authorization)
-    if not decision.allowed:
-        raise click.ClickException(decision.reason)
-    q = SearchQuery(
-        query=query,
-        mode=SearchMode.DISCOVERY,
-        max_results=3,
-        providers=[pname],
-        caller="local-cli",
-        user_visible=False,
-        metadata={
-            "caller_label": "cli-smoke", "probe_receipt": durable_receipt,
-            "probe_idempotency_key": idempotency_key,
-            "probe_provider": pname.value, "probe_no_fallback": True,
-            "probe_attempt_id": decision.attempt_id,
-        },
-    )
-    response = _run(broker.search(q))
-
-    for trace in response.traces:
-        click.echo(
-            f"  Trace: {trace.status} "
-            f"({trace.results_count} results, {trace.latency_ms}ms)"
-        )
-        if trace.error:
-            click.echo(f"  Error: {trace.error}")
-    for r in response.results[:3]:
-        click.echo(f"    - {r.title}: {r.url}")
 
 
 @cli.command()
@@ -875,138 +719,31 @@ def test_provider(
 def doctor(as_json):
     """Diagnose your Argus setup: config, providers, connectivity, and MCP readiness."""
     authority = _http_authority_client()
-    if authority is not None:
-        status = _run(authority.request("GET", "/api/admin/status"))
-        if as_json:
-            _emit_json(status)
-            return
-        build = status.get("build") or {}
-        click.echo(
-            f"Argus authority: {status.get('status', 'unknown')} "
-            f"version={build.get('version', 'unknown')} "
-            f"revision={build.get('source_revision', 'unknown')}"
-        )
-        for name, observation in sorted(
-            (status.get("dependencies") or {}).items()
-        ):
-            reason = observation.get("reason")
-            click.echo(
-                f"  {name:15s} {observation.get('state', 'unknown')}"
-                + (f" ({reason})" if reason else "")
-            )
-        for provider, provider_status in sorted(
-            (status.get("providers") or {}).items()
-        ):
-            click.echo(
-                f"  {provider:15s} {provider_status.get('state', 'unknown')}"
-            )
-            for failure in nested_status_failures(provider_status):
-                click.echo(f"    - {failure}")
-        return
+    if authority is None:
+        from argus import standalone_cli
 
-    from argus.broker.router import create_broker
-    from argus.models import ProviderName
-
-    broker = create_broker()
-    checks = []
-
-    # 1. Config loads
-    try:
-        from argus.config import get_config
-
-        cfg = get_config()
-        checks.append(("Config", True, f"env={cfg.env}, log={cfg.log_level}"))
-    except Exception as e:
-        checks.append(("Config", False, str(e)))
-
-    # 2. Provider audit
-    ready = 0
-    needs_key = 0
-    for pname in ProviderName:
-        status = broker.get_provider_status(pname)
-        raw = status["effective_status"]
-        display = _STATUS_DISPLAY.get(
-            raw if isinstance(raw, str) else raw.value, str(raw)
-        )
-        if display == "OK" or display == "HEALTHY":
-            ready += 1
-        elif display == "MISSING KEY":
-            needs_key += 1
-    checks.append(("Providers", ready > 0, f"{ready} ready, {needs_key} need API keys"))
-
-    # 3. SearXNG connectivity (HEAD request)
-    try:
-        import urllib.request
-        import urllib.error
-
-        cfg = get_config()
-        if cfg.searxng.enabled:
-            req = urllib.request.Request(cfg.searxng.base_url, method="HEAD")
-            urllib.request.urlopen(req, timeout=5)
-            checks.append(("SearXNG", True, f"reachable at {cfg.searxng.base_url}"))
-        else:
-            checks.append(
-                ("SearXNG", None, "disabled (enable in .env if you have Docker)")
-            )
-    except Exception:
-        checks.append(("SearXNG", False, "not reachable — check Docker container"))
-
-    # 4. DuckDuckGo probe
-    try:
-        from argus.providers.duckduckgo import DuckDuckGoProvider
-
-        DuckDuckGoProvider(cfg.duckduckgo)
-        checks.append(
-            (
-                "DuckDuckGo",
-                True,
-                "adapter constructed; readiness is reported by the authority",
-            )
-        )
-    except Exception as e:
-        checks.append(("DuckDuckGo", False, str(e)))
-
-    # 5. MCP package
-    try:
-        import mcp.server.fastmcp  # noqa: F401
-
-        checks.append(("MCP package", True, "installed"))
-    except ImportError:
-        checks.append(("MCP package", False, "pip install 'argus-search[mcp]'"))
-
+        standalone_cli.require_nonproduction()
+        return standalone_cli.doctor(as_json=as_json)
+    status = _run(authority.request("GET", "/api/admin/status"))
     if as_json:
-        _emit_json(
-            {
-                "checks": [{"name": n, "ok": ok, "detail": d} for n, ok, d in checks],
-                "providers_ready": ready,
-                "providers_need_keys": needs_key,
-            }
-        )
+        _emit_json(status)
         return
-
-    # Human output
-    all_pass = True
-    for name, ok, detail in checks:
-        if ok is None:
-            icon = "-"
-            status = "SKIP"
-        elif ok:
-            icon = "+"
-            status = "OK"
-        else:
-            icon = "!"
-            status = "FAIL"
-            all_pass = False
-        click.echo(f"  [{icon}] {name:15s} {status:5s} {detail}")
-    click.echo()
-    if all_pass:
-        click.echo("Setup looks good. Run 'argus health' for detailed provider status.")
-    else:
-        click.echo("Some checks failed. See above for details.")
-        if needs_key:
-            click.echo(
-                f"  {needs_key} providers need API keys — add them to .env or secrets vault."
-            )
+    build = status.get("build") or {}
+    click.echo(
+        f"Argus authority: {status.get('status', 'unknown')} "
+        f"version={build.get('version', 'unknown')} "
+        f"revision={build.get('source_revision', 'unknown')}"
+    )
+    for name, observation in sorted((status.get("dependencies") or {}).items()):
+        reason = observation.get("reason")
+        click.echo(
+            f"  {name:15s} {observation.get('state', 'unknown')}"
+            + (f" ({reason})" if reason else "")
+        )
+    for provider, provider_status in sorted((status.get("providers") or {}).items()):
+        click.echo(f"  {provider:15s} {provider_status.get('state', 'unknown')}")
+        for failure in nested_status_failures(provider_status):
+            click.echo(f"    - {failure}")
 
 
 @cli.command()
@@ -1085,7 +822,17 @@ def mcp():
 )
 def mcp_serve(transport, host, port):
     """Start MCP server. Use stdio for Claude/Cursor, sse or streamable-http for remote access."""
+    from argus.authority import adapter_execution_mode
+
     try:
+        if adapter_execution_mode() == "standalone":
+            from argus import standalone_cli
+
+            return standalone_cli.serve_mcp(
+                transport=transport,
+                host=host,
+                port=port,
+            )
         from argus.mcp.server import serve_mcp
     except ImportError:
         raise SystemExit(
@@ -1539,31 +1286,9 @@ def ledger():
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def reconcile_legacy(source, target, apply, as_json):
     """Report or import legacy search runs. Defaults to a non-mutating dry run."""
-    from pathlib import Path
+    from argus.legacy_cli_ledger import reconcile_legacy_cli
 
-    from argus.config import get_config
-    from argus.persistence.reconcile import reconcile_legacy_state
-    from argus.persistence.search_ledger import (
-        create_read_only_search_ledger_repository,
-        create_search_ledger_repository,
-    )
-
-    target_url = target or get_config().db_url
-    if not apply and target_url.startswith("sqlite:///"):
-        target_path = Path(target_url.removeprefix("sqlite:///")).expanduser()
-        if target_path.exists():
-            repository = create_read_only_search_ledger_repository(target_url)
-        else:
-            repository = create_search_ledger_repository(
-                "sqlite:///:memory:",
-                create_schema=True,
-            )
-    else:
-        repository = create_search_ledger_repository(
-            target_url,
-            create_schema=False if not apply else None,
-        )
-    report = reconcile_legacy_state(source, repository, apply=apply)
+    report = reconcile_legacy_cli(source, target, apply)
     if as_json:
         _emit_json(report)
         return
@@ -1571,7 +1296,7 @@ def reconcile_legacy(source, target, apply, as_json):
     for key in ("source", "imported", "skipped", "conflicting"):
         click.echo(f"  {key}: {report[key]}")
     if not apply:
-        click.echo("Dry run only; pass --apply to mutate the target.")
+        click.echo("Dry run only; no target mutation was performed.")
 
 
 @ledger.command(name="reconcile-sessions")
@@ -1589,31 +1314,9 @@ def reconcile_legacy(source, target, apply, as_json):
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def reconcile_sessions(source, target, apply, as_json):
     """Report or import legacy session history. Dry-run is the default."""
-    from pathlib import Path
+    from argus.legacy_cli_ledger import reconcile_sessions_cli
 
-    from argus.config import get_config
-    from argus.persistence.reconcile import reconcile_legacy_sessions
-    from argus.persistence.search_ledger import (
-        create_read_only_search_ledger_repository,
-        create_search_ledger_repository,
-    )
-
-    target_url = target or get_config().db_url
-    if not apply and target_url.startswith("sqlite:///"):
-        target_path = Path(target_url.removeprefix("sqlite:///")).expanduser()
-        if target_path.exists():
-            repository = create_read_only_search_ledger_repository(target_url)
-        else:
-            repository = create_search_ledger_repository(
-                "sqlite:///:memory:",
-                create_schema=True,
-            )
-    else:
-        repository = create_search_ledger_repository(
-            target_url,
-            create_schema=False if not apply else None,
-        )
-    report = reconcile_legacy_sessions(source, repository, apply=apply)
+    report = reconcile_sessions_cli(source, target, apply)
     if as_json:
         _emit_json(report)
         return
@@ -1621,7 +1324,7 @@ def reconcile_sessions(source, target, apply, as_json):
     for key in ("source", "imported", "skipped", "conflicting"):
         click.echo(f"  {key}: {report[key]}")
     if not apply:
-        click.echo("Dry run only; pass --apply to mutate the target.")
+        click.echo("Dry run only; no target mutation was performed.")
 
 
 @corpus.command(name="import-docs-cache")
@@ -1635,17 +1338,10 @@ def reconcile_sessions(source, target, apply, as_json):
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def import_docs_cache(source, as_json):
     """Import a legacy docs-cache tree into Argus-owned storage."""
-    from argus.broker.router import create_broker
-    from argus.workflows import WorkflowService
+    from argus import standalone_cli
 
-    service = WorkflowService(create_broker())
-    payload = service.import_legacy_docs_cache(source)
-    if as_json:
-        _emit_json(payload)
-        return
-    click.echo("Imported legacy docs-cache:")
-    for key, value in payload.items():
-        click.echo(f"  {key}: {value}")
+    standalone_cli.require_nonproduction()
+    return standalone_cli.import_docs_cache(source=source, as_json=as_json)
 
 
 @cli.group()
@@ -1656,6 +1352,9 @@ def cookies():
             "Production cookie operations are reserved for the "
             "HTTP API execution authority"
         )
+    from argus import standalone_cli
+
+    standalone_cli.require_nonproduction()
 
 
 @cookies.command(name="import")
@@ -1674,156 +1373,15 @@ def cookies():
     help="EditThisCookie JSON file. If omitted, imports all from inbox.",
 )
 def cookies_import(domain, filepath):
-    """Import cookies from EditThisCookie JSON exports.
+    """Import cookies through the standalone compatibility boundary."""
+    from argus import standalone_cli
 
-    Drop JSON files in ~/.config/argus/cookies/inbox/ then run:
-        argus cookies import
-
-    Or import a specific file:
-        argus cookies import -f ~/Downloads/nyt_cookies.json
-
-    Domain is auto-detected from cookie data. Override with -d if needed.
-    """
-    from pathlib import Path
-    from argus.extraction.cookies import (
-        COOKIE_DIR,
-        load_editthiscookie_json,
-        _load_health,
-        _save_health,
-    )
-
-    cookie_dir = COOKIE_DIR
-    inbox_dir = cookie_dir / "inbox"
-    cookie_dir.mkdir(parents=True, exist_ok=True)
-    inbox_dir.mkdir(parents=True, exist_ok=True)
-
-    # Collect files to process
-    if filepath:
-        files = [Path(filepath)]
-    elif inbox_dir.exists():
-        files = sorted(inbox_dir.glob("*.json"))
-        if not files:
-            click.echo(f"No cookie files found in {inbox_dir}")
-            click.echo(
-                "\nDrop EditThisCookie JSON exports there, then re-run this command."
-            )
-            return
-    else:
-        click.echo(f"No inbox directory at {inbox_dir}")
-        click.echo(f"Drop cookie JSON files in: {inbox_dir}")
-        return
-
-    from datetime import datetime, timezone
-
-    imported = 0
-
-    for f in files:
-        # Load raw to infer domain
-        try:
-            raw = json.loads(f.read_text())
-        except Exception as e:
-            click.echo(f"  SKIP {f.name}: invalid JSON ({e})")
-            continue
-
-        # Get cookies list (handle both array and wrapped object)
-        if isinstance(raw, dict):
-            cookie_list = raw.get("cookies", [raw])
-        else:
-            cookie_list = raw
-
-        # Infer domain from cookie data
-        inferred = domain
-        if not inferred:
-            domains_seen = set()
-            for c in cookie_list:
-                d = c.get("domain", "")
-                # Strip leading dots, skip empty
-                d = d.lstrip(".")
-                if d and not d.startswith(" "):
-                    # Get base domain (last 2 parts)
-                    parts = d.split(".")
-                    if len(parts) >= 2:
-                        base = ".".join(parts[-2:])
-                        if base not in ("co", "com", "org", "net", "io"):
-                            domains_seen.add(base)
-                    else:
-                        domains_seen.add(d)
-
-            if not domains_seen:
-                click.echo(f"  SKIP {f.name}: no domain found in cookies")
-                continue
-
-            # Pick the most common base domain
-            from collections import Counter
-
-            inferred = Counter(domains_seen).most_common(1)[0][0]
-
-        dest = cookie_dir / f"{inferred}.json"
-
-        # Validate by doing a test load
-        loaded = load_editthiscookie_json(f)
-        if not loaded:
-            click.echo(f"  SKIP {f.name}: no valid cookies")
-            continue
-
-        # Copy to destination
-        import shutil
-
-        shutil.copy2(f, dest)
-
-        # Record health
-        health = _load_health()
-        health[inferred] = {
-            "status": "healthy",
-            "request_count": 0,
-            "last_used": None,
-            "cookies_loaded_at": datetime.now(timezone.utc).isoformat(),
-        }
-        _save_health(health)
-
-        # Remove from inbox if it was there
-        if f.parent == inbox_dir:
-            f.unlink()
-
-        click.echo(f"  OK {inferred}: {len(loaded)} cookies from {f.name}")
-        imported += 1
-
-    click.echo(f"\nImported {imported} cookie file(s)")
-    click.echo(f"Cookie dir: {cookie_dir}")
-    click.echo("Run 'argus cookies health' to check status anytime.")
+    return standalone_cli.cookies_import(domain=domain, filepath=filepath)
 
 
 @cookies.command(name="health")
 def cookies_health():
-    """Show health status of all cookie domains."""
-    from argus.extraction.cookies import get_health_summary, COOKIE_DIR
+    """Show standalone cookie-domain health."""
+    from argus import standalone_cli
 
-    summary = get_health_summary()
-
-    if not summary:
-        click.echo("No cookies configured.")
-        click.echo(f"\nCookie directory: {COOKIE_DIR}")
-        click.echo(
-            "Import cookies with: argus cookies import -d nytimes.com -f cookies.json"
-        )
-        return
-
-    click.echo("Cookie health:\n")
-    for domain, info in summary.items():
-        status_emoji = "OK" if info["status"] == "healthy" else "STALE"
-        age = (
-            f"{info['days_since_used']}d ago"
-            if info["days_since_used"] is not None
-            else "never"
-        )
-        warning = " [REFRESH NEEDED]" if info.get("stale_warning") else ""
-        click.echo(
-            f"  {domain:30s} [{status_emoji:5s}]  used: {age},  requests: {info['request_count']}{warning}"
-        )
-
-    # Show what cookies are available on disk
-    click.echo(f"\nCookie directory: {COOKIE_DIR}")
-    if COOKIE_DIR.exists():
-        files = sorted(f.stem for f in COOKIE_DIR.glob("*.json") if f.stem != "health")
-        if files:
-            click.echo(f"On disk: {', '.join(files)}")
+    return standalone_cli.cookies_health()

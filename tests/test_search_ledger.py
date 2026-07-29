@@ -603,10 +603,13 @@ def test_legacy_reconciliation_reports_incomplete_or_changed_state_as_conflict(
     }
 
 
-def test_legacy_reconciliation_cli_is_dry_run_by_default(tmp_path):
+def test_legacy_reconciliation_cli_is_dry_run_by_default(tmp_path, monkeypatch):
     from click.testing import CliRunner
 
     from argus.cli.main import cli
+
+    monkeypatch.setenv("ARGUS_LEGACY_CLI_MIGRATIONS", "true")
+    monkeypatch.setenv("ARGUS_ENV", "test")
 
     source = tmp_path / "legacy-cli.db"
     target = tmp_path / "target-cli.db"
@@ -635,13 +638,70 @@ def test_legacy_reconciliation_cli_is_dry_run_by_default(tmp_path):
     assert not target.exists()
 
 
+def test_legacy_reconciliation_requires_known_environment_before_target_open(
+    tmp_path, monkeypatch
+):
+    from click.testing import CliRunner
+
+    from argus.cli.main import cli
+
+    source = tmp_path / "legacy-gated.db"
+    target = tmp_path / "target-gated.db"
+    _create_legacy_search_database(source)
+    monkeypatch.setenv("ARGUS_LEGACY_CLI_MIGRATIONS", "true")
+    monkeypatch.delenv("ARGUS_ENV", raising=False)
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "ledger",
+            "reconcile-legacy",
+            "--source",
+            f"sqlite:///{source}",
+            "--target",
+            f"sqlite:///{target}",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == (
+        "Error: Local ledger migration requires ARGUS_ENV=development, test, or local\n"
+    )
+    assert not target.exists()
+
+
+def test_legacy_reconciliation_human_dry_run_is_explicit(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+
+    from argus.cli.main import cli
+
+    source = tmp_path / "legacy-human.db"
+    _create_legacy_search_database(source)
+    monkeypatch.setenv("ARGUS_LEGACY_CLI_MIGRATIONS", "true")
+    monkeypatch.setenv("ARGUS_ENV", "test")
+
+    result = CliRunner().invoke(
+        cli,
+        ["ledger", "reconcile-legacy", "--source", f"sqlite:///{source}"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.endswith("Dry run only; no target mutation was performed.\n")
+    assert result.stderr == ""
+
+
 def test_legacy_reconciliation_cli_dry_run_does_not_mutate_existing_target(
     tmp_path,
+    monkeypatch,
 ):
     from click.testing import CliRunner
     from sqlalchemy import inspect
 
     from argus.cli.main import cli
+
+    monkeypatch.setenv("ARGUS_LEGACY_CLI_MIGRATIONS", "true")
+    monkeypatch.setenv("ARGUS_ENV", "test")
 
     source = tmp_path / "legacy-existing-target.db"
     target = tmp_path / "existing-target.db"

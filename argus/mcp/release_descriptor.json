@@ -1,0 +1,57 @@
+{
+  "descriptor_version": 1,
+  "transport_version": "2025-11-25",
+  "transport": {
+    "endpoint": "/mcp",
+    "protocol_versions": [
+      "2024-11-05",
+      "2025-03-26",
+      "2025-06-18",
+      "2025-11-25"
+    ],
+    "methods": [
+      "POST",
+      "GET",
+      "DELETE",
+      "OPTIONS"
+    ],
+    "post_content_type": "application/json",
+    "post_accept": [
+      "application/json",
+      "text/event-stream"
+    ],
+    "get_accept": "text/event-stream",
+    "max_request_body_bytes": 4194304,
+    "notification_status": 202,
+    "session_idle_timeout_seconds": 1800,
+    "max_active_sessions": 256,
+    "session_id_max_characters": 128,
+    "legacy_sse_paths": [
+      "/sse",
+      "/messages/"
+    ]
+  },
+  "tool_contract_version": "2.0",
+  "tools": [
+    {
+      "name": "search_web_v2",
+      "input_sha256": "377f1d1772fb412f6fae31ac6784cd93a8f76c212e764b92969d80d55198e767",
+      "output_sha256": "7d6282dadca6c6ac229b37f235ff92b02f96d96529e1bd52e2ebe06072ed3d9d"
+    },
+    {
+      "name": "recover_url_v2",
+      "input_sha256": "a0bf26f296772a0f1ddbd471e071a3d6179a3515fa12560cbdc6ffcfcd22a908",
+      "output_sha256": "7d6282dadca6c6ac229b37f235ff92b02f96d96529e1bd52e2ebe06072ed3d9d"
+    },
+    {
+      "name": "expand_links_v2",
+      "input_sha256": "a575e66279bb3d09f447b1034d6132cf3ad60955626192931845ae14cb63b2fa",
+      "output_sha256": "7d6282dadca6c6ac229b37f235ff92b02f96d96529e1bd52e2ebe06072ed3d9d"
+    },
+    {
+      "name": "extract_content_v2",
+      "input_sha256": "50bb241cb4156390d2d522ebafecbc8b42905214f4c4a8f1db776e7bfc29e442",
+      "output_sha256": "7d6282dadca6c6ac229b37f235ff92b02f96d96529e1bd52e2ebe06072ed3d9d"
+    }
+  ]
+}

@@ -48,7 +48,7 @@ dev = [
     "httpx>=0.27.0",
 ]
 mcp = [
-    "mcp>=1.0.0",
+    "mcp==1.27.0",
 ]
 crawl4ai = [
     "crawl4ai>=0.4",
@@ -69,6 +69,7 @@ include = ["argus*"]
 
 [tool.setuptools.package-data]
 "argus.api" = ["templates/*.html"]
+"argus.mcp" = ["release_descriptor.json"]
 "argus.providers" = ["fixture_attestations.json", "fixture_contracts.json"]
 
 [tool.setuptools.data-files]

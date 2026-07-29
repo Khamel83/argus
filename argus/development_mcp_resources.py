@@ -1,6 +1,4 @@
-"""
-MCP resource definitions for Argus.
-"""
+"""Legacy resource implementations for explicit standalone MCP development."""
 
 import json
 

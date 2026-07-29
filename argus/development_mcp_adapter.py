@@ -1,4 +1,4 @@
-"""Explicit development-only MCP adapter for standalone Argus."""
+"""Explicit development-only adapter and authority for standalone MCP."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ class LocalMcpAdapter:
         token=None,
     ):
         del token
-        from argus.mcp import tools
+        from argus import development_mcp_tools as tools
 
         return await tools.search_web(
             self.broker,
@@ -48,7 +48,7 @@ class LocalMcpAdapter:
         token=None,
     ):
         del token
-        from argus.mcp import tools
+        from argus import development_mcp_tools as tools
 
         return await tools.recover_url(
             self.broker,
@@ -69,7 +69,7 @@ class LocalMcpAdapter:
         token=None,
     ):
         del token
-        from argus.mcp import tools
+        from argus import development_mcp_tools as tools
 
         return await tools.expand_links(
             self.broker,
@@ -89,18 +89,35 @@ class LocalMcpAdapter:
         token=None,
     ):
         del caller_label, caller_identity, token
-        from argus.mcp import tools
+        from argus import development_mcp_tools as tools
 
         return await tools.extract_content(url, domain=domain)
 
     async def search_health(self, *, token=None):
         del token
-        from argus.mcp import tools
+        from argus import development_mcp_tools as tools
 
         return tools.search_health(self.broker)
 
     async def search_budgets(self, *, token=None):
         del token
-        from argus.mcp import tools
+        from argus import development_mcp_tools as tools
 
         return tools.search_budgets(self.broker)
+
+
+def build_development_mcp_backend() -> LocalMcpAdapter:
+    """Construct direct execution only for the explicit development lane."""
+    from argus.authority import (
+        AuthorityConfigurationError,
+        adapter_execution_mode,
+    )
+
+    if adapter_execution_mode() != "standalone":
+        raise AuthorityConfigurationError(
+            "Development MCP standalone backend requires ARGUS_MCP_STANDALONE=true"
+        )
+
+    from argus.broker.router import create_broker
+
+    return LocalMcpAdapter(create_broker())

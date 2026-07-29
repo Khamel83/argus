@@ -255,7 +255,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
     { name = "jinja2", specifier = ">=3.1.0" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0.0" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = "==1.27.0" },
     { name = "platformdirs", specifier = ">=4.3.0" },
     { name = "playwright", specifier = ">=1.40.0" },
     { name = "psycopg2-binary", specifier = ">=2.9.0" },

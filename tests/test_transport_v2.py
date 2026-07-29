@@ -192,9 +192,11 @@ def test_capabilities_advertise_v2_only_after_complete_registration(monkeypatch)
     )
     service._evidence_repository = MagicMock()
     try:
-        evidence = TestClient(
-            create_app(accepted_operation_service=service)
-        ).get("/api/capabilities").json()
+        evidence = (
+            TestClient(create_app(accepted_operation_service=service))
+            .get("/api/capabilities")
+            .json()
+        )
     finally:
         reset_config()
 
@@ -205,7 +207,8 @@ def test_capabilities_advertise_v2_only_after_complete_registration(monkeypatch)
     assert evidence["mcp_contract"] == {
         "transport": "streamable-http",
         "endpoint": "/mcp",
-        "argus_tool_contract_versions": ["1"],
+        "argus_tool_contract_versions": ["1", "2.0"],
+        "version_2_tool_suffix": "_v2",
     }
 
 

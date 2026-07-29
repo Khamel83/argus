@@ -308,9 +308,7 @@ def test_cross_worker_extracted_url_refreshes_before_query_validation(tmp_path):
     )
 
     loaded = second.get_session("shared")
-    assert loaded.queries[0].extracted_urls == [
-        "https://example.com/remote-turn"
-    ]
+    assert loaded.queries[0].extracted_urls == ["https://example.com/remote-turn"]
 
 
 def test_list_sessions_refreshes_existing_persistent_sessions(tmp_path):
@@ -324,9 +322,7 @@ def test_list_sessions_refreshes_existing_persistent_sessions(tmp_path):
     second.add_query("shared", query="new durable turn")
 
     listed = {session.id: session for session in first.list_sessions()}
-    assert [record.query for record in listed["shared"].queries] == [
-        "new durable turn"
-    ]
+    assert [record.query for record in listed["shared"].queries] == ["new durable turn"]
 
 
 def test_concurrent_session_creation_and_query_allocation_are_atomic(tmp_path):
@@ -349,9 +345,9 @@ def test_concurrent_session_creation_and_query_allocation_are_atomic(tmp_path):
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         list(executor.map(append, range(worker_count)))
 
-    session = SessionStore(
-        repository=_repository_for_url(database_url)
-    ).get_session("concurrent")
+    session = SessionStore(repository=_repository_for_url(database_url)).get_session(
+        "concurrent"
+    )
     assert len(session.queries) == worker_count
     assert {record.query for record in session.queries} == {
         f"query-{worker}" for worker in range(worker_count)
@@ -378,9 +374,7 @@ def test_session_url_deduplication_uses_sanitized_identity(tmp_path):
 
     loaded = store.get_session("sanitized-urls")
     with store._db.session_factory() as session:
-        count = session.scalar(
-            select(func.count()).select_from(SessionExtractedUrlRow)
-        )
+        count = session.scalar(select(func.count()).select_from(SessionExtractedUrlRow))
     assert loaded.queries[0].extracted_urls == [
         "https://example.com/article?token=%5Bredacted%5D"
     ]
@@ -551,17 +545,26 @@ def test_legacy_session_import_is_dry_run_first_and_idempotent(tmp_path):
     connection.close()
     repository = _repository(tmp_path)
 
-    assert reconcile_legacy_sessions(
-        f"sqlite:///{source}", repository
-    ) == {"source": 1, "imported": 1, "skipped": 0, "conflicting": 0}
+    assert reconcile_legacy_sessions(f"sqlite:///{source}", repository) == {
+        "source": 1,
+        "imported": 1,
+        "skipped": 0,
+        "conflicting": 0,
+    }
     assert repository.load_session("legacy") is None
 
-    assert reconcile_legacy_sessions(
-        f"sqlite:///{source}", repository, apply=True
-    ) == {"source": 1, "imported": 1, "skipped": 0, "conflicting": 0}
-    assert reconcile_legacy_sessions(
-        f"sqlite:///{source}", repository, apply=True
-    ) == {"source": 1, "imported": 0, "skipped": 1, "conflicting": 0}
+    assert reconcile_legacy_sessions(f"sqlite:///{source}", repository, apply=True) == {
+        "source": 1,
+        "imported": 1,
+        "skipped": 0,
+        "conflicting": 0,
+    }
+    assert reconcile_legacy_sessions(f"sqlite:///{source}", repository, apply=True) == {
+        "source": 1,
+        "imported": 0,
+        "skipped": 1,
+        "conflicting": 0,
+    }
     assert repository.load_session("legacy").queries[0].extracted_urls == [
         "https://example.com/old"
     ]
@@ -596,12 +599,18 @@ def test_legacy_session_reconciliation_compares_sanitized_urls(tmp_path):
     connection.close()
     repository = _repository(tmp_path)
 
-    assert reconcile_legacy_sessions(
-        f"sqlite:///{source}", repository, apply=True
-    )["imported"] == 1
-    assert reconcile_legacy_sessions(
-        f"sqlite:///{source}", repository, apply=True
-    ) == {"source": 1, "imported": 0, "skipped": 1, "conflicting": 0}
+    assert (
+        reconcile_legacy_sessions(f"sqlite:///{source}", repository, apply=True)[
+            "imported"
+        ]
+        == 1
+    )
+    assert reconcile_legacy_sessions(f"sqlite:///{source}", repository, apply=True) == {
+        "source": 1,
+        "imported": 0,
+        "skipped": 1,
+        "conflicting": 0,
+    }
 
 
 def test_session_snapshot_import_rolls_back_as_one_transaction(tmp_path):
@@ -715,13 +724,18 @@ def test_extract_endpoint_returns_503_when_durable_commit_fails(monkeypatch):
     assert response.json()["detail"] == "Extraction could not be durably recorded"
 
 
-def test_legacy_session_reconciliation_cli_dry_run_does_not_create_target(tmp_path):
+def test_legacy_session_reconciliation_cli_dry_run_does_not_create_target(
+    tmp_path, monkeypatch
+):
     import json
     import sqlite3
 
     from click.testing import CliRunner
 
     from argus.cli.main import cli
+
+    monkeypatch.setenv("ARGUS_LEGACY_CLI_MIGRATIONS", "true")
+    monkeypatch.setenv("ARGUS_ENV", "test")
 
     source = tmp_path / "legacy-cli-sessions.db"
     target = tmp_path / "target-cli-sessions.db"
@@ -825,9 +839,7 @@ def test_postgresql_concurrent_session_creation_and_query_allocation(
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         list(executor.map(append, range(worker_count)))
 
-    loaded = SessionStore(repository=repository).get_session(
-        "postgres-concurrent"
-    )
+    loaded = SessionStore(repository=repository).get_session("postgres-concurrent")
     assert len(loaded.queries) == worker_count
     assert {record.query for record in loaded.queries} == {
         f"query-{worker}" for worker in range(worker_count)

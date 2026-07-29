@@ -50,7 +50,7 @@ async def operator_status(
 
 @router.get("/capabilities")
 async def capabilities(request: Request):
-    """Return value-free truth about the HTTP execution authority."""
+    """Return frozen release support, never MCP-process liveness."""
     payload = {
         "schema_version": "1.0",
         "execution_authority": "http-api",
@@ -65,7 +65,8 @@ async def capabilities(request: Request):
             "workflows": True,
         },
     }
-    payload.update(request.app.state.capability_manifest.as_dict())
+    release_contract_support = request.app.state.capability_manifest.as_dict()
+    payload.update(release_contract_support)
     return payload
 
 

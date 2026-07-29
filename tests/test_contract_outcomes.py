@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+from copy import deepcopy
 from dataclasses import FrozenInstanceError, fields
 from pathlib import Path
 from types import MappingProxyType
@@ -110,9 +111,7 @@ def _error(
     contracts = _contracts()
     actual_code = code or outcome.value
     actual_status = (
-        contracts.http_status_for(outcome, actual_code)
-        if status is None
-        else status
+        contracts.http_status_for(outcome, actual_code) if status is None else status
     )
     arguments = {
         "outcome": outcome,
@@ -132,9 +131,7 @@ def _error(
 
 def _freeze(value: Any) -> Any:
     if isinstance(value, dict):
-        return MappingProxyType(
-            {key: _freeze(child) for key, child in value.items()}
-        )
+        return MappingProxyType({key: _freeze(child) for key, child in value.items()})
     if isinstance(value, list):
         return tuple(_freeze(child) for child in value)
     return value
@@ -158,9 +155,7 @@ def _load_json(path: Path) -> Any:
 def test_canonical_outcomes_are_closed_and_in_scorecard_order():
     contracts = _contracts()
 
-    assert [outcome.value for outcome in contracts.CanonicalOutcome] == list(
-        EXPECTED
-    )
+    assert [outcome.value for outcome in contracts.CanonicalOutcome] == list(EXPECTED)
 
 
 @pytest.mark.parametrize(("name", "expected"), EXPECTED.items())
@@ -470,6 +465,74 @@ def test_contract_version_is_exact():
         )
 
 
+def _wire_failure_envelope():
+    return {
+        "contract_version": "2.0",
+        "outcome": "providers_failed",
+        "request_id": "wire-request-1",
+        "result": {"accepted_partial_evidence": True},
+        "error": {
+            "type": "urn:argus:problem:providers_failed",
+            "title": "Providers Failed",
+            "status": 502,
+            "detail": "Providers did not reach the evidence floor",
+            "instance": "urn:argus:request:wire-request-1",
+            "code": "providers_failed",
+            "retryable": False,
+            "retry_after_seconds": None,
+        },
+    }
+
+
+def test_wire_v2_validator_accepts_failure_with_object_partial_evidence():
+    from argus.contracts import validate_v2_envelope
+
+    envelope = _wire_failure_envelope()
+
+    validated = validate_v2_envelope(envelope, http_status=502)
+
+    assert validated.model_dump() == envelope
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        "missing_field",
+        "extra_field",
+        "coerced_status",
+        "bad_request_id",
+        "non_object_result",
+        "bad_problem_instance",
+        "bad_problem_type",
+        "http_status_mismatch",
+    ),
+)
+def test_wire_v2_validator_rejects_shape_type_and_status_drift(case):
+    from argus.contracts import validate_v2_envelope
+
+    envelope = deepcopy(_wire_failure_envelope())
+    http_status = 502
+    if case == "missing_field":
+        del envelope["error"]["retryable"]
+    elif case == "extra_field":
+        envelope["unexpected"] = True
+    elif case == "coerced_status":
+        envelope["error"]["status"] = "502"
+    elif case == "bad_request_id":
+        envelope["request_id"] = "query=private value"
+    elif case == "non_object_result":
+        envelope["result"] = ["partial"]
+    elif case == "bad_problem_instance":
+        envelope["error"]["instance"] = "urn:argus:request:other"
+    elif case == "bad_problem_type":
+        envelope["error"]["type"] = "urn:argus:problem:unready"
+    else:
+        http_status = 200
+
+    with pytest.raises(ValueError):
+        validate_v2_envelope(envelope, http_status=http_status)
+
+
 def test_retrieval_evidence_manifest_hashes_every_source_and_fixture():
     manifest = _load_json(EVIDENCE_ROOT / "manifest.json")
 
@@ -529,9 +592,7 @@ def test_every_retrieval_fixture_loads_immutably_and_obeys_outer_contract():
 def test_invalid_retrieval_mutations_remain_frozen_for_later_replay():
     manifest = _load_json(EVIDENCE_ROOT / "manifest.json")
     invalid = [
-        entry
-        for entry in manifest["fixtures"]
-        if entry["kind"] == "invalid_mutation"
+        entry for entry in manifest["fixtures"] if entry["kind"] == "invalid_mutation"
     ]
 
     assert len(invalid) == 19
@@ -547,9 +608,7 @@ def test_retrieval_fixtures_reject_private_fields_and_credential_like_text():
         for value in _walk(fixture):
             if isinstance(value, str):
                 assert value.lower() not in FORBIDDEN_KEYS
-                assert not any(
-                    marker in value.lower() for marker in FORBIDDEN_TEXT
-                )
+                assert not any(marker in value.lower() for marker in FORBIDDEN_TEXT)
 
 
 def test_v1_transport_goldens_have_named_inputs_status_and_response_values():
@@ -561,9 +620,7 @@ def test_v1_transport_goldens_have_named_inputs_status_and_response_values():
         "mcp",
     }
     for path in fixtures:
-        assert hashlib.sha256(path.read_bytes()).hexdigest() == V1_SHA256[
-            path.name
-        ]
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == V1_SHA256[path.name]
         fixture = _load_json(path)
         assert set(fixture) == {
             "transport",

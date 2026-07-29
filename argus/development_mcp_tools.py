@@ -1,8 +1,8 @@
-"""
-MCP tool definitions for Argus.
-"""
+"""Legacy tool implementations for explicit standalone MCP development."""
 
 from typing import Any, Callable, Optional
+
+from mcp.server.fastmcp import Context as McpContext
 
 from argus.broker.router import SearchBroker
 from argus.corpus import describe_corpus_paths
@@ -22,7 +22,9 @@ _STATUS_DISPLAY = {
 
 def _serialize_response(resp) -> str:
     """Return markdown-formatted search results for LLM consumption."""
-    providers_used = [t.provider.value for t in resp.traces if t.results_count and t.results_count > 0]
+    providers_used = [
+        t.provider.value for t in resp.traces if t.results_count and t.results_count > 0
+    ]
     provider_str = ", ".join(providers_used) if providers_used else "none"
     cached_str = " (cached)" if resp.cached else ""
 
@@ -203,7 +205,9 @@ def search_health(broker: SearchBroker) -> str:
     for pname in ProviderName:
         status = broker.get_provider_status(pname)
         raw = status["effective_status"]
-        display = _STATUS_DISPLAY.get(raw if isinstance(raw, str) else raw.value, str(raw))
+        display = _STATUS_DISPLAY.get(
+            raw if isinstance(raw, str) else raw.value, str(raw)
+        )
         failures = status.get("consecutive_failures", 0)
         lines.append(f"{pname.value:<20} {display:<25} {failures}")
 
@@ -281,12 +285,15 @@ async def test_provider_mcp(
         user_visible=False,
     )
     authorization = ProbeAuthorization(
-        workflow="explicit_validation", provider=pname,
+        workflow="explicit_validation",
+        provider=pname,
         named_quota="free_provider_request" if PROVIDER_TIERS[pname] == 0 else None,
-        idempotency_key=idempotency_key, durable_receipt=durable_receipt,
+        idempotency_key=idempotency_key,
+        durable_receipt=durable_receipt,
         conservative_charge=(
             conservative_charge_estimate(pname, probe_query)
-            if PROVIDER_TIERS[pname] > 0 else None
+            if PROVIDER_TIERS[pname] > 0
+            else None
         ),
     )
     kind = "no_money_quota" if PROVIDER_TIERS[pname] == 0 else "billable_search"
@@ -302,9 +309,11 @@ async def test_provider_mcp(
         caller=caller_identity,
         user_visible=False,
         metadata={
-            "caller_label": caller_label, "probe_receipt": durable_receipt,
+            "caller_label": caller_label,
+            "probe_receipt": durable_receipt,
             "probe_idempotency_key": idempotency_key,
-            "probe_provider": pname.value, "probe_no_fallback": True,
+            "probe_provider": pname.value,
+            "probe_no_fallback": True,
             "probe_attempt_id": decision.attempt_id,
         },
     )
@@ -322,8 +331,53 @@ async def test_provider_mcp(
         if trace.error:
             lines.append(f"Error: {trace.error}")
     for i, r in enumerate(response.results[:3], 1):
-        lines.append(f"\n{i}. **{r.title}**\n   {r.url}\n   {r.snippet[:100] if r.snippet else ''}")
+        lines.append(
+            f"\n{i}. **{r.title}**\n   {r.url}\n   {r.snippet[:100] if r.snippet else ''}"
+        )
     return "\n".join(lines)
+
+
+def _require_standalone_mode(operation: str) -> None:
+    from argus.authority import (
+        AuthorityConfigurationError,
+        adapter_execution_mode,
+    )
+
+    if adapter_execution_mode() != "standalone":
+        raise AuthorityConfigurationError(
+            f"Direct MCP {operation} requires development standalone mode"
+        )
+
+
+async def development_mcp_extract(url: str, *, domain: str | None = None):
+    """Run the legacy standalone extractor only behind the development gate."""
+
+    _require_standalone_mode("extraction")
+    from argus.extraction import extract_url
+
+    return await extract_url(url, domain=domain, caller="mcp")
+
+
+async def development_mcp_valyu_answer(
+    query: str,
+    *,
+    fast_mode: bool = False,
+):
+    """Run the legacy standalone answer provider only behind its dev gate."""
+
+    _require_standalone_mode("provider access")
+    from argus.providers.valyu_answer import valyu_answer as provider_answer
+
+    return await provider_answer(query, fast_mode=fast_mode)
+
+
+def development_mcp_cookie_health() -> dict[str, dict[str, object]]:
+    """Read legacy standalone cookie health only behind the development gate."""
+
+    _require_standalone_mode("cookie access")
+    from argus.extraction.cookies import get_health_summary
+
+    return get_health_summary()
 
 
 async def valyu_answer(query: str, fast_mode: bool = False) -> str:
@@ -333,9 +387,7 @@ async def valyu_answer(query: str, fast_mode: bool = False) -> str:
         query: Question or research query to answer
         fast_mode: Use faster mode with lower latency
     """
-    from argus.providers.valyu_answer import valyu_answer as _answer
-
-    result = await _answer(query, fast_mode=fast_mode)
+    result = await development_mcp_valyu_answer(query, fast_mode=fast_mode)
 
     if result.error:
         return f"**valyu_answer error:** {result.error}"
@@ -370,9 +422,7 @@ async def extract_content(url: str, domain: str = None) -> str:
         url: URL to extract content from
         domain: Optional domain hint for authenticated extraction (e.g. nytimes.com)
     """
-    from argus.extraction import extract_url
-
-    result = await extract_url(url, domain=domain, caller="mcp")
+    result = await development_mcp_extract(url, domain=domain)
 
     if result.error:
         return f"**Extraction failed:** {result.error}\nURL: {result.url}"
@@ -464,6 +514,7 @@ def _serialize_workflow(result) -> str:
     elif result.report_path:
         try:
             import os
+
             if os.path.isfile(result.report_path):
                 with open(result.report_path) as f:
                     lines.append(f.read())
@@ -488,11 +539,13 @@ def _serialize_workflow(result) -> str:
 def _make_progress_callback(ctx: Any) -> Callable[[int, int, str], None] | None:
     if ctx is None:
         return None
+
     def cb(current: int, total: int, message: str) -> None:
         try:
             ctx.report_progress(current, total, message)
         except Exception:
             pass
+
     return cb
 
 
@@ -580,9 +633,7 @@ def cookie_health() -> str:
     Returns per-domain status, request counts, staleness warnings,
     and whether cookies need refreshing.
     """
-    from argus.extraction.cookies import get_health_summary
-
-    summary = get_health_summary()
+    summary = development_mcp_cookie_health()
     refresh = [d for d, s in summary.items() if s.get("stale_warning")]
 
     lines = [f"## Cookie Health ({len(summary)} domains)", ""]
@@ -644,3 +695,130 @@ def read_pack_file(path: str, max_bytes: int = 262144, offset: int = 0) -> str:
             "content": content,
         }
     )
+
+
+def register_standalone_tools(
+    mcp,
+    backend,
+    *,
+    caller_identity: Callable[[], str],
+) -> None:
+    """Register development-only tools without granting authority to MCP modules."""
+    from argus import development_mcp_resources as resources
+
+    @mcp.tool()
+    async def valyu_answer(query: str, fast_mode: bool = False) -> str:
+        return await globals()["valyu_answer"](query, fast_mode=fast_mode)
+
+    @mcp.tool()
+    def argus_paths() -> str:
+        return globals()["argus_paths"]()
+
+    @mcp.tool()
+    async def recover_dead_article(
+        url: str,
+        title: str = None,
+        domain: str = None,
+        caller: str = "mcp",
+        ctx: McpContext = None,
+    ) -> str:
+        return await globals()["recover_dead_article"](
+            backend.broker,
+            url,
+            title,
+            domain,
+            ctx=ctx,
+            caller_identity=caller_identity(),
+            caller_label=caller,
+        )
+
+    @mcp.tool()
+    async def capture_site(
+        url: str,
+        soft_page_limit: int = 75,
+        hard_page_limit: int = 200,
+        caller: str = "mcp",
+        ctx: McpContext = None,
+    ) -> str:
+        return await globals()["capture_site"](
+            backend.broker,
+            url,
+            soft_page_limit=soft_page_limit,
+            hard_page_limit=hard_page_limit,
+            ctx=ctx,
+            caller_identity=caller_identity(),
+            caller_label=caller,
+        )
+
+    @mcp.tool()
+    async def build_research_pack(
+        topic: str,
+        official_url: str = None,
+        max_research_pages: int = 40,
+        response_format: str = "markdown",
+        caller: str = "mcp",
+        ctx: McpContext = None,
+    ) -> str:
+        return await globals()["build_research_pack"](
+            backend.broker,
+            topic,
+            official_url=official_url,
+            max_research_pages=max_research_pages,
+            response_format=response_format,
+            ctx=ctx,
+            caller_identity=caller_identity(),
+            caller_label=caller,
+        )
+
+    @mcp.tool()
+    def read_pack_file(
+        path: str,
+        max_bytes: int = 262144,
+        offset: int = 0,
+    ) -> str:
+        return globals()["read_pack_file"](
+            path,
+            max_bytes=max_bytes,
+            offset=offset,
+        )
+
+    @mcp.tool()
+    async def test_provider(
+        provider: str,
+        query: str = "argus",
+        live: bool = False,
+        idempotency_key: str | None = None,
+        durable_receipt: str | None = None,
+        spend_reserved: bool = False,
+    ) -> str:
+        return await test_provider_mcp(
+            backend.broker,
+            provider,
+            query,
+            caller_identity=caller_identity(),
+            caller_label="mcp-admin-smoke",
+            live=live,
+            idempotency_key=idempotency_key,
+            durable_receipt=durable_receipt,
+            spend_reserved=spend_reserved,
+        )
+
+    @mcp.tool()
+    def cookie_health() -> str:
+        return globals()["cookie_health"]()
+
+    @mcp.resource("argus://providers/status")
+    def provider_status() -> str:
+        return resources.provider_status_resource(backend.broker)
+
+    @mcp.resource("argus://providers/budgets")
+    def provider_budgets() -> str:
+        return resources.provider_budgets_resource(backend.broker)
+
+    @mcp.resource("argus://policies/current")
+    def routing_policies() -> str:
+        return resources.routing_policies_resource(backend.broker)
+
+    @mcp.resource("argus://corpus/paths")
+    def corpus_paths() -> str:
+        return resources.corpus_paths_resource()
