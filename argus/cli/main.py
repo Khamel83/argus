@@ -72,6 +72,8 @@ def _cli_unready(detail: str):
 
 def _negotiated_http_request(authority, route: str, payload: dict):
     """Execute exactly one request against the discovered contract family."""
+    from argus.contracts import validate_v2_envelope
+
     try:
         selection = _run(
             authority.resolve_http_contract(
@@ -86,12 +88,14 @@ def _negotiated_http_request(authority, route: str, payload: dict):
         return "v2", _cli_unready("Argus HTTP contract discovery is unavailable")
     if selection.contract_version == "2.0" and selection.base_path == "/api/v2":
         try:
-            return "v2", _run(
+            response = _run(
                 authority.request_v2(
                     f"{selection.base_path}{route}",
                     payload=payload,
                 )
             )
+            validate_v2_envelope(response)
+            return "v2", response
         except Exception:
             return "v2", _cli_unready("Argus HTTP execution authority is unavailable")
     if selection.contract_version == "1" and selection.base_path == "/api":
@@ -631,7 +635,12 @@ def build_research_pack(topic, official_url, max_research_pages, as_json):
 @cli.command()
 def health():
     """Show provider health status."""
-    authority = _require_http_authority()
+    authority = _http_authority_client()
+    if authority is None:
+        from argus import standalone_cli
+
+        standalone_cli.require_nonproduction()
+        return standalone_cli.health()
     response = _run(authority.request("GET", "/api/provider-health"))
     for provider, status in (response.get("providers") or {}).items():
         raw = provider_display_state(status)
@@ -643,7 +652,12 @@ def health():
 @cli.command()
 def budgets():
     """Show provider budget status."""
-    authority = _require_http_authority()
+    authority = _http_authority_client()
+    if authority is None:
+        from argus import standalone_cli
+
+        standalone_cli.require_nonproduction()
+        return standalone_cli.budgets()
     response = _run(authority.request("GET", "/api/budgets"))
     click.echo("Provider budgets:")
     for provider, summary in (response.get("providers") or {}).items():
@@ -704,7 +718,12 @@ def test_provider(
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def doctor(as_json):
     """Diagnose your Argus setup: config, providers, connectivity, and MCP readiness."""
-    authority = _require_http_authority()
+    authority = _http_authority_client()
+    if authority is None:
+        from argus import standalone_cli
+
+        standalone_cli.require_nonproduction()
+        return standalone_cli.doctor(as_json=as_json)
     status = _run(authority.request("GET", "/api/admin/status"))
     if as_json:
         _emit_json(status)

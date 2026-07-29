@@ -11,6 +11,8 @@ from click.testing import CliRunner
 
 
 def _envelope(outcome: str = "success") -> dict[str, object]:
+    from argus.contracts import CanonicalOutcome, http_status_for
+
     successful = outcome in {"success", "degraded", "empty"}
     return {
         "contract_version": "2.0",
@@ -34,9 +36,14 @@ def _envelope(outcome: str = "success") -> dict[str, object]:
         "error": None
         if successful
         else {
+            "type": f"urn:argus:problem:{outcome}",
+            "title": outcome.replace("_", " ").title(),
             "code": outcome,
             "detail": "Safe failure",
-            "status": 503,
+            "status": http_status_for(CanonicalOutcome(outcome), outcome),
+            "instance": "urn:argus:request:cli-request-1",
+            "retryable": False,
+            "retry_after_seconds": None,
         },
     }
 
@@ -407,6 +414,30 @@ def _actual_envelope(command: str, outcome: str) -> dict[str, object]:
     return envelope
 
 
+def _http_status(envelope: dict[str, object]) -> int:
+    error = envelope["error"]
+    return 200 if error is None else error["status"]
+
+
+def _expected_cli_unready(detail: str) -> dict[str, object]:
+    return {
+        "contract_version": "2.0",
+        "outcome": "unready",
+        "request_id": "cli-deadbeef",
+        "result": None,
+        "error": {
+            "type": "urn:argus:problem:unready",
+            "title": "Unready",
+            "status": 503,
+            "detail": detail,
+            "instance": "urn:argus:request:cli-deadbeef",
+            "code": "unready",
+            "retryable": False,
+            "retry_after_seconds": None,
+        },
+    }
+
+
 def _expected_human(command: str, envelope: dict[str, object]) -> str:
     result = envelope["result"] or {}
     outcome = envelope["outcome"]
@@ -475,7 +506,7 @@ def test_real_discovery_v2_has_exact_json_and_one_selected_post(
         if request.url.path == "/api/capabilities":
             return httpx.Response(200, json=_capabilities(v2=True))
         assert request.url.path == v2_path
-        return httpx.Response(200, json=envelope)
+        return httpx.Response(_http_status(envelope), json=envelope)
 
     result = _invoke_real_http(monkeypatch, [*arguments, "--json"], handler)
 
@@ -488,6 +519,98 @@ def test_real_discovery_v2_has_exact_json_and_one_selected_post(
     )
     assert result.stderr == expected_stderr
     assert requests == [("GET", "/api/capabilities"), ("POST", v2_path)]
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        "malformed_success",
+        "malformed_failure",
+        "malformed_partial_evidence",
+        "success_status_mismatch",
+        "failure_status_mismatch",
+    ),
+)
+def test_real_cli_rejects_malformed_or_status_mismatched_execution_envelopes(
+    monkeypatch,
+    case,
+):
+    envelope = _envelope(
+        "providers_failed"
+        if case
+        in {
+            "malformed_failure",
+            "malformed_partial_evidence",
+            "failure_status_mismatch",
+        }
+        else "success"
+    )
+    status = _http_status(envelope)
+    if case == "malformed_success":
+        envelope["result"] = None
+    elif case == "malformed_failure":
+        del envelope["error"]["instance"]
+    elif case == "malformed_partial_evidence":
+        envelope["result"] = ["partial evidence must be an object"]
+    elif case == "success_status_mismatch":
+        status = 502
+    else:
+        status = 200
+
+    requests = []
+    monkeypatch.setattr("argus.cli.main.secrets.token_hex", lambda _n: "deadbeef")
+
+    def handler(request):
+        requests.append((request.method, request.url.path))
+        if request.url.path == "/api/capabilities":
+            return httpx.Response(200, json=_capabilities(v2=True))
+        return httpx.Response(status, json=envelope)
+
+    result = _invoke_real_http(
+        monkeypatch,
+        ["search", "-q", "reject drift", "--json"],
+        handler,
+    )
+
+    expected = _expected_cli_unready("Argus HTTP execution authority is unavailable")
+    assert result.exit_code == 1
+    assert result.stdout == json.dumps(expected, indent=2) + "\n"
+    assert result.stderr == (
+        "Argus operation failed (unready): "
+        "Argus HTTP execution authority is unavailable\n"
+    )
+    assert requests == [
+        ("GET", "/api/capabilities"),
+        ("POST", "/api/v2/search"),
+    ]
+
+
+def test_real_cli_preserves_failure_envelope_with_partial_evidence(monkeypatch):
+    envelope = _envelope("providers_failed")
+    envelope["result"] = _route_result("search")
+    requests = []
+
+    def handler(request):
+        requests.append((request.method, request.url.path))
+        if request.url.path == "/api/capabilities":
+            return httpx.Response(200, json=_capabilities(v2=True))
+        return httpx.Response(_http_status(envelope), json=envelope)
+
+    result = _invoke_real_http(
+        monkeypatch,
+        ["search", "-q", "partial failure", "--json"],
+        handler,
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == json.dumps(envelope, indent=2) + "\n"
+    assert result.stderr == (
+        "Argus operation failed (providers_failed): Safe failure\n"
+    )
+    assert requests == [
+        ("GET", "/api/capabilities"),
+        ("POST", "/api/v2/search"),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -592,6 +715,53 @@ def test_real_malformed_discovery_never_posts(monkeypatch, capability_body):
     assert (
         result.stderr
         == "Argus operation failed (unready): Argus HTTP contract discovery is unavailable\n"
+    )
+    assert requests == [("GET", "/api/capabilities")]
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        "worker_role",
+        "caller_role",
+        "unknown_role",
+        "false_capability",
+        "missing_capability",
+        "wrong_authority",
+        "wrong_schema",
+    ),
+)
+def test_real_unproven_legacy_capability_documents_never_post(monkeypatch, case):
+    document = _capabilities(v2=False)
+    if case.endswith("_role"):
+        document["role"] = case.removesuffix("_role")
+    elif case == "false_capability":
+        document["capabilities"]["search"] = False
+    elif case == "missing_capability":
+        del document["capabilities"]["extraction"]
+    elif case == "wrong_authority":
+        document["execution_authority"] = "worker"
+    else:
+        document["schema_version"] = "2.0"
+    requests = []
+    monkeypatch.setattr("argus.cli.main.secrets.token_hex", lambda _n: "deadbeef")
+
+    def handler(request):
+        requests.append((request.method, request.url.path))
+        return httpx.Response(200, json=document)
+
+    result = _invoke_real_http(
+        monkeypatch,
+        ["search", "-q", "never post", "--json"],
+        handler,
+    )
+
+    expected = _expected_cli_unready("Argus HTTP contract discovery is unavailable")
+    assert result.exit_code == 1
+    assert result.stdout == json.dumps(expected, indent=2) + "\n"
+    assert result.stderr == (
+        "Argus operation failed (unready): "
+        "Argus HTTP contract discovery is unavailable\n"
     )
     assert requests == [("GET", "/api/capabilities")]
 
@@ -761,7 +931,7 @@ def test_human_v2_output_is_exact_for_retrieval_commands(
     def handler(request):
         if request.url.path == "/api/capabilities":
             return httpx.Response(200, json=_capabilities(v2=True))
-        return httpx.Response(200, json=envelope)
+        return httpx.Response(_http_status(envelope), json=envelope)
 
     result = _invoke_real_http(monkeypatch, arguments, handler)
 

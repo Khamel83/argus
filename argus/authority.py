@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 from urllib.parse import urlsplit
 
 import httpx
 
 from argus.provider_controls import HERMETIC_PROVIDER_ENV_PREFIXES
+
+if TYPE_CHECKING:
+    from argus.mcp.capabilities import ContractSelection
 
 
 class AuthorityConfigurationError(RuntimeError):
@@ -69,7 +72,7 @@ class HttpAuthorityClient:
         clock: Callable[[], float],
         *,
         refresh: bool = False,
-    ):
+    ) -> ContractSelection:
         """Discover a route family with GET only, before operation execution."""
         return await self._http_contract_resolver.resolve_http_contract(
             self.authority_origin,
@@ -128,7 +131,17 @@ class HttpAuthorityClient:
             payload=payload,
             token=token,
         )
-        return self._decode_response(content, status_code=status_code)
+        body = self._decode_response(content, status_code=status_code)
+        from argus.contracts import validate_v2_envelope
+
+        try:
+            validate_v2_envelope(body, http_status=status_code)
+        except ValueError as exc:
+            raise AuthorityRequestError(
+                "Argus execution authority returned an invalid response",
+                status_code=status_code,
+            ) from exc
+        return body
 
     async def _bounded_response(
         self,
@@ -244,8 +257,7 @@ def _forbidden_adapter_inputs(values: Mapping[str, str]) -> list[str]:
         f"ARGUS_{provider}_" for provider in HERMETIC_PROVIDER_ENV_PREFIXES
     )
     bare_provider_keys = {
-        f"{provider}_API_KEY"
-        for provider in HERMETIC_PROVIDER_ENV_PREFIXES
+        f"{provider}_API_KEY" for provider in HERMETIC_PROVIDER_ENV_PREFIXES
     }
     forbidden = []
     for name, value in values.items():

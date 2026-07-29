@@ -78,6 +78,92 @@ async def test_resolver_selects_legacy_only_for_a_proven_legacy_document():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("role", ("worker", "caller", "unknown", "", None))
+async def test_resolver_rejects_non_primary_legacy_roles(role):
+    from argus.mcp.capabilities import HttpContractResolver
+
+    document = _legacy_document()
+    document["role"] = role
+
+    async def discover(_origin: str):
+        return document
+
+    selection = await HttpContractResolver(discover).resolve_http_contract(
+        "https://authority.example", "deploy-1", Clock()
+    )
+
+    assert selection.outcome == "unready"
+    assert selection.contract_version is None
+    assert selection.base_path is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("capability", "value"),
+    [
+        *(
+            (capability, False)
+            for capability in ("search", "extraction", "recovery", "expansion")
+        ),
+        *(
+            (capability, None)
+            for capability in ("search", "extraction", "recovery", "expansion")
+        ),
+    ],
+)
+async def test_resolver_requires_every_legacy_operation_capability(
+    capability,
+    value,
+):
+    from argus.mcp.capabilities import HttpContractResolver
+
+    document = _legacy_document()
+    if value is None:
+        del document["capabilities"][capability]
+    else:
+        document["capabilities"][capability] = value
+
+    async def discover(_origin: str):
+        return document
+
+    selection = await HttpContractResolver(discover).resolve_http_contract(
+        "https://authority.example", "deploy-1", Clock()
+    )
+
+    assert selection.outcome == "unready"
+    assert selection.contract_version is None
+    assert selection.base_path is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("schema_version", "2.0"),
+        ("schema_version", None),
+        ("execution_authority", "worker"),
+        ("execution_authority", None),
+    ),
+)
+async def test_resolver_rejects_wrong_legacy_authority_or_schema(field, value):
+    from argus.mcp.capabilities import HttpContractResolver
+
+    document = _legacy_document()
+    document[field] = value
+
+    async def discover(_origin: str):
+        return document
+
+    selection = await HttpContractResolver(discover).resolve_http_contract(
+        "https://authority.example", "deploy-1", Clock()
+    )
+
+    assert selection.outcome == "unready"
+    assert selection.contract_version is None
+    assert selection.base_path is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "document",
     [

@@ -10,81 +10,17 @@ from typing import Annotated, Any, Literal
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.fastmcp.tools.base import Tool
 from mcp.types import CallToolResult, TextContent
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    ValidationError,
-    model_validator,
-)
+from pydantic import Field, ValidationError
 
 from argus.contracts import (
     CanonicalOutcome,
-    http_status_for,
+    V2Envelope,
     is_success_like,
     mcp_is_error_for,
+    validate_v2_envelope,
 )
 
 _TEXT_LIMIT = 64 * 1024
-_OUTCOMES = Literal[
-    "success",
-    "degraded",
-    "empty",
-    "invalid_request",
-    "authentication_rejected",
-    "policy_rejected",
-    "timeout",
-    "persistence_failed",
-    "providers_failed",
-    "extraction_failed",
-    "unready",
-]
-
-
-class V2Problem(BaseModel):
-    """Exact public problem member of the HTTP-v2 envelope."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    type: str
-    title: str
-    status: int
-    detail: str
-    instance: str
-    code: str
-    retryable: bool
-    retry_after_seconds: int | None
-
-
-class V2Envelope(BaseModel):
-    """Exact stable outer envelope shared by HTTP and MCP v2."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    contract_version: Literal["2.0"]
-    outcome: _OUTCOMES
-    request_id: str
-    result: dict[str, Any] | None
-    error: V2Problem | None
-
-    @model_validator(mode="after")
-    def validate_result_error_invariants(self):
-        outcome = CanonicalOutcome(self.outcome)
-        if is_success_like(outcome):
-            if self.result is None or self.error is not None:
-                raise ValueError(
-                    f"outcome {outcome.value} requires result and forbids error"
-                )
-            return self
-        if self.result is not None or self.error is None:
-            raise ValueError(
-                f"outcome {outcome.value} forbids result and requires error"
-            )
-        if self.error.status != http_status_for(outcome, self.error.code):
-            raise ValueError(
-                f"outcome {outcome.value} error status/code is inconsistent"
-            )
-        return self
 
 
 V2ToolResult = Annotated[CallToolResult, V2Envelope]
@@ -183,7 +119,7 @@ def _extract_text(result: Mapping[str, Any]) -> str:
 
 
 def _result(tool_name: str, envelope: Mapping[str, Any]) -> CallToolResult:
-    validated = V2Envelope.model_validate(envelope)
+    validated = validate_v2_envelope(envelope)
     outcome = CanonicalOutcome(validated.outcome)
     result = validated.result
     if is_success_like(outcome) and result is not None:
@@ -197,11 +133,18 @@ def _result(tool_name: str, envelope: Mapping[str, Any]) -> CallToolResult:
     else:
         problem = validated.error
         detail = problem.detail if problem is not None else "Operation unavailable"
-        text = (
-            f"Argus {tool_name} outcome: {outcome.value}\n"
-            f"Request ID: {validated.request_id}\n"
-            f"Error: {detail}"
-        )
+        lines = [
+            f"Argus {tool_name} failure outcome: {outcome.value}",
+            f"Request ID: {validated.request_id}\nError: {detail}",
+        ]
+        if result is not None:
+            evidence_text = (
+                _extract_text(result)
+                if tool_name == "extract_content_v2"
+                else _search_text(result)
+            )
+            lines.extend(["", "Partial evidence:", evidence_text])
+        text = "\n".join(lines)
     return CallToolResult(
         content=[TextContent(type="text", text=_bounded(text))],
         structuredContent=dict(envelope),

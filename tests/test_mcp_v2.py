@@ -126,6 +126,27 @@ def _outcome_envelope(outcome: str) -> dict[str, Any]:
     }
 
 
+def _partial_failure_envelope() -> dict[str, Any]:
+    envelope = _outcome_envelope("providers_failed")
+    envelope["result"] = {
+        "query": "partial failure",
+        "mode": "research",
+        "results": [
+            {
+                "title": "Accepted partial evidence",
+                "url": "https://example.com/partial",
+                "snippet": "Evidence retained before the provider floor failed",
+            }
+        ],
+        "traces": [],
+        "total_results": 1,
+        "cached": False,
+        "budget_warnings": [],
+        "session_id": None,
+    }
+    return envelope
+
+
 @dataclass(frozen=True)
 class _Selection:
     contract_version: str | None
@@ -601,6 +622,20 @@ def test_v2_is_error_is_false_only_for_success_degraded_and_empty(outcome):
         assert f"Argus outcome: {outcome}" in rendered.content[0].text
 
 
+def test_v2_failure_preserves_partial_evidence_and_labels_bounded_text():
+    from argus.mcp.v2_tools import _result
+
+    envelope = _partial_failure_envelope()
+
+    rendered = _result("search_web_v2", envelope)
+
+    assert rendered.structuredContent == envelope
+    assert rendered.isError is True
+    assert "failure outcome: providers_failed" in rendered.content[0].text
+    assert "Accepted partial evidence" in rendered.content[0].text
+    assert len(rendered.content[0].text.encode("utf-8")) <= 64 * 1024
+
+
 def test_standalone_development_registers_only_usable_v1_tools(monkeypatch):
     from argus.development_mcp_adapter import LocalMcpAdapter
 
@@ -976,22 +1011,6 @@ def test_missing_pinned_sdk_tool_manager_fails_closed():
             "result": None,
             "error": None,
         },
-        {
-            "contract_version": "2.0",
-            "outcome": "unready",
-            "request_id": "request-invariant",
-            "result": {"must": "be absent on failures"},
-            "error": {
-                "type": "urn:argus:problem:unready",
-                "title": "Unready",
-                "status": 503,
-                "detail": "Invalid mixed envelope",
-                "instance": "urn:argus:request:request-invariant",
-                "code": "unready",
-                "retryable": False,
-                "retry_after_seconds": None,
-            },
-        },
     ),
 )
 def test_mcp_v2_rejects_http_envelopes_that_violate_result_error_invariants(
@@ -1003,6 +1022,77 @@ def test_mcp_v2_rejects_http_envelopes_that_violate_result_error_invariants(
 
     with pytest.raises(ValidationError, match="outcome"):
         _result("search_web_v2", envelope)
+
+
+def test_real_mcp_tool_presents_partial_failure_evidence_end_to_end(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from argus.mcp.http_adapter import HttpMcpAdapter
+
+    envelope = _partial_failure_envelope()
+
+    class PartialFailureBackend(HttpMcpAdapter):
+        def __init__(self):
+            pass
+
+        async def search_web_v2(self, **_kwargs):
+            return envelope
+
+        async def search_health(self, **_kwargs):
+            return "healthy"
+
+        async def search_budgets(self, **_kwargs):
+            return "budgets"
+
+    registered = _capture_real_mcp_server(monkeypatch, PartialFailureBackend())
+    with TestClient(registered.streamable_http_app()) as client:
+        initialized = client.post(
+            "/mcp",
+            headers={
+                "content-type": "application/json",
+                "accept": "application/json, text/event-stream",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": "fixture", "version": "1"},
+                },
+            },
+        )
+        response = client.post(
+            "/mcp",
+            headers={
+                "content-type": "application/json",
+                "accept": "application/json, text/event-stream",
+                "mcp-session-id": initialized.headers["mcp-session-id"],
+                "mcp-protocol-version": "2025-11-25",
+            },
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "search_web_v2",
+                    "arguments": {"query": "partial failure"},
+                },
+            },
+        )
+
+    event_data = next(
+        line.removeprefix("data: ")
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    )
+    result = json.loads(event_data)["result"]
+    assert response.status_code == 200
+    assert result["structuredContent"] == envelope
+    assert result["isError"] is True
+    assert "failure outcome: providers_failed" in result["content"][0]["text"]
+    assert "Accepted partial evidence" in result["content"][0]["text"]
 
 
 def _mutate_leaf(document, path):

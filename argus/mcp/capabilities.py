@@ -148,11 +148,11 @@ def _is_capability_document(document: object) -> bool:
     if (
         document.get("schema_version") != "1.0"
         or document.get("execution_authority") != "http-api"
-        or not isinstance(document.get("role"), str)
+        or document.get("role") != "primary"
         or not isinstance(capabilities, Mapping)
     ):
         return False
     return all(
-        isinstance(capabilities.get(name), bool)
+        capabilities.get(name) is True
         for name in ("search", "extraction", "recovery", "expansion")
     )

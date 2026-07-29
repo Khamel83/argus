@@ -12,6 +12,16 @@ import os
 
 import click
 
+_STATUS_DISPLAY = {
+    "enabled": "OK",
+    "disabled_by_config": "DISABLED (config)",
+    "unavailable_missing_key": "MISSING KEY",
+    "temporarily_disabled_after_failures": "COOLDOWN",
+    "budget_exhausted": "BUDGET EXHAUSTED",
+    "degraded": "DEGRADED",
+    "healthy": "HEALTHY",
+}
+
 
 def _run(coro):
     return asyncio.run(coro)
@@ -172,6 +182,172 @@ def recover_url(*, url, title, domain, as_json):
     for index, item in enumerate(response.results, 1):
         click.echo(f"  {index}. {item.title}")
         click.echo(f"     {item.url}")
+
+
+def health():
+    """Show the frozen Tier-1 provider health summary."""
+    from argus.broker.router import create_broker
+    from argus.models import ProviderName
+
+    broker = create_broker()
+    for provider_name in ProviderName:
+        status = broker.get_provider_status(provider_name)
+        effective = status["effective_status"]
+        raw = effective if isinstance(effective, str) else effective.value
+        click.echo(f"  {provider_name.value:12s} {_STATUS_DISPLAY.get(raw, raw)}")
+    click.echo()
+
+
+def budgets():
+    """Show the frozen Tier-1 provider and token budget summary."""
+    from argus.broker.router import create_broker
+    from argus.models import ProviderName
+    from argus.operations.presentation import budget_remaining
+
+    broker = create_broker()
+    click.echo("Provider budgets:")
+    for provider_name in ProviderName:
+        summary = broker.provider_budget_projection(provider_name)
+        snapshot = summary.get("provider_snapshot")
+        snapshot_text = (
+            f" provider_observed_at={snapshot['observed_at']}" if snapshot else ""
+        )
+        click.echo(
+            f"  {provider_name.value:12s} "
+            f"remaining={budget_remaining(summary['remaining'])} "
+            f"estimated={summary['argus_estimated_charge']} "
+            f"uncertain={summary['uncertain_charge']}{snapshot_text}"
+        )
+
+    store = broker.budget_tracker._store
+    if store:
+        balances = store.get_all_token_balances()
+        if balances:
+            click.echo()
+            click.echo("Token balances:")
+            for service, info in balances.items():
+                click.echo(f"  {service:12s} balance={info['balance']:,.0f} tokens")
+
+
+def doctor(*, as_json):
+    """Run the frozen Tier-1 setup and connectivity diagnostics."""
+    from argus.broker.router import create_broker
+    from argus.models import ProviderName
+
+    broker = create_broker()
+    checks = []
+
+    try:
+        from argus.config import get_config
+
+        config = get_config()
+        checks.append(("Config", True, f"env={config.env}, log={config.log_level}"))
+    except Exception as exc:
+        checks.append(("Config", False, str(exc)))
+
+    ready = 0
+    needs_key = 0
+    for provider_name in ProviderName:
+        status = broker.get_provider_status(provider_name)
+        raw = status["effective_status"]
+        display = _STATUS_DISPLAY.get(
+            raw if isinstance(raw, str) else raw.value,
+            str(raw),
+        )
+        if display in {"OK", "HEALTHY"}:
+            ready += 1
+        elif display == "MISSING KEY":
+            needs_key += 1
+    checks.append(("Providers", ready > 0, f"{ready} ready, {needs_key} need API keys"))
+
+    try:
+        import urllib.error
+        import urllib.request
+
+        if config.searxng.enabled:
+            request = urllib.request.Request(
+                config.searxng.base_url,
+                method="HEAD",
+            )
+            urllib.request.urlopen(request, timeout=5)
+            checks.append(
+                (
+                    "SearXNG",
+                    True,
+                    f"reachable at {config.searxng.base_url}",
+                )
+            )
+        else:
+            checks.append(
+                (
+                    "SearXNG",
+                    None,
+                    "disabled (enable in .env if you have Docker)",
+                )
+            )
+    except Exception:
+        checks.append(("SearXNG", False, "not reachable — check Docker container"))
+
+    try:
+        from argus.providers.duckduckgo import DuckDuckGoProvider
+
+        DuckDuckGoProvider(config.duckduckgo)
+        checks.append(
+            (
+                "DuckDuckGo",
+                True,
+                "adapter constructed; readiness is reported by the authority",
+            )
+        )
+    except Exception as exc:
+        checks.append(("DuckDuckGo", False, str(exc)))
+
+    try:
+        import mcp.server.fastmcp  # noqa: F401
+
+        checks.append(("MCP package", True, "installed"))
+    except ImportError:
+        checks.append(("MCP package", False, "pip install 'argus-search[mcp]'"))
+
+    if as_json:
+        click.echo(
+            json.dumps(
+                {
+                    "checks": [
+                        {"name": name, "ok": ok, "detail": detail}
+                        for name, ok, detail in checks
+                    ],
+                    "providers_ready": ready,
+                    "providers_need_keys": needs_key,
+                },
+                indent=2,
+            )
+        )
+        return
+
+    all_pass = True
+    for name, ok, detail in checks:
+        if ok is None:
+            icon = "-"
+            status = "SKIP"
+        elif ok:
+            icon = "+"
+            status = "OK"
+        else:
+            icon = "!"
+            status = "FAIL"
+            all_pass = False
+        click.echo(f"  [{icon}] {name:15s} {status:5s} {detail}")
+    click.echo()
+    if all_pass:
+        click.echo("Setup looks good. Run 'argus health' for detailed provider status.")
+    else:
+        click.echo("Some checks failed. See above for details.")
+        if needs_key:
+            click.echo(
+                f"  {needs_key} providers need API keys — "
+                "add them to .env or secrets vault."
+            )
 
 
 def test_provider(
