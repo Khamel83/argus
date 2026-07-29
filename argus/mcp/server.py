@@ -1074,6 +1074,15 @@ def serve_mcp(
         """Read durable provider budgets from the HTTP authority."""
         return await backend.search_budgets(token=_mcp_caller_token())
 
+    from argus.mcp.v2_tools import register_v2_tools
+
+    register_v2_tools(
+        mcp,
+        backend,
+        caller_identity=_mcp_caller_identity,
+        caller_token=_mcp_caller_token,
+    )
+
     from argus.mcp.local_adapter import LocalMcpAdapter
 
     if isinstance(backend, LocalMcpAdapter):
@@ -1245,21 +1254,28 @@ def serve_mcp(
                 token=_mcp_caller_token(),
             )
 
+    from argus.capabilities import (
+        CapabilityManifestError,
+        validate_complete_mcp_registration,
+        validate_mcp_tool_registration,
+    )
+    from argus.mcp.v2_tools import actual_v2_tool_registration
+
+    tool_registration = actual_v2_tool_registration(mcp)
+    if transport == "stdio":
+        validate_mcp_tool_registration(tool_registration)
+        logger.info("Starting Argus MCP server (%s)", transport)
+        mcp.run(transport=transport)
+        return
+    validate_complete_mcp_registration(
+        _mcp_transport_registration(mcp),
+        tool_registration,
+    )
     logger.info(
         "Starting Argus MCP server (%s)%s",
         transport,
         " with auth" if use_remote_auth else "",
     )
-    if transport == "stdio":
-        mcp.run(transport=transport)
-        return
-
-    from argus.capabilities import (
-        CapabilityManifestError,
-        validate_mcp_transport_registration,
-    )
-
-    validate_mcp_transport_registration(_mcp_transport_registration(mcp))
     if transport == "streamable-http":
         sdk_app = mcp.streamable_http_app()
         session_manager = mcp.session_manager

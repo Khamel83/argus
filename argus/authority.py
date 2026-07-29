@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
@@ -28,6 +29,39 @@ class AuthorityRequestError(RuntimeError):
     def __init__(self, message: str, *, status_code: int | None = None):
         super().__init__(message)
         self.status_code = status_code
+
+
+async def development_mcp_extract(url: str, *, domain: str | None = None):
+    """Run the legacy standalone extractor only behind the development gate."""
+    if adapter_execution_mode() != "standalone":
+        raise AuthorityConfigurationError(
+            "Direct MCP extraction requires development standalone mode"
+        )
+    from argus.extraction import extract_url
+
+    return await extract_url(url, domain=domain, caller="mcp")
+
+
+async def development_mcp_valyu_answer(query: str, *, fast_mode: bool = False):
+    """Run the legacy standalone answer provider only behind its dev gate."""
+    if adapter_execution_mode() != "standalone":
+        raise AuthorityConfigurationError(
+            "Direct MCP provider access requires development standalone mode"
+        )
+    from argus.providers.valyu_answer import valyu_answer
+
+    return await valyu_answer(query, fast_mode=fast_mode)
+
+
+def development_mcp_cookie_health() -> dict[str, dict[str, object]]:
+    """Read legacy standalone cookie health only behind the development gate."""
+    if adapter_execution_mode() != "standalone":
+        raise AuthorityConfigurationError(
+            "Direct MCP cookie access requires development standalone mode"
+        )
+    from argus.extraction.cookies import get_health_summary
+
+    return get_health_summary()
 
 
 class HttpAuthorityClient:
@@ -85,6 +119,58 @@ class HttpAuthorityClient:
         payload: Mapping[str, Any] | None = None,
         token: str | None = None,
     ) -> dict[str, Any]:
+        status_code, content = await self._bounded_response(
+            method,
+            path,
+            payload=payload,
+            token=token,
+        )
+        if status_code >= 400:
+            messages = {
+                401: "Argus execution authority authentication failed",
+                403: "Argus execution authority denied the request",
+                404: "Argus execution authority route unavailable",
+                422: "Argus execution authority rejected the request",
+                429: "Argus execution authority rate limited the request",
+            }
+            message = messages.get(
+                status_code,
+                (
+                    "Argus execution authority unavailable"
+                    if status_code >= 500
+                    else "Argus execution authority request failed"
+                ),
+            )
+            raise AuthorityRequestError(
+                message,
+                status_code=status_code,
+            )
+        return self._decode_response(content, status_code=status_code)
+
+    async def request_v2(
+        self,
+        path: str,
+        *,
+        payload: Mapping[str, Any],
+        token: str | None = None,
+    ) -> dict[str, Any]:
+        """Return an exact v2 envelope even when its HTTP status is non-2xx."""
+        status_code, content = await self._bounded_response(
+            "POST",
+            path,
+            payload=payload,
+            token=token,
+        )
+        return self._decode_response(content, status_code=status_code)
+
+    async def _bounded_response(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: Mapping[str, Any] | None,
+        token: str | None,
+    ) -> tuple[int, bytes]:
         headers = {
             "Authorization": f"Bearer {token or self._config.token}",
         }
@@ -94,52 +180,42 @@ class HttpAuthorityClient:
                 transport=self._transport,
                 timeout=self._timeout_seconds,
             ) as client:
-                response = await client.request(
+                async with client.stream(
                     method,
                     path,
                     json=dict(payload) if payload is not None else None,
                     headers=headers,
-                )
+                ) as response:
+                    chunks: list[bytes] = []
+                    total = 0
+                    async for chunk in response.aiter_bytes():
+                        total += len(chunk)
+                        if total > self._MAX_RESPONSE_BYTES:
+                            raise AuthorityRequestError(
+                                "Argus execution authority response exceeded "
+                                "the size limit",
+                                status_code=response.status_code,
+                            )
+                        chunks.append(chunk)
+                    return response.status_code, b"".join(chunks)
         except httpx.HTTPError as exc:
             raise AuthorityRequestError(
                 "Argus execution authority unavailable"
             ) from exc
-        if response.status_code >= 400:
-            messages = {
-                401: "Argus execution authority authentication failed",
-                403: "Argus execution authority denied the request",
-                404: "Argus execution authority route unavailable",
-                422: "Argus execution authority rejected the request",
-                429: "Argus execution authority rate limited the request",
-            }
-            message = messages.get(
-                response.status_code,
-                (
-                    "Argus execution authority unavailable"
-                    if response.status_code >= 500
-                    else "Argus execution authority request failed"
-                ),
-            )
-            raise AuthorityRequestError(
-                message,
-                status_code=response.status_code,
-            )
-        if len(response.content) > self._MAX_RESPONSE_BYTES:
-            raise AuthorityRequestError(
-                "Argus execution authority response exceeded the size limit",
-                status_code=response.status_code,
-            )
+
+    @staticmethod
+    def _decode_response(content: bytes, *, status_code: int) -> dict[str, Any]:
         try:
-            body = response.json()
+            body = json.loads(content)
         except ValueError as exc:
             raise AuthorityRequestError(
                 "Argus execution authority returned an invalid response",
-                status_code=response.status_code,
+                status_code=status_code,
             ) from exc
         if not isinstance(body, dict):
             raise AuthorityRequestError(
                 "Argus execution authority returned an invalid response",
-                status_code=response.status_code,
+                status_code=status_code,
             )
         return body
 

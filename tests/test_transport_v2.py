@@ -205,7 +205,8 @@ def test_capabilities_advertise_v2_only_after_complete_registration(monkeypatch)
     assert evidence["mcp_contract"] == {
         "transport": "streamable-http",
         "endpoint": "/mcp",
-        "argus_tool_contract_versions": ["1"],
+        "argus_tool_contract_versions": ["1", "2.0"],
+        "version_2_tool_suffix": "_v2",
     }
 
 

@@ -333,9 +333,9 @@ async def valyu_answer(query: str, fast_mode: bool = False) -> str:
         query: Question or research query to answer
         fast_mode: Use faster mode with lower latency
     """
-    from argus.providers.valyu_answer import valyu_answer as _answer
+    from argus.authority import development_mcp_valyu_answer
 
-    result = await _answer(query, fast_mode=fast_mode)
+    result = await development_mcp_valyu_answer(query, fast_mode=fast_mode)
 
     if result.error:
         return f"**valyu_answer error:** {result.error}"
@@ -370,9 +370,9 @@ async def extract_content(url: str, domain: str = None) -> str:
         url: URL to extract content from
         domain: Optional domain hint for authenticated extraction (e.g. nytimes.com)
     """
-    from argus.extraction import extract_url
+    from argus.authority import development_mcp_extract
 
-    result = await extract_url(url, domain=domain, caller="mcp")
+    result = await development_mcp_extract(url, domain=domain)
 
     if result.error:
         return f"**Extraction failed:** {result.error}\nURL: {result.url}"
@@ -580,9 +580,9 @@ def cookie_health() -> str:
     Returns per-domain status, request counts, staleness warnings,
     and whether cookies need refreshing.
     """
-    from argus.extraction.cookies import get_health_summary
+    from argus.authority import development_mcp_cookie_health
 
-    summary = get_health_summary()
+    summary = development_mcp_cookie_health()
     refresh = [d for d, s in summary.items() if s.get("stale_warning")]
 
     lines = [f"## Cookie Health ({len(summary)} domains)", ""]

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import secrets
+import time
 from typing import Any
 
 from argus.authority import HttpAuthorityClient
@@ -11,6 +13,26 @@ from argus.operations.presentation import (
     nested_status_failures,
     provider_display_state,
 )
+
+
+def _adapter_unready(detail: str) -> dict[str, Any]:
+    request_id = f"mcp-{secrets.token_hex(8)}"
+    return {
+        "contract_version": "2.0",
+        "outcome": "unready",
+        "request_id": request_id,
+        "result": None,
+        "error": {
+            "type": "urn:argus:problem:unready",
+            "title": "Unready",
+            "status": 503,
+            "detail": detail,
+            "instance": f"urn:argus:request:{request_id}",
+            "code": "unready",
+            "retryable": False,
+            "retry_after_seconds": None,
+        },
+    }
 
 
 def _search_markdown(payload: dict[str, Any]) -> str:
@@ -78,6 +100,117 @@ class HttpMcpAdapter:
 
     def __init__(self, client: HttpAuthorityClient):
         self._client = client
+
+    async def _v2_request(
+        self,
+        path: str,
+        *,
+        payload: dict[str, Any],
+        token: str | None,
+    ) -> dict[str, Any]:
+        from argus.authority import AuthorityRequestError
+
+        selection = await self._client.resolve_http_contract(
+            None,
+            time.monotonic,
+        )
+        if (
+            selection.outcome != "ready"
+            or selection.contract_version != "2.0"
+            or selection.base_path != "/api/v2"
+        ):
+            return _adapter_unready(
+                "Argus HTTP contract discovery is unavailable"
+            )
+        try:
+            return await self._client.request_v2(
+                path,
+                payload=payload,
+                token=token,
+            )
+        except AuthorityRequestError:
+            return _adapter_unready(
+                "Argus HTTP execution authority is unavailable"
+            )
+
+    async def search_web_v2(
+        self,
+        *,
+        query: str,
+        mode: str = "discovery",
+        max_results: int = 10,
+        session_id: str | None = None,
+        include_attribution: bool = False,
+        free_only: bool = False,
+        caller_label: str = "mcp",
+        caller_identity: str = "mcp",
+        token: str | None = None,
+    ) -> dict[str, Any]:
+        del caller_identity
+        request = {
+            "query": query,
+            "mode": mode,
+            "max_results": max_results,
+            "include_attribution": include_attribution,
+            "free_only": free_only,
+            "caller": caller_label,
+        }
+        if session_id:
+            request["session_id"] = session_id
+        return await self._v2_request(
+            "/api/v2/search",
+            payload=request,
+            token=token,
+        )
+
+    async def recover_url_v2(
+        self,
+        url: str,
+        title: str | None = None,
+        domain: str | None = None,
+        *,
+        caller_label: str = "mcp",
+        caller_identity: str = "mcp",
+        token: str | None = None,
+    ) -> dict[str, Any]:
+        del caller_label, caller_identity
+        return await self._v2_request(
+            "/api/v2/recover-url",
+            payload={"url": url, "title": title, "domain": domain},
+            token=token,
+        )
+
+    async def expand_links_v2(
+        self,
+        query: str,
+        context: str | None = None,
+        *,
+        caller_label: str = "mcp",
+        caller_identity: str = "mcp",
+        token: str | None = None,
+    ) -> dict[str, Any]:
+        del caller_label, caller_identity
+        return await self._v2_request(
+            "/api/v2/expand",
+            payload={"query": query, "context": context},
+            token=token,
+        )
+
+    async def extract_content_v2(
+        self,
+        url: str,
+        domain: str | None = None,
+        *,
+        caller_label: str = "mcp",
+        caller_identity: str = "mcp",
+        token: str | None = None,
+    ) -> dict[str, Any]:
+        del caller_identity
+        return await self._v2_request(
+            "/api/v2/extract",
+            payload={"url": url, "domain": domain, "caller": caller_label},
+            token=token,
+        )
 
     async def search_web(
         self,

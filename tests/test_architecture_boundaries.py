@@ -25,17 +25,21 @@ LEGACY_ADAPTER_EXCEPTIONS = {
     ROOT / "argus/api/routes_admin.py",
     ROOT / "argus/api/routes_dashboard.py",
     ROOT / "argus/api/routes_health.py",
+    ROOT / "argus/cli/main.py",
+    ROOT / "argus/workflows/service.py",
+}
+MCP_ADAPTERS = {
     ROOT / "argus/mcp/http_adapter.py",
     ROOT / "argus/mcp/local_adapter.py",
     ROOT / "argus/mcp/resources.py",
     ROOT / "argus/mcp/server.py",
     ROOT / "argus/mcp/tools.py",
-    ROOT / "argus/cli/main.py",
-    ROOT / "argus/workflows/service.py",
+    ROOT / "argus/mcp/v2_tools.py",
 }
 EXPECTED_ADAPTERS = {
     *PORTED_HTTP_MODULES,
     *LEGACY_ADAPTER_EXCEPTIONS,
+    *MCP_ADAPTERS,
     ROOT / "argus/api/routes_workflows.py",
 }
 FORBIDDEN = {
