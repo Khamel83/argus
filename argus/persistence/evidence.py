@@ -1,17 +1,14 @@
-"""Normalized, transactionally accepted retrieval-evidence storage.
-
-This is deliberately a persistence seam only.  S7/P1 will wire it into the
-broker; importing it registers the SQLite development schema with the legacy
-ledger metadata without activating the new retrieval path.
-"""
+"""Normalized, transactionally accepted retrieval-evidence storage."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime
+from enum import Enum
+from collections.abc import Mapping
 from typing import Callable
 
 from sqlalchemy import (
@@ -22,6 +19,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     select,
+    text,
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column, sessionmaker
@@ -197,18 +195,49 @@ class RetrievalCachePublicationRow(LedgerBase):
 
 
 def _canonical(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    return json.dumps(
+        _jsonable(value),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _jsonable(value):
+    if is_dataclass(value):
+        return _jsonable(asdict(value))
+    if isinstance(value, Mapping):
+        return {str(key): _jsonable(child) for key, child in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(child) for child in value]
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
 
 
 @dataclass(frozen=True, slots=True)
 class RetrievalEvidence:
     accepted: AcceptedRetrieval
+    plan: object | None = None
+    provider_batches: tuple[object, ...] = ()
+    fusion: object | None = None
+    readiness: tuple[Mapping[str, object], ...] = ()
+    traces: tuple[Mapping[str, object], ...] = ()
+    cache_decision: str = "miss"
+    origin_receipt_ref: str | None = None
+    cache_published: bool = False
 
     @classmethod
     def from_accepted(cls, accepted: AcceptedRetrieval) -> "RetrievalEvidence":
-        if not accepted.contributor_attempt_refs:
-            raise ValueError("accepted retrieval requires contributor lineage")
-        return cls(accepted=accepted)
+        return cls(
+            accepted=accepted,
+            cache_published=accepted.outcome.value
+            in {"success", "degraded", "proven_empty"}
+            and bool(accepted.contributor_attempt_refs),
+        )
 
     @property
     def source_fingerprint(self) -> str:
@@ -219,6 +248,14 @@ class RetrievalEvidence:
             "outcome": self.accepted.outcome.value,
             "attempts": self.accepted.contributor_attempt_refs,
             "receipt": self.accepted.acceptance_receipt.acceptance_fingerprint,
+            "plan": self.plan,
+            "provider_batches": self.provider_batches,
+            "fusion": self.fusion,
+            "readiness": self.readiness,
+            "traces": self.traces,
+            "cache_decision": self.cache_decision,
+            "origin_receipt_ref": self.origin_receipt_ref,
+            "cache_published": self.cache_published,
         }
         return hashlib.sha256(_canonical(payload).encode()).hexdigest()
 
@@ -239,6 +276,26 @@ class SqlAlchemyEvidenceRepository:
         accepted = evidence.accepted
         try:
             with self.session_factory.begin() as session:
+                if (
+                    evidence.cache_published
+                    and session.bind is not None
+                    and session.bind.dialect.name == "postgresql"
+                ):
+                    lock_key = int.from_bytes(
+                        hashlib.sha256(
+                            (
+                                f"{accepted.cache_fingerprint}\0"
+                                f"{accepted.execution_cohort}"
+                            ).encode()
+                        ).digest()[:8],
+                        "big",
+                    )
+                    if lock_key >= 2**63:
+                        lock_key -= 2**64
+                    session.execute(
+                        text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                        {"lock_key": lock_key},
+                    )
                 existing = session.scalar(
                     select(AcceptedOperationRow).where(
                         AcceptedOperationRow.operation_id == accepted.operation_id
@@ -261,33 +318,146 @@ class SqlAlchemyEvidenceRepository:
                         operation_id=accepted.operation_id,
                         cache_fingerprint=accepted.cache_fingerprint,
                         execution_cohort=accepted.execution_cohort,
-                        plan_json=_canonical({"results": accepted.results}),
+                        plan_json=_canonical(
+                            evidence.plan
+                            if evidence.plan is not None
+                            else {
+                                "plan_id": accepted.plan_id,
+                                "results": accepted.results,
+                            }
+                        ),
                         source_fingerprint=evidence.source_fingerprint,
                         created_at=self.clock(),
                     )
                 )
                 session.flush()
-                batch_id = uuid.uuid4().hex
-                session.add(
-                    RetrievalEvidenceBatchRow(
-                        id=batch_id,
-                        plan_id=plan_id,
-                        provider="accepted",
-                        ordinal=0,
-                        batch_json="{}",
+                attempt_rows_by_provider: dict[str, str] = {}
+                for batch_ordinal, batch in enumerate(evidence.provider_batches):
+                    batch_id = uuid.uuid4().hex
+                    provider = batch.provider.value
+                    session.add(
+                        RetrievalEvidenceBatchRow(
+                            id=batch_id,
+                            plan_id=plan_id,
+                            provider=provider,
+                            ordinal=batch_ordinal,
+                            batch_json=_canonical(batch),
+                        )
                     )
-                )
-                session.flush()
-                for ordinal, attempt_ref in enumerate(
-                    accepted.contributor_attempt_refs
-                ):
+                    session.flush()
+                    attempt_ref = batch.request_evidence.attempt_id
+                    if attempt_ref is None:
+                        raise ValueError(
+                            "provider evidence is missing its accepted attempt identity"
+                        )
+                    attempt_id = uuid.uuid4().hex
                     session.add(
                         RetrievalEvidenceAttemptRow(
-                            id=uuid.uuid4().hex,
+                            id=attempt_id,
                             batch_id=batch_id,
                             attempt_ref=attempt_ref,
-                            ordinal=ordinal,
-                            attempt_json="{}",
+                            ordinal=0,
+                            attempt_json=_canonical(batch.request_evidence),
+                        )
+                    )
+                    attempt_rows_by_provider[provider] = attempt_id
+                    for observation_ordinal, observation in enumerate(
+                        batch.observations
+                    ):
+                        observation_json = _canonical(observation)
+                        observation_ref = "observation:" + hashlib.sha256(
+                            (
+                                f"{accepted.operation_id}:{provider}:"
+                                f"{observation_ordinal}:{observation_json}"
+                            ).encode()
+                        ).hexdigest()[:48]
+                        session.add(
+                            RetrievalEvidenceObservationRow(
+                                id=uuid.uuid4().hex,
+                                plan_id=plan_id,
+                                observation_ref=observation_ref,
+                                observation_json=observation_json,
+                            )
+                        )
+                if (
+                    not evidence.provider_batches
+                    and accepted.contributor_attempt_refs
+                    and evidence.origin_receipt_ref is None
+                ):
+                    batch_id = uuid.uuid4().hex
+                    session.add(
+                        RetrievalEvidenceBatchRow(
+                            id=batch_id,
+                            plan_id=plan_id,
+                            provider="accepted",
+                            ordinal=0,
+                            batch_json="{}",
+                        )
+                    )
+                    session.flush()
+                    for ordinal, attempt_ref in enumerate(
+                        accepted.contributor_attempt_refs
+                    ):
+                        session.add(
+                            RetrievalEvidenceAttemptRow(
+                                id=uuid.uuid4().hex,
+                                batch_id=batch_id,
+                                attempt_ref=attempt_ref,
+                                ordinal=ordinal,
+                                attempt_json="{}",
+                            )
+                        )
+                if evidence.fusion is not None:
+                    for cluster in evidence.fusion.ranked_result_clusters:
+                        cluster_id = uuid.uuid4().hex
+                        session.add(
+                            RetrievalEvidenceClusterRow(
+                                id=cluster_id,
+                                plan_id=plan_id,
+                                ordinal=cluster.output_rank,
+                                cluster_json=_canonical(cluster),
+                            )
+                        )
+                        session.flush()
+                        for contribution in cluster.contributions:
+                            attempt_id = attempt_rows_by_provider.get(
+                                contribution.provider.value
+                            )
+                            if attempt_id is None:
+                                raise ValueError(
+                                    "fusion contribution lacks provider attempt"
+                                )
+                            session.add(
+                                RetrievalEvidenceContributionRow(
+                                    id=uuid.uuid4().hex,
+                                    cluster_id=cluster_id,
+                                    attempt_id=attempt_id,
+                                    contribution_json=_canonical(contribution),
+                                )
+                            )
+                for readiness in evidence.readiness:
+                    session.add(
+                        RetrievalEvidenceReadinessRow(
+                            id=uuid.uuid4().hex,
+                            plan_id=plan_id,
+                            provider=str(readiness["provider"]),
+                            decision_json=_canonical(readiness),
+                        )
+                    )
+                for trace_ordinal, trace in enumerate(evidence.traces):
+                    provider = str(trace.get("provider", ""))
+                    attempt_id = attempt_rows_by_provider.get(provider)
+                    if attempt_id is None:
+                        continue
+                    session.add(
+                        RetrievalEvidenceTraceRow(
+                            id=uuid.uuid4().hex,
+                            attempt_id=attempt_id,
+                            ordinal=trace_ordinal,
+                            trace_ref=(
+                                f"trace:{provider}:"
+                                f"{str(trace.get('status', 'unknown'))}"
+                            ),
                         )
                     )
                 session.add(
@@ -297,7 +467,13 @@ class SqlAlchemyEvidenceRepository:
                         cache_fingerprint=accepted.cache_fingerprint,
                         execution_cohort=accepted.execution_cohort,
                         lineage_json=_canonical(
-                            {"origin_receipt": accepted.acceptance_receipt.receipt_ref}
+                            {
+                                "cache_decision": evidence.cache_decision,
+                                "origin_receipt": evidence.origin_receipt_ref,
+                                "contributor_attempt_refs": (
+                                    accepted.contributor_attempt_refs
+                                ),
+                            }
                         ),
                     )
                 )
@@ -321,15 +497,33 @@ class SqlAlchemyEvidenceRepository:
                     )
                 )
                 session.flush()
-                session.add(
-                    RetrievalCachePublicationRow(
-                        id=uuid.uuid4().hex,
-                        receipt_ref=accepted.acceptance_receipt.receipt_ref,
-                        cache_fingerprint=accepted.cache_fingerprint,
-                        execution_cohort=accepted.execution_cohort,
-                        published_at=accepted.acceptance_receipt.accepted_at,
+                if evidence.cache_published:
+                    prior_publication = session.scalar(
+                        select(RetrievalCachePublicationRow).where(
+                            RetrievalCachePublicationRow.cache_fingerprint
+                            == accepted.cache_fingerprint,
+                            RetrievalCachePublicationRow.execution_cohort
+                            == accepted.execution_cohort,
+                        )
                     )
-                )
+                    if prior_publication is not None:
+                        accepted_at = (
+                            accepted.acceptance_receipt.accepted_at.replace(
+                                tzinfo=None
+                            )
+                        )
+                        if prior_publication.published_at < accepted_at:
+                            session.delete(prior_publication)
+                            session.flush()
+                    session.add(
+                        RetrievalCachePublicationRow(
+                            id=uuid.uuid4().hex,
+                            receipt_ref=accepted.acceptance_receipt.receipt_ref,
+                            cache_fingerprint=accepted.cache_fingerprint,
+                            execution_cohort=accepted.execution_cohort,
+                            published_at=accepted.acceptance_receipt.accepted_at,
+                        )
+                    )
             return accepted.acceptance_receipt
         except IntegrityError:
             with self.session_factory() as session:

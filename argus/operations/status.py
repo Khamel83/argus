@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from argus.models import ProviderName
+from argus.models import ProviderName, is_adapter_provider
 
 
 _STATES = {"healthy", "degraded", "unready", "unknown", "disabled"}
@@ -26,7 +26,7 @@ _SENSITIVE_REASON = re.compile(
 )
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]+")
 _PROVIDERS = frozenset(
-    provider.value for provider in ProviderName if provider != ProviderName.CACHE
+    provider.value for provider in ProviderName if is_adapter_provider(provider)
 )
 _PROVIDER_DIMENSIONS = frozenset(
     {"reachability", "health", "cooldown", "balance", "capability"}

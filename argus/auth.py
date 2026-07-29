@@ -170,6 +170,8 @@ def is_public_path(path: str) -> bool:
 
 
 def is_caller_path(path: str) -> bool:
+    if path.startswith("/api/v2/"):
+        return True
     if path.startswith("/api/workflows/"):
         return True
     return path in {

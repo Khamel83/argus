@@ -12,7 +12,7 @@ from argus.broker.router import SearchBroker
 from argus.broker.budgets import PROVIDER_TIERS
 from argus.broker.execution import conservative_charge_estimate
 from argus.broker.readiness import ProbeAuthorization
-from argus.models import ProviderName, SearchMode, SearchQuery
+from argus.models import ProviderName, SearchMode, SearchQuery, is_adapter_provider
 from argus.workflows import WorkflowService
 
 router = APIRouter(prefix="/admin")
@@ -151,7 +151,7 @@ async def provider_spend(
     providers = []
     operational = []
     for provider in ProviderName:
-        if provider == ProviderName.CACHE:
+        if not is_adapter_provider(provider):
             continue
         providers.append(
             broker.provider_budget_projection(provider)

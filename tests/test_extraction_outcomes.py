@@ -172,6 +172,140 @@ def _finalize(raw, *, plan=None, mapper=None, repository=None):
     )
 
 
+def test_production_extraction_adapter_uses_canonical_finalizer():
+    from argus.extraction.completeness import CompletenessResult
+    from argus.extraction.extractor import _finalize_accepted_extraction
+    from argus.extraction.models import (
+        ExtractedContent,
+        ExtractionAttempt,
+        ExtractorName,
+    )
+
+    repository = MemoryOutcomeRepository()
+    result = ExtractedContent(
+        url="https://example.com/article",
+        title="Article",
+        text="Complete normalized content.",
+        author="Ada",
+        word_count=3,
+        extractor=ExtractorName.TRAFILATURA,
+        attempts=[
+            ExtractionAttempt(
+                extractor="trafilatura",
+                status="success",
+                latency_ms=12,
+            )
+        ],
+        completeness_result=CompletenessResult(
+            is_complete=True,
+            confidence=1.0,
+            truncation_type="clean",
+            signals=["word_cap:500"],
+            word_count=3,
+        ),
+        source_type="normalized_text",
+        egress="local",
+        machine="homelab-ts",
+    )
+
+    projected = _finalize_accepted_extraction(
+        result,
+        url=result.url,
+        mode="default",
+        caller="maya",
+        request_id="request-production-adapter",
+        latency_ms=12,
+        repository=repository,
+    )
+
+    assert projected.extraction_run_id
+    assert projected.acceptance_receipt is repository.receipt
+    assert projected.text == result.text
+    assert projected.machine == "homelab-ts"
+    assert projected.completeness_result.signals == ["word_cap:500"]
+
+
+def test_production_extraction_adapter_accepts_visible_terminal_failure():
+    from argus.extraction.extractor import _finalize_accepted_extraction
+    from argus.extraction.models import ExtractedContent, ExtractionAttempt
+
+    projected = _finalize_accepted_extraction(
+        ExtractedContent(
+            url="https://example.com/article",
+            error="all extractors failed",
+            attempts=[
+                ExtractionAttempt(
+                    extractor="trafilatura",
+                    status="failed",
+                    latency_ms=12,
+                )
+            ],
+        ),
+        url="https://example.com/article",
+        mode="default",
+        caller="maya",
+        request_id="request-production-failure",
+        latency_ms=12,
+        repository=MemoryOutcomeRepository(),
+    )
+
+    assert projected.error == "extraction_failed"
+    assert projected.extraction_run_id
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        ("ssrf_blocked: loopback address", CanonicalOutcome.POLICY_REJECTED),
+        (
+            "domain rate limit exceeded, retry after 5s",
+            CanonicalOutcome.UNREADY,
+        ),
+    ],
+)
+def test_production_extraction_adapter_preserves_preflight_outcome(
+    error,
+    expected,
+):
+    from argus.extraction.extractor import _finalize_accepted_extraction
+    from argus.extraction.models import ExtractedContent
+
+    repository = MemoryOutcomeRepository()
+    projected = _finalize_accepted_extraction(
+        ExtractedContent(url="https://example.com/article", error=error),
+        url="https://example.com/article",
+        mode="default",
+        caller="maya",
+        request_id="request-preflight",
+        latency_ms=1,
+        repository=repository,
+    )
+
+    assert projected.accepted_outcome is expected
+    assert projected.attempts == []
+    assert projected.acceptance_receipt is repository.receipt
+
+
+def test_production_extraction_adapter_rejects_unsafe_evidence_labels():
+    from argus.extraction.extractor import _finalize_accepted_extraction
+    from argus.extraction.models import ExtractedContent
+
+    with pytest.raises(ValueError, match="invalid extraction evidence label"):
+        _finalize_accepted_extraction(
+            ExtractedContent(
+                url="https://example.com/article",
+                error="all extractors failed",
+                machine="unsafe machine label",
+            ),
+            url="https://example.com/article",
+            mode="default",
+            caller="maya",
+            request_id="request-unsafe-provenance",
+            latency_ms=1,
+            repository=MemoryOutcomeRepository(),
+        )
+
+
 @pytest.mark.parametrize(
     ("quality", "complete", "partial_allowed", "outcome", "disposition", "code"),
     [

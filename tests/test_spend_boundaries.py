@@ -40,6 +40,7 @@ def test_remote_search_variants_use_scoped_credential_identity(
         "ARGUS_CALLER_CREDENTIALS_JSON",
         '{"maya":{"token":"maya-secret"}}',
     )
+    monkeypatch.setenv("ARGUS_ALLOWED_HOSTS", "testserver")
     broker = MagicMock()
     broker.search = AsyncMock(side_effect=_empty_response)
     broker.budget_tracker = MagicMock()
@@ -99,6 +100,7 @@ def test_http_workflows_receive_credential_principal(
         "ARGUS_CALLER_CREDENTIALS_JSON",
         '{"maya":{"token":"maya-secret"}}',
     )
+    monkeypatch.setenv("ARGUS_ALLOWED_HOSTS", "testserver")
     workflow = MagicMock()
     setattr(
         workflow,

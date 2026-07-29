@@ -207,27 +207,19 @@
   "sources": [
     {
       "path": "docs/prototypes/retrieval-evidence-envelope/README.md",
-      "sha256": "a6d109868caeeee6ae1d17b599059df6dc9f3484fb3628b2030088a904bf990c"
+      "sha256": "3b78cb4e4fc0bfb0c774e9a97912eda63a96edb71e88e42c01a1d29600cfa4e3"
     },
     {
       "path": "docs/prototypes/retrieval-evidence-envelope/NOTES.md",
       "sha256": "215c63822e7f42a7b3fe95bf6f4e01fa0d4ad7644cdbb3923fc7da19669549e1"
     },
     {
-      "path": "docs/prototypes/retrieval-evidence-envelope/envelope.schema.json",
-      "sha256": "bfe785a674f29f15f3eac8614f5afc4d15e2bcb8dff8cf7b3f4188d58bc74fcd"
+      "path": "argus/contracts/evidence.py",
+      "sha256": "faf2c67271a000305c463c02924280abfb102b0467bb1fbceffe438977c1b972"
     },
     {
-      "path": "docs/prototypes/retrieval-evidence-envelope/model.py",
-      "sha256": "654bc13e2eaae3e8ed6244048926f2ec4214682be9ac6be61550b0931ab9a142"
-    },
-    {
-      "path": "docs/prototypes/retrieval-evidence-envelope/prototype.py",
-      "sha256": "7f1f3926f9ca40f97cce806611a417e37efc897d9d682e713fae948f2ec7dd34"
-    },
-    {
-      "path": "docs/prototypes/retrieval-evidence-envelope/vectors.json",
-      "sha256": "11471782112e6f9460630eaa9b3e681f423a693a5dfb692006a745f33437046a"
+      "path": "tests/test_accepted_operations.py",
+      "sha256": "3029a70e1725b9c305021b4791408004dec75ea8d83cf330b233661bff030b78"
     }
   ],
   "valid_vector_count": 8

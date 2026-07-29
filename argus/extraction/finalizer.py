@@ -46,7 +46,7 @@ from argus.extraction.rejection import (
     validate_typed_extraction_rejection,
 )
 
-_SAFE_LABEL = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_SAFE_LABEL = re.compile(r"^[a-z][a-z0-9_:-]{0,63}$")
 _SAFE_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _MAX_LATENCY_MS = 2**63 - 1
 _MAX_NANODOLLARS = 2**63 - 1

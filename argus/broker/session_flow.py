@@ -13,6 +13,12 @@ class SessionSearchService:
     def __init__(self, session_store=None):
         self._session_store = session_store
 
+    def session_exists(self, session_id: str) -> bool:
+        return (
+            self._session_store is not None
+            and self._session_store.get_session(session_id) is not None
+        )
+
     async def search_with_session(
         self,
         query: SearchQuery,

@@ -1,14 +1,13 @@
-"""Pure invariant checker for the throwaway issue #65 envelope prototype."""
+"""Complete fail-closed validator for accepted retrieval evidence."""
 
 from __future__ import annotations
 
 from datetime import datetime
+from dataclasses import dataclass
 from decimal import Decimal
 from fractions import Fraction
-from typing import Any
-
-from jsonschema import Draft202012Validator, FormatChecker
-
+from types import MappingProxyType
+from typing import Any, Mapping
 
 SUCCESS_OUTCOMES = {"success", "degraded", "empty"}
 FAILURE_OUTCOMES = {
@@ -44,6 +43,42 @@ FORBIDDEN_KEYS = {
 FORBIDDEN_TEXT = ("authorization: bearer", "bearer sk-", "api_key=", "token=")
 
 
+class RetrievalEvidenceContractViolation(ValueError):
+    """A frozen external evidence envelope failed closed production admission."""
+
+    def __init__(self, violations: list[str]):
+        self.violations = tuple(violations)
+        super().__init__("; ".join(self.violations))
+
+
+def _freeze(value):
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {str(key): _freeze(child) for key, child in value.items()}
+        )
+    if isinstance(value, list):
+        return tuple(_freeze(child) for child in value)
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptedEvidenceEnvelope:
+    """Immutable production admission value for the frozen S1-S7 corpus."""
+
+    evidence: Mapping[str, object]
+
+    @classmethod
+    def from_mapping(cls, evidence: Mapping[str, object]):
+        if not isinstance(evidence, Mapping):
+            raise RetrievalEvidenceContractViolation(
+                ["evidence envelope must be a mapping"]
+            )
+        violations = validate_retrieval_evidence(dict(evidence))
+        if violations:
+            raise RetrievalEvidenceContractViolation(violations)
+        return cls(evidence=_freeze(evidence))
+
+
 def _duplicate(values: list[str]) -> set[str]:
     seen: set[str] = set()
     duplicates: set[str] = set()
@@ -69,19 +104,10 @@ def _timestamp(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def validate_envelope(envelope: dict[str, Any], schema: dict[str, Any]) -> list[str]:
-    """Return every schema/reference/semantic violation without mutating input."""
+def validate_retrieval_evidence(envelope: dict[str, Any]) -> list[str]:
+    """Return every closed reference/semantic violation without mutation."""
 
     violations: list[str] = []
-    validator = Draft202012Validator(schema, format_checker=FormatChecker())
-    for error in sorted(validator.iter_errors(envelope), key=lambda item: list(item.path)):
-        location = "$" + "".join(
-            f"[{part}]" if isinstance(part, int) else f".{part}"
-            for part in error.absolute_path
-        )
-        violations.append(f"{location}: {error.message}")
-    if violations:
-        return violations
 
     request = envelope["request"]
     plan = envelope["plan"]

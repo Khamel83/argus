@@ -50,6 +50,8 @@ _NARROW_HTTP_STATUS = {
     "session_not_found": (CanonicalOutcome.UNREADY, 404),
     "rate_limited": (CanonicalOutcome.UNREADY, 429),
     "internal_failure": (CanonicalOutcome.UNREADY, 503),
+    "misdirected_request": (CanonicalOutcome.POLICY_REJECTED, 421),
+    "method_not_allowed": (CanonicalOutcome.INVALID_REQUEST, 405),
 }
 _ADMISSION_ONLY_CODES = frozenset(_NARROW_HTTP_STATUS)
 _CANONICAL_ERROR_TITLES = {

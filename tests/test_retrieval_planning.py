@@ -9,6 +9,7 @@ from typing import Callable
 
 import pytest
 
+from argus.broker.accepted import execution_cohort
 from argus.broker.planning import (
     DomainConstraints,
     ExecutionPolicySnapshot,
@@ -179,6 +180,7 @@ def _pair_for_identity_vector(name: str) -> tuple[PlanInput, PlanInput]:
         "ranking version bump": "ranking_policy_version",
         "result-normalization version bump": "result_normalization_version",
         "spend-policy version bump": "spend_policy_version",
+        "organization-policy version bump": "organization_policy_version",
     }
     if name in version_fields:
         value: object = (
@@ -231,6 +233,7 @@ IDENTITY_VECTORS = [
     ("ranking version bump", False, False),
     ("result-normalization version bump", False, False),
     ("spend-policy version bump", False, True),
+    ("organization-policy version bump", False, True),
     ("deployment SHA or unrelated config change", True, True),
     ("unknown metadata difference", True, True),
 ]
@@ -252,6 +255,8 @@ def test_adr_0002_identity_vectors(
 
     assert (left.plan_id == right.plan_id) is same_plan_id
     assert (left.cache_fingerprint == right.cache_fingerprint) is same_cache_fingerprint
+    if name == "organization-policy version bump":
+        assert execution_cohort(left) != execution_cohort(right)
 
     if name.startswith("cross-tier"):
         expected = (
@@ -282,7 +287,7 @@ def test_fixed_canonical_json_hashes_do_not_drift() -> None:
 
     assert (
         base.plan_id
-        == "72a3abd49deb6c6ca16f29980111b7ade7d26df7ab823a000b48ff118ecdb07b"
+        == "2639b22d379703732af0b2ae5e550546cfbe2e98d0dfe8cd58a3f30d7d0aa3f6"
     )
     assert (
         base.cache_fingerprint
@@ -290,7 +295,7 @@ def test_fixed_canonical_json_hashes_do_not_drift() -> None:
     )
     assert (
         explicit.plan_id
-        == "d0044e836e675445e0700598e90db9e541e5d89387969ff0762e2d15812a5111"
+        == "ec4f506c6d803b3e886042a4b2645afd48f91e86c128cd70b81a2541d435023b"
     )
     assert (
         explicit.cache_fingerprint

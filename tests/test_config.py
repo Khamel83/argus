@@ -29,11 +29,15 @@ class TestConfig:
         assert cfg.duckduckgo.enabled is False
 
     def test_provider_control_prefixes_cover_every_search_provider(self):
-        from argus.models import ProviderName
+        from argus.models import ProviderName, is_adapter_provider
         from argus.provider_controls import PROVIDER_ENV_PREFIXES
 
         controlled = {name.lower() for name in PROVIDER_ENV_PREFIXES}
-        expected = {provider.value for provider in ProviderName if provider.value != "cache"}
+        expected = {
+            provider.value
+            for provider in ProviderName
+            if is_adapter_provider(provider)
+        }
 
         assert controlled == expected
 

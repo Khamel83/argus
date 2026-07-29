@@ -11,11 +11,40 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 PRESENTER = ROOT / "argus/api/presenters.py"
+PORTED_HTTP_MODULES = {
+    ROOT / "argus/api/routes_search.py": set(),
+    ROOT / "argus/api/routes_v2.py": set(),
+    # The same module still owns the pure assess-content and cookie-health
+    # compatibility routes. Those exact imports are the closed exception.
+    ROOT / "argus/api/routes_extract.py": {
+        "argus.extraction.completeness",
+        "argus.extraction.cookies",
+    },
+}
+LEGACY_ADAPTER_EXCEPTIONS = {
+    ROOT / "argus/api/routes_admin.py",
+    ROOT / "argus/api/routes_dashboard.py",
+    ROOT / "argus/api/routes_health.py",
+    ROOT / "argus/mcp/http_adapter.py",
+    ROOT / "argus/mcp/local_adapter.py",
+    ROOT / "argus/mcp/resources.py",
+    ROOT / "argus/mcp/server.py",
+    ROOT / "argus/mcp/tools.py",
+    ROOT / "argus/cli/main.py",
+    ROOT / "argus/workflows/service.py",
+}
+EXPECTED_ADAPTERS = {
+    *PORTED_HTTP_MODULES,
+    *LEGACY_ADAPTER_EXCEPTIONS,
+    ROOT / "argus/api/routes_workflows.py",
+}
 FORBIDDEN = {
     "argus.providers",
     "argus.extraction",
     "argus.persistence",
     "argus.broker.cache",
+    "argus.broker.ranking",
+    "argus.broker.dedupe",
 }
 
 
@@ -61,6 +90,71 @@ def test_presenter_does_not_import_execution_or_persistence_authority():
         )
     }
     assert not violations
+
+
+@pytest.mark.parametrize(
+    ("path", "allowed_exceptions"),
+    tuple(PORTED_HTTP_MODULES.items()),
+)
+def test_ported_http_modules_have_no_secondary_semantic_authority(
+    path,
+    allowed_exceptions,
+):
+    imported = _imports(path)
+    violations = {
+        module
+        for module in imported
+        if any(
+            module == forbidden or module.startswith(f"{forbidden}.")
+            for forbidden in FORBIDDEN
+        )
+        and not any(
+            module == allowed or module.startswith(f"{allowed}.")
+            for allowed in allowed_exceptions
+        )
+    }
+    assert not violations
+    assert "argus.operations.accepted" in imported
+
+
+def test_transport_adapter_inventory_has_only_closed_legacy_exceptions():
+    discovered = {
+        *ROOT.glob("argus/api/routes_*.py"),
+        *ROOT.glob("argus/mcp/*.py"),
+        *ROOT.glob("argus/cli/*.py"),
+        *ROOT.glob("argus/workflows/*.py"),
+    }
+    non_adapters = {
+        ROOT / "argus/mcp/__init__.py",
+        ROOT / "argus/cli/__init__.py",
+        ROOT / "argus/workflows/__init__.py",
+        ROOT / "argus/workflows/models.py",
+        ROOT / "argus/workflows/summarizer.py",
+    }
+    assert discovered - non_adapters == EXPECTED_ADAPTERS
+
+    for path in EXPECTED_ADAPTERS - LEGACY_ADAPTER_EXCEPTIONS:
+        imported = _imports(path)
+        violations = {
+            module
+            for module in imported
+            if any(
+                module == forbidden or module.startswith(f"{forbidden}.")
+                for forbidden in FORBIDDEN
+            )
+        }
+        if path == ROOT / "argus/api/routes_extract.py":
+            violations = {
+                module
+                for module in violations
+                if not module.startswith(
+                    (
+                        "argus.extraction.completeness",
+                        "argus.extraction.cookies",
+                    )
+                )
+            }
+        assert not violations, f"{path.relative_to(ROOT)}: {sorted(violations)}"
 
 
 def test_contract_kernel_does_not_import_the_throwaway_prototype():

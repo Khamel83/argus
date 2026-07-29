@@ -52,7 +52,12 @@ from argus.providers.normalization import (
     classify_provider_failure_response,
     normalize_provider_response,
 )
-from argus.models import ProviderName, ProviderTrace, SearchResult
+from argus.models import (
+    ProviderName,
+    ProviderTrace,
+    SearchResult,
+    is_adapter_provider,
+)
 from argus.models import SearchQuery
 from argus.config import ProviderConfig
 from argus.provider_controls import (
@@ -69,7 +74,7 @@ STATUS_SCHEMA_PATH = (
 )
 FAILURE_CLASSES = {"401", "402", "403", "408_504", "422", "429", "5xx"}
 REGISTERED = {
-    provider.value for provider in ProviderName if provider is not ProviderName.CACHE
+    provider.value for provider in ProviderName if is_adapter_provider(provider)
 }
 EXPECTED_MAX_RATE_RESET_AHEAD_SECONDS = 366 * 24 * 60 * 60
 PROVIDER_FIXTURE_OBSERVED_AT = datetime(
@@ -2216,7 +2221,7 @@ def test_cross_origin_redirect_strips_credentials_cookies_and_signed_query():
 
 def test_all_provider_control_capabilities_are_closed_and_required_controls_fail():
     assert set(PROVIDER_CONTROL_CAPABILITIES) == {
-        provider for provider in ProviderName if provider is not ProviderName.CACHE
+        provider for provider in ProviderName if is_adapter_provider(provider)
     }
     assert set(PROVIDER_CONTROL_CAPABILITIES.values()) <= set(
         FreshnessControlCapability

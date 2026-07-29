@@ -36,7 +36,13 @@ class ProviderName(str, Enum):
     VALYU = "valyu"
     GITHUB = "github"
     WOLFRAM = "wolfram"
+    ARCHIVE = "archive_ph"
     CACHE = "cache"
+
+
+def is_adapter_provider(provider: ProviderName) -> bool:
+    """Whether a provider has a configurable executable search adapter."""
+    return provider not in {ProviderName.CACHE, ProviderName.ARCHIVE}
 
 
 class ProviderStatus(str, Enum):

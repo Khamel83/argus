@@ -49,9 +49,9 @@ async def operator_status(
 
 
 @router.get("/capabilities")
-async def capabilities():
+async def capabilities(request: Request):
     """Return value-free truth about the HTTP execution authority."""
-    return {
+    payload = {
         "schema_version": "1.0",
         "execution_authority": "http-api",
         "role": "primary",
@@ -65,6 +65,8 @@ async def capabilities():
             "workflows": True,
         },
     }
+    payload.update(request.app.state.capability_manifest.as_dict())
+    return payload
 
 
 @router.get("/provider-health")

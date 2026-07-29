@@ -30,6 +30,7 @@ PROVIDER_TIERS: dict[ProviderName, int] = {
     ProviderName.YAHOO: 0,       # free, unlimited (scraped, fragile)
     ProviderName.GITHUB: 0,      # free, unlimited (rate-limited but no cost)
     ProviderName.WOLFRAM: 0,     # free, 2k/month (API key required)
+    ProviderName.ARCHIVE: 0,     # free recovery fallback
     ProviderName.BRAVE: 1,       # monthly recurring
     ProviderName.TAVILY: 1,      # monthly recurring
     ProviderName.LINKUP: 1,      # monthly recurring

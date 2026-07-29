@@ -14,7 +14,7 @@ from typing import Mapping
 from pathlib import Path
 
 from argus.broker.budgets import PROVIDER_TIERS
-from argus.models import ProviderName
+from argus.models import ProviderName, is_adapter_provider
 
 UTC = timezone.utc
 MAX_EVIDENCE_RECEIPTS = 32
@@ -76,7 +76,7 @@ def _reason(value: str | None) -> str | None:
 
 
 def provider_catalog() -> tuple[ProviderName, ...]:
-    return tuple(provider for provider in ProviderName if provider is not ProviderName.CACHE)
+    return tuple(provider for provider in ProviderName if is_adapter_provider(provider))
 
 
 @dataclass(frozen=True, slots=True)

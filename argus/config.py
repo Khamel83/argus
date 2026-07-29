@@ -162,6 +162,7 @@ class ArgusConfig:
     log_full_results: bool = False
     log_provider_payloads: bool = False
     caller_tier_caps: dict[str, int] = field(default_factory=dict)
+    accepted_operation_authority: str = "legacy"
 
 
 class SecretsResolver:
@@ -370,6 +371,10 @@ class EnvironmentConfigLoader:
                 60,
             ),
             default_max_results=self.get_int("ARGUS_DEFAULT_MAX_RESULTS", 10),
+            accepted_operation_authority=self.get_str(
+                "ARGUS_ACCEPTED_OPERATION_AUTHORITY",
+                "legacy",
+            ).strip().lower(),
             searxng=SearXNGConfig(
                 enabled=self.get_bool("ARGUS_SEARXNG_ENABLED", False),
                 base_url=self.get_str(

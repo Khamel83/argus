@@ -449,7 +449,7 @@ def test_http_recovery_preserves_archive_fallback(monkeypatch):
         )
     )
     monkeypatch.setattr(
-        "argus.api.routes_search.try_archive_ph",
+        "argus.operations.accepted.try_archive_ph",
         AsyncMock(
             return_value={
                 "url": "https://archive.ph/example",
@@ -1126,6 +1126,7 @@ async def test_http_and_mcp_share_one_broker_identity_and_durable_state(
 
     monkeypatch.setenv("ARGUS_ENV", "production")
     monkeypatch.setenv("ARGUS_NODE_ROLE", "primary")
+    monkeypatch.setenv("ARGUS_ALLOWED_HOSTS", "argus.internal")
     monkeypatch.setenv(
         "ARGUS_CALLER_CREDENTIALS_JSON",
         json.dumps({"mcp": {"token": "mcp-token"}}),
@@ -1194,6 +1195,7 @@ async def test_mcp_restart_reuses_http_health_budget_and_extraction_state(
 
     monkeypatch.setenv("ARGUS_ENV", "production")
     monkeypatch.setenv("ARGUS_NODE_ROLE", "primary")
+    monkeypatch.setenv("ARGUS_ALLOWED_HOSTS", "argus.internal")
     monkeypatch.setenv(
         "ARGUS_CALLER_CREDENTIALS_JSON",
         json.dumps({"mcp": {"token": "mcp-token"}}),
@@ -1222,7 +1224,7 @@ async def test_mcp_restart_reuses_http_health_budget_and_extraction_state(
             extractor=ExtractorName.TRAFILATURA,
         )
     )
-    monkeypatch.setattr("argus.api.routes_extract.extract_url", extract)
+    monkeypatch.setattr("argus.operations.accepted.extract_url", extract)
     transport = httpx.ASGITransport(
         app=create_app(
             broker=broker,
@@ -1271,6 +1273,7 @@ async def test_mcp_restart_keeps_sessions_cooldowns_spend_and_outbox_acceptance(
 
     monkeypatch.setenv("ARGUS_ENV", "production")
     monkeypatch.setenv("ARGUS_NODE_ROLE", "primary")
+    monkeypatch.setenv("ARGUS_ALLOWED_HOSTS", "argus.internal")
     monkeypatch.setenv(
         "ARGUS_CALLER_CREDENTIALS_JSON",
         json.dumps({"mcp": {"token": "mcp-token"}}),

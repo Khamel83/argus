@@ -693,11 +693,22 @@ When running from the repo, Argus now auto-loads `.env` and `.env.local` (withou
 | `ARGUS_AUTOLOAD_DOTENV` | `true` | Auto-load `.env` / `.env.local` from cwd and repo root for CLI/API/MCP processes |
 | `ARGUS_API_KEY` | — | Required for non-local HTTP API and remote MCP callers |
 | `ARGUS_ADMIN_API_KEY` | — | Enables dashboard login and admin API authentication |
+| `ARGUS_ACCEPTED_OPERATION_AUTHORITY` | `legacy` | Atomic authority selection. `evidence` activates the registered planner, readiness, evidence repository, extraction finalizer, and HTTP presenters as one unit |
+| `ARGUS_ALLOWED_HOSTS` | — | Exact comma-separated HTTP Host allowlist; required for a remote production listener |
+| `ARGUS_ALLOWED_ORIGINS` | — | Exact comma-separated browser Origin allowlist. Set explicitly, including an empty value, for remote production |
+| `ARGUS_RETRIEVAL_SESSION_SECRET` | — | Stable random secret of at least 32 characters used to bind v2 retrieval sessions to authenticated principals |
+| `ARGUS_ORGANIZATION_POLICY_VERSION` | `1` | Stable organization-policy identity included in accepted execution cohorts |
 | `ARGUS_ROOT_PATH` | — | Public subpath prefix for dashboard links and redirects, e.g. `/argus` |
 | `ARGUS_MAYA_CAPTURE_URL` | — | Maya's dedicated Argus retrieval-capture endpoint; delivery stays disabled when unset |
 | `ARGUS_MAYA_CAPTURE_TOKEN` | — | Dedicated shared secret for Maya capture delivery; never reuse the generic Maya ingest token |
 | `ARGUS_MAYA_OUTBOX_BATCH_SIZE` | `20` | Maximum durable captures claimed by one delivery pass (bounded to 100) |
 | `ARGUS_MAYA_ACKNOWLEDGED_RETENTION_DAYS` | `7` | Days to retain acknowledged capture bodies before preserving audit metadata only |
+
+`/api/v2/*` is additive and returns a canonical version-2 envelope. It remains
+fail-closed with `unready` while the evidence authority is disabled. Unsafe
+Host, Origin, credential, media-type, and body-size combinations are rejected
+before provider, extractor, session, or persistence work. Version-1 routes
+retain their established response shapes.
 
 ## When Not To Use Argus
 

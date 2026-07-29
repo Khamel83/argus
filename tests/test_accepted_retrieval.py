@@ -118,7 +118,11 @@ def test_cache_admission_rejects_identity_or_freshness_mismatch(
         max_age_seconds=max_age_seconds,
     )
 
-    assert decision.outcome.value == "hit_ineligible"
+    assert decision.outcome.value == (
+        "hit_ineligible"
+        if fingerprint == "cache-fingerprint" and cohort == "free:en"
+        else "miss"
+    )
     assert decision.accepted is None
 
 

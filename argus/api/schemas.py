@@ -9,10 +9,12 @@ from typing import Any, List, Optional, Set
 from pydantic import BaseModel, Field, field_validator
 
 from argus.extraction.rejection import RejectionAction, RejectionCode
-from argus.models import ProviderName
+from argus.models import ProviderName, is_adapter_provider
 
 _VALID_MODES: Set[str] = {"recovery", "discovery", "grounding", "research"}
-_VALID_PROVIDERS: Set[str] = {provider.value for provider in ProviderName if provider != ProviderName.CACHE}
+_VALID_PROVIDERS: Set[str] = {
+    provider.value for provider in ProviderName if is_adapter_provider(provider)
+}
 
 
 class SearchRequest(BaseModel):

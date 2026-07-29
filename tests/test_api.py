@@ -528,6 +528,7 @@ class TestAuthEnforcement:
         from argus.api.main import create_app
 
         monkeypatch.setenv("ARGUS_API_KEY", "caller-secret")
+        monkeypatch.setenv("ARGUS_ALLOWED_HOSTS", "testserver")
         client = TestClient(create_app(broker=self._build_broker()), client=("203.0.113.10", 50000))
 
         resp = client.post("/api/search", json={"query": "test", "mode": "discovery"})
@@ -540,6 +541,7 @@ class TestAuthEnforcement:
         from argus.api.main import create_app
 
         monkeypatch.setenv("ARGUS_API_KEY", "caller-secret")
+        monkeypatch.setenv("ARGUS_ALLOWED_HOSTS", "testserver")
         client = TestClient(create_app(broker=self._build_broker()), client=("203.0.113.10", 50000))
 
         bearer = client.post(
@@ -563,6 +565,7 @@ class TestAuthEnforcement:
 
         monkeypatch.delenv("ARGUS_API_KEY", raising=False)
         monkeypatch.delenv("ARGUS_ADMIN_API_KEY", raising=False)
+        monkeypatch.setenv("ARGUS_ALLOWED_HOSTS", "testserver")
         client = TestClient(create_app(broker=self._build_broker()), client=("203.0.113.10", 50000))
 
         resp = client.post("/api/search", json={"query": "test", "mode": "discovery"})

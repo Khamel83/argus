@@ -22,12 +22,18 @@ Obscura (https://github.com/h4ckf0r0day/obscura): optional Rust headless browser
 
 import asyncio
 import copy
+import hashlib
 import os
+import re
 import time
+import uuid
+from datetime import datetime, timezone
+from decimal import Decimal
 
 import httpx
 
 from argus.config import get_config
+from argus.contracts import CanonicalOutcome
 from argus.extraction.cache import ExtractionCache
 from argus.extraction.completeness import assess_completeness
 from argus.extraction.models import ExtractedContent, ExtractionAttempt, ExtractorName
@@ -213,7 +219,12 @@ def project_accepted_extraction(accepted_outcome) -> ExtractedContent:
 
 
 async def _extract_url_unpersisted(
-    url: str, domain: str = None, mode: str = "default"
+    url: str,
+    domain: str = None,
+    mode: str = "default",
+    *,
+    allow_legacy_cache: bool = True,
+    allow_legacy_cache_writes: bool = True,
 ) -> ExtractedContent:
     """Extract clean content from a URL using the integrated fallback chain.
 
@@ -237,7 +248,7 @@ async def _extract_url_unpersisted(
         return ExtractedContent(url=url, error=f"ssrf_blocked: {reason}")
 
     # Cache check
-    cached = _cache.get(url)
+    cached = _cache.get(url) if allow_legacy_cache else None
     if cached is not None:
         logger.debug("Extraction cache hit for %s", url[:60])
         result = copy.deepcopy(cached)
@@ -277,7 +288,8 @@ async def _extract_url_unpersisted(
                 )
             ]
         if not result.error:
-            _cache.put(url, result)
+            if allow_legacy_cache_writes:
+                _cache.put(url, result)
         return result
 
     # Domain rate limit
@@ -419,7 +431,8 @@ async def _extract_url_unpersisted(
                     result.completeness_result = assess_completeness(result.text, url)
                     if not _should_continue_for_completeness(result, step=1):
                         logger.info("Extracted %s via auth (%d words)", url[:60], result.word_count)
-                        _cache.put(url, result)
+                        if allow_legacy_cache_writes:
+                            _cache.put(url, result)
                         return result
         except Exception as e:
             logger.warning("Auth extraction failed for %s: %s", url[:60], e)
@@ -428,7 +441,8 @@ async def _extract_url_unpersisted(
     if use_residential_early and res_policy != "off":
         res_res = await run_residential_step()
         if res_res:
-            _cache.put(url, res_res)
+            if allow_legacy_cache_writes:
+                _cache.put(url, res_res)
             return res_res
 
     # Local Extractors (Steps 2-5)
@@ -461,7 +475,8 @@ async def _extract_url_unpersisted(
                     result.completeness_result = assess_completeness(result.text, url)
                     if not _should_continue_for_completeness(result, step=step_num):
                         logger.info("Extracted %s via %s (%d words)", url[:60], step_name, result.word_count)
-                        _cache.put(url, result)
+                        if allow_legacy_cache_writes:
+                            _cache.put(url, result)
                         return result
         except Exception as e:
             logger.warning("%s failed for %s: %s", step_name.capitalize(), url[:60], e)
@@ -470,7 +485,8 @@ async def _extract_url_unpersisted(
     if not use_residential_early and res_policy != "off":
         res_res = await run_residential_step()
         if res_res:
-            _cache.put(url, res_res)
+            if allow_legacy_cache_writes:
+                _cache.put(url, res_res)
             return res_res
 
     # External APIs (Steps 7-10)
@@ -512,7 +528,8 @@ async def _extract_url_unpersisted(
                         _track_jina_usage(result.word_count)
                     if not _should_continue_for_completeness(result, step=step_num):
                         logger.info("Extracted %s via %s (%d words)", url[:60], step_name, result.word_count)
-                        _cache.put(url, result)
+                        if allow_legacy_cache_writes:
+                            _cache.put(url, result)
                         return result
         except Exception as e:
             logger.warning("%s failed for %s: %s", step_name.capitalize(), url[:60], e)
@@ -540,7 +557,8 @@ async def _extract_url_unpersisted(
                     track_quality_pass(result)
                     result.completeness_result = assess_completeness(result.text, url)
                     logger.info("Extracted %s via %s (%d words)", url[:60], step_name, result.word_count)
-                    _cache.put(url, result)
+                    if allow_legacy_cache_writes:
+                        _cache.put(url, result)
                     return result
         except Exception as e:
             logger.warning("%s failed for %s: %s", step_name.capitalize(), url[:60], e)
@@ -575,7 +593,8 @@ async def _extract_url_unpersisted(
                             _track_jina_usage(result.word_count)
                         if not _should_continue_for_completeness(result, step=step_num):
                             logger.info("Extracted %s via %s (%d words)", url[:60], step_name, result.word_count)
-                            _cache.put(url, result)
+                            if allow_legacy_cache_writes:
+                                _cache.put(url, result)
                             return result
             except Exception as e:
                 logger.warning("%s failed for %s: %s", step_name.capitalize(), url[:60], e)
@@ -588,7 +607,8 @@ async def _extract_url_unpersisted(
         best_quality_result.quality_reason = None
         best_quality_result.extractors_tried = extractors_tried
         best_quality_result.attempts = list(attempts)
-        _cache.put(url, best_quality_result)
+        if allow_legacy_cache_writes:
+            _cache.put(url, best_quality_result)
         logger.warning(
             "Completeness fallbacks exhausted for %s, returning valid incomplete "
             "content (%d words via %s)",
@@ -606,7 +626,8 @@ async def _extract_url_unpersisted(
         best_result.attempts = list(attempts)
         if best_result.text and best_result.completeness_result is None:
             best_result.completeness_result = assess_completeness(best_result.text, url)
-        _cache.put(url, best_result)
+        if allow_legacy_cache_writes:
+            _cache.put(url, best_result)
         logger.warning(
             "All quality gates failed for %s, returning best (%d words via %s)",
             url[:60], best_result.word_count, best_result.extractor,
@@ -634,19 +655,37 @@ async def extract_url(
     caller: str = "",
     repository=None,
     authority_capability: object | None = None,
+    use_evidence_authority: bool = False,
+    request_id: str | None = None,
 ) -> ExtractedContent:
     """Extract and durably record one logical operation before returning."""
     from argus.authority import extraction_execution_allowed
 
     extraction_execution_allowed(authority_capability=authority_capability)
     started = time.perf_counter()
-    result = await _extract_url_unpersisted(url, domain=domain, mode=mode)
+    result = await _extract_url_unpersisted(
+        url,
+        domain=domain,
+        mode=mode,
+        allow_legacy_cache=not use_evidence_authority,
+        allow_legacy_cache_writes=not use_evidence_authority,
+    )
     if repository is None:
         from argus.persistence.search_ledger import (
             create_search_ledger_repository,
         )
 
         repository = create_search_ledger_repository()
+    if use_evidence_authority:
+        return _finalize_accepted_extraction(
+            result,
+            url=url,
+            mode=mode,
+            caller=caller,
+            request_id=request_id or uuid.uuid4().hex,
+            latency_ms=round((time.perf_counter() - started) * 1000),
+            repository=repository,
+        )
     receipt = repository.record_extraction(
         url=url,
         domain=domain,
@@ -657,6 +696,223 @@ async def extract_url(
     )
     result.extraction_run_id = receipt.extraction_run_id
     return result
+
+
+def _finalize_accepted_extraction(
+    result: ExtractedContent,
+    *,
+    url: str,
+    mode: str,
+    caller: str,
+    request_id: str,
+    latency_ms: int,
+    repository,
+) -> ExtractedContent:
+    """Adapt bounded chain evidence into the canonical extraction finalizer."""
+    from argus.extraction.finalizer import finalize_extraction
+    from argus.extraction.outcomes import (
+        ArtifactEvaluation,
+        AttemptOutcome,
+        CacheDecision,
+        CacheOutcome,
+        ExtractionCandidate,
+        ExtractionPlan,
+        ExtractionProvenance,
+        ExtractionRequest,
+        ExtractorDecision,
+        ExtractorExecutionDecision,
+        OutcomePolicy,
+        RawExtractionResult,
+        SpendEvidence,
+        TerminalCause,
+        TerminalCauseKind,
+    )
+
+    run_id = uuid.uuid4().hex
+    selected = result.extractor.value if result.extractor else None
+    candidate_names = list(
+        dict.fromkeys(
+            [
+                *(attempt.extractor for attempt in result.attempts),
+                *([selected] if selected else []),
+            ]
+        )
+    )
+    def evidence_label(value: object, fallback: str) -> str:
+        label = fallback if value in {None, ""} else str(value)
+        if re.fullmatch(r"[a-z][a-z0-9_:-]{0,63}", label) is None:
+            raise ValueError("invalid extraction evidence label")
+        return label
+
+    provenance = ExtractionProvenance(
+        source_type=evidence_label(result.source_type, "normalized_text"),
+        egress=evidence_label(result.egress, "unknown"),
+        machine=evidence_label(result.machine, "unknown"),
+    )
+    decisions = []
+    for ordinal, attempt in enumerate(result.attempts):
+        decisions.append(
+            ExtractorDecision(
+                ordinal=ordinal,
+                extractor=attempt.extractor,
+                decision=ExtractorExecutionDecision.INVOKED,
+                attempt_outcome=(
+                    AttemptOutcome.CONTENT
+                    if selected == attempt.extractor and bool(result.text)
+                    else AttemptOutcome.EMPTY
+                    if attempt.status == "success"
+                    else AttemptOutcome.PARSE_ERROR
+                    if attempt.status == "quality_failed"
+                    else AttemptOutcome.UNKNOWN_FAILURE
+                ),
+                latency_ms=max(0, attempt.latency_ms),
+                provenance=provenance,
+                spend=SpendEvidence(
+                    actual_usd=Decimal(
+                        str(
+                            max(0.0, result.cost)
+                            if selected == attempt.extractor
+                            else 0.0
+                        )
+                    ),
+                    reserved_usd=Decimal(
+                        str(
+                            max(0.0, result.cost)
+                            if selected == attempt.extractor
+                            else 0.0
+                        )
+                    ),
+                    spend_attempt_ref=f"extract-spend-{run_id}-{ordinal}",
+                ),
+            )
+        )
+    if selected and not any(
+        step.extractor == selected and step.attempt_outcome is AttemptOutcome.CONTENT
+        for step in decisions
+    ):
+        decisions.append(
+            ExtractorDecision(
+                ordinal=len(decisions),
+                extractor=selected,
+                decision=ExtractorExecutionDecision.INVOKED,
+                attempt_outcome=AttemptOutcome.CONTENT,
+                latency_ms=0,
+                provenance=provenance,
+                spend=SpendEvidence(
+                    actual_usd=Decimal(str(max(0.0, result.cost))),
+                    reserved_usd=Decimal(str(max(0.0, result.cost))),
+                    spend_attempt_ref=f"extract-spend-{run_id}-{len(decisions)}",
+                ),
+            )
+        )
+    preflight_outcome = None
+    preflight_authority_ref = None
+    if not decisions and not result.text:
+        error = (result.error or "").lower()
+        if error.startswith("ssrf_blocked"):
+            preflight_outcome = CanonicalOutcome.POLICY_REJECTED
+            preflight_authority_ref = "extraction-ssrf-policy-v1"
+        elif "domain rate limit" in error:
+            preflight_outcome = CanonicalOutcome.UNREADY
+            preflight_authority_ref = "extraction-domain-rate-limit-v1"
+        else:
+            preflight_outcome = CanonicalOutcome.UNREADY
+            preflight_authority_ref = "extraction-preflight-unclassified-v1"
+    artifact = None
+    if result.text:
+        completeness = result.completeness_result or assess_completeness(
+            result.text, url
+        )
+        artifact = ArtifactEvaluation(
+            artifact_ref=f"artifact-{run_id}",
+            content_identity="sha256:"
+            + hashlib.sha256(result.text.encode("utf-8")).hexdigest(),
+            text=result.text,
+            title=result.title,
+            author=result.author,
+            published_date=result.date,
+            word_count=result.word_count,
+            quality_passed=result.quality_passed,
+            is_complete=completeness.is_complete,
+            completeness_confidence=Decimal(str(completeness.confidence)),
+            completeness_signals=tuple(
+                dict.fromkeys(
+                    evidence_label(signal, "unknown_signal")
+                    for signal in completeness.signals[:16]
+                )
+            ),
+            completeness_assessment_version="completeness-v1",
+            completeness_recommended_action=completeness.recommended_action,
+            provenance=provenance,
+        )
+    terminal = None
+    if artifact is None:
+        if preflight_outcome is not None:
+            terminal = TerminalCause(
+                kind=TerminalCauseKind.PREFLIGHT,
+                preflight_outcome=preflight_outcome,
+                authority_ref=preflight_authority_ref,
+            )
+        else:
+            outcomes = tuple(
+                dict.fromkeys(
+                    step.attempt_outcome
+                    for step in decisions
+                    if step.attempt_outcome is not None
+                )
+            ) or (AttemptOutcome.UNKNOWN_FAILURE,)
+            terminal = TerminalCause(
+                kind=TerminalCauseKind.CHAIN_EXHAUSTED,
+                invoked_ordinals=tuple(step.ordinal for step in decisions),
+                distinct_attempt_outcomes=outcomes,
+            )
+    plan = ExtractionPlan(
+        plan_ref=f"extract-plan-{run_id}",
+        normalized_url=url,
+        access_scope="public",
+        mode=mode,
+        candidates=tuple(
+            ExtractionCandidate(
+                extractor=name,
+                eligible=True,
+                spend_class="metered" if result.cost else "free",
+            )
+            for name in dict.fromkeys(candidate_names)
+        ),
+        cache_policy_ref="accepted-extraction-cache-v1",
+        extraction_plan_version="1",
+        quality_policy_version="quality-v1",
+        completeness_policy_version="completeness-v1",
+        partial_allowed=True,
+        deadline_ms=120_000,
+        caller=caller,
+        profile="autonomous",
+        privacy_scope="public",
+    )
+    accepted = finalize_extraction(
+        ExtractionRequest(
+            request_id=request_id,
+            extraction_run_id=run_id,
+            normalized_url=url,
+            access_scope="public",
+            caller=caller,
+            profile="autonomous",
+            privacy_scope="public",
+        ),
+        plan,
+        RawExtractionResult(
+            cache_decision=CacheDecision(outcome=CacheOutcome.MISS),
+            steps=tuple(decisions),
+            artifact=artifact,
+            selected_extractor=selected if artifact is not None else None,
+            terminal_cause=terminal,
+            operation_latency_ms=latency_ms,
+        ),
+        OutcomePolicy(version="extraction-outcome-v1"),
+        repository=repository,
+        clock=lambda: datetime.now(timezone.utc).isoformat(),
+    )
+    return accepted.to_legacy_extracted_content()
 
 
 def _track_jina_usage(word_count: int) -> None:

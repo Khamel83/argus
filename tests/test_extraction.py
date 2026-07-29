@@ -4,9 +4,39 @@ import time
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
-from argus.extraction.models import ExtractedContent, ExtractorName
 from argus.extraction.cache import ExtractionCache
+from argus.extraction.models import ExtractedContent, ExtractorName
 from argus.extraction.rate_limit import DomainRateLimiter
+
+
+@pytest.mark.asyncio
+async def test_evidence_extraction_does_not_publish_legacy_cache(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from argus.extraction import extractor as extraction_module
+
+    extracted = ExtractedContent(
+        url="https://www.youtube.com/watch?v=abcdefghijk",
+        title="Video",
+        text="Durable transcript content.",
+        word_count=3,
+        extractor=ExtractorName.YOUTUBE,
+    )
+    monkeypatch.setattr(
+        "argus.extraction.youtube_extractor.extract_youtube",
+        AsyncMock(return_value=extracted),
+    )
+    legacy_put = MagicMock()
+    monkeypatch.setattr(extraction_module._cache, "put", legacy_put)
+
+    result = await extraction_module._extract_url_unpersisted(
+        extracted.url,
+        allow_legacy_cache=False,
+        allow_legacy_cache_writes=False,
+    )
+
+    assert result.text == extracted.text
+    legacy_put.assert_not_called()
 
 
 class TestExtractionModels:

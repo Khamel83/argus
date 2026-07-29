@@ -3045,7 +3045,7 @@ def create_retrieval_evidence_repository(
     create_schema: bool | None = None,
     clock: Callable[[], datetime] = _system_now,
 ):
-    """Build the inactive S6 evidence repository beside the legacy ledger."""
+    """Build the accepted retrieval-evidence repository beside the legacy ledger."""
     from argus.persistence.evidence import SqlAlchemyEvidenceRepository
 
     ledger = create_search_ledger_repository(
