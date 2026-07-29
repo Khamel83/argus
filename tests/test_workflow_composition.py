@@ -719,6 +719,50 @@ async def test_site_acquisition_accepts_sitemap_and_internal_link_pages(
 
 
 @pytest.mark.asyncio
+async def test_site_acquisition_excludes_sibling_domains_from_all_candidates(
+    tmp_path, monkeypatch
+):
+    service, repository = _real_authority(tmp_path, ())
+    root_url = "https://victim.co.uk"
+    initial_subdomain = "https://docs.victim.co.uk/guide"
+    discovered_subdomain = "https://blog.victim.co.uk/post"
+    attacker_url = "https://attacker.co.uk/page"
+    service.search = AsyncMock(
+        return_value=_accepted_retrieval(
+            repository,
+            (
+                {"url": root_url, "title": "Home"},
+                {"url": initial_subdomain, "title": "Guide"},
+                {"url": attacker_url, "title": "Attacker"},
+            ),
+            receipt_ref="receipt:site-boundary",
+        )
+    )
+    monkeypatch.setattr(
+        "argus.operations.accepted.discover_site_urls",
+        AsyncMock(return_value=(discovered_subdomain, attacker_url)),
+    )
+
+    acquired = await service.acquire_site(
+        SimpleNamespace(
+            url=root_url,
+            soft_page_limit=10,
+            hard_page_limit=20,
+            caller="site-test",
+        ),
+        principal="site-principal",
+        request_id="site-boundary",
+    )
+
+    assert acquired.outcome is CanonicalOutcome.SUCCESS
+    assert {item["url"] for item in acquired.result["results"]} == {
+        root_url,
+        initial_subdomain,
+        discovered_subdomain,
+    }
+
+
+@pytest.mark.asyncio
 async def test_real_authority_verifies_exact_url_selection_and_receipt_binding(
     tmp_path,
 ):

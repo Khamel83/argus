@@ -28,7 +28,8 @@ from argus.extraction.outcomes import ArtifactDisposition
 from argus.models import ProviderName, SearchMode, SearchQuery, SearchResult
 from argus.recovery.archive_ph import try_archive_ph
 from argus.operations.site_acquisition import (
-    domain_root,
+    _normalized_hostname,
+    _same_site,
     discover_site_urls,
     fetch_site_text,
     looks_like_html,
@@ -573,7 +574,7 @@ class AcceptedOperationService:
 
         from urllib.parse import urlparse
 
-        root_domain = domain_root(urlparse(request.url).netloc)
+        root_hostname = _normalized_hostname(request.url)
         discovered = await discover_site_urls(
             request.url,
             fetcher=self._site_fetcher,
@@ -582,12 +583,14 @@ class AcceptedOperationService:
         candidates: dict[str, dict[str, object]] = {}
         for item in base.result.get("results", ()):
             url = str(item["url"])
-            if domain_root(urlparse(url).netloc) == root_domain and looks_like_html(
-                url
+            if (
+                root_hostname is not None
+                and _same_site(url, root_hostname)
+                and looks_like_html(url)
             ):
                 candidates[url.rstrip("/")] = dict(item)
         for url in discovered:
-            if domain_root(urlparse(url).netloc) == root_domain:
+            if root_hostname is not None and _same_site(url, root_hostname):
                 candidates.setdefault(
                     url.rstrip("/"),
                     {"url": url, "title": url},
