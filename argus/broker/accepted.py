@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 import hashlib
 import json
@@ -135,6 +136,32 @@ class AcceptedRetrievalView:
 
 
 @dataclass(frozen=True, slots=True)
+class AcceptedSearchExecutionEvidence:
+    """Safe accepted facts carried from the broker to transport projection."""
+
+    operation_id: str
+    receipt_ref: str
+    accepted_at: datetime
+    acceptance_fingerprint: str
+    cache_decision: CacheDecisionOutcome
+    origin_spend_usd: Decimal
+    current_spend_usd: Decimal
+    current_provider_calls: int
+
+    def __post_init__(self) -> None:
+        if not self.operation_id or not self.receipt_ref:
+            raise ValueError("accepted search evidence requires identity")
+        if self.accepted_at.tzinfo is None or self.accepted_at.utcoffset() is None:
+            raise ValueError("accepted search evidence requires aware accepted_at")
+        if len(self.acceptance_fingerprint) != 64:
+            raise ValueError("accepted search evidence requires fingerprint")
+        if self.origin_spend_usd < 0 or self.current_spend_usd < 0:
+            raise ValueError("accepted search evidence spend must be nonnegative")
+        if self.current_provider_calls < 0:
+            raise ValueError("accepted search provider calls must be nonnegative")
+
+
+@dataclass(frozen=True, slots=True)
 class AcceptedSearchExecution:
     """Broker-owned accepted search fact for transport-neutral projection."""
 
@@ -143,6 +170,7 @@ class AcceptedSearchExecution:
     response: object | None
     receipt: AcceptanceReceipt | None
     session_update_failed: bool = False
+    evidence: AcceptedSearchExecutionEvidence | None = None
 
 
 @dataclass(frozen=True, slots=True)

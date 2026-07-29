@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 from typing import TYPE_CHECKING, Optional
 
@@ -46,6 +47,37 @@ class ExtractionAttempt:
     failure_summary: Optional[str] = None
 
 
+@dataclass(frozen=True, slots=True)
+class AcceptedExtractionExecutionEvidence:
+    """Receipt-bound execution facts preserved by the accepted projection."""
+
+    operation_id: str
+    receipt_ref: str
+    accepted_at: str
+    receipt_scope: str
+    actual_usd: Decimal
+    reserved_usd: Decimal
+    spend_delta_usd: Decimal
+    spend_attempt_refs: tuple[str, ...]
+    spend_complete: bool
+    cache_decision: str
+    cache_age_seconds: int | None
+    operation_latency_ms: int
+    extractor_call_count: int
+
+    def __post_init__(self) -> None:
+        if not self.operation_id or not self.receipt_ref:
+            raise ValueError("accepted extraction evidence requires identity")
+        if self.actual_usd < 0 or self.reserved_usd < 0:
+            raise ValueError("accepted extraction spend must be nonnegative")
+        if self.spend_delta_usd != self.actual_usd - self.reserved_usd:
+            raise ValueError("accepted extraction spend delta does not reconcile")
+        if self.cache_age_seconds is not None and self.cache_age_seconds < 0:
+            raise ValueError("accepted extraction cache age must be nonnegative")
+        if self.operation_latency_ms < 0 or self.extractor_call_count < 0:
+            raise ValueError("accepted extraction execution counts must be nonnegative")
+
+
 @dataclass
 class ExtractedContent:
     """Result of extracting content from a URL."""
@@ -71,6 +103,7 @@ class ExtractedContent:
     artifact_disposition: ArtifactDisposition | None = None
     acceptance_receipt: ExtractionAcceptanceReceipt | None = None
     accepted_outcome: CanonicalOutcome | None = None
+    accepted_execution_evidence: AcceptedExtractionExecutionEvidence | None = None
 
     # Provenance metadata
     source_type: Optional[str] = None  # live|authenticated|residential|wayback|archive|paid_api|search_recovery

@@ -22,6 +22,8 @@ EVIDENCE_FIXTURES = (
 
 
 def _search_response(*, results: bool = True) -> SearchResponse:
+    from datetime import datetime, timezone
+
     return SearchResponse(
         query="accepted operation",
         mode=SearchMode.DISCOVERY,
@@ -43,10 +45,12 @@ def _search_response(*, results: bool = True) -> SearchResponse:
                 provider=ProviderName.DUCKDUCKGO,
                 status="success",
                 results_count=1 if results else 0,
+                latency_ms=7,
             )
         ],
         total_results=1 if results else 0,
         search_run_id="run-accepted",
+        created_at=datetime(2026, 7, 28, 12, 0, tzinfo=timezone.utc),
     )
 
 
@@ -87,8 +91,14 @@ async def test_search_executes_and_accepts_once_then_presenter_is_pure():
 @pytest.mark.asyncio
 async def test_evidence_authority_never_calls_legacy_search_or_accept():
     from datetime import datetime, timezone
+    from decimal import Decimal
 
-    from argus.broker.accepted import AcceptanceReceipt, AcceptedSearchExecution
+    from argus.broker.accepted import (
+        AcceptanceReceipt,
+        AcceptedSearchExecution,
+        AcceptedSearchExecutionEvidence,
+        CacheDecisionOutcome,
+    )
     from argus.operations.accepted import (
         AcceptedOperationRegistration,
         AcceptedOperationService,
@@ -107,6 +117,16 @@ async def test_evidence_authority_never_calls_legacy_search_or_accept():
             reason="accepted",
             response=_search_response(),
             receipt=receipt,
+            evidence=AcceptedSearchExecutionEvidence(
+                operation_id="run-accepted",
+                receipt_ref="receipt:evidence",
+                accepted_at=datetime(2026, 7, 28, tzinfo=timezone.utc),
+                acceptance_fingerprint="a" * 64,
+                cache_decision=CacheDecisionOutcome.MISS,
+                origin_spend_usd=Decimal("0"),
+                current_spend_usd=Decimal("0"),
+                current_provider_calls=1,
+            ),
         )
     )
     legacy_repository = MagicMock()
@@ -128,6 +148,206 @@ async def test_evidence_authority_never_calls_legacy_search_or_accept():
     broker.search_accepted.assert_awaited_once()
     broker.search.assert_not_awaited()
     legacy_repository.accept.assert_not_called()
+    execution_evidence = operation.result["execution_evidence"]
+    assert execution_evidence["schema"] == "argus-execution-evidence-v1"
+    assert execution_evidence["source"] == "SearchResponse"
+    assert execution_evidence["operation_id"] == {
+        "availability": "available",
+        "source": "search_run_id",
+        "value": "run-accepted",
+    }
+    assert execution_evidence["observation"] == {
+        "availability": "available",
+        "observed_at": "2026-07-28T00:00:00+00:00",
+        "semantics": "durably_accepted_at",
+        "source": "acceptance_receipt.accepted_at",
+    }
+    assert execution_evidence["attempts"] == (
+        {
+            "provider": "duckduckgo",
+            "status": "success",
+            "reason_code": None,
+            "results_count": 1,
+            "latency_ms": 7,
+            "budget_remaining": None,
+        },
+    )
+    assert execution_evidence["timing"]["component_ms"] == {
+        "availability": "available",
+        "source": "max_provider_trace_latency_ms",
+        "value": 7,
+    }
+    assert execution_evidence["timing"]["wall_ms"]["availability"] == "unavailable"
+    assert execution_evidence["cache"]["status"] == "miss"
+    assert execution_evidence["cache"]["decision"] == "miss"
+    assert execution_evidence["cache"]["age_ms"]["availability"] == "unavailable"
+    assert execution_evidence["spend"] == {
+        "availability": "available",
+        "actual_usd": {
+            "availability": "available",
+            "source": "accepted_search_evidence.current_spend_usd",
+            "value": "0",
+        },
+        "origin_usd": {
+            "availability": "available",
+            "source": "accepted_search_evidence.origin_spend_usd",
+            "value": "0",
+        },
+        "provider_calls": {
+            "availability": "available",
+            "source": "accepted_search_evidence.current_provider_calls",
+            "value": 1,
+        },
+    }
+    assert execution_evidence["freshness"]["availability"] == (
+        "observation_available"
+    )
+    assert execution_evidence["freshness"]["age_ms"]["availability"] == "unavailable"
+    assert execution_evidence["persistence"] == {
+        "availability": "available",
+        "source": "acceptance_receipt",
+        "receipt_ref": "receipt:evidence",
+        "accepted_at": "2026-07-28T00:00:00+00:00",
+        "acceptance_fingerprint": "a" * 64,
+    }
+
+
+@pytest.mark.asyncio
+async def test_extraction_projection_preserves_attempt_cost_and_explicit_gaps():
+    from datetime import datetime, timezone
+    from decimal import Decimal
+
+    from argus.extraction.models import (
+        AcceptedExtractionExecutionEvidence,
+        ExtractedContent,
+        ExtractionAttempt,
+    )
+    from argus.extraction.outcomes import ExtractionAcceptanceReceipt
+    from argus.operations.accepted import AcceptedOperationService
+
+    result = ExtractedContent(
+        url="https://example.test/article",
+        extraction_run_id="extract-run-1",
+        text="Accepted content.",
+        word_count=2,
+        attempts=[
+            ExtractionAttempt(
+                extractor="trafilatura",
+                status="quality_failed",
+                latency_ms=4,
+                failure_summary="too_short",
+            ),
+            ExtractionAttempt(
+                extractor="playwright",
+                status="success",
+                latency_ms=9,
+            ),
+        ],
+        extractors_tried=["trafilatura", "playwright"],
+        cache_hit=False,
+        extracted_at=datetime(2026, 7, 28, 12, 1, tzinfo=timezone.utc),
+        cost=0.25,
+        acceptance_receipt=ExtractionAcceptanceReceipt(
+            receipt_ref="receipt:extract-run-1",
+            accepted_at="2026-07-28T12:02:00+00:00",
+            scope="extraction_outcome",
+        ),
+        accepted_outcome=CanonicalOutcome.SUCCESS,
+        accepted_execution_evidence=AcceptedExtractionExecutionEvidence(
+            operation_id="extract-run-1",
+            receipt_ref="receipt:extract-run-1",
+            accepted_at="2026-07-28T12:02:00+00:00",
+            receipt_scope="extraction_outcome",
+            actual_usd=Decimal("0.25"),
+            reserved_usd=Decimal("0.25"),
+            spend_delta_usd=Decimal("0"),
+            spend_attempt_refs=("extract-spend-1",),
+            spend_complete=True,
+            cache_decision="miss",
+            cache_age_seconds=None,
+            operation_latency_ms=15,
+            extractor_call_count=2,
+        ),
+    )
+    extractor = AsyncMock(return_value=result)
+    service = AcceptedOperationService(
+        broker_provider=MagicMock(),
+        repository_provider=MagicMock(),
+        extractor=extractor,
+    )
+
+    operation = await service.extract(
+        ExtractRequest(url=result.url),
+        principal="scorecard",
+        request_id="request-extraction-evidence",
+    )
+
+    evidence = operation.result["execution_evidence"]
+    assert evidence["schema"] == "argus-execution-evidence-v1"
+    assert evidence["source"] == "ExtractedContent"
+    assert evidence["operation_id"] == {
+        "availability": "available",
+        "source": "extraction_run_id",
+        "value": "extract-run-1",
+    }
+    assert evidence["observation"] == {
+        "availability": "available",
+        "observed_at": "2026-07-28T12:02:00+00:00",
+        "semantics": "durably_accepted_at",
+        "source": "acceptance_receipt.accepted_at",
+    }
+    assert evidence["attempts"] == (
+        {
+            "extractor": "trafilatura",
+            "status": "quality_failed",
+            "latency_ms": 4,
+            "reason_code": "quality_failed",
+        },
+        {
+            "extractor": "playwright",
+            "status": "success",
+            "latency_ms": 9,
+            "reason_code": None,
+        },
+    )
+    assert evidence["timing"]["component_ms"] == {
+        "availability": "available",
+        "source": "sum_extraction_attempt_latency_ms",
+        "value": 13,
+    }
+    assert evidence["timing"]["wall_ms"] == {
+        "availability": "available",
+        "source": "accepted_extraction_evidence.operation_latency_ms",
+        "value": 15,
+    }
+    assert evidence["cache"]["status"] == "miss"
+    assert evidence["cache"]["decision"] == "miss"
+    assert evidence["cache"]["age_ms"]["availability"] == "unavailable"
+    assert evidence["spend"]["actual_usd"] == {
+        "availability": "available",
+        "source": "accepted_extraction_evidence.actual_usd",
+        "value": "0.25",
+    }
+    assert evidence["spend"]["availability"] == "available"
+    assert evidence["spend"]["reserved_usd"] == {
+        "availability": "available",
+        "source": "accepted_extraction_evidence.reserved_usd",
+        "value": "0.25",
+    }
+    assert evidence["spend"]["reconciliation"] == {
+        "availability": "available",
+        "source": "accepted_extraction_evidence.spend_delta_usd",
+        "value": "0",
+    }
+    assert evidence["freshness"]["availability"] == "observation_available"
+    assert evidence["freshness"]["age_ms"]["availability"] == "unavailable"
+    assert evidence["persistence"] == {
+        "availability": "available",
+        "source": "acceptance_receipt",
+        "receipt_ref": "receipt:extract-run-1",
+        "accepted_at": "2026-07-28T12:02:00+00:00",
+        "scope": "extraction_outcome",
+    }
 
 
 @pytest.mark.asyncio

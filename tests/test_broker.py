@@ -133,6 +133,14 @@ async def test_accepted_search_cache_hit_gets_fresh_durable_receipt(tmp_path):
     assert first.receipt != second.receipt
     assert first.response.cached is False
     assert second.response.cached is True
+    assert first.evidence.operation_id == first.response.search_run_id
+    assert first.evidence.cache_decision.value == "miss"
+    assert format(first.evidence.current_spend_usd, "f") == "0"
+    assert first.evidence.current_provider_calls == 1
+    assert second.evidence.operation_id == second.response.search_run_id
+    assert second.evidence.cache_decision.value == "hit_eligible"
+    assert format(second.evidence.current_spend_usd, "f") == "0"
+    assert second.evidence.current_provider_calls == 0
     assert provider.calls == 1
     assert evidence.accepted_count() == 2
     assert evidence.publication_count() == 1

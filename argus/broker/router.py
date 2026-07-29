@@ -16,6 +16,7 @@ from argus.broker.accepted import (
     AcceptanceReceipt,
     AcceptedRetrieval,
     AcceptedSearchExecution,
+    AcceptedSearchExecutionEvidence,
     CacheDecisionOutcome,
     CacheEntry,
     RetrievalCache,
@@ -498,6 +499,16 @@ class SearchBroker:
                         include_attribution=compute_attribution,
                     ),
                     receipt,
+                    evidence=AcceptedSearchExecutionEvidence(
+                        operation_id=accepted.operation_id,
+                        receipt_ref=receipt.receipt_ref,
+                        accepted_at=receipt.accepted_at,
+                        acceptance_fingerprint=receipt.acceptance_fingerprint,
+                        cache_decision=decision.outcome,
+                        origin_spend_usd=Decimal(accepted.origin_spend_usd),
+                        current_spend_usd=Decimal("0"),
+                        current_provider_calls=0,
+                    ),
                 )
 
             started = self._monotonic_clock()
@@ -712,7 +723,25 @@ class SearchBroker:
                 cached=False,
                 include_attribution=compute_attribution,
             )
-            return AcceptedSearchExecution(outcome, reason, response, receipt)
+            return AcceptedSearchExecution(
+                outcome,
+                reason,
+                response,
+                receipt,
+                evidence=AcceptedSearchExecutionEvidence(
+                    operation_id=accepted.operation_id,
+                    receipt_ref=receipt.receipt_ref,
+                    accepted_at=receipt.accepted_at,
+                    acceptance_fingerprint=receipt.acceptance_fingerprint,
+                    cache_decision=decision.outcome,
+                    origin_spend_usd=Decimal(accepted.origin_spend_usd),
+                    current_spend_usd=Decimal(accepted.origin_spend_usd),
+                    current_provider_calls=sum(
+                        trace.status not in {"skipped", "cache"}
+                        for trace in execution.traces
+                    ),
+                ),
+            )
 
     async def search_with_session_accepted(
         self,
@@ -764,6 +793,7 @@ class SearchBroker:
                     response=accepted.response,
                     receipt=accepted.receipt,
                     session_update_failed=True,
+                    evidence=accepted.evidence,
                 ),
                 session_id,
             )
