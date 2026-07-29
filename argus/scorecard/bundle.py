@@ -90,9 +90,7 @@ _SUCCESS_LIKE_OUTCOMES = {
 _LOCAL_CAPTURE_REPLAY_EXTRACTORS = frozenset(
     {"trafilatura", "crawl4ai", "obscura", "playwright"}
 )
-_PROVIDER_ATTEMPT_STATUSES = frozenset(
-    {"success", "empty", "error", "skipped", "cache"}
-)
+_PROVIDER_ATTEMPT_STATUSES = frozenset({"success", "error", "skipped", "cache"})
 _EXTRACTOR_ATTEMPT_STATUSES = frozenset({"success", "failed", "quality_failed"})
 _PROVIDER_RESULT_SUPPLYING_STATUSES = frozenset({"success", "cache"})
 _EXTRACTOR_RESULT_SUPPLYING_STATUSES = frozenset({"success"})
@@ -637,7 +635,7 @@ def _validate_search_outcome_reconciliation(
             if any(status in {"error", "skipped"} for status in statuses)
             else "success"
         )
-    elif any(status in {"success", "empty", "cache"} for status in statuses):
+    elif any(status in {"success", "cache"} for status in statuses):
         expected = "empty"
     elif all(status == "skipped" for status in statuses):
         expected = "policy_rejected"

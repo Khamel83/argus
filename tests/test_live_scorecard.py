@@ -480,7 +480,7 @@ def _claim_providers_failed_for_successful_empty(sealed):
     evidence["outcome"] = "providers_failed"
     evidence["results"] = []
     evidence["diagnostics"]["attempts"][0].update(
-        {"status": "empty", "reason": "successful empty", "result_count": 0}
+        {"status": "success", "reason": "successful empty", "result_count": 0}
     )
 
 
@@ -490,6 +490,15 @@ def _invent_provider_attempt_status(sealed):
     evidence["results"] = []
     evidence["diagnostics"]["attempts"][0].update(
         {"status": "invented_status", "reason": "invented", "result_count": 0}
+    )
+
+
+def _use_non_runtime_provider_empty_status(sealed):
+    evidence = sealed["operations"][0]["candidate"]
+    evidence["outcome"] = "empty"
+    evidence["results"] = []
+    evidence["diagnostics"]["attempts"][0].update(
+        {"status": "empty", "reason": "successful empty", "result_count": 0}
     )
 
 
@@ -511,7 +520,7 @@ def _canonical_empty(sealed):
     evidence["outcome"] = "empty"
     evidence["results"] = []
     evidence["diagnostics"]["attempts"][0].update(
-        {"status": "empty", "reason": "successful empty", "result_count": 0}
+        {"status": "success", "reason": "successful empty", "result_count": 0}
     )
 
 
@@ -550,7 +559,7 @@ def _canonical_mixed_degraded(sealed):
                 "name": "yahoo",
                 "kind": "provider",
                 "tier": 0,
-                "status": "empty" if side == "baseline" else "error",
+                "status": "success" if side == "baseline" else "error",
                 "reason": "successful empty"
                 if side == "baseline"
                 else "provider failed",
@@ -632,6 +641,7 @@ def _canonical_quality_failed_extraction(sealed):
         (_claim_empty_when_all_providers_failed, "search outcome"),
         (_claim_providers_failed_for_successful_empty, "search outcome"),
         (_invent_provider_attempt_status, "provider attempt status"),
+        (_use_non_runtime_provider_empty_status, "provider attempt status"),
         (_invent_extractor_attempt_status, "extractor attempt status"),
     ],
 )
