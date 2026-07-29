@@ -203,6 +203,34 @@ async def test_resolver_scopes_cache_by_origin_and_invalidates_on_deployment_cha
 
 
 @pytest.mark.asyncio
+async def test_resolver_evicts_the_least_recently_used_entry_at_configured_bound():
+    from argus.mcp.capabilities import HttpContractResolver
+
+    calls = []
+
+    async def discover(origin: str):
+        calls.append(origin)
+        return _v2_document()
+
+    resolver = HttpContractResolver(discover, max_entries=2)
+    clock = Clock()
+
+    await resolver.resolve_http_contract("https://one.example", "deploy-1", clock)
+    await resolver.resolve_http_contract("https://two.example", "deploy-1", clock)
+    await resolver.resolve_http_contract("https://one.example", "deploy-1", clock)
+    await resolver.resolve_http_contract("https://three.example", "deploy-1", clock)
+    await resolver.resolve_http_contract("https://one.example", "deploy-1", clock)
+    await resolver.resolve_http_contract("https://two.example", "deploy-1", clock)
+
+    assert calls == [
+        "https://one.example",
+        "https://two.example",
+        "https://three.example",
+        "https://two.example",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_discovery_error_does_not_overwrite_a_still_valid_entry():
     from argus.mcp.capabilities import HttpContractResolver
 
