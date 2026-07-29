@@ -25,6 +25,20 @@ def _imports(path: Path) -> set[str]:
     return imported
 
 
+def _has_direct_repository_access(path: Path) -> bool:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Attribute):
+            continue
+        if node.attr.startswith("get_") and node.attr.endswith("_repository"):
+            return True
+        if isinstance(node.value, ast.Name) and (
+            node.value.id == "repository" or node.value.id.endswith("_repository")
+        ):
+            return True
+    return False
+
+
 def find_architecture_exceptions(repository_root: Path) -> tuple[str, ...]:
     """Scan the complete route/presenter surface for direct authority imports."""
     exceptions: list[str] = []
@@ -42,4 +56,6 @@ def find_architecture_exceptions(repository_root: Path) -> tuple[str, ...]:
             for prefix in FORBIDDEN_AUTHORITY_PREFIXES
         ):
             exceptions.append(relative)
+        elif _has_direct_repository_access(path):
+            exceptions.append(f"{relative}:direct-repository-call")
     return tuple(exceptions)

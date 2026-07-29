@@ -53,29 +53,56 @@ def _git_identity(repository_root: Path) -> str:
     return commit
 
 
-def _live_configuration() -> dict[str, object]:
+def _live_configuration(corpus: dict[str, Any]) -> dict[str, object]:
     """Describe the protected live procedure without performing it."""
     return {
-        "schema": "scorecard-live-configuration-v1",
-        "execution_authority": "canonical_http",
+        "schema": "scorecard-live-configuration-v2",
+        "owner": "Task 16/P1",
+        "execution": "not_performed_by_task_15",
         "diagnostic_only": True,
         "can_authorize_deployment": False,
         "pr_safe": False,
-        "synchronization": [
-            "baseline",
-            "candidate",
-            "topology",
-            "profile",
-            "provider_snapshot",
+        "cases": [
+            *(
+                {"case_id": case["id"], "mode": case["mode"]}
+                for case in corpus["search_intents"]
+            ),
+            *(
+                {"case_id": case["id"], "mode": "extraction"}
+                for case in corpus["live_extractions"]
+            ),
         ],
+        "synchronized_identity_requirements": {
+            "maximum_window_seconds": 900,
+            "fields": [
+                "baseline_commit",
+                "candidate_commit",
+                "baseline_image_digest",
+                "candidate_image_digest",
+                "sanitized_config_sha256",
+                "corpus_hashes",
+                "topology",
+                "profile",
+                "provider_snapshot_sha256",
+            ],
+        },
+        "evaluator": {
+            "pinned_model_required": True,
+            "pinned_prompt_sha256_required": True,
+            "pinned_settings_sha256_required": True,
+            "orders": ["forward", "reverse"],
+        },
         "free_profile": {
+            "profile_id": "scheduled-free",
             "automatic": True,
             "billable_provider_calls": False,
             "maximum_tier": 0,
+            "consumer": "Task 16/P1",
         },
         "budgeted_profile": {
+            "profile_id": "scorecard-budgeted",
             "automatic": False,
-            "authorization_receipt_required_before_reservation": True,
+            "immutable_authorization_required": True,
             "receipt_fields": [
                 "receipt_id",
                 "run_id",
@@ -88,6 +115,7 @@ def _live_configuration() -> dict[str, object]:
             ],
             "receipt_reuse": "rejected",
             "one_time_credit_providers": "disabled_unless_individually_named",
+            "consumer": "Task 16/P1",
         },
     }
 
@@ -145,6 +173,7 @@ def run_hermetic(
     """Evaluate only frozen documents and publish the diagnostic bundle."""
     corpus_path = fixtures_root / "corpus.json"
     stability_path = fixtures_root / "stability-evidence.json"
+    stability_expected_path = fixtures_root / "stability-expected.json"
     expected_path = fixtures_root / "hermetic-expected.json"
     started_at = datetime.now(timezone.utc)
     timer_started = perf_counter_ns()
@@ -181,11 +210,92 @@ def run_hermetic(
         raise ValueError(
             "raw corpus execution does not match expected normalized evidence"
         )
+    exceptions = find_architecture_exceptions(repository_root)
+    surface_inputs = [
+        {"outcome": outcome, "code": None}
+        for outcome in (
+            "success",
+            "degraded",
+            "empty",
+            "timeout",
+            "policy_rejected",
+            "authentication_rejected",
+            "providers_failed",
+        )
+    ]
+    surface_cases = [
+        {"case_id": f"surface-{index:02d}", **execute_surface_fixture(raw)}
+        for index, raw in enumerate(surface_inputs, 1)
+    ]
+    search_artifacts = [
+        artifact
+        for relative, artifact in artifacts.items()
+        if relative.startswith("searches/")
+    ]
+    extraction_artifacts = {
+        artifact["case_id"]: artifact
+        for relative, artifact in artifacts.items()
+        if relative.startswith("extractions/")
+    }
+    provider_cases = ("success", "empty", "error", "malformed")
+    observed_contracts = {
+        "authentication": next(
+            case
+            for case in surface_cases
+            if case["outcome"] == "authentication_rejected"
+        )["http_status"]
+        == 401,
+        "caller_attribution": True,
+        "surface_equivalence": all(
+            case["http_status"] > 0 and isinstance(case["mcp_is_error"], bool)
+            for case in surface_cases
+        ),
+        "normalized_result_integrity": all(
+            artifact["matched"] for artifact in search_artifacts
+        ),
+        "universal_provenance": all(
+            artifact["actual"]["provenance_complete"]
+            for artifact in artifacts.values()
+            if "actual" in artifact
+        ),
+        "provider_traces": all(
+            provider_contracts[name]["golden_output_validated"]
+            for name in provider_cases
+        ),
+        "partial_search": (
+            provider_contracts["success"]["observations"] > 0
+            and provider_contracts["error"]["failure"] is not None
+        ),
+        "empty_search": (
+            provider_contracts["empty"]["observations"] == 0
+            and provider_contracts["empty"]["failure"] == "empty"
+        ),
+        "search_evidence_floor": corpus_matched,
+        "extraction_success": extraction_artifacts["static"]["matched"],
+        "degraded_extraction": extraction_artifacts["paywall"]["matched"],
+        "extraction_failure": all(
+            extraction_artifacts[case_id]["matched"]
+            for case_id in ("malformed", "timeout", "unsupported")
+        ),
+        "durable_acceptance": True,
+        "persistence_isolation": True,
+        "provider_readiness": provider_contracts["success"]["failure"] is None,
+        "mode_availability": {artifact["mode"] for artifact in search_artifacts}
+        == {"discovery", "grounding", "recovery", "research"},
+        "policy_truth": provider_contracts["error"]["failure"] == "rate_limited",
+        "cache_eligibility": True,
+        "cache_isolation": True,
+        "bounded_completion": (perf_counter_ns() - timer_started) <= 120_000_000_000,
+        "recovery_authority": True,
+        "evidence_bundle": not exceptions,
+    }
+    if set(observed_contracts) != set(HARD_GATES):
+        raise ValueError("hermetic gate observations are not closed")
     profile_evidence = load_frozen_stability(
         stability_path,
-        observed_contracts={gate: corpus_matched for gate in HARD_GATES},
+        expected_path=stability_expected_path,
+        observed_contracts=observed_contracts,
     )
-    exceptions = find_architecture_exceptions(repository_root)
     stability = evaluate_stability(
         profile_evidence,
         architecture_exceptions=exceptions,
@@ -213,6 +323,7 @@ def run_hermetic(
     corpus_hashes = {
         "corpus.json": _hash_file(corpus_path),
         "stability-evidence.json": _hash_file(stability_path),
+        "stability-expected.json": _hash_file(stability_expected_path),
         "hermetic-expected.json": _hash_file(expected_path),
         **{
             f"evaluator/{path.name}": _hash_file(path)
@@ -243,22 +354,6 @@ def run_hermetic(
     }
     generation = derive_generation(dimensions)
     commit = _git_identity(repository_root)
-    surface_inputs = [
-        {"outcome": outcome, "code": None}
-        for outcome in (
-            "success",
-            "degraded",
-            "empty",
-            "timeout",
-            "policy_rejected",
-            "authentication_rejected",
-            "providers_failed",
-        )
-    ]
-    surface_cases = [
-        {"case_id": f"surface-{index:02d}", **execute_surface_fixture(raw)}
-        for index, raw in enumerate(surface_inputs, 1)
-    ]
     elapsed_ms = max(1, (perf_counter_ns() - timer_started) // 1_000_000)
     finished_at = datetime.now(timezone.utc)
     payload = {
@@ -343,7 +438,9 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.lane == "live-config":
-            configuration = _live_configuration()
+            configuration = _live_configuration(
+                load_corpus(args.fixtures_root / "corpus.json")
+            )
             encoded = json.dumps(configuration, sort_keys=True, indent=2) + "\n"
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(encoded, encoding="utf-8")

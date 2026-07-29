@@ -5,8 +5,6 @@ from __future__ import annotations
 from datetime import datetime
 from hashlib import sha256
 import json
-import os
-from pathlib import Path
 import re
 from typing import Any, Mapping
 
@@ -18,6 +16,22 @@ class AuthorizationError(ValueError):
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 _ONE_TIME_PROVIDERS = frozenset({"serper", "you", "searchapi", "valyu"})
+_CANONICAL_PROVIDER_TIERS = {
+    "searxng": 0,
+    "duckduckgo": 0,
+    "yahoo": 0,
+    "github": 0,
+    "wolfram": 0,
+    "brave": 1,
+    "tavily": 1,
+    "exa": 1,
+    "linkup": 1,
+    "parallel": 1,
+    "serper": 3,
+    "you": 3,
+    "searchapi": 3,
+    "valyu": 3,
+}
 _FIELDS = {
     "schema",
     "receipt_id",
@@ -42,49 +56,16 @@ def _provider_list(value: object, label: str) -> list[str]:
     if (
         not isinstance(value, list)
         or not value
-        or len(value) != len(set(value))
         or any(
-            not isinstance(provider, str) or not _IDENTIFIER.fullmatch(provider)
+            not isinstance(provider, str)
+            or not _IDENTIFIER.fullmatch(provider)
+            or provider not in _CANONICAL_PROVIDER_TIERS
             for provider in value
         )
+        or len(value) != len(set(value))
     ):
-        raise AuthorizationError(f"{label} must name unique providers")
+        raise AuthorizationError(f"{label} must name unique canonical providers")
     return value
-
-
-def validate_and_consume_authorization(
-    receipt_path: Path,
-    *,
-    expected_sha256: str,
-    run_id: str,
-    generation: str,
-    consumption_dir: Path,
-) -> Mapping[str, Any]:
-    """Legacy local validation wrapper; production consumption is SQL-backed."""
-    try:
-        encoded = receipt_path.read_bytes()
-    except OSError as exc:
-        raise AuthorizationError("authorization receipt is required") from exc
-    receipt = validate_authorization_bytes(
-        encoded,
-        expected_sha256=expected_sha256,
-        run_id=run_id,
-        generation=generation,
-    )
-    receipt_id = receipt["receipt_id"]
-    assert isinstance(receipt_id, str)
-    consumption_dir.mkdir(parents=True, exist_ok=True)
-    marker = consumption_dir / f"{receipt_id}-{expected_sha256}.consumed"
-    try:
-        descriptor = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError as exc:
-        raise AuthorizationError("authorization receipt was already consumed") from exc
-    try:
-        os.write(descriptor, f"{run_id}\n{generation}\n".encode())
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    return receipt
 
 
 def validate_authorization_bytes(
@@ -122,6 +103,10 @@ def validate_authorization_bytes(
     maximum_tier = _positive_int(receipt["maximum_tier"], "maximum tier")
     if maximum_tier not in {1, 3}:
         raise AuthorizationError("maximum tier must be 1 or 3")
+    if any(
+        _CANONICAL_PROVIDER_TIERS[provider] > maximum_tier for provider in providers
+    ):
+        raise AuthorizationError("permitted provider exceeds maximum tier")
     _positive_int(receipt["call_count_cap"], "call count cap")
     _positive_int(receipt["cost_or_credit_cap"], "cost or credit cap")
     one_time = receipt["one_time_credit_providers"]

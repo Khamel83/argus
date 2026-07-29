@@ -1,56 +1,20 @@
-name: Live competitive scorecard (diagnostic-only)
+name: Live scorecard configuration (diagnostic-only)
 
 on:
   schedule:
     - cron: "17 9 * * 1"
   workflow_dispatch:
-    inputs:
-      profile:
-        description: Evaluation profile
-        type: choice
-        required: true
-        default: free
-        options: [free, budgeted]
-      run_id:
-        description: Immutable live run id
-        type: string
-        required: true
-      generation:
-        description: Derived 64-character benchmark generation
-        type: string
-        required: true
-      authorization_receipt:
-        description: Exact secret-free budget authorization JSON (budgeted only)
-        type: string
-        required: false
-      authorization_sha256:
-        description: Protected expected receipt SHA-256 (budgeted only)
-        type: string
-        required: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: live-scorecard-${{ github.event_name }}-${{ inputs.run_id || 'scheduled-free' }}
+  group: scorecard-live-configuration-${{ github.run_id }}
   cancel-in-progress: false
 
 jobs:
-  scheduled-free:
-    if: github.event_name == 'schedule' || inputs.profile == 'free'
+  configuration:
     runs-on: ubuntu-latest
-    environment: scorecard-free
-    env:
-      ARGUS_AUTOLOAD_DOTENV: "false"
-      ARGUS_DISABLE_SECRET_RESOLUTION: "true"
-      ARGUS_NODE_ROLE: caller
-      ARGUS_CALLER_TIER_CAPS: "scorecard-free:0"
-      SCORECARD_PROFILE: free
-      SCORECARD_MAXIMUM_TIER: "0"
-      SCORECARD_BILLABLE_CALL_CAP: "0"
-      SCORECARD_EXECUTION_AUTHORITY: canonical_http
-      BASELINE_URL: ${{ vars.ARGUS_SCORECARD_BASELINE_URL }}
-      CANDIDATE_URL: ${{ vars.ARGUS_SCORECARD_CANDIDATE_URL }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
@@ -59,89 +23,17 @@ jobs:
       - name: Install uv
         run: python -m pip install uv==0.11.26
       - name: Sync frozen dependencies
-        run: uv sync --frozen --python 3.12 --extra mcp
-      - name: Execute and verify synchronized exact-28 canonical HTTP bundle
-        env:
-          BASELINE_TOKEN: ${{ secrets.ARGUS_SCORECARD_BASELINE_TOKEN }}
-          CANDIDATE_TOKEN: ${{ secrets.ARGUS_SCORECARD_CANDIDATE_TOKEN }}
-          DISPATCH_RUN_ID: ${{ inputs.run_id }}
-          DISPATCH_GENERATION: ${{ inputs.generation }}
-          SCHEDULE_GENERATION: ${{ vars.ARGUS_SCORECARD_GENERATION }}
-          GITHUB_RUN_NUMBER_SAFE: ${{ github.run_id }}
-          BASELINE_COMMIT: ${{ vars.ARGUS_SCORECARD_BASELINE_COMMIT }}
-          CANDIDATE_COMMIT: ${{ vars.ARGUS_SCORECARD_CANDIDATE_COMMIT }}
-          BASELINE_IMAGE_DIGEST: ${{ vars.ARGUS_SCORECARD_BASELINE_IMAGE_DIGEST }}
-          CANDIDATE_IMAGE_DIGEST: ${{ vars.ARGUS_SCORECARD_CANDIDATE_IMAGE_DIGEST }}
-          SCORECARD_SANITIZED_CONFIG_SHA256: ${{ vars.ARGUS_SCORECARD_CONFIG_SHA256 }}
-          SCORECARD_EGRESS: ${{ vars.ARGUS_SCORECARD_EGRESS }}
-          SCORECARD_MACHINE: ${{ vars.ARGUS_SCORECARD_MACHINE }}
-        run: |
-          test "$SCORECARD_PROFILE" = "free"
-          test "$SCORECARD_MAXIMUM_TIER" = "0"
-          test "$SCORECARD_BILLABLE_CALL_CAP" = "0"
-          run_id="${DISPATCH_RUN_ID:-scheduled-$GITHUB_RUN_NUMBER_SAFE}"
-          generation="${DISPATCH_GENERATION:-$SCHEDULE_GENERATION}"
-          uv run python scripts/run-live-scorecard.py \
-            --profile "free" \
-            --run-id "$run_id" \
-            --generation "$generation" \
-            --output .artifacts/live
-      - name: Upload free live evidence
+        run: uv sync --frozen --python 3.12
+      - name: Generate scheduled-free and scorecard-budgeted P1 configuration
+        run: >-
+          uv run python scripts/run-scorecard.py
+          --lane live-config
+          --output .artifacts/live/config.json
+      - name: Publish configuration for Task 16 P1
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: live-scorecard-free-${{ inputs.run_id || 'scheduled-free' }}
-          path: .artifacts/live
+          name: scorecard-live-configuration-${{ github.run_id }}
+          path: .artifacts/live/config.json
           if-no-files-found: error
 
-  budgeted:
-    if: github.event_name == 'workflow_dispatch' && inputs.profile == 'budgeted'
-    runs-on: ubuntu-latest
-    environment: scorecard-budgeted
-    env:
-      ARGUS_AUTOLOAD_DOTENV: "false"
-      ARGUS_DISABLE_SECRET_RESOLUTION: "true"
-      ARGUS_NODE_ROLE: caller
-      SCORECARD_EXECUTION_AUTHORITY: canonical_http
-      BASELINE_URL: ${{ vars.ARGUS_SCORECARD_BASELINE_URL }}
-      CANDIDATE_URL: ${{ vars.ARGUS_SCORECARD_CANDIDATE_URL }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: "3.12"
-      - name: Install uv
-        run: python -m pip install uv==0.11.26
-      - name: Sync frozen dependencies
-        run: uv sync --frozen --python 3.12 --extra mcp
-      - name: Execute exact-28 canonical HTTP bundle after durable authority consumption
-        env:
-          BASELINE_TOKEN: ${{ secrets.ARGUS_SCORECARD_BASELINE_TOKEN }}
-          CANDIDATE_TOKEN: ${{ secrets.ARGUS_SCORECARD_CANDIDATE_TOKEN }}
-          SCORECARD_AUTHORIZATION_RECEIPT: ${{ inputs.authorization_receipt }}
-          SCORECARD_AUTHORIZATION_SHA256: ${{ inputs.authorization_sha256 }}
-          DISPATCH_RUN_ID: ${{ inputs.run_id }}
-          DISPATCH_GENERATION: ${{ inputs.generation }}
-          BASELINE_COMMIT: ${{ vars.ARGUS_SCORECARD_BASELINE_COMMIT }}
-          CANDIDATE_COMMIT: ${{ vars.ARGUS_SCORECARD_CANDIDATE_COMMIT }}
-          BASELINE_IMAGE_DIGEST: ${{ vars.ARGUS_SCORECARD_BASELINE_IMAGE_DIGEST }}
-          CANDIDATE_IMAGE_DIGEST: ${{ vars.ARGUS_SCORECARD_CANDIDATE_IMAGE_DIGEST }}
-          SCORECARD_SANITIZED_CONFIG_SHA256: ${{ vars.ARGUS_SCORECARD_CONFIG_SHA256 }}
-          SCORECARD_EGRESS: ${{ vars.ARGUS_SCORECARD_EGRESS }}
-          SCORECARD_MACHINE: ${{ vars.ARGUS_SCORECARD_MACHINE }}
-        run: |
-          test -n "$SCORECARD_AUTHORIZATION_RECEIPT"
-          test -n "$SCORECARD_AUTHORIZATION_SHA256"
-          uv run python scripts/run-live-scorecard.py \
-            --profile "budgeted" \
-            --run-id "$DISPATCH_RUN_ID" \
-            --generation "$DISPATCH_GENERATION" \
-            --output .artifacts/live
-      - name: Upload verified budgeted live bundle
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: live-scorecard-budgeted-${{ inputs.run_id }}
-          path: .artifacts/live
-          if-no-files-found: error
-
-# This workflow produces diagnostic evidence only. It cannot authorize
-# deployment, promotion, provider purchases, or budget expansion.
+# Task 16/P1 is the only owner of live execution and protected promotion.

@@ -7,9 +7,16 @@ from argus.api.schemas import (
     ProviderSnapshotRequest,
     ProviderTestRequest,
     SpendResolutionRequest,
-    ScorecardAuthorizationConsumeRequest,
 )
-from argus.models import ProviderName
+from argus.api.admin_operations import (
+    AdminApplicationService,
+    AdminConflictError,
+    AdminInvalidError,
+    AdminNotFoundError,
+    AdminUnauthorizedError,
+    UnknownAdminProviderError,
+)
+from argus.api.admin_presenters import present_admin_facts
 from argus.api.provider_operations import (
     ProbeRejected,
     ProviderApplicationService,
@@ -17,7 +24,6 @@ from argus.api.provider_operations import (
 )
 from argus.api.provider_presenters import present_provider_facts
 from argus.workflows import WorkflowService
-from argus.scorecard.authorization import AuthorizationError, validate_authorization_bytes
 
 router = APIRouter(prefix="/admin")
 
@@ -30,87 +36,38 @@ def get_workflows(request: Request) -> WorkflowService:
     return request.app.state.get_workflows()
 
 
-def get_spend_repository(request: Request):
-    return request.app.state.get_spend_repository()
-
-
-def get_search_repository(request: Request):
-    return request.app.state.get_search_repository()
+def get_admin_operations(request: Request) -> AdminApplicationService:
+    return request.app.state.admin_operations
 
 
 @router.get("/maya-outbox/status")
-async def maya_outbox_status(repository=Depends(get_search_repository)):
-    """Return bounded delivery state without payloads or capture identifiers."""
-    return repository.maya_outbox_status()
-
-
-@router.post("/scorecard-authorizations/consume")
-async def consume_scorecard_authorization(
-    payload: ScorecardAuthorizationConsumeRequest,
-    request: Request,
-    repository=Depends(get_spend_repository),
+async def maya_outbox_status(
+    operations: AdminApplicationService = Depends(get_admin_operations),
 ):
-    """Validate and durably consume a scorecard receipt before reservations."""
-    encoded = payload.receipt_json.encode()
-    try:
-        receipt = validate_authorization_bytes(
-            encoded,
-            expected_sha256=payload.expected_sha256,
-            run_id=payload.run_id,
-            generation=payload.generation,
-        )
-        durable_id = repository.consume_scorecard_authorization(
-            receipt_id=receipt["receipt_id"],
-            receipt_sha256=payload.expected_sha256,
-            run_id=payload.run_id,
-            generation=payload.generation,
-            actor_identity=getattr(request.state, "caller_identity", "admin"),
-            constraints={
-                "permitted_providers": receipt["permitted_providers"],
-                "maximum_tier": receipt["maximum_tier"],
-                "call_count_cap": receipt["call_count_cap"],
-                "cost_or_credit_cap": receipt["cost_or_credit_cap"],
-                "one_time_credit_providers": receipt["one_time_credit_providers"],
-            },
-        )
-    except AuthorizationError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        if request.app.state.provider_presentation.is_spend_conflict(exc):
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        raise
-    return {
-        "status": "consumed",
-        "durable_id": durable_id,
-        "constraints": {
-            "permitted_providers": receipt["permitted_providers"],
-            "maximum_tier": receipt["maximum_tier"],
-            "call_count_cap": receipt["call_count_cap"],
-            "cost_or_credit_cap": receipt["cost_or_credit_cap"],
-            "one_time_credit_providers": receipt["one_time_credit_providers"],
-        },
-    }
+    """Return bounded delivery state without payloads or capture identifiers."""
+    return present_admin_facts(operations.maya_outbox_status())
 
 
 @router.get("/maya-outbox/dead-letters")
 async def list_maya_dead_letters(
     limit: int = Query(default=50, ge=1, le=100),
-    repository=Depends(get_search_repository),
+    operations: AdminApplicationService = Depends(get_admin_operations),
 ):
-    return {"items": repository.list_maya_dead_letters(limit=limit)}
+    return present_admin_facts(operations.list_maya_dead_letters(limit=limit))
 
 
 @router.post("/maya-outbox/{intent_id}/recover")
 async def recover_maya_dead_letter(
     intent_id: str,
-    repository=Depends(get_search_repository),
+    operations: AdminApplicationService = Depends(get_admin_operations),
 ):
-    if not repository.recover_maya_dead_letter(intent_id):
+    try:
+        return present_admin_facts(operations.recover_maya_dead_letter(intent_id))
+    except AdminConflictError as exc:
         raise HTTPException(
             status_code=409,
             detail="Maya delivery is not a recoverable dead letter",
-        )
-    return {"status": "pending"}
+        ) from exc
 
 
 @router.post("/test-provider")
@@ -122,13 +79,15 @@ async def test_provider(
     try:
         if not req.live:
             return present_provider_facts(presentation.fixture_provider(req.provider))
-        return present_provider_facts(await presentation.live_provider(
-            provider=req.provider,
-            query_text=req.query,
-            caller=getattr(request.state, "caller_identity", "admin"),
-            idempotency_key=req.idempotency_key,
-            durable_receipt=req.durable_receipt,
-        ))
+        return present_provider_facts(
+            await presentation.live_provider(
+                provider=req.provider,
+                query_text=req.query,
+                caller=getattr(request.state, "caller_identity", "admin"),
+                idempotency_key=req.idempotency_key,
+                durable_receipt=req.durable_receipt,
+            )
+        )
     except UnknownProviderError as exc:
         raise HTTPException(
             status_code=400, detail=f"Unknown provider: {req.provider}"
@@ -148,36 +107,13 @@ async def provider_spend(
 async def provider_spend_attempts(
     status: str | None = None,
     provider: str | None = None,
-    repository=Depends(get_spend_repository),
+    operations: AdminApplicationService = Depends(get_admin_operations),
 ):
-    provider_name = None
-    if provider is not None:
-        try:
-            provider_name = ProviderName(provider)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Unknown provider") from exc
-    attempts = repository.list_attempts(status=status, provider=provider_name)
-    return {
-        "attempts": [
-            {
-                "attempt_id": attempt.attempt_id,
-                "provider": attempt.provider,
-                "is_paid": attempt.is_paid,
-                "status": attempt.status,
-                "outcome": attempt.outcome,
-                "reserved_charge": attempt.reserved_charge,
-                "estimator_violation": attempt.estimator_violation,
-                "reservation_overrun": attempt.reservation_overrun,
-                "actual_charge": attempt.actual_charge,
-                "usage": attempt.usage,
-                "caller_identity": attempt.caller_identity,
-                "caller_label": attempt.caller_label,
-                "resolution_source": attempt.resolution_source,
-                "created_at": attempt.created_at,
-            }
-            for attempt in attempts
-        ]
-    }
+    try:
+        facts = operations.list_spend_attempts(status=status, provider=provider)
+    except UnknownAdminProviderError as exc:
+        raise HTTPException(status_code=400, detail="Unknown provider") from exc
+    return present_admin_facts(facts)
 
 
 @router.post("/provider-spend/attempts/{attempt_id}/resolve")
@@ -185,48 +121,24 @@ async def resolve_provider_spend(
     attempt_id: str,
     payload: SpendResolutionRequest,
     request: Request,
-    repository=Depends(get_spend_repository),
+    operations: AdminApplicationService = Depends(get_admin_operations),
 ):
     try:
-        existing = repository.get_attempt(attempt_id)
-        if payload.source == "provider":
-            token = request.headers.get("x-provider-reconciliation-key")
-            if not request.app.state.auth_config.matches_provider_reconciliation_token(
-                existing.provider,
-                token,
-            ):
-                raise HTTPException(
-                    status_code=401,
-                    detail="Valid provider reconciliation credential required",
-                )
-        attempt = repository.resolve(
-            attempt_id,
-            actual_charge=payload.actual_charge,
-            outcome=payload.outcome,
-            source=payload.source,
-            actor_identity=(
-                f"provider:{existing.provider}"
-                if payload.source == "provider"
-                else getattr(request.state, "caller_identity", "admin")
-            ),
-            idempotency_key=payload.idempotency_key,
-            provider_snapshot_id=payload.provider_snapshot_id,
+        facts = operations.resolve_provider_spend(
+            attempt_id=attempt_id,
+            payload=payload,
+            caller_identity=getattr(request.state, "caller_identity", "admin"),
+            reconciliation_token=request.headers.get("x-provider-reconciliation-key"),
         )
-    except KeyError as exc:
+    except AdminNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Unknown provider attempt") from exc
-    except Exception as exc:
-        if request.app.state.provider_presentation.is_spend_conflict(exc):
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        if isinstance(exc, ValueError):
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        raise
-    return {
-        "attempt_id": attempt.attempt_id,
-        "provider": attempt.provider,
-        "status": attempt.status,
-        "outcome": attempt.outcome,
-        "actual_charge": attempt.actual_charge,
-    }
+    except AdminUnauthorizedError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except AdminConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AdminInvalidError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return present_admin_facts(facts)
 
 
 @router.post("/provider-spend/{provider}/snapshots")
@@ -234,50 +146,25 @@ async def record_provider_snapshot(
     provider: str,
     payload: ProviderSnapshotRequest,
     request: Request,
-    repository=Depends(get_spend_repository),
+    operations: AdminApplicationService = Depends(get_admin_operations),
 ):
     try:
-        provider_name = ProviderName(provider)
-    except ValueError as exc:
+        facts = operations.record_provider_snapshot(
+            provider=provider,
+            payload=payload,
+            reconciliation_token=request.headers.get("x-provider-reconciliation-key"),
+        )
+    except UnknownAdminProviderError as exc:
         raise HTTPException(status_code=400, detail="Unknown provider") from exc
-    token = request.headers.get("x-provider-reconciliation-key")
-    if not request.app.state.auth_config.matches_provider_reconciliation_token(
-        provider_name.value,
-        token,
-    ):
-        raise HTTPException(
-            status_code=401,
-            detail="Valid provider reconciliation credential required",
-        )
-    try:
-        snapshot = repository.record_provider_snapshot(
-            provider=provider_name,
-            balance=payload.balance,
-            observed_at=payload.observed_at,
-            actor_identity=f"provider:{provider_name.value}",
-            idempotency_key=payload.idempotency_key,
-            provider_reference=payload.provider_reference,
-            related_attempt_id=payload.related_attempt_id,
-            authoritative_charge=payload.authoritative_charge,
-        )
-    except KeyError as exc:
+    except AdminNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Unknown provider attempt") from exc
-    except Exception as exc:
-        if request.app.state.provider_presentation.is_spend_conflict(exc):
-            raise HTTPException(
-                status_code=409,
-                detail="provider reference already used",
-            ) from exc
-        if isinstance(exc, ValueError):
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        raise
-    return {
-        "snapshot_id": snapshot.snapshot_id,
-        "provider": snapshot.provider,
-        "balance": snapshot.balance,
-        "source": "provider",
-        "observed_at": snapshot.observed_at,
-    }
+    except AdminUnauthorizedError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except AdminConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AdminInvalidError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return present_admin_facts(facts)
 
 
 @router.get("/paths", response_model=PathsResponse)

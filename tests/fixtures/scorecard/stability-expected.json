@@ -1,0 +1,141 @@
+{
+  "schema": "scorecard-stability-expected-v1",
+  "profiles": {
+    "free": {
+      "authentication": {
+        "passed": true
+      },
+      "caller_attribution": {
+        "passed": true
+      },
+      "surface_equivalence": {
+        "passed": true
+      },
+      "normalized_result_integrity": {
+        "passed": true
+      },
+      "universal_provenance": {
+        "passed": true
+      },
+      "provider_traces": {
+        "passed": true
+      },
+      "partial_search": {
+        "passed": true
+      },
+      "empty_search": {
+        "passed": true
+      },
+      "search_evidence_floor": {
+        "passed": true
+      },
+      "extraction_success": {
+        "passed": true
+      },
+      "degraded_extraction": {
+        "passed": true
+      },
+      "extraction_failure": {
+        "passed": true
+      },
+      "durable_acceptance": {
+        "passed": true
+      },
+      "persistence_isolation": {
+        "passed": true
+      },
+      "provider_readiness": {
+        "passed": true
+      },
+      "mode_availability": {
+        "passed": true
+      },
+      "policy_truth": {
+        "passed": true
+      },
+      "cache_eligibility": {
+        "passed": true
+      },
+      "cache_isolation": {
+        "passed": true
+      },
+      "bounded_completion": {
+        "passed": true
+      },
+      "recovery_authority": {
+        "passed": true
+      },
+      "evidence_bundle": {
+        "passed": true
+      }
+    },
+    "budgeted": {
+      "authentication": {
+        "passed": true
+      },
+      "caller_attribution": {
+        "passed": true
+      },
+      "surface_equivalence": {
+        "passed": true
+      },
+      "normalized_result_integrity": {
+        "passed": true
+      },
+      "universal_provenance": {
+        "passed": true
+      },
+      "provider_traces": {
+        "passed": true
+      },
+      "partial_search": {
+        "passed": true
+      },
+      "empty_search": {
+        "passed": true
+      },
+      "search_evidence_floor": {
+        "passed": true
+      },
+      "extraction_success": {
+        "passed": true
+      },
+      "degraded_extraction": {
+        "passed": true
+      },
+      "extraction_failure": {
+        "passed": true
+      },
+      "durable_acceptance": {
+        "passed": true
+      },
+      "persistence_isolation": {
+        "passed": true
+      },
+      "provider_readiness": {
+        "passed": true
+      },
+      "mode_availability": {
+        "passed": true
+      },
+      "policy_truth": {
+        "passed": true
+      },
+      "cache_eligibility": {
+        "passed": true
+      },
+      "cache_isolation": {
+        "passed": true
+      },
+      "bounded_completion": {
+        "passed": true
+      },
+      "recovery_authority": {
+        "passed": true
+      },
+      "evidence_bundle": {
+        "passed": true
+      }
+    }
+  }
+}

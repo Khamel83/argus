@@ -101,6 +101,7 @@ def evaluate_stability(
 def load_frozen_stability(
     path: Path,
     *,
+    expected_path: Path,
     observed_contracts: Mapping[str, bool],
 ) -> dict[str, dict[str, dict[str, Any]]]:
     """Bind independently executed production-contract observations to gates."""
@@ -110,22 +111,45 @@ def load_frozen_stability(
         raise ValueError(f"invalid frozen stability evidence: {exc}") from exc
     if not isinstance(document, Mapping) or set(document) != {"schema", "profiles"}:
         raise ValueError("frozen stability evidence must contain exact keys")
-    if document["schema"] != "scorecard-stability-bindings-v2":
+    if document["schema"] != "scorecard-stability-raw-v3":
         raise ValueError("unsupported frozen stability evidence schema")
+    try:
+        expected_document = json.loads(expected_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid frozen stability expectations: {exc}") from exc
+    if (
+        not isinstance(expected_document, Mapping)
+        or set(expected_document) != {"schema", "profiles"}
+        or expected_document["schema"] != "scorecard-stability-expected-v1"
+    ):
+        raise ValueError("frozen stability expectations must contain exact keys")
     profiles = document["profiles"]
+    expected_profiles = expected_document["profiles"]
     if not isinstance(profiles, Mapping) or set(profiles) != set(REQUIRED_PROFILES):
         raise ValueError("frozen stability evidence requires both profiles")
+    if not isinstance(expected_profiles, Mapping) or set(expected_profiles) != set(
+        REQUIRED_PROFILES
+    ):
+        raise ValueError("frozen stability expectations require both profiles")
     evaluated: dict[str, dict[str, dict[str, Any]]] = {}
     for profile in REQUIRED_PROFILES:
         gates = profiles[profile]
         if not isinstance(gates, Mapping) or set(gates) != set(HARD_GATES):
             raise ValueError(f"{profile} must contain every hard gate exactly once")
+        expected_gates = expected_profiles[profile]
+        if not isinstance(expected_gates, Mapping) or set(expected_gates) != set(
+            HARD_GATES
+        ):
+            raise ValueError(
+                f"{profile} expectations must contain every hard gate exactly once"
+            )
         evaluated[profile] = {}
         for gate in HARD_GATES:
             check = gates[gate]
             if not isinstance(check, Mapping) or set(check) != {
                 "fixture_id",
                 "contract",
+                "raw",
             }:
                 raise ValueError(f"{profile}.{gate} has invalid fixture shape")
             fixture_id = check["fixture_id"]
@@ -134,13 +158,31 @@ def load_frozen_stability(
             contract = check["contract"]
             if contract != gate or contract not in observed_contracts:
                 raise ValueError(f"{profile}.{gate} has invalid contract binding")
-            matched = observed_contracts[contract] is True
+            raw = check["raw"]
+            if (
+                not isinstance(raw, Mapping)
+                or set(raw) != {"schema", "samples"}
+                or raw["schema"] != "scorecard-gate-raw-v1"
+                or not isinstance(raw["samples"], list)
+                or not raw["samples"]
+                or any(not isinstance(sample, bool) for sample in raw["samples"])
+            ):
+                raise ValueError(f"{profile}.{gate} has invalid raw evidence")
+            expected = expected_gates[gate]
+            if (
+                not isinstance(expected, Mapping)
+                or set(expected) != {"passed"}
+                or expected["passed"] is not True
+            ):
+                raise ValueError(f"{profile}.{gate} has invalid expected evidence")
+            observed = all(raw["samples"]) and observed_contracts[contract] is True
+            matched = observed == expected["passed"]
             evaluated[profile][gate] = {
                 "status": "pass" if matched else "fail",
                 "reason": (
-                    "independently executed production contract passed"
+                    f"{profile}.{gate} independent raw contract passed"
                     if matched
-                    else "independently executed production contract failed"
+                    else f"{profile}.{gate} independent raw contract failed"
                 ),
                 "evidence": {
                     "schema": "normalized-gate-evidence-v2",
@@ -148,7 +190,7 @@ def load_frozen_stability(
                     "check": {
                         "kind": gate,
                         "passed": matched,
-                        "observation_count": 1,
+                        "observation_count": len(raw["samples"]) + 1,
                     },
                 },
             }

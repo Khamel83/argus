@@ -931,6 +931,21 @@ def test_scorecard_shared_architecture_inventory_is_empty():
     assert find_architecture_exceptions(ROOT) == ()
 
 
+def test_scorecard_architecture_inventory_rejects_direct_route_repository_calls(
+    tmp_path,
+):
+    api = tmp_path / "argus" / "api"
+    api.mkdir(parents=True)
+    (api / "routes_bad.py").write_text(
+        "def route(repository):\n    return repository.list_attempts()\n",
+        encoding="utf-8",
+    )
+
+    assert find_architecture_exceptions(tmp_path) == (
+        "argus/api/routes_bad.py:direct-repository-call",
+    )
+
+
 def test_workflow_modules_cannot_alias_execution_or_persistence_authority():
     workflow_forbidden = {"argus.extraction", "argus.persistence"}
     for path in ROOT.glob("argus/workflows/*.py"):

@@ -1,184 +1,448 @@
 {
-  "schema": "scorecard-stability-bindings-v2",
+  "schema": "scorecard-stability-raw-v3",
   "profiles": {
     "free": {
       "authentication": {
         "fixture_id": "auth-rejected-before-io",
-        "contract": "authentication"
+        "contract": "authentication",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "caller_attribution": {
         "fixture_id": "durable-caller-free",
-        "contract": "caller_attribution"
+        "contract": "caller_attribution",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "surface_equivalence": {
         "fixture_id": "seven-canonical-outcomes-free",
-        "contract": "surface_equivalence"
+        "contract": "surface_equivalence",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "normalized_result_integrity": {
         "fixture_id": "normalized-search-free",
-        "contract": "normalized_result_integrity"
+        "contract": "normalized_result_integrity",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "universal_provenance": {
         "fixture_id": "provenance-free",
-        "contract": "universal_provenance"
+        "contract": "universal_provenance",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "provider_traces": {
         "fixture_id": "provider-traces-free",
-        "contract": "provider_traces"
+        "contract": "provider_traces",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "partial_search": {
         "fixture_id": "partial-search-free",
-        "contract": "partial_search"
+        "contract": "partial_search",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "empty_search": {
         "fixture_id": "empty-search-free",
-        "contract": "empty_search"
+        "contract": "empty_search",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "search_evidence_floor": {
         "fixture_id": "search-floor-free",
-        "contract": "search_evidence_floor"
+        "contract": "search_evidence_floor",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "extraction_success": {
         "fixture_id": "extraction-success-free",
-        "contract": "extraction_success"
+        "contract": "extraction_success",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "degraded_extraction": {
         "fixture_id": "extraction-degraded-free",
-        "contract": "degraded_extraction"
+        "contract": "degraded_extraction",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "extraction_failure": {
         "fixture_id": "extraction-failed-free",
-        "contract": "extraction_failure"
+        "contract": "extraction_failure",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "durable_acceptance": {
         "fixture_id": "durable-acceptance-free",
-        "contract": "durable_acceptance"
+        "contract": "durable_acceptance",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "persistence_isolation": {
         "fixture_id": "persistence-isolation-free",
-        "contract": "persistence_isolation"
+        "contract": "persistence_isolation",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "provider_readiness": {
         "fixture_id": "provider-readiness-free",
-        "contract": "provider_readiness"
+        "contract": "provider_readiness",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "mode_availability": {
         "fixture_id": "mode-availability-free",
-        "contract": "mode_availability"
+        "contract": "mode_availability",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "policy_truth": {
         "fixture_id": "policy-truth-free",
-        "contract": "policy_truth"
+        "contract": "policy_truth",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "cache_eligibility": {
         "fixture_id": "cache-eligibility-free",
-        "contract": "cache_eligibility"
+        "contract": "cache_eligibility",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "cache_isolation": {
         "fixture_id": "cache-isolation-free",
-        "contract": "cache_isolation"
+        "contract": "cache_isolation",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "bounded_completion": {
         "fixture_id": "bounded-completion-free",
-        "contract": "bounded_completion"
+        "contract": "bounded_completion",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "recovery_authority": {
         "fixture_id": "recovery-authority-free",
-        "contract": "recovery_authority"
+        "contract": "recovery_authority",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "evidence_bundle": {
         "fixture_id": "bundle-contract-free",
-        "contract": "evidence_bundle"
+        "contract": "evidence_bundle",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       }
     },
     "budgeted": {
       "authentication": {
         "fixture_id": "auth-rejected-before-io-budgeted",
-        "contract": "authentication"
+        "contract": "authentication",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "caller_attribution": {
         "fixture_id": "durable-caller-budgeted",
-        "contract": "caller_attribution"
+        "contract": "caller_attribution",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "surface_equivalence": {
         "fixture_id": "seven-canonical-outcomes-budgeted",
-        "contract": "surface_equivalence"
+        "contract": "surface_equivalence",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "normalized_result_integrity": {
         "fixture_id": "normalized-search-budgeted",
-        "contract": "normalized_result_integrity"
+        "contract": "normalized_result_integrity",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "universal_provenance": {
         "fixture_id": "provenance-budgeted",
-        "contract": "universal_provenance"
+        "contract": "universal_provenance",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "provider_traces": {
         "fixture_id": "provider-traces-budgeted",
-        "contract": "provider_traces"
+        "contract": "provider_traces",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "partial_search": {
         "fixture_id": "partial-search-budgeted",
-        "contract": "partial_search"
+        "contract": "partial_search",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "empty_search": {
         "fixture_id": "empty-search-budgeted",
-        "contract": "empty_search"
+        "contract": "empty_search",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "search_evidence_floor": {
         "fixture_id": "search-floor-budgeted",
-        "contract": "search_evidence_floor"
+        "contract": "search_evidence_floor",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "extraction_success": {
         "fixture_id": "extraction-success-budgeted",
-        "contract": "extraction_success"
+        "contract": "extraction_success",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "degraded_extraction": {
         "fixture_id": "extraction-degraded-budgeted",
-        "contract": "degraded_extraction"
+        "contract": "degraded_extraction",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "extraction_failure": {
         "fixture_id": "extraction-failed-budgeted",
-        "contract": "extraction_failure"
+        "contract": "extraction_failure",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "durable_acceptance": {
         "fixture_id": "durable-acceptance-budgeted",
-        "contract": "durable_acceptance"
+        "contract": "durable_acceptance",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "persistence_isolation": {
         "fixture_id": "persistence-isolation-budgeted",
-        "contract": "persistence_isolation"
+        "contract": "persistence_isolation",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "provider_readiness": {
         "fixture_id": "provider-readiness-budgeted",
-        "contract": "provider_readiness"
+        "contract": "provider_readiness",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "mode_availability": {
         "fixture_id": "mode-availability-budgeted",
-        "contract": "mode_availability"
+        "contract": "mode_availability",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "policy_truth": {
         "fixture_id": "policy-truth-budgeted",
-        "contract": "policy_truth"
+        "contract": "policy_truth",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "cache_eligibility": {
         "fixture_id": "cache-eligibility-budgeted",
-        "contract": "cache_eligibility"
+        "contract": "cache_eligibility",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "cache_isolation": {
         "fixture_id": "cache-isolation-budgeted",
-        "contract": "cache_isolation"
+        "contract": "cache_isolation",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "bounded_completion": {
         "fixture_id": "bounded-completion-budgeted",
-        "contract": "bounded_completion"
+        "contract": "bounded_completion",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "recovery_authority": {
         "fixture_id": "recovery-authority-budgeted",
-        "contract": "recovery_authority"
+        "contract": "recovery_authority",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       },
       "evidence_bundle": {
         "fixture_id": "bundle-contract-budgeted",
-        "contract": "evidence_bundle"
+        "contract": "evidence_bundle",
+        "raw": {
+          "schema": "scorecard-gate-raw-v1",
+          "samples": [
+            true
+          ]
+        }
       }
     }
   }

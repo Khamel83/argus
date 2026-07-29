@@ -10,10 +10,6 @@ import sys
 
 import pytest
 
-from argus.persistence.provider_spend import (
-    SpendConflictError,
-    create_provider_spend_repository,
-)
 from argus.scorecard.authorization import (
     AuthorizationError,
     validate_authorization_bytes,
@@ -395,6 +391,47 @@ def test_hermetic_runner_fails_for_broken_fixtures_before_live_execution(tmp_pat
     assert not (tmp_path / "broken-bundle").exists()
 
 
+def test_hermetic_gate_mutation_fails_only_that_gate_and_exits_unstable(tmp_path):
+    import shutil
+
+    broken = tmp_path / "fixtures"
+    shutil.copytree(FIXTURES, broken)
+    evidence_path = broken / "stability-evidence.json"
+    evidence = json.loads(evidence_path.read_text())
+    evidence["profiles"]["free"]["authentication"]["raw"]["samples"][0] = False
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run-scorecard.py",
+            "--lane",
+            "hermetic",
+            "--fixtures-root",
+            str(broken),
+            "--output",
+            str(tmp_path / "unstable-bundle"),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "ARGUS_AUTOLOAD_DOTENV": "false"},
+    )
+
+    assert result.returncode == 1, result.stderr
+    gates = json.loads(
+        (tmp_path / "unstable-bundle" / "stability" / "gates.json").read_text()
+    )
+    assert gates["profiles"]["free"]["gates"]["authentication"]["status"] == "fail"
+    assert all(
+        verdict["status"] == "pass"
+        for gate, verdict in gates["profiles"]["free"]["gates"].items()
+        if gate != "authentication"
+    )
+    assert gates["profiles"]["budgeted"]["verdict"] == "stable"
+
+
 def test_ci_runs_only_the_hermetic_lane_and_publishes_its_bundle():
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
 
@@ -408,21 +445,32 @@ def test_live_workflow_is_free_only_on_schedule_and_budgeted_is_receipt_gated():
 
     assert "schedule:" in workflow
     assert "workflow_dispatch:" in workflow
-    assert "canonical_http" in workflow
+    assert "live-config" in workflow
     assert "scheduled-free" in workflow
     assert "budgeted" in workflow
     assert "scorecard-budgeted" in workflow
-    assert workflow.count("scripts/run-live-scorecard.py") == 2
-    assert "/api/admin/scorecard-authorizations/consume" not in workflow
+    assert "scripts/run-live-scorecard.py" not in workflow
+    assert "Authorization" not in workflow
+    assert "secrets." not in workflow
+    assert "BASELINE_TOKEN" not in workflow
+    assert "CANDIDATE_TOKEN" not in workflow
+    assert "curl " not in workflow
+    assert "argus search" not in workflow
+    assert "/api/search" not in workflow
+    assert "/api/extract" not in workflow
+    assert "reserve" not in workflow.lower()
+    assert "consume" not in workflow.lower()
+    assert "deploy" not in workflow.lower()
     assert "actions/cache" not in workflow
     run_blocks = workflow.split("run:")[1:]
     assert all(
         "${{ inputs." not in block.split("\n      -", 1)[0] for block in run_blocks
     )
     assert "diagnostic-only" in workflow
+    assert "Task 16/P1" in workflow
 
 
-def test_budgeted_authorization_receipt_is_exact_digest_bound_and_single_use(tmp_path):
+def test_budgeted_authorization_receipt_is_exact_digest_bound():
     receipt = {
         "schema": "scorecard-budget-authorization-v1",
         "receipt_id": "receipt-001",
@@ -435,34 +483,25 @@ def test_budgeted_authorization_receipt_is_exact_digest_bound_and_single_use(tmp
         "one_time_credit_providers": [],
         "issued_at": "2026-07-29T00:00:00Z",
     }
-    receipt_path = tmp_path / "receipt.json"
     encoded = json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n"
-    receipt_path.write_text(encoded)
     digest = __import__("hashlib").sha256(encoded.encode()).hexdigest()
-    command = [
-        sys.executable,
-        "scripts/validate-scorecard-authorization.py",
-        "--receipt",
-        str(receipt_path),
-        "--expected-sha256",
-        digest,
-        "--run-id",
-        "run-001",
-        "--generation",
-        "a" * 64,
-        "--consumption-dir",
-        str(tmp_path / "consumed"),
-    ]
-
-    first = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
-    reused = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
-
-    assert first.returncode == 0, first.stderr
-    assert reused.returncode != 0
-    assert "already consumed" in reused.stderr
+    validated = validate_authorization_bytes(
+        encoded.encode(),
+        expected_sha256=digest,
+        run_id="run-001",
+        generation="a" * 64,
+    )
+    assert validated["receipt_id"] == "receipt-001"
+    with pytest.raises(AuthorizationError, match="digest"):
+        validate_authorization_bytes(
+            encoded.encode(),
+            expected_sha256="0" * 64,
+            run_id="run-001",
+            generation="a" * 64,
+        )
 
 
-def test_budgeted_authorization_fails_closed_before_consumption(tmp_path):
+def test_budgeted_authorization_fails_closed_on_mismatch():
     receipt = {
         "schema": "scorecard-budget-authorization-v1",
         "receipt_id": "receipt-002",
@@ -475,34 +514,16 @@ def test_budgeted_authorization_fails_closed_before_consumption(tmp_path):
         "one_time_credit_providers": [],
         "issued_at": "2026-07-29T00:00:00Z",
     }
-    receipt_path = tmp_path / "receipt.json"
     encoded = json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n"
-    receipt_path.write_text(encoded)
     digest = __import__("hashlib").sha256(encoded.encode()).hexdigest()
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            "scripts/validate-scorecard-authorization.py",
-            "--receipt",
-            str(receipt_path),
-            "--expected-sha256",
-            digest,
-            "--run-id",
-            "run-002",
-            "--generation",
-            "b" * 64,
-            "--consumption-dir",
-            str(tmp_path / "consumed"),
-        ],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-    )
-
-    assert result.returncode != 0
-    assert "run id" in result.stderr or "one-time" in result.stderr
-    assert not (tmp_path / "consumed").exists()
+    with pytest.raises(AuthorizationError, match="run id|one-time"):
+        validate_authorization_bytes(
+            encoded.encode(),
+            expected_sha256=digest,
+            run_id="run-002",
+            generation="b" * 64,
+        )
 
 
 @pytest.mark.parametrize("hostile", ([["serper"]], [{"provider": "serper"}], [1]))
@@ -531,25 +552,36 @@ def test_budgeted_authorization_rejects_hostile_one_time_provider_lists(hostile)
         )
 
 
-def test_scorecard_authorization_consumption_survives_repository_restart(tmp_path):
-    db_url = f"sqlite:///{tmp_path / 'spend.db'}"
-    first = create_provider_spend_repository(db_url)
-    durable_id = first.consume_scorecard_authorization(
-        receipt_id="receipt-durable",
-        receipt_sha256="a" * 64,
-        run_id="run-durable",
-        generation="b" * 64,
-        actor_identity="admin:test",
-        constraints={"maximum_tier": 1, "call_count_cap": 28},
-    )
-    restarted = create_provider_spend_repository(db_url)
-    with pytest.raises(SpendConflictError, match="already consumed"):
-        restarted.consume_scorecard_authorization(
-            receipt_id="receipt-durable",
-            receipt_sha256="a" * 64,
-            run_id="run-durable",
-            generation="b" * 64,
-            actor_identity="admin:test",
-            constraints={"maximum_tier": 1, "call_count_cap": 28},
+@pytest.mark.parametrize(
+    "hostile",
+    (
+        [["brave"]],
+        [{"provider": "brave"}],
+        [1],
+        ["not-a-provider"],
+        ["brave", "brave"],
+    ),
+)
+def test_budgeted_authorization_rejects_hostile_permitted_provider_lists(hostile):
+    receipt = {
+        "schema": "scorecard-budget-authorization-v1",
+        "receipt_id": "receipt-hostile-permitted",
+        "run_id": "run-hostile",
+        "generation": "a" * 64,
+        "permitted_providers": hostile,
+        "maximum_tier": 1,
+        "call_count_cap": 28,
+        "cost_or_credit_cap": 1,
+        "one_time_credit_providers": [],
+        "issued_at": "2026-07-29T00:00:00Z",
+    }
+    encoded = (
+        json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode()
+    with pytest.raises(AuthorizationError):
+        validate_authorization_bytes(
+            encoded,
+            expected_sha256=__import__("hashlib").sha256(encoded).hexdigest(),
+            run_id="run-hostile",
+            generation="a" * 64,
         )
-    assert durable_id.startswith("provider_spend_audit:")

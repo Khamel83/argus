@@ -352,34 +352,26 @@ and writes a checksummed secret-free diagnostic bundle. All transport is
 stubbed; it has no live network, persistence, spend, deployment, or promotion
 authority.
 
-`scripts/run-live-scorecard.py` is the shared free/budgeted live runner. A live
-competitive run is deliberately outside ordinary CI: it executes all 24
-searches and four live extractions for both baseline and candidate through
-canonical HTTP with baseline and candidate close together under the same
-topology, profile, and provider snapshot. The free profile can be scheduled
-without a billable call. A budgeted run must first present an immutable,
-single-use authorization receipt for the exact run id and generation naming
-permitted providers, maximum tier, call-count cap, and cost/credit cap;
-one-time-credit providers remain disabled unless individually named. Absence,
-reuse, or mismatch fails before reservation. These requirements are a human
-promotion boundary, not an authorization supplied by a scorecard verdict.
+`scripts/run-scorecard.py --lane live-config` emits the secret-free interface
+for a future live run: the exact 28 cases, synchronized identity requirements,
+pinned evaluator requirements, automatic free-only policy, and immutable
+budgeted receipt fields. It does not search, extract, evaluate, reserve,
+consume a receipt, or contact an authority.
 
 The separately defined `.github/workflows/scorecard-live.yml` is the only
-repository workflow for weekly/manual live evidence. Scheduled execution is
-hard-coded to the `free` profile, tier 0, and a zero billable-call cap. Manual
-budgeted preparation runs in the protected `scorecard-budgeted` environment
-validates the exact receipt digest, run id, derived generation, permitted
-providers, maximum tier, call-count cap, cost/credit cap, and individually
-named one-time-credit providers. The canonical authority consumes the receipt
-atomically in its durable SQL audit repository before any provider reservation;
-process restart, cache eviction, or rerun cannot restore authority. Absence,
-mismatch, or reuse exits before reservation. Workflow artifacts and scorecard
-verdicts remain diagnostic-only and cannot deploy or promote a release.
+repository workflow for weekly/manual live configuration publication. It needs
+no authority URL, token, provider credential, evaluator, receipt, or protected
+environment. Task 16/P1 is the only owner of canonical-HTTP live execution,
+both evaluator orders, provider reservation and cap enforcement, receipt
+consumption, and protected promotion/deployment. Task 15 never simulates those
+actions.
 
-The hermetic lane derives gate results from executed raw inputs and compares
-them with a separate expected-observation file, retains normalized evidence for
-every gate and corpus case, and reads the same whole route/presenter inventory
-as the architecture boundary tests. Bundle preparation and verification both
+The hermetic lane executes a distinct frozen raw contract for every hard gate
+and compares it with separate expected evidence. A mutation to one gate cannot
+be fanned across the others. The lane retains normalized evidence for every
+gate and corpus case and reads the same whole route/presenter inventory,
+including direct repository-call detection, as the architecture boundary
+tests. Bundle preparation and verification both
 recompute stability, blinded-pair classification, deterministic counts, exact
 sign-test value, ordered verdict, and stability dependency; serialized claims
 are never treated as authority. It writes to a private sibling staging
