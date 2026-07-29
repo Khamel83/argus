@@ -3,9 +3,12 @@ Argus CLI — command-line interface to the search broker.
 """
 
 import asyncio
+import importlib
 import json
 import os
+import secrets
 import sys
+import time
 
 import click
 
@@ -46,6 +49,149 @@ def _run(coro):
 
 def _emit_json(payload):
     click.echo(json.dumps(payload, indent=2))
+
+
+def _development_symbol(module: str, name: str):
+    """Load a standalone-only implementation outside the production adapter."""
+    if os.environ.get("ARGUS_ENV", "development").strip().lower() == "production":
+        raise click.ClickException(
+            "Production CLI execution is reserved for the HTTP API authority"
+        )
+    return getattr(importlib.import_module(module), name)
+
+
+def _development_module(module: str):
+    """Load a standalone-only module outside the production adapter."""
+    if os.environ.get("ARGUS_ENV", "development").strip().lower() == "production":
+        raise click.ClickException(
+            "Production CLI execution is reserved for the HTTP API authority"
+        )
+    return importlib.import_module(module)
+
+
+def _cli_unready(detail: str):
+    """Return the one bounded v2 shape available before execution starts."""
+    request_id = f"cli-{secrets.token_hex(8)}"
+    return {
+        "contract_version": "2.0",
+        "outcome": "unready",
+        "request_id": request_id,
+        "result": None,
+        "error": {
+            "type": "urn:argus:problem:unready",
+            "title": "Unready",
+            "status": 503,
+            "detail": detail,
+            "instance": f"urn:argus:request:{request_id}",
+            "code": "unready",
+            "retryable": False,
+            "retry_after_seconds": None,
+        },
+    }
+
+
+def _negotiated_http_request(authority, route: str, payload: dict):
+    """Execute exactly one request against the discovered contract family."""
+    try:
+        selection = _run(
+            authority.resolve_http_contract(
+                None,
+                time.monotonic,
+            )
+        )
+    except Exception:
+        return "v2", _cli_unready("Argus HTTP contract discovery is unavailable")
+
+    if selection.outcome != "ready":
+        return "v2", _cli_unready("Argus HTTP contract discovery is unavailable")
+    if selection.contract_version == "2.0" and selection.base_path == "/api/v2":
+        try:
+            return "v2", _run(
+                authority.request_v2(
+                    f"{selection.base_path}{route}",
+                    payload=payload,
+                )
+            )
+        except Exception:
+            return "v2", _cli_unready("Argus HTTP execution authority is unavailable")
+    if selection.contract_version == "1" and selection.base_path == "/api":
+        try:
+            return "v1", _run(
+                authority.request(
+                    "POST",
+                    f"{selection.base_path}{route}",
+                    payload=payload,
+                )
+            )
+        except Exception:
+            return "v2", _cli_unready("Argus HTTP execution authority is unavailable")
+    return "v2", _cli_unready("Argus HTTP contract discovery is unavailable")
+
+
+def _finish_v2(envelope: dict, as_json: bool) -> None:
+    """Write one envelope, then map its canonical outcome to the CLI status."""
+    if as_json:
+        _emit_json(envelope)
+    outcome = envelope.get("outcome")
+    if outcome not in {"success", "degraded", "empty"}:
+        error = envelope.get("error") or {}
+        code = error.get("code") or outcome or "operation_failed"
+        detail = error.get("detail") or code
+        click.echo(f"Argus operation failed ({code}): {detail}", err=True)
+        raise click.exceptions.Exit(1)
+
+
+def _print_v2_search(envelope: dict, query: str, mode: str, as_json: bool) -> None:
+    """Preserve legacy search text while exposing v2 evidence identity."""
+    if as_json:
+        _finish_v2(envelope, as_json=True)
+        return
+    result = envelope.get("result") or {}
+    click.echo(f"Query: {result.get('query', query)}")
+    click.echo(
+        f"Mode: {result.get('mode', mode)} | "
+        f"Results: {result.get('total_results', 0)} | "
+        f"Cached: {result.get('cached', False)}"
+    )
+    click.echo(f"Run ID: {result.get('search_run_id')}")
+    click.echo(f"Outcome: {envelope.get('outcome', 'unready')}")
+    click.echo(f"Request ID: {envelope.get('request_id', 'unknown')}")
+    click.echo("Evidence: " + ("available" if result else "unavailable"))
+    if result.get("session_id"):
+        click.echo(f"Session: {result['session_id']}")
+    click.echo()
+    for index, item in enumerate(result.get("results") or [], 1):
+        provider = f" [{item['provider']}]" if item.get("provider") else ""
+        click.echo(f"  {index}. {item.get('title', '')}{provider}")
+        click.echo(f"     {item.get('url', '')}")
+        if item.get("snippet"):
+            click.echo(f"     {item['snippet'][:120]}")
+        click.echo()
+    _finish_v2(envelope, as_json=False)
+
+
+def _print_v2_extract(envelope: dict, as_json: bool) -> None:
+    """Preserve legacy extraction text while exposing v2 evidence identity."""
+    if as_json:
+        _finish_v2(envelope, as_json=True)
+        return
+    result = envelope.get("result") or {}
+    if result.get("title"):
+        click.echo(f"Title: {result['title']}")
+    if result.get("author"):
+        click.echo(f"Author: {result['author']}")
+    if result.get("date"):
+        click.echo(f"Date: {result['date']}")
+    click.echo(
+        f"Words: {result.get('word_count', 0)} | "
+        f"Extractor: {result.get('extractor') or 'unknown'}"
+    )
+    click.echo(f"Outcome: {envelope.get('outcome', 'unready')}")
+    click.echo(f"Request ID: {envelope.get('request_id', 'unknown')}")
+    click.echo("Evidence: " + ("available" if result else "unavailable"))
+    click.echo()
+    click.echo(result.get("text") or "")
+    _finish_v2(envelope, as_json=False)
 
 
 def _http_authority_client():
@@ -272,7 +418,10 @@ def search(
             request["providers"] = [item.strip() for item in providers.split(",")]
         if session:
             request["session_id"] = session
-        response = _run(authority.search(request))
+        version, response = _negotiated_http_request(authority, "/search", request)
+        if version == "v2":
+            _print_v2_search(response, query, mode, as_json)
+            return
         if as_json:
             output = dict(response)
             output["run_id"] = output.pop("search_run_id", None)
@@ -407,18 +556,19 @@ def extract(url, domain, mode, as_json):
     """Extract clean text content from a URL."""
     authority = _http_authority_client()
     if authority is not None:
-        result = _run(
-            authority.request(
-                "POST",
-                "/api/extract",
-                payload={
-                    "url": url,
-                    "domain": domain,
-                    "mode": mode,
-                    "caller": "cli",
-                },
-            )
+        version, result = _negotiated_http_request(
+            authority,
+            "/extract",
+            {
+                "url": url,
+                "domain": domain,
+                "mode": mode,
+                "caller": "cli",
+            },
         )
+        if version == "v2":
+            _print_v2_extract(result, as_json)
+            return
         if result.get("error"):
             raise click.ClickException("Extraction failed")
         if as_json:
@@ -438,7 +588,7 @@ def extract(url, domain, mode, as_json):
         click.echo(result.get("text") or "")
         return
 
-    from argus.extraction import extract_url
+    extract_url = _development_symbol("argus.extraction", "extract_url")
 
     result = _run(extract_url(url, domain=domain, mode=mode, caller="cli"))
 
@@ -516,17 +666,30 @@ def recover_url(url, title, domain, as_json):
     """Recover a dead or moved URL."""
     authority = _http_authority_client()
     if authority is not None:
-        response = _run(
-            authority.request(
-                "POST",
-                "/api/recover-url",
-                payload={
-                    "url": url,
-                    "title": title,
-                    "domain": domain,
-                },
-            )
+        version, response = _negotiated_http_request(
+            authority,
+            "/recover-url",
+            {
+                "url": url,
+                "title": title,
+                "domain": domain,
+            },
         )
+        if version == "v2":
+            if as_json:
+                _finish_v2(response, as_json=True)
+                return
+            result = response.get("result") or {}
+            click.echo(f"Recovery for: {url}")
+            click.echo(f"Results: {result.get('total_results', 0)}")
+            click.echo(f"Outcome: {response.get('outcome', 'unready')}")
+            click.echo(f"Request ID: {response.get('request_id', 'unknown')}")
+            click.echo("Evidence: " + ("available" if result else "unavailable"))
+            for index, item in enumerate(result.get("results") or [], 1):
+                click.echo(f"  {index}. {item.get('title', '')}")
+                click.echo(f"     {item.get('url', '')}")
+            _finish_v2(response, as_json=False)
+            return
         if as_json:
             _emit_json(
                 {
@@ -831,12 +994,15 @@ def test_provider(
         user_visible=False,
     )
     authorization = ProbeAuthorization(
-        workflow="explicit_validation", provider=pname,
+        workflow="explicit_validation",
+        provider=pname,
         named_quota="free_provider_request" if PROVIDER_TIERS[pname] == 0 else None,
-        idempotency_key=idempotency_key, durable_receipt=durable_receipt,
+        idempotency_key=idempotency_key,
+        durable_receipt=durable_receipt,
         conservative_charge=(
             conservative_charge_estimate(pname, q)
-            if PROVIDER_TIERS[pname] > 0 else None
+            if PROVIDER_TIERS[pname] > 0
+            else None
         ),
     )
     kind = "no_money_quota" if PROVIDER_TIERS[pname] == 0 else "billable_search"
@@ -851,9 +1017,11 @@ def test_provider(
         caller="local-cli",
         user_visible=False,
         metadata={
-            "caller_label": "cli-smoke", "probe_receipt": durable_receipt,
+            "caller_label": "cli-smoke",
+            "probe_receipt": durable_receipt,
             "probe_idempotency_key": idempotency_key,
-            "probe_provider": pname.value, "probe_no_fallback": True,
+            "probe_provider": pname.value,
+            "probe_no_fallback": True,
             "probe_attempt_id": decision.attempt_id,
         },
     )
@@ -886,9 +1054,7 @@ def doctor(as_json):
             f"version={build.get('version', 'unknown')} "
             f"revision={build.get('source_revision', 'unknown')}"
         )
-        for name, observation in sorted(
-            (status.get("dependencies") or {}).items()
-        ):
+        for name, observation in sorted((status.get("dependencies") or {}).items()):
             reason = observation.get("reason")
             click.echo(
                 f"  {name:15s} {observation.get('state', 'unknown')}"
@@ -897,9 +1063,7 @@ def doctor(as_json):
         for provider, provider_status in sorted(
             (status.get("providers") or {}).items()
         ):
-            click.echo(
-                f"  {provider:15s} {provider_status.get('state', 'unknown')}"
-            )
+            click.echo(f"  {provider:15s} {provider_status.get('state', 'unknown')}")
             for failure in nested_status_failures(provider_status):
                 click.echo(f"    - {failure}")
         return
@@ -953,7 +1117,9 @@ def doctor(as_json):
 
     # 4. DuckDuckGo probe
     try:
-        from argus.providers.duckduckgo import DuckDuckGoProvider
+        DuckDuckGoProvider = _development_symbol(
+            "argus.providers.duckduckgo", "DuckDuckGoProvider"
+        )
 
         DuckDuckGoProvider(cfg.duckduckgo)
         checks.append(
@@ -1549,10 +1715,15 @@ def reconcile_legacy(source, target, apply, as_json):
     from pathlib import Path
 
     from argus.config import get_config
-    from argus.persistence.reconcile import reconcile_legacy_state
-    from argus.persistence.search_ledger import (
-        create_read_only_search_ledger_repository,
-        create_search_ledger_repository,
+
+    reconcile_legacy_state = _development_symbol(
+        "argus.persistence.reconcile", "reconcile_legacy_state"
+    )
+    create_read_only_search_ledger_repository = _development_symbol(
+        "argus.persistence.search_ledger", "create_read_only_search_ledger_repository"
+    )
+    create_search_ledger_repository = _development_symbol(
+        "argus.persistence.search_ledger", "create_search_ledger_repository"
     )
 
     target_url = target or get_config().db_url
@@ -1599,10 +1770,15 @@ def reconcile_sessions(source, target, apply, as_json):
     from pathlib import Path
 
     from argus.config import get_config
-    from argus.persistence.reconcile import reconcile_legacy_sessions
-    from argus.persistence.search_ledger import (
-        create_read_only_search_ledger_repository,
-        create_search_ledger_repository,
+
+    reconcile_legacy_sessions = _development_symbol(
+        "argus.persistence.reconcile", "reconcile_legacy_sessions"
+    )
+    create_read_only_search_ledger_repository = _development_symbol(
+        "argus.persistence.search_ledger", "create_read_only_search_ledger_repository"
+    )
+    create_search_ledger_repository = _development_symbol(
+        "argus.persistence.search_ledger", "create_search_ledger_repository"
     )
 
     target_url = target or get_config().db_url
@@ -1692,12 +1868,12 @@ def cookies_import(domain, filepath):
     Domain is auto-detected from cookie data. Override with -d if needed.
     """
     from pathlib import Path
-    from argus.extraction.cookies import (
-        COOKIE_DIR,
-        load_editthiscookie_json,
-        _load_health,
-        _save_health,
-    )
+
+    cookies_module = _development_module("argus.extraction.cookies")
+    COOKIE_DIR = cookies_module.COOKIE_DIR
+    load_editthiscookie_json = cookies_module.load_editthiscookie_json
+    _load_health = cookies_module._load_health
+    _save_health = cookies_module._save_health
 
     cookie_dir = COOKIE_DIR
     inbox_dir = cookie_dir / "inbox"
@@ -1803,7 +1979,9 @@ def cookies_import(domain, filepath):
 @cookies.command(name="health")
 def cookies_health():
     """Show health status of all cookie domains."""
-    from argus.extraction.cookies import get_health_summary, COOKIE_DIR
+    cookies_module = _development_module("argus.extraction.cookies")
+    get_health_summary = cookies_module.get_health_summary
+    COOKIE_DIR = cookies_module.COOKIE_DIR
 
     summary = get_health_summary()
 

@@ -28,9 +28,7 @@ def _configure_authority_projections(broker):
         )
         return {
             "provider": provider.value,
-            "registration": (
-                "not_registered" if state == "disabled" else "registered"
-            ),
+            "registration": ("not_registered" if state == "disabled" else "registered"),
             "configuration": {
                 "configured": state != "disabled",
                 "issues": [] if state != "disabled" else ["disabled_by_config"],
@@ -892,34 +890,51 @@ def test_production_cli_search_uses_http_without_constructing_broker(
         monkeypatch.setenv(name, value)
     observed = {}
 
-    async def search(client, payload, *, token=None):
+    from argus.mcp.capabilities import ContractSelection
+
+    async def resolve_http_contract(client, deployment_id, clock, *, refresh=False):
+        del client, deployment_id, clock, refresh
+        return ContractSelection("2.0", "/api/v2", "ready")
+
+    async def request_v2(client, path, *, payload, token=None):
         del client
+        observed["path"] = path
         observed["payload"] = payload
         observed["token"] = token
         return {
-            "query": "cli authority",
-            "mode": "discovery",
-            "results": [
-                {
-                    "url": "https://example.com/cli",
-                    "title": "CLI result",
-                    "snippet": "HTTP only",
-                    "provider": "duckduckgo",
-                    "score": 1.0,
-                    "score_attribution": {},
-                    "egress": "residential",
-                    "machine": "homelab",
-                }
-            ],
-            "traces": [],
-            "total_results": 1,
-            "cached": False,
-            "search_run_id": "cli-http-run",
+            "contract_version": "2.0",
+            "outcome": "success",
+            "request_id": "cli-http-request",
+            "result": {
+                "query": "cli authority",
+                "mode": "discovery",
+                "results": [
+                    {
+                        "url": "https://example.com/cli",
+                        "title": "CLI result",
+                        "snippet": "HTTP only",
+                        "provider": "duckduckgo",
+                        "score": 1.0,
+                        "score_attribution": {},
+                        "egress": "residential",
+                        "machine": "homelab",
+                    }
+                ],
+                "traces": [],
+                "total_results": 1,
+                "cached": False,
+                "search_run_id": "cli-http-run",
+            },
+            "error": None,
         }
 
     monkeypatch.setattr(
-        "argus.authority.HttpAuthorityClient.search",
-        search,
+        "argus.authority.HttpAuthorityClient.resolve_http_contract",
+        resolve_http_contract,
+    )
+    monkeypatch.setattr(
+        "argus.authority.HttpAuthorityClient.request_v2",
+        request_v2,
     )
     monkeypatch.setattr(
         "argus.broker.router.create_broker",
@@ -936,6 +951,7 @@ def test_production_cli_search_uses_http_without_constructing_broker(
     assert result.exit_code == 0, result.output
     assert "https://example.com/cli" in result.output
     assert observed == {
+        "path": "/api/v2/search",
         "payload": {
             "query": "cli authority",
             "mode": "discovery",
@@ -959,6 +975,12 @@ def test_production_cli_core_commands_all_use_http_authority(monkeypatch):
     for name, value in _production_adapter_environment().items():
         monkeypatch.setenv(name, value)
     observed = []
+
+    from argus.mcp.capabilities import ContractSelection
+
+    async def resolve_http_contract(client, deployment_id, clock, *, refresh=False):
+        del client, deployment_id, clock, refresh
+        return ContractSelection("1", "/api", "ready")
 
     async def request(client, method, path, *, payload=None, token=None):
         del client, token
@@ -1003,6 +1025,10 @@ def test_production_cli_core_commands_all_use_http_authority(monkeypatch):
     monkeypatch.setattr(
         "argus.authority.HttpAuthorityClient.request",
         request,
+    )
+    monkeypatch.setattr(
+        "argus.authority.HttpAuthorityClient.resolve_http_contract",
+        resolve_http_contract,
     )
     monkeypatch.setattr(
         "argus.broker.router.create_broker",
