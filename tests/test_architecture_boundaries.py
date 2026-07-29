@@ -59,6 +59,7 @@ MCP_FORBIDDEN_PREFIXES = (
     "argus.development_mcp_",
 )
 CLI_MAIN = ROOT / "argus/cli/main.py"
+CLI_STANDALONE = ROOT / "argus/standalone_cli.py"
 CLI_FORBIDDEN_PREFIXES = (
     "argus.broker",
     "argus.extraction",
@@ -129,8 +130,15 @@ def _cli_boundary_violations(path: Path) -> set[str]:
         if alias.name == "importlib"
     }
     violations = {
-        module for module in _imports(path) if module.startswith(CLI_FORBIDDEN_PREFIXES)
+        module
+        for module in _imports(path, package="argus.cli")
+        if module.startswith(CLI_FORBIDDEN_PREFIXES)
     }
+    violations.update(
+        violation
+        for violation in _LexicalBoundaryVisitor(package="argus.cli").inspect(tree)
+        if violation in {"dynamic-import", "wildcard-import"}
+    )
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             if node.value.startswith(CLI_FORBIDDEN_PREFIXES):
@@ -916,6 +924,29 @@ def test_transport_adapter_inventory_has_only_closed_legacy_exceptions():
 
 def test_production_cli_has_no_direct_or_dynamic_execution_authority():
     assert not _cli_boundary_violations(CLI_MAIN)
+
+
+def test_cli_models_one_explicit_standalone_dispatch_seam():
+    assert "argus.standalone_cli" in _imports(CLI_MAIN)
+    standalone_imports = _imports(CLI_STANDALONE)
+    assert any(module.startswith("argus.broker") for module in standalone_imports)
+    assert any(module.startswith("argus.extraction") for module in standalone_imports)
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        "from argus.broker.router import create_broker as build\nbuild()\n",
+        "from importlib import import_module as load\nload(variable)\n",
+        "import importlib as loader\nloader.import_module('argus.broker.router')\n",
+        "module = 'argus.extraction'\n__import__(module)\n",
+    ),
+)
+def test_cli_boundary_rejects_direct_aliased_and_dynamic_authority(tmp_path, source):
+    module = tmp_path / "cli_bypass.py"
+    module.write_text(source, encoding="utf-8")
+
+    assert _cli_boundary_violations(module)
 
 
 def test_contract_kernel_does_not_import_the_throwaway_prototype():

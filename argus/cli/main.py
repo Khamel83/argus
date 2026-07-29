@@ -394,7 +394,21 @@ def search(
       grounding   Fact-checking and finding authoritative sources
       research    Deep multi-provider search for research tasks
     """
-    authority = _require_http_authority()
+    authority = _http_authority_client()
+    if authority is None:
+        from argus import standalone_cli
+
+        return standalone_cli.search(
+            query=query,
+            mode=mode,
+            max_results=max_results,
+            providers=providers,
+            as_json=as_json,
+            session=session,
+            attribution=attribution,
+            free_only=free_only,
+            caller=caller,
+        )
     request = {
         "query": query,
         "mode": mode,
@@ -450,7 +464,16 @@ def search(
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def extract(url, domain, mode, as_json):
     """Extract clean text content from a URL."""
-    authority = _require_http_authority()
+    authority = _http_authority_client()
+    if authority is None:
+        from argus import standalone_cli
+
+        return standalone_cli.extract(
+            url=url,
+            domain=domain,
+            mode=mode,
+            as_json=as_json,
+        )
     version, result = _negotiated_http_request(
         authority,
         "/extract",
@@ -513,7 +536,16 @@ def recover_article(url, title, domain, as_json):
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def recover_url(url, title, domain, as_json):
     """Recover a dead or moved URL."""
-    authority = _require_http_authority()
+    authority = _http_authority_client()
+    if authority is None:
+        from argus import standalone_cli
+
+        return standalone_cli.recover_url(
+            url=url,
+            title=title,
+            domain=domain,
+            as_json=as_json,
+        )
     version, response = _negotiated_http_request(
         authority,
         "/recover-url",
@@ -624,10 +656,11 @@ def budgets():
 
 @cli.command("check-balances")
 def check_balances():
-    """Balance probing is reserved for the HTTP execution authority."""
-    raise click.ClickException(
-        "Use the HTTP authority administration API for balance probes"
-    )
+    """Probe balances through the standalone compatibility boundary."""
+    from argus import standalone_cli
+
+    standalone_cli.require_nonproduction()
+    return standalone_cli.check_balances()
 
 
 @cli.command()
@@ -636,9 +669,11 @@ def check_balances():
     "--balance", "-b", required=True, type=float, help="Current token balance"
 )
 def set_balance(service, balance):
-    """Balance mutation is reserved for the HTTP execution authority."""
-    del service, balance
-    raise click.ClickException("Use the HTTP authority administration API for balances")
+    """Set a standalone extraction-service token balance."""
+    from argus import standalone_cli
+
+    standalone_cli.require_nonproduction()
+    return standalone_cli.set_balance(service=service, balance=balance)
 
 
 @cli.command()
@@ -651,9 +686,18 @@ def set_balance(service, balance):
 def test_provider(
     provider, query, live, idempotency_key, durable_receipt, spend_reserved
 ):
-    """Provider probing is reserved for the HTTP execution authority."""
-    del provider, query, live, idempotency_key, durable_receipt, spend_reserved
-    raise click.ClickException("Use the HTTP authority administration API for probes")
+    """Smoke-test a provider through the standalone compatibility boundary."""
+    from argus import standalone_cli
+
+    standalone_cli.require_nonproduction()
+    return standalone_cli.test_provider(
+        provider=provider,
+        query=query,
+        live=live,
+        idempotency_key=idempotency_key,
+        durable_receipt=durable_receipt,
+        spend_reserved=spend_reserved,
+    )
 
 
 @cli.command()
@@ -759,7 +803,17 @@ def mcp():
 )
 def mcp_serve(transport, host, port):
     """Start MCP server. Use stdio for Claude/Cursor, sse or streamable-http for remote access."""
+    from argus.authority import adapter_execution_mode
+
     try:
+        if adapter_execution_mode() == "standalone":
+            from argus import standalone_cli
+
+            return standalone_cli.serve_mcp(
+                transport=transport,
+                host=host,
+                port=port,
+            )
         from argus.mcp.server import serve_mcp
     except ImportError:
         raise SystemExit(
@@ -1222,6 +1276,8 @@ def reconcile_legacy(source, target, apply, as_json):
     click.echo("Legacy search reconciliation:")
     for key in ("source", "imported", "skipped", "conflicting"):
         click.echo(f"  {key}: {report[key]}")
+    if not apply:
+        click.echo("Dry run only; no target mutation was performed.")
 
 
 @ledger.command(name="reconcile-sessions")
@@ -1248,6 +1304,8 @@ def reconcile_sessions(source, target, apply, as_json):
     click.echo("Legacy session reconciliation:")
     for key in ("source", "imported", "skipped", "conflicting"):
         click.echo(f"  {key}: {report[key]}")
+    if not apply:
+        click.echo("Dry run only; no target mutation was performed.")
 
 
 @corpus.command(name="import-docs-cache")
@@ -1261,16 +1319,23 @@ def reconcile_sessions(source, target, apply, as_json):
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def import_docs_cache(source, as_json):
     """Import a legacy docs-cache tree into Argus-owned storage."""
-    del source, as_json
-    raise click.ClickException("Use the HTTP authority import workflow")
+    from argus import standalone_cli
+
+    standalone_cli.require_nonproduction()
+    return standalone_cli.import_docs_cache(source=source, as_json=as_json)
 
 
 @cli.group()
 def cookies():
     """Manage browser cookies for authenticated extraction."""
-    raise click.ClickException(
-        "Cookie operations are reserved for the HTTP API execution authority"
-    )
+    if os.environ.get("ARGUS_ENV", "development").strip().lower() == "production":
+        raise click.ClickException(
+            "Production cookie operations are reserved for the "
+            "HTTP API execution authority"
+        )
+    from argus import standalone_cli
+
+    standalone_cli.require_nonproduction()
 
 
 @cookies.command(name="import")
@@ -1289,16 +1354,15 @@ def cookies():
     help="EditThisCookie JSON file. If omitted, imports all from inbox.",
 )
 def cookies_import(domain, filepath):
-    """Cookie import is reserved for the HTTP execution authority."""
-    del domain, filepath
-    raise click.ClickException(
-        "Cookie operations are reserved for the HTTP API authority"
-    )
+    """Import cookies through the standalone compatibility boundary."""
+    from argus import standalone_cli
+
+    return standalone_cli.cookies_import(domain=domain, filepath=filepath)
 
 
 @cookies.command(name="health")
 def cookies_health():
-    """Show health status of all cookie domains."""
-    raise click.ClickException(
-        "Cookie operations are reserved for the HTTP API authority"
-    )
+    """Show standalone cookie-domain health."""
+    from argus import standalone_cli
+
+    return standalone_cli.cookies_health()

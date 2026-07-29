@@ -39,11 +39,14 @@ def test_extract_cli_passes_archive_ingest_mode(monkeypatch):
         ["extract", "-u", "https://example.com", "--mode", "archive_ingest", "--json"],
     )
 
-    assert result.exit_code == 1
-    assert result.output == (
-        "Error: CLI retrieval requires ARGUS_AUTHORITY_URL and authority authentication\n"
-    )
-    assert seen == {}
+    assert result.exit_code == 0
+    assert seen == {
+        "url": "https://example.com",
+        "domain": None,
+        "mode": "archive_ingest",
+        "caller": "cli",
+    }
+    assert '"mode": "archive_ingest"' in result.output
 
 
 def test_mcp_init_writes_opencode_native_local_config(tmp_path, monkeypatch):
@@ -158,8 +161,8 @@ def test_search_free_flag_sets_free_only_on_query(monkeypatch):
         ["search", "-q", "hello world", "--free"],
     )
 
-    assert result.exit_code == 1
-    assert seen == {}
+    assert result.exit_code == 0, result.output
+    assert seen.get("free_only") is True
 
 
 def test_search_without_free_flag_leaves_free_only_false(monkeypatch):
@@ -184,8 +187,8 @@ def test_search_without_free_flag_leaves_free_only_false(monkeypatch):
         ["search", "-q", "hello world"],
     )
 
-    assert result.exit_code == 1
-    assert seen == {}
+    assert result.exit_code == 0, result.output
+    assert seen.get("free_only") is False
 
 
 def test_search_caller_flag_sets_caller_on_query(monkeypatch):
@@ -210,8 +213,8 @@ def test_search_caller_flag_sets_caller_on_query(monkeypatch):
         ["search", "-q", "test", "--caller", "my_project"],
     )
 
-    assert result.exit_code == 1
-    assert seen == {}
+    assert result.exit_code == 0, result.output
+    assert seen.get("caller") == "my_project"
 
 
 def test_search_caller_defaults_to_cli(monkeypatch):
@@ -236,12 +239,13 @@ def test_search_caller_defaults_to_cli(monkeypatch):
         ["search", "-q", "test"],
     )
 
-    assert result.exit_code == 1
-    assert seen == {}
+    assert result.exit_code == 0, result.output
+    assert seen.get("caller") == "cli"
 
 
 def test_provider_smoke_cli_marks_query_operational_only(monkeypatch):
     from argus.cli import main as cli_main
+    from argus.models import ProviderName
     from unittest.mock import MagicMock
 
     seen = {}
@@ -264,8 +268,6 @@ def test_provider_smoke_cli_marks_query_operational_only(monkeypatch):
         ["test-provider", "--provider", "duckduckgo"],
     )
 
-    assert result.exit_code == 1
-    assert (
-        result.output == "Error: Use the HTTP authority administration API for probes\n"
-    )
-    assert seen == {}
+    assert result.exit_code == 0, result.output
+    assert seen["provider"] == ProviderName.DUCKDUCKGO
+    assert "Fixture: verified" in result.output

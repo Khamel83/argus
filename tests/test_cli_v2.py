@@ -139,17 +139,6 @@ def test_search_uses_v1_only_after_legacy_discovery(monkeypatch):
     assert "Query: legacy" in result.stdout
 
 
-def test_search_does_not_execute_after_unready_discovery(monkeypatch):
-    authority = _Authority(_Selection(None, None, "unready"), _envelope())
-
-    result = _invoke(monkeypatch, authority, ["search", "-q", "never", "--json"])
-
-    assert result.exit_code == 1
-    assert json.loads(result.stdout)["outcome"] == "unready"
-    assert "contract discovery is unavailable" in result.stderr
-    assert [kind for kind, _ in authority.calls] == ["discover"]
-
-
 @pytest.mark.parametrize("outcome", ["success", "degraded", "empty"])
 def test_v2_accepted_outcomes_exit_zero(monkeypatch, outcome):
     authority = _Authority(
@@ -332,6 +321,19 @@ _RETRIEVAL_CASES = (
         "/api/recover-url",
     ),
 )
+_CANONICAL_OUTCOMES = (
+    "success",
+    "degraded",
+    "empty",
+    "invalid_request",
+    "authentication_rejected",
+    "policy_rejected",
+    "timeout",
+    "persistence_failed",
+    "providers_failed",
+    "extraction_failed",
+    "unready",
+)
 
 
 def _capabilities(*, v2: bool) -> dict[str, object]:
@@ -450,19 +452,7 @@ def _expected_human(command: str, envelope: dict[str, object]) -> str:
 )
 @pytest.mark.parametrize(
     "outcome",
-    [
-        "success",
-        "degraded",
-        "empty",
-        "invalid_request",
-        "authentication_rejected",
-        "policy_rejected",
-        "timeout",
-        "persistence_failed",
-        "providers_failed",
-        "extraction_failed",
-        "unready",
-    ],
+    _CANONICAL_OUTCOMES,
 )
 def test_real_discovery_v2_has_exact_json_and_one_selected_post(
     monkeypatch, command, arguments, v2_path, _v1_path, outcome
@@ -518,6 +508,46 @@ def test_real_legacy_discovery_preserves_frozen_json(
     assert requests == [("GET", "/api/capabilities"), ("POST", v1_path)]
 
 
+@pytest.mark.parametrize(
+    ("command", "arguments", "_v2_path", "v1_path"), _RETRIEVAL_CASES
+)
+def test_real_legacy_discovery_preserves_frozen_human_output(
+    monkeypatch, command, arguments, _v2_path, v1_path
+):
+    legacy = _route_result(command)
+
+    def handler(request):
+        if request.url.path == "/api/capabilities":
+            return httpx.Response(200, json=_capabilities(v2=False))
+        assert request.url.path == v1_path
+        return httpx.Response(200, json=legacy)
+
+    result = _invoke_real_http(monkeypatch, arguments, handler)
+
+    expected = {
+        "search": (
+            "Query: negotiated query\n"
+            "Mode: discovery | Results: 1 | Cached: False\n"
+            "Run ID: None\n\n"
+            "  1. Canonical result\n"
+            "     https://example.com/result\n"
+            "     evidence\n\n"
+        ),
+        "extract": (
+            "Title: Article\nWords: 2 | Extractor: trafilatura\n\nEvidence text\n"
+        ),
+        "recover-url": (
+            "Recovery for: https://example.com/gone\n"
+            "Results: 1\n"
+            "  1. Recovered\n"
+            "     https://archive.example\n"
+        ),
+    }[command]
+    assert result.exit_code == 0
+    assert result.stdout == expected
+    assert result.stderr == ""
+
+
 @pytest.mark.parametrize("capability_body", [b"{", b"[]"])
 def test_real_malformed_discovery_never_posts(monkeypatch, capability_body):
     requests = []
@@ -556,6 +586,27 @@ def test_real_malformed_discovery_never_posts(monkeypatch, capability_body):
     assert requests == [("GET", "/api/capabilities")]
 
 
+def test_real_unavailable_discovery_never_posts(monkeypatch):
+    requests = []
+    monkeypatch.setattr("argus.cli.main.secrets.token_hex", lambda _n: "deadbeef")
+
+    def handler(request):
+        requests.append((request.method, request.url.path))
+        raise httpx.ConnectError("unavailable", request=request)
+
+    result = _invoke_real_http(
+        monkeypatch, ["search", "-q", "blocked", "--json"], handler
+    )
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["outcome"] == "unready"
+    assert (
+        result.stderr
+        == "Argus operation failed (unready): Argus HTTP contract discovery is unavailable\n"
+    )
+    assert requests == [("GET", "/api/capabilities")]
+
+
 def test_real_v2_execution_exception_never_retries_v1(monkeypatch):
     requests = []
     monkeypatch.setattr("argus.cli.main.secrets.token_hex", lambda _n: "deadbeef")
@@ -574,6 +625,57 @@ def test_real_v2_execution_exception_never_retries_v1(monkeypatch):
         == "Argus operation failed (unready): Argus HTTP execution authority is unavailable\n"
     )
     assert requests == [("GET", "/api/capabilities"), ("POST", "/api/v2/search")]
+
+
+def test_cli_passes_no_deployment_id_and_discovers_on_each_invocation(monkeypatch):
+    import argus.authority as authority_module
+
+    deployment_ids = []
+    requests = []
+    original = authority_module.HttpAuthorityClient.resolve_http_contract
+
+    async def observed(self, deployment_id, clock, *, refresh=False):
+        deployment_ids.append(deployment_id)
+        return await original(
+            self,
+            deployment_id,
+            clock,
+            refresh=refresh,
+        )
+
+    monkeypatch.setattr(
+        authority_module.HttpAuthorityClient,
+        "resolve_http_contract",
+        observed,
+    )
+
+    def handler(request):
+        requests.append((request.method, request.url.path))
+        if request.url.path == "/api/capabilities":
+            return httpx.Response(200, json=_capabilities(v2=True))
+        return httpx.Response(200, json=_actual_envelope("search", "success"))
+
+    real = authority_module.HttpAuthorityClient(
+        authority_module.AuthorityClientConfig("https://authority.example", "token"),
+        transport=httpx.MockTransport(handler),
+    )
+    monkeypatch.setenv("ARGUS_ENV", "development")
+    monkeypatch.setenv("ARGUS_AUTHORITY_URL", "https://authority.example")
+    monkeypatch.setenv("ARGUS_AUTHORITY_TOKEN", "token")
+    monkeypatch.setattr(authority_module, "HttpAuthorityClient", lambda _config: real)
+    from argus.cli.main import cli
+
+    for _ in range(2):
+        result = CliRunner().invoke(cli, ["search", "-q", "uncached", "--json"])
+        assert result.exit_code == 0
+
+    assert deployment_ids == [None, None]
+    assert requests == [
+        ("GET", "/api/capabilities"),
+        ("POST", "/api/v2/search"),
+        ("GET", "/api/capabilities"),
+        ("POST", "/api/v2/search"),
+    ]
 
 
 @pytest.mark.parametrize("offset", [-1, 0, 1])
@@ -605,7 +707,10 @@ def test_actual_cli_enforces_the_11_mib_response_bound(monkeypatch, offset):
         assert result.stderr == ""
     else:
         assert result.exit_code == 1
-        assert result.stdout.count("\n") > 1
+        decoded = json.loads(result.stdout)
+        assert decoded["contract_version"] == "2.0"
+        assert decoded["outcome"] == "unready"
+        assert result.stdout == json.dumps(decoded, indent=2) + "\n"
         assert (
             result.stderr
             == "Argus operation failed (unready): Argus HTTP execution authority is unavailable\n"
@@ -615,9 +720,7 @@ def test_actual_cli_enforces_the_11_mib_response_bound(monkeypatch, offset):
 @pytest.mark.parametrize(
     ("command", "arguments", "_v2_path", "_v1_path"), _RETRIEVAL_CASES
 )
-@pytest.mark.parametrize(
-    "outcome", ["success", "degraded", "empty", "providers_failed"]
-)
+@pytest.mark.parametrize("outcome", _CANONICAL_OUTCOMES)
 def test_human_v2_output_is_exact_for_retrieval_commands(
     monkeypatch, command, arguments, _v2_path, _v1_path, outcome
 ):
@@ -637,3 +740,9 @@ def test_human_v2_output_is_exact_for_retrieval_commands(
         if outcome in {"success", "degraded", "empty"}
         else f"Argus operation failed ({outcome}): Safe failure\n"
     )
+
+
+def test_cli_exposes_no_expand_links_command():
+    from argus.cli.main import cli
+
+    assert "expand-links" not in cli.commands

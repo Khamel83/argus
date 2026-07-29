@@ -21,7 +21,7 @@ from argus.persistence.search_ledger import (
 def _repository(target: str | None, apply: bool):
     target_url = target or get_config().db_url
     if not apply and target_url.startswith("sqlite:///"):
-        target_path = Path(target_url.removeprefix("sqlite:///"))
+        target_path = Path(target_url.removeprefix("sqlite:///")).expanduser()
         if target_path.exists():
             return create_read_only_search_ledger_repository(target_url)
         return create_search_ledger_repository("sqlite:///:memory:", create_schema=True)
@@ -32,9 +32,10 @@ def _repository(target: str | None, apply: bool):
 
 
 def _require_nonproduction() -> None:
-    if os.environ.get("ARGUS_ENV", "development").strip().lower() == "production":
+    environment = os.environ.get("ARGUS_ENV", "").strip().lower()
+    if environment not in {"development", "test", "local"}:
         raise click.ClickException(
-            "Production ledger migration belongs to the HTTP authority"
+            "Local ledger migration requires ARGUS_ENV=development, test, or local"
         )
     if os.environ.get("ARGUS_LEGACY_CLI_MIGRATIONS", "").strip().lower() not in {
         "1",

@@ -735,6 +735,7 @@ def test_legacy_session_reconciliation_cli_dry_run_does_not_create_target(
     from argus.cli.main import cli
 
     monkeypatch.setenv("ARGUS_LEGACY_CLI_MIGRATIONS", "true")
+    monkeypatch.setenv("ARGUS_ENV", "test")
 
     source = tmp_path / "legacy-cli-sessions.db"
     target = tmp_path / "target-cli-sessions.db"
