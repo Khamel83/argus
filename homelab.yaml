@@ -4,14 +4,14 @@ project:
   name: Argus
   repository: https://github.com/Khamel83/argus
   kind: service
-  lifecycle: development
+  lifecycle: production
   owner: homelab
 monitoring:
-  state: standby
+  state: active
 runtime:
   production:
     host: homelab
-    managed_by: unknown
+    managed_by: docker
     unit: argus
     sync_mode: homelab-native
 health:
@@ -35,4 +35,4 @@ operations:
   repair_ids: []
 docs:
   index: README.md
-  operations: docs/OPERATIONS.md
+  operations: docs/operations.md

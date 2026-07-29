@@ -2,6 +2,8 @@
 
 If you can't find your issue here, run `argus doctor` and include its output
 when opening a [bug report](https://github.com/Khamel83/argus/issues/new?template=bug_report.yml).
+Production operators should start with the
+[canonical production operations guide](operations.md).
 
 ## Installation
 
@@ -86,8 +88,10 @@ truncation pattern — please open an extraction-failure issue with the URL.
 **SearXNG container won't start.**
 Check the container logs (`docker compose logs argus`). SearXNG needs 512MB
 of free RAM and a writable volume. Make sure
-`ARGUS_SEARXNG_BASE_URL=http://127.0.0.1:8080` matches the port your container
-exposes.
+For standalone Compose,
+`ARGUS_SEARXNG_BASE_URL=http://127.0.0.1:8080` must match its loopback port.
+Production uses Docker-internal `http://searxng:8080`; it is not a LAN/public
+listener.
 
 **SearXNG is healthy but Argus isn't using it.**
 SearXNG is disabled by default. Set `ARGUS_SEARXNG_ENABLED=true` in `.env` and

@@ -269,7 +269,8 @@ curl -X POST -H "Authorization: Bearer $ARGUS_ADMIN_API_KEY" \
 `/api/health` remains a 200 liveness compatibility route. It intentionally
 does not check PostgreSQL, providers, Maya, or the browser, so a dependency
 outage cannot cause container restart storms. See
-[Operational status](docs/operations-status.md) for endpoint semantics,
+[production operations](docs/operations.md) for the canonical topology and
+operator procedures, and [operational status](docs/operations-status.md) for endpoint semantics,
 readiness classification, observation expiry, and safe telemetry.
 
 #### Search modes
