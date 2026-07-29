@@ -2539,8 +2539,8 @@ def test_architecture_has_no_legacy_semantic_reads_in_decision_or_surfaces():
         "argus/api/routes_admin.py",
         "argus/operations/status.py",
         "argus/cli/main.py",
-        "argus/mcp/resources.py",
-        "argus/mcp/tools.py",
+        "argus/development_mcp_resources.py",
+        "argus/development_mcp_tools.py",
     )
     violations = {
         path: token

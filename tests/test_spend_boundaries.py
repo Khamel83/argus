@@ -134,7 +134,7 @@ def test_http_workflows_receive_credential_principal(
 
 @pytest.mark.asyncio
 async def test_mcp_recover_and_expand_propagate_principal():
-    from argus.mcp import tools
+    from argus import development_mcp_tools as tools
 
     broker = MagicMock()
     broker.search = AsyncMock(side_effect=_empty_response)
@@ -162,7 +162,7 @@ async def test_mcp_recover_and_expand_propagate_principal():
 
 @pytest.mark.asyncio
 async def test_paid_mcp_provider_test_defaults_to_fixture_without_broker_search():
-    from argus.mcp.tools import test_provider_mcp
+    from argus.development_mcp_tools import test_provider_mcp
 
     broker = MagicMock()
     broker.readiness_service.authorize_probe.return_value.allowed = True
@@ -185,7 +185,7 @@ async def test_paid_mcp_live_probe_requires_reservation_and_has_no_fallback():
         ProviderReadinessService,
         ProviderRegistrationSpec,
     )
-    from argus.mcp.tools import test_provider_mcp
+    from argus.development_mcp_tools import test_provider_mcp
     from argus.persistence.readiness import create_readiness_repository
     from argus.providers.fixture_attestation import build_fixture_attestation
 
@@ -271,8 +271,8 @@ async def test_unledgered_paid_helpers_are_explicitly_disabled(monkeypatch):
 def test_durable_budget_renderers_include_uncertainty_and_provider_freshness(
     tmp_path,
 ):
-    from argus.mcp.resources import provider_budgets_resource
-    from argus.mcp.tools import search_budgets
+    from argus.development_mcp_resources import provider_budgets_resource
+    from argus.development_mcp_tools import search_budgets
     from argus.persistence.provider_spend import create_provider_spend_repository
 
     repository = create_provider_spend_repository(

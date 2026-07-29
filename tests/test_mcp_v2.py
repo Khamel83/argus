@@ -55,7 +55,7 @@ def _schema_digest(schema):
     ).hexdigest()
 
 
-def _capture_real_mcp_server(monkeypatch, backend):
+def _capture_real_mcp_server(monkeypatch, backend, *, standalone=False):
     from mcp.server.fastmcp import FastMCP
     from mcp.server.transport_security import TransportSecuritySettings
 
@@ -74,8 +74,17 @@ def _capture_real_mcp_server(monkeypatch, backend):
         return instance
 
     monkeypatch.setattr("mcp.server.fastmcp.FastMCP", factory)
-    monkeypatch.setattr(server, "build_mcp_backend", lambda: backend)
-    server.serve_mcp(transport="stdio")
+    if standalone:
+        from argus.development_mcp_server import serve_development_mcp
+
+        monkeypatch.setattr(
+            "argus.development_mcp_adapter.build_development_mcp_backend",
+            lambda: backend,
+        )
+        serve_development_mcp(transport="stdio")
+    else:
+        monkeypatch.setattr(server, "build_mcp_backend", lambda: backend)
+        server.serve_mcp(transport="stdio")
     return created[0]
 
 
@@ -590,11 +599,12 @@ def test_v2_is_error_is_false_only_for_success_degraded_and_empty(outcome):
 
 
 def test_standalone_development_registers_only_usable_v1_tools(monkeypatch):
-    from argus.mcp.local_adapter import LocalMcpAdapter
+    from argus.development_mcp_adapter import LocalMcpAdapter
 
     registered = _capture_real_mcp_server(
         monkeypatch,
         LocalMcpAdapter(object()),
+        standalone=True,
     )
     names = {tool.name for tool in registered._tool_manager.list_tools()}
     assert {
@@ -602,6 +612,10 @@ def test_standalone_development_registers_only_usable_v1_tools(monkeypatch):
         "recover_url",
         "expand_links",
         "extract_content",
+        "valyu_answer",
+        "capture_site",
+        "build_research_pack",
+        "read_pack_file",
     }.issubset(names)
     assert not any(name.endswith("_v2") for name in names)
 
@@ -984,3 +998,88 @@ for candidate in sorted(Path(sys.argv[1]).glob("mutated-*.json")):
         check=False,
     )
     assert mcp_process.returncode == 0, mcp_process.stderr
+
+
+@pytest.mark.parametrize(
+    ("artifact_state", "artifact_content", "expected_error"),
+    (
+        ("missing", None, "unavailable"),
+        ("malformed", "{", "malformed"),
+        (
+            "structurally-incomplete",
+            json.dumps(
+                {
+                    "descriptor_version": 1,
+                    "transport_version": "2025-11-25",
+                    "transport": {},
+                    "tool_contract_version": "2.0",
+                    "tools": [],
+                }
+            ),
+            "transport fields are missing",
+        ),
+        ("hash-tampered", None, "digest does not match"),
+    ),
+)
+def test_fresh_process_import_survives_invalid_packaged_release_descriptor(
+    tmp_path,
+    artifact_state,
+    artifact_content,
+    expected_error,
+):
+    from argus.capabilities import MCP_RELEASE_DESCRIPTOR_PATH
+
+    isolated = tmp_path / artifact_state
+    package = isolated / "argus"
+    mcp_package = package / "mcp"
+    mcp_package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (mcp_package / "__init__.py").write_text("")
+    (package / "capabilities.py").write_text(
+        (MCP_RELEASE_DESCRIPTOR_PATH.parents[1] / "capabilities.py").read_text()
+    )
+    descriptor = mcp_package / "release_descriptor.json"
+    if artifact_state == "hash-tampered":
+        tampered = json.loads(MCP_RELEASE_DESCRIPTOR_PATH.read_text())
+        tampered["tool_contract_version"] = "2.0-tampered"
+        descriptor.write_text(json.dumps(tampered))
+    elif artifact_content is not None:
+        descriptor.write_text(artifact_content)
+
+    process = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+import argus.capabilities as capabilities
+
+registrations = {
+    "accepted_service",
+    "legacy_presenter",
+    "v2_presenter",
+    "v2_routes",
+    "transport_security",
+}
+manifest = capabilities.http_capability_manifest(
+    evidence_enabled=True,
+    registrations=registrations,
+).as_dict()
+assert manifest["http_contracts"][-1]["version"] == "2.0"
+assert manifest["mcp_contract"]["argus_tool_contract_versions"] == ["1"]
+assert "version_2_tool_suffix" not in manifest["mcp_contract"]
+try:
+    capabilities.validate_mcp_transport_registration({})
+except capabilities.CapabilityManifestError as error:
+    assert sys.argv[1] in str(error), (sys.argv[1], str(error))
+else:
+    raise AssertionError("MCP startup accepted an invalid packaged descriptor")
+""",
+            expected_error,
+        ],
+        cwd=isolated,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert process.returncode == 0, process.stderr

@@ -1,9 +1,13 @@
 """Tests for machine-readable MCP research-pack output (issue #19)."""
 
+import base64
 import json
 from datetime import datetime
 
-from argus.mcp.tools import _serialize_workflow_json
+from argus.development_mcp_tools import (
+    _serialize_workflow_json,
+    read_pack_file,
+)
 from argus.workflows.models import (
     StoredDocument,
     WorkflowArtifact,
@@ -57,15 +61,8 @@ def test_serialize_workflow_json_error_run(tmp_path):
     assert payload["status"] == "failed"
 
 
-import base64
-
-from argus.mcp.tools import read_pack_file
-
-
 def test_read_pack_file_utf8(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "argus.corpus.paths.resolve_data_root", lambda: tmp_path
-    )
+    monkeypatch.setattr("argus.corpus.paths.resolve_data_root", lambda: tmp_path)
     f = tmp_path / "SUMMARY.md"
     f.write_text("hello pack", encoding="utf-8")
     payload = json.loads(read_pack_file(str(f)))
@@ -84,7 +81,9 @@ def test_read_pack_file_binary_falls_back_to_base64(tmp_path, monkeypatch):
 
 
 def test_read_pack_file_rejects_path_outside_data_root(tmp_path, monkeypatch):
-    monkeypatch.setattr("argus.corpus.paths.resolve_data_root", lambda: tmp_path / "root")
+    monkeypatch.setattr(
+        "argus.corpus.paths.resolve_data_root", lambda: tmp_path / "root"
+    )
     (tmp_path / "root").mkdir()
     outside = tmp_path / "secret.txt"
     outside.write_text("nope", encoding="utf-8")
@@ -117,4 +116,3 @@ def test_read_pack_file_missing_file(tmp_path, monkeypatch):
     monkeypatch.setattr("argus.corpus.paths.resolve_data_root", lambda: tmp_path)
     payload = json.loads(read_pack_file(str(tmp_path / "nope.md")))
     assert "error" in payload
-

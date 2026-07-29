@@ -1085,8 +1085,15 @@ def mcp():
 )
 def mcp_serve(transport, host, port):
     """Start MCP server. Use stdio for Claude/Cursor, sse or streamable-http for remote access."""
+    from argus.authority import adapter_execution_mode
+
     try:
-        from argus.mcp.server import serve_mcp
+        if adapter_execution_mode() == "standalone":
+            from argus.development_mcp_server import (
+                serve_development_mcp as serve_mcp,
+            )
+        else:
+            from argus.mcp.server import serve_mcp
     except ImportError:
         raise SystemExit(
             "MCP extras not installed. Run: pip install 'argus-search[mcp]'"

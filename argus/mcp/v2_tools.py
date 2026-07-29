@@ -331,15 +331,13 @@ def _digest(schema: Mapping[str, Any] | None) -> str:
 
 def actual_v2_tool_registration(mcp) -> dict[str, object]:
     """Describe the actual bound pinned-SDK schemas for startup validation."""
-    from argus.capabilities import MCP_V2_TOOL_DESCRIPTOR
-
     manager = _pinned_tool_manager(mcp)
     by_name = {
         tool.name: tool for tool in manager.list_tools() if tool.name.endswith("_v2")
     }
     names = tuple(by_name)
     return {
-        "transport_version": MCP_V2_TOOL_DESCRIPTOR["transport_version"],
+        "transport_version": "2025-11-25",
         "tool_contract_version": "2.0",
         "tools": names,
         "schemas": {

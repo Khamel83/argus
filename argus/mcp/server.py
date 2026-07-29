@@ -18,7 +18,6 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from argus.auth import AuthConfig, remote_mcp_requires_auth
-from argus.capabilities import MCP_TRANSPORT_DESCRIPTOR
 from argus.logging import get_logger, setup_logging
 from argus.mcp.sessions import (
     MCP_MAX_ACTIVE_SESSIONS,
@@ -30,10 +29,18 @@ from argus.mcp.sessions import (
 
 logger = get_logger("mcp.server")
 
-_MCP_PROTOCOL_VERSIONS = tuple(MCP_TRANSPORT_DESCRIPTOR["protocol_versions"])
+_MCP_PROTOCOL_VERSIONS = (
+    "2024-11-05",
+    "2025-03-26",
+    "2025-06-18",
+    "2025-11-25",
+)
 _LEGACY_DEFAULT_PROTOCOL_VERSION = "2025-03-26"
-_MCP_MAX_REQUEST_BODY_BYTES = int(MCP_TRANSPORT_DESCRIPTOR["max_request_body_bytes"])
-_MCP_ALLOW = ", ".join(MCP_TRANSPORT_DESCRIPTOR["methods"])
+_MCP_METHODS = ("POST", "GET", "DELETE", "OPTIONS")
+_MCP_MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024
+_MCP_ALLOW = ", ".join(_MCP_METHODS)
+_MCP_NOTIFICATION_STATUS = 202
+_MCP_SESSION_ID_MAX_CHARACTERS = 128
 _MCP_SWEEP_INTERVAL_SECONDS = 60
 _MCP_CORS_ALLOW_HEADERS = (
     "Authorization, Content-Type, MCP-Protocol-Version, Mcp-Session-Id, "
@@ -57,20 +64,23 @@ def _mcp_remote_exposed(environ=None) -> bool:
 def _mcp_transport_registration(mcp) -> dict[str, object]:
     from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS
 
-    registration = dict(MCP_TRANSPORT_DESCRIPTOR)
-    registration.update(
-        {
-            "endpoint": mcp.settings.streamable_http_path,
-            "protocol_versions": tuple(SUPPORTED_PROTOCOL_VERSIONS),
-            "legacy_sse_paths": (
-                mcp.settings.sse_path,
-                mcp.settings.message_path,
-            ),
-            "session_idle_timeout_seconds": MCP_SESSION_IDLE_TIMEOUT_SECONDS,
-            "max_active_sessions": MCP_MAX_ACTIVE_SESSIONS,
-        }
-    )
-    return registration
+    return {
+        "endpoint": mcp.settings.streamable_http_path,
+        "protocol_versions": tuple(SUPPORTED_PROTOCOL_VERSIONS),
+        "methods": _MCP_METHODS,
+        "post_content_type": "application/json",
+        "post_accept": ("application/json", "text/event-stream"),
+        "get_accept": "text/event-stream",
+        "max_request_body_bytes": _MCP_MAX_REQUEST_BODY_BYTES,
+        "notification_status": _MCP_NOTIFICATION_STATUS,
+        "session_idle_timeout_seconds": MCP_SESSION_IDLE_TIMEOUT_SECONDS,
+        "max_active_sessions": MCP_MAX_ACTIVE_SESSIONS,
+        "session_id_max_characters": _MCP_SESSION_ID_MAX_CHARACTERS,
+        "legacy_sse_paths": (
+            mcp.settings.sse_path,
+            mcp.settings.message_path,
+        ),
+    }
 
 
 def _jsonrpc_transport_error(
@@ -917,7 +927,7 @@ def _mcp_caller_token() -> str | None:
 
 
 def build_mcp_backend(environ=None):
-    """Build an HTTP adapter or an explicitly opted-in development backend."""
+    """Build the production HTTP adapter without local execution authority."""
     from argus.authority import (
         AuthorityConfigurationError,
         HttpAuthorityClient,
@@ -932,15 +942,9 @@ def build_mcp_backend(environ=None):
         return HttpMcpAdapter(
             HttpAuthorityClient(authority_client_config(environ, adapter="mcp"))
         )
-    if mode == "standalone":
-        from argus.development_mcp_adapter import (
-            build_development_mcp_backend,
-        )
-
-        return build_development_mcp_backend()
     raise AuthorityConfigurationError(
         "MCP requires ARGUS_AUTHORITY_URL and authority authentication; "
-        "development standalone mode requires ARGUS_MCP_STANDALONE=true"
+        "standalone development must use the external development MCP launcher"
     )
 
 
@@ -948,6 +952,9 @@ def serve_mcp(
     transport: str = "stdio",
     host: str = "127.0.0.1",
     port: int = 8001,
+    *,
+    backend=None,
+    additional_registration=None,
 ):
     """Start MCP as a protocol adapter over the configured execution backend."""
     try:
@@ -961,7 +968,7 @@ def serve_mcp(
     setup_logging("INFO")
     if transport not in {"stdio", "sse", "streamable-http"}:
         raise SystemExit(f"Unknown MCP transport: {transport}")
-    backend = build_mcp_backend()
+    backend = build_mcp_backend() if backend is None else backend
     auth_config = AuthConfig.from_env()
     from argus.api.security import TransportSecurityGuard
     from argus.config import load_config
@@ -1076,7 +1083,6 @@ def serve_mcp(
         return await backend.search_budgets(token=_mcp_caller_token())
 
     from argus.mcp.http_adapter import HttpMcpAdapter
-    from argus.development_mcp_adapter import LocalMcpAdapter
 
     v2_registered = isinstance(backend, HttpMcpAdapter)
     if v2_registered:
@@ -1136,10 +1142,8 @@ def serve_mcp(
                 token=_mcp_caller_token(),
             )
 
-    if isinstance(backend, LocalMcpAdapter):
-        from argus.development_mcp_tools import register_standalone_tools
-
-        register_standalone_tools(
+    if additional_registration is not None:
+        additional_registration(
             mcp,
             backend,
             caller_identity=_mcp_caller_identity,

@@ -222,7 +222,7 @@ async def test_archive_paths_accept_document_results(
 
 @pytest.mark.asyncio
 async def test_mcp_recovery_path_accepts_document_results():
-    from argus.mcp.tools import _try_archive_ph
+    from argus.development_mcp_tools import _try_archive_ph
 
     response = MagicMock()
     response.status_code = 200

@@ -56,20 +56,40 @@ MCP_RELEASE_DESCRIPTOR_PATH = (
 _MCP_RELEASE_DESCRIPTOR_SHA256 = (
     "679728d897ac24bca9eb2547c6e9ef7d819ef76605863b401bd7f36475793e56"
 )
+_MCP_TRANSPORT_FIELD_TYPES = {
+    "endpoint": str,
+    "protocol_versions": (list, tuple),
+    "methods": (list, tuple),
+    "post_content_type": str,
+    "post_accept": (list, tuple),
+    "get_accept": str,
+    "max_request_body_bytes": int,
+    "notification_status": int,
+    "session_idle_timeout_seconds": int,
+    "max_active_sessions": int,
+    "session_id_max_characters": int,
+    "legacy_sse_paths": (list, tuple),
+}
 
 
-def _read_release_descriptor(path: Path) -> dict[str, object]:
+def _read_release_descriptor(path: Path) -> tuple[bytes, dict[str, object]]:
     try:
-        document = json.loads(path.read_bytes())
-    except (OSError, ValueError) as exc:
+        encoded = path.read_bytes()
+    except OSError as exc:
         raise CapabilityManifestError(
-            "MCP release manifest descriptor is unavailable or malformed"
+            "MCP release manifest descriptor is unavailable"
+        ) from exc
+    try:
+        document = json.loads(encoded)
+    except ValueError as exc:
+        raise CapabilityManifestError(
+            "MCP release manifest descriptor is malformed"
         ) from exc
     if not isinstance(document, dict):
         raise CapabilityManifestError(
             "MCP release manifest descriptor must be an object"
         )
-    return document
+    return encoded, document
 
 
 def _tool_descriptor(release: Mapping[str, object]) -> Mapping[str, object]:
@@ -116,33 +136,82 @@ def load_mcp_release_descriptor(
 ) -> Mapping[str, object]:
     """Load and authenticate the immutable packaged MCP release artifact."""
     descriptor_path = MCP_RELEASE_DESCRIPTOR_PATH if path is None else Path(path)
-    try:
-        encoded = descriptor_path.read_bytes()
-    except OSError as exc:
-        raise CapabilityManifestError(
-            "MCP release manifest descriptor is unavailable"
-        ) from exc
-    if hashlib.sha256(encoded).hexdigest() != _MCP_RELEASE_DESCRIPTOR_SHA256:
-        raise CapabilityManifestError(
-            "MCP release manifest descriptor digest does not match the release"
-        )
-    document = _read_release_descriptor(descriptor_path)
+    encoded, document = _read_release_descriptor(descriptor_path)
     if document.get("descriptor_version") != 1:
         raise CapabilityManifestError(
             "MCP release manifest descriptor version does not match the release"
+        )
+    if not isinstance(document.get("transport_version"), str):
+        raise CapabilityManifestError(
+            "MCP release manifest descriptor transport version is malformed"
+        )
+    if not isinstance(document.get("tool_contract_version"), str):
+        raise CapabilityManifestError(
+            "MCP release manifest descriptor tool contract version is malformed"
         )
     transport = document.get("transport")
     if not isinstance(transport, Mapping):
         raise CapabilityManifestError(
             "MCP release manifest descriptor transport is malformed"
         )
+    missing_transport_fields = sorted(set(_MCP_TRANSPORT_FIELD_TYPES) - set(transport))
+    if missing_transport_fields:
+        raise CapabilityManifestError(
+            "MCP release manifest descriptor transport fields are missing: "
+            + ", ".join(missing_transport_fields)
+        )
+    malformed_transport_fields = sorted(
+        name
+        for name, expected_type in _MCP_TRANSPORT_FIELD_TYPES.items()
+        if not isinstance(transport[name], expected_type)
+    )
+    if malformed_transport_fields:
+        raise CapabilityManifestError(
+            "MCP release manifest descriptor transport fields are malformed: "
+            + ", ".join(malformed_transport_fields)
+        )
     _tool_descriptor(document)
+    if hashlib.sha256(encoded).hexdigest() != _MCP_RELEASE_DESCRIPTOR_SHA256:
+        raise CapabilityManifestError(
+            "MCP release manifest descriptor digest does not match the release"
+        )
     return _freeze(document)
 
 
-_PACKAGED_RELEASE = _freeze(_read_release_descriptor(MCP_RELEASE_DESCRIPTOR_PATH))
-MCP_TRANSPORT_DESCRIPTOR = _PACKAGED_RELEASE["transport"]
-MCP_V2_TOOL_DESCRIPTOR = _tool_descriptor(_PACKAGED_RELEASE)
+def mcp_transport_descriptor(
+    path: str | Path | None = None,
+) -> Mapping[str, object]:
+    """Load the authenticated transport descriptor at a startup boundary."""
+
+    return load_mcp_release_descriptor(path)["transport"]
+
+
+def mcp_v2_tool_descriptor(
+    path: str | Path | None = None,
+) -> Mapping[str, object]:
+    """Load the authenticated tool descriptor at a startup boundary."""
+
+    return _tool_descriptor(load_mcp_release_descriptor(path))
+
+
+class _LazyDescriptor(Mapping):
+    """Compatibility mapping that authenticates the artifact only on access."""
+
+    def __init__(self, loader):
+        self._loader = loader
+
+    def __getitem__(self, key):
+        return self._loader()[key]
+
+    def __iter__(self):
+        return iter(self._loader())
+
+    def __len__(self):
+        return len(self._loader())
+
+
+MCP_TRANSPORT_DESCRIPTOR = _LazyDescriptor(mcp_transport_descriptor)
+MCP_V2_TOOL_DESCRIPTOR = _LazyDescriptor(mcp_v2_tool_descriptor)
 
 
 def http_capability_manifest(
@@ -154,6 +223,8 @@ def http_capability_manifest(
     release_descriptor_path: str | Path | None = None,
 ) -> ReleaseCapabilityManifest:
     active = frozenset() if registrations is None else frozenset(registrations)
+    expected_transport: Mapping[str, object] = _freeze({})
+    expected_tools: Mapping[str, object] = _freeze({})
     try:
         release = load_mcp_release_descriptor(release_descriptor_path)
         expected_transport = release["transport"]
@@ -202,8 +273,8 @@ def http_capability_manifest(
         snapshot = {}
     return ReleaseCapabilityManifest(
         snapshot=_freeze(snapshot),
-        mcp_transport=MCP_TRANSPORT_DESCRIPTOR,
-        mcp_tools=MCP_V2_TOOL_DESCRIPTOR,
+        mcp_transport=expected_transport,
+        mcp_tools=expected_tools,
     )
 
 

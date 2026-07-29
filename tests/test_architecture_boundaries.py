@@ -30,12 +30,10 @@ LEGACY_ADAPTER_EXCEPTIONS = {
 }
 MCP_ADAPTERS = {
     ROOT / "argus/mcp/http_adapter.py",
-    ROOT / "argus/mcp/local_adapter.py",
-    ROOT / "argus/mcp/resources.py",
     ROOT / "argus/mcp/server.py",
-    ROOT / "argus/mcp/tools.py",
     ROOT / "argus/mcp/v2_tools.py",
 }
+MCP_MODULES = frozenset(ROOT.glob("argus/mcp/*.py"))
 EXPECTED_ADAPTERS = {
     *PORTED_HTTP_MODULES,
     *LEGACY_ADAPTER_EXCEPTIONS,
@@ -52,6 +50,9 @@ FORBIDDEN = {
 }
 MCP_FORBIDDEN = {
     "argus.broker",
+    "argus.development_mcp_adapter",
+    "argus.development_mcp_resources",
+    "argus.development_mcp_tools",
     "argus.extraction",
     "argus.persistence",
     "argus.provider_controls",
@@ -177,7 +178,7 @@ def test_contract_kernel_does_not_import_the_throwaway_prototype():
     assert "jsonschema" not in imported
 
 
-@pytest.mark.parametrize("path", tuple(sorted(MCP_ADAPTERS)))
+@pytest.mark.parametrize("path", tuple(sorted(MCP_MODULES)))
 def test_mcp_modules_have_no_execution_authority_imports_or_invocations(path):
     imported = _imports(path)
     violations = {
@@ -191,6 +192,31 @@ def test_mcp_modules_have_no_execution_authority_imports_or_invocations(path):
     assert not violations, f"{path.relative_to(ROOT)}: {sorted(violations)}"
 
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    forbidden_dynamic_references = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.startswith("argus.development_mcp_")
+    }
+    assert not forbidden_dynamic_references, (
+        f"{path.relative_to(ROOT)}: dynamic development authority references "
+        f"{sorted(forbidden_dynamic_references)}"
+    )
+    forbidden_development_names = {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and node.id.startswith("development_mcp_")
+    } | {
+        node.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and node.attr.startswith("development_mcp_")
+    }
+    assert not forbidden_development_names, (
+        f"{path.relative_to(ROOT)}: development authority names "
+        f"{sorted(forbidden_development_names)}"
+    )
+
     forbidden_calls = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
