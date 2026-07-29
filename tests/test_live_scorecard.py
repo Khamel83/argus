@@ -450,6 +450,22 @@ def _declare_external_extractor_as_replay_chain(sealed):
         ]
 
 
+def _claim_result_from_policy_skipped_provider(sealed):
+    attempt = sealed["operations"][0]["candidate"]["diagnostics"]["attempts"][0]
+    attempt["status"] = "policy_skipped"
+    attempt["reason"] = "policy denied execution"
+    attempt["result_count"] = 0
+
+
+def _claim_paid_api_source_from_local_replay(sealed):
+    extraction = next(
+        operation
+        for operation in sealed["operations"]
+        if operation["mode"] == "extraction"
+    )
+    extraction["candidate"]["content"]["source_type"] = "paid_api"
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
@@ -494,6 +510,8 @@ def _declare_external_extractor_as_replay_chain(sealed):
         (_add_unrepresented_requested_provider, "provider evidence"),
         (_inject_external_extraction_attempt, "local captured replay"),
         (_declare_external_extractor_as_replay_chain, "local captured replay"),
+        (_claim_result_from_policy_skipped_provider, "provider result reconciliation"),
+        (_claim_paid_api_source_from_local_replay, "local replay provenance"),
     ],
 )
 def test_sealed_live_compiler_fails_closed(mutate, message, tmp_path):

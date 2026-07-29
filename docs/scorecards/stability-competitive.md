@@ -394,6 +394,20 @@ tier-zero providers; every requested provider must be represented. Extraction
 attempts must be exactly the declared local extractor chain, with no external
 provider calls.
 
+Provider `result_count` has one exact meaning: the number of normalized results
+from that attempt retained after within-provider and retry deduplication.
+Duplicates discarded before emission are not counted. For each requested
+provider, the sum across `success` or `degraded` attempts must equal the number
+of emitted normalized results attributed to that provider. Every other attempt
+status, including `policy_skipped` and failures, must report zero and cannot
+supply a result.
+
+Captured replay uses the same reconciliation rule for content. If content is
+present, exactly one `success` or `degraded` local extractor attempt contributes
+one retained document, and normalized `source_type` must name that extractor in
+the declared replay chain. Paid API, external reader, phantom, or multiply
+claimed source provenance is rejected.
+
 Freshness observations are side-specific: `observed_at` must fall within the
 corresponding baseline or candidate execution window, and `age_seconds` must be
 derivable from that identity's finish time. Serialized timing or age claims

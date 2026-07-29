@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import asdict
 from datetime import datetime
 from hashlib import sha256
@@ -89,6 +90,7 @@ _SUCCESS_LIKE_OUTCOMES = {
 _LOCAL_CAPTURE_REPLAY_EXTRACTORS = frozenset(
     {"trafilatura", "crawl4ai", "obscura", "playwright"}
 )
+_RESULT_SUPPLYING_ATTEMPT_STATUSES = frozenset({"success", "degraded"})
 
 
 def _canonical_bytes(value: Any) -> bytes:
@@ -579,6 +581,47 @@ def _validate_normalized_extraction_evidence(value: object, label: str) -> None:
     _validate_live_diagnostics(evidence["diagnostics"], f"{label} diagnostics")
 
 
+def _validate_provider_result_reconciliation(
+    evidence: Mapping[str, Any], requested_providers: list[str], label: str
+) -> None:
+    """Treat attempt result_count as the exact post-dedupe emitted count."""
+    emitted = Counter(result["provider"] for result in evidence["results"])
+    traced: Counter[str] = Counter()
+    for attempt in evidence["diagnostics"]["attempts"]:
+        if attempt["status"] in _RESULT_SUPPLYING_ATTEMPT_STATUSES:
+            traced[attempt["name"]] += attempt["result_count"]
+        elif attempt["result_count"] != 0:
+            raise BundleError(
+                f"{label} non-supplying provider attempt reported results"
+            )
+    if any(emitted[provider] != traced[provider] for provider in requested_providers):
+        raise BundleError(f"{label} provider result reconciliation failed after dedupe")
+
+
+def _validate_local_replay_provenance(
+    evidence: Mapping[str, Any], replay_chain: list[str], label: str
+) -> None:
+    traced: Counter[str] = Counter()
+    for attempt in evidence["diagnostics"]["attempts"]:
+        if attempt["status"] in _RESULT_SUPPLYING_ATTEMPT_STATUSES:
+            traced[attempt["name"]] += attempt["result_count"]
+        elif attempt["result_count"] != 0:
+            raise BundleError(f"{label} non-supplying local extractor reported content")
+    content = evidence["content"]
+    if content is None:
+        if sum(traced.values()) != 0:
+            raise BundleError(f"{label} local replay provenance has phantom content")
+        return
+    source_type = content["source_type"]
+    if (
+        source_type not in replay_chain
+        or source_type not in _LOCAL_CAPTURE_REPLAY_EXTRACTORS
+        or traced[source_type] != 1
+        or sum(traced.values()) != 1
+    ):
+        raise BundleError(f"{label} local replay provenance does not match source_type")
+
+
 def _validate_live_diagnostics(value: object, label: str) -> None:
     diagnostics = _mapping(value, label)
     _exact_keys(
@@ -806,6 +849,11 @@ def _validate_artifact(
                 raise BundleError(
                     "competitive provider evidence does not match request"
                 )
+            _validate_provider_result_reconciliation(
+                evidence,
+                request["providers"],
+                f"competitive {side} provider evidence",
+            )
     elif lane == "competitive" and relative.startswith("extractions/"):
         _exact_keys(
             artifact,
@@ -904,6 +952,11 @@ def _validate_artifact(
                 raise BundleError(
                     "competitive extraction evidence is not local captured replay"
                 )
+            _validate_local_replay_provenance(
+                artifact[side],
+                request["replay_chain"],
+                f"competitive {side} extraction evidence",
+            )
     elif lane == "hermetic" and relative.startswith("searches/"):
         _exact_keys(
             artifact,

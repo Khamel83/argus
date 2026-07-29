@@ -16,6 +16,8 @@ from typing import Any, Mapping
 from .bundle import (
     BundleError,
     _validate_live_diagnostics,
+    _validate_local_replay_provenance,
+    _validate_provider_result_reconciliation,
     derive_generation,
     write_bundle,
 )
@@ -280,6 +282,14 @@ def _compile_operation(
                 raise LiveExecutionError(
                     "extraction diagnostics must match the local captured replay chain"
                 )
+            try:
+                _validate_local_replay_provenance(
+                    side,
+                    request["replay_chain"],
+                    f"{case_id} extraction evidence",
+                )
+            except BundleError as exc:
+                raise LiveExecutionError(str(exc)) from exc
         else:
             if (
                 any(attempt["kind"] != "provider" for attempt in attempts)
@@ -294,6 +304,12 @@ def _compile_operation(
                 raise LiveExecutionError(
                     "provider evidence must exactly represent the sealed request"
                 )
+            try:
+                _validate_provider_result_reconciliation(
+                    side, request["providers"], f"{case_id} provider evidence"
+                )
+            except BundleError as exc:
+                raise LiveExecutionError(str(exc)) from exc
 
     evaluation = _mapping(operation["evaluation"], f"{case_id} evaluation")
     _exact(evaluation, {"forward", "reverse"}, f"{case_id} evaluation")

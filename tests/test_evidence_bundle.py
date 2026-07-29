@@ -335,6 +335,14 @@ def test_competitive_bundle_accepts_all_normalized_live_case_artifacts(tmp_path)
         }
     ]
     extraction_diagnostics["spend"]["provider_calls"] = 0
+    extraction_failure_diagnostics = json.loads(json.dumps(extraction_diagnostics))
+    extraction_failure_diagnostics["attempts"][0].update(
+        {"status": "failed", "reason": "no retained content", "result_count": 0}
+    )
+    search_failure_diagnostics = json.loads(json.dumps(diagnostics))
+    search_failure_diagnostics["attempts"][0].update(
+        {"status": "failed", "reason": "no retained results", "result_count": 0}
+    )
     payload["artifacts"] = {
         **{
             f"searches/{case_id}.json": {
@@ -412,7 +420,7 @@ def test_competitive_bundle_accepts_all_normalized_live_case_artifacts(tmp_path)
         "outcome": "extraction_failed",
         "content": None,
         "capture_sha256": "a" * 64,
-        "diagnostics": extraction_diagnostics,
+        "diagnostics": extraction_failure_diagnostics,
     }
     failure_output = tmp_path / "competitive-failure"
     write_bundle(
@@ -433,7 +441,7 @@ def test_competitive_bundle_accepts_all_normalized_live_case_artifacts(tmp_path)
         canonical_failure["artifacts"]["searches/discovery-01.json"]["candidate"] = {
             "outcome": outcome,
             "results": [],
-            "diagnostics": diagnostics,
+            "diagnostics": search_failure_diagnostics,
         }
         canonical_failure["artifacts"]["extractions/javascript-live.json"][
             "candidate"
@@ -441,7 +449,7 @@ def test_competitive_bundle_accepts_all_normalized_live_case_artifacts(tmp_path)
             "outcome": outcome,
             "content": None,
             "capture_sha256": "a" * 64,
-            "diagnostics": extraction_diagnostics,
+            "diagnostics": extraction_failure_diagnostics,
         }
         canonical_output = tmp_path / f"competitive-{outcome}"
         write_bundle(
