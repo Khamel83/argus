@@ -25,7 +25,6 @@ LEGACY_ADAPTER_EXCEPTIONS = {
     ROOT / "argus/api/routes_admin.py",
     ROOT / "argus/api/routes_dashboard.py",
     ROOT / "argus/api/routes_health.py",
-    ROOT / "argus/workflows/service.py",
 }
 MCP_ADAPTERS = {
     ROOT / "argus/mcp/http_adapter.py",
@@ -39,6 +38,7 @@ EXPECTED_ADAPTERS = {
     *MCP_ADAPTERS,
     ROOT / "argus/cli/main.py",
     ROOT / "argus/api/routes_workflows.py",
+    ROOT / "argus/workflows/service.py",
 }
 FORBIDDEN = {
     "argus.providers",
@@ -919,6 +919,21 @@ def test_transport_adapter_inventory_has_only_closed_legacy_exceptions():
                     )
                 )
             }
+        assert not violations, f"{path.relative_to(ROOT)}: {sorted(violations)}"
+
+
+def test_workflow_modules_cannot_alias_execution_or_persistence_authority():
+    workflow_forbidden = {"argus.extraction", "argus.persistence"}
+    for path in ROOT.glob("argus/workflows/*.py"):
+        imported = _imports(path)
+        violations = {
+            module
+            for module in imported
+            if any(
+                module == forbidden or module.startswith(f"{forbidden}.")
+                for forbidden in workflow_forbidden
+            )
+        }
         assert not violations, f"{path.relative_to(ROOT)}: {sorted(violations)}"
 
 

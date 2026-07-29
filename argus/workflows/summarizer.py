@@ -66,9 +66,17 @@ class ExtractiveSummarizer(BaseSummarizer):
         highlights = []
         for doc in top_docs:
             lead = doc.metadata.get("lead_text", "")
+            marker = (
+                " [PARTIAL CONTENT]"
+                if doc.metadata.get("artifact_disposition") == "partial"
+                else ""
+            )
             if lead:
-                overview_bits.append(lead)
-            highlights.append(f"- **{doc.title or doc.url}**: {lead or 'Captured and stored for review.'}")
+                overview_bits.append(f"{marker.strip()} {lead}".strip())
+            highlights.append(
+                f"- **{doc.title or doc.url}**{marker}: "
+                f"{lead or 'Captured and stored for review.'}"
+            )
 
         overview = " ".join(bit for bit in overview_bits[:3] if bit).strip()
         if not overview:
@@ -114,7 +122,13 @@ class ValyuSummarizer(BaseSummarizer):
         from argus.providers.valyu_answer import valyu_answer
 
         source_list = "\n".join(
-            f"- {doc.title or doc.url} ({doc.url})" for doc in list(documents)[:6]
+            f"- {doc.title or doc.url} ({doc.url})"
+            + (
+                " [PARTIAL CONTENT]"
+                if doc.metadata.get("artifact_disposition") == "partial"
+                else ""
+            )
+            for doc in list(documents)[:6]
         )
         instructions = (
             "Write a concise factual summary grounded in the listed sources. "
@@ -125,9 +139,14 @@ class ValyuSummarizer(BaseSummarizer):
             f"Target: {title or prompt}\n"
             f"Ground only in these sources:\n{source_list}"
         )
-        result = await valyu_answer(query, system_instructions=instructions, fast_mode=True)
+        result = await valyu_answer(
+            query, system_instructions=instructions, fast_mode=True
+        )
         if result.error or not result.answer.strip():
-            logger.info("Valyu summarizer unavailable, using extractive fallback: %s", result.error)
+            logger.info(
+                "Valyu summarizer unavailable, using extractive fallback: %s",
+                result.error,
+            )
             return await self.fallback.summarize(
                 title=title,
                 prompt=prompt,
@@ -183,7 +202,14 @@ class LLMSummarizer(BaseSummarizer):
             text = doc.metadata.get("lead_text", "") or ""
             if not text:
                 continue
-            context_parts.append(f"[Source {i+1}] {doc.title or doc.url}\n{text[:2000]}")
+            marker = (
+                " [PARTIAL CONTENT]"
+                if doc.metadata.get("artifact_disposition") == "partial"
+                else ""
+            )
+            context_parts.append(
+                f"[Source {i + 1}]{marker} {doc.title or doc.url}\n{text[:2000]}"
+            )
         context = "\n\n".join(context_parts)
 
         system_prompt = (
@@ -210,12 +236,18 @@ class LLMSummarizer(BaseSummarizer):
                 },
             )
             if resp.status_code != 200:
-                raise RuntimeError(f"gateway returned {resp.status_code}: {resp.text[:200]}")
+                raise RuntimeError(
+                    f"gateway returned {resp.status_code}: {resp.text[:200]}"
+                )
             body = resp.json()
             answer = body.get("choices", [{}])[0].get("message", {}).get("content", "")
 
         return [
-            SummarySection(heading="Answer", body=answer, citation_ids=[c.id for c in citations[:10]]),
+            SummarySection(
+                heading="Answer",
+                body=answer,
+                citation_ids=[c.id for c in citations[:10]],
+            ),
         ]
 
 
@@ -240,7 +272,9 @@ def get_summarizer(kind: str = "extractive") -> BaseSummarizer:
         if get_config().valyu.api_key:
             return ValyuSummarizer(fallback=fallback)
         else:
-            logger.info("Valyu API key not configured; using fallback extractive summarizer.")
+            logger.info(
+                "Valyu API key not configured; using fallback extractive summarizer."
+            )
             return fallback
     if kind == "llm":
         return LLMSummarizer()

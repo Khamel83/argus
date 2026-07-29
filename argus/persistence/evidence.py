@@ -312,6 +312,10 @@ class SqlAlchemyEvidenceRepository:
                     return accepted.acceptance_receipt
 
                 plan_id = uuid.uuid4().hex
+                accepted_results = _jsonable(accepted.results)
+                accepted_results_fingerprint = hashlib.sha256(
+                    _canonical(accepted_results).encode()
+                ).hexdigest()
                 session.add(
                     RetrievalEvidencePlanRow(
                         id=plan_id,
@@ -319,11 +323,17 @@ class SqlAlchemyEvidenceRepository:
                         cache_fingerprint=accepted.cache_fingerprint,
                         execution_cohort=accepted.execution_cohort,
                         plan_json=_canonical(
-                            evidence.plan
-                            if evidence.plan is not None
-                            else {
-                                "plan_id": accepted.plan_id,
-                                "results": accepted.results,
+                            {
+                                "evidence_plan": (
+                                    evidence.plan
+                                    if evidence.plan is not None
+                                    else {"plan_id": accepted.plan_id}
+                                ),
+                                "accepted_results": accepted_results,
+                                "accepted_results_fingerprint": (
+                                    accepted_results_fingerprint
+                                ),
+                                "binding_version": "accepted-results-v1",
                             }
                         ),
                         source_fingerprint=evidence.source_fingerprint,
@@ -365,12 +375,15 @@ class SqlAlchemyEvidenceRepository:
                         batch.observations
                     ):
                         observation_json = _canonical(observation)
-                        observation_ref = "observation:" + hashlib.sha256(
-                            (
-                                f"{accepted.operation_id}:{provider}:"
-                                f"{observation_ordinal}:{observation_json}"
-                            ).encode()
-                        ).hexdigest()[:48]
+                        observation_ref = (
+                            "observation:"
+                            + hashlib.sha256(
+                                (
+                                    f"{accepted.operation_id}:{provider}:"
+                                    f"{observation_ordinal}:{observation_json}"
+                                ).encode()
+                            ).hexdigest()[:48]
+                        )
                         session.add(
                             RetrievalEvidenceObservationRow(
                                 id=uuid.uuid4().hex,
@@ -507,10 +520,8 @@ class SqlAlchemyEvidenceRepository:
                         )
                     )
                     if prior_publication is not None:
-                        accepted_at = (
-                            accepted.acceptance_receipt.accepted_at.replace(
-                                tzinfo=None
-                            )
+                        accepted_at = accepted.acceptance_receipt.accepted_at.replace(
+                            tzinfo=None
                         )
                         if prior_publication.published_at < accepted_at:
                             session.delete(prior_publication)

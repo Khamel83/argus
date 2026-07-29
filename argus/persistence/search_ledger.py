@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import fcntl
 import hashlib
 import json
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -51,6 +54,61 @@ class LedgerBase(DeclarativeBase):
 
 
 _DATABASE_OPERATION_TIMEOUT_SECONDS = 5
+_WORKFLOW_COMPOSITION_LOCKS: dict[tuple[str, str, str], tuple[threading.Lock, int]] = {}
+_WORKFLOW_COMPOSITION_LOCKS_GUARD = threading.Lock()
+_WORKFLOW_COMPOSITION_LOCK_TIMEOUT_SECONDS = 35.0
+
+
+def _acquire_workflow_file_lock(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a+")
+    deadline = time.monotonic() + _WORKFLOW_COMPOSITION_LOCK_TIMEOUT_SECONDS
+    try:
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return handle
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("workflow composition claim timed out")
+                time.sleep(0.05)
+    except BaseException:
+        handle.close()
+        raise
+
+
+def _release_workflow_file_lock(handle) -> None:
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        handle.close()
+
+
+async def _acquire_process_lock(process_lock: threading.Lock) -> bool:
+    task = asyncio.create_task(
+        asyncio.to_thread(
+            process_lock.acquire,
+            True,
+            _WORKFLOW_COMPOSITION_LOCK_TIMEOUT_SECONDS,
+        )
+    )
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        acquired = await task
+        if acquired:
+            process_lock.release()
+        raise
+
+
+async def _acquire_file_lock(path: Path):
+    task = asyncio.create_task(asyncio.to_thread(_acquire_workflow_file_lock, path))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        handle = await task
+        await asyncio.to_thread(_release_workflow_file_lock, handle)
+        raise
 
 
 def _system_now() -> datetime:
@@ -435,8 +493,7 @@ class ResultExtractionLinkRow(LedgerBase):
             name="uq_result_extraction_links_composition_cluster",
         ),
         CheckConstraint(
-            "(extraction_acceptance_ref IS NULL) = "
-            "(extraction_plan_id IS NULL)",
+            "(extraction_acceptance_ref IS NULL) = (extraction_plan_id IS NULL)",
             name="ck_result_extraction_links_acceptance_pair",
         ),
         CheckConstraint(
@@ -448,13 +505,11 @@ class ResultExtractionLinkRow(LedgerBase):
             name="ck_result_extraction_links_rejection_pair",
         ),
         CheckConstraint(
-            "artifact_plan_id IS NULL OR "
-            "artifact_plan_id = extraction_plan_id",
+            "artifact_plan_id IS NULL OR artifact_plan_id = extraction_plan_id",
             name="ck_result_extraction_links_artifact_same_plan",
         ),
         CheckConstraint(
-            "rejection_plan_id IS NULL OR "
-            "rejection_plan_id = extraction_plan_id",
+            "rejection_plan_id IS NULL OR rejection_plan_id = extraction_plan_id",
             name="ck_result_extraction_links_rejection_same_plan",
         ),
         CheckConstraint(
@@ -510,21 +565,11 @@ class ResultExtractionLinkRow(LedgerBase):
     extraction_acceptance_ref: Mapped[str | None] = mapped_column(
         String(128), nullable=True
     )
-    extraction_plan_id: Mapped[str | None] = mapped_column(
-        String(32), nullable=True
-    )
-    artifact_row_id: Mapped[str | None] = mapped_column(
-        String(32), nullable=True
-    )
-    artifact_plan_id: Mapped[str | None] = mapped_column(
-        String(32), nullable=True
-    )
-    rejection_row_id: Mapped[str | None] = mapped_column(
-        String(32), nullable=True
-    )
-    rejection_plan_id: Mapped[str | None] = mapped_column(
-        String(32), nullable=True
-    )
+    extraction_plan_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    artifact_row_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    artifact_plan_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    rejection_row_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    rejection_plan_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     reuse_origin: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
@@ -853,9 +898,7 @@ def _deserialize_extraction_projection(state: dict):
                     if artifact_state["completeness_confidence"] is not None
                     else None
                 ),
-                "completeness_signals": tuple(
-                    artifact_state["completeness_signals"]
-                ),
+                "completeness_signals": tuple(artifact_state["completeness_signals"]),
                 "provenance": provenance(artifact_state["provenance"]),
             }
         )
@@ -868,9 +911,7 @@ def _deserialize_extraction_projection(state: dict):
                 ExtractorDecision(
                     **{
                         **step_state,
-                        "decision": ExtractorExecutionDecision(
-                            step_state["decision"]
-                        ),
+                        "decision": ExtractorExecutionDecision(step_state["decision"]),
                         "attempt_outcome": (
                             AttemptOutcome(step_state["attempt_outcome"])
                             if step_state["attempt_outcome"] is not None
@@ -883,15 +924,9 @@ def _deserialize_extraction_projection(state: dict):
                         ),
                         "spend": (
                             SpendEvidence(
-                                actual_usd=Decimal(
-                                    spend_state["actual_usd"]
-                                ),
-                                reserved_usd=Decimal(
-                                    spend_state["reserved_usd"]
-                                ),
-                                spend_attempt_ref=(
-                                    spend_state["spend_attempt_ref"]
-                                ),
+                                actual_usd=Decimal(spend_state["actual_usd"]),
+                                reserved_usd=Decimal(spend_state["reserved_usd"]),
+                                spend_attempt_ref=(spend_state["spend_attempt_ref"]),
                             )
                             if spend_state is not None
                             else None
@@ -967,9 +1002,7 @@ def _deserialize_extraction_projection(state: dict):
                 "artifact": parse_artifact(origin_state["artifact"]),
                 "rejection": parse_rejection(origin_state["rejection"]),
                 "steps": parse_steps(origin_state["steps"]),
-                "acceptance_receipt": ExtractionAcceptanceReceipt(
-                    **receipt_state
-                ),
+                "acceptance_receipt": ExtractionAcceptanceReceipt(**receipt_state),
             }
         )
     projection_state = dict(state)
@@ -977,9 +1010,7 @@ def _deserialize_extraction_projection(state: dict):
         **{
             **projection_state,
             "outcome": CanonicalOutcome(state["outcome"]),
-            "artifact_disposition": ArtifactDisposition(
-                state["artifact_disposition"]
-            ),
+            "artifact_disposition": ArtifactDisposition(state["artifact_disposition"]),
             "plan": plan,
             "artifact": artifact,
             "rejection": rejection,
@@ -991,9 +1022,7 @@ def _deserialize_extraction_projection(state: dict):
                     "outcome": CacheOutcome(cache_state["outcome"]),
                     "origin_evidence": origin,
                     "current_identity": (
-                        ExtractionCacheIdentity(
-                            **cache_state["current_identity"]
-                        )
+                        ExtractionCacheIdentity(**cache_state["current_identity"])
                         if cache_state.get("current_identity") is not None
                         else None
                     ),
@@ -1049,15 +1078,10 @@ def _safe_persisted_url(value: str) -> str:
     fragment = (
         "[redacted]"
         if parts.fragment
-        and any(
-            marker in parts.fragment.lower()
-            for marker in sensitive_markers
-        )
+        and any(marker in parts.fragment.lower() for marker in sensitive_markers)
         else parts.fragment
     )
-    return urlunsplit(
-        (parts.scheme, netloc, parts.path, urlencode(query), fragment)
-    )
+    return urlunsplit((parts.scheme, netloc, parts.path, urlencode(query), fragment))
 
 
 def _persist_extraction_projection_rows(
@@ -1120,10 +1144,13 @@ def _persist_extraction_projection_rows(
                 .on_conflict_do_nothing(index_elements=["artifact_ref"])
             )
         else:
-            if session.get(
-                ExtractionArtifactIdentityRow,
-                artifact.artifact_ref,
-            ) is None:
+            if (
+                session.get(
+                    ExtractionArtifactIdentityRow,
+                    artifact.artifact_ref,
+                )
+                is None
+            ):
                 session.add(ExtractionArtifactIdentityRow(**identity_values))
         canonical = session.get(
             ExtractionArtifactIdentityRow,
@@ -1166,8 +1193,7 @@ def _persist_extraction_projection_rows(
             )
         ).all()
         if any(
-            existing.projection_json != rejection_json
-            for existing in reused_rejections
+            existing.projection_json != rejection_json for existing in reused_rejections
         ):
             raise ExtractionAcceptanceConflict()
         session.add(
@@ -1238,6 +1264,94 @@ class SqlAlchemySearchLedgerRepository:
         self._extraction_finalization_locks: dict[str, threading.Lock] = {}
         self._extraction_finalization_locks_guard = threading.Lock()
 
+    @asynccontextmanager
+    async def workflow_composition_claim(
+        self, retrieval_receipt_ref: str, requirement_ref: str
+    ):
+        """Serialize one immutable workflow composition without adding schema."""
+        bind = self.session_factory.kw.get("bind")
+        database_scope = str(getattr(bind, "url", "unknown"))
+        key = (database_scope, retrieval_receipt_ref, requirement_ref)
+        with _WORKFLOW_COMPOSITION_LOCKS_GUARD:
+            entry = _WORKFLOW_COMPOSITION_LOCKS.get(key)
+            process_lock, references = entry or (threading.Lock(), 0)
+            _WORKFLOW_COMPOSITION_LOCKS[key] = (process_lock, references + 1)
+        try:
+            acquired_process_lock = await _acquire_process_lock(process_lock)
+        except BaseException:
+            with _WORKFLOW_COMPOSITION_LOCKS_GUARD:
+                current_lock, current_references = _WORKFLOW_COMPOSITION_LOCKS[key]
+                if current_references == 1:
+                    _WORKFLOW_COMPOSITION_LOCKS.pop(key, None)
+                else:
+                    _WORKFLOW_COMPOSITION_LOCKS[key] = (
+                        current_lock,
+                        current_references - 1,
+                    )
+            raise
+        if not acquired_process_lock:
+            with _WORKFLOW_COMPOSITION_LOCKS_GUARD:
+                current_lock, current_references = _WORKFLOW_COMPOSITION_LOCKS[key]
+                if current_references == 1:
+                    _WORKFLOW_COMPOSITION_LOCKS.pop(key, None)
+                else:
+                    _WORKFLOW_COMPOSITION_LOCKS[key] = (
+                        current_lock,
+                        current_references - 1,
+                    )
+            raise TimeoutError("workflow composition process claim timed out")
+        file_handle = None
+        try:
+            dialect = getattr(getattr(bind, "dialect", None), "name", "")
+            if dialect == "sqlite":
+                database_path = getattr(getattr(bind, "url", None), "database", None)
+                if database_path not in {None, "", ":memory:"}:
+                    resolved_database = Path(str(database_path)).expanduser().resolve()
+                    claim_hash = hashlib.sha256(
+                        (
+                            f"{resolved_database}\0{retrieval_receipt_ref}\0"
+                            f"{requirement_ref}"
+                        ).encode()
+                    ).hexdigest()
+                    file_handle = await _acquire_file_lock(
+                        resolved_database.parent
+                        / ".argus-composition-locks"
+                        / f"{claim_hash}.lock",
+                    )
+                yield
+                return
+            if dialect == "postgresql":
+                signed_key = int.from_bytes(
+                    hashlib.sha256(
+                        f"{retrieval_receipt_ref}\0{requirement_ref}".encode()
+                    ).digest()[:8],
+                    "big",
+                    signed=True,
+                )
+                with self.session_factory.begin() as session:
+                    session.execute(
+                        text("SELECT pg_advisory_xact_lock(:claim_key)"),
+                        {"claim_key": signed_key},
+                    )
+                    yield
+                return
+            yield
+        finally:
+            if file_handle is not None:
+                await asyncio.shield(
+                    asyncio.to_thread(_release_workflow_file_lock, file_handle)
+                )
+            process_lock.release()
+            with _WORKFLOW_COMPOSITION_LOCKS_GUARD:
+                current_lock, current_references = _WORKFLOW_COMPOSITION_LOCKS[key]
+                if current_references == 1:
+                    _WORKFLOW_COMPOSITION_LOCKS.pop(key, None)
+                else:
+                    _WORKFLOW_COMPOSITION_LOCKS[key] = (
+                        current_lock,
+                        current_references - 1,
+                    )
+
     def issue_authentication_scope(
         self,
         *,
@@ -1252,14 +1366,9 @@ class SqlAlchemySearchLedgerRepository:
         )
 
         for value in (scope_ref, access_scope, privacy_scope):
-            if (
-                not isinstance(value, str)
-                or not 1 <= len(value.encode("utf-8")) <= 128
-            ):
+            if not isinstance(value, str) or not 1 <= len(value.encode("utf-8")) <= 128:
                 raise ValueError("authentication authority scope is invalid")
-        fingerprint = (
-            "sha256:" + hashlib.sha256(scope_ref.encode("utf-8")).hexdigest()
-        )
+        fingerprint = "sha256:" + hashlib.sha256(scope_ref.encode("utf-8")).hexdigest()
         receipt_ref = "auth-" + uuid.uuid4().hex
         issued_at = self.clock()
         with self.session_factory.begin() as session:
@@ -1303,9 +1412,7 @@ class SqlAlchemySearchLedgerRepository:
                 scope=row.scope,
                 access_scope=row.access_scope,
                 privacy_scope=row.privacy_scope,
-                authentication_scope_fingerprint=(
-                    row.authentication_scope_fingerprint
-                ),
+                authentication_scope_fingerprint=(row.authentication_scope_fingerprint),
                 issued_at=row.issued_at.isoformat(),
             )
 
@@ -1663,8 +1770,7 @@ class SqlAlchemySearchLedgerRepository:
                             raise ExtractionAcceptanceConflict()
                         acceptance = session.scalar(
                             select(ExtractionOutcomeAcceptanceRow).where(
-                                ExtractionOutcomeAcceptanceRow.plan_id
-                                == existing.id
+                                ExtractionOutcomeAcceptanceRow.plan_id == existing.id
                             )
                         )
                         if acceptance is None:
@@ -1706,10 +1812,9 @@ class SqlAlchemySearchLedgerRepository:
                     raw_state = _extraction_projection_state(raw_projection)
                     projection = _deserialize_extraction_projection(raw_state)
                     state = _extraction_projection_state(projection)
-                    if (
-                        _extraction_source_fingerprint(state)
-                        != _extraction_source_fingerprint(claim_state)
-                    ):
+                    if _extraction_source_fingerprint(
+                        state
+                    ) != _extraction_source_fingerprint(claim_state):
                         raise ExtractionAcceptanceConflict()
                     receipt_ref, scope = _persist_extraction_projection_rows(
                         session,
@@ -1726,9 +1831,7 @@ class SqlAlchemySearchLedgerRepository:
                 return AcceptedExtractionOutcome.accepted(projection, receipt)
             except IntegrityError:
                 for _ in range(100):
-                    existing = self.load_extraction_outcome(
-                        claim.extraction_run_id
-                    )
+                    existing = self.load_extraction_outcome(claim.extraction_run_id)
                     if existing is not None:
                         existing_state = _extraction_projection_state(
                             FinalizedExtractionProjection(
@@ -1736,9 +1839,7 @@ class SqlAlchemySearchLedgerRepository:
                                     existing.extraction_outcome_policy_version
                                 ),
                                 outcome=existing.outcome,
-                                artifact_disposition=(
-                                    existing.artifact_disposition
-                                ),
+                                artifact_disposition=(existing.artifact_disposition),
                                 extraction_run_id=existing.extraction_run_id,
                                 request_id=existing.request_id,
                                 plan_ref=existing.plan_ref,
@@ -1749,18 +1850,15 @@ class SqlAlchemySearchLedgerRepository:
                                 terminal_cause=existing.terminal_cause,
                                 selected_extractor=existing.selected_extractor,
                                 cache_decision=existing.cache_decision,
-                                operation_latency_ms=(
-                                    existing.operation_latency_ms
-                                ),
+                                operation_latency_ms=(existing.operation_latency_ms),
                                 normalized_url_identity=(
                                     existing.normalized_url_identity
                                 ),
                             )
                         )
-                        if (
-                            _extraction_source_fingerprint(existing_state)
-                            != _extraction_source_fingerprint(claim_state)
-                        ):
+                        if _extraction_source_fingerprint(
+                            existing_state
+                        ) != _extraction_source_fingerprint(claim_state):
                             raise ExtractionAcceptanceConflict()
                         return existing
                     time.sleep(0.01)
@@ -1811,9 +1909,7 @@ class SqlAlchemySearchLedgerRepository:
                     plan_ref=projection.plan_ref,
                     extraction_run_id=projection.extraction_run_id,
                     request_id=projection.request_id,
-                    normalized_url=_safe_persisted_url(
-                        projection.plan.normalized_url
-                    ),
+                    normalized_url=_safe_persisted_url(projection.plan.normalized_url),
                     access_scope=projection.plan.access_scope,
                     mode=projection.plan.mode,
                     plan_json=_canonical_json(plan_state),
@@ -1853,10 +1949,7 @@ class SqlAlchemySearchLedgerRepository:
                     ExtractionOutcomeAcceptanceRow.plan_id
                     == ExtractionOutcomePlanRow.id,
                 )
-                .where(
-                    ExtractionOutcomePlanRow.extraction_run_id
-                    == extraction_run_id
-                )
+                .where(ExtractionOutcomePlanRow.extraction_run_id == extraction_run_id)
             ).one_or_none()
             if pair is None:
                 return None
@@ -1869,6 +1962,93 @@ class SqlAlchemySearchLedgerRepository:
                 scope=acceptance.scope,
             )
             return AcceptedExtractionOutcome.accepted(projection, receipt)
+
+    def load_accepted_extraction_outcome(self, extraction_run_id: str):
+        """Workflow-only typed outcome loader; never returns raw extractor state."""
+        return self.load_extraction_outcome(extraction_run_id)
+
+    def load_accepted_retrieval_results(self, receipt_ref: str):
+        """Load receipt-bound accepted results; legacy rows without proof fail closed."""
+        from argus.persistence.evidence import (
+            AcceptedOperationRow,
+            RetrievalEvidencePlanRow,
+        )
+
+        with self.session_factory() as session:
+            pair = session.execute(
+                select(AcceptedOperationRow, RetrievalEvidencePlanRow)
+                .join(
+                    RetrievalEvidencePlanRow,
+                    RetrievalEvidencePlanRow.id == AcceptedOperationRow.plan_id,
+                )
+                .where(AcceptedOperationRow.receipt_ref == receipt_ref)
+            ).one_or_none()
+            if pair is None:
+                return None
+            _, plan = pair
+            state = _parse_json_value(plan.plan_json)
+            if (
+                not isinstance(state, dict)
+                or state.get("binding_version") != "accepted-results-v1"
+                or not isinstance(state.get("accepted_results"), list)
+                or not isinstance(state.get("accepted_results_fingerprint"), str)
+            ):
+                return None
+            results = state["accepted_results"]
+            fingerprint = hashlib.sha256(_canonical_json(results).encode()).hexdigest()
+            if fingerprint != state["accepted_results_fingerprint"]:
+                return None
+            return tuple(results)
+
+    def load_accepted_workflow_composition(
+        self,
+        retrieval_acceptance_ref: str,
+        requirement_ref: str,
+    ):
+        """Load one exact accepted composition for idempotent workflow resume."""
+        with self.session_factory() as session:
+            rows = list(
+                session.scalars(
+                    select(RetrievalCompositionRow).where(
+                        RetrievalCompositionRow.retrieval_acceptance_ref
+                        == retrieval_acceptance_ref,
+                        RetrievalCompositionRow.requirement_ref == requirement_ref,
+                    )
+                )
+            )
+            if len(rows) != 1:
+                return None
+            row = rows[0]
+            state = _parse_json_value(row.projection_json)
+            if (
+                not isinstance(state, dict)
+                or acceptance_fingerprint(state) != row.source_fingerprint
+            ):
+                return None
+            durable_refs = set(
+                session.scalars(
+                    select(ResultExtractionLinkRow.result_cluster_ref).where(
+                        ResultExtractionLinkRow.composition_ref == row.receipt_ref
+                    )
+                )
+            )
+            projected_links = state.get("composition", {}).get("links")
+            if not isinstance(projected_links, list) or durable_refs != {
+                link.get("result_cluster_ref")
+                for link in projected_links
+                if isinstance(link, dict)
+            }:
+                return None
+            return {
+                "receipt_ref": row.receipt_ref,
+                "accepted_at": row.accepted_at.isoformat() + "Z",
+                "scope": (
+                    "sqlite_development"
+                    if session.get_bind().dialect.name == "sqlite"
+                    else "postgresql_authority"
+                ),
+                "source_state": state,
+            }
 
     def load_extraction_outcome_by_receipt(self, receipt_ref: str):
         """Reload the exact durable accepted projection for cache/composition."""
@@ -1917,8 +2097,7 @@ class SqlAlchemySearchLedgerRepository:
 
         if (
             not isinstance(composition, RetrievalComposition)
-            or composition.composite_outcome
-            is CanonicalOutcome.PERSISTENCE_FAILED
+            or composition.composite_outcome is CanonicalOutcome.PERSISTENCE_FAILED
         ):
             raise ValueError("persistence-failed composition cannot be accepted")
         if (
@@ -1945,9 +2124,7 @@ class SqlAlchemySearchLedgerRepository:
             link_state.pop("accepted_outcome", None)
         source_state = {
             "retrieval_outcome": accepted_retrieval.outcome,
-            "result_cluster_refs": tuple(
-                accepted_retrieval.result_cluster_refs
-            ),
+            "result_cluster_refs": tuple(accepted_retrieval.result_cluster_refs),
             "retrieval_acceptance_ref": retrieval_receipt_ref,
             "artifact_requirement": (
                 asdict(artifact_requirement)
@@ -2024,15 +2201,12 @@ class SqlAlchemySearchLedgerRepository:
                 inserted = session.execute(
                     dialect_insert(RetrievalCompositionRow)
                     .values(**composition_values)
-                    .on_conflict_do_nothing(
-                        index_elements=["source_fingerprint"]
-                    )
+                    .on_conflict_do_nothing(index_elements=["source_fingerprint"])
                 )
                 if inserted.rowcount == 0:
                     existing = session.scalar(
                         select(RetrievalCompositionRow).where(
-                            RetrievalCompositionRow.source_fingerprint
-                            == fingerprint
+                            RetrievalCompositionRow.source_fingerprint == fingerprint
                         )
                     )
                     if existing is None:
@@ -2084,8 +2258,7 @@ class SqlAlchemySearchLedgerRepository:
                     ).one_or_none()
                     if (
                         accepted_pair is None
-                        or accepted_pair[1].extraction_run_id
-                        != link.extraction_run_id
+                        or accepted_pair[1].extraction_run_id != link.extraction_run_id
                     ):
                         raise InvalidArtifactRequirement(
                             "extraction receipt is not bound to the linked run"
@@ -2124,10 +2297,8 @@ class SqlAlchemySearchLedgerRepository:
                         )
                         if (
                             artifact_row is None
-                            or artifact_row.content_identity
-                            != link.artifact_identity
-                            or accepted_pair[1].access_scope
-                            != link.access_scope
+                            or artifact_row.content_identity != link.artifact_identity
+                            or accepted_pair[1].access_scope != link.access_scope
                         ):
                             raise InvalidArtifactRequirement(
                                 "artifact is not bound to the accepted plan"
@@ -2156,15 +2327,11 @@ class SqlAlchemySearchLedgerRepository:
                         extraction_plan_id=extraction_plan_id,
                         artifact_row_id=artifact_row_id,
                         artifact_plan_id=(
-                            extraction_plan_id
-                            if artifact_row_id is not None
-                            else None
+                            extraction_plan_id if artifact_row_id is not None else None
                         ),
                         rejection_row_id=rejection_row_id,
                         rejection_plan_id=(
-                            extraction_plan_id
-                            if rejection_row_id is not None
-                            else None
+                            extraction_plan_id if rejection_row_id is not None else None
                         ),
                         reuse_origin=link.reuse_origin,
                     )
@@ -2178,6 +2345,54 @@ class SqlAlchemySearchLedgerRepository:
             receipt_ref=receipt_ref,
             accepted_at=now.isoformat() + "Z",
             scope=scope,
+        )
+
+    def accept_workflow_retrieval_composition(
+        self,
+        accepted_retrieval,
+        composition,
+        artifact_requirement,
+    ):
+        """Verify workflow refs against receipt-bound retrieval evidence, then accept."""
+        from argus.extraction.composition import InvalidArtifactRequirement
+
+        receipt = getattr(
+            accepted_retrieval.acceptance_receipt,
+            "receipt_ref",
+            accepted_retrieval.acceptance_receipt,
+        )
+        selected = getattr(accepted_retrieval, "result_projections", None)
+        durable = (
+            self.load_accepted_retrieval_results(receipt)
+            if isinstance(receipt, str)
+            else None
+        )
+        if selected is None or durable is None:
+            raise InvalidArtifactRequirement(
+                "workflow retrieval lacks durable accepted result proof"
+            )
+        normalized_durable = [_normalize_json_value(item) for item in durable]
+        normalized_selected = [_normalize_json_value(item) for item in selected]
+        remaining = list(normalized_durable)
+        for item in normalized_selected:
+            try:
+                remaining.remove(item)
+            except ValueError as error:
+                raise InvalidArtifactRequirement(
+                    "workflow result is not bound to its retrieval receipt"
+                ) from error
+        from argus.contracts.result_refs import accepted_result_refs
+
+        if accepted_result_refs(normalized_selected) != tuple(
+            accepted_retrieval.result_cluster_refs
+        ):
+            raise InvalidArtifactRequirement(
+                "workflow result refs do not match durable accepted results"
+            )
+        return self.accept_retrieval_composition(
+            accepted_retrieval,
+            composition,
+            artifact_requirement,
         )
 
     def record_extraction(
@@ -3017,6 +3232,7 @@ def create_search_ledger_repository(
     # Register S6 tables with development SQLite schema creation. This import
     # only declares metadata; it does not activate retrieval evidence writes.
     from argus.persistence import evidence as _retrieval_evidence  # noqa: F401
+
     is_sqlite = url.startswith("sqlite:")
     if is_sqlite and url.startswith("sqlite:///"):
         path = url.removeprefix("sqlite:///")
