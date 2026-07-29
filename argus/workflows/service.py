@@ -6,16 +6,12 @@ import asyncio
 import json
 import shutil
 import uuid
-import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import datetime
-from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
-
-import httpx
+from urllib.parse import urlparse
 
 from argus.corpus import (
     CorpusPaths,
@@ -23,23 +19,16 @@ from argus.corpus import (
     get_corpus_paths,
     mirror_legacy_docs_cache,
 )
-from argus.contracts import AcceptedOperation, CanonicalOutcome
+from argus.contracts import AcceptedOperation
 from argus.logging import get_logger
 from argus.workflows.models import (
     CitationRef,
-    WorkflowAggregateArtifactFloor,
-    WorkflowArtifactDisposition,
-    WorkflowArtifactRequirement,
-    WorkflowArtifactSelection,
-    WorkflowResultExtractionLink,
     StoredDocument,
     SummarySection,
-    WorkflowEvidenceView,
     WorkflowArtifact,
     WorkflowKind,
     WorkflowResult,
     WorkflowStatus,
-    compose_workflow_evidence,
 )
 from argus.workflows.summarizer import get_summarizer
 
@@ -81,19 +70,6 @@ _HIGH_VALUE_KEYWORDS = (
     "article",
     "faq",
 )
-
-
-class _LinkParser(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.links: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]):
-        if tag != "a":
-            return
-        for key, value in attrs:
-            if key == "href" and value:
-                self.links.append(value)
 
 
 def _json_default(value: Any):
@@ -141,7 +117,15 @@ def _same_site(url: str, root_domain: str) -> bool:
 def _normal_url(url: str) -> str:
     """Stable local dedupe key; execution authority remains injected."""
     parsed = urlparse(url)
-    return parsed._replace(fragment="").geturl().rstrip("/").lower()
+    return (
+        parsed._replace(
+            scheme=parsed.scheme.lower(),
+            netloc=parsed.netloc.lower(),
+            fragment="",
+        )
+        .geturl()
+        .rstrip("/")
+    )
 
 
 def _looks_like_html(url: str) -> bool:
@@ -453,124 +437,39 @@ class WorkflowService:
         role: str,
         source_type: str,
     ) -> tuple[list[StoredDocument], list[CitationRef]]:
-        """Compose only accepted extraction evidence for an accepted search."""
-        view = WorkflowEvidenceView.from_operation(operation, max_results=max_results)
-        result = operation.result
-        if result is None:
-            raise RuntimeError(f"workflow_search_{operation.outcome.value}")
-        selected = tuple(result["results"][:max_results])
-        requirement = WorkflowArtifactRequirement(
-            requirement_ref=f"workflow-{view.acceptance_receipt}",
-            selections=tuple(
-                WorkflowArtifactSelection(
-                    result_cluster_ref=cluster_ref,
-                    required=ordinal == 0,
-                    minimum_disposition=WorkflowArtifactDisposition.PARTIAL,
-                )
-                for ordinal, cluster_ref in enumerate(view.result_cluster_refs)
-            ),
-            aggregate_floor=WorkflowAggregateArtifactFloor(
-                count=1 if view.result_cluster_refs else 0,
-                minimum_disposition=WorkflowArtifactDisposition.PARTIAL,
-            ),
-            max_extractions=len(view.result_cluster_refs),
-            deadline_ms=30_000,
-            spend_policy_ref="workflow-extraction-v1",
+        """Build documents solely from the accepted composition projection."""
+        composed = await self._accepted_operations.compose_workflow(
+            operation,
+            max_results=max_results,
+            principal=self._caller_for_run(run),
+            request_id=run.run_id,
         )
-        links: list[WorkflowResultExtractionLink] = []
-        outcomes = []
-        for ordinal, (cluster_ref, search_result) in enumerate(
-            zip(view.result_cluster_refs, selected, strict=True)
-        ):
-            try:
-                extracted = await self._operation_extract(str(search_result["url"]))
-            except Exception:
-                extracted = None
-            typed = None
-            if extracted is not None and extracted.result is not None:
-                run_value = extracted.result.get("extraction_run_id")
-                if isinstance(run_value, str):
-                    typed = self._evidence_gateway.load_accepted_extraction_outcome(
-                        run_value
-                    )
-            if typed is not None:
-                links.append(
-                    WorkflowResultExtractionLink.from_accepted(
-                        link_ref=f"{view.acceptance_receipt}-{ordinal}",
-                        result_cluster_ref=cluster_ref,
-                        accepted_outcome=typed,
-                        required=ordinal == 0,
-                    )
-                )
-                outcomes.append((search_result, typed))
-            else:
-                links.append(
-                    WorkflowResultExtractionLink(
-                        link_ref=f"{view.acceptance_receipt}-{ordinal}",
-                        result_cluster_ref=cluster_ref,
-                        extraction_run_id=None,
-                        extraction_outcome=(
-                            extracted.outcome
-                            if extracted is not None
-                            else CanonicalOutcome.PERSISTENCE_FAILED
-                        ),
-                        artifact_disposition=WorkflowArtifactDisposition.NONE,
-                        artifact_ref=None,
-                        rejection_ref=None,
-                        acceptance_receipt=None,
-                        required=ordinal == 0,
-                        eligible_path=(
-                            extracted is not None
-                            and extracted.outcome is not CanonicalOutcome.UNREADY
-                        ),
-                        attempted=False,
-                    )
-                )
-        composition = compose_workflow_evidence(view, tuple(links), requirement)
+        if composed.result is None:
+            raise RuntimeError(f"workflow_composition_{composed.outcome.value}")
+        projection = composed.result
         run.metadata["composition"] = {
-            "outcome": composition.composite_outcome.value,
-            "trace": list(composition.composition_trace),
+            "outcome": projection["composition_outcome"],
         }
-        receipt = self._evidence_gateway.accept_retrieval_composition(
-            view, composition, requirement
-        )
-        run.metadata["composition_receipt_ref"] = receipt.receipt_ref
-        if composition.composite_outcome not in {
-            CanonicalOutcome.SUCCESS,
-            CanonicalOutcome.DEGRADED,
-        }:
-            raise RuntimeError(
-                f"workflow_composition_{composition.composite_outcome.value}"
-            )
+        run.metadata["composition_receipt_ref"] = projection["composition_receipt_ref"]
         documents: list[StoredDocument] = []
         citations: list[CitationRef] = []
         output_dir = Path(run.snapshot_dir) / section
         output_dir.mkdir(parents=True, exist_ok=True)
-        for ordinal, (search_result, accepted) in enumerate(outcomes, start=1):
-            artifact = accepted.artifact
-            if artifact is None or accepted.artifact_disposition not in {
-                WorkflowArtifactDisposition.USABLE,
-                WorkflowArtifactDisposition.PARTIAL,
-            }:
-                continue
+        for ordinal, artifact in enumerate(projection["artifacts"], start=1):
             document = self._store_document(
                 output_dir,
                 citation_id=f"S{ordinal}",
-                url=str(search_result["url"]),
-                title=artifact.title or str(search_result.get("title") or ""),
-                text=artifact.text,
-                word_count=artifact.word_count,
-                domain=urlparse(str(search_result["url"]))
-                .netloc.lower()
-                .lstrip("www."),
+                url=artifact["url"],
+                title=artifact["title"],
+                text=artifact["text"],
+                word_count=artifact["word_count"],
+                domain=urlparse(artifact["url"]).netloc.lower().lstrip("www."),
                 role=role,
                 source_type=source_type,
-                extractor=accepted.selected_extractor,
+                extractor=artifact["extractor"],
                 metadata={
-                    "artifact_disposition": accepted.artifact_disposition.value,
-                    "lead_text": _lead_text(artifact.text),
-                    "quality_passed": artifact.quality_passed,
-                    "is_complete": artifact.is_complete,
+                    "artifact_disposition": artifact["disposition"],
+                    "lead_text": _lead_text(artifact["text"]),
                 },
             )
             documents.append(document)
@@ -706,7 +605,6 @@ class WorkflowService:
     ):
         self._report(0, 3, "Searching for recovery candidates...")
         operation = await self._operation_recover(url=url, title=title, domain=domain)
-        view = WorkflowEvidenceView.from_operation(operation, max_results=8)
         accepted_results = operation.result["results"] if operation.result else ()
         candidates = []
         seen = {_normal_url(url)}
@@ -723,7 +621,7 @@ class WorkflowService:
         documents, citations = await self._compose_search_documents(
             run,
             operation,
-            max_results=min(8, len(view.result_cluster_refs)),
+            max_results=min(8, len(accepted_results)),
             section="recovered-sources",
             role="recovered_source",
             source_type="recovery_candidate",
@@ -1041,78 +939,18 @@ class WorkflowService:
     async def _discover_site_urls(
         self, root_url: str, *, soft_page_limit: int, hard_page_limit: int
     ) -> list[str]:
-        root_domain = _domain_root(urlparse(root_url).netloc)
-        discovered: dict[str, tuple[str, int]] = {
-            _normal_url(root_url): (root_url, 100)
-        }
-
-        sitemap_urls = await self._load_sitemap_urls(root_url)
-        for url in sitemap_urls:
-            if _same_site(url, root_domain) and _looks_like_html(url):
-                discovered[_normal_url(url)] = (url, _score_site_url(url, root_url))
-
-        queue: list[str] = [root_url]
-        visited: set[str] = set()
-        while queue and len(visited) < min(soft_page_limit, 25):
-            current = queue.pop(0)
-            normalized = _normal_url(current)
-            if normalized in visited:
-                continue
-            visited.add(normalized)
-            links = await self._fetch_links(current)
-            for link in links:
-                absolute = urljoin(current, link)
-                if not _same_site(absolute, root_domain) or not _looks_like_html(
-                    absolute
-                ):
-                    continue
-                normalized_link = _normal_url(absolute)
-                score = _score_site_url(absolute, root_url)
-                previous = discovered.get(normalized_link)
-                if previous is None or score > previous[1]:
-                    discovered[normalized_link] = (absolute, score)
-                if normalized_link not in visited and len(queue) < hard_page_limit:
-                    queue.append(absolute)
-            if len(discovered) >= hard_page_limit * 2:
-                break
-
-        ordered = sorted(
-            discovered.values(),
-            key=lambda item: (-item[1], len(urlparse(item[0]).path), item[0]),
+        operation = await self._operation_search(
+            query=root_url, mode="discovery", max_results=hard_page_limit
         )
-        urls = [url for url, _ in ordered[:hard_page_limit]]
-        if root_url in urls:
-            urls.remove(root_url)
-        return [root_url] + urls
-
-    async def _load_sitemap_urls(self, root_url: str) -> list[str]:
-        parsed = urlparse(root_url)
-        sitemap_url = f"{parsed.scheme}://{parsed.netloc}/sitemap.xml"
-        try:
-            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
-                resp = await client.get(sitemap_url)
-                resp.raise_for_status()
-            root = ET.fromstring(resp.text)
-            urls = []
-            for loc in root.findall(".//{*}loc"):
-                if loc.text:
-                    urls.append(loc.text.strip())
-            return urls
-        except Exception:
-            return []
-
-    async def _fetch_links(self, url: str) -> list[str]:
-        try:
-            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
-                resp = await client.get(
-                    url, headers={"User-Agent": "ArgusSiteCapture/1.0"}
-                )
-                resp.raise_for_status()
-            parser = _LinkParser()
-            parser.feed(resp.text)
-            return parser.links
-        except Exception:
-            return []
+        results = (operation.result or {}).get("results", ())
+        urls = [
+            str(result["url"])
+            for result in results
+            if _normal_url(str(result["url"])) == _normal_url(root_url)
+        ]
+        if not urls:
+            raise RuntimeError("workflow_exact_url_unready")
+        return urls[:soft_page_limit]
 
     def _store_document(
         self,

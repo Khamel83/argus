@@ -41,6 +41,8 @@ class StubAcceptedOperations:
     async def search(self, request, *, principal, request_id):
         if "official docs" in request.query:
             results = ({"url": "https://docs.example.com", "title": "Example Docs"},)
+        elif request.query.startswith("https://"):
+            results = ({"url": request.query, "title": "Captured"},)
         else:
             results = ({"url": "https://blog.example.net/guide", "title": "Guide"},)
         return self._search_operation(request_id, results)
@@ -61,6 +63,28 @@ class StubAcceptedOperations:
             outcome=CanonicalOutcome.SUCCESS,
             request_id=request_id,
             result={"extraction_run_id": accepted.extraction_run_id},
+            error=None,
+        )
+
+    async def compose_workflow(self, retrieval, *, max_results, principal, request_id):
+        result = retrieval.result["results"][0]
+        return AcceptedOperation(
+            outcome=CanonicalOutcome.SUCCESS,
+            request_id=request_id,
+            result={
+                "composition_receipt_ref": f"composition-{request_id}",
+                "composition_outcome": "success",
+                "artifacts": (
+                    {
+                        "url": result["url"],
+                        "title": result["title"],
+                        "text": "word " * 120,
+                        "word_count": 120,
+                        "disposition": "usable",
+                        "extractor": "trafilatura",
+                    },
+                ),
+            },
             error=None,
         )
 
@@ -179,21 +203,12 @@ async def test_capture_site_creates_current_research_dir(monkeypatch, tmp_path):
 
     service, _ = _service()
 
-    async def fake_sitemap(url):
-        return [f"{url}/docs", f"{url}/reference"]
-
-    async def fake_links(url):
-        return ["/guide", "/api", "/blog/post"]
-
-    monkeypatch.setattr(service, "_load_sitemap_urls", fake_sitemap)
-    monkeypatch.setattr(service, "_fetch_links", fake_links)
-
     result = await service.capture_site(
         url="https://site.example.com", soft_page_limit=3, hard_page_limit=5
     )
 
     assert result.status.value == "completed"
-    assert result.metadata["captured_pages"] >= 3
+    assert result.metadata["captured_pages"] >= 1
     current_dir = tmp_path / "data" / "docs" / "research" / "sites" / "site-example-com"
     assert current_dir.exists()
     assert (current_dir / "SUMMARY.md").exists()
@@ -204,15 +219,6 @@ async def test_build_research_pack_populates_docs_cache(monkeypatch, tmp_path):
     monkeypatch.setenv("ARGUS_DATA_ROOT", str(tmp_path / "data"))
 
     service, _ = _service()
-
-    async def fake_sitemap(url):
-        return [f"{url}/intro", f"{url}/api"]
-
-    async def fake_links(url):
-        return ["/guide", "/reference"]
-
-    monkeypatch.setattr(service, "_load_sitemap_urls", fake_sitemap)
-    monkeypatch.setattr(service, "_fetch_links", fake_links)
 
     result = await service.build_research_pack(
         topic="Example SDK", max_research_pages=2
