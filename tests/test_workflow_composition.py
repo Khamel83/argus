@@ -1,5 +1,6 @@
 """Workflow evidence composition and rejected-content safety."""
 
+import asyncio
 from dataclasses import fields
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -152,6 +153,9 @@ async def test_real_authority_hashes_frozen_retrieval_and_returns_full_projectio
     assert composed.result["rejected_extraction_refs"] == ()
     assert composed.result["composition_trace"] == ("artifact_floor_met",)
     assert composed.result["composition_receipt"]["receipt_ref"]
+    assert composed.result["retrieval_outcome"] == "success"
+    assert composed.result["artifact_outcome"] == "success"
+    assert composed.result["composite_outcome"] == "success"
     assert composed.result["composition_outcome"] == "success"
     assert composed.result["artifacts"][0]["artifact_ref"] == "artifact-1"
 
@@ -396,6 +400,43 @@ async def test_real_authority_resumes_accepted_composition_without_reextracting(
 
 
 @pytest.mark.asyncio
+async def test_concurrent_same_receipt_extracts_once_and_remains_resumable(tmp_path):
+    from tests.test_extraction_composition import _link
+
+    service, repository = _real_authority(tmp_path, [_link()])
+    retrieval = _accepted_retrieval(
+        repository,
+        ({"url": "https://example.com/1", "title": "Article"},),
+    )
+
+    first, second = await asyncio.gather(
+        service.compose_workflow(
+            retrieval,
+            max_results=1,
+            principal="caller-a",
+            request_id="compose-a",
+        ),
+        service.compose_workflow(
+            retrieval,
+            max_results=1,
+            principal="caller-b",
+            request_id="compose-b",
+        ),
+    )
+
+    assert service.extract.await_count == 1
+    assert first.result == second.result
+    third = await service.compose_workflow(
+        retrieval,
+        max_results=1,
+        principal="caller-c",
+        request_id="compose-c",
+    )
+    assert third.result == first.result
+    assert service.extract.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_real_authority_verifies_exact_url_selection_and_receipt_binding(
     tmp_path,
 ):
@@ -578,7 +619,7 @@ async def test_rejected_artifact_never_reaches_document_or_summarizer(
         "_replace_directory",
         prohibited_delivery,
     )
-    result = await WorkflowService(Operations(), gateway).capture_site(
+    result = await WorkflowService(Operations()).capture_site(
         url="https://example.com/rejected",
         soft_page_limit=1,
         hard_page_limit=1,

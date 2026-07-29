@@ -7,6 +7,7 @@ from mcp.server.fastmcp import Context as McpContext
 from argus.broker.router import SearchBroker
 from argus.corpus import describe_corpus_paths
 from argus.models import SearchMode, SearchQuery
+from argus.operations.accepted import create_development_accepted_operation_service
 from argus.workflows import WorkflowService
 
 _STATUS_DISPLAY = {
@@ -560,7 +561,7 @@ async def recover_dead_article(
 ) -> str:
     """Recover a dead article into a local citation-backed report."""
     service = WorkflowService(
-        broker,
+        create_development_accepted_operation_service(broker),
         progress_callback=_make_progress_callback(ctx),
         caller=caller_identity,
     )
@@ -585,7 +586,7 @@ async def capture_site(
 ) -> str:
     """Capture the important pages from a site and summarize them."""
     service = WorkflowService(
-        broker,
+        create_development_accepted_operation_service(broker),
         progress_callback=_make_progress_callback(ctx),
         caller=caller_identity,
     )
@@ -611,7 +612,7 @@ async def build_research_pack(
 ) -> str:
     """Build a combined official-docs and external-research pack."""
     service = WorkflowService(
-        broker,
+        create_development_accepted_operation_service(broker),
         progress_callback=_make_progress_callback(ctx),
         caller=caller_identity,
     )

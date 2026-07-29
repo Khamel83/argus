@@ -104,17 +104,13 @@ def _build_broker_provider(
 
 def _build_workflow_provider(
     accepted_operations_provider: Callable[[], AcceptedOperationService],
-    evidence_gateway_provider: Callable[[], SearchLedgerRepository],
 ) -> Callable[[], WorkflowService]:
     current: WorkflowService | None = None
 
     def get_workflows() -> WorkflowService:
         nonlocal current
         if current is None:
-            current = WorkflowService(
-                accepted_operations_provider(),
-                evidence_gateway_provider(),
-            )
+            current = WorkflowService(accepted_operations_provider())
         return current
 
     return get_workflows
@@ -769,7 +765,6 @@ def create_app(
     app.state.get_spend_repository = get_spend_repository
     app.state.get_workflows = _build_workflow_provider(
         app.state.get_accepted_operation_service,
-        app.state.get_search_repository,
     )
     app.state.rate_limiter = rate_limiter or _build_rate_limiter()
     app.state.auth_config = auth_config

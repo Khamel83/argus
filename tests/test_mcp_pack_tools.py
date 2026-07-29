@@ -3,6 +3,9 @@
 import base64
 import json
 from datetime import datetime
+from types import SimpleNamespace
+
+import pytest
 
 from argus.development_mcp_tools import (
     _serialize_workflow_json,
@@ -110,6 +113,47 @@ def test_read_pack_file_truncation_and_offset(tmp_path, monkeypatch):
     rest = json.loads(read_pack_file(str(f), max_bytes=100, offset=4))
     assert rest["content"] == "efghij"
     assert rest["truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_standalone_capture_uses_development_accepted_authority(monkeypatch):
+    from argus import development_mcp_tools
+
+    broker = object()
+    accepted_authority = object()
+    observed = {}
+
+    monkeypatch.setattr(
+        development_mcp_tools,
+        "create_development_accepted_operation_service",
+        lambda supplied: accepted_authority if supplied is broker else None,
+    )
+
+    class Service:
+        def __init__(self, accepted_operations, **_kwargs):
+            observed["accepted_operations"] = accepted_operations
+
+        async def capture_site(self, **_kwargs):
+            return SimpleNamespace(
+                run_id="standalone",
+                kind=SimpleNamespace(value="capture_site"),
+                target="https://example.com",
+                status=SimpleNamespace(value="completed"),
+                report_path=None,
+                snapshot_dir="",
+                manifest_path=None,
+                error=None,
+                metadata={},
+                artifacts=[],
+                summary_sections=[],
+                documents=[],
+            )
+
+    monkeypatch.setattr(development_mcp_tools, "WorkflowService", Service)
+    rendered = await development_mcp_tools.capture_site(broker, "https://example.com")
+
+    assert observed["accepted_operations"] is accepted_authority
+    assert "standalone" in rendered
 
 
 def test_read_pack_file_missing_file(tmp_path, monkeypatch):

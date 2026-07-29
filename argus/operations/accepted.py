@@ -132,15 +132,6 @@ def _canonical_json(value) -> str:
     )
 
 
-def _workflow_result_refs(results) -> tuple[str, ...]:
-    return tuple(
-        "wf-"
-        + hashlib.sha256(_canonical_json(item).encode()).hexdigest()[:24]
-        + f"-{ordinal}"
-        for ordinal, item in enumerate(results)
-    )
-
-
 def _workflow_projection(requirement, composition, receipt, artifacts):
     requirement_state = _canonical_json_value(requirement)
     composition_state = _canonical_json_value(composition)
@@ -157,9 +148,34 @@ def _workflow_projection(requirement, composition, receipt, artifacts):
         "composition_trace": composition_state["composition_trace"],
         "composition_receipt": receipt_state,
         "composition_receipt_ref": receipt_state["receipt_ref"],
+        "retrieval_outcome": composition_state["retrieval_outcome"],
+        "artifact_outcome": composition_state["artifact_outcome"],
+        "composite_outcome": composition_state["composite_outcome"],
         "composition_outcome": composition_state["composite_outcome"],
         "artifacts": artifacts,
     }
+
+
+def _workflow_requirement_ref(
+    *,
+    receipt_ref: str,
+    refs: tuple[str, ...],
+    required: frozenset[str],
+    minimum_disposition: ArtifactDisposition,
+    aggregate_count: int,
+) -> str:
+    identity = hashlib.sha256(
+        _canonical_json(
+            {
+                "receipt_ref": receipt_ref,
+                "refs": refs,
+                "required_urls": tuple(sorted(required)),
+                "minimum_disposition": minimum_disposition,
+                "aggregate_count": aggregate_count,
+            }
+        ).encode()
+    ).hexdigest()[:48]
+    return f"workflow-{identity}"
 
 
 def _search_projection(response, *, include_attribution: bool) -> dict[str, object]:
@@ -749,6 +765,83 @@ class AcceptedOperationService:
         allow_partial: bool = True,
         minimum_artifacts: int | None = None,
     ) -> AcceptedOperation:
+        """Claim and compose one immutable receipt-bound workflow requirement."""
+        receipt = (retrieval.result or {}).get("acceptance_receipt")
+        receipt_ref = (
+            receipt.get("receipt_ref") if isinstance(receipt, Mapping) else None
+        )
+        repository = self._repository_provider()
+        claim_requirement_ref = None
+        results = (retrieval.result or {}).get("results")
+        if isinstance(receipt_ref, str) and isinstance(results, tuple):
+            if selection_urls is None:
+                selected = tuple(results[:max_results])
+            else:
+                by_url = {item.get("url"): item for item in results}
+                selected = tuple(
+                    by_url[url] for url in selection_urls[:max_results] if url in by_url
+                )
+            from argus.contracts.result_refs import accepted_result_refs
+
+            refs = accepted_result_refs(selected)
+            selected_urls = tuple(str(item["url"]) for item in selected)
+            required = (
+                frozenset(selected_urls[:1])
+                if required_urls is None
+                else frozenset(required_urls)
+            )
+            aggregate_count = (
+                minimum_artifacts
+                if type(minimum_artifacts) is int
+                else (1 if refs else 0)
+            )
+            claim_requirement_ref = _workflow_requirement_ref(
+                receipt_ref=receipt_ref,
+                refs=refs,
+                required=required,
+                minimum_disposition=(
+                    ArtifactDisposition.PARTIAL
+                    if allow_partial
+                    else ArtifactDisposition.USABLE
+                ),
+                aggregate_count=aggregate_count,
+            )
+        claim = getattr(repository, "workflow_composition_claim", None)
+        if claim_requirement_ref is None or claim is None:
+            return await self._compose_workflow_unlocked(
+                retrieval,
+                max_results=max_results,
+                principal=principal,
+                request_id=request_id,
+                selection_urls=selection_urls,
+                required_urls=required_urls,
+                allow_partial=allow_partial,
+                minimum_artifacts=minimum_artifacts,
+            )
+        async with claim(receipt_ref, claim_requirement_ref):
+            return await self._compose_workflow_unlocked(
+                retrieval,
+                max_results=max_results,
+                principal=principal,
+                request_id=request_id,
+                selection_urls=selection_urls,
+                required_urls=required_urls,
+                allow_partial=allow_partial,
+                minimum_artifacts=minimum_artifacts,
+            )
+
+    async def _compose_workflow_unlocked(
+        self,
+        retrieval: AcceptedOperation,
+        *,
+        max_results: int,
+        principal: str,
+        request_id: str,
+        selection_urls: tuple[str, ...] | None = None,
+        required_urls: tuple[str, ...] | None = None,
+        allow_partial: bool = True,
+        minimum_artifacts: int | None = None,
+    ) -> AcceptedOperation:
         """Compose workflow extraction evidence behind the accepted authority."""
         from argus.extraction.composition import InvalidArtifactRequirement
         from argus.persistence.search_ledger import AcceptanceConflictError
@@ -830,7 +923,9 @@ class AcceptedOperationService:
                     "Requested workflow URL is absent from accepted retrieval evidence",
                 )
             selected = tuple(by_url[url] for url in selection_urls[:max_results])
-        refs = _workflow_result_refs(selected)
+        from argus.contracts.result_refs import accepted_result_refs
+
+        refs = accepted_result_refs(selected)
 
         selected_urls = tuple(str(item["url"]) for item in selected)
         if required_urls is None:
@@ -859,17 +954,14 @@ class AcceptedOperationService:
         minimum_disposition = (
             ArtifactDisposition.PARTIAL if allow_partial else ArtifactDisposition.USABLE
         )
-        requirement_identity = hashlib.sha256(
-            _canonical_json(
-                {
-                    "receipt_ref": receipt_ref,
-                    "refs": refs,
-                    "required_urls": tuple(sorted(required)),
-                    "minimum_disposition": minimum_disposition,
-                    "aggregate_count": aggregate_count,
-                }
-            ).encode()
-        ).hexdigest()[:48]
+        requirement_ref = _workflow_requirement_ref(
+            receipt_ref=receipt_ref,
+            refs=refs,
+            required=required,
+            minimum_disposition=minimum_disposition,
+            aggregate_count=aggregate_count,
+        )
+        requirement_identity = requirement_ref.removeprefix("workflow-")
         view = _WorkflowRetrievalView(
             retrieval.outcome,
             refs,
@@ -877,7 +969,7 @@ class AcceptedOperationService:
             tuple(selected),
         )
         requirement = ArtifactRequirement(
-            requirement_ref=f"workflow-{requirement_identity}",
+            requirement_ref=requirement_ref,
             selections=tuple(
                 ArtifactSelection(
                     ref,
@@ -963,6 +1055,9 @@ class AcceptedOperationService:
                 "composition_trace": composition_state["composition_trace"],
                 "composition_receipt": receipt_state,
                 "composition_receipt_ref": resumed["receipt_ref"],
+                "retrieval_outcome": composition_state["retrieval_outcome"],
+                "artifact_outcome": composition_state["artifact_outcome"],
+                "composite_outcome": composition_state["composite_outcome"],
                 "composition_outcome": composition_state["composite_outcome"],
                 "artifacts": projected_artifacts,
             }
@@ -1113,3 +1208,18 @@ class AcceptedOperationService:
             result=projection,
             error=None,
         )
+
+
+def create_development_accepted_operation_service(
+    broker, repository=None
+) -> AcceptedOperationService:
+    """Build the explicit SQLite-backed authority used only by standalone tools."""
+    if repository is None:
+        from argus.persistence.search_ledger import create_search_ledger_repository
+
+        repository = create_search_ledger_repository()
+    return AcceptedOperationService(
+        broker_provider=lambda: broker,
+        repository_provider=lambda: repository,
+        registration=AcceptedOperationRegistration.complete(),
+    )

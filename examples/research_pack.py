@@ -12,12 +12,13 @@ Output: a pack directory under your Argus runtime corpus root (run
 import asyncio
 
 from argus.broker.router import create_broker
+from argus.operations.accepted import create_development_accepted_operation_service
 from argus.workflows import WorkflowService
 
 
 async def main() -> None:
     broker = create_broker()
-    service = WorkflowService(broker)
+    service = WorkflowService(create_development_accepted_operation_service(broker))
 
     result = await service.build_research_pack(
         topic="example sdk",

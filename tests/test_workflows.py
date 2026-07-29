@@ -27,6 +27,7 @@ class StubAcceptedOperations:
         self.gateway = gateway
         self._counter = 0
         self.compose_calls = []
+        self.callers = []
 
     def _search_operation(self, request_id, results):
         return AcceptedOperation(
@@ -40,6 +41,7 @@ class StubAcceptedOperations:
         )
 
     async def search(self, request, *, principal, request_id):
+        self.callers.append((principal, request.caller))
         if "official docs" in request.query:
             results = ({"url": "https://docs.example.com", "title": "Example Docs"},)
         elif request.query.startswith("https://"):
@@ -49,6 +51,7 @@ class StubAcceptedOperations:
         return self._search_operation(request_id, results)
 
     async def recover(self, request, *, principal, request_id):
+        self.callers.append((principal, None))
         return self._search_operation(
             request_id,
             ({"url": "https://archive.example.com/post", "title": "Recovered Post"},),
@@ -85,10 +88,13 @@ class StubAcceptedOperations:
             }
         )
         results = retrieval.result["results"]
-        result = (
-            next(item for item in results if item["url"] == selection_urls[0])
+        selected = (
+            tuple(
+                next(item for item in results if item["url"] == url)
+                for url in selection_urls
+            )
             if selection_urls
-            else results[0]
+            else results[:max_results]
         )
         return AcceptedOperation(
             outcome=CanonicalOutcome.SUCCESS,
@@ -96,7 +102,7 @@ class StubAcceptedOperations:
             result={
                 "composition_receipt_ref": f"composition-{request_id}",
                 "composition_outcome": "success",
-                "artifacts": (
+                "artifacts": tuple(
                     {
                         "url": result["url"],
                         "title": result["title"],
@@ -104,7 +110,8 @@ class StubAcceptedOperations:
                         "word_count": 120,
                         "disposition": "usable",
                         "extractor": "trafilatura",
-                    },
+                    }
+                    for result in selected
                 ),
             },
             error=None,
@@ -115,7 +122,7 @@ def _service():
     from argus.workflows import WorkflowService
 
     gateway = StubEvidenceGateway()
-    return WorkflowService(StubAcceptedOperations(gateway), gateway), gateway
+    return WorkflowService(StubAcceptedOperations(gateway)), gateway
 
 
 class StubBroker:
@@ -240,6 +247,96 @@ async def test_capture_site_creates_current_research_dir(monkeypatch, tmp_path):
     current_dir = tmp_path / "data" / "docs" / "research" / "sites" / "site-example-com"
     assert current_dir.exists()
     assert (current_dir / "SUMMARY.md").exists()
+    assert len(service._accepted_operations.compose_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_site_capture_composes_all_ranked_same_site_pages_once(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("ARGUS_DATA_ROOT", str(tmp_path / "data"))
+    service, _ = _service()
+    original_search = service._accepted_operations.search
+
+    async def multi_page_search(request, *, principal, request_id):
+        if request.query == "https://site.example.com":
+            return service._accepted_operations._search_operation(
+                request_id,
+                (
+                    {"url": "https://site.example.com", "title": "Home"},
+                    {"url": "https://site.example.com/docs", "title": "Docs"},
+                    {"url": "https://unrelated.example.net", "title": "Unrelated"},
+                ),
+            )
+        return await original_search(
+            request, principal=principal, request_id=request_id
+        )
+
+    service._accepted_operations.search = multi_page_search
+    result = await service.capture_site(
+        url="https://site.example.com", soft_page_limit=3, hard_page_limit=5
+    )
+
+    assert result.status.value == "completed"
+    assert {document.url for document in result.documents} == {
+        "https://site.example.com",
+        "https://site.example.com/docs",
+    }
+    assert len(service._accepted_operations.compose_calls) == 1
+    assert service._accepted_operations.compose_calls[0]["selection_urls"] == (
+        "https://site.example.com",
+        "https://site.example.com/docs",
+    )
+
+
+@pytest.mark.asyncio
+async def test_workflow_search_uses_authenticated_run_caller(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARGUS_DATA_ROOT", str(tmp_path / "data"))
+    service, _ = _service()
+
+    await service.capture_site(
+        url="https://site.example.com",
+        soft_page_limit=1,
+        hard_page_limit=1,
+        caller_identity="maya",
+        caller_label="research-ui",
+    )
+
+    assert service._accepted_operations.callers == [("maya", "research-ui")]
+
+
+@pytest.mark.asyncio
+async def test_partial_artifact_is_marked_in_document_citation_and_report(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("ARGUS_DATA_ROOT", str(tmp_path / "data"))
+    service, _ = _service()
+    original_compose = service._accepted_operations.compose_workflow
+
+    async def partial_compose(*args, **kwargs):
+        operation = await original_compose(*args, **kwargs)
+        result = dict(operation.result)
+        artifacts = [dict(item) for item in result["artifacts"]]
+        artifacts[0]["disposition"] = "partial"
+        result["artifacts"] = tuple(artifacts)
+        return AcceptedOperation(
+            outcome=CanonicalOutcome.DEGRADED,
+            request_id=operation.request_id,
+            result=result,
+            error=None,
+        )
+
+    service._accepted_operations.compose_workflow = partial_compose
+    result = await service.capture_site(
+        url="https://site.example.com", soft_page_limit=1, hard_page_limit=1
+    )
+
+    assert result.documents[0].metadata["artifact_disposition"] == "partial"
+    assert result.citations[0].artifact_disposition == "partial"
+    assert "[PARTIAL CONTENT]" in result.summary_sections[1].body
+    from pathlib import Path
+
+    assert "PARTIAL CONTENT" in Path(result.report_path).read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio

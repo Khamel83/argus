@@ -30,6 +30,11 @@ class CitationRef:
     artifact_path: str
     note: str = ""
 
+    @property
+    def artifact_disposition(self) -> str:
+        """Expose partial provenance without changing the serialized citation shape."""
+        return "partial" if "artifact_disposition=partial" in self.note else "usable"
+
 
 @dataclass
 class SummarySection:

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import threading
 import time
 import uuid
 from dataclasses import dataclass
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Protocol
@@ -51,6 +53,8 @@ class LedgerBase(DeclarativeBase):
 
 
 _DATABASE_OPERATION_TIMEOUT_SECONDS = 5
+_WORKFLOW_COMPOSITION_LOCKS: dict[tuple[str, str, str], asyncio.Lock] = {}
+_WORKFLOW_COMPOSITION_LOCKS_GUARD = threading.Lock()
 
 
 def _system_now() -> datetime:
@@ -744,17 +748,6 @@ def _normalize_json_value(value):
     return json.loads(_canonical_json(value))
 
 
-def _workflow_result_refs(results) -> tuple[str, ...]:
-    return tuple(
-        "wf-"
-        + hashlib.sha256(
-            _canonical_json(_normalize_json_value(item)).encode()
-        ).hexdigest()[:24]
-        + f"-{ordinal}"
-        for ordinal, item in enumerate(results)
-    )
-
-
 def _parse_json_value(value: str | None):
     try:
         return json.loads(value or "{}")
@@ -1216,6 +1209,35 @@ class SqlAlchemySearchLedgerRepository:
         self.clock = clock
         self._extraction_finalization_locks: dict[str, threading.Lock] = {}
         self._extraction_finalization_locks_guard = threading.Lock()
+
+    @asynccontextmanager
+    async def workflow_composition_claim(
+        self, retrieval_receipt_ref: str, requirement_ref: str
+    ):
+        """Serialize one immutable workflow composition without adding schema."""
+        bind = self.session_factory.kw.get("bind")
+        database_scope = str(getattr(bind, "url", "unknown"))
+        key = (database_scope, retrieval_receipt_ref, requirement_ref)
+        with _WORKFLOW_COMPOSITION_LOCKS_GUARD:
+            process_lock = _WORKFLOW_COMPOSITION_LOCKS.setdefault(key, asyncio.Lock())
+        async with process_lock:
+            dialect = getattr(getattr(bind, "dialect", None), "name", "")
+            if dialect != "postgresql":
+                yield
+                return
+            signed_key = int.from_bytes(
+                hashlib.sha256(
+                    f"{retrieval_receipt_ref}\0{requirement_ref}".encode()
+                ).digest()[:8],
+                "big",
+                signed=True,
+            )
+            with self.session_factory.begin() as session:
+                session.execute(
+                    text("SELECT pg_advisory_xact_lock(:claim_key)"),
+                    {"claim_key": signed_key},
+                )
+                yield
 
     def issue_authentication_scope(
         self,
@@ -2246,7 +2268,9 @@ class SqlAlchemySearchLedgerRepository:
                 raise InvalidArtifactRequirement(
                     "workflow result is not bound to its retrieval receipt"
                 ) from error
-        if _workflow_result_refs(normalized_selected) != tuple(
+        from argus.contracts.result_refs import accepted_result_refs
+
+        if accepted_result_refs(normalized_selected) != tuple(
             accepted_retrieval.result_cluster_refs
         ):
             raise InvalidArtifactRequirement(
