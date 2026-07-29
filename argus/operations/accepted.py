@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from dataclasses import asdict, dataclass, fields, is_dataclass
 from enum import Enum
 from types import SimpleNamespace
@@ -26,6 +27,13 @@ from argus.extraction.composition import (
 from argus.extraction.outcomes import ArtifactDisposition
 from argus.models import ProviderName, SearchMode, SearchQuery, SearchResult
 from argus.recovery.archive_ph import try_archive_ph
+from argus.operations.site_acquisition import (
+    domain_root,
+    discover_site_urls,
+    fetch_site_text,
+    looks_like_html,
+    site_url_score,
+)
 
 
 class AcceptedAuthorityConfigurationError(RuntimeError):
@@ -287,6 +295,7 @@ class AcceptedOperationService:
         archive_lookup: Callable[..., Awaitable[object]] | None = None,
         session_authority=None,
         registration: AcceptedOperationRegistration | None = None,
+        site_fetcher=None,
     ):
         self._broker_provider = broker_provider
         self._repository_provider = repository_provider
@@ -294,6 +303,7 @@ class AcceptedOperationService:
         self._archive_lookup = archive_lookup
         self._session_authority = session_authority
         self._registration = registration or AcceptedOperationRegistration()
+        self._site_fetcher = site_fetcher or fetch_site_text
         self._evidence_repository = None
 
     def validate_registration(self, authority: str) -> None:
@@ -511,6 +521,170 @@ class AcceptedOperationService:
             request_id=request_id,
             include_attribution=request.include_attribution,
             session_id=session_id,
+        )
+
+    async def acquire_site(
+        self,
+        request,
+        *,
+        principal: str,
+        request_id: str,
+    ) -> AcceptedOperation:
+        """Acquire, rank, and durably accept sitemap/internal-link site results."""
+        search_request = SimpleNamespace(
+            query=request.url,
+            mode="discovery",
+            max_results=request.hard_page_limit,
+            providers=None,
+            free_only=False,
+            caller=request.caller,
+            session_id=None,
+            include_attribution=False,
+        )
+        base = await self.search(
+            search_request,
+            principal=principal,
+            request_id=f"{request_id}-search",
+        )
+        if base.result is None:
+            return AcceptedOperation(
+                outcome=base.outcome,
+                request_id=request_id,
+                result=None,
+                error=base.error,
+            )
+        base_receipt = base.result.get("acceptance_receipt")
+        base_receipt_ref = (
+            base_receipt.get("receipt_ref")
+            if isinstance(base_receipt, Mapping)
+            else None
+        )
+        if not isinstance(base_receipt_ref, str):
+            return AcceptedOperation(
+                outcome=CanonicalOutcome.PERSISTENCE_FAILED,
+                request_id=request_id,
+                result=None,
+                error=_operation_error(
+                    CanonicalOutcome.PERSISTENCE_FAILED,
+                    request_id=request_id,
+                    detail="Site acquisition search was not durably accepted",
+                ),
+            )
+
+        from urllib.parse import urlparse
+
+        root_domain = domain_root(urlparse(request.url).netloc)
+        discovered = await discover_site_urls(
+            request.url,
+            fetcher=self._site_fetcher,
+            hard_limit=request.hard_page_limit,
+        )
+        candidates: dict[str, dict[str, object]] = {}
+        for item in base.result.get("results", ()):
+            url = str(item["url"])
+            if domain_root(urlparse(url).netloc) == root_domain and looks_like_html(
+                url
+            ):
+                candidates[url.rstrip("/")] = dict(item)
+        for url in discovered:
+            if domain_root(urlparse(url).netloc) == root_domain:
+                candidates.setdefault(
+                    url.rstrip("/"),
+                    {"url": url, "title": url},
+                )
+        ranked = tuple(
+            sorted(
+                candidates.values(),
+                key=lambda item: (
+                    -site_url_score(str(item["url"]), request.url),
+                    len(urlparse(str(item["url"])).path),
+                    str(item["url"]),
+                ),
+            )[: min(request.soft_page_limit, request.hard_page_limit)]
+        )
+        operation_identity = hashlib.sha256(
+            _canonical_json(
+                {
+                    "base_receipt_ref": base_receipt_ref,
+                    "root_url": request.url,
+                    "results": ranked,
+                }
+            ).encode()
+        ).hexdigest()[:48]
+        operation_id = f"site-acquisition-{operation_identity}"
+        plan_id = f"site-plan-{operation_identity}"
+        cache_fingerprint = f"site-cache-{operation_identity}"
+        execution_cohort = f"site-cohort-{operation_identity}"
+        contributor_refs = (f"site-attempt-{operation_identity}",)
+        from argus.broker.accepted import (
+            AcceptanceReceipt,
+            AcceptedRetrieval,
+            CacheOutcome,
+            acceptance_fingerprint,
+        )
+        from argus.persistence.evidence import RetrievalEvidence
+
+        fingerprint = acceptance_fingerprint(
+            operation_id=operation_id,
+            plan_id=plan_id,
+            cache_fingerprint=cache_fingerprint,
+            execution_cohort_id=execution_cohort,
+            outcome=CacheOutcome.SUCCESS,
+            reason="site_acquisition_accepted",
+            results=ranked,
+            contributor_attempt_refs=contributor_refs,
+            origin_spend_usd="0",
+        )
+        receipt = AcceptanceReceipt(
+            receipt_ref=f"receipt:{operation_id}",
+            accepted_at=datetime.now(timezone.utc),
+            acceptance_fingerprint=fingerprint,
+        )
+        accepted = AcceptedRetrieval(
+            operation_id=operation_id,
+            plan_id=plan_id,
+            cache_fingerprint=cache_fingerprint,
+            execution_cohort=execution_cohort,
+            outcome=CacheOutcome.SUCCESS,
+            reason="site_acquisition_accepted",
+            query=request.url,
+            mode="discovery",
+            results=ranked,
+            contributor_attempt_refs=contributor_refs,
+            origin_spend_usd="0",
+            acceptance_receipt=receipt,
+        )
+        try:
+            accepted_receipt = self._get_evidence_repository().accept(
+                RetrievalEvidence(
+                    accepted=accepted,
+                    origin_receipt_ref=base_receipt_ref,
+                    cache_published=False,
+                )
+            )
+        except Exception:
+            return AcceptedOperation(
+                outcome=CanonicalOutcome.PERSISTENCE_FAILED,
+                request_id=request_id,
+                result=None,
+                error=_operation_error(
+                    CanonicalOutcome.PERSISTENCE_FAILED,
+                    request_id=request_id,
+                    detail="Site acquisition could not be durably accepted",
+                ),
+            )
+        return AcceptedOperation(
+            outcome=CanonicalOutcome.SUCCESS,
+            request_id=request_id,
+            result={
+                "results": ranked,
+                "acceptance_receipt": {
+                    "receipt_ref": accepted_receipt.receipt_ref,
+                    "accepted_at": accepted_receipt.accepted_at.isoformat(),
+                    "acceptance_fingerprint": (accepted_receipt.acceptance_fingerprint),
+                },
+            },
+            error=None,
         )
 
     def _accept_search(

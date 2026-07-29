@@ -34,43 +34,6 @@ from argus.workflows.summarizer import get_summarizer
 
 logger = get_logger("workflows")
 
-_STATIC_SUFFIXES = {
-    ".css",
-    ".js",
-    ".map",
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".gif",
-    ".svg",
-    ".ico",
-    ".pdf",
-    ".zip",
-    ".gz",
-    ".tgz",
-    ".json",
-    ".xml",
-    ".txt",
-    ".rss",
-    ".atom",
-}
-_HIGH_VALUE_KEYWORDS = (
-    "docs",
-    "doc",
-    "guide",
-    "guides",
-    "reference",
-    "api",
-    "manual",
-    "tutorial",
-    "learn",
-    "kb",
-    "knowledge",
-    "blog",
-    "article",
-    "faq",
-)
-
 
 def _json_default(value: Any):
     if isinstance(value, datetime):
@@ -107,13 +70,6 @@ def _domain_root(hostname: str) -> str:
     return ".".join(parts[-2:])
 
 
-def _same_site(url: str, root_domain: str) -> bool:
-    parsed = urlparse(url)
-    if not parsed.scheme.startswith("http"):
-        return False
-    return _domain_root(parsed.netloc) == root_domain
-
-
 def _normal_url(url: str) -> str:
     """Stable local dedupe key; execution authority remains injected."""
     parsed = urlparse(url)
@@ -126,36 +82,6 @@ def _normal_url(url: str) -> str:
         .geturl()
         .rstrip("/")
     )
-
-
-def _looks_like_html(url: str) -> bool:
-    parsed = urlparse(url)
-    suffix = Path(parsed.path).suffix.lower()
-    return suffix not in _STATIC_SUFFIXES
-
-
-def _score_site_url(url: str, root_url: str) -> int:
-    parsed = urlparse(url)
-    base = urlparse(root_url)
-    score = 1
-    path = parsed.path.lower()
-    if parsed.path in {"", "/"}:
-        score += 4
-    if parsed.netloc == base.netloc:
-        score += 2
-    for keyword in _HIGH_VALUE_KEYWORDS:
-        if keyword in path:
-            score += 3
-    depth = len([part for part in parsed.path.split("/") if part])
-    if depth <= 2:
-        score += 2
-    elif depth >= 5:
-        score -= 1
-    if any(skip in path for skip in ("/tag/", "/author/", "/page/", "/category/")):
-        score -= 3
-    if parsed.query:
-        score -= 1
-    return score
 
 
 def _lead_text(text: str, limit: int = 280) -> str:
@@ -242,6 +168,30 @@ class WorkflowService:
             {"url": url, "title": title, "domain": domain},
         )()
         return await self._accepted_operations.recover(
+            request,
+            principal=self._caller_for_run(run),
+            request_id=uuid.uuid4().hex,
+        )
+
+    async def _operation_acquire_site(
+        self,
+        run: WorkflowResult,
+        *,
+        url: str,
+        soft_page_limit: int,
+        hard_page_limit: int,
+    ):
+        request = type(
+            "WorkflowSiteAcquisitionRequest",
+            (),
+            {
+                "url": url,
+                "soft_page_limit": soft_page_limit,
+                "hard_page_limit": hard_page_limit,
+                "caller": str(run.metadata.get("caller_label") or self._caller),
+            },
+        )()
+        return await self._accepted_operations.acquire_site(
             request,
             principal=self._caller_for_run(run),
             request_id=uuid.uuid4().hex,
@@ -1099,48 +1049,16 @@ class WorkflowService:
         soft_page_limit: int,
         hard_page_limit: int,
     ) -> tuple[Any, list[str]]:
-        operation = await self._operation_search(
+        operation = await self._operation_acquire_site(
             run,
-            query=root_url,
-            mode="discovery",
-            max_results=hard_page_limit,
+            url=root_url,
+            soft_page_limit=soft_page_limit,
+            hard_page_limit=hard_page_limit,
         )
         results = (operation.result or {}).get("results", ())
-        root_domain = _domain_root(urlparse(root_url).netloc)
-        ranked: dict[str, tuple[str, int]] = {_normal_url(root_url): (root_url, 100)}
-        for result in results:
-            candidate = str(result["url"])
-            if _domain_root(urlparse(candidate).netloc) != root_domain:
-                continue
-            normalized = _normal_url(candidate)
-            ranked[normalized] = (
-                candidate,
-                _score_site_url(candidate, root_url),
-            )
-        urls = [
-            item[0]
-            for item in sorted(
-                ranked.values(),
-                key=lambda item: (-item[1], len(urlparse(item[0]).path), item[0]),
-            )
-            if any(
-                _normal_url(str(result["url"])) == _normal_url(item[0])
-                for result in results
-            )
-        ]
-        root_match = next(
-            (
-                candidate
-                for candidate in urls
-                if _normal_url(candidate) == _normal_url(root_url)
-            ),
-            None,
-        )
-        if root_match is not None:
-            urls.remove(root_match)
-            urls.insert(0, root_match)
+        urls = [str(result["url"]) for result in results]
         if not urls:
-            raise RuntimeError("workflow_exact_url_unready")
+            raise RuntimeError("workflow_site_acquisition_unready")
         return operation, urls[: min(soft_page_limit, hard_page_limit)]
 
     def _store_document(

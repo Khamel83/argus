@@ -57,6 +57,37 @@ class StubAcceptedOperations:
             ({"url": "https://archive.example.com/post", "title": "Recovered Post"},),
         )
 
+    async def acquire_site(self, request, *, principal, request_id):
+        operation = await self.search(
+            SimpleNamespace(
+                query=request.url,
+                mode="discovery",
+                max_results=request.hard_page_limit,
+                providers=None,
+                free_only=False,
+                caller=request.caller,
+                session_id=None,
+                include_attribution=False,
+            ),
+            principal=principal,
+            request_id=request_id,
+        )
+        from urllib.parse import urlparse
+
+        root_host = urlparse(request.url).netloc
+        result = dict(operation.result)
+        result["results"] = tuple(
+            item
+            for item in result["results"]
+            if urlparse(str(item["url"])).netloc == root_host
+        )
+        return AcceptedOperation(
+            outcome=operation.outcome,
+            request_id=operation.request_id,
+            result=result,
+            error=operation.error,
+        )
+
     async def extract(self, request, *, principal, request_id):
         from tests.test_extraction_composition import _link
 
@@ -102,6 +133,13 @@ class StubAcceptedOperations:
             result={
                 "composition_receipt_ref": f"composition-{request_id}",
                 "composition_outcome": "success",
+                "links": tuple(
+                    {
+                        "result_cluster_ref": f"cluster-{ordinal}",
+                        "artifact_disposition": "usable",
+                    }
+                    for ordinal, _result in enumerate(selected)
+                ),
                 "artifacts": tuple(
                     {
                         "url": result["url"],
@@ -287,6 +325,7 @@ async def test_site_capture_composes_all_ranked_same_site_pages_once(
         "https://site.example.com",
         "https://site.example.com/docs",
     )
+    assert len(result.metadata["composition"]["links"]) == 2
 
 
 @pytest.mark.asyncio

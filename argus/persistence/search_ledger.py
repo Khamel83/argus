@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import hashlib
 import json
 import threading
 import time
 import uuid
-from dataclasses import dataclass
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Protocol
@@ -53,8 +54,61 @@ class LedgerBase(DeclarativeBase):
 
 
 _DATABASE_OPERATION_TIMEOUT_SECONDS = 5
-_WORKFLOW_COMPOSITION_LOCKS: dict[tuple[str, str, str], asyncio.Lock] = {}
+_WORKFLOW_COMPOSITION_LOCKS: dict[tuple[str, str, str], tuple[threading.Lock, int]] = {}
 _WORKFLOW_COMPOSITION_LOCKS_GUARD = threading.Lock()
+_WORKFLOW_COMPOSITION_LOCK_TIMEOUT_SECONDS = 35.0
+
+
+def _acquire_workflow_file_lock(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a+")
+    deadline = time.monotonic() + _WORKFLOW_COMPOSITION_LOCK_TIMEOUT_SECONDS
+    try:
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return handle
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("workflow composition claim timed out")
+                time.sleep(0.05)
+    except BaseException:
+        handle.close()
+        raise
+
+
+def _release_workflow_file_lock(handle) -> None:
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        handle.close()
+
+
+async def _acquire_process_lock(process_lock: threading.Lock) -> bool:
+    task = asyncio.create_task(
+        asyncio.to_thread(
+            process_lock.acquire,
+            True,
+            _WORKFLOW_COMPOSITION_LOCK_TIMEOUT_SECONDS,
+        )
+    )
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        acquired = await task
+        if acquired:
+            process_lock.release()
+        raise
+
+
+async def _acquire_file_lock(path: Path):
+    task = asyncio.create_task(asyncio.to_thread(_acquire_workflow_file_lock, path))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        handle = await task
+        await asyncio.to_thread(_release_workflow_file_lock, handle)
+        raise
 
 
 def _system_now() -> datetime:
@@ -1219,25 +1273,84 @@ class SqlAlchemySearchLedgerRepository:
         database_scope = str(getattr(bind, "url", "unknown"))
         key = (database_scope, retrieval_receipt_ref, requirement_ref)
         with _WORKFLOW_COMPOSITION_LOCKS_GUARD:
-            process_lock = _WORKFLOW_COMPOSITION_LOCKS.setdefault(key, asyncio.Lock())
-        async with process_lock:
+            entry = _WORKFLOW_COMPOSITION_LOCKS.get(key)
+            process_lock, references = entry or (threading.Lock(), 0)
+            _WORKFLOW_COMPOSITION_LOCKS[key] = (process_lock, references + 1)
+        try:
+            acquired_process_lock = await _acquire_process_lock(process_lock)
+        except BaseException:
+            with _WORKFLOW_COMPOSITION_LOCKS_GUARD:
+                current_lock, current_references = _WORKFLOW_COMPOSITION_LOCKS[key]
+                if current_references == 1:
+                    _WORKFLOW_COMPOSITION_LOCKS.pop(key, None)
+                else:
+                    _WORKFLOW_COMPOSITION_LOCKS[key] = (
+                        current_lock,
+                        current_references - 1,
+                    )
+            raise
+        if not acquired_process_lock:
+            with _WORKFLOW_COMPOSITION_LOCKS_GUARD:
+                current_lock, current_references = _WORKFLOW_COMPOSITION_LOCKS[key]
+                if current_references == 1:
+                    _WORKFLOW_COMPOSITION_LOCKS.pop(key, None)
+                else:
+                    _WORKFLOW_COMPOSITION_LOCKS[key] = (
+                        current_lock,
+                        current_references - 1,
+                    )
+            raise TimeoutError("workflow composition process claim timed out")
+        file_handle = None
+        try:
             dialect = getattr(getattr(bind, "dialect", None), "name", "")
-            if dialect != "postgresql":
+            if dialect == "sqlite":
+                database_path = getattr(getattr(bind, "url", None), "database", None)
+                if database_path not in {None, "", ":memory:"}:
+                    resolved_database = Path(str(database_path)).expanduser().resolve()
+                    claim_hash = hashlib.sha256(
+                        (
+                            f"{resolved_database}\0{retrieval_receipt_ref}\0"
+                            f"{requirement_ref}"
+                        ).encode()
+                    ).hexdigest()
+                    file_handle = await _acquire_file_lock(
+                        resolved_database.parent
+                        / ".argus-composition-locks"
+                        / f"{claim_hash}.lock",
+                    )
                 yield
                 return
-            signed_key = int.from_bytes(
-                hashlib.sha256(
-                    f"{retrieval_receipt_ref}\0{requirement_ref}".encode()
-                ).digest()[:8],
-                "big",
-                signed=True,
-            )
-            with self.session_factory.begin() as session:
-                session.execute(
-                    text("SELECT pg_advisory_xact_lock(:claim_key)"),
-                    {"claim_key": signed_key},
+            if dialect == "postgresql":
+                signed_key = int.from_bytes(
+                    hashlib.sha256(
+                        f"{retrieval_receipt_ref}\0{requirement_ref}".encode()
+                    ).digest()[:8],
+                    "big",
+                    signed=True,
                 )
-                yield
+                with self.session_factory.begin() as session:
+                    session.execute(
+                        text("SELECT pg_advisory_xact_lock(:claim_key)"),
+                        {"claim_key": signed_key},
+                    )
+                    yield
+                return
+            yield
+        finally:
+            if file_handle is not None:
+                await asyncio.shield(
+                    asyncio.to_thread(_release_workflow_file_lock, file_handle)
+                )
+            process_lock.release()
+            with _WORKFLOW_COMPOSITION_LOCKS_GUARD:
+                current_lock, current_references = _WORKFLOW_COMPOSITION_LOCKS[key]
+                if current_references == 1:
+                    _WORKFLOW_COMPOSITION_LOCKS.pop(key, None)
+                else:
+                    _WORKFLOW_COMPOSITION_LOCKS[key] = (
+                        current_lock,
+                        current_references - 1,
+                    )
 
     def issue_authentication_scope(
         self,

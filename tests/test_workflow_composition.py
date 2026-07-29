@@ -1,7 +1,8 @@
 """Workflow evidence composition and rejected-content safety."""
 
 import asyncio
-from dataclasses import fields
+import multiprocessing
+from dataclasses import fields, replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -111,6 +112,57 @@ def _accepted_retrieval(repository, results, *, receipt_ref="receipt:workflow"):
             "acceptance_receipt": {"receipt_ref": receipt_ref},
         },
         error=None,
+    )
+
+
+def _cross_process_compose_worker(
+    database_path: str,
+    extraction_run_id: str,
+    extraction_counter_path: str,
+    barrier,
+    output,
+) -> None:
+    repository = create_search_ledger_repository(
+        f"sqlite:///{database_path}",
+        create_schema=True,
+    )
+    service = AcceptedOperationService(
+        broker_provider=lambda: SimpleNamespace(),
+        repository_provider=lambda: repository,
+        registration=AcceptedOperationRegistration.complete(),
+    )
+
+    async def extract(request, *, principal, request_id):
+        with open(extraction_counter_path, "a", encoding="utf-8") as counter:
+            counter.write(f"{request_id}\n")
+        await asyncio.sleep(0.2)
+        return AcceptedOperation(
+            outcome=CanonicalOutcome.SUCCESS,
+            request_id=request_id,
+            result={"extraction_run_id": extraction_run_id},
+            error=None,
+        )
+
+    service.extract = extract
+    retrieval = _accepted_retrieval(
+        repository,
+        ({"url": "https://example.com/1", "title": "Article"},),
+    )
+    barrier.wait()
+    composed = asyncio.run(
+        service.compose_workflow(
+            retrieval,
+            max_results=1,
+            principal="process-test",
+            request_id=f"process-{multiprocessing.current_process().pid}",
+        )
+    )
+    output.put(
+        (
+            composed.outcome.value,
+            composed.result["composition_receipt_ref"],
+            composed.result["requirement_ref"],
+        )
     )
 
 
@@ -436,6 +488,236 @@ async def test_concurrent_same_receipt_extracts_once_and_remains_resumable(tmp_p
     assert service.extract.await_count == 1
 
 
+def test_sqlite_composition_claim_is_cross_process_and_resumes_stably(tmp_path):
+    from tests.test_extraction_composition import _link
+
+    database_path = tmp_path / "cross-process.db"
+    counter_path = tmp_path / "extractions.txt"
+    repository = create_search_ledger_repository(
+        f"sqlite:///{database_path}",
+        create_schema=True,
+    )
+    accepted = _link().accepted_outcome
+    repository.accept_extraction_outcome(_projection(accepted))
+    _accepted_retrieval(
+        repository,
+        ({"url": "https://example.com/1", "title": "Article"},),
+    )
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(2)
+    output = context.Queue()
+    processes = [
+        context.Process(
+            target=_cross_process_compose_worker,
+            args=(
+                str(database_path),
+                accepted.extraction_run_id,
+                str(counter_path),
+                barrier,
+                output,
+            ),
+        )
+        for _ in range(2)
+    ]
+
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(15)
+
+    assert [process.exitcode for process in processes] == [0, 0]
+    outcomes = [output.get(timeout=2) for _ in processes]
+    assert outcomes[0] == outcomes[1]
+    assert counter_path.read_text(encoding="utf-8").count("\n") == 1
+
+    resumed = AcceptedOperationService(
+        broker_provider=lambda: SimpleNamespace(),
+        repository_provider=lambda: create_search_ledger_repository(
+            f"sqlite:///{database_path}",
+            create_schema=True,
+        ),
+        registration=AcceptedOperationRegistration.complete(),
+    )
+    resumed.extract = AsyncMock(
+        side_effect=AssertionError("stable resume attempted extraction")
+    )
+    retrieval = _accepted_retrieval(
+        repository,
+        ({"url": "https://example.com/1", "title": "Article"},),
+    )
+    final = asyncio.run(
+        resumed.compose_workflow(
+            retrieval,
+            max_results=1,
+            principal="parent-test",
+            request_id="parent-resume",
+        )
+    )
+    assert final.result["composition_receipt_ref"] == outcomes[0][1]
+    resumed.extract.assert_not_awaited()
+    from argus.persistence import search_ledger
+
+    assert search_ledger._WORKFLOW_COMPOSITION_LOCKS == {}
+
+
+@pytest.mark.asyncio
+async def test_cancelled_sqlite_claim_waiter_releases_process_lock_entry(tmp_path):
+    from argus.persistence import search_ledger
+
+    repository = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'cancel-claim.db'}",
+        create_schema=True,
+    )
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def holder():
+        async with repository.workflow_composition_claim("receipt", "requirement"):
+            entered.set()
+            await release.wait()
+
+    async def waiter():
+        async with repository.workflow_composition_claim("receipt", "requirement"):
+            raise AssertionError("cancelled waiter entered the claim")
+
+    holding = asyncio.create_task(holder())
+    await entered.wait()
+    waiting = asyncio.create_task(waiter())
+    await asyncio.sleep(0.05)
+    waiting.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+    await holding
+    await asyncio.sleep(0.1)
+
+    assert search_ledger._WORKFLOW_COMPOSITION_LOCKS == {}
+
+
+@pytest.mark.asyncio
+async def test_cancelled_sqlite_claim_holder_releases_file_and_process_locks(tmp_path):
+    from argus.persistence import search_ledger
+
+    repository = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'cancel-holder.db'}",
+        create_schema=True,
+    )
+    entered = asyncio.Event()
+
+    async def holder():
+        async with repository.workflow_composition_claim("receipt", "requirement"):
+            entered.set()
+            await asyncio.Event().wait()
+
+    holding = asyncio.create_task(holder())
+    await entered.wait()
+    holding.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await holding
+
+    async with repository.workflow_composition_claim("receipt", "requirement"):
+        pass
+    assert search_ledger._WORKFLOW_COMPOSITION_LOCKS == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("pages", "expected_url"),
+    (
+        pytest.param(
+            {
+                "https://site.example.com": "<html><body>Home</body></html>",
+                "https://site.example.com/sitemap.xml": (
+                    "<urlset><url><loc>https://site.example.com/sitemap-only"
+                    "</loc></url></urlset>"
+                ),
+            },
+            "https://site.example.com/sitemap-only",
+            id="sitemap-only",
+        ),
+        pytest.param(
+            {
+                "https://site.example.com": (
+                    '<html><body><a href="/internal-only">Internal</a></body></html>'
+                ),
+            },
+            "https://site.example.com/internal-only",
+            id="internal-link-only",
+        ),
+    ),
+)
+async def test_site_acquisition_accepts_sitemap_and_internal_link_pages(
+    tmp_path, pages, expected_url
+):
+    from tests.test_extraction_composition import _link
+
+    accepted_links = []
+    for ordinal, url in enumerate(
+        ("https://site.example.com", expected_url),
+        start=1,
+    ):
+        accepted = _link(f"cluster-{ordinal}").accepted_outcome
+        plan = replace(
+            accepted.plan,
+            plan_ref=f"site-plan-{ordinal}",
+            normalized_url=url,
+        )
+        accepted_links.append(
+            SimpleNamespace(
+                accepted_outcome=replace(
+                    accepted,
+                    plan=plan,
+                    plan_ref=plan.plan_ref,
+                )
+            )
+        )
+    service, repository = _real_authority(tmp_path, accepted_links)
+    base = _accepted_retrieval(
+        repository,
+        ({"url": "https://site.example.com", "title": "Home"},),
+        receipt_ref=f"receipt:{expected_url.rsplit('/', 1)[-1]}",
+    )
+
+    async def fetch(url):
+        if url not in pages:
+            raise OSError("not found")
+        return pages[url]
+
+    service.search = AsyncMock(return_value=base)
+    service._site_fetcher = fetch
+    acquired = await service.acquire_site(
+        SimpleNamespace(
+            url="https://site.example.com",
+            soft_page_limit=10,
+            hard_page_limit=20,
+            caller="site-test",
+        ),
+        principal="site-principal",
+        request_id=f"site-{expected_url.rsplit('/', 1)[-1]}",
+    )
+
+    assert acquired.outcome is CanonicalOutcome.SUCCESS
+    assert expected_url in {item["url"] for item in acquired.result["results"]}
+    receipt_ref = acquired.result["acceptance_receipt"]["receipt_ref"]
+    durable = repository.load_accepted_retrieval_results(receipt_ref)
+    assert durable == acquired.result["results"]
+    selected_urls = tuple(item["url"] for item in acquired.result["results"])
+    assert selected_urls == ("https://site.example.com", expected_url)
+    composed = await service.compose_workflow(
+        acquired,
+        max_results=len(selected_urls),
+        selection_urls=selected_urls,
+        principal="site-principal",
+        request_id=f"compose-{expected_url.rsplit('/', 1)[-1]}",
+    )
+    assert len(composed.result["links"]) == len(selected_urls)
+    from argus.contracts.result_refs import accepted_result_refs
+
+    assert {link["result_cluster_ref"] for link in composed.result["links"]} == set(
+        accepted_result_refs(acquired.result["results"])
+    )
+
+
 @pytest.mark.asyncio
 async def test_real_authority_verifies_exact_url_selection_and_receipt_binding(
     tmp_path,
@@ -555,6 +837,13 @@ async def test_rejected_artifact_never_reaches_document_or_summarizer(
                     "acceptance_receipt": {"receipt_ref": "receipt-search-2"},
                 },
                 error=None,
+            )
+
+        async def acquire_site(self, request, *, principal, request_id):
+            return await self.search(
+                SimpleNamespace(),
+                principal=principal,
+                request_id=request_id,
             )
 
         async def compose_workflow(
