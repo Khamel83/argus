@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from html.parser import HTMLParser
+import ipaddress
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlsplit
 from xml.etree import ElementTree
 
 import httpx
@@ -29,10 +30,51 @@ def domain_root(hostname: str) -> str:
     return host if len(parts) <= 2 else ".".join(parts[-2:])
 
 
-def _same_site(url: str, root_domain: str) -> bool:
-    parsed = urlparse(url)
-    return (
-        parsed.scheme in {"http", "https"} and domain_root(parsed.netloc) == root_domain
+def _normalize_hostname(hostname: str | None) -> str | None:
+    if not hostname:
+        return None
+    try:
+        normalized = hostname.lower().rstrip(".").encode("idna").decode("ascii")
+    except UnicodeError:
+        return None
+    if not normalized:
+        return None
+    try:
+        return ipaddress.ip_address(normalized).compressed
+    except ValueError:
+        pass
+    if any(
+        not label
+        or len(label) > 63
+        or label.startswith("-")
+        or label.endswith("-")
+        or not label.replace("-", "").isalnum()
+        for label in normalized.split(".")
+    ):
+        return None
+    return normalized
+
+
+def _normalized_hostname(url: str) -> str | None:
+    try:
+        hostname = urlsplit(url).hostname
+    except ValueError:
+        return None
+    return _normalize_hostname(hostname)
+
+
+def _same_site(url: str, root_hostname: str) -> bool:
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
+    hostname = _normalized_hostname(url)
+    normalized_root = _normalize_hostname(root_hostname)
+    return bool(
+        parsed.scheme in {"http", "https"}
+        and hostname
+        and normalized_root
+        and (hostname == normalized_root or hostname.endswith(f".{normalized_root}"))
     )
 
 
@@ -111,7 +153,7 @@ async def fetch_site_text(url: str) -> str:
 
 async def discover_site_urls(root_url: str, *, fetcher, hard_limit: int) -> list[str]:
     """Discover same-site URLs from sitemap and bounded internal-link traversal."""
-    root_domain = domain_root(urlparse(root_url).netloc)
+    root_hostname = _normalized_hostname(root_url)
     discovered: dict[str, str] = {_normalized(root_url): root_url}
     sitemap_url = urljoin(root_url.rstrip("/") + "/", "/sitemap.xml")
     try:
@@ -121,7 +163,8 @@ async def discover_site_urls(root_url: str, *, fetcher, hard_limit: int) -> list
             candidate = (location.text or "").strip()
             if (
                 candidate
-                and _same_site(candidate, root_domain)
+                and root_hostname is not None
+                and _same_site(candidate, root_hostname)
                 and looks_like_html(candidate)
             ):
                 discovered[_normalized(candidate)] = candidate
@@ -144,7 +187,11 @@ async def discover_site_urls(root_url: str, *, fetcher, hard_limit: int) -> list
         parser.feed(html)
         for href in parser.links:
             candidate = urljoin(current, href)
-            if not _same_site(candidate, root_domain) or not looks_like_html(candidate):
+            if (
+                root_hostname is None
+                or not _same_site(candidate, root_hostname)
+                or not looks_like_html(candidate)
+            ):
                 continue
             candidate_normalized = _normalized(candidate)
             discovered[candidate_normalized] = candidate
