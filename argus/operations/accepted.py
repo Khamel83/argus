@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, fields
+from dataclasses import asdict, dataclass, fields, is_dataclass
+from enum import Enum
 from types import SimpleNamespace
 from typing import Awaitable, Callable, Mapping
 
@@ -36,6 +37,7 @@ class _WorkflowRetrievalView:
     outcome: CanonicalOutcome
     result_cluster_refs: tuple[str, ...]
     acceptance_receipt: str
+    result_projections: tuple[Mapping[str, object], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +110,56 @@ def _operation_error(
         retry_after_seconds=retry_after_seconds,
         operation_began=operation_began,
     )
+
+
+def _canonical_json_value(value):
+    if is_dataclass(value):
+        return _canonical_json_value(asdict(value))
+    if isinstance(value, Mapping):
+        return {str(key): _canonical_json_value(child) for key, child in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_canonical_json_value(child) for child in value]
+    if isinstance(value, Enum):
+        return value.value
+    return value
+
+
+def _canonical_json(value) -> str:
+    return json.dumps(
+        _canonical_json_value(value),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _workflow_result_refs(results) -> tuple[str, ...]:
+    return tuple(
+        "wf-"
+        + hashlib.sha256(_canonical_json(item).encode()).hexdigest()[:24]
+        + f"-{ordinal}"
+        for ordinal, item in enumerate(results)
+    )
+
+
+def _workflow_projection(requirement, composition, receipt, artifacts):
+    requirement_state = _canonical_json_value(requirement)
+    composition_state = _canonical_json_value(composition)
+    for link in composition_state["links"]:
+        link.pop("accepted_outcome", None)
+    receipt_state = _canonical_json_value(receipt)
+    return {
+        "requirement_ref": requirement.requirement_ref,
+        "artifact_requirement": requirement_state,
+        "links": composition_state["links"],
+        "accepted_artifact_refs": composition_state["accepted_artifact_refs"],
+        "degraded_artifact_refs": composition_state["degraded_artifact_refs"],
+        "rejected_extraction_refs": composition_state["rejected_extraction_refs"],
+        "composition_trace": composition_state["composition_trace"],
+        "composition_receipt": receipt_state,
+        "composition_receipt_ref": receipt_state["receipt_ref"],
+        "composition_outcome": composition_state["composite_outcome"],
+        "artifacts": artifacts,
+    }
 
 
 def _search_projection(response, *, include_attribution: bool) -> dict[str, object]:
@@ -692,30 +744,37 @@ class AcceptedOperationService:
         max_results: int,
         principal: str,
         request_id: str,
+        selection_urls: tuple[str, ...] | None = None,
+        required_urls: tuple[str, ...] | None = None,
+        allow_partial: bool = True,
+        minimum_artifacts: int | None = None,
     ) -> AcceptedOperation:
         """Compose workflow extraction evidence behind the accepted authority."""
-        if self._registration != AcceptedOperationRegistration.complete():
-            outcome = CanonicalOutcome.UNREADY
+        from argus.extraction.composition import InvalidArtifactRequirement
+        from argus.persistence.search_ledger import AcceptanceConflictError
+        from sqlalchemy.exc import SQLAlchemyError
+
+        def failed(outcome: CanonicalOutcome, detail: str, result=None):
             return AcceptedOperation(
                 outcome=outcome,
                 request_id=request_id,
-                result=None,
+                result=result,
                 error=_operation_error(
                     outcome,
                     request_id=request_id,
-                    detail="Workflow evidence authority is not active",
+                    detail=detail,
                 ),
             )
+
+        if self._registration != AcceptedOperationRegistration.complete():
+            return failed(
+                CanonicalOutcome.UNREADY,
+                "Workflow evidence authority is not active",
+            )
         if retrieval.result is None:
-            return AcceptedOperation(
-                outcome=retrieval.outcome,
-                request_id=request_id,
-                result=None,
-                error=_operation_error(
-                    retrieval.outcome,
-                    request_id=request_id,
-                    detail="Workflow retrieval has no accepted evidence",
-                ),
+            return failed(
+                retrieval.outcome,
+                "Workflow retrieval has no accepted evidence",
             )
         results = retrieval.result.get("results")
         receipt = retrieval.result.get("acceptance_receipt")
@@ -726,43 +785,203 @@ class AcceptedOperationService:
             not isinstance(results, tuple)
             or not isinstance(receipt_ref, str)
             or not 0 <= max_results <= 200
+            or type(allow_partial) is not bool
         ):
-            outcome = CanonicalOutcome.UNREADY
-            return AcceptedOperation(
-                outcome=outcome,
-                request_id=request_id,
-                result=None,
-                error=_operation_error(
-                    outcome,
-                    request_id=request_id,
-                    detail="Workflow retrieval evidence is unavailable",
-                ),
+            return failed(
+                CanonicalOutcome.UNREADY,
+                "Workflow retrieval evidence is unavailable",
             )
-        selected = results[:max_results]
-        refs = tuple(
-            "wf-"
-            + hashlib.sha256(
-                json.dumps(item, sort_keys=True, separators=(",", ":")).encode()
-            ).hexdigest()[:24]
-            + f"-{ordinal}"
-            for ordinal, item in enumerate(selected)
+        repository = self._repository_provider()
+        try:
+            durable_results = repository.load_accepted_retrieval_results(receipt_ref)
+        except SQLAlchemyError:
+            return failed(
+                CanonicalOutcome.PERSISTENCE_FAILED,
+                "Workflow retrieval evidence could not be loaded",
+            )
+        if durable_results is None:
+            return failed(
+                CanonicalOutcome.UNREADY,
+                "Workflow retrieval evidence is unavailable",
+            )
+        if _canonical_json(results) != _canonical_json(durable_results):
+            return failed(
+                CanonicalOutcome.UNREADY,
+                "Workflow retrieval projection is not receipt-bound",
+            )
+
+        if selection_urls is None:
+            selected = tuple(durable_results[:max_results])
+        else:
+            if (
+                not isinstance(selection_urls, tuple)
+                or len(selection_urls) > 200
+                or len(set(selection_urls)) != len(selection_urls)
+                or any(not isinstance(url, str) or not url for url in selection_urls)
+            ):
+                return failed(
+                    CanonicalOutcome.INVALID_REQUEST,
+                    "Workflow result selection is invalid",
+                )
+            by_url = {item.get("url"): item for item in durable_results}
+            if any(url not in by_url for url in selection_urls):
+                return failed(
+                    CanonicalOutcome.UNREADY,
+                    "Requested workflow URL is absent from accepted retrieval evidence",
+                )
+            selected = tuple(by_url[url] for url in selection_urls[:max_results])
+        refs = _workflow_result_refs(selected)
+
+        selected_urls = tuple(str(item["url"]) for item in selected)
+        if required_urls is None:
+            required = frozenset(selected_urls[:1])
+        elif (
+            not isinstance(required_urls, tuple)
+            or len(set(required_urls)) != len(required_urls)
+            or any(url not in selected_urls for url in required_urls)
+        ):
+            return failed(
+                CanonicalOutcome.INVALID_REQUEST,
+                "Workflow required-result selection is invalid",
+            )
+        else:
+            required = frozenset(required_urls)
+        aggregate_count = 1 if refs else 0
+        if minimum_artifacts is not None:
+            if type(minimum_artifacts) is not int or not 0 <= minimum_artifacts <= len(
+                refs
+            ):
+                return failed(
+                    CanonicalOutcome.INVALID_REQUEST,
+                    "Workflow aggregate artifact floor is invalid",
+                )
+            aggregate_count = minimum_artifacts
+        minimum_disposition = (
+            ArtifactDisposition.PARTIAL if allow_partial else ArtifactDisposition.USABLE
         )
-        view = _WorkflowRetrievalView(retrieval.outcome, refs, receipt_ref)
+        requirement_identity = hashlib.sha256(
+            _canonical_json(
+                {
+                    "receipt_ref": receipt_ref,
+                    "refs": refs,
+                    "required_urls": tuple(sorted(required)),
+                    "minimum_disposition": minimum_disposition,
+                    "aggregate_count": aggregate_count,
+                }
+            ).encode()
+        ).hexdigest()[:48]
+        view = _WorkflowRetrievalView(
+            retrieval.outcome,
+            refs,
+            receipt_ref,
+            tuple(selected),
+        )
         requirement = ArtifactRequirement(
-            requirement_ref=f"workflow-{receipt_ref}",
+            requirement_ref=f"workflow-{requirement_identity}",
             selections=tuple(
-                ArtifactSelection(ref, ordinal == 0, ArtifactDisposition.PARTIAL)
+                ArtifactSelection(
+                    ref,
+                    selected_urls[ordinal] in required,
+                    minimum_disposition,
+                )
                 for ordinal, ref in enumerate(refs)
             ),
             aggregate_floor=AggregateArtifactFloor(
-                count=1 if refs else 0,
-                minimum_disposition=ArtifactDisposition.PARTIAL,
+                count=aggregate_count,
+                minimum_disposition=minimum_disposition,
             ),
             max_extractions=len(refs),
             deadline_ms=30_000,
             spend_policy_ref="workflow-extraction-v1",
         )
-        repository = self._repository_provider()
+
+        try:
+            resumed = repository.load_accepted_workflow_composition(
+                receipt_ref,
+                requirement.requirement_ref,
+            )
+        except SQLAlchemyError:
+            return failed(
+                CanonicalOutcome.PERSISTENCE_FAILED,
+                "Workflow composition could not be loaded",
+            )
+        if resumed is not None:
+            source = resumed["source_state"]
+            composition_state = source["composition"]
+            projected_artifacts = []
+            selected_by_ref = dict(zip(refs, selected, strict=True))
+            for link_state in composition_state["links"]:
+                artifact_ref = link_state.get("artifact_ref")
+                disposition = link_state.get("artifact_disposition")
+                if artifact_ref is None or disposition not in {
+                    ArtifactDisposition.USABLE.value,
+                    ArtifactDisposition.PARTIAL.value,
+                }:
+                    continue
+                acceptance = link_state.get("acceptance_receipt")
+                extraction_receipt = (
+                    acceptance.get("receipt_ref")
+                    if isinstance(acceptance, dict)
+                    else acceptance
+                )
+                typed = (
+                    repository.load_extraction_outcome_by_receipt(extraction_receipt)
+                    if isinstance(extraction_receipt, str)
+                    else None
+                )
+                if typed is None or typed.artifact is None:
+                    return failed(
+                        CanonicalOutcome.PERSISTENCE_FAILED,
+                        "Accepted workflow artifact could not be reloaded",
+                    )
+                item = selected_by_ref[link_state["result_cluster_ref"]]
+                projected_artifacts.append(
+                    {
+                        "result_cluster_ref": link_state["result_cluster_ref"],
+                        "artifact_ref": typed.artifact.artifact_ref,
+                        "content_identity": typed.artifact.content_identity,
+                        "url": item["url"],
+                        "title": typed.artifact.title,
+                        "text": typed.artifact.text,
+                        "word_count": typed.artifact.word_count,
+                        "disposition": typed.artifact_disposition.value,
+                        "extractor": typed.selected_extractor,
+                    }
+                )
+            receipt_state = {
+                key: resumed[key] for key in ("receipt_ref", "accepted_at", "scope")
+            }
+            resumed_projection = {
+                "requirement_ref": requirement.requirement_ref,
+                "artifact_requirement": source["artifact_requirement"],
+                "links": composition_state["links"],
+                "accepted_artifact_refs": composition_state["accepted_artifact_refs"],
+                "degraded_artifact_refs": composition_state["degraded_artifact_refs"],
+                "rejected_extraction_refs": composition_state[
+                    "rejected_extraction_refs"
+                ],
+                "composition_trace": composition_state["composition_trace"],
+                "composition_receipt": receipt_state,
+                "composition_receipt_ref": resumed["receipt_ref"],
+                "composition_outcome": composition_state["composite_outcome"],
+                "artifacts": projected_artifacts,
+            }
+            outcome = CanonicalOutcome(composition_state["composite_outcome"])
+            return AcceptedOperation(
+                outcome=outcome,
+                request_id=request_id,
+                result=resumed_projection,
+                error=(
+                    None
+                    if outcome in {CanonicalOutcome.SUCCESS, CanonicalOutcome.DEGRADED}
+                    else _operation_error(
+                        outcome,
+                        request_id=request_id,
+                        detail="Workflow artifact floor was not met",
+                    )
+                ),
+            )
+
         links = []
         projected_artifacts = []
         reuse_by_identity: dict[tuple[str, str], int] = {}
@@ -776,31 +995,38 @@ class AcceptedOperationService:
             if extraction.result is not None:
                 run_id = extraction.result.get("extraction_run_id")
                 if isinstance(run_id, str):
-                    typed = repository.load_accepted_extraction_outcome(run_id)
+                    try:
+                        typed = repository.load_accepted_extraction_outcome(run_id)
+                    except SQLAlchemyError:
+                        return failed(
+                            CanonicalOutcome.PERSISTENCE_FAILED,
+                            "Accepted extraction evidence could not be loaded",
+                        )
             if typed is None:
-                links.append(
-                    ResultExtractionLink(
-                        link_ref=f"{receipt_ref}-{ordinal}",
-                        result_cluster_ref=ref,
-                        extraction_run_id=None,
-                        extraction_outcome=extraction.outcome,
-                        artifact_disposition=ArtifactDisposition.NONE,
-                        artifact_ref=None,
-                        rejection_ref=None,
-                        acceptance_receipt=None,
-                        required=ordinal == 0,
-                        eligible_path=extraction.outcome
-                        is not CanonicalOutcome.UNREADY,
-                        attempted=False,
-                    )
+                return failed(
+                    CanonicalOutcome.PERSISTENCE_FAILED,
+                    "Accepted extraction evidence is missing",
                 )
-                continue
-            link = ResultExtractionLink.from_accepted(
-                link_ref=f"{receipt_ref}-{ordinal}",
-                result_cluster_ref=ref,
-                accepted_outcome=typed,
-                required=ordinal == 0,
+            selected_url_identity = (
+                "sha256:" + hashlib.sha256(str(item["url"]).encode()).hexdigest()
             )
+            if typed.normalized_url_identity != selected_url_identity:
+                return failed(
+                    CanonicalOutcome.PERSISTENCE_FAILED,
+                    "Accepted extraction evidence does not match the selected URL",
+                )
+            try:
+                link = ResultExtractionLink.from_accepted(
+                    link_ref=f"link-{requirement_identity}-{ordinal}",
+                    result_cluster_ref=ref,
+                    accepted_outcome=typed,
+                    required=selected_urls[ordinal] in required,
+                )
+            except InvalidArtifactRequirement:
+                return failed(
+                    CanonicalOutcome.INVALID_REQUEST,
+                    "Accepted extraction evidence is invalid",
+                )
             if link.artifact_ref and link.artifact_identity:
                 identity = (link.artifact_ref, link.artifact_identity)
                 previous = reuse_by_identity.get(identity)
@@ -829,6 +1055,9 @@ class AcceptedOperationService:
             }:
                 projected_artifacts.append(
                     {
+                        "result_cluster_ref": ref,
+                        "artifact_ref": artifact.artifact_ref,
+                        "content_identity": artifact.content_identity,
                         "url": item["url"],
                         "title": artifact.title,
                         "text": artifact.text,
@@ -837,54 +1066,50 @@ class AcceptedOperationService:
                         "extractor": typed.selected_extractor,
                     }
                 )
-        composition = compose_retrieval_evidence(view, tuple(links), requirement)
+        try:
+            composition = compose_retrieval_evidence(view, tuple(links), requirement)
+        except InvalidArtifactRequirement:
+            return failed(
+                CanonicalOutcome.INVALID_REQUEST,
+                "Workflow artifact requirement is invalid",
+            )
         if composition.composite_outcome is CanonicalOutcome.PERSISTENCE_FAILED:
-            return AcceptedOperation(
-                outcome=CanonicalOutcome.PERSISTENCE_FAILED,
-                request_id=request_id,
-                result=None,
-                error=_operation_error(
-                    CanonicalOutcome.PERSISTENCE_FAILED,
-                    request_id=request_id,
-                    detail="Workflow composition could not be durably accepted",
-                ),
+            return failed(
+                CanonicalOutcome.PERSISTENCE_FAILED,
+                "Workflow composition could not be durably accepted",
             )
         try:
-            accepted = repository.accept_retrieval_composition(
+            accepted = repository.accept_workflow_retrieval_composition(
                 view, composition, requirement
             )
-        except Exception:
-            return AcceptedOperation(
-                outcome=CanonicalOutcome.PERSISTENCE_FAILED,
-                request_id=request_id,
-                result=None,
-                error=_operation_error(
-                    CanonicalOutcome.PERSISTENCE_FAILED,
-                    request_id=request_id,
-                    detail="Workflow composition could not be durably accepted",
-                ),
+        except InvalidArtifactRequirement:
+            return failed(
+                CanonicalOutcome.UNREADY,
+                "Workflow retrieval binding proof is unavailable",
             )
+        except (AcceptanceConflictError, SQLAlchemyError, ValueError):
+            return failed(
+                CanonicalOutcome.PERSISTENCE_FAILED,
+                "Workflow composition could not be durably accepted",
+            )
+        projection = _workflow_projection(
+            requirement,
+            composition,
+            accepted,
+            projected_artifacts,
+        )
         if composition.composite_outcome not in {
             CanonicalOutcome.SUCCESS,
             CanonicalOutcome.DEGRADED,
         }:
-            return AcceptedOperation(
-                outcome=composition.composite_outcome,
-                request_id=request_id,
-                result=None,
-                error=_operation_error(
-                    composition.composite_outcome,
-                    request_id=request_id,
-                    detail="Workflow artifact floor was not met",
-                ),
+            return failed(
+                composition.composite_outcome,
+                "Workflow artifact floor was not met",
+                projection,
             )
         return AcceptedOperation(
             outcome=composition.composite_outcome,
             request_id=request_id,
-            result={
-                "composition_receipt_ref": accepted.receipt_ref,
-                "composition_outcome": composition.composite_outcome.value,
-                "artifacts": projected_artifacts,
-            },
+            result=projection,
             error=None,
         )

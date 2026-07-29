@@ -744,6 +744,17 @@ def _normalize_json_value(value):
     return json.loads(_canonical_json(value))
 
 
+def _workflow_result_refs(results) -> tuple[str, ...]:
+    return tuple(
+        "wf-"
+        + hashlib.sha256(
+            _canonical_json(_normalize_json_value(item)).encode()
+        ).hexdigest()[:24]
+        + f"-{ordinal}"
+        for ordinal, item in enumerate(results)
+    )
+
+
 def _parse_json_value(value: str | None):
     try:
         return json.loads(value or "{}")
@@ -1821,6 +1832,89 @@ class SqlAlchemySearchLedgerRepository:
         """Workflow-only typed outcome loader; never returns raw extractor state."""
         return self.load_extraction_outcome(extraction_run_id)
 
+    def load_accepted_retrieval_results(self, receipt_ref: str):
+        """Load receipt-bound accepted results; legacy rows without proof fail closed."""
+        from argus.persistence.evidence import (
+            AcceptedOperationRow,
+            RetrievalEvidencePlanRow,
+        )
+
+        with self.session_factory() as session:
+            pair = session.execute(
+                select(AcceptedOperationRow, RetrievalEvidencePlanRow)
+                .join(
+                    RetrievalEvidencePlanRow,
+                    RetrievalEvidencePlanRow.id == AcceptedOperationRow.plan_id,
+                )
+                .where(AcceptedOperationRow.receipt_ref == receipt_ref)
+            ).one_or_none()
+            if pair is None:
+                return None
+            _, plan = pair
+            state = _parse_json_value(plan.plan_json)
+            if (
+                not isinstance(state, dict)
+                or state.get("binding_version") != "accepted-results-v1"
+                or not isinstance(state.get("accepted_results"), list)
+                or not isinstance(state.get("accepted_results_fingerprint"), str)
+            ):
+                return None
+            results = state["accepted_results"]
+            fingerprint = hashlib.sha256(_canonical_json(results).encode()).hexdigest()
+            if fingerprint != state["accepted_results_fingerprint"]:
+                return None
+            return tuple(results)
+
+    def load_accepted_workflow_composition(
+        self,
+        retrieval_acceptance_ref: str,
+        requirement_ref: str,
+    ):
+        """Load one exact accepted composition for idempotent workflow resume."""
+        with self.session_factory() as session:
+            rows = list(
+                session.scalars(
+                    select(RetrievalCompositionRow).where(
+                        RetrievalCompositionRow.retrieval_acceptance_ref
+                        == retrieval_acceptance_ref,
+                        RetrievalCompositionRow.requirement_ref == requirement_ref,
+                    )
+                )
+            )
+            if len(rows) != 1:
+                return None
+            row = rows[0]
+            state = _parse_json_value(row.projection_json)
+            if (
+                not isinstance(state, dict)
+                or acceptance_fingerprint(state) != row.source_fingerprint
+            ):
+                return None
+            durable_refs = set(
+                session.scalars(
+                    select(ResultExtractionLinkRow.result_cluster_ref).where(
+                        ResultExtractionLinkRow.composition_ref == row.receipt_ref
+                    )
+                )
+            )
+            projected_links = state.get("composition", {}).get("links")
+            if not isinstance(projected_links, list) or durable_refs != {
+                link.get("result_cluster_ref")
+                for link in projected_links
+                if isinstance(link, dict)
+            }:
+                return None
+            return {
+                "receipt_ref": row.receipt_ref,
+                "accepted_at": row.accepted_at.isoformat() + "Z",
+                "scope": (
+                    "sqlite_development"
+                    if session.get_bind().dialect.name == "sqlite"
+                    else "postgresql_authority"
+                ),
+                "source_state": state,
+            }
+
     def load_extraction_outcome_by_receipt(self, receipt_ref: str):
         """Reload the exact durable accepted projection for cache/composition."""
         with self.session_factory() as session:
@@ -2116,6 +2210,52 @@ class SqlAlchemySearchLedgerRepository:
             receipt_ref=receipt_ref,
             accepted_at=now.isoformat() + "Z",
             scope=scope,
+        )
+
+    def accept_workflow_retrieval_composition(
+        self,
+        accepted_retrieval,
+        composition,
+        artifact_requirement,
+    ):
+        """Verify workflow refs against receipt-bound retrieval evidence, then accept."""
+        from argus.extraction.composition import InvalidArtifactRequirement
+
+        receipt = getattr(
+            accepted_retrieval.acceptance_receipt,
+            "receipt_ref",
+            accepted_retrieval.acceptance_receipt,
+        )
+        selected = getattr(accepted_retrieval, "result_projections", None)
+        durable = (
+            self.load_accepted_retrieval_results(receipt)
+            if isinstance(receipt, str)
+            else None
+        )
+        if selected is None or durable is None:
+            raise InvalidArtifactRequirement(
+                "workflow retrieval lacks durable accepted result proof"
+            )
+        normalized_durable = [_normalize_json_value(item) for item in durable]
+        normalized_selected = [_normalize_json_value(item) for item in selected]
+        remaining = list(normalized_durable)
+        for item in normalized_selected:
+            try:
+                remaining.remove(item)
+            except ValueError as error:
+                raise InvalidArtifactRequirement(
+                    "workflow result is not bound to its retrieval receipt"
+                ) from error
+        if _workflow_result_refs(normalized_selected) != tuple(
+            accepted_retrieval.result_cluster_refs
+        ):
+            raise InvalidArtifactRequirement(
+                "workflow result refs do not match durable accepted results"
+            )
+        return self.accept_retrieval_composition(
+            accepted_retrieval,
+            composition,
+            artifact_requirement,
         )
 
     def record_extraction(

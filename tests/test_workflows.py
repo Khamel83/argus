@@ -26,6 +26,7 @@ class StubAcceptedOperations:
     def __init__(self, gateway):
         self.gateway = gateway
         self._counter = 0
+        self.compose_calls = []
 
     def _search_operation(self, request_id, results):
         return AcceptedOperation(
@@ -66,8 +67,29 @@ class StubAcceptedOperations:
             error=None,
         )
 
-    async def compose_workflow(self, retrieval, *, max_results, principal, request_id):
-        result = retrieval.result["results"][0]
+    async def compose_workflow(
+        self,
+        retrieval,
+        *,
+        max_results,
+        principal,
+        request_id,
+        selection_urls=None,
+        **kwargs,
+    ):
+        self.compose_calls.append(
+            {
+                "selection_urls": selection_urls,
+                "max_results": max_results,
+                **kwargs,
+            }
+        )
+        results = retrieval.result["results"]
+        result = (
+            next(item for item in results if item["url"] == selection_urls[0])
+            if selection_urls
+            else results[0]
+        )
         return AcceptedOperation(
             outcome=CanonicalOutcome.SUCCESS,
             request_id=request_id,
@@ -178,6 +200,12 @@ async def test_recover_article_writes_report(monkeypatch, tmp_path):
     assert result.manifest_path is not None
     assert result.metadata["recovered_url"] == "https://archive.example.com/post"
     assert (tmp_path / "data" / "workflows" / "runs" / f"{result.run_id}.json").exists()
+    assert service._accepted_operations.compose_calls == [
+        {
+            "selection_urls": ("https://archive.example.com/post",),
+            "max_results": 1,
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -232,6 +260,13 @@ async def test_build_research_pack_populates_docs_cache(monkeypatch, tmp_path):
         encoding="utf-8"
     )
     assert "| docs-example-com | https://docs.example.com |" in index_text
+    assert [citation.id for citation in result.citations] == ["S1", "S2"]
+    assert len({document.id for document in result.documents}) == len(result.documents)
+    assert all(
+        call["selection_urls"] is not None
+        for call in service._accepted_operations.compose_calls
+        if call["max_results"] == 1
+    )
 
 
 @pytest.mark.asyncio

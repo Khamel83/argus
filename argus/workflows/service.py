@@ -19,7 +19,7 @@ from argus.corpus import (
     get_corpus_paths,
     mirror_legacy_docs_cache,
 )
-from argus.contracts import AcceptedOperation
+from argus.contracts import AcceptedOperation, CanonicalOutcome
 from argus.logging import get_logger
 from argus.workflows.models import (
     CitationRef,
@@ -166,20 +166,29 @@ def _lead_text(text: str, limit: int = 280) -> str:
     return cleaned
 
 
+class WorkflowOperationFailure(RuntimeError):
+    """Bounded carrier for one already-classified accepted-operation failure."""
+
+    def __init__(self, outcome, code: str):
+        self.outcome = outcome
+        self.operation_code = code
+        self.stable_code = f"workflow_composition_{code}"
+        super().__init__(self.stable_code)
+
+
 class WorkflowService:
     """Async workflow executor with in-memory run tracking."""
 
     def __init__(
         self,
         accepted_operations,
-        evidence_gateway,
+        evidence_gateway=None,
         *,
         corpus_paths: CorpusPaths | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
         caller: str = "workflows",
     ):
         self._accepted_operations = accepted_operations
-        self._evidence_gateway = evidence_gateway
         self._paths = corpus_paths or get_corpus_paths()
         self._runs: dict[str, WorkflowResult] = {}
         self._progress = progress_callback
@@ -222,18 +231,6 @@ class WorkflowService:
             {"url": url, "title": title, "domain": domain},
         )()
         return await self._accepted_operations.recover(
-            request,
-            principal=self._caller,
-            request_id=uuid.uuid4().hex,
-        )
-
-    async def _operation_extract(self, url: str):
-        request = type(
-            "WorkflowExtractRequest",
-            (),
-            {"url": url, "domain": None, "mode": "default"},
-        )()
-        return await self._accepted_operations.extract(
             request,
             principal=self._caller,
             request_id=uuid.uuid4().hex,
@@ -436,26 +433,63 @@ class WorkflowService:
         section: str,
         role: str,
         source_type: str,
+        selection_urls: tuple[str, ...] | None = None,
+        citation_start: int = 0,
     ) -> tuple[list[StoredDocument], list[CitationRef]]:
         """Build documents solely from the accepted composition projection."""
-        composed = await self._accepted_operations.compose_workflow(
-            operation,
-            max_results=max_results,
-            principal=self._caller_for_run(run),
-            request_id=run.run_id,
-        )
-        if composed.result is None:
-            raise RuntimeError(f"workflow_composition_{composed.outcome.value}")
-        projection = composed.result
-        run.metadata["composition"] = {
-            "outcome": projection["composition_outcome"],
+        composition_kwargs = {
+            "max_results": max_results,
+            "principal": self._caller_for_run(run),
+            "request_id": run.run_id,
         }
-        run.metadata["composition_receipt_ref"] = projection["composition_receipt_ref"]
+        if selection_urls is not None:
+            composition_kwargs["selection_urls"] = selection_urls
+        composed = await self._accepted_operations.compose_workflow(
+            operation, **composition_kwargs
+        )
+        projection = composed.result or {}
+        run.metadata["composition"] = {
+            "outcome": composed.outcome.value,
+            "requirement_ref": projection.get("requirement_ref"),
+            "composition_receipt_ref": projection.get("composition_receipt_ref"),
+            "accepted_artifact_refs": list(
+                projection.get("accepted_artifact_refs", ())
+            ),
+            "degraded_artifact_refs": list(
+                projection.get("degraded_artifact_refs", ())
+            ),
+            "rejected_extraction_refs": list(
+                projection.get("rejected_extraction_refs", ())
+            ),
+            "composition_trace": list(projection.get("composition_trace", ())),
+        }
+        if projection.get("composition_receipt_ref"):
+            run.metadata["composition_receipt_ref"] = projection[
+                "composition_receipt_ref"
+            ]
+        if composed.outcome not in {
+            CanonicalOutcome.SUCCESS,
+            CanonicalOutcome.DEGRADED,
+        }:
+            code = (
+                composed.error.code
+                if composed.error is not None
+                else composed.outcome.value
+            )
+            raise WorkflowOperationFailure(composed.outcome, code)
+        if composed.result is None:
+            raise WorkflowOperationFailure(
+                CanonicalOutcome.PERSISTENCE_FAILED,
+                CanonicalOutcome.PERSISTENCE_FAILED.value,
+            )
         documents: list[StoredDocument] = []
         citations: list[CitationRef] = []
         output_dir = Path(run.snapshot_dir) / section
         output_dir.mkdir(parents=True, exist_ok=True)
-        for ordinal, artifact in enumerate(projection["artifacts"], start=1):
+        for ordinal, artifact in enumerate(
+            projection["artifacts"],
+            start=citation_start + 1,
+        ):
             document = self._store_document(
                 output_dir,
                 citation_id=f"S{ordinal}",
@@ -591,6 +625,18 @@ class WorkflowService:
         try:
             await handler(run, **kwargs)
             run.status = WorkflowStatus.COMPLETED
+        except WorkflowOperationFailure as exc:
+            logger.warning(
+                "Workflow %s stopped with accepted outcome %s",
+                run.run_id,
+                exc.outcome.value,
+            )
+            run.status = WorkflowStatus.FAILED
+            run.error = exc.stable_code
+            run.metadata["failure"] = {
+                "outcome": exc.outcome.value,
+                "code": exc.operation_code,
+            }
         except Exception as exc:
             logger.exception("Workflow %s failed", run.run_id)
             run.status = WorkflowStatus.FAILED
@@ -621,10 +667,11 @@ class WorkflowService:
         documents, citations = await self._compose_search_documents(
             run,
             operation,
-            max_results=min(8, len(accepted_results)),
+            max_results=min(8, len(candidates)),
             section="recovered-sources",
             role="recovered_source",
             source_type="recovery_candidate",
+            selection_urls=tuple(candidates[:8]),
         )
         self._report(1, 3, f"Extracted {len(documents)} candidate pages")
         if not documents:
@@ -926,6 +973,8 @@ class WorkflowService:
                 section=section,
                 role=role,
                 source_type=source_type,
+                selection_urls=(candidate_url,),
+                citation_start=citation_start + len(documents),
             )
             documents.extend(captured)
             citations.extend(captured_citations)
