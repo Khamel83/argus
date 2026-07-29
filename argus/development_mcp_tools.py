@@ -337,6 +337,49 @@ async def test_provider_mcp(
     return "\n".join(lines)
 
 
+def _require_standalone_mode(operation: str) -> None:
+    from argus.authority import (
+        AuthorityConfigurationError,
+        adapter_execution_mode,
+    )
+
+    if adapter_execution_mode() != "standalone":
+        raise AuthorityConfigurationError(
+            f"Direct MCP {operation} requires development standalone mode"
+        )
+
+
+async def development_mcp_extract(url: str, *, domain: str | None = None):
+    """Run the legacy standalone extractor only behind the development gate."""
+
+    _require_standalone_mode("extraction")
+    from argus.extraction import extract_url
+
+    return await extract_url(url, domain=domain, caller="mcp")
+
+
+async def development_mcp_valyu_answer(
+    query: str,
+    *,
+    fast_mode: bool = False,
+):
+    """Run the legacy standalone answer provider only behind its dev gate."""
+
+    _require_standalone_mode("provider access")
+    from argus.providers.valyu_answer import valyu_answer as provider_answer
+
+    return await provider_answer(query, fast_mode=fast_mode)
+
+
+def development_mcp_cookie_health() -> dict[str, dict[str, object]]:
+    """Read legacy standalone cookie health only behind the development gate."""
+
+    _require_standalone_mode("cookie access")
+    from argus.extraction.cookies import get_health_summary
+
+    return get_health_summary()
+
+
 async def valyu_answer(query: str, fast_mode: bool = False) -> str:
     """Get an AI-synthesized answer grounded in real-time search results.
 
@@ -344,8 +387,6 @@ async def valyu_answer(query: str, fast_mode: bool = False) -> str:
         query: Question or research query to answer
         fast_mode: Use faster mode with lower latency
     """
-    from argus.authority import development_mcp_valyu_answer
-
     result = await development_mcp_valyu_answer(query, fast_mode=fast_mode)
 
     if result.error:
@@ -381,8 +422,6 @@ async def extract_content(url: str, domain: str = None) -> str:
         url: URL to extract content from
         domain: Optional domain hint for authenticated extraction (e.g. nytimes.com)
     """
-    from argus.authority import development_mcp_extract
-
     result = await development_mcp_extract(url, domain=domain)
 
     if result.error:
@@ -594,8 +633,6 @@ def cookie_health() -> str:
     Returns per-domain status, request counts, staleness warnings,
     and whether cookies need refreshing.
     """
-    from argus.authority import development_mcp_cookie_health
-
     summary = development_mcp_cookie_health()
     refresh = [d for d, s in summary.items() if s.get("stale_warning")]
 

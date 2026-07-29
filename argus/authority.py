@@ -31,39 +31,6 @@ class AuthorityRequestError(RuntimeError):
         self.status_code = status_code
 
 
-async def development_mcp_extract(url: str, *, domain: str | None = None):
-    """Run the legacy standalone extractor only behind the development gate."""
-    if adapter_execution_mode() != "standalone":
-        raise AuthorityConfigurationError(
-            "Direct MCP extraction requires development standalone mode"
-        )
-    from argus.extraction import extract_url
-
-    return await extract_url(url, domain=domain, caller="mcp")
-
-
-async def development_mcp_valyu_answer(query: str, *, fast_mode: bool = False):
-    """Run the legacy standalone answer provider only behind its dev gate."""
-    if adapter_execution_mode() != "standalone":
-        raise AuthorityConfigurationError(
-            "Direct MCP provider access requires development standalone mode"
-        )
-    from argus.providers.valyu_answer import valyu_answer
-
-    return await valyu_answer(query, fast_mode=fast_mode)
-
-
-def development_mcp_cookie_health() -> dict[str, dict[str, object]]:
-    """Read legacy standalone cookie health only behind the development gate."""
-    if adapter_execution_mode() != "standalone":
-        raise AuthorityConfigurationError(
-            "Direct MCP cookie access requires development standalone mode"
-        )
-    from argus.extraction.cookies import get_health_summary
-
-    return get_health_summary()
-
-
 class HttpAuthorityClient:
     """Small authenticated client for the sole Argus execution authority."""
 

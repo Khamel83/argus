@@ -108,6 +108,17 @@ class LocalMcpAdapter:
 
 def build_development_mcp_backend() -> LocalMcpAdapter:
     """Construct direct execution only for the explicit development lane."""
+    from argus.authority import (
+        AuthorityConfigurationError,
+        adapter_execution_mode,
+    )
+
+    if adapter_execution_mode() != "standalone":
+        raise AuthorityConfigurationError(
+            "Development MCP standalone backend requires "
+            "ARGUS_MCP_STANDALONE=true"
+        )
+
     from argus.broker.router import create_broker
 
     return LocalMcpAdapter(create_broker())

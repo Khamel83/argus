@@ -10,6 +10,16 @@ def serve_development_mcp(
 ):
     """Launch the legacy standalone lane through injected MCP wire adapters."""
 
+    from argus.authority import (
+        AuthorityConfigurationError,
+        adapter_execution_mode,
+    )
+
+    if adapter_execution_mode() != "standalone":
+        raise AuthorityConfigurationError(
+            "Development MCP standalone launch requires ARGUS_MCP_STANDALONE=true"
+        )
+
     from argus.development_mcp_adapter import build_development_mcp_backend
     from argus.development_mcp_tools import register_standalone_tools
     from argus.mcp.server import serve_mcp

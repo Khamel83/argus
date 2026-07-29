@@ -77,6 +77,9 @@ def _capture_real_mcp_server(monkeypatch, backend, *, standalone=False):
     if standalone:
         from argus.development_mcp_server import serve_development_mcp
 
+        monkeypatch.delenv("ARGUS_AUTHORITY_URL", raising=False)
+        monkeypatch.setenv("ARGUS_ENV", "development")
+        monkeypatch.setenv("ARGUS_MCP_STANDALONE", "true")
         monkeypatch.setattr(
             "argus.development_mcp_adapter.build_development_mcp_backend",
             lambda: backend,
@@ -618,6 +621,82 @@ def test_standalone_development_registers_only_usable_v1_tools(monkeypatch):
         "read_pack_file",
     }.issubset(names)
     assert not any(name.endswith("_v2") for name in names)
+
+
+@pytest.mark.parametrize("standalone_value", (None, "false", "0"))
+def test_direct_development_launcher_rejects_without_explicit_opt_in(
+    monkeypatch,
+    standalone_value,
+):
+    from argus.authority import AuthorityConfigurationError
+    from argus.development_mcp_server import serve_development_mcp
+
+    monkeypatch.delenv("ARGUS_AUTHORITY_URL", raising=False)
+    monkeypatch.setenv("ARGUS_ENV", "development")
+    if standalone_value is None:
+        monkeypatch.delenv("ARGUS_MCP_STANDALONE", raising=False)
+    else:
+        monkeypatch.setenv("ARGUS_MCP_STANDALONE", standalone_value)
+    monkeypatch.setattr(
+        "argus.development_mcp_adapter.build_development_mcp_backend",
+        lambda: pytest.fail("rejected launch must not construct a broker"),
+    )
+
+    with pytest.raises(AuthorityConfigurationError, match="standalone"):
+        serve_development_mcp()
+
+
+def test_direct_development_launcher_accepts_explicit_opt_in(monkeypatch):
+    from argus.development_mcp_server import serve_development_mcp
+
+    backend = object()
+    observed = {}
+    monkeypatch.delenv("ARGUS_AUTHORITY_URL", raising=False)
+    monkeypatch.setenv("ARGUS_ENV", "development")
+    monkeypatch.setenv("ARGUS_MCP_STANDALONE", "true")
+    monkeypatch.setattr(
+        "argus.development_mcp_adapter.build_development_mcp_backend",
+        lambda: backend,
+    )
+    monkeypatch.setattr(
+        "argus.mcp.server.serve_mcp",
+        lambda **kwargs: observed.update(kwargs),
+    )
+
+    serve_development_mcp(
+        transport="streamable-http",
+        host="127.0.0.1",
+        port=9001,
+    )
+
+    assert observed["backend"] is backend
+    assert observed["transport"] == "streamable-http"
+    assert observed["host"] == "127.0.0.1"
+    assert observed["port"] == 9001
+    assert callable(observed["additional_registration"])
+
+
+@pytest.mark.parametrize("standalone_value", (None, "false"))
+def test_direct_development_backend_builder_rejects_without_opt_in(
+    monkeypatch,
+    standalone_value,
+):
+    from argus.authority import AuthorityConfigurationError
+    from argus.development_mcp_adapter import build_development_mcp_backend
+
+    monkeypatch.delenv("ARGUS_AUTHORITY_URL", raising=False)
+    monkeypatch.setenv("ARGUS_ENV", "development")
+    if standalone_value is None:
+        monkeypatch.delenv("ARGUS_MCP_STANDALONE", raising=False)
+    else:
+        monkeypatch.setenv("ARGUS_MCP_STANDALONE", standalone_value)
+    monkeypatch.setattr(
+        "argus.broker.router.create_broker",
+        lambda: pytest.fail("rejected builder must not construct a broker"),
+    )
+
+    with pytest.raises(AuthorityConfigurationError, match="standalone"):
+        build_development_mcp_backend()
 
 
 @pytest.mark.asyncio
