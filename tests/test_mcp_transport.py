@@ -1,3 +1,4 @@
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Lock
 
@@ -253,6 +254,160 @@ class FakeMcpSdkApp:
             }
         )
         await send({"type": "http.response.body", "body": content})
+
+
+def _http_scope(method, path, *, query_string=b"", headers=()):
+    return {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": method,
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": query_string,
+        "root_path": "",
+        "headers": [(b"host", b"testserver"), *headers],
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
+    }
+
+
+async def _raw_http_request(
+    app,
+    method,
+    path,
+    *,
+    query_string=b"",
+    body=b"",
+    headers=(),
+):
+    delivered = False
+    messages = []
+
+    async def receive():
+        nonlocal delivered
+        if not delivered:
+            delivered = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        messages.append(message)
+
+    await app(
+        _http_scope(
+            method,
+            path,
+            query_string=query_string,
+            headers=headers,
+        ),
+        receive,
+        send,
+    )
+    return messages
+
+
+def _response_parts(messages):
+    start = next(
+        message for message in messages if message["type"] == "http.response.start"
+    )
+    headers = {
+        key.decode().lower(): value.decode() for key, value in start.get("headers", [])
+    }
+    body = b"".join(
+        message.get("body", b"")
+        for message in messages
+        if message["type"] == "http.response.body"
+    )
+    return start["status"], headers, body
+
+
+class ActiveLegacySseConnection:
+    def __init__(self, app):
+        self._app = app
+        self._receive_queue = asyncio.Queue()
+        self.messages = []
+        self.endpoint = asyncio.Event()
+        self.task = None
+
+    async def start(self):
+        await self._receive_queue.put(
+            {"type": "http.request", "body": b"", "more_body": False}
+        )
+
+        async def receive():
+            return await self._receive_queue.get()
+
+        async def send(message):
+            self.messages.append(message)
+            if message[
+                "type"
+            ] == "http.response.body" and b"session_id=" in message.get("body", b""):
+                self.endpoint.set()
+
+        self.task = asyncio.create_task(
+            self._app(
+                _http_scope(
+                    "GET",
+                    "/sse",
+                    headers=[(b"accept", b"text/event-stream")],
+                ),
+                receive,
+                send,
+            )
+        )
+        await asyncio.wait_for(self.endpoint.wait(), timeout=2)
+        return self
+
+    @property
+    def session_id(self):
+        _, _, body = _response_parts(self.messages)
+        marker = b"session_id="
+        value = body.split(marker, 1)[1].splitlines()[0]
+        return value.decode()
+
+    async def disconnect(self):
+        await self._receive_queue.put({"type": "http.disconnect"})
+        if self.task is not None:
+            await asyncio.wait_for(self.task, timeout=2)
+
+
+def _real_legacy_sdk_app(*, registry_options=None):
+    from mcp.server.fastmcp import FastMCP
+    from mcp.server.sse import SseServerTransport
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    from argus.api.security import TransportSecurityGuard
+    from argus.mcp.server import secure_mcp_transport_app
+
+    mcp = FastMCP(
+        "legacy-contract-fixture",
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=["testserver"],
+            allowed_origins=[],
+        ),
+    )
+    sdk_app = mcp.sse_app()
+    transport = next(
+        route.app.__self__
+        for route in sdk_app.routes
+        if isinstance(getattr(route.app, "__self__", None), SseServerTransport)
+    )
+    app = secure_mcp_transport_app(
+        sdk_app,
+        transport="sse",
+        security_guard=TransportSecurityGuard(
+            allowed_hosts=("testserver",),
+            allowed_origins=(),
+            host_policy_explicit=True,
+            origin_policy_explicit=True,
+        ),
+        legacy_transport=transport,
+        registry_options=registry_options,
+    )
+    return app, transport
 
 
 def _streamable_client(
@@ -742,7 +897,7 @@ def test_production_default_sdk_sse_response_is_not_cancelled_by_body_replay(
     assert f'"protocolVersion":"{protocol}"'.encode() in initialized.content
 
 
-def test_legacy_sse_guard_preserves_frozen_get_and_post_shapes():
+def test_legacy_sse_guard_preserves_get_shape_and_invalidates_disconnected_session():
     from argus.api.security import TransportSecurityGuard
     from argus.auth import AuthConfig
     from argus.mcp.server import secure_mcp_transport_app
@@ -832,13 +987,89 @@ def test_legacy_sse_guard_preserves_frozen_get_and_post_shapes():
     )
     assert get_response.headers["content-type"] == "text/event-stream; charset=utf-8"
     assert get_response.headers["cache-control"] == "no-cache"
-    assert post_response.status_code == 202
-    assert post_response.content == b"Accepted"
-    assert post_response.headers["content-type"] == "text/plain; charset=utf-8"
+    assert post_response.status_code == 404
     assert wrong_principal.status_code == 404
     assert unsupported_media.status_code == 415
     assert oversized.status_code == 413
-    assert calls == [("GET", "/sse"), ("POST", "/messages/")]
+    assert calls == [("GET", "/sse")]
+
+
+@pytest.mark.asyncio
+async def test_real_legacy_sdk_rejects_257th_before_allocation_and_cleans_disconnects():
+    app, transport = _real_legacy_sdk_app()
+    connections = []
+    try:
+        for _ in range(256):
+            connections.append(await ActiveLegacySseConnection(app).start())
+
+        assert len(transport._read_stream_writers) == 256
+        rejected = await _raw_http_request(
+            app,
+            "GET",
+            "/sse",
+            headers=[(b"accept", b"text/event-stream")],
+        )
+        status, _, body = _response_parts(rejected)
+
+        assert status == 503
+        assert b"session_id=" not in body
+        assert len(transport._read_stream_writers) == 256
+    finally:
+        await asyncio.gather(*(connection.disconnect() for connection in connections))
+
+    assert len(transport._read_stream_writers) == 0
+    assert app.legacy_registry.active_count == 0
+
+
+@pytest.mark.asyncio
+async def test_real_legacy_sdk_expiry_is_exact_and_cannot_be_revived():
+    clock = ManualClock()
+    app, transport = _real_legacy_sdk_app(registry_options={"clock": clock})
+    connection = await ActiveLegacySseConnection(app).start()
+    clock.advance(1_800)
+
+    rejected = await _raw_http_request(
+        app,
+        "POST",
+        "/messages/",
+        query_string=f"session_id={connection.session_id}".encode(),
+        body=b'{"jsonrpc":"2.0","method":"notifications/initialized"}',
+        headers=[(b"content-type", b"application/json")],
+    )
+    status, _, _ = _response_parts(rejected)
+
+    assert status == 404
+    assert app.legacy_registry.active_count == 0
+    assert len(transport._read_stream_writers) == 0
+    await connection.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_real_legacy_sdk_preserves_accepted_wire_shapes():
+    app, transport = _real_legacy_sdk_app()
+    connection = await ActiveLegacySseConnection(app).start()
+    get_status, get_headers, get_body = _response_parts(connection.messages)
+
+    accepted = await _raw_http_request(
+        app,
+        "POST",
+        "/messages/",
+        query_string=f"session_id={connection.session_id}".encode(),
+        body=b'{"jsonrpc":"2.0","method":"notifications/initialized"}',
+        headers=[(b"content-type", b"application/json")],
+    )
+    post_status, post_headers, post_body = _response_parts(accepted)
+
+    assert get_status == 200
+    assert get_headers["content-type"].startswith("text/event-stream")
+    assert get_body.startswith(b"event: endpoint\r\ndata: /messages/?session_id=")
+    assert post_status == 202
+    assert "content-type" not in post_headers
+    assert post_body == b"Accepted"
+
+    await connection.disconnect()
+    assert len(transport._read_stream_writers) == 0
+    assert app.legacy_registry.active_count == 0
 
 
 def test_rejected_initialize_removes_unaccounted_sdk_transport():
@@ -902,6 +1133,20 @@ def test_env_example_documents_fixed_transport_bounds_and_proxy_exposure():
     assert "idle timeout: 30 minutes" in example
     assert "maximum active sessions: 256" in example
     assert "request body maximum: 4 MiB" in example
+
+
+def test_package_metadata_exactly_pins_the_audited_mcp_sdk():
+    import importlib.metadata
+    import tomllib
+    from pathlib import Path
+
+    root = Path(__file__).parents[1]
+    metadata = tomllib.loads((root / "pyproject.toml").read_text())
+    lock = (root / "uv.lock").read_text()
+
+    assert metadata["project"]["optional-dependencies"]["mcp"] == ["mcp==1.27.0"]
+    assert 'name = "mcp", marker = "extra == \'mcp\'", specifier = "==1.27.0"' in lock
+    assert importlib.metadata.version("mcp") == "1.27.0"
 
 
 def test_network_serve_binds_sdk_app_to_validated_argus_registration(monkeypatch):

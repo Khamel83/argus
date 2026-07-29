@@ -10,6 +10,7 @@ import threading
 import time
 from http import HTTPStatus
 from typing import Any
+from uuid import UUID
 
 from mcp.server.auth.provider import AccessToken
 from starlette.requests import Request
@@ -119,6 +120,7 @@ class McpTransportSecurityApp:
         auth_config: AuthConfig,
         requires_auth: bool,
         session_manager=None,
+        legacy_transport=None,
         registry_options: dict[str, Any] | None = None,
         sweep_interval_seconds: float = _MCP_SWEEP_INTERVAL_SECONDS,
     ):
@@ -128,12 +130,16 @@ class McpTransportSecurityApp:
         self._auth_config = auth_config
         self._requires_auth = requires_auth
         self._session_manager = session_manager
+        self._legacy_transport = legacy_transport
         self._sweep_interval_seconds = sweep_interval_seconds
         self._cleanup_tasks: set[asyncio.Task] = set()
-        self._legacy_sessions: dict[str, tuple[str, float]] = {}
+        self._legacy_actual_to_reservation: dict[str, str] = {}
+        self._legacy_reservation_to_actual: dict[str, str] = {}
         self._legacy_lock = threading.Lock()
         self.registry = McpSessionRegistry(**(registry_options or {}))
         self.registry.bind_removal_callback(self._remove_transport)
+        self.legacy_registry = McpSessionRegistry(**(registry_options or {}))
+        self.legacy_registry.bind_removal_callback(self._remove_legacy_session)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "lifespan":
@@ -245,6 +251,26 @@ class McpTransportSecurityApp:
             await self._send_response(response, request, scope, receive, send)
             return
         bounded_receive = receive
+        legacy_reservation = None
+        if request.method == "GET":
+            try:
+                legacy_reservation = self.legacy_registry.initialize(
+                    principal,
+                    "legacy-sse",
+                )
+            except McpSessionCapacityError:
+                await self._send_response(
+                    _jsonrpc_transport_error(
+                        HTTPStatus.SERVICE_UNAVAILABLE,
+                        "MCP transport session capacity exhausted",
+                        headers={"Retry-After": "60"},
+                    ),
+                    request,
+                    scope,
+                    receive,
+                    send,
+                )
+                return
         if request.method == "POST":
             content_type = (
                 request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
@@ -277,16 +303,17 @@ class McpTransportSecurityApp:
             bounded_receive = self._replay_body(body, receive)
             legacy_session_id = request.query_params.get("session_id", "")
             with self._legacy_lock:
-                owner = self._legacy_sessions.get(legacy_session_id)
-                if owner is not None and owner[0] == principal:
-                    self._legacy_sessions[legacy_session_id] = (
-                        principal,
-                        time.monotonic(),
-                    )
-                    owned = True
-                else:
-                    owned = False
-            if not owned:
+                reservation_id = self._legacy_actual_to_reservation.get(
+                    legacy_session_id
+                )
+            if (
+                reservation_id is None
+                or self.legacy_registry.touch(
+                    reservation_id,
+                    principal,
+                )
+                is None
+            ):
                 await self._send_response(
                     _jsonrpc_transport_error(
                         HTTPStatus.NOT_FOUND,
@@ -299,18 +326,26 @@ class McpTransportSecurityApp:
                 )
                 return
         downstream_send = self._cors_send(request, send)
-        if request.method == "GET":
+        if legacy_reservation is not None:
             downstream_send = self._legacy_binding_send(
                 principal,
+                legacy_reservation,
                 downstream_send,
             )
-        await self._call_with_principal(
-            principal,
-            token,
-            scope,
-            bounded_receive,
-            downstream_send,
-        )
+        try:
+            await self._call_with_principal(
+                principal,
+                token,
+                scope,
+                bounded_receive,
+                downstream_send,
+            )
+        finally:
+            if legacy_reservation is not None:
+                self.legacy_registry.terminate(
+                    legacy_reservation.session_id,
+                    principal,
+                )
 
     async def _handle_streamable(
         self,
@@ -686,7 +721,12 @@ class McpTransportSecurityApp:
         self._cleanup_tasks.add(task)
         task.add_done_callback(self._cleanup_tasks.discard)
 
-    def _legacy_binding_send(self, principal: str, send: Send) -> Send:
+    def _legacy_binding_send(
+        self,
+        principal: str,
+        reservation: McpSession,
+        send: Send,
+    ) -> Send:
         buffered = bytearray()
         bound = False
 
@@ -700,32 +740,51 @@ class McpTransportSecurityApp:
                     session_id = match.group(1).decode("ascii", errors="ignore")
                     if session_id and len(session_id) <= 128:
                         with self._legacy_lock:
-                            self._sweep_legacy_locked()
-                            existing = self._legacy_sessions.get(session_id)
-                            if (
-                                existing is not None
-                                and existing[0] == principal
-                                or existing is None
-                                and len(self._legacy_sessions) < MCP_MAX_ACTIVE_SESSIONS
-                            ):
-                                self._legacy_sessions[session_id] = (
-                                    principal,
-                                    time.monotonic(),
+                            existing = self._legacy_actual_to_reservation.get(
+                                session_id
+                            )
+                            if existing is None:
+                                self._legacy_actual_to_reservation[session_id] = (
+                                    reservation.session_id
                                 )
+                                self._legacy_reservation_to_actual[
+                                    reservation.session_id
+                                ] = session_id
                         bound = True
             await send(message)
 
         return binding_send
 
-    def _sweep_legacy_locked(self) -> None:
-        cutoff = time.monotonic() - MCP_SESSION_IDLE_TIMEOUT_SECONDS
-        expired = [
-            session_id
-            for session_id, (_, touched_at) in self._legacy_sessions.items()
-            if touched_at <= cutoff
-        ][:MCP_MAX_ACTIVE_SESSIONS]
-        for session_id in expired:
-            self._legacy_sessions.pop(session_id, None)
+    def _remove_legacy_session(self, session: McpSession) -> None:
+        with self._legacy_lock:
+            actual_id = self._legacy_reservation_to_actual.pop(
+                session.session_id,
+                None,
+            )
+            if actual_id is not None:
+                self._legacy_actual_to_reservation.pop(actual_id, None)
+        if actual_id is None or self._legacy_transport is None:
+            return
+        try:
+            sdk_session_id = UUID(hex=actual_id)
+        except ValueError:
+            return
+        writer = self._legacy_transport._read_stream_writers.pop(
+            sdk_session_id,
+            None,
+        )
+        if writer is not None:
+            self._schedule_cleanup(writer.aclose())
+
+    def _schedule_cleanup(self, cleanup) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            cleanup.close()
+            return
+        task = loop.create_task(cleanup)
+        self._cleanup_tasks.add(task)
+        task.add_done_callback(self._cleanup_tasks.discard)
 
     async def _run_lifespan(
         self,
@@ -737,8 +796,7 @@ class McpTransportSecurityApp:
             while True:
                 await asyncio.sleep(self._sweep_interval_seconds)
                 self.registry.sweep()
-                with self._legacy_lock:
-                    self._sweep_legacy_locked()
+                self.legacy_registry.sweep()
 
         task = asyncio.create_task(periodic_sweep())
         try:
@@ -804,6 +862,7 @@ def secure_mcp_transport_app(
     auth_config: AuthConfig | None = None,
     requires_auth: bool = False,
     session_manager=None,
+    legacy_transport=None,
     registry_options: dict[str, Any] | None = None,
     sweep_interval_seconds: float = _MCP_SWEEP_INTERVAL_SECONDS,
 ) -> McpTransportSecurityApp:
@@ -817,6 +876,7 @@ def secure_mcp_transport_app(
         auth_config=auth_config or AuthConfig.from_env(),
         requires_auth=requires_auth,
         session_manager=session_manager,
+        legacy_transport=legacy_transport,
         registry_options=registry_options,
         sweep_interval_seconds=sweep_interval_seconds,
     )
@@ -1194,15 +1254,36 @@ def serve_mcp(
         mcp.run(transport=transport)
         return
 
-    from argus.capabilities import validate_mcp_transport_registration
+    from argus.capabilities import (
+        CapabilityManifestError,
+        validate_mcp_transport_registration,
+    )
 
     validate_mcp_transport_registration(_mcp_transport_registration(mcp))
     if transport == "streamable-http":
         sdk_app = mcp.streamable_http_app()
         session_manager = mcp.session_manager
+        legacy_transport = None
     else:
+        from mcp.server.sse import SseServerTransport
+
         sdk_app = mcp.sse_app()
         session_manager = None
+        legacy_transport = next(
+            (
+                route.app.__self__
+                for route in sdk_app.routes
+                if isinstance(
+                    getattr(route.app, "__self__", None),
+                    SseServerTransport,
+                )
+            ),
+            None,
+        )
+        if legacy_transport is None:
+            raise CapabilityManifestError(
+                "Pinned MCP SDK legacy SSE transport registration is unavailable"
+            )
     secured_app = secure_mcp_transport_app(
         sdk_app,
         transport=transport,
@@ -1210,6 +1291,7 @@ def serve_mcp(
         auth_config=auth_config,
         requires_auth=use_remote_auth,
         session_manager=session_manager,
+        legacy_transport=legacy_transport,
     )
 
     import uvicorn
