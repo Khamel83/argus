@@ -922,6 +922,52 @@ def test_argus_source_inventory_matches_restore_count_scope():
     assert "alembic_version" not in inventory["tables"]
 
 
+def test_restored_source_inventory_accepts_manifest_projection_and_rejects_drift():
+    from argus.recovery.database import verify_restored_source_inventory
+
+    database = "argus_restore_issue40_manifest_projection"
+    baseline = verify_restored_source_inventory(
+        database,
+        tenant="argus",
+        expected_inventory=None,
+        connect=lambda **kwargs: FakeConnection(REQUIRED_TABLES, database),
+    )
+    projection = {
+        key: baseline[key]
+        for key in ("tables", "schema_sha256", "constraints_validated")
+    }
+
+    assert verify_restored_source_inventory(
+        database,
+        tenant="argus",
+        expected_inventory=projection,
+        connect=lambda **kwargs: FakeConnection(REQUIRED_TABLES, database),
+    ) == baseline
+    assert verify_restored_source_inventory(
+        database,
+        tenant="argus",
+        expected_inventory=baseline,
+        connect=lambda **kwargs: FakeConnection(REQUIRED_TABLES, database),
+    ) == baseline
+
+    invalid_expected = (
+        {**projection, "tables": {**projection["tables"], "retrieval_runs": 1}},
+        {**projection, "schema_sha256": "f" * 64},
+        {**projection, "tables": []},
+        {**projection, "unexpected": True},
+        {key: value for key, value in projection.items() if key != "constraints_validated"},
+        {**baseline, "indexes": [*baseline["indexes"], ["unexpected"]]},
+    )
+    for expected in invalid_expected:
+        with pytest.raises(RuntimeError, match="source inventory"):
+            verify_restored_source_inventory(
+                database,
+                tenant="argus",
+                expected_inventory=expected,
+                connect=lambda **kwargs: FakeConnection(REQUIRED_TABLES, database),
+            )
+
+
 def test_recovery_schema_head_tracks_alembic_head():
     from alembic.config import Config
     from alembic.script import ScriptDirectory

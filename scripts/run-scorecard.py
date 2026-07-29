@@ -18,9 +18,17 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from argus.scorecard.architecture import find_architecture_exceptions  # noqa: E402
-from argus.scorecard.bundle import derive_generation, write_bundle  # noqa: E402
+from argus.scorecard.bundle import (  # noqa: E402
+    derive_generation,
+    verify_bundle,
+    write_bundle,
+)
 from argus.scorecard.competitive import classify_pair  # noqa: E402
 from argus.scorecard.corpus import load_corpus  # noqa: E402
+from argus.scorecard.live import write_live_execution_bundle  # noqa: E402
+from argus.scorecard.residual import (  # noqa: E402
+    write_bounded_inconclusive_residual,
+)
 from argus.scorecard.stability import (  # noqa: E402
     HARD_GATES,
     evaluate_stability,
@@ -39,6 +47,15 @@ from argus.providers.fixture_harness import run_fixture_case_summaries  # noqa: 
 
 def _hash_file(path: Path) -> str:
     return sha256(path.read_bytes()).hexdigest()
+
+
+def _hash_canonical_json(value: Any) -> str:
+    return sha256(
+        (
+            json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            + "\n"
+        ).encode()
+    ).hexdigest()
 
 
 def _git_identity(repository_root: Path) -> str:
@@ -65,11 +82,21 @@ def _live_configuration(corpus: dict[str, Any]) -> dict[str, object]:
         "pr_safe": False,
         "cases": [
             *(
-                {"case_id": case["id"], "mode": case["mode"]}
+                {
+                    "case_id": case["id"],
+                    "mode": case["mode"],
+                    "query": case["live_query"],
+                }
                 for case in corpus["search_intents"]
             ),
             *(
-                {"case_id": case["id"], "mode": "extraction"}
+                {
+                    "case_id": case["id"],
+                    "mode": "extraction",
+                    "url": case["url"],
+                    "url_sha256": case["url_sha256"],
+                    "snapshot_id": case["snapshot_id"],
+                }
                 for case in corpus["live_extractions"]
             ),
         ],
@@ -88,9 +115,13 @@ def _live_configuration(corpus: dict[str, Any]) -> dict[str, object]:
             ],
         },
         "evaluator": {
+            "identity_statuses": ["pinned", "unavailable"],
             "pinned_model_required": True,
             "pinned_prompt_sha256_required": True,
             "pinned_settings_sha256_required": True,
+            "unavailable_model": None,
+            "unavailable_reason_code_required": True,
+            "unavailable_value_in_both_orders": True,
             "orders": ["forward", "reverse"],
         },
         "free_profile": {
@@ -172,6 +203,7 @@ def run_hermetic(
     *,
     fixtures_root: Path,
     repository_root: Path,
+    candidate_image_digest: str | None = None,
 ) -> tuple[Path, str]:
     """Evaluate only frozen documents and publish the diagnostic bundle."""
     corpus_path = fixtures_root / "corpus.json"
@@ -364,7 +396,7 @@ def run_hermetic(
         ).encode()
     ).hexdigest()
     corpus_hashes = {
-        "corpus.json": _hash_file(corpus_path),
+        "corpus.json": _hash_canonical_json(corpus),
         "stability-evidence.json": _hash_file(stability_path),
         "stability-expected.json": _hash_file(stability_expected_path),
         "hermetic-expected.json": _hash_file(expected_path),
@@ -386,9 +418,11 @@ def run_hermetic(
     dimensions = {
         "corpus_hashes": corpus_hashes,
         "evaluator": {
+            "status": "pinned",
             "model": "frozen-paired-evaluator-fixtures-v1",
             "prompt_sha256": evaluator_hash,
             "settings_sha256": sha256(b"deterministic:no-network:v1").hexdigest(),
+            "reason_code": None,
         },
         "topology": {"egress": "hermetic", "machine": "local-fixture"},
         "profile": "hermetic",
@@ -405,7 +439,7 @@ def run_hermetic(
         "candidate_identity": {
             "generation": generation,
             "commit": commit,
-            "image_digest": None,
+            "image_digest": candidate_image_digest,
             "sanitized_config_sha256": sanitized_config_sha256,
             "dimensions": dimensions,
             "started_at": started_at.isoformat(),
@@ -468,9 +502,68 @@ def run_hermetic(
     )
 
 
+def _load_json_object(path: Path, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{label} is invalid JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    return value
+
+
+def _verified_stability_inputs(bundle: Path):
+    manifest = verify_bundle(bundle)
+    if manifest["lane"] != "hermetic" or manifest["stability_verdict"] != "stable":
+        raise ValueError("stability bundle must be a verified stable hermetic bundle")
+    serialized = _load_json_object(
+        bundle / "stability" / "gates.json", "stability gates"
+    )
+    profiles = serialized.get("profiles")
+    if not isinstance(profiles, dict):
+        raise ValueError("stability gates are missing profiles")
+    evidence: dict[str, Any] = {}
+    for profile in ("free", "budgeted"):
+        raw_profile = profiles.get(profile)
+        if not isinstance(raw_profile, dict) or not isinstance(
+            raw_profile.get("gates"), dict
+        ):
+            raise ValueError("stability gates have invalid profile evidence")
+        evidence[profile] = raw_profile["gates"]
+    exceptions = serialized.get("architecture_exceptions")
+    if not isinstance(exceptions, list):
+        raise ValueError("stability architecture exceptions are invalid")
+    stability = evaluate_stability(evidence, architecture_exceptions=exceptions)
+    surface = _load_json_object(
+        bundle / "stability" / "surface-equivalence.json",
+        "surface equivalence",
+    )
+    candidate = _load_json_object(
+        bundle / "identities" / "candidate.json", "hermetic candidate identity"
+    )
+    if candidate["image_digest"] is None:
+        raise ValueError(
+            "legacy hermetic bundle lacks a candidate image digest and cannot certify live"
+        )
+    proof = {
+        "schema": "verified-hermetic-stability-binding-v1",
+        "manifest_sha256": _hash_file(bundle / "manifest.json"),
+        "generation": manifest["generation"],
+        "corpus_sha256": manifest["dimensions"]["corpus_hashes"]["corpus.json"],
+        "sanitized_config_sha256": manifest["dimensions"]["sanitized_config_sha256"],
+        "candidate_commit": candidate["commit"],
+        "candidate_image_digest": candidate["image_digest"],
+    }
+    return stability, surface, proof
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--lane", choices=("hermetic", "live-config"), required=True)
+    parser.add_argument(
+        "--lane",
+        choices=("hermetic", "live-config", "competitive", "residual"),
+        required=True,
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
         "--fixtures-root",
@@ -478,6 +571,11 @@ def main() -> int:
         default=ROOT / "tests" / "fixtures" / "scorecard",
     )
     parser.add_argument("--repository-root", type=Path, default=ROOT)
+    parser.add_argument("--candidate-image-digest")
+    parser.add_argument("--input", type=Path)
+    parser.add_argument("--stability-bundle", type=Path)
+    parser.add_argument("--attempt-one", type=Path)
+    parser.add_argument("--attempt-two", type=Path)
     args = parser.parse_args()
     try:
         if args.lane == "live-config":
@@ -492,10 +590,43 @@ def main() -> int:
                 "no live execution performed"
             )
             return 0
+        if args.lane == "competitive":
+            if args.input is None or args.stability_bundle is None:
+                raise ValueError(
+                    "competitive lane requires --input and --stability-bundle"
+                )
+            stability, surface, proof = _verified_stability_inputs(
+                args.stability_bundle
+            )
+            live_corpus = load_corpus(args.fixtures_root / "corpus.json")
+            output = write_live_execution_bundle(
+                args.output,
+                sealed=_load_json_object(args.input, "sealed live execution"),
+                corpus=live_corpus,
+                corpus_sha256=_hash_canonical_json(live_corpus),
+                stability=stability,
+                stability_proof=proof,
+                surface_equivalence=surface,
+            )
+            print(f"compiled sealed live execution into verified bundle: {output}")
+            return 0
+        if args.lane == "residual":
+            if args.attempt_one is None or args.attempt_two is None:
+                raise ValueError(
+                    "residual lane requires --attempt-one and --attempt-two"
+                )
+            output = write_bounded_inconclusive_residual(
+                args.output,
+                first_bundle=args.attempt_one,
+                second_bundle=args.attempt_two,
+            )
+            print(f"wrote verified bounded-inconclusive residual: {output}")
+            return 0
         output, verdict = run_hermetic(
             args.output,
             fixtures_root=args.fixtures_root,
             repository_root=args.repository_root,
+            candidate_image_digest=args.candidate_image_digest,
         )
     except (OSError, ValueError) as exc:
         print(f"scorecard fixture/configuration error: {exc}", file=sys.stderr)

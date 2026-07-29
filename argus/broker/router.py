@@ -15,7 +15,9 @@ from argus.broker.budgets import PROVIDER_TIERS, BudgetTracker
 from argus.broker.accepted import (
     AcceptanceReceipt,
     AcceptedRetrieval,
+    AcceptedSearchAccounting,
     AcceptedSearchExecution,
+    AcceptedSearchExecutionEvidence,
     CacheDecisionOutcome,
     CacheEntry,
     RetrievalCache,
@@ -26,6 +28,7 @@ from argus.broker.accepted import (
 from argus.broker.cache import SearchCache
 from argus.broker.execution import (
     ProviderExecutor,
+    ProviderInvocationEvidence,
     caller_tier_cap,
     conservative_charge_estimate,
 )
@@ -356,6 +359,58 @@ class SearchBroker:
                 )
         return format(total, "f")
 
+    @staticmethod
+    def _accepted_execution_accounting(
+        traces,
+        *,
+        invoked_attempts: tuple[ProviderInvocationEvidence, ...],
+    ) -> AcceptedSearchAccounting:
+        invoked_providers = {attempt.provider for attempt in invoked_attempts}
+        attempt_ids = [attempt.attempt_id for attempt in invoked_attempts]
+        traced_providers = {trace.provider for trace in traces}
+        if (
+            not invoked_providers.issubset(traced_providers)
+            or any(not attempt_id for attempt_id in attempt_ids)
+            or len(set(attempt_ids)) != len(attempt_ids)
+        ):
+            return AcceptedSearchAccounting(
+                provider_calls=len(invoked_attempts),
+                actual_usd=None,
+                reserved_usd=None,
+                accounting_source="attempt_evidence_incomplete",
+                reconciliation="uncertain",
+                complete=False,
+            )
+        if any(PROVIDER_TIERS[provider] > 0 for provider in invoked_providers):
+            return AcceptedSearchAccounting(
+                provider_calls=len(invoked_attempts),
+                actual_usd=None,
+                reserved_usd=None,
+                accounting_source="paid_attempt_accounting_incomplete",
+                reconciliation="uncertain",
+                complete=False,
+            )
+        return AcceptedSearchAccounting(
+            provider_calls=len(invoked_attempts),
+            actual_usd=Decimal("0"),
+            reserved_usd=Decimal("0"),
+            accounting_source="tier_zero_accepted_attempts",
+            reconciliation="settled",
+            complete=True,
+        )
+
+    @staticmethod
+    def _accepted_origin_spend(
+        accounting: AcceptedSearchAccounting,
+        *,
+        durable_origin_spend: Decimal,
+    ) -> tuple[Decimal, bool]:
+        return (
+            durable_origin_spend,
+            accounting.complete
+            and accounting.actual_usd == durable_origin_spend,
+        )
+
     def _accepted_response(
         self,
         accepted: AcceptedRetrieval,
@@ -498,6 +553,24 @@ class SearchBroker:
                         include_attribution=compute_attribution,
                     ),
                     receipt,
+                    evidence=AcceptedSearchExecutionEvidence(
+                        operation_id=accepted.operation_id,
+                        receipt_ref=receipt.receipt_ref,
+                        accepted_at=receipt.accepted_at,
+                        acceptance_fingerprint=receipt.acceptance_fingerprint,
+                        cache_decision=decision.outcome,
+                        origin_spend_usd=Decimal(accepted.origin_spend_usd),
+                        current_spend_usd=Decimal("0"),
+                        reserved_spend_usd=Decimal("0"),
+                        spend_accounting_source="cache_receipt_no_current_calls",
+                        spend_reconciliation="settled",
+                        spend_complete=True,
+                        current_provider_calls=0,
+                        cache_origin=decision.origin_receipt_ref or "unknown",
+                        origin_spend_complete=False,
+                        cache_eligible=True,
+                        cache_age_ms=int((decision.age_seconds or 0) * 1000),
+                    ),
                 )
 
             started = self._monotonic_clock()
@@ -567,6 +640,13 @@ class SearchBroker:
                     outcome = CanonicalOutcome.TIMEOUT
                     reason = "operation_deadline"
                 else:
+                    fallback_attempt_id = f"archive:{uuid.uuid4().hex}"
+                    execution.invoked_attempts += (
+                        ProviderInvocationEvidence(
+                            provider=ProviderName.ARCHIVE,
+                            attempt_id=fallback_attempt_id,
+                        ),
+                    )
                     try:
                         fallback_result = await asyncio.wait_for(
                             empty_fallback(),
@@ -598,7 +678,7 @@ class SearchBroker:
                         fallback_batch,
                         request_evidence=replace(
                             fallback_batch.request_evidence,
-                            attempt_id=f"archive:{uuid.uuid4().hex}",
+                            attempt_id=fallback_attempt_id,
                         ),
                     )
                     provider_batches[ProviderName.ARCHIVE.value] = fallback_batch
@@ -664,6 +744,16 @@ class SearchBroker:
                 "degraded",
                 "proven_empty",
             } and bool(contributor_refs)
+            accounting = self._accepted_execution_accounting(
+                execution.traces,
+                invoked_attempts=execution.invoked_attempts,
+            )
+            origin_spend_value, origin_spend_complete = (
+                self._accepted_origin_spend(
+                    accounting,
+                    durable_origin_spend=Decimal(accepted.origin_spend_usd),
+                )
+            )
             readiness = tuple(
                 (
                     {
@@ -696,6 +786,7 @@ class SearchBroker:
                         traces=traces,
                         cache_decision=decision.outcome.value,
                         cache_published=cacheable,
+                        invoked_attempts=execution.invoked_attempts,
                     )
                 )
             except Exception:
@@ -712,7 +803,33 @@ class SearchBroker:
                 cached=False,
                 include_attribution=compute_attribution,
             )
-            return AcceptedSearchExecution(outcome, reason, response, receipt)
+            return AcceptedSearchExecution(
+                outcome,
+                reason,
+                response,
+                receipt,
+                evidence=AcceptedSearchExecutionEvidence(
+                    operation_id=accepted.operation_id,
+                    receipt_ref=receipt.receipt_ref,
+                    accepted_at=receipt.accepted_at,
+                    acceptance_fingerprint=receipt.acceptance_fingerprint,
+                    cache_decision=decision.outcome,
+                    origin_spend_usd=origin_spend_value,
+                    current_spend_usd=accounting.actual_usd,
+                    reserved_spend_usd=accounting.reserved_usd,
+                    spend_accounting_source=accounting.accounting_source,
+                    spend_reconciliation=accounting.reconciliation,
+                    spend_complete=accounting.complete,
+                    current_provider_calls=accounting.provider_calls,
+                    cache_origin=decision.origin_receipt_ref or "none",
+                    origin_spend_complete=(
+                        decision.outcome is CacheDecisionOutcome.MISS
+                        and origin_spend_complete
+                    ),
+                    cache_eligible=cacheable,
+                    cache_age_ms=int((decision.age_seconds or 0) * 1000),
+                ),
+            )
 
     async def search_with_session_accepted(
         self,
@@ -764,6 +881,7 @@ class SearchBroker:
                     response=accepted.response,
                     receipt=accepted.receipt,
                     session_update_failed=True,
+                    evidence=accepted.evidence,
                 ),
                 session_id,
             )

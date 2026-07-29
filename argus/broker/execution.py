@@ -84,6 +84,15 @@ def conservative_charge_estimate(
     return float(estimate)
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderInvocationEvidence:
+    """Authorization-bound proof that one provider invocation began."""
+
+    provider: ProviderName
+    attempt_id: str
+    egress: str = "local"
+
+
 @dataclass
 class ProviderExecutionOutcome:
     traces: List[ProviderTrace]
@@ -91,6 +100,7 @@ class ProviderExecutionOutcome:
     live_providers_used: int
     budget_pace_warnings: List[str] = field(default_factory=list)
     provider_batches: Dict[str, ProviderSearchBatch] = field(default_factory=dict)
+    invoked_attempts: tuple[ProviderInvocationEvidence, ...] = ()
 
     def contributor_attempt_refs(self) -> tuple[str, ...]:
         """Expose bounded provider attempt lineage for durable acceptance."""
@@ -193,6 +203,7 @@ class ProviderExecutor:
         provider_batches: Dict[str, ProviderSearchBatch] = {}
         live_providers_used = 0
         pace_warnings: List[str] = []
+        invoked_attempts: list[ProviderInvocationEvidence] = []
         attempt_scope = str(query.metadata.get("attempt_scope") or uuid.uuid4().hex)
         probe_execution_authorization = None
         probe_key = None
@@ -310,6 +321,13 @@ class ProviderExecutor:
                         )
                     )
                     continue
+                invoked_attempts.append(
+                    ProviderInvocationEvidence(
+                        provider=pname,
+                        attempt_id=authorization.attempt_id,
+                        egress=best_egress,
+                    )
+                )
                 batch = None
                 try:
                     try:
@@ -440,11 +458,19 @@ class ProviderExecutor:
                 )
                 continue
 
+            invoked_attempts.append(
+                ProviderInvocationEvidence(
+                    provider=pname,
+                    attempt_id=authorization.attempt_id,
+                    egress=best_egress,
+                )
+            )
             try:
                 invocation = await self._execute_provider(
                     query,
                     provider,
                     pname,
+                    attempt_id=authorization.attempt_id,
                     scope=authorization.scope,
                     plan=plan,
                     provider_phase_deadline=provider_phase_deadline,
@@ -496,6 +522,7 @@ class ProviderExecutor:
             live_providers_used=live_providers_used,
             budget_pace_warnings=pace_warnings,
             provider_batches=provider_batches,
+            invoked_attempts=tuple(invoked_attempts),
         )
 
     async def _execute_provider(
@@ -504,6 +531,7 @@ class ProviderExecutor:
         provider: BaseProvider,
         provider_name: ProviderName,
         *,
+        attempt_id: str | None = None,
         scope=None,
         plan: RetrievalPlan | None = None,
         provider_phase_deadline: float | None = None,
@@ -515,6 +543,8 @@ class ProviderExecutor:
                 request_class=query.mode.value,
             )
         metadata = dict(query.metadata)
+        if attempt_id is not None:
+            metadata["_provider_attempt_id"] = attempt_id
         if plan is not None:
             metadata["_retrieval_plan"] = plan
             metadata["_freshness_window"] = plan.freshness

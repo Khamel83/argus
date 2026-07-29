@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 import re
 from typing import Any, Mapping
@@ -35,6 +36,7 @@ _INTENT_FIELDS = frozenset(
         "freshness_window_days",
         "minimum_evidence_shape",
         "profiles",
+        "live_query",
         "hermetic_input",
     }
 )
@@ -53,7 +55,7 @@ _LIVE_EXTRACTION_FIELDS = frozenset(
         "profiles",
         "synchronized",
         "snapshot_id",
-        "snapshot_sha256",
+        "url_sha256",
         "url",
     }
 )
@@ -221,6 +223,11 @@ def validate_corpus(corpus: Mapping[str, Any]) -> None:
         for count in minimum.values():
             _count(count, f"search intent {intent_id} minimum evidence")
         _profiles(intent["profiles"], f"search intent {intent_id}")
+        live_query = _nonempty_string(
+            intent["live_query"], f"search intent {intent_id} literal live query"
+        )
+        if "fixture query" in live_query.lower():
+            raise ValueError(f"search intent {intent_id} literal live query is invalid")
         hermetic_input = _mapping(
             intent["hermetic_input"], f"search intent {intent_id} hermetic input"
         )
@@ -299,10 +306,12 @@ def validate_corpus(corpus: Mapping[str, Any]) -> None:
         if entry["synchronized"] is not True:
             raise ValueError(f"live extraction {case_id} must be synchronized")
         _nonempty_string(entry["snapshot_id"], f"live extraction {case_id} snapshot")
-        if not isinstance(entry["snapshot_sha256"], str) or not _SHA256.fullmatch(
-            entry["snapshot_sha256"]
+        if not isinstance(entry["url_sha256"], str) or not _SHA256.fullmatch(
+            entry["url_sha256"]
         ):
-            raise ValueError(f"live extraction {case_id} has invalid snapshot hash")
+            raise ValueError(f"live extraction {case_id} has invalid URL hash")
         url = _nonempty_string(entry["url"], f"live extraction {case_id} URL")
         if not url.startswith("https://"):
             raise ValueError(f"live extraction {case_id} URL must use HTTPS")
+        if sha256(url.encode()).hexdigest() != entry["url_sha256"]:
+            raise ValueError(f"live extraction {case_id} URL hash mismatch")

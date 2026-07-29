@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 import hashlib
 import json
@@ -135,6 +136,81 @@ class AcceptedRetrievalView:
 
 
 @dataclass(frozen=True, slots=True)
+class AcceptedSearchAccounting:
+    """Safe spend and invocation accounting for one current execution."""
+
+    provider_calls: int
+    actual_usd: Decimal | None
+    reserved_usd: Decimal | None
+    accounting_source: str
+    reconciliation: str
+    complete: bool
+
+    def __post_init__(self) -> None:
+        if self.provider_calls < 0 or not self.accounting_source:
+            raise ValueError("accepted search accounting is invalid")
+        if self.complete:
+            if self.actual_usd is None or self.reserved_usd is None:
+                raise ValueError("complete search accounting requires spend totals")
+            if self.actual_usd < 0 or self.reserved_usd < 0:
+                raise ValueError("accepted search spend must be nonnegative")
+            if self.reconciliation != "settled":
+                raise ValueError("complete search accounting must be settled")
+        elif self.actual_usd is not None or self.reserved_usd is not None:
+            raise ValueError("incomplete search accounting cannot claim spend totals")
+
+
+@dataclass(frozen=True, slots=True)
+class AcceptedSearchExecutionEvidence:
+    """Safe accepted facts carried from the broker to transport projection."""
+
+    operation_id: str
+    receipt_ref: str
+    accepted_at: datetime
+    acceptance_fingerprint: str
+    cache_decision: CacheDecisionOutcome
+    origin_spend_usd: Decimal
+    current_spend_usd: Decimal | None
+    reserved_spend_usd: Decimal | None
+    spend_accounting_source: str
+    spend_reconciliation: str
+    spend_complete: bool
+    current_provider_calls: int
+    cache_origin: str
+    origin_spend_complete: bool
+    cache_eligible: bool
+    cache_age_ms: int
+
+    def __post_init__(self) -> None:
+        if not self.operation_id or not self.receipt_ref:
+            raise ValueError("accepted search evidence requires identity")
+        if self.accepted_at.tzinfo is None or self.accepted_at.utcoffset() is None:
+            raise ValueError("accepted search evidence requires aware accepted_at")
+        if len(self.acceptance_fingerprint) != 64:
+            raise ValueError("accepted search evidence requires fingerprint")
+        if self.origin_spend_usd < 0:
+            raise ValueError("accepted search origin spend must be nonnegative")
+        if self.spend_complete:
+            if self.current_spend_usd is None or self.reserved_spend_usd is None:
+                raise ValueError("complete search evidence requires spend totals")
+            if self.current_spend_usd < 0 or self.reserved_spend_usd < 0:
+                raise ValueError("accepted search spend must be nonnegative")
+            if self.spend_reconciliation != "settled":
+                raise ValueError("complete search evidence must be settled")
+        elif (
+            self.current_spend_usd is not None
+            or self.reserved_spend_usd is not None
+        ):
+            raise ValueError("incomplete search evidence cannot claim spend totals")
+        if self.current_provider_calls < 0:
+            raise ValueError("accepted search provider calls must be nonnegative")
+        if not self.spend_accounting_source or not self.cache_origin:
+            raise ValueError("accepted search evidence requires accounting sources")
+        if self.cache_age_ms < 0:
+            raise ValueError("accepted search cache age must be nonnegative")
+
+
+@dataclass(frozen=True, slots=True)
 class AcceptedSearchExecution:
     """Broker-owned accepted search fact for transport-neutral projection."""
 
@@ -143,6 +219,7 @@ class AcceptedSearchExecution:
     response: object | None
     receipt: AcceptanceReceipt | None
     session_update_failed: bool = False
+    evidence: AcceptedSearchExecutionEvidence | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +257,7 @@ class CacheDecision:
     outcome: CacheDecisionOutcome
     accepted: AcceptedRetrievalView | None = None
     origin_receipt_ref: str | None = None
+    age_seconds: float | None = None
 
 
 class AcceptancePersister(Protocol):
@@ -278,11 +356,18 @@ class RetrievalCache:
                 return CacheDecision(CacheDecisionOutcome.MISS)
             age_seconds = (self._clock() - entry.accepted_at).total_seconds()
             if age_seconds < 0 or age_seconds > max_age_seconds:
-                return CacheDecision(CacheDecisionOutcome.HIT_INELIGIBLE)
+                return CacheDecision(
+                    CacheDecisionOutcome.HIT_INELIGIBLE,
+                    origin_receipt_ref=(
+                        entry.accepted.acceptance_receipt.receipt_ref
+                    ),
+                    age_seconds=max(0, age_seconds),
+                )
             return CacheDecision(
                 CacheDecisionOutcome.HIT_ELIGIBLE,
                 accepted=entry.accepted.copy_for_receipt(),
                 origin_receipt_ref=entry.accepted.acceptance_receipt.receipt_ref,
+                age_seconds=age_seconds,
             )
 
     def accept_and_publish(

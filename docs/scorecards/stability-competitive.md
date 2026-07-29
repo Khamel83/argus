@@ -353,21 +353,100 @@ stubbed; it has no live network, persistence, spend, deployment, or promotion
 authority.
 
 `scripts/run-scorecard.py --lane live-config` emits the secret-free interface
-for a future live run: the exact 28 cases, synchronized identity requirements,
-pinned evaluator requirements, automatic free-only policy, and immutable
+for a future live run: the exact 28 cases, all 24 literal live search queries,
+the four extraction URLs with distinct `url_sha256` and `snapshot_id` fields,
+synchronized identity requirements, evaluator requirements, automatic free-only
+policy, and immutable
 budgeted receipt fields (`schema`, `receipt_id`, `run_id`, `generation`,
 `permitted_providers`, `maximum_tier`, `call_count_cap`,
 `cost_or_credit_cap`, `one_time_credit_providers`, and `issued_at`). It does
 not search, extract, evaluate, reserve, consume a receipt, or contact an
 authority.
 
-The separately defined `.github/workflows/scorecard-live.yml` is the only
-repository workflow for weekly/manual live configuration publication. It needs
+`scripts/run-scorecard.py --lane competitive --input SEALED.json
+--stability-bundle HERMETIC_BUNDLE` is a network-free compiler. The supplied
+execution document must already be sealed by the live authority. The compiler
+requires exact 24-search plus 4-extraction coverage; immutable baseline and
+candidate commits and image digests; the shared frozen extraction captures;
+bounded timing; complete attempt, cache, freshness, spend, and PostgreSQL
+persistence diagnostics for both identities; ready tier-zero provider
+selection; and reconciled zero spend. Missing HTTP diagnostics fail closed.
+It copies normalized evidence into a checksummed competitive bundle and derives
+the verdict from the two serialized evaluator orders. It never calls a
+provider, extractor, evaluator, HTTP authority, or database.
+
+The hermetic bundle used by that compiler is not an arbitrary green bundle.
+After the candidate image exists, Homelab generates a fresh proof with
+`--lane hermetic --candidate-image-digest sha256:...`. The compiler verifies
+the proof bundle and requires the sealed `stability_binding` to match its
+manifest hash, hermetic generation, semantic corpus hash, sanitized
+configuration hash, candidate commit, and candidate image digest. Those proof
+dimensions are incorporated into the live generation. Ordinary pull-request
+hermetic bundles with `image_digest: null` remain valid diagnostic evidence but
+are explicitly rejected as live certification inputs. No digest is required or
+guessed before the candidate image has been built.
+
+Every extraction request names the shared `capture_sha256` and an exact local
+captured-replay chain. Both baseline and candidate normalized evidence repeat
+that capture identity, and each capture hash is part of the live generation.
+Search results and provider attempts are closed to the requested ready
+tier-zero providers; every requested provider must be represented. Extraction
+attempts must be exactly the declared local extractor chain, with no external
+provider calls.
+
+Provider `result_count` has one exact meaning: the number of normalized results
+from that attempt retained after within-provider and retry deduplication.
+Duplicates discarded before emission are not counted. For each requested
+provider, the sum across `success` or `cache` attempts must equal the number of
+emitted normalized results attributed to that provider. Every other attempt
+status must report zero and cannot supply a result. Provider status is closed
+to the runtime trace vocabulary: `success`, `error`, `skipped`, or `cache`.
+
+The canonical search outcome is derived from the complete provider trace, not
+trusted as a free-standing claim. Emitted results with only successful or cache
+attempts are `success`; emitted results alongside a skipped or error attempt are
+`degraded`. A successful attempt with zero retained results yields `empty`, as
+does a zero-result cache projection. An entirely skipped trace yields
+`policy_rejected`; other complete no-success traces yield `providers_failed`.
+
+Captured replay uses the same reconciliation rule for content. If content is
+present, exactly one `success` local extractor attempt contributes one retained
+document, and normalized `source_type` must name that extractor in the declared
+replay chain. Extractor status is closed to the runtime attempt vocabulary:
+`success`, `failed`, or `quality_failed`. Paid API, external reader, phantom, or
+multiply claimed source provenance is rejected.
+
+Freshness observations are side-specific: `observed_at` must fall within the
+corresponding baseline or candidate execution window, and `age_seconds` must be
+derivable from that identity's finish time. Serialized timing or age claims
+from an unrelated execution are rejected.
+
+The evaluator identity is explicit. `status: pinned` requires a non-empty model
+and immutable prompt/settings hashes. When no genuinely pinned evaluator is
+configured, `status: unavailable` requires `model: null`, a reason code, and
+`unavailable` in both orders for every case. The latter truthfully derives an
+inconclusive competitive verdict; it does not substitute a model or fabricate
+judgments.
+
+`scripts/run-scorecard.py --lane residual --attempt-one BUNDLE_ONE
+--attempt-two BUNDLE_TWO` accepts only two distinct, stable, free-profile,
+inconclusive competitive bundles with the same generation and immutable
+baseline/candidate identities. It writes a closed, checksummed
+`scorecard-bounded-inconclusive-residual-v1` receipt. The receipt records the
+two source manifest/checksum hashes and explicitly sets
+`can_authorize_deployment: false`; it is bounded residual-risk evidence, never a
+deployment authorization. The two source runs must also have disjoint timing
+operation IDs and durable persistence receipt IDs; a renamed run ID is not
+independent evidence.
+
+The separately defined `.github/workflows/scorecard-live.yml` remains a
+diagnostic-only weekly/manual live configuration publication. It needs
 no authority URL, token, provider credential, evaluator, receipt, or protected
-environment. Task 16/P1 is the only owner of canonical-HTTP live execution,
-both evaluator orders, provider reservation and cap enforcement, receipt
-consumption, and protected promotion/deployment. Task 15 never simulates those
-actions.
+environment. External Task 16/P1 execution owns canonical-HTTP retrieval,
+both evaluator orders, provider reservation and cap enforcement, and receipt
+consumption. The repository compiler only verifies and packages the resulting
+sealed document; it has no execution or protected promotion/deployment
+authority.
 
 The hermetic lane executes a distinct frozen raw contract for every hard gate
 and compares it with separate expected evidence. A mutation to one gate cannot

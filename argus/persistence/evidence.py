@@ -229,6 +229,7 @@ class RetrievalEvidence:
     cache_decision: str = "miss"
     origin_receipt_ref: str | None = None
     cache_published: bool = False
+    invoked_attempts: tuple[object, ...] = ()
 
     @classmethod
     def from_accepted(cls, accepted: AcceptedRetrieval) -> "RetrievalEvidence":
@@ -256,6 +257,7 @@ class RetrievalEvidence:
             "cache_decision": self.cache_decision,
             "origin_receipt_ref": self.origin_receipt_ref,
             "cache_published": self.cache_published,
+            "invoked_attempts": self.invoked_attempts,
         }
         return hashlib.sha256(_canonical(payload).encode()).hexdigest()
 
@@ -334,6 +336,7 @@ class SqlAlchemyEvidenceRepository:
                                     accepted_results_fingerprint
                                 ),
                                 "binding_version": "accepted-results-v1",
+                                "invoked_attempts": evidence.invoked_attempts,
                             }
                         ),
                         source_fingerprint=evidence.source_fingerprint,

@@ -444,6 +444,7 @@ class AcceptedExtractionOutcome:
         """Project the accepted semantic truth to the readable v1 object."""
         from argus.extraction.completeness import CompletenessResult
         from argus.extraction.models import (
+            AcceptedExtractionExecutionEvidence,
             ExtractedContent,
             ExtractionAttempt,
             ExtractorName,
@@ -509,6 +510,37 @@ class AcceptedExtractionOutcome:
         legacy.artifact_disposition = self.artifact_disposition
         legacy.acceptance_receipt = self.acceptance_receipt
         legacy.accepted_outcome = self.outcome
+        invoked_steps = tuple(
+            step
+            for step in self.steps
+            if step.decision is ExtractorExecutionDecision.INVOKED
+        )
+        spend_steps = tuple(step.spend for step in invoked_steps if step.spend)
+        actual_usd = sum(
+            (spend.actual_usd for spend in spend_steps),
+            start=Decimal("0"),
+        )
+        reserved_usd = sum(
+            (spend.reserved_usd for spend in spend_steps),
+            start=Decimal("0"),
+        )
+        legacy.accepted_execution_evidence = AcceptedExtractionExecutionEvidence(
+            operation_id=self.extraction_run_id,
+            receipt_ref=self.acceptance_receipt.receipt_ref,
+            accepted_at=self.acceptance_receipt.accepted_at,
+            receipt_scope=self.acceptance_receipt.scope,
+            actual_usd=actual_usd,
+            reserved_usd=reserved_usd,
+            spend_delta_usd=actual_usd - reserved_usd,
+            spend_attempt_refs=tuple(
+                spend.spend_attempt_ref for spend in spend_steps
+            ),
+            spend_complete=len(spend_steps) == len(invoked_steps),
+            cache_decision=self.cache_decision.outcome.value,
+            cache_age_seconds=self.cache_decision.age_seconds,
+            operation_latency_ms=self.operation_latency_ms,
+            extractor_call_count=len(invoked_steps),
+        )
         return legacy
 
 

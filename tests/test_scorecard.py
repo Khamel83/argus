@@ -14,6 +14,7 @@ from argus.scorecard.authorization import (
     AuthorizationError,
     validate_authorization_bytes,
 )
+from argus.scorecard.bundle import verify_bundle
 from argus.scorecard.competitive import CompetitiveInputError, evaluate_competitive
 from argus.scorecard.corpus import load_corpus, validate_corpus
 from argus.scorecard.stability import (
@@ -68,6 +69,18 @@ def test_frozen_corpus_has_the_declared_search_and_extraction_coverage():
     assert len(corpus["hermetic_extractions"]) == 8
     assert len(corpus["live_extractions"]) == 4
     assert all(entry["profiles"] for entry in corpus["search_intents"])
+    assert all(
+        entry["live_query"]
+        and entry["live_query"] != entry["hermetic_input"]["query"]
+        and "fixture query" not in entry["live_query"].lower()
+        for entry in corpus["search_intents"]
+    )
+    assert all(
+        __import__("hashlib").sha256(entry["url"].encode()).hexdigest()
+        == entry["url_sha256"]
+        for entry in corpus["live_extractions"]
+    )
+    assert all("snapshot_sha256" not in entry for entry in corpus["live_extractions"])
 
 
 def test_corpus_rejects_an_intent_without_its_evidence_contract():
@@ -99,8 +112,20 @@ def test_corpus_rejects_an_intent_without_its_evidence_contract():
             "evidence",
         ),
         (
-            lambda corpus: corpus["live_extractions"][0].pop("snapshot_sha256", None),
+            lambda corpus: corpus["live_extractions"][0].pop("url_sha256", None),
             "exact keys",
+        ),
+        (
+            lambda corpus: corpus["search_intents"][0].update(
+                {"live_query": "fixture query for discovery-01"}
+            ),
+            "literal live query",
+        ),
+        (
+            lambda corpus: corpus["live_extractions"][0].update(
+                {"url_sha256": "0" * 64}
+            ),
+            "URL hash",
         ),
     ),
 )
@@ -545,6 +570,87 @@ def test_live_configuration_declares_exact_receipt_contract():
         "one_time_credit_providers",
         "issued_at",
     ]
+    assert len(configuration["cases"]) == 28
+    assert all(
+        "query" in case
+        for case in configuration["cases"]
+        if case["mode"] != "extraction"
+    )
+    assert all(
+        {"url", "url_sha256", "snapshot_id"} <= set(case)
+        for case in configuration["cases"]
+        if case["mode"] == "extraction"
+    )
+
+
+def test_scorecard_cli_exposes_network_free_compiler_and_residual_interfaces():
+    completed = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "run-scorecard.py"), "--help"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "{hermetic,live-config,competitive,residual}" in completed.stdout
+    assert "--input" in completed.stdout
+    assert "--stability-bundle" in completed.stdout
+    assert "--attempt-one" in completed.stdout
+    assert "--attempt-two" in completed.stdout
+    assert "--candidate-image-digest" in completed.stdout
+
+
+def test_hermetic_bundle_can_be_bound_to_post_build_candidate_digest(tmp_path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "run_scorecard_bound", ROOT / "scripts" / "run-scorecard.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    digest = f"sha256:{'a' * 64}"
+    output, verdict = module.run_hermetic(
+        tmp_path / "hermetic-bound",
+        fixtures_root=FIXTURES,
+        repository_root=ROOT,
+        candidate_image_digest=digest,
+    )
+
+    _, _, proof = module._verified_stability_inputs(output)
+
+    assert verdict == "stable"
+    assert proof["candidate_image_digest"] == digest
+    assert (
+        proof["candidate_commit"]
+        == subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
+
+
+def test_legacy_hermetic_bundle_remains_valid_but_cannot_certify_live(tmp_path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "run_scorecard_legacy", ROOT / "scripts" / "run-scorecard.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    output, verdict = module.run_hermetic(
+        tmp_path / "hermetic-legacy",
+        fixtures_root=FIXTURES,
+        repository_root=ROOT,
+    )
+
+    assert verdict == "stable"
+    assert verify_bundle(output)["lane"] == "hermetic"
+    with pytest.raises(ValueError, match="cannot certify live"):
+        module._verified_stability_inputs(output)
 
 
 def test_budgeted_authorization_receipt_is_exact_digest_bound():

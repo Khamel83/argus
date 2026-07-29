@@ -12,7 +12,7 @@ from argus.models import (
     SearchQuery,
     SearchResult,
 )
-from argus.providers.base import ProbeCapability
+from argus.providers.base import BaseProvider, ProbeCapability
 from tests.planning_helpers import execute_with_plan
 
 
@@ -133,9 +133,78 @@ async def test_accepted_search_cache_hit_gets_fresh_durable_receipt(tmp_path):
     assert first.receipt != second.receipt
     assert first.response.cached is False
     assert second.response.cached is True
+    assert first.evidence.operation_id == first.response.search_run_id
+    assert first.evidence.cache_decision.value == "miss"
+    assert format(first.evidence.current_spend_usd, "f") == "0"
+    assert format(first.evidence.reserved_spend_usd, "f") == "0"
+    assert first.evidence.spend_accounting_source == "tier_zero_accepted_attempts"
+    assert first.evidence.spend_reconciliation == "settled"
+    assert first.evidence.spend_complete is True
+    assert first.evidence.current_provider_calls == 1
+    assert first.evidence.cache_origin == "none"
+    assert first.evidence.origin_spend_complete is True
+    assert first.evidence.cache_eligible is True
+    assert first.evidence.cache_age_ms == 0
+    assert second.evidence.operation_id == second.response.search_run_id
+    assert second.evidence.cache_decision.value == "hit_eligible"
+    assert format(second.evidence.current_spend_usd, "f") == "0"
+    assert format(second.evidence.reserved_spend_usd, "f") == "0"
+    assert second.evidence.spend_reconciliation == "settled"
+    assert second.evidence.current_provider_calls == 0
+    assert second.evidence.cache_origin == first.receipt.receipt_ref
+    assert second.evidence.origin_spend_complete is False
     assert provider.calls == 1
     assert evidence.accepted_count() == 2
     assert evidence.publication_count() == 1
+
+
+def test_accepted_accounting_fails_closed_for_paid_charge_and_counts_invocations():
+    from decimal import Decimal
+
+    from argus.broker.execution import ProviderInvocationEvidence
+    from argus.broker.router import SearchBroker
+
+    traces = [
+        ProviderTrace(provider=ProviderName.DUCKDUCKGO, status="success"),
+        ProviderTrace(
+            provider=ProviderName.BRAVE,
+            status="error",
+            error="Authorization: Bearer should-never-leak",
+        ),
+        ProviderTrace(
+            provider=ProviderName.ARCHIVE,
+            status="error",
+            error="synthetic fallback timeout",
+        ),
+    ]
+
+    accounting = SearchBroker._accepted_execution_accounting(
+        traces,
+        invoked_attempts=(
+            ProviderInvocationEvidence(
+                provider=ProviderName.DUCKDUCKGO,
+                attempt_id="attempt-ddg",
+            ),
+            ProviderInvocationEvidence(
+                provider=ProviderName.BRAVE,
+                attempt_id="attempt-brave",
+            ),
+        ),
+    )
+
+    assert accounting.provider_calls == 2
+    assert accounting.complete is False
+    assert accounting.actual_usd is None
+    assert accounting.reserved_usd is None
+    assert accounting.accounting_source == "paid_attempt_accounting_incomplete"
+    assert accounting.reconciliation == "uncertain"
+    assert "should-never-leak" not in repr(accounting)
+    origin_spend, origin_complete = SearchBroker._accepted_origin_spend(
+        accounting,
+        durable_origin_spend=Decimal("1"),
+    )
+    assert origin_spend == Decimal("1")
+    assert origin_complete is False
 
 
 @pytest.mark.asyncio
@@ -536,6 +605,48 @@ async def test_executor_preserves_normalized_batch_and_projects_only_at_compatib
     assert executor._readiness.snapshot(
         ProviderName.YAHOO, request_class="discovery"
     ).usability == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_executor_passes_readiness_attempt_id_to_native_provider_batch():
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.broker.provider_evidence import ProviderSearchBatch
+
+    class NativeBatchProvider(BaseProvider):
+        @property
+        def name(self):
+            return ProviderName.YAHOO
+
+        def is_available(self):
+            return True
+
+        def status(self):
+            return ProviderStatus.ENABLED
+
+        async def search(self, query):
+            return ProviderSearchBatch(
+                provider=self.name,
+                provider_contract_version="fixture-v1",
+                request_evidence=self._request_evidence(query),
+            )
+
+    executor = ProviderExecutor(
+        providers={ProviderName.YAHOO: NativeBatchProvider()},
+        health_tracker=HealthTracker(),
+        budget_tracker=BudgetTracker(),
+    )
+
+    outcome = await execute_with_plan(
+        executor,
+        SearchQuery(query="authority attempt", providers=[ProviderName.YAHOO]),
+        [ProviderName.YAHOO],
+    )
+
+    attempt_id = outcome.provider_batches["yahoo"].request_evidence.attempt_id
+    assert attempt_id
+    assert attempt_id != "yahoo-attempt"
 
 
 @pytest.mark.asyncio
@@ -2371,6 +2482,7 @@ async def test_remote_exception_settles_typed_failure_never_success():
     from unittest.mock import patch
 
     from argus.broker.reachability import ReachabilityMatrix
+    from argus.broker.router import SearchBroker
     from argus.config import EgressNode
 
     matrix = ReachabilityMatrix()
@@ -2398,6 +2510,17 @@ async def test_remote_exception_settles_typed_failure_never_success():
         )
 
     assert outcome.traces[0].status == "error"
+    assert len(outcome.invoked_attempts) == 1
+    assert outcome.invoked_attempts[0].provider is ProviderName.YAHOO
+    assert outcome.invoked_attempts[0].attempt_id
+    accounting = SearchBroker._accepted_execution_accounting(
+        outcome.traces,
+        invoked_attempts=outcome.invoked_attempts,
+    )
+    assert accounting.provider_calls == 1
+    assert accounting.complete is True
+    assert accounting.actual_usd == 0
+    assert accounting.reserved_usd == 0
     lease = executor._readiness.repository.latest_lease(ProviderName.YAHOO)
     assert lease is not None
     assert lease.outcome == "provider_unavailable"

@@ -788,6 +788,17 @@ def test_outcome_values_are_immutable_and_project_to_legacy_content():
     assert legacy.text == "normalized artifact"
     assert legacy.completeness_result.recommended_action == "use_as_is"
     assert legacy.rejection is None
+    evidence = legacy.accepted_execution_evidence
+    assert evidence.operation_id == accepted.extraction_run_id
+    assert evidence.receipt_ref == accepted.acceptance_receipt.receipt_ref
+    assert evidence.accepted_at == accepted.acceptance_receipt.accepted_at
+    assert evidence.actual_usd == Decimal("0")
+    assert evidence.reserved_usd == Decimal("0")
+    assert evidence.spend_delta_usd == Decimal("0")
+    assert evidence.cache_decision == "miss"
+    assert evidence.cache_age_seconds is None
+    assert evidence.operation_latency_ms == 12
+    assert evidence.extractor_call_count == 1
 
 
 def test_cache_identity_isolates_access_and_policy_and_rejects_diagnostic_content():

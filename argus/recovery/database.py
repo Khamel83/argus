@@ -874,5 +874,13 @@ def _compare_inventory(
     actual: dict[str, Any],
     expected: dict[str, Any] | None,
 ) -> None:
-    if expected is not None and actual != expected:
+    if expected is None:
+        return
+    manifest_projection = {
+        key: actual[key]
+        for key in ("tables", "schema_sha256", "constraints_validated")
+    }
+    if expected == manifest_projection:
+        return
+    if actual != expected:
         raise RuntimeError("restored database does not match source inventory")

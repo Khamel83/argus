@@ -187,7 +187,444 @@ def _workflow_requirement_ref(
     return f"workflow-{identity}"
 
 
-def _search_projection(response, *, include_attribution: bool) -> dict[str, object]:
+def _available(value: object, *, source: str) -> dict[str, object]:
+    return {
+        "availability": "available",
+        "source": source,
+        "value": value,
+    }
+
+
+def _unavailable(reason: str) -> dict[str, object]:
+    return {
+        "availability": "unavailable",
+        "reason": reason,
+    }
+
+
+def _operation_id_evidence(value: object, *, source: str) -> dict[str, object]:
+    if isinstance(value, str) and value:
+        return _available(value, source=source)
+    return _unavailable(f"{source} is not present")
+
+
+def _observation_evidence(
+    value: object,
+    *,
+    source: str,
+    semantics: str,
+) -> dict[str, object]:
+    if (
+        not isinstance(value, datetime)
+        or value.tzinfo is None
+        or value.utcoffset() is None
+    ):
+        return _unavailable(f"{source} is not timezone-aware")
+    return {
+        "availability": "available",
+        "observed_at": value.isoformat(),
+        "semantics": semantics,
+        "source": source,
+    }
+
+
+def _accepted_at_observation(
+    value: object,
+    *,
+    source: str,
+) -> dict[str, object]:
+    if not isinstance(value, str):
+        return _observation_evidence(
+            value,
+            source=source,
+            semantics="durably_accepted_at",
+        )
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return _unavailable(f"{source} is not an ISO-8601 timestamp")
+    return _observation_evidence(
+        parsed,
+        source=source,
+        semantics="durably_accepted_at",
+    )
+
+
+def _decimal_text(value: object) -> str:
+    return format(value, "f")
+
+
+def _classified_status(
+    value: object,
+    *,
+    successful: frozenset[str],
+    allowed: frozenset[str],
+) -> tuple[str, str | None]:
+    status = str(value)
+    if status not in allowed:
+        return "unclassified_failure", "unclassified_failure"
+    return status, None if status in successful else status
+
+
+def _freshness_from_observation(
+    observation: Mapping[str, object],
+) -> dict[str, object]:
+    if observation.get("availability") != "available":
+        return _unavailable(
+            "accepted observation time is unavailable for age derivation"
+        )
+    return {
+        "availability": "observation_available",
+        "source": observation["source"],
+        "observed_at": observation["observed_at"],
+        "semantics": "accepted_execution_age",
+        "age_ms": _unavailable(
+            "caller must derive age against its capture timestamp"
+        ),
+    }
+
+
+def _search_execution_evidence(
+    response,
+    *,
+    accepted_evidence=None,
+    acceptance_receipt=None,
+) -> dict[str, object]:
+    attempts = []
+    for trace in response.traces:
+        status, reason_code = _classified_status(
+            trace.status,
+            successful=frozenset({"success", "cache", "empty"}),
+            allowed=frozenset({"success", "cache", "empty", "error", "skipped"}),
+        )
+        attempts.append(
+            {
+                "provider": trace.provider.value,
+                "status": status,
+                "reason_code": reason_code,
+                "results_count": trace.results_count,
+                "latency_ms": trace.latency_ms,
+                "budget_remaining": trace.budget_remaining,
+            }
+        )
+    component_timing = (
+        _available(
+            max(trace.latency_ms for trace in response.traces),
+            source="max_provider_trace_latency_ms",
+        )
+        if response.traces
+        else _unavailable("SearchResponse has no provider traces")
+    )
+    evidence_bound = (
+        accepted_evidence is not None
+        and accepted_evidence.operation_id == response.search_run_id
+        and acceptance_receipt is not None
+        and accepted_evidence.receipt_ref == acceptance_receipt.receipt_ref
+        and accepted_evidence.accepted_at == acceptance_receipt.accepted_at
+        and accepted_evidence.acceptance_fingerprint
+        == acceptance_receipt.acceptance_fingerprint
+        and response.cached
+        == (
+            accepted_evidence.cache_decision.value == "hit_eligible"
+        )
+    )
+    if evidence_bound:
+        observation = _accepted_at_observation(
+            acceptance_receipt.accepted_at,
+            source="acceptance_receipt.accepted_at",
+        )
+        persistence = {
+            "availability": "available",
+            "source": "acceptance_receipt",
+            "receipt_ref": acceptance_receipt.receipt_ref,
+            "accepted_at": acceptance_receipt.accepted_at.isoformat(),
+            "acceptance_fingerprint": (
+                acceptance_receipt.acceptance_fingerprint
+            ),
+        }
+    else:
+        observation = _observation_evidence(
+            response.created_at,
+            source="created_at",
+            semantics="response_created_at",
+        )
+        persistence = _unavailable(
+            "accepted search evidence is not bound to an acceptance receipt"
+        )
+    if evidence_bound and accepted_evidence.spend_complete:
+        spend = {
+            "availability": "available",
+            "actual_usd": _available(
+                _decimal_text(accepted_evidence.current_spend_usd),
+                source="accepted_search_evidence.current_spend_usd",
+            ),
+            "origin_usd": _available(
+                _decimal_text(accepted_evidence.origin_spend_usd),
+                source="accepted_search_evidence.origin_spend_usd",
+            ),
+            "provider_calls": _available(
+                accepted_evidence.current_provider_calls,
+                source="accepted_search_evidence.current_provider_calls",
+            ),
+            "reserved_usd": _available(
+                _decimal_text(accepted_evidence.reserved_spend_usd),
+                source="accepted_search_evidence.reserved_spend_usd",
+            ),
+            "accounting_source": accepted_evidence.spend_accounting_source,
+            "reconciliation": accepted_evidence.spend_reconciliation,
+        }
+        cache_decision = accepted_evidence.cache_decision.value
+    elif evidence_bound:
+        spend = {
+            **_unavailable(
+                "accepted provider spend accounting is incomplete"
+            ),
+            "provider_calls": _available(
+                accepted_evidence.current_provider_calls,
+                source="accepted_search_evidence.current_provider_calls",
+            ),
+            "accounting_source": accepted_evidence.spend_accounting_source,
+            "reconciliation": accepted_evidence.spend_reconciliation,
+        }
+        cache_decision = accepted_evidence.cache_decision.value
+    else:
+        spend = _unavailable(
+            "SearchResponse does not expose accepted spend accounting"
+        )
+        cache_decision = None
+    return {
+        "schema": "argus-execution-evidence-v1",
+        "source": "SearchResponse",
+        "operation_id": _operation_id_evidence(
+            response.search_run_id,
+            source="search_run_id",
+        ),
+        "observation": observation,
+        "attempts": attempts,
+        "timing": {
+            "component_ms": component_timing,
+            "wall_ms": _unavailable(
+                "HTTP caller must measure wall time around the accepted request"
+            ),
+        },
+        "cache": {
+            "status": "hit" if response.cached else "miss",
+            "source": "cached",
+            "decision": cache_decision,
+            "age_ms": (
+                _available(
+                    accepted_evidence.cache_age_ms,
+                    source="accepted_search_evidence.cache_age_ms",
+                )
+                if evidence_bound
+                else _unavailable(
+                    "SearchResponse does not expose accepted cache age"
+                )
+            ),
+            "age_semantics": (
+                "no_cache_entry"
+                if evidence_bound
+                and accepted_evidence.cache_decision.value == "miss"
+                else "accepted_origin_age"
+                if evidence_bound
+                and accepted_evidence.cache_decision.value == "hit_eligible"
+                else "ineligible_origin_age"
+                if evidence_bound
+                else "unavailable"
+            ),
+            "origin": (
+                accepted_evidence.cache_origin if evidence_bound else None
+            ),
+            "origin_spend_usd": (
+                _decimal_text(accepted_evidence.origin_spend_usd)
+                if evidence_bound
+                and accepted_evidence.origin_spend_complete
+                else None
+            ),
+            "origin_spend_availability": (
+                "available"
+                if evidence_bound
+                and accepted_evidence.origin_spend_complete
+                else "unavailable"
+            ),
+            "eligible": (
+                accepted_evidence.cache_eligible if evidence_bound else None
+            ),
+        },
+        "spend": spend,
+        "freshness": _freshness_from_observation(observation),
+        "persistence": persistence,
+    }
+
+
+def _extraction_execution_evidence(result) -> dict[str, object]:
+    allowed_extraction_statuses = frozenset(
+        {
+            "success",
+            "content",
+            "cache",
+            "empty",
+            "adapter_request_rejected",
+            "provider_authentication_rejected",
+            "provider_policy_rejected",
+            "rate_limited",
+            "balance_exhausted",
+            "timeout",
+            "provider_unavailable",
+            "parse_error",
+            "unknown_failure",
+            "policy_skipped",
+            "quality_failed",
+            "failed",
+        }
+    )
+    attempts = []
+    for attempt in result.attempts:
+        status, reason_code = _classified_status(
+            attempt.status,
+            successful=frozenset({"success", "content", "cache"}),
+            allowed=allowed_extraction_statuses,
+        )
+        attempts.append(
+            {
+                "extractor": attempt.extractor,
+                "status": status,
+                "reason_code": reason_code,
+                "latency_ms": attempt.latency_ms,
+            }
+        )
+    component_timing = (
+        _available(
+            sum(attempt.latency_ms for attempt in result.attempts),
+            source="sum_extraction_attempt_latency_ms",
+        )
+        if result.attempts
+        else _unavailable("ExtractedContent has no extraction attempts")
+    )
+    accepted_evidence = result.accepted_execution_evidence
+    acceptance_receipt = result.acceptance_receipt
+    evidence_bound = (
+        accepted_evidence is not None
+        and acceptance_receipt is not None
+        and accepted_evidence.operation_id == result.extraction_run_id
+        and accepted_evidence.receipt_ref == acceptance_receipt.receipt_ref
+        and accepted_evidence.accepted_at == acceptance_receipt.accepted_at
+        and accepted_evidence.receipt_scope == acceptance_receipt.scope
+        and result.cache_hit
+        == (accepted_evidence.cache_decision == "hit_eligible")
+    )
+    if evidence_bound:
+        observation = _accepted_at_observation(
+            accepted_evidence.accepted_at,
+            source="acceptance_receipt.accepted_at",
+        )
+        wall_timing = _available(
+            accepted_evidence.operation_latency_ms,
+            source="accepted_extraction_evidence.operation_latency_ms",
+        )
+        cache_age = (
+            _available(
+                accepted_evidence.cache_age_seconds * 1000,
+                source="accepted_extraction_evidence.cache_age_seconds",
+            )
+            if accepted_evidence.cache_age_seconds is not None
+            else _unavailable(
+                "cache miss or bypass has no cache-entry age"
+            )
+        )
+        if accepted_evidence.spend_complete:
+            spend = {
+                "availability": "available",
+                "actual_usd": _available(
+                    _decimal_text(accepted_evidence.actual_usd),
+                    source="accepted_extraction_evidence.actual_usd",
+                ),
+                "reserved_usd": _available(
+                    _decimal_text(accepted_evidence.reserved_usd),
+                    source="accepted_extraction_evidence.reserved_usd",
+                ),
+                "reconciliation": _available(
+                    _decimal_text(accepted_evidence.spend_delta_usd),
+                    source="accepted_extraction_evidence.spend_delta_usd",
+                ),
+                "spend_attempt_refs": tuple(
+                    accepted_evidence.spend_attempt_refs
+                ),
+                "extractor_calls": _available(
+                    accepted_evidence.extractor_call_count,
+                    source="accepted_extraction_evidence.extractor_call_count",
+                ),
+            }
+        else:
+            spend = _unavailable(
+                "accepted extraction steps do not all carry spend evidence"
+            )
+        persistence = {
+            "availability": "available",
+            "source": "acceptance_receipt",
+            "receipt_ref": acceptance_receipt.receipt_ref,
+            "accepted_at": acceptance_receipt.accepted_at,
+            "scope": acceptance_receipt.scope,
+        }
+        cache_decision = accepted_evidence.cache_decision
+    else:
+        observation = _observation_evidence(
+            result.extracted_at,
+            source="extracted_at",
+            semantics="content_projection_created_at",
+        )
+        wall_timing = _unavailable(
+            "ExtractedContent does not expose accepted operation wall time"
+        )
+        cache_age = _unavailable(
+            "ExtractedContent does not expose accepted cache age"
+        )
+        spend = {
+            "availability": "partial",
+            "actual_usd": _available(result.cost, source="cost"),
+            "reserved_usd": _unavailable(
+                "ExtractedContent does not expose reserved spend"
+            ),
+            "reconciliation": _unavailable(
+                "ExtractedContent does not expose spend reconciliation"
+            ),
+        }
+        persistence = _unavailable(
+            "extraction_run_id is an identifier, not durable acceptance proof"
+        )
+        cache_decision = None
+    return {
+        "schema": "argus-execution-evidence-v1",
+        "source": "ExtractedContent",
+        "operation_id": _operation_id_evidence(
+            result.extraction_run_id,
+            source="extraction_run_id",
+        ),
+        "observation": observation,
+        "attempts": attempts,
+        "timing": {
+            "component_ms": component_timing,
+            "wall_ms": wall_timing,
+        },
+        "cache": {
+            "status": "hit" if result.cache_hit else "miss",
+            "source": "cache_hit",
+            "decision": cache_decision,
+            "age_ms": cache_age,
+        },
+        "spend": spend,
+        "freshness": _freshness_from_observation(observation),
+        "persistence": persistence,
+    }
+
+
+def _search_projection(
+    response,
+    *,
+    include_attribution: bool,
+    accepted_evidence=None,
+    acceptance_receipt=None,
+) -> dict[str, object]:
     return {
         "query": response.query,
         "mode": response.mode.value,
@@ -225,6 +662,11 @@ def _search_projection(response, *, include_attribution: bool) -> dict[str, obje
         "budget_warnings": list(response.budget_warnings),
         "search_run_id": response.search_run_id,
         "session_id": None,
+        "execution_evidence": _search_execution_evidence(
+            response,
+            accepted_evidence=accepted_evidence,
+            acceptance_receipt=acceptance_receipt,
+        ),
     }
 
 
@@ -281,6 +723,7 @@ def _extract_projection(result) -> dict[str, object]:
         "cookies_used": getattr(result, "cookies_used", False),
         "archive_used": getattr(result, "archive_used", False),
         "cost": getattr(result, "cost", 0.0),
+        "execution_evidence": _extraction_execution_evidence(result),
     }
 
 
@@ -373,6 +816,8 @@ class AcceptedOperationService:
         result = _search_projection(
             execution.response,
             include_attribution=include_attribution,
+            accepted_evidence=getattr(execution, "evidence", None),
+            acceptance_receipt=execution.receipt,
         )
         result["session_id"] = session_id
         result["acceptance_receipt"] = {
