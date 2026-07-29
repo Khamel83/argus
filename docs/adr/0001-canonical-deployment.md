@@ -1,9 +1,11 @@
 # 0001 — One canonical Argus on the mac mini (launchd, :8300/:8301)
 
 Date: 2026-07-05
-Status: accepted
+Status: superseded 2026-07-29 by [the production operations authority](../operations.md)
 
 ## Context
+
+> Historical record only. Do not use this ADR to operate or deploy Argus.
 
 Argus had drifted into inconsistent deployments: Clio's config defaulted
 to `http://localhost:8005`, the repo documented `argus serve` on `:8000`,

@@ -894,6 +894,32 @@ def _registration(
     )
 
 
+def test_default_snapshot_uses_registered_active_egress(tmp_path):
+    service, _ = _service(tmp_path)
+    service.register_provider(
+        replace(_registration(provider=ProviderName.DUCKDUCKGO), egress="residential")
+    )
+    for dimension, state in (
+        ("reachability", "reachable"),
+        ("usability", "usable"),
+    ):
+        service.record_observation(
+            _observation(
+                ProviderName.DUCKDUCKGO,
+                dimension,
+                state,
+                receipt=f"residential-{dimension}",
+                egress="residential",
+            )
+        )
+
+    snapshot = service.render_snapshot(ProviderName.DUCKDUCKGO)
+
+    assert snapshot.reachability == "reachable"
+    assert snapshot.usability == "usable"
+    assert snapshot.healthy is True
+
+
 def test_registration_persists_all_issues_and_never_calls_adapter_availability(
     tmp_path,
 ):

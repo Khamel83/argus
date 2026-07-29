@@ -90,6 +90,9 @@ If PyPI is behind the repo:
 
 ## Immutable homelab promotion
 
+The complete operator procedure and recovery checkpoints live in the
+[canonical production operations guide](operations.md).
+
 The homelab runs the **container image**, not the PyPI package. A push to
 `main`, a `v*` tag, or a manual dispatch builds one
 `ghcr.io/khamel83/argus:sha-<commit>` image. Buildx publishes OCI provenance

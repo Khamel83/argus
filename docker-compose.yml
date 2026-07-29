@@ -1,5 +1,7 @@
 services:
   argus:
+    # Standalone/development Compose only. Canonical production topology and
+    # promotion are owned by the Homelab repo; see docs/operations.md.
     build:
       context: .
       args:

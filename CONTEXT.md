@@ -98,8 +98,9 @@ credits (tier 3) can only be spent by interactive/uncapped callers.
 
 ### Canonical deployment
 
-One Argus for the fleet: the mac mini (`omars-mac-mini` on Tailscale,
-residential egress), run by launchd from `/Users/macmini/github/argus` —
-HTTP API on `:8300`, streamable-http MCP on `:8301`. Chosen 2026-07-05
-over the drifted alternatives (Clio pointing at `:8005`, a Docker argus
-on homelab). See `docs/adr/0001-canonical-deployment.md`.
+One Argus for the fleet: digest-addressed Homelab Docker, with HTTP and MCP
+host backends on loopback ports 8270/8271 and tailnet-only Tailscale Serve
+HTTPS ingress. PostgreSQL and SearXNG remain Docker-internal. The Mac is
+development only; Mac launchd, OCI, Clio, and the host residential worker are
+retired and are not fallbacks. See the
+[production operations guide](docs/operations.md); ADR 0001 is superseded.

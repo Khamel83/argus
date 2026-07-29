@@ -18,6 +18,7 @@ Top-level entry points live at the repo root:
 - [releasing.md](releasing.md) — release process: version sync, preflight, publish, verify
 - [troubleshooting.md](troubleshooting.md) — common installation, MCP, search, and extraction issues
 - [operations-status.md](operations-status.md) — liveness, startup, readiness, authenticated status, and bounded telemetry semantics
+- [operations.md](operations.md) — canonical private-homelab production, diagnostics, promotion, rollback, recovery, spend reconciliation, secrets, and client cutover runbook
 - [adr/0002-bounded-retrieval-plan-cache-identity.md](adr/0002-bounded-retrieval-plan-cache-identity.md) — deterministic internal planning, cache identity, eligibility, and invalidation
 - [adr/0003-provider-aware-freshness-provenance-ranking.md](adr/0003-provider-aware-freshness-provenance-ranking.md) — typed provider evidence, freshness proof, duplicate clustering, deterministic fusion, and research diversity
 - [adr/0004-no-spend-provider-readiness.md](adr/0004-no-spend-provider-readiness.md) — typed provider readiness, no-spend diagnostics, terminal exhaustion, and profile registration

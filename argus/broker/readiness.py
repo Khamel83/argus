@@ -884,7 +884,7 @@ class ProviderReadinessService:
         return ReadinessScope(**defaults)
 
     def snapshot(
-        self, provider: ProviderName, *, egress="local",
+        self, provider: ProviderName, *, egress=None,
         request_class="discovery", release_revision=None, contract_version=None,
         execution_context=None,
     ):
