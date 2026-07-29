@@ -30,10 +30,13 @@ def _has_direct_repository_access(path: Path) -> bool:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Attribute):
             continue
+        if node.attr == "repository" or node.attr.endswith("_repository"):
+            return True
         if node.attr.startswith("get_") and node.attr.endswith("_repository"):
             return True
         if isinstance(node.value, ast.Name) and (
-            node.value.id == "repository" or node.value.id.endswith("_repository")
+            node.value.id in {"repo", "repository", "store"}
+            or node.value.id.endswith(("_repo", "_repository"))
         ):
             return True
     return False

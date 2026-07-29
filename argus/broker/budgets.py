@@ -17,33 +17,12 @@ from typing import Optional
 
 from argus.logging import get_logger
 from argus.models import ProviderName, ProviderStatus
+from argus.provider_policy import ONE_TIME_CREDIT_PROVIDERS, PROVIDER_TIERS
 
 logger = get_logger("broker.budgets")
 
-# Provider tiers — used by routing to prioritize recurring credits over one-time.
-# Tier 0: Free/unlimited (SearXNG, DuckDuckGo, Yahoo, GitHub, Wolfram)
-# Tier 1: Monthly recurring credits (Brave, Tavily, Exa, Linkup, Parallel)
-# Tier 3: One-time signup credits (Serper, You, SearchAPI, Valyu)
-PROVIDER_TIERS: dict[ProviderName, int] = {
-    ProviderName.SEARXNG: 0,     # free, unlimited (self-hosted, 70+ engines)
-    ProviderName.DUCKDUCKGO: 0,  # free, unlimited (scrapes DDG)
-    ProviderName.YAHOO: 0,       # free, unlimited (scraped, fragile)
-    ProviderName.GITHUB: 0,      # free, unlimited (rate-limited but no cost)
-    ProviderName.WOLFRAM: 0,     # free, 2k/month (API key required)
-    ProviderName.ARCHIVE: 0,     # free recovery fallback
-    ProviderName.BRAVE: 1,       # monthly recurring
-    ProviderName.TAVILY: 1,      # monthly recurring
-    ProviderName.LINKUP: 1,      # monthly recurring
-    ProviderName.EXA: 1,         # monthly recurring
-    ProviderName.PARALLEL: 1,    # monthly recurring ($5 / up to 5k searches)
-    ProviderName.SERPER: 3,      # one-time credits
-    ProviderName.YOU: 3,         # one-time credits
-    ProviderName.SEARCHAPI: 3,   # one-time/placeholder
-    ProviderName.VALYU: 3,       # one-time credits ($10)
-}
-
 # Tier 3 providers use lifetime counters (never reset) instead of rolling windows.
-_TIER_3_PROVIDERS = {p for p, t in PROVIDER_TIERS.items() if t == 3}
+_TIER_3_PROVIDERS = ONE_TIME_CREDIT_PROVIDERS
 
 
 class BudgetTracker:
@@ -57,6 +36,7 @@ class BudgetTracker:
 
         if persist_path:
             from argus.broker.budget_persistence import BudgetStore
+
             self._store = BudgetStore(persist_path)
             self._load_from_store()
 

@@ -66,7 +66,7 @@ One change per PR makes review easier. If it's two logically separate things, it
 10. Add adapter and failure-shape tests in `tests/test_providers.py`, plus the
    canonical fixture-attestation cases in `tests/test_provider_readiness.py`
 11. Add the provider to routing policies in `argus/broker/policies.py` and
-    budget tiers in `argus/broker/budgets.py`
+    canonical budget tiers in `argus/provider_policy.py`
 
 The DuckDuckGo provider is a good reference — it's simple and doesn't need an API key. See [docs/providers.md](docs/providers.md) for the full provider and extractor reference.
 

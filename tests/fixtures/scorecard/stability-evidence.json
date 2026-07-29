@@ -6,220 +6,347 @@
         "fixture_id": "auth-rejected-before-io",
         "contract": "authentication",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "http_status": 401,
+            "network_calls_before_rejection": 0
+          }
         }
       },
       "caller_attribution": {
         "fixture_id": "durable-caller-free",
         "contract": "caller_attribution",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "request_caller_identity": "scorecard:hermetic",
+            "durable_caller_identity": "scorecard:hermetic"
+          }
         }
       },
       "surface_equivalence": {
         "fixture_id": "seven-canonical-outcomes-free",
         "contract": "surface_equivalence",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "cases": [
+              {
+                "case_id": "surface-01",
+                "outcome": "success",
+                "http_status": 200,
+                "mcp_is_error": false,
+                "cli_exit": 0,
+                "python_error": false
+              },
+              {
+                "case_id": "surface-02",
+                "outcome": "degraded",
+                "http_status": 200,
+                "mcp_is_error": false,
+                "cli_exit": 0,
+                "python_error": false
+              },
+              {
+                "case_id": "surface-03",
+                "outcome": "empty",
+                "http_status": 200,
+                "mcp_is_error": false,
+                "cli_exit": 0,
+                "python_error": false
+              },
+              {
+                "case_id": "surface-04",
+                "outcome": "timeout",
+                "http_status": 504,
+                "mcp_is_error": true,
+                "cli_exit": 1,
+                "python_error": true
+              },
+              {
+                "case_id": "surface-05",
+                "outcome": "policy_rejected",
+                "http_status": 403,
+                "mcp_is_error": true,
+                "cli_exit": 1,
+                "python_error": true
+              },
+              {
+                "case_id": "surface-06",
+                "outcome": "authentication_rejected",
+                "http_status": 401,
+                "mcp_is_error": true,
+                "cli_exit": 1,
+                "python_error": true
+              },
+              {
+                "case_id": "surface-07",
+                "outcome": "providers_failed",
+                "http_status": 502,
+                "mcp_is_error": true,
+                "cli_exit": 1,
+                "python_error": true
+              }
+            ]
+          }
         }
       },
       "normalized_result_integrity": {
         "fixture_id": "normalized-search-free",
         "contract": "normalized_result_integrity",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "case_count": 24,
+            "matched_case_count": 24
+          }
         }
       },
       "universal_provenance": {
         "fixture_id": "provenance-free",
         "contract": "universal_provenance",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "evidence_count": 32,
+            "provenance_complete_count": 32
+          }
         }
       },
       "provider_traces": {
         "fixture_id": "provider-traces-free",
         "contract": "provider_traces",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "required_cases": [
+              "success",
+              "empty",
+              "error",
+              "malformed"
+            ],
+            "validated_cases": [
+              "success",
+              "empty",
+              "error",
+              "malformed"
+            ]
+          }
         }
       },
       "partial_search": {
         "fixture_id": "partial-search-free",
         "contract": "partial_search",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "successful_observations": 1,
+            "failed_provider_outcome": "rate_limited"
+          }
         }
       },
       "empty_search": {
         "fixture_id": "empty-search-free",
         "contract": "empty_search",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "observation_count": 0,
+            "outcome": "empty"
+          }
         }
       },
       "search_evidence_floor": {
         "fixture_id": "search-floor-free",
         "contract": "search_evidence_floor",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "case_count": 24,
+            "matched_case_count": 24
+          }
         }
       },
       "extraction_success": {
         "fixture_id": "extraction-success-free",
         "contract": "extraction_success",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "required_case_ids": [
+              "static"
+            ],
+            "matched_case_ids": [
+              "static"
+            ]
+          }
         }
       },
       "degraded_extraction": {
         "fixture_id": "extraction-degraded-free",
         "contract": "degraded_extraction",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "required_case_ids": [
+              "paywall"
+            ],
+            "matched_case_ids": [
+              "paywall"
+            ]
+          }
         }
       },
       "extraction_failure": {
         "fixture_id": "extraction-failed-free",
         "contract": "extraction_failure",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "required_case_ids": [
+              "malformed",
+              "timeout",
+              "unsupported"
+            ],
+            "matched_case_ids": [
+              "malformed",
+              "timeout",
+              "unsupported"
+            ]
+          }
         }
       },
       "durable_acceptance": {
         "fixture_id": "durable-acceptance-free",
         "contract": "durable_acceptance",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "operation_outcome": "empty",
+            "acceptance_receipt_present": true,
+            "publication_events": [
+              "durable",
+              "cache"
+            ],
+            "receipt_matched": true
+          }
         }
       },
       "persistence_isolation": {
         "fixture_id": "persistence-isolation-free",
         "contract": "persistence_isolation",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "production_adapter_rejected_db_config": true,
+            "production_caller_rejected_broker": true,
+            "development_sqlite_scope": "explicit"
+          }
         }
       },
       "provider_readiness": {
         "fixture_id": "provider-readiness-free",
         "contract": "provider_readiness",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "provider": "duckduckgo",
+            "success_failure": null,
+            "fixture_validated": true
+          }
         }
       },
       "mode_availability": {
         "fixture_id": "mode-availability-free",
         "contract": "mode_availability",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "observed_modes": [
+              "discovery",
+              "grounding",
+              "recovery",
+              "research"
+            ]
+          }
         }
       },
       "policy_truth": {
         "fixture_id": "policy-truth-free",
         "contract": "policy_truth",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "error_fixture_outcome": "rate_limited",
+            "expected_policy_outcome": "rate_limited"
+          }
         }
       },
       "cache_eligibility": {
         "fixture_id": "cache-eligibility-free",
         "contract": "cache_eligibility",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "fresh_decision": "hit_eligible",
+            "stale_decision": "hit_ineligible"
+          }
         }
       },
       "cache_isolation": {
         "fixture_id": "cache-isolation-free",
         "contract": "cache_isolation",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "wrong_policy_decision": "miss",
+            "origin_spend_usd": "0.01",
+            "current_spend_usd": "0",
+            "current_provider_calls": 0
+          }
         }
       },
       "bounded_completion": {
         "fixture_id": "bounded-completion-free",
         "contract": "bounded_completion",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "completed_within_limit": true,
+            "limit_ms": 120000
+          }
         }
       },
       "recovery_authority": {
         "fixture_id": "recovery-authority-free",
         "contract": "recovery_authority",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "mode": "recovery",
+            "authority": "canonical_http",
+            "speculative_fallback": false
+          }
         }
       },
       "evidence_bundle": {
         "fixture_id": "bundle-contract-free",
         "contract": "evidence_bundle",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "required_sections": [
+              "manifest",
+              "identities",
+              "corpus",
+              "stability",
+              "artifacts",
+              "checksums"
+            ],
+            "checksum_algorithm": "sha256",
+            "secret_scan": true,
+            "provider_native_payloads": false
+          }
         }
       }
     },
@@ -228,220 +355,347 @@
         "fixture_id": "auth-rejected-before-io-budgeted",
         "contract": "authentication",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "http_status": 401,
+            "network_calls_before_rejection": 0
+          }
         }
       },
       "caller_attribution": {
         "fixture_id": "durable-caller-budgeted",
         "contract": "caller_attribution",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "request_caller_identity": "scorecard:hermetic",
+            "durable_caller_identity": "scorecard:hermetic"
+          }
         }
       },
       "surface_equivalence": {
         "fixture_id": "seven-canonical-outcomes-budgeted",
         "contract": "surface_equivalence",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "cases": [
+              {
+                "case_id": "surface-01",
+                "outcome": "success",
+                "http_status": 200,
+                "mcp_is_error": false,
+                "cli_exit": 0,
+                "python_error": false
+              },
+              {
+                "case_id": "surface-02",
+                "outcome": "degraded",
+                "http_status": 200,
+                "mcp_is_error": false,
+                "cli_exit": 0,
+                "python_error": false
+              },
+              {
+                "case_id": "surface-03",
+                "outcome": "empty",
+                "http_status": 200,
+                "mcp_is_error": false,
+                "cli_exit": 0,
+                "python_error": false
+              },
+              {
+                "case_id": "surface-04",
+                "outcome": "timeout",
+                "http_status": 504,
+                "mcp_is_error": true,
+                "cli_exit": 1,
+                "python_error": true
+              },
+              {
+                "case_id": "surface-05",
+                "outcome": "policy_rejected",
+                "http_status": 403,
+                "mcp_is_error": true,
+                "cli_exit": 1,
+                "python_error": true
+              },
+              {
+                "case_id": "surface-06",
+                "outcome": "authentication_rejected",
+                "http_status": 401,
+                "mcp_is_error": true,
+                "cli_exit": 1,
+                "python_error": true
+              },
+              {
+                "case_id": "surface-07",
+                "outcome": "providers_failed",
+                "http_status": 502,
+                "mcp_is_error": true,
+                "cli_exit": 1,
+                "python_error": true
+              }
+            ]
+          }
         }
       },
       "normalized_result_integrity": {
         "fixture_id": "normalized-search-budgeted",
         "contract": "normalized_result_integrity",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "case_count": 24,
+            "matched_case_count": 24
+          }
         }
       },
       "universal_provenance": {
         "fixture_id": "provenance-budgeted",
         "contract": "universal_provenance",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "evidence_count": 32,
+            "provenance_complete_count": 32
+          }
         }
       },
       "provider_traces": {
         "fixture_id": "provider-traces-budgeted",
         "contract": "provider_traces",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "required_cases": [
+              "success",
+              "empty",
+              "error",
+              "malformed"
+            ],
+            "validated_cases": [
+              "success",
+              "empty",
+              "error",
+              "malformed"
+            ]
+          }
         }
       },
       "partial_search": {
         "fixture_id": "partial-search-budgeted",
         "contract": "partial_search",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "successful_observations": 1,
+            "failed_provider_outcome": "rate_limited"
+          }
         }
       },
       "empty_search": {
         "fixture_id": "empty-search-budgeted",
         "contract": "empty_search",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "observation_count": 0,
+            "outcome": "empty"
+          }
         }
       },
       "search_evidence_floor": {
         "fixture_id": "search-floor-budgeted",
         "contract": "search_evidence_floor",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "case_count": 24,
+            "matched_case_count": 24
+          }
         }
       },
       "extraction_success": {
         "fixture_id": "extraction-success-budgeted",
         "contract": "extraction_success",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "required_case_ids": [
+              "static"
+            ],
+            "matched_case_ids": [
+              "static"
+            ]
+          }
         }
       },
       "degraded_extraction": {
         "fixture_id": "extraction-degraded-budgeted",
         "contract": "degraded_extraction",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "required_case_ids": [
+              "paywall"
+            ],
+            "matched_case_ids": [
+              "paywall"
+            ]
+          }
         }
       },
       "extraction_failure": {
         "fixture_id": "extraction-failed-budgeted",
         "contract": "extraction_failure",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "required_case_ids": [
+              "malformed",
+              "timeout",
+              "unsupported"
+            ],
+            "matched_case_ids": [
+              "malformed",
+              "timeout",
+              "unsupported"
+            ]
+          }
         }
       },
       "durable_acceptance": {
         "fixture_id": "durable-acceptance-budgeted",
         "contract": "durable_acceptance",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "operation_outcome": "empty",
+            "acceptance_receipt_present": true,
+            "publication_events": [
+              "durable",
+              "cache"
+            ],
+            "receipt_matched": true
+          }
         }
       },
       "persistence_isolation": {
         "fixture_id": "persistence-isolation-budgeted",
         "contract": "persistence_isolation",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "production_adapter_rejected_db_config": true,
+            "production_caller_rejected_broker": true,
+            "development_sqlite_scope": "explicit"
+          }
         }
       },
       "provider_readiness": {
         "fixture_id": "provider-readiness-budgeted",
         "contract": "provider_readiness",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "provider": "duckduckgo",
+            "success_failure": null,
+            "fixture_validated": true
+          }
         }
       },
       "mode_availability": {
         "fixture_id": "mode-availability-budgeted",
         "contract": "mode_availability",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "observed_modes": [
+              "discovery",
+              "grounding",
+              "recovery",
+              "research"
+            ]
+          }
         }
       },
       "policy_truth": {
         "fixture_id": "policy-truth-budgeted",
         "contract": "policy_truth",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "error_fixture_outcome": "rate_limited",
+            "expected_policy_outcome": "rate_limited"
+          }
         }
       },
       "cache_eligibility": {
         "fixture_id": "cache-eligibility-budgeted",
         "contract": "cache_eligibility",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "fresh_decision": "hit_eligible",
+            "stale_decision": "hit_ineligible"
+          }
         }
       },
       "cache_isolation": {
         "fixture_id": "cache-isolation-budgeted",
         "contract": "cache_isolation",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "wrong_policy_decision": "miss",
+            "origin_spend_usd": "0.01",
+            "current_spend_usd": "0",
+            "current_provider_calls": 0
+          }
         }
       },
       "bounded_completion": {
         "fixture_id": "bounded-completion-budgeted",
         "contract": "bounded_completion",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "completed_within_limit": true,
+            "limit_ms": 120000
+          }
         }
       },
       "recovery_authority": {
         "fixture_id": "recovery-authority-budgeted",
         "contract": "recovery_authority",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "mode": "recovery",
+            "authority": "canonical_http",
+            "speculative_fallback": false
+          }
         }
       },
       "evidence_bundle": {
         "fixture_id": "bundle-contract-budgeted",
         "contract": "evidence_bundle",
         "raw": {
-          "schema": "scorecard-gate-raw-v1",
-          "samples": [
-            true
-          ]
+          "schema": "scorecard-gate-raw-v2",
+          "facts": {
+            "required_sections": [
+              "manifest",
+              "identities",
+              "corpus",
+              "stability",
+              "artifacts",
+              "checksums"
+            ],
+            "checksum_algorithm": "sha256",
+            "secret_scan": true,
+            "provider_native_payloads": false
+          }
         }
       }
     }

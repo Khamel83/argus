@@ -355,8 +355,11 @@ authority.
 `scripts/run-scorecard.py --lane live-config` emits the secret-free interface
 for a future live run: the exact 28 cases, synchronized identity requirements,
 pinned evaluator requirements, automatic free-only policy, and immutable
-budgeted receipt fields. It does not search, extract, evaluate, reserve,
-consume a receipt, or contact an authority.
+budgeted receipt fields (`schema`, `receipt_id`, `run_id`, `generation`,
+`permitted_providers`, `maximum_tier`, `call_count_cap`,
+`cost_or_credit_cap`, `one_time_credit_providers`, and `issued_at`). It does
+not search, extract, evaluate, reserve, consume a receipt, or contact an
+authority.
 
 The separately defined `.github/workflows/scorecard-live.yml` is the only
 repository workflow for weekly/manual live configuration publication. It needs
@@ -368,10 +371,15 @@ actions.
 
 The hermetic lane executes a distinct frozen raw contract for every hard gate
 and compares it with separate expected evidence. A mutation to one gate cannot
-be fanned across the others. The lane retains normalized evidence for every
-gate and corpus case and reads the same whole route/presenter inventory,
-including direct repository-call detection, as the architecture boundary
-tests. Bundle preparation and verification both
+be fanned across the others. Local production contracts directly exercise
+authentication-before-I/O, caller propagation, accepted-operation durability,
+persist-before-cache publication, cache freshness/isolation, and production
+authority isolation. Gates whose live dependency belongs to P1 use an exact
+typed raw contract with an independent evaluator rather than a copied status.
+The lane retains normalized evidence for every gate and corpus case and reads
+the same whole route/presenter inventory, including direct repository-call
+detection, as the architecture boundary tests. Bundle preparation and
+verification both
 recompute stability, blinded-pair classification, deterministic counts, exact
 sign-test value, ordered verdict, and stability dependency; serialized claims
 are never treated as authority. It writes to a private sibling staging
@@ -380,7 +388,11 @@ all typed identities, synchronized generation dimensions, normalized document
 schemas, safe paths, and secret/native-payload checks pass. Verification
 requires exact agreement between the manifest file set, regular files, and
 unique canonical checksum entries, including a checksum for `manifest.json`,
-before the staged directory is atomically published.
+before the staged directory is atomically published. A future competitive
+bundle must include normalized baseline and candidate artifacts for all 24
+search cases and all four synchronized live extraction cases. Search
+artifacts retain normalized results and extraction artifacts retain normalized
+content; provider-native payloads remain forbidden.
 
 ## Explicit non-goals
 

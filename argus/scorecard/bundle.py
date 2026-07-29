@@ -13,6 +13,8 @@ import shutil
 import tempfile
 from typing import Any, Mapping
 
+from argus.contracts import CanonicalOutcome
+
 from .competitive import CompetitiveInputError, classify_pair, evaluate_competitive
 from .corpus import (
     COMPETITIVE_CASE_MODES,
@@ -78,6 +80,11 @@ _DIMENSION_FIELDS = {
     "profile",
     "provider_snapshot_sha256",
     "sanitized_config_sha256",
+}
+_NORMALIZED_OUTCOMES = frozenset(outcome.value for outcome in CanonicalOutcome)
+_SUCCESS_LIKE_OUTCOMES = {
+    CanonicalOutcome.SUCCESS.value,
+    CanonicalOutcome.DEGRADED.value,
 }
 
 
@@ -442,11 +449,108 @@ def _validate_receipts(
     return dict(timing), dict(persistence)
 
 
+def _validate_normalized_search_evidence(value: object, label: str) -> None:
+    evidence = _mapping(value, label)
+    _exact_keys(evidence, {"outcome", "results"}, label)
+    outcome = evidence["outcome"]
+    results = evidence["results"]
+    if outcome not in _NORMALIZED_OUTCOMES or not isinstance(results, list):
+        raise BundleError(f"{label} is invalid")
+    if outcome in _SUCCESS_LIKE_OUTCOMES and not results:
+        raise BundleError(f"{label} success-like outcome requires results")
+    if outcome not in _SUCCESS_LIKE_OUTCOMES and results:
+        raise BundleError(f"{label} non-success outcome forbids results")
+    for result_value in results:
+        result = _mapping(result_value, f"{label} result")
+        _exact_keys(
+            result,
+            {
+                "url",
+                "title",
+                "snippet",
+                "domain",
+                "provider",
+                "score",
+                "egress",
+                "machine",
+            },
+            f"{label} result",
+        )
+        if (
+            any(
+                not isinstance(result[field], str) or not result[field]
+                for field in (
+                    "url",
+                    "title",
+                    "domain",
+                    "provider",
+                    "egress",
+                    "machine",
+                )
+            )
+            or not isinstance(result["snippet"], str)
+            or isinstance(result["score"], bool)
+            or not isinstance(result["score"], (int, float))
+        ):
+            raise BundleError(f"{label} result is invalid")
+
+
+def _validate_normalized_extraction_evidence(value: object, label: str) -> None:
+    evidence = _mapping(value, label)
+    _exact_keys(evidence, {"outcome", "content"}, label)
+    outcome = evidence["outcome"]
+    if outcome not in _NORMALIZED_OUTCOMES:
+        raise BundleError(f"{label} is invalid")
+    if evidence["content"] is None:
+        if outcome in _SUCCESS_LIKE_OUTCOMES:
+            raise BundleError(f"{label} success-like outcome requires content")
+        return
+    if outcome not in _SUCCESS_LIKE_OUTCOMES:
+        raise BundleError(f"{label} non-success outcome forbids content")
+    content = _mapping(evidence["content"], f"{label} content")
+    _exact_keys(
+        content,
+        {
+            "url",
+            "title",
+            "text",
+            "author",
+            "date",
+            "word_count",
+            "egress",
+            "machine",
+            "source_type",
+        },
+        f"{label} content",
+    )
+    if (
+        any(
+            not isinstance(content[field], str) or not content[field]
+            for field in (
+                "url",
+                "title",
+                "text",
+                "egress",
+                "machine",
+                "source_type",
+            )
+        )
+        or any(
+            content[field] is not None and not isinstance(content[field], str)
+            for field in ("author", "date")
+        )
+        or isinstance(content["word_count"], bool)
+        or not isinstance(content["word_count"], int)
+        or content["word_count"] < 0
+    ):
+        raise BundleError(f"{label} content is invalid")
+
+
 def _validate_artifact(
-    relative: str, artifact: object, corpus: Mapping[str, Any]
+    relative: str, artifact: object, corpus: Mapping[str, Any], lane: str
 ) -> dict[str, Any]:
     artifact = _mapping(artifact, f"artifact {relative}")
-    if relative == "hermetic-summary.json":
+    if lane == "hermetic" and relative == "hermetic-summary.json":
         _exact_keys(
             artifact,
             {
@@ -460,7 +564,47 @@ def _validate_artifact(
         )
         if artifact["schema"] != "hermetic-summary-v1":
             raise BundleError("unsupported hermetic summary schema")
-    elif relative.startswith("searches/"):
+    elif lane == "competitive" and relative.startswith("searches/"):
+        _exact_keys(
+            artifact,
+            {"schema", "case_id", "mode", "baseline", "candidate"},
+            "competitive search artifact",
+        )
+        case_id = artifact["case_id"]
+        if (
+            artifact["schema"] != "normalized-competitive-search-v1"
+            or case_id not in corpus["competitive_case_ids"]
+            or COMPETITIVE_CASE_MODES.get(case_id) != artifact["mode"]
+            or artifact["mode"] == "extraction"
+        ):
+            raise BundleError("invalid normalized competitive search artifact")
+        _validate_normalized_search_evidence(
+            artifact["baseline"], "competitive baseline search evidence"
+        )
+        _validate_normalized_search_evidence(
+            artifact["candidate"], "competitive candidate search evidence"
+        )
+    elif lane == "competitive" and relative.startswith("extractions/"):
+        _exact_keys(
+            artifact,
+            {"schema", "case_id", "mode", "baseline", "candidate"},
+            "competitive extraction artifact",
+        )
+        case_id = artifact["case_id"]
+        if (
+            artifact["schema"] != "normalized-competitive-extraction-v1"
+            or case_id not in corpus["competitive_case_ids"]
+            or COMPETITIVE_CASE_MODES.get(case_id) != "extraction"
+            or artifact["mode"] != "extraction"
+        ):
+            raise BundleError("invalid normalized competitive extraction artifact")
+        _validate_normalized_extraction_evidence(
+            artifact["baseline"], "competitive baseline extraction evidence"
+        )
+        _validate_normalized_extraction_evidence(
+            artifact["candidate"], "competitive candidate extraction evidence"
+        )
+    elif lane == "hermetic" and relative.startswith("searches/"):
         _exact_keys(
             artifact,
             {
@@ -503,7 +647,7 @@ def _validate_artifact(
                 raise BundleError("search artifact evidence is invalid")
         if artifact["actual"] != artifact["expected"]:
             raise BundleError("search artifact does not match expected evidence")
-    elif relative.startswith("extractions/"):
+    elif lane == "hermetic" and relative.startswith("extractions/"):
         _exact_keys(
             artifact,
             {"schema", "case_id", "profile", "input", "actual", "expected", "matched"},
@@ -748,7 +892,6 @@ def _required_static_paths(lane: str) -> set[str]:
         "stability/timing-receipts.json",
         "stability/persistence-receipts.json",
         "provider-snapshot.json",
-        "artifacts/hermetic-summary.json",
         "checksums.sha256",
     }
     if lane == "competitive":
@@ -760,7 +903,34 @@ def _required_static_paths(lane: str) -> set[str]:
         }
     if lane != "hermetic":
         raise BundleError(f"unsupported scorecard lane: {lane}")
-    return base
+    return base | {"artifacts/hermetic-summary.json"}
+
+
+def _expected_artifact_paths(corpus: Mapping[str, Any], lane: str) -> set[str]:
+    if lane == "hermetic":
+        return {
+            "hermetic-summary.json",
+            *(
+                f"searches/{case_id}.json"
+                for case_id in corpus["hermetic_search_case_ids"]
+            ),
+            *(
+                f"extractions/{case_id}.json"
+                for case_id in corpus["hermetic_extraction_case_ids"]
+            ),
+        }
+    return {
+        *(
+            f"searches/{case_id}.json"
+            for case_id in corpus["competitive_case_ids"]
+            if COMPETITIVE_CASE_MODES.get(case_id) != "extraction"
+        ),
+        *(
+            f"extractions/{case_id}.json"
+            for case_id in corpus["competitive_case_ids"]
+            if COMPETITIVE_CASE_MODES.get(case_id) == "extraction"
+        ),
+    }
 
 
 def _prepare_documents(
@@ -829,20 +999,15 @@ def _prepare_documents(
         payload["timing_receipts"], payload["persistence_receipts"], lane
     )
     artifacts = _mapping(payload["artifacts"], "artifacts")
-    if "hermetic-summary.json" not in artifacts:
+    if lane == "hermetic" and "hermetic-summary.json" not in artifacts:
         raise BundleError("bundle requires artifacts/hermetic-summary.json")
     validated_artifacts: dict[str, Any] = {}
     for relative, artifact in artifacts.items():
         relative = _canonical_relative(relative)
-        validated_artifacts[relative] = _validate_artifact(relative, artifact, corpus)
-    expected_artifacts = {
-        "hermetic-summary.json",
-        *(f"searches/{case_id}.json" for case_id in corpus["hermetic_search_case_ids"]),
-        *(
-            f"extractions/{case_id}.json"
-            for case_id in corpus["hermetic_extraction_case_ids"]
-        ),
-    }
+        validated_artifacts[relative] = _validate_artifact(
+            relative, artifact, corpus, lane
+        )
+    expected_artifacts = _expected_artifact_paths(corpus, lane)
     if set(validated_artifacts) != expected_artifacts:
         raise BundleError("artifact coverage is not closed against the corpus")
 
@@ -1138,18 +1303,11 @@ def verify_bundle(root: Path) -> dict[str, Any]:
         for relative in declared_set
         if relative.startswith("artifacts/") and relative.endswith(".json")
     }
-    expected_artifacts = {
-        "hermetic-summary.json",
-        *(f"searches/{case_id}.json" for case_id in corpus["hermetic_search_case_ids"]),
-        *(
-            f"extractions/{case_id}.json"
-            for case_id in corpus["hermetic_extraction_case_ids"]
-        ),
-    }
+    expected_artifacts = _expected_artifact_paths(corpus, lane)
     if set(artifact_documents) != expected_artifacts:
         raise BundleError("verified artifact coverage is not closed against corpus")
     for relative, document in artifact_documents.items():
-        _validate_artifact(relative, document, corpus)
+        _validate_artifact(relative, document, corpus, lane)
     if lane == "competitive":
         _validate_competitive_documents(
             load_json("competitive/deterministic-metrics.json"),

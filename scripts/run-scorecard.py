@@ -27,6 +27,7 @@ from argus.scorecard.stability import (  # noqa: E402
     load_frozen_stability,
 )
 from argus.hermetic_scorecard import (  # noqa: E402
+    execute_authority_gate_contracts,
     execute_extraction_fixture,
     execute_search_fixture,
     execute_surface_fixture,
@@ -104,6 +105,7 @@ def _live_configuration(corpus: dict[str, Any]) -> dict[str, object]:
             "automatic": False,
             "immutable_authorization_required": True,
             "receipt_fields": [
+                "schema",
                 "receipt_id",
                 "run_id",
                 "generation",
@@ -112,6 +114,7 @@ def _live_configuration(corpus: dict[str, Any]) -> dict[str, object]:
                 "call_count_cap",
                 "cost_or_credit_cap",
                 "one_time_credit_providers",
+                "issued_at",
             ],
             "receipt_reuse": "rejected",
             "one_time_credit_providers": "disabled_unless_individually_named",
@@ -238,58 +241,98 @@ def run_hermetic(
         if relative.startswith("extractions/")
     }
     provider_cases = ("success", "empty", "error", "malformed")
+    authority_contracts = execute_authority_gate_contracts()
+    provenance_artifacts = [
+        artifact for artifact in artifacts.values() if "actual" in artifact
+    ]
     observed_contracts = {
-        "authentication": next(
-            case
-            for case in surface_cases
-            if case["outcome"] == "authentication_rejected"
-        )["http_status"]
-        == 401,
-        "caller_attribution": True,
-        "surface_equivalence": all(
-            case["http_status"] > 0 and isinstance(case["mcp_is_error"], bool)
-            for case in surface_cases
-        ),
-        "normalized_result_integrity": all(
-            artifact["matched"] for artifact in search_artifacts
-        ),
-        "universal_provenance": all(
-            artifact["actual"]["provenance_complete"]
-            for artifact in artifacts.values()
-            if "actual" in artifact
-        ),
-        "provider_traces": all(
-            provider_contracts[name]["golden_output_validated"]
-            for name in provider_cases
-        ),
-        "partial_search": (
-            provider_contracts["success"]["observations"] > 0
-            and provider_contracts["error"]["failure"] is not None
-        ),
-        "empty_search": (
-            provider_contracts["empty"]["observations"] == 0
-            and provider_contracts["empty"]["failure"] == "empty"
-        ),
-        "search_evidence_floor": corpus_matched,
-        "extraction_success": extraction_artifacts["static"]["matched"],
-        "degraded_extraction": extraction_artifacts["paywall"]["matched"],
-        "extraction_failure": all(
-            extraction_artifacts[case_id]["matched"]
-            for case_id in ("malformed", "timeout", "unsupported")
-        ),
-        "durable_acceptance": True,
-        "persistence_isolation": True,
-        "provider_readiness": provider_contracts["success"]["failure"] is None,
-        "mode_availability": {artifact["mode"] for artifact in search_artifacts}
-        == {"discovery", "grounding", "recovery", "research"},
-        "policy_truth": provider_contracts["error"]["failure"] == "rate_limited",
-        "cache_eligibility": True,
-        "cache_isolation": True,
-        "bounded_completion": (perf_counter_ns() - timer_started) <= 120_000_000_000,
-        "recovery_authority": True,
-        "evidence_bundle": not exceptions,
+        "authentication": authority_contracts["authentication"],
+        "caller_attribution": authority_contracts["caller_attribution"],
+        "surface_equivalence": {"cases": surface_cases},
+        "normalized_result_integrity": {
+            "case_count": len(search_artifacts),
+            "matched_case_count": sum(
+                artifact["matched"] is True for artifact in search_artifacts
+            ),
+        },
+        "universal_provenance": {
+            "evidence_count": len(provenance_artifacts),
+            "provenance_complete_count": sum(
+                artifact["actual"]["provenance_complete"] is True
+                for artifact in provenance_artifacts
+            ),
+        },
+        "provider_traces": {
+            "required_cases": list(provider_cases),
+            "validated_cases": [
+                name
+                for name in provider_cases
+                if provider_contracts[name]["golden_output_validated"]
+            ],
+        },
+        "partial_search": {
+            "successful_observations": provider_contracts["success"]["observations"],
+            "failed_provider_outcome": provider_contracts["error"]["failure"],
+        },
+        "empty_search": {
+            "observation_count": provider_contracts["empty"]["observations"],
+            "outcome": provider_contracts["empty"]["failure"],
+        },
+        "search_evidence_floor": {
+            "case_count": len(search_artifacts),
+            "matched_case_count": sum(
+                artifact["matched"] is True for artifact in search_artifacts
+            ),
+        },
+        "extraction_success": {
+            "required_case_ids": ["static"],
+            "matched_case_ids": (
+                ["static"] if extraction_artifacts["static"]["matched"] else []
+            ),
+        },
+        "degraded_extraction": {
+            "required_case_ids": ["paywall"],
+            "matched_case_ids": (
+                ["paywall"] if extraction_artifacts["paywall"]["matched"] else []
+            ),
+        },
+        "extraction_failure": {
+            "required_case_ids": ["malformed", "timeout", "unsupported"],
+            "matched_case_ids": [
+                case_id
+                for case_id in ("malformed", "timeout", "unsupported")
+                if extraction_artifacts[case_id]["matched"]
+            ],
+        },
+        "durable_acceptance": authority_contracts["durable_acceptance"],
+        "persistence_isolation": authority_contracts["persistence_isolation"],
+        "provider_readiness": {
+            "provider": "duckduckgo",
+            "success_failure": provider_contracts["success"]["failure"],
+            "fixture_validated": provider_contracts["success"][
+                "golden_output_validated"
+            ],
+        },
+        "mode_availability": {
+            "observed_modes": sorted(
+                {artifact["mode"] for artifact in search_artifacts}
+            )
+        },
+        "policy_truth": {
+            "error_fixture_outcome": provider_contracts["error"]["failure"],
+            "expected_policy_outcome": "rate_limited",
+        },
+        "cache_eligibility": authority_contracts["cache_eligibility"],
+        "cache_isolation": authority_contracts["cache_isolation"],
+        "bounded_completion": {
+            "completed_within_limit": (perf_counter_ns() - timer_started)
+            <= 120_000_000_000,
+            "limit_ms": 120_000,
+        },
     }
-    if set(observed_contracts) != set(HARD_GATES):
+    if set(observed_contracts) | {"recovery_authority", "evidence_bundle"} != set(
+        HARD_GATES
+    ):
         raise ValueError("hermetic gate observations are not closed")
     profile_evidence = load_frozen_stability(
         stability_path,

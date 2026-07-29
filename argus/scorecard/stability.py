@@ -98,11 +98,236 @@ def evaluate_stability(
     return StabilityVerdict(overall, profiles, exceptions)
 
 
+def _exact_facts(facts: Mapping[str, Any], expected: set[str], contract: str) -> bool:
+    return set(facts) == expected
+
+
+def _contract_passed_unchecked(contract: str, facts: Mapping[str, Any]) -> bool:
+    """Independently evaluate one exact typed hermetic gate observation."""
+    if contract == "authentication":
+        return (
+            _exact_facts(
+                facts, {"http_status", "network_calls_before_rejection"}, contract
+            )
+            and facts["http_status"] == 401
+            and facts["network_calls_before_rejection"] == 0
+        )
+    if contract == "caller_attribution":
+        return (
+            _exact_facts(
+                facts, {"request_caller_identity", "durable_caller_identity"}, contract
+            )
+            and facts["request_caller_identity"] == facts["durable_caller_identity"]
+            and bool(facts["request_caller_identity"])
+        )
+    if contract == "surface_equivalence":
+        expected = {
+            "success": (200, False, 0, False),
+            "degraded": (200, False, 0, False),
+            "empty": (200, False, 0, False),
+            "timeout": (504, True, 1, True),
+            "policy_rejected": (403, True, 1, True),
+            "authentication_rejected": (401, True, 1, True),
+            "providers_failed": (502, True, 1, True),
+        }
+        if not _exact_facts(facts, {"cases"}, contract):
+            return False
+        cases = facts["cases"]
+        return (
+            isinstance(cases, list)
+            and {
+                case.get("outcome"): (
+                    case.get("http_status"),
+                    case.get("mcp_is_error"),
+                    case.get("cli_exit"),
+                    case.get("python_error"),
+                )
+                for case in cases
+                if isinstance(case, Mapping)
+            }
+            == expected
+        )
+    if contract == "normalized_result_integrity":
+        return (
+            _exact_facts(facts, {"case_count", "matched_case_count"}, contract)
+            and facts["case_count"] == facts["matched_case_count"]
+            and facts["case_count"] > 0
+        )
+    if contract == "universal_provenance":
+        return (
+            _exact_facts(
+                facts, {"evidence_count", "provenance_complete_count"}, contract
+            )
+            and facts["evidence_count"] == facts["provenance_complete_count"]
+            and facts["evidence_count"] > 0
+        )
+    if contract == "provider_traces":
+        return (
+            _exact_facts(facts, {"required_cases", "validated_cases"}, contract)
+            and facts["required_cases"] == facts["validated_cases"]
+            and set(facts["required_cases"])
+            == {"success", "empty", "error", "malformed"}
+        )
+    if contract == "partial_search":
+        return (
+            _exact_facts(
+                facts, {"successful_observations", "failed_provider_outcome"}, contract
+            )
+            and facts["successful_observations"] > 0
+            and facts["failed_provider_outcome"] == "rate_limited"
+        )
+    if contract == "empty_search":
+        return (
+            _exact_facts(facts, {"observation_count", "outcome"}, contract)
+            and facts["observation_count"] == 0
+            and facts["outcome"] == "empty"
+        )
+    if contract == "search_evidence_floor":
+        return (
+            _exact_facts(facts, {"case_count", "matched_case_count"}, contract)
+            and facts["case_count"] == facts["matched_case_count"]
+            and facts["case_count"] == 24
+        )
+    if contract in {
+        "extraction_success",
+        "degraded_extraction",
+        "extraction_failure",
+    }:
+        return (
+            _exact_facts(facts, {"required_case_ids", "matched_case_ids"}, contract)
+            and facts["required_case_ids"] == facts["matched_case_ids"]
+            and bool(facts["required_case_ids"])
+        )
+    if contract == "durable_acceptance":
+        return (
+            _exact_facts(
+                facts,
+                {
+                    "operation_outcome",
+                    "acceptance_receipt_present",
+                    "publication_events",
+                    "receipt_matched",
+                },
+                contract,
+            )
+            and facts["operation_outcome"] in {"success", "degraded", "empty"}
+            and facts["acceptance_receipt_present"] is True
+            and facts["publication_events"] == ["durable", "cache"]
+            and facts["receipt_matched"] is True
+        )
+    if contract == "persistence_isolation":
+        return _exact_facts(
+            facts,
+            {
+                "production_adapter_rejected_db_config",
+                "production_caller_rejected_broker",
+                "development_sqlite_scope",
+            },
+            contract,
+        ) and facts == {
+            "production_adapter_rejected_db_config": True,
+            "production_caller_rejected_broker": True,
+            "development_sqlite_scope": "explicit",
+        }
+    if contract == "provider_readiness":
+        return (
+            _exact_facts(
+                facts, {"provider", "success_failure", "fixture_validated"}, contract
+            )
+            and facts["provider"] == "duckduckgo"
+            and facts["success_failure"] is None
+            and facts["fixture_validated"] is True
+        )
+    if contract == "mode_availability":
+        return _exact_facts(facts, {"observed_modes"}, contract) and set(
+            facts["observed_modes"]
+        ) == {"discovery", "grounding", "recovery", "research"}
+    if contract == "policy_truth":
+        return (
+            _exact_facts(
+                facts, {"error_fixture_outcome", "expected_policy_outcome"}, contract
+            )
+            and facts["error_fixture_outcome"]
+            == facts["expected_policy_outcome"]
+            == "rate_limited"
+        )
+    if contract == "cache_eligibility":
+        return _exact_facts(
+            facts,
+            {"fresh_decision", "stale_decision"},
+            contract,
+        ) and facts == {
+            "fresh_decision": "hit_eligible",
+            "stale_decision": "hit_ineligible",
+        }
+    if contract == "cache_isolation":
+        return _exact_facts(
+            facts,
+            {
+                "wrong_policy_decision",
+                "origin_spend_usd",
+                "current_spend_usd",
+                "current_provider_calls",
+            },
+            contract,
+        ) and facts == {
+            "wrong_policy_decision": "miss",
+            "origin_spend_usd": "0.01",
+            "current_spend_usd": "0",
+            "current_provider_calls": 0,
+        }
+    if contract == "bounded_completion":
+        return (
+            _exact_facts(facts, {"completed_within_limit", "limit_ms"}, contract)
+            and facts["completed_within_limit"] is True
+            and facts["limit_ms"] == 120_000
+        )
+    if contract == "recovery_authority":
+        return _exact_facts(
+            facts, {"mode", "authority", "speculative_fallback"}, contract
+        ) and facts == {
+            "mode": "recovery",
+            "authority": "canonical_http",
+            "speculative_fallback": False,
+        }
+    if contract == "evidence_bundle":
+        return _exact_facts(
+            facts,
+            {
+                "required_sections",
+                "checksum_algorithm",
+                "secret_scan",
+                "provider_native_payloads",
+            },
+            contract,
+        ) and facts == {
+            "required_sections": [
+                "manifest",
+                "identities",
+                "corpus",
+                "stability",
+                "artifacts",
+                "checksums",
+            ],
+            "checksum_algorithm": "sha256",
+            "secret_scan": True,
+            "provider_native_payloads": False,
+        }
+    return False
+
+
+def _contract_passed(contract: str, facts: Mapping[str, Any]) -> bool:
+    try:
+        return _contract_passed_unchecked(contract, facts)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 def load_frozen_stability(
     path: Path,
     *,
     expected_path: Path,
-    observed_contracts: Mapping[str, bool],
+    observed_contracts: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, dict[str, dict[str, Any]]]:
     """Bind independently executed production-contract observations to gates."""
     try:
@@ -131,6 +356,13 @@ def load_frozen_stability(
         REQUIRED_PROFILES
     ):
         raise ValueError("frozen stability expectations require both profiles")
+    if not set(observed_contracts) <= set(HARD_GATES):
+        raise ValueError("typed gate observations contain an unknown hard gate")
+    if any(
+        not isinstance(observation, Mapping) or not observation
+        for observation in observed_contracts.values()
+    ):
+        raise ValueError("each contract requires a typed gate observation")
     evaluated: dict[str, dict[str, dict[str, Any]]] = {}
     for profile in REQUIRED_PROFILES:
         gates = profiles[profile]
@@ -156,16 +388,15 @@ def load_frozen_stability(
             if not isinstance(fixture_id, str) or not fixture_id:
                 raise ValueError(f"{profile}.{gate} has invalid fixture id")
             contract = check["contract"]
-            if contract != gate or contract not in observed_contracts:
+            if contract != gate:
                 raise ValueError(f"{profile}.{gate} has invalid contract binding")
             raw = check["raw"]
             if (
                 not isinstance(raw, Mapping)
-                or set(raw) != {"schema", "samples"}
-                or raw["schema"] != "scorecard-gate-raw-v1"
-                or not isinstance(raw["samples"], list)
-                or not raw["samples"]
-                or any(not isinstance(sample, bool) for sample in raw["samples"])
+                or set(raw) != {"schema", "facts"}
+                or raw["schema"] != "scorecard-gate-raw-v2"
+                or not isinstance(raw["facts"], Mapping)
+                or not raw["facts"]
             ):
                 raise ValueError(f"{profile}.{gate} has invalid raw evidence")
             expected = expected_gates[gate]
@@ -175,8 +406,19 @@ def load_frozen_stability(
                 or expected["passed"] is not True
             ):
                 raise ValueError(f"{profile}.{gate} has invalid expected evidence")
-            observed = all(raw["samples"]) and observed_contracts[contract] is True
-            matched = observed == expected["passed"]
+            raw_passed = _contract_passed(contract, raw["facts"])
+            observed_facts = observed_contracts.get(contract)
+            if observed_facts is None:
+                matched = raw_passed == expected["passed"]
+                observation_count = len(raw["facts"])
+            else:
+                observed_passed = _contract_passed(contract, observed_facts)
+                matched = (
+                    dict(raw["facts"]) == dict(observed_facts)
+                    and raw_passed
+                    and observed_passed == expected["passed"]
+                )
+                observation_count = len(observed_facts)
             evaluated[profile][gate] = {
                 "status": "pass" if matched else "fail",
                 "reason": (
@@ -190,7 +432,7 @@ def load_frozen_stability(
                     "check": {
                         "kind": gate,
                         "passed": matched,
-                        "observation_count": len(raw["samples"]) + 1,
+                        "observation_count": observation_count,
                     },
                 },
             }

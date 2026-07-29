@@ -16,7 +16,11 @@ from argus.scorecard.authorization import (
 )
 from argus.scorecard.competitive import CompetitiveInputError, evaluate_competitive
 from argus.scorecard.corpus import load_corpus, validate_corpus
-from argus.scorecard.stability import HARD_GATES, evaluate_stability
+from argus.scorecard.stability import (
+    HARD_GATES,
+    evaluate_stability,
+    load_frozen_stability,
+)
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "scorecard"
@@ -398,7 +402,7 @@ def test_hermetic_gate_mutation_fails_only_that_gate_and_exits_unstable(tmp_path
     shutil.copytree(FIXTURES, broken)
     evidence_path = broken / "stability-evidence.json"
     evidence = json.loads(evidence_path.read_text())
-    evidence["profiles"]["free"]["authentication"]["raw"]["samples"][0] = False
+    evidence["profiles"]["free"]["authentication"]["raw"]["facts"]["http_status"] = 200
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
 
     result = subprocess.run(
@@ -430,6 +434,54 @@ def test_hermetic_gate_mutation_fails_only_that_gate_and_exits_unstable(tmp_path
         if gate != "authentication"
     )
     assert gates["profiles"]["budgeted"]["verdict"] == "stable"
+
+
+def test_frozen_stability_requires_typed_raw_facts_and_observations():
+    document = json.loads((FIXTURES / "stability-evidence.json").read_text())
+    for profile in ("free", "budgeted"):
+        for gate in HARD_GATES:
+            raw = document["profiles"][profile][gate]["raw"]
+            assert raw["schema"] == "scorecard-gate-raw-v2"
+            assert isinstance(raw["facts"], dict)
+            assert raw["facts"]
+            assert "samples" not in raw
+
+    with pytest.raises(ValueError, match="typed gate observation"):
+        load_frozen_stability(
+            FIXTURES / "stability-evidence.json",
+            expected_path=FIXTURES / "stability-expected.json",
+            observed_contracts={gate: True for gate in HARD_GATES},
+        )
+
+
+def test_authority_gate_observations_execute_production_contracts():
+    import argus.hermetic_scorecard as hermetic
+
+    execute = getattr(hermetic, "execute_authority_gate_contracts", None)
+    assert callable(execute)
+
+    observations = execute()
+
+    assert observations["authentication"] == {
+        "http_status": 401,
+        "network_calls_before_rejection": 0,
+    }
+    assert observations["caller_attribution"] == {
+        "request_caller_identity": "scorecard:hermetic",
+        "durable_caller_identity": "scorecard:hermetic",
+    }
+    assert observations["durable_acceptance"]["publication_events"] == [
+        "durable",
+        "cache",
+    ]
+    assert observations["cache_eligibility"]["fresh_decision"] == "hit_eligible"
+    assert observations["cache_eligibility"]["stale_decision"] == "hit_ineligible"
+    assert observations["cache_isolation"]["wrong_policy_decision"] == "miss"
+    assert observations["persistence_isolation"] == {
+        "production_adapter_rejected_db_config": True,
+        "production_caller_rejected_broker": True,
+        "development_sqlite_scope": "explicit",
+    }
 
 
 def test_ci_runs_only_the_hermetic_lane_and_publishes_its_bundle():
@@ -468,6 +520,31 @@ def test_live_workflow_is_free_only_on_schedule_and_budgeted_is_receipt_gated():
     )
     assert "diagnostic-only" in workflow
     assert "Task 16/P1" in workflow
+
+
+def test_live_configuration_declares_exact_receipt_contract():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "run_scorecard", ROOT / "scripts" / "run-scorecard.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    configuration = module._live_configuration(load_corpus(FIXTURES / "corpus.json"))
+
+    assert configuration["budgeted_profile"]["receipt_fields"] == [
+        "schema",
+        "receipt_id",
+        "run_id",
+        "generation",
+        "permitted_providers",
+        "maximum_tier",
+        "call_count_cap",
+        "cost_or_credit_cap",
+        "one_time_credit_providers",
+        "issued_at",
+    ]
 
 
 def test_budgeted_authorization_receipt_is_exact_digest_bound():

@@ -194,6 +194,192 @@ def test_bundle_writer_emits_declared_tree_and_verified_checksums(tmp_path):
     assert (output / "checksums.sha256").is_file()
 
 
+def test_competitive_bundle_accepts_all_normalized_live_case_artifacts(tmp_path):
+    payload = _payload()
+    generation = payload["generation"]
+    payload["baseline_identity"] = {
+        **payload["candidate_identity"],
+        "commit": "8" * 40,
+        "generation": generation,
+    }
+    payload["candidate_identity"]["commit"] = "9" * 40
+    payload["corpus"]["hermetic_search_case_ids"] = [
+        case_id
+        for case_id, mode in COMPETITIVE_CASE_MODES.items()
+        if mode != "extraction"
+    ]
+    payload["corpus"]["competitive_case_ids"] = list(COMPETITIVE_CASE_MODES)
+    payload["persistence_receipts"] = {
+        "schema": "normalized-persistence-receipts-v1",
+        "status": "accepted",
+        "reason": "canonical HTTP evidence persisted",
+        "receipts": [
+            {
+                "operation_id": "competitive-run",
+                "repository": "postgresql",
+                "durable_id": "receipt-001",
+                "status": "accepted",
+            }
+        ],
+    }
+    pairs = [
+        {
+            "pair_id": case_id,
+            "mode": mode,
+            "forward": "tie",
+            "reverse": "tie",
+            "classification": "tie",
+        }
+        for case_id, mode in COMPETITIVE_CASE_MODES.items()
+    ]
+    payload["competitive"] = {
+        "deterministic_metrics": {
+            "schema": "competitive-deterministic-metrics-v1",
+            "consistent_pairs": 28,
+            "decisive_pairs": 0,
+            "candidate_wins": 0,
+            "baseline_wins": 0,
+            "p_value": None,
+        },
+        "blinded_comparisons": {
+            "schema": "blinded-comparisons-v1",
+            "pairs": pairs,
+        },
+        "verdict": {
+            "schema": "competitive-verdict-v1",
+            "verdict": "inconclusive",
+            "reason": "fewer than 8 decisive pairs",
+        },
+    }
+    search_result = {
+        "url": "https://example.com/result",
+        "title": "Result",
+        "snippet": "Normalized evidence",
+        "domain": "example.com",
+        "provider": "duckduckgo",
+        "score": 1.0,
+        "egress": "residential",
+        "machine": "homelab",
+    }
+    extraction = {
+        "url": "https://example.com/article",
+        "title": "Article",
+        "text": "Normalized extracted evidence.",
+        "author": None,
+        "date": None,
+        "word_count": 3,
+        "egress": "residential",
+        "machine": "homelab",
+        "source_type": "trafilatura",
+    }
+    payload["artifacts"] = {
+        **{
+            f"searches/{case_id}.json": {
+                "schema": "normalized-competitive-search-v1",
+                "case_id": case_id,
+                "mode": mode,
+                "baseline": {"outcome": "success", "results": [search_result]},
+                "candidate": {"outcome": "success", "results": [search_result]},
+            }
+            for case_id, mode in COMPETITIVE_CASE_MODES.items()
+            if mode != "extraction"
+        },
+        **{
+            f"extractions/{case_id}.json": {
+                "schema": "normalized-competitive-extraction-v1",
+                "case_id": case_id,
+                "mode": "extraction",
+                "baseline": {"outcome": "success", "content": extraction},
+                "candidate": {"outcome": "success", "content": extraction},
+            }
+            for case_id, mode in COMPETITIVE_CASE_MODES.items()
+            if mode == "extraction"
+        },
+    }
+
+    output = tmp_path / "competitive"
+    write_bundle(output, lane="competitive", stability=_stability(), payload=payload)
+    manifest = verify_bundle(output)
+
+    assert manifest["lane"] == "competitive"
+    assert len(list((output / "artifacts" / "searches").glob("*.json"))) == 24
+    assert len(list((output / "artifacts" / "extractions").glob("*.json"))) == 4
+
+    failure_payload = json.loads(json.dumps(payload))
+    failure_payload["artifacts"]["extractions/javascript-live.json"]["candidate"] = {
+        "outcome": "extraction_failed",
+        "content": None,
+    }
+    failure_output = tmp_path / "competitive-failure"
+    write_bundle(
+        failure_output,
+        lane="competitive",
+        stability=_stability(),
+        payload=failure_payload,
+    )
+    assert verify_bundle(failure_output)["lane"] == "competitive"
+
+    for outcome in (
+        "invalid_request",
+        "authentication_rejected",
+        "policy_rejected",
+        "persistence_failed",
+    ):
+        canonical_failure = json.loads(json.dumps(payload))
+        canonical_failure["artifacts"]["searches/discovery-01.json"]["candidate"] = {
+            "outcome": outcome,
+            "results": [],
+        }
+        canonical_failure["artifacts"]["extractions/javascript-live.json"][
+            "candidate"
+        ] = {
+            "outcome": outcome,
+            "content": None,
+        }
+        canonical_output = tmp_path / f"competitive-{outcome}"
+        write_bundle(
+            canonical_output,
+            lane="competitive",
+            stability=_stability(),
+            payload=canonical_failure,
+        )
+        assert verify_bundle(canonical_output)["lane"] == "competitive"
+
+    contradictions = [
+        (
+            "searches/discovery-01.json",
+            {"outcome": "success", "results": []},
+        ),
+        (
+            "extractions/javascript-live.json",
+            {
+                "outcome": "extraction_failed",
+                "content": {
+                    "url": "https://example.com/article",
+                    "title": "Article",
+                    "text": "Contradictory content.",
+                    "author": None,
+                    "date": None,
+                    "word_count": 2,
+                    "egress": "residential",
+                    "machine": "homelab",
+                    "source_type": "trafilatura",
+                },
+            },
+        ),
+    ]
+    for index, (artifact, evidence) in enumerate(contradictions):
+        contradictory = json.loads(json.dumps(payload))
+        contradictory["artifacts"][artifact]["candidate"] = evidence
+        with pytest.raises(BundleError, match="outcome"):
+            write_bundle(
+                tmp_path / f"contradictory-{index}",
+                lane="competitive",
+                stability=_stability(),
+                payload=contradictory,
+            )
+
+
 def test_bundle_writer_never_overwrites_an_existing_evidence_directory(tmp_path):
     output = tmp_path / "bundle"
     output.mkdir()

@@ -946,6 +946,32 @@ def test_scorecard_architecture_inventory_rejects_direct_route_repository_calls(
     )
 
 
+@pytest.mark.parametrize(
+    "source",
+    (
+        "def route(repo):\n    return repo.list_attempts()\n",
+        "def route(store):\n    return store.list_attempts()\n",
+        (
+            "def route(request):\n"
+            "    return request.app.state.search_repository.list_attempts()\n"
+        ),
+    ),
+)
+def test_scorecard_architecture_inventory_rejects_aliased_repository_calls(
+    tmp_path, source
+):
+    api = tmp_path / "argus" / "api"
+    api.mkdir(parents=True)
+    (api / "routes_bad.py").write_text(
+        source,
+        encoding="utf-8",
+    )
+
+    assert find_architecture_exceptions(tmp_path) == (
+        "argus/api/routes_bad.py:direct-repository-call",
+    )
+
+
 def test_workflow_modules_cannot_alias_execution_or_persistence_authority():
     workflow_forbidden = {"argus.extraction", "argus.persistence"}
     for path in ROOT.glob("argus/workflows/*.py"):

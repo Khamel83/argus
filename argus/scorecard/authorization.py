@@ -8,6 +8,9 @@ import json
 import re
 from typing import Any, Mapping
 
+from argus.models import is_adapter_provider
+from argus.provider_policy import ONE_TIME_CREDIT_PROVIDERS, PROVIDER_TIERS
+
 
 class AuthorizationError(ValueError):
     """A budgeted scorecard authorization is absent, mismatched, or reused."""
@@ -15,23 +18,16 @@ class AuthorizationError(ValueError):
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
-_ONE_TIME_PROVIDERS = frozenset({"serper", "you", "searchapi", "valyu"})
 _CANONICAL_PROVIDER_TIERS = {
-    "searxng": 0,
-    "duckduckgo": 0,
-    "yahoo": 0,
-    "github": 0,
-    "wolfram": 0,
-    "brave": 1,
-    "tavily": 1,
-    "exa": 1,
-    "linkup": 1,
-    "parallel": 1,
-    "serper": 3,
-    "you": 3,
-    "searchapi": 3,
-    "valyu": 3,
+    provider.value: tier
+    for provider, tier in PROVIDER_TIERS.items()
+    if is_adapter_provider(provider)
 }
+_ONE_TIME_PROVIDERS = frozenset(
+    provider.value
+    for provider in ONE_TIME_CREDIT_PROVIDERS
+    if is_adapter_provider(provider)
+)
 _FIELDS = {
     "schema",
     "receipt_id",
