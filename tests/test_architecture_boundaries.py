@@ -33,7 +33,7 @@ MCP_ADAPTERS = {
     ROOT / "argus/mcp/server.py",
     ROOT / "argus/mcp/v2_tools.py",
 }
-MCP_MODULES = frozenset(ROOT.glob("argus/mcp/*.py"))
+MCP_ROOT = ROOT / "argus/mcp"
 EXPECTED_ADAPTERS = {
     *PORTED_HTTP_MODULES,
     *LEGACY_ADAPTER_EXCEPTIONS,
@@ -58,6 +58,18 @@ MCP_FORBIDDEN_PREFIXES = (
     "argus.authority.development_mcp_",
     "argus.development_mcp_",
 )
+DYNAMIC_IMPORT_PRIMITIVES = {
+    "__import__",
+    "builtins.__import__",
+    "importlib.import_module",
+}
+
+
+def _mcp_python_modules(root: Path) -> frozenset[Path]:
+    return frozenset(root.rglob("*.py"))
+
+
+MCP_MODULES = _mcp_python_modules(MCP_ROOT)
 
 
 def _module_package(path: Path) -> str:
@@ -88,13 +100,16 @@ def _imports(path: Path, *, package: str | None = None) -> set[str]:
 
 def _is_forbidden_mcp_reference(qualified_name: str) -> bool:
     return any(
-        qualified_name == forbidden
-        or qualified_name.startswith(f"{forbidden}.")
+        qualified_name == forbidden or qualified_name.startswith(f"{forbidden}.")
         for forbidden in MCP_FORBIDDEN
     ) or qualified_name.startswith(MCP_FORBIDDEN_PREFIXES)
 
 
-def _resolved_import_aliases(tree: ast.AST) -> dict[str, str]:
+def _resolved_import_aliases(
+    tree: ast.AST,
+    *,
+    package: str = "argus.mcp",
+) -> dict[str, str]:
     aliases: dict[str, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -104,7 +119,7 @@ def _resolved_import_aliases(tree: ast.AST) -> dict[str, str]:
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             if node.level:
-                module = resolve_name("." * node.level + module, "argus.mcp")
+                module = resolve_name("." * node.level + module, package)
             for imported in node.names:
                 if imported.name != "*":
                     aliases[imported.asname or imported.name] = (
@@ -123,28 +138,73 @@ def _qualified_name(node: ast.AST, aliases: dict[str, str]) -> str | None:
     return None
 
 
+def _assignment_names(target: ast.AST) -> set[str]:
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, (ast.List, ast.Tuple)):
+        return {name for element in target.elts for name in _assignment_names(element)}
+    return set()
+
+
+def _resolved_assignment_aliases(
+    tree: ast.AST,
+    aliases: dict[str, str],
+) -> dict[str, str]:
+    """Resolve simple assignment chains used to disguise imported authority."""
+
+    resolved = dict(aliases)
+    assignments: list[tuple[set[str], ast.AST]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            names = {
+                name for target in node.targets for name in _assignment_names(target)
+            }
+            assignments.append((names, node.value))
+        elif isinstance(node, ast.AnnAssign):
+            if node.value is not None:
+                assignments.append((_assignment_names(node.target), node.value))
+        elif isinstance(node, ast.NamedExpr):
+            assignments.append((_assignment_names(node.target), node.value))
+
+    for _ in range(len(assignments) + 1):
+        changed = False
+        for names, value in assignments:
+            qualified = _qualified_name(value, resolved)
+            if qualified is None:
+                continue
+            for name in names:
+                if resolved.get(name) != qualified:
+                    resolved[name] = qualified
+                    changed = True
+        if not changed:
+            break
+    return resolved
+
+
 def _mcp_boundary_violations(path: Path) -> set[str]:
     """Resolve imports, aliases, calls, and authority references fail-closed."""
 
+    package = _module_package(path) if path.is_relative_to(ROOT) else "argus.mcp"
     violations = {
         module
-        for module in _imports(path, package="argus.mcp")
+        for module in _imports(path, package=package)
         if _is_forbidden_mcp_reference(module)
     }
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    aliases = _resolved_import_aliases(tree)
+    aliases = _resolved_assignment_aliases(
+        tree,
+        _resolved_import_aliases(tree, package=package),
+    )
     for node in ast.walk(tree):
         qualified = _qualified_name(node, aliases)
         if qualified is not None and _is_forbidden_mcp_reference(qualified):
             violations.add(qualified)
+        if qualified in DYNAMIC_IMPORT_PRIMITIVES:
+            violations.add("dynamic-import")
         if not isinstance(node, ast.Call):
             continue
         function = _qualified_name(node.func, aliases)
-        if function in {
-            "__import__",
-            "builtins.__import__",
-            "importlib.import_module",
-        }:
+        if function in DYNAMIC_IMPORT_PRIMITIVES:
             violations.add("dynamic-import")
         if isinstance(node.func, ast.Name) and node.func.id in {
             "create_broker",
@@ -164,6 +224,55 @@ def _mcp_boundary_violations(path: Path) -> set[str]:
     return violations
 
 
+def _mcp_namespace_violations(root: Path) -> dict[Path, set[str]]:
+    return {
+        path: violations
+        for path in _mcp_python_modules(root)
+        if (violations := _mcp_boundary_violations(path))
+    }
+
+
+def _development_authority_surface(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    exposed = {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name.startswith("development_mcp_")
+    }
+    aliases: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for imported in node.names:
+                bound = imported.asname or imported.name.split(".", 1)[0]
+                aliases[bound] = imported.name if imported.asname else bound
+                if imported.name.startswith("argus.development_mcp_"):
+                    exposed.add(imported.name)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level:
+                module = resolve_name("." * node.level + module, "argus")
+            for imported in node.names:
+                qualified = (
+                    module if imported.name == "*" else f"{module}.{imported.name}"
+                )
+                if imported.name != "*":
+                    aliases[imported.asname or imported.name] = qualified
+                if qualified.startswith("argus.development_mcp_"):
+                    exposed.add(qualified)
+
+    module_tree = ast.Module(body=list(tree.body), type_ignores=[])
+    aliases = _resolved_assignment_aliases(module_tree, aliases)
+    for bound, qualified in aliases.items():
+        if bound.startswith("development_mcp_"):
+            exposed.add(
+                qualified if qualified.startswith("argus.development_mcp_") else bound
+            )
+        elif qualified.startswith("argus.development_mcp_"):
+            exposed.add(qualified)
+    return exposed
+
+
 @pytest.mark.parametrize(
     ("source", "expected"),
     (
@@ -180,6 +289,24 @@ def _mcp_boundary_violations(path: Path) -> set[str]:
             "loader.import_module('argus.' + 'development_mcp_server')\n",
             "dynamic-import",
         ),
+        (
+            "import importlib\nload = importlib.import_module\nload(dynamic_name)\n",
+            "dynamic-import",
+        ),
+        (
+            "import importlib\n"
+            "(load,) = (importlib.import_module,)\n"
+            "load(dynamic_name)\n",
+            "dynamic-import",
+        ),
+        (
+            "import importlib\n"
+            "load = importlib.import_module\n"
+            "def unrelated_scope():\n"
+            "    load = harmless\n"
+            "load(dynamic_name)\n",
+            "dynamic-import",
+        ),
     ),
 )
 def test_mcp_boundary_rejects_review_bypass_fixtures(tmp_path, source, expected):
@@ -189,16 +316,53 @@ def test_mcp_boundary_rejects_review_bypass_fixtures(tmp_path, source, expected)
     assert expected in _mcp_boundary_violations(module)
 
 
+def test_mcp_namespace_scan_rejects_nested_module_fixture(tmp_path):
+    mcp_root = tmp_path / "argus/mcp"
+    nested = mcp_root / "nested/adapter.py"
+    nested.parent.mkdir(parents=True)
+    nested.write_text(
+        "from argus import development_mcp_server as launch\n",
+        encoding="utf-8",
+    )
+
+    violations = _mcp_namespace_violations(mcp_root)
+
+    assert violations[nested] == {"argus.development_mcp_server"}
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    (
+        (
+            "from argus.development_mcp_tools import (\n"
+            "    extract_content as development_mcp_extract,\n"
+            ")\n",
+            "argus.development_mcp_tools.extract_content",
+        ),
+        (
+            "import argus.development_mcp_tools\n"
+            "development_mcp_extract = getattr(\n"
+            "    argus.development_mcp_tools,\n"
+            '    "extract_content",\n'
+            ")\n",
+            "argus.development_mcp_tools",
+        ),
+    ),
+)
+def test_general_authority_surface_rejects_imported_reexport_fixture(
+    tmp_path,
+    source,
+    expected,
+):
+    authority = tmp_path / "authority.py"
+    authority.write_text(source, encoding="utf-8")
+
+    assert expected in _development_authority_surface(authority)
+
+
 def test_general_authority_module_exposes_no_development_mcp_execution_helpers():
     authority = ROOT / "argus/authority.py"
-    tree = ast.parse(authority.read_text(encoding="utf-8"), filename=str(authority))
-    exposed = {
-        node.name
-        for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and node.name.startswith("development_mcp_")
-    }
-    assert not exposed
+    assert not _development_authority_surface(authority)
 
 
 def test_presenter_does_not_import_execution_or_persistence_authority():

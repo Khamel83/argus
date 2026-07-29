@@ -677,6 +677,88 @@ def test_direct_development_launcher_accepts_explicit_opt_in(monkeypatch):
 
 
 @pytest.mark.parametrize("standalone_value", (None, "false"))
+@pytest.mark.parametrize("injection", ("local-backend", "development-registration"))
+def test_direct_serve_mcp_rejects_injected_development_before_listener_work(
+    monkeypatch,
+    standalone_value,
+    injection,
+):
+    from argus.authority import AuthorityConfigurationError
+    from argus.mcp.http_adapter import HttpMcpAdapter
+    import argus.mcp.server as server
+
+    class GuardedLocalBackend:
+        def __getattribute__(self, name):
+            pytest.fail(f"rejected backend must not be used: {name}")
+
+    monkeypatch.delenv("ARGUS_AUTHORITY_URL", raising=False)
+    monkeypatch.setenv("ARGUS_AUTOLOAD_DOTENV", "false")
+    monkeypatch.setenv("ARGUS_ENV", "development")
+    if standalone_value is None:
+        monkeypatch.delenv("ARGUS_MCP_STANDALONE", raising=False)
+    else:
+        monkeypatch.setenv("ARGUS_MCP_STANDALONE", standalone_value)
+    monkeypatch.setattr(
+        "mcp.server.fastmcp.FastMCP",
+        lambda *_args, **_kwargs: pytest.fail(
+            "rejected injection must not construct a listener"
+        ),
+    )
+
+    if injection == "local-backend":
+        kwargs = {"backend": GuardedLocalBackend()}
+    else:
+        kwargs = {
+            "backend": object.__new__(HttpMcpAdapter),
+            "additional_registration": lambda *_args, **_kwargs: pytest.fail(
+                "rejected development registration must not run"
+            ),
+        }
+
+    with pytest.raises(AuthorityConfigurationError, match="standalone"):
+        server.serve_mcp(transport="stdio", **kwargs)
+
+
+def test_direct_serve_mcp_accepts_injected_development_with_explicit_opt_in(
+    monkeypatch,
+):
+    import argus.mcp.server as server
+
+    observed = {}
+    backend = object()
+
+    class FakeFastMCP:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def tool(self):
+            return lambda function: function
+
+        def run(self, **kwargs):
+            observed["run"] = kwargs
+
+    def register(_mcp, registered_backend, *, caller_identity):
+        observed["backend"] = registered_backend
+        observed["caller_identity"] = caller_identity
+
+    monkeypatch.delenv("ARGUS_AUTHORITY_URL", raising=False)
+    monkeypatch.setenv("ARGUS_AUTOLOAD_DOTENV", "false")
+    monkeypatch.setenv("ARGUS_ENV", "development")
+    monkeypatch.setenv("ARGUS_MCP_STANDALONE", "true")
+    monkeypatch.setattr("mcp.server.fastmcp.FastMCP", FakeFastMCP)
+
+    server.serve_mcp(
+        transport="stdio",
+        backend=backend,
+        additional_registration=register,
+    )
+
+    assert observed["backend"] is backend
+    assert callable(observed["caller_identity"])
+    assert observed["run"] == {"transport": "stdio"}
+
+
+@pytest.mark.parametrize("standalone_value", (None, "false"))
 def test_direct_development_backend_builder_rejects_without_opt_in(
     monkeypatch,
     standalone_value,

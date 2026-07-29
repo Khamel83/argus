@@ -948,6 +948,30 @@ def build_mcp_backend(environ=None):
     )
 
 
+def _require_standalone_for_injected_development(
+    backend,
+    additional_registration,
+) -> None:
+    """Reject injected local authority at the public MCP entry boundary."""
+
+    from argus.mcp.http_adapter import HttpMcpAdapter
+
+    local_backend = backend is not None and type(backend) is not HttpMcpAdapter
+    if not local_backend and additional_registration is None:
+        return
+
+    from argus.authority import (
+        AuthorityConfigurationError,
+        adapter_execution_mode,
+    )
+
+    if adapter_execution_mode() != "standalone":
+        raise AuthorityConfigurationError(
+            "Injected MCP development authority requires standalone mode via "
+            "ARGUS_MCP_STANDALONE=true"
+        )
+
+
 def serve_mcp(
     transport: str = "stdio",
     host: str = "127.0.0.1",
@@ -957,6 +981,10 @@ def serve_mcp(
     additional_registration=None,
 ):
     """Start MCP as a protocol adapter over the configured execution backend."""
+    _require_standalone_for_injected_development(
+        backend,
+        additional_registration,
+    )
     try:
         from mcp.server.fastmcp import FastMCP
     except ImportError:
