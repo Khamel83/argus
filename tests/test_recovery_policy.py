@@ -263,6 +263,7 @@ async def test_authenticated_health_detail_includes_sanitized_recovery_evidence(
     monkeypatch,
 ):
     from argus.api.routes_health import health_detail
+    from argus.api.provider_operations import ProviderApplicationService
 
     path = tmp_path / "recovery.json"
     path.write_text(
@@ -275,7 +276,8 @@ async def test_authenticated_health_detail_includes_sanitized_recovery_evidence(
     broker.health_tracker.get_all_status.return_value = {}
     broker._reachability.get_all.return_value = {}
 
-    payload = await health_detail(broker)
+    presentation = ProviderApplicationService(lambda: broker, MagicMock())
+    payload = await health_detail(presentation)
 
     recovery = payload["runtime"]["recovery"]
     assert recovery["schema_promotion_allowed"] is True

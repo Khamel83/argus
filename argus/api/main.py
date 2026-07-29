@@ -47,6 +47,8 @@ from argus.operations.accepted import (
     AcceptedOperationRegistration,
     AcceptedOperationService,
 )
+from argus.api.provider_operations import ProviderApplicationService
+from argus.api.admin_operations import AdminApplicationService
 from argus.persistence.search_ledger import (
     SearchLedgerRepository,
     create_search_ledger_repository,
@@ -763,6 +765,15 @@ def create_app(
         return current_spend_repository
 
     app.state.get_spend_repository = get_spend_repository
+    app.state.provider_presentation = ProviderApplicationService(
+        app.state.get_broker,
+        app.state.get_spend_repository,
+    )
+    app.state.admin_operations = AdminApplicationService(
+        app.state.get_search_repository,
+        app.state.get_spend_repository,
+        lambda: app.state.auth_config,
+    )
     app.state.get_workflows = _build_workflow_provider(
         app.state.get_accepted_operation_service,
     )

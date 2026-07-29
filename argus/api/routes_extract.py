@@ -5,13 +5,13 @@ Content extraction endpoint.
 from fastapi import APIRouter, Depends, Request
 
 from argus.api.presenters import LegacyHttpPresenter
+from argus.api.extraction_operations import assess_content_facts, cookie_health_facts
 from argus.api.schemas import (
     AssessContentRequest,
     AssessContentResponse,
     ExtractRequest,
     ExtractResponse,
 )
-from argus.extraction.completeness import assess_completeness
 from argus.logging import get_logger
 from argus.operations.accepted import AcceptedOperationService
 
@@ -53,12 +53,12 @@ async def assess_content(req: AssessContentRequest):
     that already have text (e.g. feed items, stored articles) and want to know
     whether to try fetching the full version.
     """
-    result = assess_completeness(req.text, req.url)
+    result = assess_content_facts(req.text, req.url)
     return AssessContentResponse(
         is_complete=result.is_complete,
         confidence=result.confidence,
         truncation_type=result.truncation_type,
-        signals=result.signals,
+        signals=list(result.signals),
         word_count=result.word_count,
         recommended_action=result.recommended_action,
     )
@@ -67,6 +67,4 @@ async def assess_content(req: AssessContentRequest):
 @router.get("/admin/cookies/health")
 async def cookie_health():
     """Get health status of all configured cookie domains."""
-    from argus.extraction.cookies import get_health_summary
-
-    return get_health_summary()
+    return cookie_health_facts().values

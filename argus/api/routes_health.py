@@ -3,16 +3,15 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from argus.broker.router import SearchBroker
-from argus.models import ProviderName
-from argus.operations.presentation import provider_display_state
+from argus.api.provider_operations import ProviderApplicationService
+from argus.api.provider_presenters import present_provider_facts
 from argus.operations.status import OperationalStatusService
 
 router = APIRouter()
 
 
-def get_broker(request: Request) -> SearchBroker:
-    return request.app.state.get_broker()
+def get_provider_presentation(request: Request) -> ProviderApplicationService:
+    return request.app.state.provider_presentation
 
 
 def get_operational_status(request: Request) -> OperationalStatusService:
@@ -72,58 +71,29 @@ async def capabilities(request: Request):
 
 @router.get("/provider-health")
 async def provider_health(
-    broker: SearchBroker = Depends(get_broker),
+    presentation: ProviderApplicationService = Depends(get_provider_presentation),
     operational: OperationalStatusService = Depends(get_operational_status),
 ):
     try:
-        providers = {
-            pname.value: broker.provider_readiness_projection(pname)
-            for pname in ProviderName
-            if pname != ProviderName.CACHE
-        }
+        return present_provider_facts(presentation.provider_health(operational))
     except Exception as exc:
         raise HTTPException(
             status_code=503,
             detail="Execution authority state unavailable",
         ) from exc
-    cached = operational.full_status().get("providers") or {}
-    for provider, evidence in cached.items():
-        if provider in providers:
-            providers[provider] = {
-                **providers[provider],
-                "operational": {
-                    "non_authoritative": True,
-                    "state": evidence.get("state", "unknown"),
-                    "observations": evidence.get("observations") or {},
-                },
-            }
-    active_states = [
-        provider_display_state(status)
-        for status in providers.values()
-        if provider_display_state(status) != "disabled"
-    ]
-    healthy = any(state in {"healthy", "degraded"} for state in active_states)
-    fully_healthy = healthy and all(state == "healthy" for state in active_states)
-    return {
-        "status": "ok" if fully_healthy else "degraded",
-        "providers": providers,
-    }
 
 
 @router.get("/budgets")
-async def caller_budgets(broker: SearchBroker = Depends(get_broker)):
+async def caller_budgets(
+    presentation: ProviderApplicationService = Depends(get_provider_presentation),
+):
     try:
-        providers = {}
-        for pname in ProviderName:
-            if pname == ProviderName.CACHE:
-                continue
-            providers[pname.value] = broker.provider_budget_projection(pname)
+        return present_provider_facts(presentation.caller_budgets())
     except Exception as exc:
         raise HTTPException(
             status_code=503,
             detail="Execution authority state unavailable",
         ) from exc
-    return {"providers": providers}
 
 
 @router.get("/health")
@@ -144,55 +114,14 @@ async def health():
 
 
 @router.get("/admin/health/detail")
-async def health_detail(broker: SearchBroker = Depends(get_broker)):
-    from argus.extraction.playwright_extractor import browser_capability_status
-    from argus.recovery.evidence import recovery_status_from_environment
-
-    provider_evidence = broker.operational_provider_evidence()
-    providers = {
-        name: dict(entry.get("status") or {})
-        for name, entry in provider_evidence.items()
-    }
-
-    for pname_str, entry in providers.items():
-        try:
-            r = (provider_evidence.get(pname_str) or {}).get("reachability")
-            if r:
-                entry["best_egress"] = r["best"]
-                entry["egress_probes"] = r["probes"]
-            else:
-                entry["best_egress"] = "local"
-                entry["egress_probes"] = {}
-        except ValueError:
-            pass
-
-    return {
-        "status": "ok",
-        "providers": providers,
-        "health_tracking": {
-            name: (provider_evidence.get(name) or {}).get("readiness", {})
-            for name in providers
-        },
-        "runtime": {
-            "browser": browser_capability_status(),
-            "recovery": recovery_status_from_environment(),
-        },
-    }
+async def health_detail(
+    presentation: ProviderApplicationService = Depends(get_provider_presentation),
+):
+    return present_provider_facts(presentation.health_detail())
 
 
 @router.get("/admin/budgets")
-async def budgets(broker: SearchBroker = Depends(get_broker)):
-    budget_info = {}
-    for pname in ProviderName:
-        budget_info[pname.value] = broker.provider_budget_projection(pname)
-
-    # Token balances for extraction services (Jina, etc.)
-    token_balances = {}
-    store = broker.budget_tracker._store
-    if store:
-        token_balances = store.get_all_token_balances()
-
-    return {
-        "budgets": budget_info,
-        "non_authoritative_operational": {"token_balances": token_balances},
-    }
+async def budgets(
+    presentation: ProviderApplicationService = Depends(get_provider_presentation),
+):
+    return present_provider_facts(presentation.admin_budgets())

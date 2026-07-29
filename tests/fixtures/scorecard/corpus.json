@@ -1,0 +1,1055 @@
+{
+  "version": "scorecard-v1",
+  "search_intents": [
+    {
+      "id": "discovery-01",
+      "mode": "discovery",
+      "intent": "canonical source",
+      "forbidden_interpretation": "mirror",
+      "required_source_characteristics": [
+        "canonical"
+      ],
+      "forbidden_patterns": [
+        "duplicate"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 1
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for discovery-01",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/discovery-01/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "discovery-02",
+      "mode": "discovery",
+      "intent": "related breadth",
+      "forbidden_interpretation": "single source",
+      "required_source_characteristics": [
+        "related"
+      ],
+      "forbidden_patterns": [
+        "duplicate"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 1
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for discovery-02",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/discovery-02/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "discovery-03",
+      "mode": "discovery",
+      "intent": "ambiguous term",
+      "forbidden_interpretation": "wrong term",
+      "required_source_characteristics": [
+        "disambiguated"
+      ],
+      "forbidden_patterns": [
+        "wrong meaning"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 1
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for discovery-03",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/discovery-03/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "discovery-04",
+      "mode": "discovery",
+      "intent": "niche topic",
+      "forbidden_interpretation": "generic",
+      "required_source_characteristics": [
+        "specialist"
+      ],
+      "forbidden_patterns": [
+        "generic"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 1
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for discovery-04",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/discovery-04/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "discovery-05",
+      "mode": "discovery",
+      "intent": "primary source",
+      "forbidden_interpretation": "secondary only",
+      "required_source_characteristics": [
+        "primary"
+      ],
+      "forbidden_patterns": [
+        "secondary only"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 1
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for discovery-05",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/discovery-05/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "discovery-06",
+      "mode": "discovery",
+      "intent": "duplicates",
+      "forbidden_interpretation": "repeated",
+      "required_source_characteristics": [
+        "deduplicated"
+      ],
+      "forbidden_patterns": [
+        "duplicate"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 1
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for discovery-06",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/discovery-06/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "grounding-01",
+      "mode": "grounding",
+      "intent": "stable fact",
+      "forbidden_interpretation": "speculation",
+      "required_source_characteristics": [
+        "authoritative"
+      ],
+      "forbidden_patterns": [
+        "unsupported"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 1
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for grounding-01",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/grounding-01/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "grounding-02",
+      "mode": "grounding",
+      "intent": "computed fact",
+      "forbidden_interpretation": "guess",
+      "required_source_characteristics": [
+        "computed"
+      ],
+      "forbidden_patterns": [
+        "guess"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 1
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for grounding-02",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/grounding-02/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "grounding-03",
+      "mode": "grounding",
+      "intent": "current fact",
+      "forbidden_interpretation": "stale",
+      "required_source_characteristics": [
+        "current"
+      ],
+      "forbidden_patterns": [
+        "stale"
+      ],
+      "freshness_window_days": 30,
+      "minimum_evidence_shape": {
+        "sources": 1
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for grounding-03",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/grounding-03/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "grounding-04",
+      "mode": "grounding",
+      "intent": "technical claim",
+      "forbidden_interpretation": "marketing",
+      "required_source_characteristics": [
+        "technical"
+      ],
+      "forbidden_patterns": [
+        "marketing"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 1
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for grounding-04",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/grounding-04/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "grounding-05",
+      "mode": "grounding",
+      "intent": "disputed claim",
+      "forbidden_interpretation": "settled",
+      "required_source_characteristics": [
+        "dispute"
+      ],
+      "forbidden_patterns": [
+        "one sided"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 1
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for grounding-05",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/grounding-05/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "grounding-06",
+      "mode": "grounding",
+      "intent": "unknown",
+      "forbidden_interpretation": "invented",
+      "required_source_characteristics": [
+        "explicit unknown"
+      ],
+      "forbidden_patterns": [
+        "invented"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 0
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for grounding-06",
+        "transport_outcome": "empty",
+        "results": []
+      }
+    },
+    {
+      "id": "recovery-01",
+      "mode": "recovery",
+      "intent": "moved canonical",
+      "forbidden_interpretation": "old",
+      "required_source_characteristics": [
+        "replacement"
+      ],
+      "forbidden_patterns": [
+        "dead"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 1
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for recovery-01",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/recovery-01/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "recovery-02",
+      "mode": "recovery",
+      "intent": "dead URL",
+      "forbidden_interpretation": "live",
+      "required_source_characteristics": [
+        "archive"
+      ],
+      "forbidden_patterns": [
+        "wrong page"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 1
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for recovery-02",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/recovery-02/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "recovery-03",
+      "mode": "recovery",
+      "intent": "renamed project",
+      "forbidden_interpretation": "unrelated",
+      "required_source_characteristics": [
+        "rename"
+      ],
+      "forbidden_patterns": [
+        "unrelated"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 1
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for recovery-03",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/recovery-03/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "recovery-04",
+      "mode": "recovery",
+      "intent": "archived content",
+      "forbidden_interpretation": "fabricated",
+      "required_source_characteristics": [
+        "archive"
+      ],
+      "forbidden_patterns": [
+        "fabricated"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 1
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for recovery-04",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/recovery-04/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "recovery-05",
+      "mode": "recovery",
+      "intent": "redirect chain",
+      "forbidden_interpretation": "loop",
+      "required_source_characteristics": [
+        "canonical"
+      ],
+      "forbidden_patterns": [
+        "loop"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 1
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for recovery-05",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/recovery-05/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "recovery-06",
+      "mode": "recovery",
+      "intent": "unrecoverable",
+      "forbidden_interpretation": "invented",
+      "required_source_characteristics": [
+        "explicit unknown"
+      ],
+      "forbidden_patterns": [
+        "invented"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 0
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for recovery-06",
+        "transport_outcome": "empty",
+        "results": []
+      }
+    },
+    {
+      "id": "research-01",
+      "mode": "research",
+      "intent": "technical",
+      "forbidden_interpretation": "single",
+      "required_source_characteristics": [
+        "technical",
+        "independent"
+      ],
+      "forbidden_patterns": [
+        "duplicate"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 3,
+        "domains": 2
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for research-01",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/research-01/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          },
+          {
+            "url": "https://fixture1.example/research-01/1",
+            "title": "Raw fixture 1",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          },
+          {
+            "url": "https://fixture0.example/research-01/2",
+            "title": "Raw fixture 2",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "research-02",
+      "mode": "research",
+      "intent": "time sensitive",
+      "forbidden_interpretation": "stale",
+      "required_source_characteristics": [
+        "current"
+      ],
+      "forbidden_patterns": [
+        "stale"
+      ],
+      "freshness_window_days": 7,
+      "minimum_evidence_shape": {
+        "sources": 3,
+        "domains": 2
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for research-02",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/research-02/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          },
+          {
+            "url": "https://fixture1.example/research-02/1",
+            "title": "Raw fixture 1",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          },
+          {
+            "url": "https://fixture0.example/research-02/2",
+            "title": "Raw fixture 2",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "research-03",
+      "mode": "research",
+      "intent": "competing claims",
+      "forbidden_interpretation": "one sided",
+      "required_source_characteristics": [
+        "independent"
+      ],
+      "forbidden_patterns": [
+        "one sided"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 3,
+        "domains": 2
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for research-03",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/research-03/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          },
+          {
+            "url": "https://fixture1.example/research-03/1",
+            "title": "Raw fixture 1",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          },
+          {
+            "url": "https://fixture0.example/research-03/2",
+            "title": "Raw fixture 2",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "research-04",
+      "mode": "research",
+      "intent": "primary secondary",
+      "forbidden_interpretation": "secondary only",
+      "required_source_characteristics": [
+        "primary",
+        "secondary"
+      ],
+      "forbidden_patterns": [
+        "secondary only"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 3,
+        "domains": 2
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for research-04",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/research-04/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          },
+          {
+            "url": "https://fixture1.example/research-04/1",
+            "title": "Raw fixture 1",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          },
+          {
+            "url": "https://fixture0.example/research-04/2",
+            "title": "Raw fixture 2",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "research-05",
+      "mode": "research",
+      "intent": "long tail",
+      "forbidden_interpretation": "generic",
+      "required_source_characteristics": [
+        "specialist"
+      ],
+      "forbidden_patterns": [
+        "generic"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 3,
+        "domains": 2
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for research-05",
+        "transport_outcome": "success",
+        "results": [
+          {
+            "url": "https://fixture0.example/research-05/0",
+            "title": "Raw fixture 0",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          },
+          {
+            "url": "https://fixture1.example/research-05/1",
+            "title": "Raw fixture 1",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          },
+          {
+            "url": "https://fixture0.example/research-05/2",
+            "title": "Raw fixture 2",
+            "snippet": "raw adapter response",
+            "egress": "hermetic",
+            "machine": "fixture-harness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "research-06",
+      "mode": "research",
+      "intent": "evidence gap",
+      "forbidden_interpretation": "invented",
+      "required_source_characteristics": [
+        "explicit unknown"
+      ],
+      "forbidden_patterns": [
+        "invented"
+      ],
+      "freshness_window_days": null,
+      "minimum_evidence_shape": {
+        "sources": 0,
+        "domains": 0
+      },
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "query": "fixture query for research-06",
+        "transport_outcome": "empty",
+        "results": []
+      }
+    }
+  ],
+  "hermetic_extractions": [
+    {
+      "id": "static",
+      "kind": "complete static article",
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "fixture": "static",
+        "content_type": "text/html",
+        "transport_outcome": "success",
+        "text": "This is a frozen raw article fixture. It ends as a complete sentence.",
+        "provenance": {
+          "egress": "hermetic",
+          "machine": "fixture-harness",
+          "source_type": "frozen_raw"
+        }
+      }
+    },
+    {
+      "id": "javascript",
+      "kind": "javascript rendered",
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "fixture": "javascript",
+        "content_type": "text/html",
+        "transport_outcome": "success",
+        "text": "This is a frozen raw article fixture. It ends as a complete sentence.",
+        "provenance": {
+          "egress": "hermetic",
+          "machine": "fixture-harness",
+          "source_type": "frozen_raw"
+        }
+      }
+    },
+    {
+      "id": "paywall",
+      "kind": "truncated paywall",
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "fixture": "paywall",
+        "content_type": "text/html",
+        "transport_outcome": "degraded",
+        "text": "This frozen raw article continues...",
+        "provenance": {
+          "egress": "hermetic",
+          "machine": "fixture-harness",
+          "source_type": "frozen_raw"
+        }
+      }
+    },
+    {
+      "id": "malformed",
+      "kind": "malformed content",
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "fixture": "malformed",
+        "content_type": "text/html",
+        "transport_outcome": "extraction_failed",
+        "text": "",
+        "provenance": {
+          "egress": "hermetic",
+          "machine": "fixture-harness",
+          "source_type": "frozen_raw"
+        }
+      }
+    },
+    {
+      "id": "redirect",
+      "kind": "redirect canonical",
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "fixture": "redirect",
+        "content_type": "text/html",
+        "transport_outcome": "success",
+        "text": "This is a frozen raw article fixture. It ends as a complete sentence.",
+        "provenance": {
+          "egress": "hermetic",
+          "machine": "fixture-harness",
+          "source_type": "frozen_raw"
+        }
+      }
+    },
+    {
+      "id": "mirror",
+      "kind": "duplicate mirror",
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "fixture": "mirror",
+        "content_type": "text/html",
+        "transport_outcome": "success",
+        "text": "This is a frozen raw article fixture. It ends as a complete sentence.",
+        "provenance": {
+          "egress": "hermetic",
+          "machine": "fixture-harness",
+          "source_type": "frozen_raw"
+        }
+      }
+    },
+    {
+      "id": "timeout",
+      "kind": "timeout total failure",
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "fixture": "timeout",
+        "content_type": "text/html",
+        "transport_outcome": "timeout",
+        "text": "",
+        "provenance": {
+          "egress": "hermetic",
+          "machine": "fixture-harness",
+          "source_type": "frozen_raw"
+        }
+      }
+    },
+    {
+      "id": "unsupported",
+      "kind": "unsupported content",
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "hermetic_input": {
+        "fixture": "unsupported",
+        "content_type": "text/html",
+        "transport_outcome": "extraction_failed",
+        "text": "",
+        "provenance": {
+          "egress": "hermetic",
+          "machine": "fixture-harness",
+          "source_type": "frozen_raw"
+        }
+      }
+    }
+  ],
+  "live_extractions": [
+    {
+      "id": "primary-docs",
+      "kind": "canonical primary documentation",
+      "synchronized": true,
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "snapshot_id": "snapshot-primary-docs-v1",
+      "snapshot_sha256": "eb33d36da592855b5796694f3ce252b91bcbc19ea06f926195e4f54065760e27",
+      "url": "https://docs.python.org/3/library/asyncio.html"
+    },
+    {
+      "id": "long-form",
+      "kind": "long form article",
+      "synchronized": true,
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "snapshot_id": "snapshot-long-form-v1",
+      "snapshot_sha256": "b1b13a12aee75c6ecc20fb910c724cdfd1e4d841add5e14d1dd4a2006727a9ad",
+      "url": "https://www.rfc-editor.org/rfc/rfc9110.html"
+    },
+    {
+      "id": "javascript-live",
+      "kind": "javascript dependent page",
+      "synchronized": true,
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "snapshot_id": "snapshot-javascript-live-v1",
+      "snapshot_sha256": "036cd5a07f8352549e40761ab737dfd322cc36903e9c0019e869305cce448f04",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API"
+    },
+    {
+      "id": "moved-live",
+      "kind": "moved archived page",
+      "synchronized": true,
+      "profiles": [
+        "free",
+        "budgeted"
+      ],
+      "snapshot_id": "snapshot-moved-live-v1",
+      "snapshot_sha256": "59d2eeb2b982a45ae87ad4e384671ed040cc17fec0751b51ada57666826841c0",
+      "url": "https://www.rfc-editor.org/rfc/rfc2616"
+    }
+  ]
+}

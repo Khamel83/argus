@@ -262,7 +262,15 @@ A baseline is not just a commit. Each immutable benchmark generation records:
 Baseline and candidate run close together to control web drift. Changing the
 corpus, evaluator, prompt, settings, topology class, or other fixed component
 starts a new benchmark generation. Results from different generations are not
-presented as one comparable score series.
+presented as one comparable score series. The sanitized configuration hash is
+itself a generation dimension, not merely an identity annotation. Baseline and
+candidate must start within 15 minutes and the synchronized comparison window
+must also finish within 15 minutes.
+
+The competitive input is closed: it must contain exactly the frozen 24 search
+ids plus four live-extraction ids, with each id appearing once under its
+declared mode. Missing, duplicate, extra, or mode-mismatched pairs invalidate
+the run before scoring.
 
 ## Evidence bundle
 
@@ -333,6 +341,58 @@ contract: `observed_at <= now < expires_at`. A missing or expired observation is
 not fresh. Each canary schedule records its interval and evidence TTL; the next
 run must occur before expiry, so “recurrently” never becomes an unbounded
 operator promise.
+
+## Hermetic implementation boundary
+
+`scripts/run-scorecard.py --lane hermetic` is the pull-request lane. It reads
+frozen raw corpus inputs and separately frozen expected observations, executes
+the raw inputs through pure production contracts and the hermetic provider
+adapter harness, evaluates both `free` and `budgeted` profiles independently,
+and writes a checksummed secret-free diagnostic bundle. All transport is
+stubbed; it has no live network, persistence, spend, deployment, or promotion
+authority.
+
+`scripts/run-scorecard.py --lane live-config` emits the secret-free interface
+for a future live run: the exact 28 cases, synchronized identity requirements,
+pinned evaluator requirements, automatic free-only policy, and immutable
+budgeted receipt fields (`schema`, `receipt_id`, `run_id`, `generation`,
+`permitted_providers`, `maximum_tier`, `call_count_cap`,
+`cost_or_credit_cap`, `one_time_credit_providers`, and `issued_at`). It does
+not search, extract, evaluate, reserve, consume a receipt, or contact an
+authority.
+
+The separately defined `.github/workflows/scorecard-live.yml` is the only
+repository workflow for weekly/manual live configuration publication. It needs
+no authority URL, token, provider credential, evaluator, receipt, or protected
+environment. Task 16/P1 is the only owner of canonical-HTTP live execution,
+both evaluator orders, provider reservation and cap enforcement, receipt
+consumption, and protected promotion/deployment. Task 15 never simulates those
+actions.
+
+The hermetic lane executes a distinct frozen raw contract for every hard gate
+and compares it with separate expected evidence. A mutation to one gate cannot
+be fanned across the others. Local production contracts directly exercise
+authentication-before-I/O, caller propagation, accepted-operation durability,
+persist-before-cache publication, cache freshness/isolation, and production
+authority isolation. Gates whose live dependency belongs to P1 use an exact
+typed raw contract with an independent evaluator rather than a copied status.
+The lane retains normalized evidence for every gate and corpus case and reads
+the same whole route/presenter inventory, including direct repository-call
+detection, as the architecture boundary tests. Bundle preparation and
+verification both
+recompute stability, blinded-pair classification, deterministic counts, exact
+sign-test value, ordered verdict, and stability dependency; serialized claims
+are never treated as authority. It writes to a private sibling staging
+directory only after
+all typed identities, synchronized generation dimensions, normalized document
+schemas, safe paths, and secret/native-payload checks pass. Verification
+requires exact agreement between the manifest file set, regular files, and
+unique canonical checksum entries, including a checksum for `manifest.json`,
+before the staged directory is atomically published. A future competitive
+bundle must include normalized baseline and candidate artifacts for all 24
+search cases and all four synchronized live extraction cases. Search
+artifacts retain normalized results and extraction artifacts retain normalized
+content; provider-native payloads remain forbidden.
 
 ## Explicit non-goals
 

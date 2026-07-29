@@ -8,200 +8,112 @@ from argus.api.schemas import (
     ProviderTestRequest,
     SpendResolutionRequest,
 )
-from argus.broker.router import SearchBroker
-from argus.broker.budgets import PROVIDER_TIERS
-from argus.broker.execution import conservative_charge_estimate
-from argus.broker.readiness import ProbeAuthorization
-from argus.models import ProviderName, SearchMode, SearchQuery, is_adapter_provider
+from argus.api.admin_operations import (
+    AdminApplicationService,
+    AdminConflictError,
+    AdminInvalidError,
+    AdminNotFoundError,
+    AdminUnauthorizedError,
+    UnknownAdminProviderError,
+)
+from argus.api.admin_presenters import present_admin_facts
+from argus.api.provider_operations import (
+    ProbeRejected,
+    ProviderApplicationService,
+    UnknownProviderError,
+)
+from argus.api.provider_presenters import present_provider_facts
 from argus.workflows import WorkflowService
 
 router = APIRouter(prefix="/admin")
 
 
-def get_broker(request: Request) -> SearchBroker:
-    return request.app.state.get_broker()
+def get_provider_presentation(request: Request) -> ProviderApplicationService:
+    return request.app.state.provider_presentation
 
 
 def get_workflows(request: Request) -> WorkflowService:
     return request.app.state.get_workflows()
 
 
-def get_spend_repository(request: Request):
-    return request.app.state.get_spend_repository()
-
-
-def get_search_repository(request: Request):
-    return request.app.state.get_search_repository()
+def get_admin_operations(request: Request) -> AdminApplicationService:
+    return request.app.state.admin_operations
 
 
 @router.get("/maya-outbox/status")
-async def maya_outbox_status(repository=Depends(get_search_repository)):
+async def maya_outbox_status(
+    operations: AdminApplicationService = Depends(get_admin_operations),
+):
     """Return bounded delivery state without payloads or capture identifiers."""
-    return repository.maya_outbox_status()
+    return present_admin_facts(operations.maya_outbox_status())
 
 
 @router.get("/maya-outbox/dead-letters")
 async def list_maya_dead_letters(
     limit: int = Query(default=50, ge=1, le=100),
-    repository=Depends(get_search_repository),
+    operations: AdminApplicationService = Depends(get_admin_operations),
 ):
-    return {"items": repository.list_maya_dead_letters(limit=limit)}
+    return present_admin_facts(operations.list_maya_dead_letters(limit=limit))
 
 
 @router.post("/maya-outbox/{intent_id}/recover")
 async def recover_maya_dead_letter(
     intent_id: str,
-    repository=Depends(get_search_repository),
+    operations: AdminApplicationService = Depends(get_admin_operations),
 ):
-    if not repository.recover_maya_dead_letter(intent_id):
+    try:
+        return present_admin_facts(operations.recover_maya_dead_letter(intent_id))
+    except AdminConflictError as exc:
         raise HTTPException(
             status_code=409,
             detail="Maya delivery is not a recoverable dead letter",
-        )
-    return {"status": "pending"}
+        ) from exc
 
 
 @router.post("/test-provider")
 async def test_provider(
     req: ProviderTestRequest,
     request: Request,
-    broker: SearchBroker = Depends(get_broker),
+    presentation: ProviderApplicationService = Depends(get_provider_presentation),
 ):
     try:
-        pname = ProviderName(req.provider)
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Unknown provider: {req.provider}")
-
-    if not req.live:
-        decision = broker.readiness_service.authorize_probe(pname, "fixture")
-        readiness = broker.provider_readiness_projection(pname)
-        return {
-            "provider": req.provider,
-            "mode": "fixture",
-            "available": decision.allowed,
-            "status": "fixture_verified" if decision.allowed else "denied",
-            "readiness": readiness,
-            "sample_results": [],
-        }
-
-    probe_query = SearchQuery(
-        query=req.query,
-        mode=SearchMode.DISCOVERY,
-        max_results=3,
-        providers=[pname],
-        caller=getattr(request.state, "caller_identity", "admin"),
-        user_visible=False,
-    )
-    authorization = ProbeAuthorization(
-        workflow="explicit_validation", provider=pname,
-        named_quota="free_provider_request" if PROVIDER_TIERS[pname] == 0 else None,
-        idempotency_key=req.idempotency_key,
-        durable_receipt=req.durable_receipt,
-        conservative_charge=(
-            conservative_charge_estimate(pname, probe_query)
-            if PROVIDER_TIERS[pname] > 0 else None
-        ),
-    )
-    kind = "no_money_quota" if PROVIDER_TIERS[pname] == 0 else "billable_search"
-    decision = broker.readiness_service.authorize_probe(pname, kind, authorization)
-    if not decision.allowed:
-        raise HTTPException(status_code=409, detail=decision.reason)
-    query = SearchQuery(
-        query=probe_query.query,
-        mode=SearchMode.DISCOVERY,
-        max_results=3,
-        providers=[pname],
-        caller=getattr(request.state, "caller_identity", "admin"),
-        user_visible=False,
-        metadata={
-            "caller_label": "http-admin-smoke",
-            "probe_receipt": req.durable_receipt,
-            "probe_idempotency_key": req.idempotency_key,
-            "probe_provider": pname.value,
-            "probe_no_fallback": True,
-            "probe_attempt_id": decision.attempt_id,
-        },
-    )
-    response = await broker.search(query)
-    trace = response.traces[0] if response.traces else None
-
-    return {
-        "provider": req.provider,
-        "mode": "live",
-        "available": trace is not None,
-        "status": trace.status if trace else "no_trace",
-        "trace": {
-            "status": trace.status if trace else "no_trace",
-            "results_count": trace.results_count if trace else 0,
-            "latency_ms": trace.latency_ms if trace else 0,
-            "error": trace.error if trace else None,
-        },
-        "sample_results": [
-            {"url": r.url, "title": r.title, "snippet": r.snippet[:100]}
-            for r in response.results[:3]
-        ],
-    }
+        if not req.live:
+            return present_provider_facts(presentation.fixture_provider(req.provider))
+        return present_provider_facts(
+            await presentation.live_provider(
+                provider=req.provider,
+                query_text=req.query,
+                caller=getattr(request.state, "caller_identity", "admin"),
+                idempotency_key=req.idempotency_key,
+                durable_receipt=req.durable_receipt,
+            )
+        )
+    except UnknownProviderError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"Unknown provider: {req.provider}"
+        ) from exc
+    except ProbeRejected as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/provider-spend")
 async def provider_spend(
-    broker: SearchBroker = Depends(get_broker),
-    repository=Depends(get_spend_repository),
+    presentation: ProviderApplicationService = Depends(get_provider_presentation),
 ):
-    providers = []
-    operational = []
-    for provider in ProviderName:
-        if not is_adapter_provider(provider):
-            continue
-        providers.append(
-            broker.provider_budget_projection(provider)
-        )
-        operational.append(repository.non_authoritative_operational_projection(
-            provider,
-            budget_limit=float(
-                broker.provider_budget_projection(provider).get("budget_limit") or 0
-            ),
-        ))
-    return {
-        "providers": providers,
-        "non_authoritative_operational": {"providers": operational},
-    }
+    return present_provider_facts(presentation.provider_spend())
 
 
 @router.get("/provider-spend/attempts")
 async def provider_spend_attempts(
     status: str | None = None,
     provider: str | None = None,
-    repository=Depends(get_spend_repository),
+    operations: AdminApplicationService = Depends(get_admin_operations),
 ):
-    provider_name = None
-    if provider is not None:
-        try:
-            provider_name = ProviderName(provider)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Unknown provider") from exc
-    attempts = repository.list_attempts(status=status, provider=provider_name)
-    return {
-        "attempts": [
-            {
-                "attempt_id": attempt.attempt_id,
-                "provider": attempt.provider,
-                "is_paid": attempt.is_paid,
-                "status": attempt.status,
-                "outcome": attempt.outcome,
-                "reserved_charge": attempt.reserved_charge,
-                "estimator_violation": attempt.estimator_violation,
-                "reservation_overrun": attempt.reservation_overrun,
-                "actual_charge": attempt.actual_charge,
-                "usage": attempt.usage,
-                "caller_identity": attempt.caller_identity,
-                "caller_label": attempt.caller_label,
-                "resolution_source": attempt.resolution_source,
-                "created_at": attempt.created_at,
-            }
-            for attempt in attempts
-        ]
-    }
+    try:
+        facts = operations.list_spend_attempts(status=status, provider=provider)
+    except UnknownAdminProviderError as exc:
+        raise HTTPException(status_code=400, detail="Unknown provider") from exc
+    return present_admin_facts(facts)
 
 
 @router.post("/provider-spend/attempts/{attempt_id}/resolve")
@@ -209,50 +121,24 @@ async def resolve_provider_spend(
     attempt_id: str,
     payload: SpendResolutionRequest,
     request: Request,
-    repository=Depends(get_spend_repository),
+    operations: AdminApplicationService = Depends(get_admin_operations),
 ):
     try:
-        existing = repository.get_attempt(attempt_id)
-        if payload.source == "provider":
-            token = request.headers.get("x-provider-reconciliation-key")
-            if not request.app.state.auth_config.matches_provider_reconciliation_token(
-                existing.provider,
-                token,
-            ):
-                raise HTTPException(
-                    status_code=401,
-                    detail="Valid provider reconciliation credential required",
-                )
-        attempt = repository.resolve(
-            attempt_id,
-            actual_charge=payload.actual_charge,
-            outcome=payload.outcome,
-            source=payload.source,
-            actor_identity=(
-                f"provider:{existing.provider}"
-                if payload.source == "provider"
-                else getattr(request.state, "caller_identity", "admin")
-            ),
-            idempotency_key=payload.idempotency_key,
-            provider_snapshot_id=payload.provider_snapshot_id,
+        facts = operations.resolve_provider_spend(
+            attempt_id=attempt_id,
+            payload=payload,
+            caller_identity=getattr(request.state, "caller_identity", "admin"),
+            reconciliation_token=request.headers.get("x-provider-reconciliation-key"),
         )
-    except KeyError as exc:
+    except AdminNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Unknown provider attempt") from exc
-    except Exception as exc:
-        from argus.persistence.provider_spend import SpendConflictError
-
-        if isinstance(exc, SpendConflictError):
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        if isinstance(exc, ValueError):
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        raise
-    return {
-        "attempt_id": attempt.attempt_id,
-        "provider": attempt.provider,
-        "status": attempt.status,
-        "outcome": attempt.outcome,
-        "actual_charge": attempt.actual_charge,
-    }
+    except AdminUnauthorizedError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except AdminConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AdminInvalidError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return present_admin_facts(facts)
 
 
 @router.post("/provider-spend/{provider}/snapshots")
@@ -260,52 +146,25 @@ async def record_provider_snapshot(
     provider: str,
     payload: ProviderSnapshotRequest,
     request: Request,
-    repository=Depends(get_spend_repository),
+    operations: AdminApplicationService = Depends(get_admin_operations),
 ):
     try:
-        provider_name = ProviderName(provider)
-    except ValueError as exc:
+        facts = operations.record_provider_snapshot(
+            provider=provider,
+            payload=payload,
+            reconciliation_token=request.headers.get("x-provider-reconciliation-key"),
+        )
+    except UnknownAdminProviderError as exc:
         raise HTTPException(status_code=400, detail="Unknown provider") from exc
-    token = request.headers.get("x-provider-reconciliation-key")
-    if not request.app.state.auth_config.matches_provider_reconciliation_token(
-        provider_name.value,
-        token,
-    ):
-        raise HTTPException(
-            status_code=401,
-            detail="Valid provider reconciliation credential required",
-        )
-    try:
-        snapshot = repository.record_provider_snapshot(
-            provider=provider_name,
-            balance=payload.balance,
-            observed_at=payload.observed_at,
-            actor_identity=f"provider:{provider_name.value}",
-            idempotency_key=payload.idempotency_key,
-            provider_reference=payload.provider_reference,
-            related_attempt_id=payload.related_attempt_id,
-            authoritative_charge=payload.authoritative_charge,
-        )
-    except KeyError as exc:
+    except AdminNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Unknown provider attempt") from exc
-    except Exception as exc:
-        from argus.persistence.provider_spend import SpendConflictError
-
-        if isinstance(exc, SpendConflictError):
-            raise HTTPException(
-                status_code=409,
-                detail="provider reference already used",
-            ) from exc
-        if isinstance(exc, ValueError):
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        raise
-    return {
-        "snapshot_id": snapshot.snapshot_id,
-        "provider": snapshot.provider,
-        "balance": snapshot.balance,
-        "source": "provider",
-        "observed_at": snapshot.observed_at,
-    }
+    except AdminUnauthorizedError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except AdminConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except AdminInvalidError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return present_admin_facts(facts)
 
 
 @router.get("/paths", response_model=PathsResponse)

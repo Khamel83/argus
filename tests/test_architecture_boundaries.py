@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from argus.scorecard.architecture import find_architecture_exceptions
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PRESENTER = ROOT / "argus/api/presenters.py"
@@ -21,19 +23,22 @@ PORTED_HTTP_MODULES = {
         "argus.extraction.cookies",
     },
 }
-LEGACY_ADAPTER_EXCEPTIONS = {
+PRESENTATION_ADAPTERS = {
     ROOT / "argus/api/routes_admin.py",
     ROOT / "argus/api/routes_dashboard.py",
     ROOT / "argus/api/routes_health.py",
 }
+LEGACY_ADAPTER_EXCEPTIONS: set[Path] = set()
 MCP_ADAPTERS = {
     ROOT / "argus/mcp/http_adapter.py",
     ROOT / "argus/mcp/server.py",
     ROOT / "argus/mcp/v2_tools.py",
 }
 MCP_ROOT = ROOT / "argus/mcp"
+SCORECARD_ROOT = ROOT / "argus/scorecard"
 EXPECTED_ADAPTERS = {
     *PORTED_HTTP_MODULES,
+    *PRESENTATION_ADAPTERS,
     *LEGACY_ADAPTER_EXCEPTIONS,
     *MCP_ADAPTERS,
     ROOT / "argus/cli/main.py",
@@ -922,6 +927,51 @@ def test_transport_adapter_inventory_has_only_closed_legacy_exceptions():
         assert not violations, f"{path.relative_to(ROOT)}: {sorted(violations)}"
 
 
+def test_scorecard_shared_architecture_inventory_is_empty():
+    assert find_architecture_exceptions(ROOT) == ()
+
+
+def test_scorecard_architecture_inventory_rejects_direct_route_repository_calls(
+    tmp_path,
+):
+    api = tmp_path / "argus" / "api"
+    api.mkdir(parents=True)
+    (api / "routes_bad.py").write_text(
+        "def route(repository):\n    return repository.list_attempts()\n",
+        encoding="utf-8",
+    )
+
+    assert find_architecture_exceptions(tmp_path) == (
+        "argus/api/routes_bad.py:direct-repository-call",
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        "def route(repo):\n    return repo.list_attempts()\n",
+        "def route(store):\n    return store.list_attempts()\n",
+        (
+            "def route(request):\n"
+            "    return request.app.state.search_repository.list_attempts()\n"
+        ),
+    ),
+)
+def test_scorecard_architecture_inventory_rejects_aliased_repository_calls(
+    tmp_path, source
+):
+    api = tmp_path / "argus" / "api"
+    api.mkdir(parents=True)
+    (api / "routes_bad.py").write_text(
+        source,
+        encoding="utf-8",
+    )
+
+    assert find_architecture_exceptions(tmp_path) == (
+        "argus/api/routes_bad.py:direct-repository-call",
+    )
+
+
 def test_workflow_modules_cannot_alias_execution_or_persistence_authority():
     workflow_forbidden = {"argus.extraction", "argus.persistence"}
     for path in ROOT.glob("argus/workflows/*.py"):
@@ -997,3 +1047,27 @@ def test_import_parser_resolves_relative_reexport_seams(tmp_path):
         "argus.extraction.extractor",
         "argus.api.routes_search",
     }
+
+
+def test_scorecard_is_diagnostic_only_and_has_no_execution_authority_imports():
+    forbidden = {
+        "argus.api",
+        "argus.broker",
+        "argus.providers",
+        "argus.extraction",
+        "argus.persistence",
+        "argus.workflows",
+        "argus.authority",
+    }
+    scorecard_modules = tuple(SCORECARD_ROOT.glob("*.py"))
+
+    assert scorecard_modules
+    for path in scorecard_modules:
+        violations = {
+            module
+            for module in _imports(path)
+            if any(
+                module == name or module.startswith(f"{name}.") for name in forbidden
+            )
+        }
+        assert not violations, f"{path.relative_to(ROOT)}: {sorted(violations)}"
