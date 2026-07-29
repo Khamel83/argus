@@ -315,3 +315,325 @@ async def test_cli_shared_reader_stops_one_byte_over_11_mib_before_parse():
     with pytest.raises(AuthorityRequestError, match="size limit"):
         await client.request_v2("/api/v2/search", payload={"query": "bounded"})
     assert stream.yielded == 2
+
+
+_RETRIEVAL_CASES = (
+    ("search", ["search", "-q", "actual"], "/api/v2/search", "/api/search"),
+    (
+        "extract",
+        ["extract", "-u", "https://example.com/article"],
+        "/api/v2/extract",
+        "/api/extract",
+    ),
+    (
+        "recover-url",
+        ["recover-url", "-u", "https://example.com/gone"],
+        "/api/v2/recover-url",
+        "/api/recover-url",
+    ),
+)
+
+
+def _capabilities(*, v2: bool) -> dict[str, object]:
+    document: dict[str, object] = {
+        "schema_version": "1.0",
+        "execution_authority": "http-api",
+        "role": "primary",
+        "capabilities": {
+            "search": True,
+            "extraction": True,
+            "recovery": True,
+            "expansion": True,
+        },
+    }
+    if v2:
+        document["http_contracts"] = [
+            {"version": "1", "base_path": "/api", "legacy": True},
+            {"version": "2.0", "base_path": "/api/v2", "legacy": False},
+        ]
+    return document
+
+
+def _invoke_real_http(monkeypatch, arguments, handler):
+    import argus.authority as authority_module
+
+    real = authority_module.HttpAuthorityClient(
+        authority_module.AuthorityClientConfig("https://authority.example", "token"),
+        transport=httpx.MockTransport(handler),
+    )
+    monkeypatch.setenv("ARGUS_ENV", "development")
+    monkeypatch.setenv("ARGUS_AUTHORITY_URL", "https://authority.example")
+    monkeypatch.setenv("ARGUS_AUTHORITY_TOKEN", "token")
+    monkeypatch.setattr(authority_module, "HttpAuthorityClient", lambda _config: real)
+    from argus.cli.main import cli
+
+    return CliRunner().invoke(cli, arguments)
+
+
+def _route_result(command: str) -> dict[str, object]:
+    if command == "extract":
+        return {
+            "url": "https://example.com/article",
+            "title": "Article",
+            "text": "Evidence text",
+            "word_count": 2,
+            "extractor": "trafilatura",
+        }
+    if command == "recover-url":
+        return {
+            "query": "https://example.com/gone",
+            "results": [{"title": "Recovered", "url": "https://archive.example"}],
+            "total_results": 1,
+        }
+    return _envelope()["result"]
+
+
+def _actual_envelope(command: str, outcome: str) -> dict[str, object]:
+    envelope = _envelope(outcome)
+    if outcome in {"success", "degraded", "empty"}:
+        envelope["result"] = _route_result(command)
+    return envelope
+
+
+def _expected_human(command: str, envelope: dict[str, object]) -> str:
+    result = envelope["result"] or {}
+    outcome = envelope["outcome"]
+    prefix = f"Outcome: {outcome}\nRequest ID: cli-request-1\n"
+    if command == "extract":
+        if not result:
+            return (
+                "Words: 0 | Extractor: unknown\n"
+                + prefix
+                + "Evidence: unavailable\n\n\n"
+            )
+        return (
+            f"Title: {result['title']}\n"
+            f"Words: {result.get('word_count', 0)} | "
+            f"Extractor: {result.get('extractor') or 'unknown'}\n"
+            + prefix
+            + "Evidence: available\n\n"
+            + (result.get("text") or "")
+            + "\n"
+        )
+    if command == "recover-url":
+        lines = [
+            "Recovery for: https://example.com/gone",
+            f"Results: {result.get('total_results', 0)}",
+            f"Outcome: {outcome}",
+            "Request ID: cli-request-1",
+            "Evidence: " + ("available" if result else "unavailable"),
+        ]
+        for item in result.get("results") or []:
+            lines.extend(
+                [f"  1. {item.get('title', '')}", f"     {item.get('url', '')}"]
+            )
+        return "\n".join(lines) + "\n"
+    lines = [
+        f"Query: {result.get('query', 'actual')}",
+        f"Mode: {result.get('mode', 'discovery')} | Results: {result.get('total_results', 0)} | Cached: {result.get('cached', False)}",
+        f"Run ID: {result.get('search_run_id')}",
+        f"Outcome: {outcome}",
+        "Request ID: cli-request-1",
+        "Evidence: " + ("available" if result else "unavailable"),
+        "",
+    ]
+    for item in result.get("results") or []:
+        lines.extend([f"  1. {item.get('title', '')}", f"     {item.get('url', '')}"])
+        if item.get("snippet"):
+            lines.append(f"     {item['snippet'][:120]}")
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+@pytest.mark.parametrize(
+    ("command", "arguments", "v2_path", "_v1_path"), _RETRIEVAL_CASES
+)
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "success",
+        "degraded",
+        "empty",
+        "invalid_request",
+        "authentication_rejected",
+        "policy_rejected",
+        "timeout",
+        "persistence_failed",
+        "providers_failed",
+        "extraction_failed",
+        "unready",
+    ],
+)
+def test_real_discovery_v2_has_exact_json_and_one_selected_post(
+    monkeypatch, command, arguments, v2_path, _v1_path, outcome
+):
+    envelope = _actual_envelope(command, outcome)
+    requests = []
+
+    def handler(request):
+        requests.append((request.method, request.url.path))
+        if request.url.path == "/api/capabilities":
+            return httpx.Response(200, json=_capabilities(v2=True))
+        assert request.url.path == v2_path
+        return httpx.Response(200, json=envelope)
+
+    result = _invoke_real_http(monkeypatch, [*arguments, "--json"], handler)
+
+    assert result.exit_code == (0 if outcome in {"success", "degraded", "empty"} else 1)
+    assert result.stdout == json.dumps(envelope, indent=2) + "\n"
+    expected_stderr = (
+        ""
+        if outcome in {"success", "degraded", "empty"}
+        else (f"Argus operation failed ({outcome}): Safe failure\n")
+    )
+    assert result.stderr == expected_stderr
+    assert requests == [("GET", "/api/capabilities"), ("POST", v2_path)]
+
+
+@pytest.mark.parametrize(
+    ("command", "arguments", "_v2_path", "v1_path"), _RETRIEVAL_CASES
+)
+def test_real_legacy_discovery_preserves_frozen_json(
+    monkeypatch, command, arguments, _v2_path, v1_path
+):
+    legacy = _route_result(command)
+    requests = []
+
+    def handler(request):
+        requests.append((request.method, request.url.path))
+        if request.url.path == "/api/capabilities":
+            return httpx.Response(200, json=_capabilities(v2=False))
+        return httpx.Response(200, json=legacy)
+
+    result = _invoke_real_http(monkeypatch, [*arguments, "--json"], handler)
+
+    expected = dict(legacy)
+    if command == "search":
+        expected["run_id"] = expected.pop("search_run_id", None)
+    elif command == "recover-url":
+        expected = {"url": "https://example.com/gone", "results": legacy["results"]}
+    assert result.exit_code == 0
+    assert result.stdout == json.dumps(expected, indent=2) + "\n"
+    assert result.stderr == ""
+    assert requests == [("GET", "/api/capabilities"), ("POST", v1_path)]
+
+
+@pytest.mark.parametrize("capability_body", [b"{", b"[]"])
+def test_real_malformed_discovery_never_posts(monkeypatch, capability_body):
+    requests = []
+    monkeypatch.setattr("argus.cli.main.secrets.token_hex", lambda _n: "deadbeef")
+
+    def handler(request):
+        requests.append((request.method, request.url.path))
+        return httpx.Response(200, content=capability_body)
+
+    result = _invoke_real_http(
+        monkeypatch, ["search", "-q", "blocked", "--json"], handler
+    )
+
+    expected = {
+        "contract_version": "2.0",
+        "outcome": "unready",
+        "request_id": "cli-deadbeef",
+        "result": None,
+        "error": {
+            "type": "urn:argus:problem:unready",
+            "title": "Unready",
+            "status": 503,
+            "detail": "Argus HTTP contract discovery is unavailable",
+            "instance": "urn:argus:request:cli-deadbeef",
+            "code": "unready",
+            "retryable": False,
+            "retry_after_seconds": None,
+        },
+    }
+    assert result.exit_code == 1
+    assert result.stdout == json.dumps(expected, indent=2) + "\n"
+    assert (
+        result.stderr
+        == "Argus operation failed (unready): Argus HTTP contract discovery is unavailable\n"
+    )
+    assert requests == [("GET", "/api/capabilities")]
+
+
+def test_real_v2_execution_exception_never_retries_v1(monkeypatch):
+    requests = []
+    monkeypatch.setattr("argus.cli.main.secrets.token_hex", lambda _n: "deadbeef")
+
+    def handler(request):
+        requests.append((request.method, request.url.path))
+        if request.url.path == "/api/capabilities":
+            return httpx.Response(200, json=_capabilities(v2=True))
+        raise httpx.ReadError("authority disconnected", request=request)
+
+    result = _invoke_real_http(monkeypatch, ["search", "-q", "once", "--json"], handler)
+
+    assert result.exit_code == 1
+    assert (
+        result.stderr
+        == "Argus operation failed (unready): Argus HTTP execution authority is unavailable\n"
+    )
+    assert requests == [("GET", "/api/capabilities"), ("POST", "/api/v2/search")]
+
+
+@pytest.mark.parametrize("offset", [-1, 0, 1])
+def test_actual_cli_enforces_the_11_mib_response_bound(monkeypatch, offset):
+    bound = 11 * 1024 * 1024
+    envelope = _actual_envelope("search", "success")
+    envelope["result"]["padding"] = ""
+    encoded = json.dumps(envelope, separators=(",", ":")).encode()
+    envelope["result"]["padding"] = "x" * (bound + offset - len(encoded))
+    encoded = json.dumps(envelope, separators=(",", ":")).encode()
+    stream = _ChunkStream([encoded[:1024], encoded[1024:]])
+    requests = []
+    monkeypatch.setattr("argus.cli.main.secrets.token_hex", lambda _n: "deadbeef")
+
+    def handler(request):
+        requests.append((request.method, request.url.path))
+        if request.url.path == "/api/capabilities":
+            return httpx.Response(200, json=_capabilities(v2=True))
+        return httpx.Response(200, stream=stream)
+
+    result = _invoke_real_http(
+        monkeypatch, ["search", "-q", "bounded", "--json"], handler
+    )
+
+    assert requests == [("GET", "/api/capabilities"), ("POST", "/api/v2/search")]
+    if offset <= 0:
+        assert result.exit_code == 0
+        assert result.stdout == json.dumps(envelope, indent=2) + "\n"
+        assert result.stderr == ""
+    else:
+        assert result.exit_code == 1
+        assert result.stdout.count("\n") > 1
+        assert (
+            result.stderr
+            == "Argus operation failed (unready): Argus HTTP execution authority is unavailable\n"
+        )
+
+
+@pytest.mark.parametrize(
+    ("command", "arguments", "_v2_path", "_v1_path"), _RETRIEVAL_CASES
+)
+@pytest.mark.parametrize(
+    "outcome", ["success", "degraded", "empty", "providers_failed"]
+)
+def test_human_v2_output_is_exact_for_retrieval_commands(
+    monkeypatch, command, arguments, _v2_path, _v1_path, outcome
+):
+    envelope = _actual_envelope(command, outcome)
+
+    def handler(request):
+        if request.url.path == "/api/capabilities":
+            return httpx.Response(200, json=_capabilities(v2=True))
+        return httpx.Response(200, json=envelope)
+
+    result = _invoke_real_http(monkeypatch, arguments, handler)
+
+    assert result.exit_code == (0 if outcome in {"success", "degraded", "empty"} else 1)
+    assert result.stdout == _expected_human(command, envelope)
+    assert result.stderr == (
+        ""
+        if outcome in {"success", "degraded", "empty"}
+        else f"Argus operation failed ({outcome}): Safe failure\n"
+    )

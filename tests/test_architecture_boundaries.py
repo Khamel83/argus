@@ -58,6 +58,19 @@ MCP_FORBIDDEN_PREFIXES = (
     "argus.authority.development_mcp_",
     "argus.development_mcp_",
 )
+CLI_MAIN = ROOT / "argus/cli/main.py"
+CLI_FORBIDDEN_PREFIXES = (
+    "argus.broker",
+    "argus.extraction",
+    "argus.persistence",
+    "argus.providers",
+    "argus.development_",
+)
+CLI_FORBIDDEN_CALLS = {
+    "create_broker",
+    "extract_url",
+    "serve_development_mcp",
+}
 DYNAMIC_IMPORT_PRIMITIVES = {
     "__import__",
     "builtins.__import__",
@@ -103,6 +116,39 @@ def _is_forbidden_mcp_reference(qualified_name: str) -> bool:
         qualified_name == forbidden or qualified_name.startswith(f"{forbidden}.")
         for forbidden in MCP_FORBIDDEN
     ) or qualified_name.startswith(MCP_FORBIDDEN_PREFIXES)
+
+
+def _cli_boundary_violations(path: Path) -> set[str]:
+    """Fail closed on direct, aliased, or string-loaded CLI authority access."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    importlib_aliases = {
+        alias.asname or alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+        if alias.name == "importlib"
+    }
+    violations = {
+        module for module in _imports(path) if module.startswith(CLI_FORBIDDEN_PREFIXES)
+    }
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if node.value.startswith(CLI_FORBIDDEN_PREFIXES):
+                violations.add(node.value)
+        if isinstance(node, ast.Call):
+            names = _qualified_names(node.func, {})
+            if names & DYNAMIC_IMPORT_PRIMITIVES:
+                violations.add("dynamic-import")
+            if (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr == "import_module"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in importlib_aliases
+            ):
+                violations.add("dynamic-import")
+            if isinstance(node.func, ast.Name) and node.func.id in CLI_FORBIDDEN_CALLS:
+                violations.add(node.func.id)
+    return violations
 
 
 def _qualified_names(
@@ -866,6 +912,10 @@ def test_transport_adapter_inventory_has_only_closed_legacy_exceptions():
                 )
             }
         assert not violations, f"{path.relative_to(ROOT)}: {sorted(violations)}"
+
+
+def test_production_cli_has_no_direct_or_dynamic_execution_authority():
+    assert not _cli_boundary_violations(CLI_MAIN)
 
 
 def test_contract_kernel_does_not_import_the_throwaway_prototype():

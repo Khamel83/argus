@@ -603,10 +603,12 @@ def test_legacy_reconciliation_reports_incomplete_or_changed_state_as_conflict(
     }
 
 
-def test_legacy_reconciliation_cli_is_dry_run_by_default(tmp_path):
+def test_legacy_reconciliation_cli_is_dry_run_by_default(tmp_path, monkeypatch):
     from click.testing import CliRunner
 
     from argus.cli.main import cli
+
+    monkeypatch.setenv("ARGUS_LEGACY_CLI_MIGRATIONS", "true")
 
     source = tmp_path / "legacy-cli.db"
     target = tmp_path / "target-cli.db"
@@ -637,11 +639,14 @@ def test_legacy_reconciliation_cli_is_dry_run_by_default(tmp_path):
 
 def test_legacy_reconciliation_cli_dry_run_does_not_mutate_existing_target(
     tmp_path,
+    monkeypatch,
 ):
     from click.testing import CliRunner
     from sqlalchemy import inspect
 
     from argus.cli.main import cli
+
+    monkeypatch.setenv("ARGUS_LEGACY_CLI_MIGRATIONS", "true")
 
     source = tmp_path / "legacy-existing-target.db"
     target = tmp_path / "existing-target.db"
