@@ -359,13 +359,23 @@ def _capabilities(*, v2: bool) -> dict[str, object]:
 def _invoke_real_http(monkeypatch, arguments, handler):
     import argus.authority as authority_module
 
+    def authenticated_handler(request):
+        has_configured_bearer = (
+            request.headers.get("Authorization") == "Bearer test-authority-token"
+        )
+        assert has_configured_bearer
+        return handler(request)
+
     real = authority_module.HttpAuthorityClient(
-        authority_module.AuthorityClientConfig("https://authority.example", "token"),
-        transport=httpx.MockTransport(handler),
+        authority_module.AuthorityClientConfig(
+            "https://authority.example",
+            "test-authority-token",
+        ),
+        transport=httpx.MockTransport(authenticated_handler),
     )
     monkeypatch.setenv("ARGUS_ENV", "development")
     monkeypatch.setenv("ARGUS_AUTHORITY_URL", "https://authority.example")
-    monkeypatch.setenv("ARGUS_AUTHORITY_TOKEN", "token")
+    monkeypatch.setenv("ARGUS_AUTHORITY_TOKEN", "test-authority-token")
     monkeypatch.setattr(authority_module, "HttpAuthorityClient", lambda _config: real)
     from argus.cli.main import cli
 
@@ -650,18 +660,27 @@ def test_cli_passes_no_deployment_id_and_discovers_on_each_invocation(monkeypatc
     )
 
     def handler(request):
-        requests.append((request.method, request.url.path))
+        requests.append(
+            (
+                request.method,
+                request.url.path,
+                request.headers.get("Authorization") == "Bearer test-authority-token",
+            )
+        )
         if request.url.path == "/api/capabilities":
             return httpx.Response(200, json=_capabilities(v2=True))
         return httpx.Response(200, json=_actual_envelope("search", "success"))
 
     real = authority_module.HttpAuthorityClient(
-        authority_module.AuthorityClientConfig("https://authority.example", "token"),
+        authority_module.AuthorityClientConfig(
+            "https://authority.example",
+            "test-authority-token",
+        ),
         transport=httpx.MockTransport(handler),
     )
     monkeypatch.setenv("ARGUS_ENV", "development")
     monkeypatch.setenv("ARGUS_AUTHORITY_URL", "https://authority.example")
-    monkeypatch.setenv("ARGUS_AUTHORITY_TOKEN", "token")
+    monkeypatch.setenv("ARGUS_AUTHORITY_TOKEN", "test-authority-token")
     monkeypatch.setattr(authority_module, "HttpAuthorityClient", lambda _config: real)
     from argus.cli.main import cli
 
@@ -671,10 +690,10 @@ def test_cli_passes_no_deployment_id_and_discovers_on_each_invocation(monkeypatc
 
     assert deployment_ids == [None, None]
     assert requests == [
-        ("GET", "/api/capabilities"),
-        ("POST", "/api/v2/search"),
-        ("GET", "/api/capabilities"),
-        ("POST", "/api/v2/search"),
+        ("GET", "/api/capabilities", True),
+        ("POST", "/api/v2/search", True),
+        ("GET", "/api/capabilities", True),
+        ("POST", "/api/v2/search", True),
     ]
 
 
@@ -706,11 +725,24 @@ def test_actual_cli_enforces_the_11_mib_response_bound(monkeypatch, offset):
         assert result.stdout == json.dumps(envelope, indent=2) + "\n"
         assert result.stderr == ""
     else:
+        expected = {
+            "contract_version": "2.0",
+            "outcome": "unready",
+            "request_id": "cli-deadbeef",
+            "result": None,
+            "error": {
+                "type": "urn:argus:problem:unready",
+                "title": "Unready",
+                "status": 503,
+                "detail": "Argus HTTP execution authority is unavailable",
+                "instance": "urn:argus:request:cli-deadbeef",
+                "code": "unready",
+                "retryable": False,
+                "retry_after_seconds": None,
+            },
+        }
         assert result.exit_code == 1
-        decoded = json.loads(result.stdout)
-        assert decoded["contract_version"] == "2.0"
-        assert decoded["outcome"] == "unready"
-        assert result.stdout == json.dumps(decoded, indent=2) + "\n"
+        assert result.stdout == json.dumps(expected, indent=2) + "\n"
         assert (
             result.stderr
             == "Argus operation failed (unready): Argus HTTP execution authority is unavailable\n"

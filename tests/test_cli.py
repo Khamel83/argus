@@ -1,5 +1,6 @@
 import json
 
+import click
 from click.testing import CliRunner
 
 
@@ -271,3 +272,264 @@ def test_provider_smoke_cli_marks_query_operational_only(monkeypatch):
     assert result.exit_code == 0, result.output
     assert seen["provider"] == ProviderName.DUCKDUCKGO
     assert "Fixture: verified" in result.output
+
+
+def test_standalone_recover_url_dispatches_exactly(monkeypatch):
+    from argus import standalone_cli
+    from argus.cli import main as cli_main
+
+    calls = []
+
+    def fake_recover_url(**kwargs):
+        calls.append(kwargs)
+        click.echo("standalone recovery")
+
+    monkeypatch.setattr(cli_main, "_http_authority_client", lambda: None)
+    monkeypatch.setattr(standalone_cli, "recover_url", fake_recover_url)
+
+    result = CliRunner().invoke(
+        cli_main.cli,
+        [
+            "recover-url",
+            "--url",
+            "https://example.com/gone",
+            "--title",
+            "Lost",
+            "--domain",
+            "example.com",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "standalone recovery\n"
+    assert result.stderr == ""
+    assert calls == [
+        {
+            "url": "https://example.com/gone",
+            "title": "Lost",
+            "domain": "example.com",
+            "as_json": True,
+        }
+    ]
+
+
+def test_standalone_balance_commands_dispatch_exactly(monkeypatch):
+    from argus import standalone_cli
+    from argus.cli import main as cli_main
+
+    calls = []
+
+    def fake_gate():
+        calls.append(("gate",))
+
+    def fake_check():
+        calls.append(("check",))
+        click.echo("checked balances")
+
+    def fake_set_balance(**kwargs):
+        calls.append(("set", kwargs))
+        click.echo("set balance")
+
+    monkeypatch.setenv("ARGUS_ENV", "development")
+    monkeypatch.setattr(standalone_cli, "require_nonproduction", fake_gate)
+    monkeypatch.setattr(standalone_cli, "check_balances", fake_check)
+    monkeypatch.setattr(standalone_cli, "set_balance", fake_set_balance)
+
+    check = CliRunner().invoke(cli_main.cli, ["check-balances"])
+    update = CliRunner().invoke(
+        cli_main.cli,
+        ["set-balance", "--service", "jina", "--balance", "1250"],
+    )
+
+    assert check.exit_code == 0
+    assert check.stdout == "checked balances\n"
+    assert check.stderr == ""
+    assert update.exit_code == 0
+    assert update.stdout == "set balance\n"
+    assert update.stderr == ""
+    assert calls == [
+        ("gate",),
+        ("check",),
+        ("gate",),
+        ("set", {"service": "jina", "balance": 1250.0}),
+    ]
+
+
+def test_standalone_balance_command_is_gated_in_production(monkeypatch):
+    from argus import standalone_cli
+    from argus.cli import main as cli_main
+
+    dispatched = False
+
+    def forbidden_dispatch():
+        nonlocal dispatched
+        dispatched = True
+
+    monkeypatch.setenv("ARGUS_ENV", "production")
+    monkeypatch.setattr(standalone_cli, "check_balances", forbidden_dispatch)
+
+    result = CliRunner().invoke(cli_main.cli, ["check-balances"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == (
+        "Error: Standalone CLI execution is unavailable in production\n"
+    )
+    assert dispatched is False
+
+
+def test_standalone_corpus_import_dispatches_exactly(tmp_path, monkeypatch):
+    from argus import standalone_cli
+    from argus.cli import main as cli_main
+
+    calls = []
+    source = tmp_path / "legacy-docs"
+    source.mkdir()
+
+    def fake_gate():
+        calls.append(("gate",))
+
+    def fake_import(**kwargs):
+        calls.append(("import", kwargs))
+        click.echo("imported corpus")
+
+    monkeypatch.setenv("ARGUS_ENV", "development")
+    monkeypatch.setattr(standalone_cli, "require_nonproduction", fake_gate)
+    monkeypatch.setattr(standalone_cli, "import_docs_cache", fake_import)
+
+    result = CliRunner().invoke(
+        cli_main.cli,
+        ["corpus", "import-docs-cache", "--source", str(source), "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "imported corpus\n"
+    assert result.stderr == ""
+    assert calls == [
+        ("gate",),
+        ("import", {"source": str(source), "as_json": True}),
+    ]
+
+
+def test_standalone_cookie_commands_dispatch_exactly(tmp_path, monkeypatch):
+    from argus import standalone_cli
+    from argus.cli import main as cli_main
+
+    calls = []
+    cookie_file = tmp_path / "cookies.json"
+    cookie_file.write_text("[]", encoding="utf-8")
+
+    def fake_gate():
+        calls.append(("gate",))
+
+    def fake_import(**kwargs):
+        calls.append(("import", kwargs))
+        click.echo("imported cookies")
+
+    def fake_health():
+        calls.append(("health",))
+        click.echo("cookie health")
+
+    monkeypatch.setenv("ARGUS_ENV", "development")
+    monkeypatch.setattr(standalone_cli, "require_nonproduction", fake_gate)
+    monkeypatch.setattr(standalone_cli, "cookies_import", fake_import)
+    monkeypatch.setattr(standalone_cli, "cookies_health", fake_health)
+
+    imported = CliRunner().invoke(
+        cli_main.cli,
+        [
+            "cookies",
+            "import",
+            "--domain",
+            "example.com",
+            "--file",
+            str(cookie_file),
+        ],
+    )
+    health = CliRunner().invoke(cli_main.cli, ["cookies", "health"])
+
+    assert imported.exit_code == 0
+    assert imported.stdout == "imported cookies\n"
+    assert imported.stderr == ""
+    assert health.exit_code == 0
+    assert health.stdout == "cookie health\n"
+    assert health.stderr == ""
+    assert calls == [
+        ("gate",),
+        (
+            "import",
+            {"domain": "example.com", "filepath": str(cookie_file)},
+        ),
+        ("gate",),
+        ("health",),
+    ]
+
+
+def test_mcp_serve_dispatches_to_explicit_standalone_launcher(monkeypatch):
+    from argus import standalone_cli
+    from argus.cli import main as cli_main
+
+    calls = []
+
+    def fake_serve_mcp(**kwargs):
+        calls.append(kwargs)
+        click.echo("standalone mcp")
+
+    monkeypatch.setenv("ARGUS_ENV", "development")
+    monkeypatch.setenv("ARGUS_MCP_STANDALONE", "true")
+    monkeypatch.delenv("ARGUS_AUTHORITY_URL", raising=False)
+    monkeypatch.setattr(standalone_cli, "serve_mcp", fake_serve_mcp)
+
+    result = CliRunner().invoke(
+        cli_main.cli,
+        [
+            "mcp",
+            "serve",
+            "--transport",
+            "streamable-http",
+            "--host",
+            "127.0.0.2",
+            "--port",
+            "9001",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "standalone mcp\n"
+    assert result.stderr == ""
+    assert calls == [
+        {
+            "transport": "streamable-http",
+            "host": "127.0.0.2",
+            "port": 9001,
+        }
+    ]
+
+
+def test_mcp_serve_standalone_launcher_is_gated_in_production(monkeypatch):
+    from argus import standalone_cli
+    from argus.cli import main as cli_main
+
+    calls = []
+
+    def forbidden_standalone(**kwargs):
+        calls.append(("standalone", kwargs))
+
+    monkeypatch.setenv("ARGUS_ENV", "production")
+    monkeypatch.setenv("ARGUS_MCP_STANDALONE", "true")
+    monkeypatch.delenv("ARGUS_AUTHORITY_URL", raising=False)
+    monkeypatch.delenv("ARGUS_AUTHORITY_TOKEN", raising=False)
+    monkeypatch.setenv("ARGUS_AUTOLOAD_DOTENV", "false")
+    monkeypatch.setattr(standalone_cli, "serve_mcp", forbidden_standalone)
+
+    result = CliRunner().invoke(cli_main.cli, ["mcp", "serve"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert str(result.exception) == (
+        "MCP requires ARGUS_AUTHORITY_URL and authority authentication; "
+        "standalone development must use the external development MCP launcher"
+    )
+    assert calls == []
