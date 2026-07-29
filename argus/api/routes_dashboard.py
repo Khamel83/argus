@@ -19,9 +19,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from argus.api import usage as usage_queries
-from argus.broker.budgets import PROVIDER_TIERS
-from argus.broker.router import SearchBroker
-from argus.models import ProviderName
+from argus.operations.provider_presentation import ProviderPresentationService
 
 router = APIRouter()
 
@@ -54,38 +52,8 @@ def _check_auth(request: Request) -> bool:
     return auth.matches_admin_token(cookie_val)
 
 
-def _get_broker(request: Request) -> SearchBroker:
-    return request.app.state.get_broker()
-
-
-def _build_budget_state(broker: SearchBroker) -> list[dict]:
-    """Build budget cards solely from the readiness authority projection."""
-    rows = []
-    for pname in ProviderName:
-        projection = broker.provider_budget_projection(pname)
-        budget = projection.get("budget_limit")
-        if not isinstance(budget, (int, float)) or budget <= 0:
-            continue
-        remaining = projection.get("remaining")
-        used = (
-            max(0.0, budget - remaining)
-            if isinstance(remaining, (int, float)) else 0.0
-        )
-        pct_used = min(100.0, (used / budget) * 100.0)
-        status = str(projection.get("state", "unknown"))
-
-        rows.append({
-            "provider": pname.value,
-            "tier": PROVIDER_TIERS.get(pname, 99),
-            "budget": int(budget),
-            "used": int(used),
-            "remaining": int(remaining) if isinstance(remaining, (int, float)) else None,
-            "used_today": 0,
-            "pct_used": round(pct_used, 1),
-            "status": status,
-        })
-    rows.sort(key=lambda r: (r["status"] != "exhausted", r["status"] != "over_pace", r["tier"]))
-    return rows
+def _get_presentation(request: Request) -> ProviderPresentationService:
+    return request.app.state.provider_presentation
 
 
 def _build_chart_data(daily_rows: list[dict]) -> dict:
@@ -100,16 +68,24 @@ def _build_chart_data(daily_rows: list[dict]) -> dict:
         by_machine[r["machine"]][r["day"]] = r["count"]
 
     palette = [
-        "#60a5fa", "#34d399", "#fbbf24", "#f87171",
-        "#a78bfa", "#fb7185", "#22d3ee", "#a3e635",
+        "#60a5fa",
+        "#34d399",
+        "#fbbf24",
+        "#f87171",
+        "#a78bfa",
+        "#fb7185",
+        "#22d3ee",
+        "#a3e635",
     ]
     datasets = []
     for i, m in enumerate(machines):
-        datasets.append({
-            "label": m,
-            "data": [by_machine[m].get(d, 0) for d in days],
-            "backgroundColor": palette[i % len(palette)],
-        })
+        datasets.append(
+            {
+                "label": m,
+                "data": [by_machine[m].get(d, 0) for d in days],
+                "backgroundColor": palette[i % len(palette)],
+            }
+        )
     return {"labels": days, "datasets": datasets}
 
 
@@ -156,8 +132,7 @@ async def dashboard(request: Request):
     if not _check_auth(request):
         return RedirectResponse(f"{ROOT_PATH}/dashboard/login", status_code=303)
 
-    broker = _get_broker(request)
-    budget_state = _build_budget_state(broker)
+    budget_state = _get_presentation(request).budget_state()
     daily = usage_queries.get_daily_query_counts(days=30)
     machines = usage_queries.get_machine_summary(days=30)
     provider_activity = usage_queries.get_provider_activity(days=7)
@@ -168,6 +143,7 @@ async def dashboard(request: Request):
     over_pace = [b for b in budget_state if b["status"] == "over_pace"]
 
     from argus.config import get_config
+
     cfg = get_config()
 
     return templates.TemplateResponse(
@@ -191,8 +167,7 @@ async def dashboard(request: Request):
 async def budget_fragment(request: Request):
     if not _check_auth(request):
         return Response(status_code=401)
-    broker = _get_broker(request)
-    budget_state = _build_budget_state(broker)
+    budget_state = _get_presentation(request).budget_state()
     exhausted = [b for b in budget_state if b["status"] == "exhausted"]
     over_pace = [b for b in budget_state if b["status"] == "over_pace"]
     return templates.TemplateResponse(

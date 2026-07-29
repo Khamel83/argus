@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -24,20 +25,24 @@ def _stable_profile() -> dict[str, dict[str, object]]:
     }
 
 
-def _pairs(
-    outcome: str,
-    *,
-    count: int = 28,
-    mode: str = "research",
-) -> list[dict[str, str]]:
+def _canonical_pairs(default: str = "tie") -> list[dict[str, str]]:
+    corpus = load_corpus(FIXTURES / "corpus.json")
     return [
         {
-            "pair_id": f"pair-{number:02d}",
-            "mode": mode,
-            "forward": outcome,
-            "reverse": outcome,
+            "pair_id": entry["id"],
+            "mode": entry["mode"],
+            "forward": default,
+            "reverse": default,
         }
-        for number in range(count)
+        for entry in corpus["search_intents"]
+    ] + [
+        {
+            "pair_id": entry["id"],
+            "mode": "extraction",
+            "forward": default,
+            "reverse": default,
+        }
+        for entry in corpus["live_extractions"]
     ]
 
 
@@ -61,7 +66,41 @@ def test_corpus_rejects_an_intent_without_its_evidence_contract():
     corpus = json.loads((FIXTURES / "corpus.json").read_text())
     del corpus["search_intents"][0]["minimum_evidence_shape"]
 
-    with pytest.raises(ValueError, match="minimum_evidence_shape"):
+    with pytest.raises(ValueError, match="exact keys"):
+        validate_corpus(corpus)
+
+
+@pytest.mark.parametrize(
+    "mutation, message",
+    (
+        (lambda corpus: corpus.update({"unexpected": True}), "exact keys"),
+        (
+            lambda corpus: corpus["search_intents"][0].update({"unexpected": True}),
+            "exact keys",
+        ),
+        (
+            lambda corpus: corpus["search_intents"][0].update(
+                {"profiles": ["free", "free"]}
+            ),
+            "profiles",
+        ),
+        (
+            lambda corpus: corpus["search_intents"][0]["minimum_evidence_shape"].update(
+                {"sources": True}
+            ),
+            "evidence",
+        ),
+        (
+            lambda corpus: corpus["live_extractions"][0].pop("snapshot_sha256", None),
+            "exact keys",
+        ),
+    ),
+)
+def test_corpus_rejects_noncanonical_shapes(mutation, message):
+    corpus = json.loads((FIXTURES / "corpus.json").read_text())
+    mutation(corpus)
+
+    with pytest.raises(ValueError, match=message):
         validate_corpus(corpus)
 
 
@@ -100,23 +139,16 @@ def test_competitive_applies_catastrophic_and_mode_regression_before_statistics(
         architecture_exceptions=(),
     )
 
-    catastrophic = evaluate_competitive(
-        stable,
-        _pairs("candidate_win")
-        + [
-            {
-                "pair_id": "catastrophic",
-                "mode": "research",
-                "forward": "catastrophic_regression",
-                "reverse": "catastrophic_regression",
-            }
-        ],
-    )
-    mode_loss = evaluate_competitive(
-        stable,
-        _pairs("candidate_win", count=24)
-        + _pairs("baseline_win", count=4, mode="grounding"),
-    )
+    catastrophic_pairs = _canonical_pairs("candidate_win")
+    catastrophic_pairs[-1]["forward"] = "catastrophic_regression"
+    catastrophic_pairs[-1]["reverse"] = "catastrophic_regression"
+    catastrophic = evaluate_competitive(stable, catastrophic_pairs)
+    mode_loss_pairs = _canonical_pairs()
+    for pair in mode_loss_pairs:
+        if pair["mode"] == "grounding":
+            pair["forward"] = "baseline_win"
+            pair["reverse"] = "baseline_win"
+    mode_loss = evaluate_competitive(stable, mode_loss_pairs)
 
     assert catastrophic.verdict == "not_competitive"
     assert mode_loss.verdict == "not_competitive"
@@ -128,10 +160,12 @@ def test_competitive_requires_consistency_and_decisive_pairs():
         architecture_exceptions=(),
     )
 
-    unavailable = evaluate_competitive(
-        stable, _pairs("unavailable", count=9) + _pairs("candidate_win", count=19)
-    )
-    tied = evaluate_competitive(stable, _pairs("tie", count=20))
+    unavailable_pairs = _canonical_pairs("candidate_win")
+    for pair in unavailable_pairs[:9]:
+        pair["forward"] = "unavailable"
+        pair["reverse"] = "unavailable"
+    unavailable = evaluate_competitive(stable, unavailable_pairs)
+    tied = evaluate_competitive(stable, _canonical_pairs("tie"))
 
     assert unavailable.verdict == "inconclusive"
     assert unavailable.consistent_pairs == 19
@@ -143,7 +177,10 @@ def test_competitive_uses_exact_one_sided_sign_test_and_ignores_speed_and_spend(
         {"free": _stable_profile(), "budgeted": _stable_profile()},
         architecture_exceptions=(),
     )
-    pairs = _pairs("candidate_win", count=8) + _pairs("tie", count=20)
+    pairs = _canonical_pairs("tie")
+    for pair in pairs[:8]:
+        pair["forward"] = "candidate_win"
+        pair["reverse"] = "candidate_win"
     for pair in pairs:
         pair["latency_ms"] = "1"
         pair["cost"] = "999999"
@@ -153,6 +190,107 @@ def test_competitive_uses_exact_one_sided_sign_test_and_ignores_speed_and_spend(
     assert verdict.verdict == "competitive"
     assert verdict.candidate_wins == 8
     assert verdict.p_value < 0.05
+
+
+def test_competitive_stability_rule_precedes_hostile_pair_parsing():
+    unstable = evaluate_stability(
+        {"free": {}, "budgeted": {}},
+        architecture_exceptions=("argus/api/routes_dashboard.py",),
+    )
+
+    verdict = evaluate_competitive(
+        unstable,
+        [{"pair_id": ["hostile"], "mode": {"bad": True}, "forward": [], "reverse": {}}],
+    )
+
+    assert verdict.verdict == "unstable"
+    assert verdict.pairs == ()
+
+
+def test_competitive_normalizes_missing_duplicate_unknown_and_malformed_cases():
+    stable = evaluate_stability(
+        {"free": _stable_profile(), "budgeted": _stable_profile()},
+        architecture_exceptions=(),
+    )
+    corpus = load_corpus(FIXTURES / "corpus.json")
+    canonical = [
+        {
+            "pair_id": entry["id"],
+            "mode": entry["mode"],
+            "forward": "tie",
+            "reverse": "tie",
+        }
+        for entry in corpus["search_intents"]
+    ] + [
+        {
+            "pair_id": entry["id"],
+            "mode": "extraction",
+            "forward": "tie",
+            "reverse": "tie",
+        }
+        for entry in corpus["live_extractions"]
+    ]
+    missing_id = canonical.pop()["pair_id"]
+    canonical.append(dict(canonical[0]))
+    canonical.append(
+        {
+            "pair_id": "unknown-case",
+            "mode": "unknown-mode",
+            "forward": ["not-hashable"],
+            "reverse": {"native": "shape"},
+        }
+    )
+
+    verdict = evaluate_competitive(stable, canonical)
+
+    by_id = {pair.pair_id: pair for pair in verdict.pairs}
+    assert by_id[missing_id].classification == "unavailable"
+    assert by_id[canonical[0]["pair_id"]].classification == "malformed"
+    assert by_id["unknown-case"].classification == "malformed"
+    assert verdict.verdict == "inconclusive"
+
+
+@pytest.mark.parametrize(
+    ("candidate_wins", "baseline_wins", "expected"),
+    (
+        (7, 0, "inconclusive"),
+        (8, 0, "competitive"),
+        (0, 8, "not_competitive"),
+        (11, 5, "inconclusive"),
+        (13, 3, "competitive"),
+    ),
+)
+def test_competitive_sign_test_boundaries_and_reverse_direction(
+    candidate_wins, baseline_wins, expected
+):
+    stable = evaluate_stability(
+        {"free": _stable_profile(), "budgeted": _stable_profile()},
+        architecture_exceptions=(),
+    )
+    pairs = _canonical_pairs("tie")
+    extraction_pairs = [pair for pair in pairs if pair["mode"] == "extraction"]
+    search_pairs = [pair for pair in pairs if pair["mode"] != "extraction"]
+    for pair in search_pairs[:candidate_wins]:
+        pair["forward"] = "candidate_win"
+        pair["reverse"] = "candidate_win"
+    remaining_candidate = max(0, candidate_wins - len(search_pairs))
+    for pair in extraction_pairs[:remaining_candidate]:
+        pair["forward"] = "candidate_win"
+        pair["reverse"] = "candidate_win"
+    baseline_targets = extraction_pairs[:baseline_wins]
+    if baseline_wins > len(baseline_targets):
+        baseline_targets += search_pairs[
+            candidate_wins : candidate_wins + baseline_wins - len(baseline_targets)
+        ]
+    for pair in baseline_targets:
+        pair["forward"] = "baseline_win"
+        pair["reverse"] = "baseline_win"
+
+    verdict = evaluate_competitive(stable, pairs)
+
+    assert verdict.verdict == expected
+    assert verdict.candidate_wins == candidate_wins
+    assert verdict.baseline_wins == baseline_wins
 
 
 @pytest.mark.parametrize(
@@ -173,10 +311,17 @@ def test_paired_evaluator_fixture_classification(fixture_name, expected):
         architecture_exceptions=(),
     )
     pair = json.loads((FIXTURES / "evaluator" / fixture_name).read_text())
+    pair["pair_id"] = "discovery-01"
+    pair["mode"] = "discovery"
 
     verdict = evaluate_competitive(stable, [pair])
 
-    assert verdict.pairs[0].classification == expected
+    assert (
+        next(
+            item for item in verdict.pairs if item.pair_id == "discovery-01"
+        ).classification
+        == expected
+    )
 
 
 def test_hermetic_runner_writes_a_verified_bundle_without_live_execution(tmp_path):
@@ -193,11 +338,54 @@ def test_hermetic_runner_writes_a_verified_bundle_without_live_execution(tmp_pat
         text=True,
         capture_output=True,
         check=False,
+        env={
+            **os.environ,
+            "ARGUS_AUTHORITY_URL": "https://must-not-be-called.invalid",
+            "ARGUS_AUTHORITY_TOKEN": "__ARGUS_SECRET_SENTINEL__",
+            "ARGUS_AUTOLOAD_DOTENV": "false",
+        },
     )
 
     assert result.returncode == 0, result.stderr
     assert "stable" in result.stdout
     assert (tmp_path / "scorecard" / "checksums.sha256").is_file()
+
+
+def test_hermetic_runner_fails_for_broken_fixtures_before_live_execution(tmp_path):
+    broken = tmp_path / "fixtures"
+    broken.mkdir()
+    corpus = json.loads((FIXTURES / "corpus.json").read_text())
+    corpus["search_intents"][0]["expected_normalized_evidence"]["outcome"] = "wrong"
+    (broken / "corpus.json").write_text(json.dumps(corpus), encoding="utf-8")
+    (broken / "stability-evidence.json").write_bytes(
+        (FIXTURES / "stability-evidence.json").read_bytes()
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run-scorecard.py",
+            "--lane",
+            "hermetic",
+            "--fixtures-root",
+            str(broken),
+            "--output",
+            str(tmp_path / "broken-bundle"),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+        env={
+            "PATH": "",
+            "ARGUS_AUTHORITY_URL": "https://must-not-be-called.invalid",
+            "ARGUS_API_KEY": "__ARGUS_SECRET_SENTINEL__",
+        },
+    )
+
+    assert result.returncode != 0
+    assert "fixture" in result.stderr.lower()
+    assert not (tmp_path / "broken-bundle").exists()
 
 
 def test_ci_runs_only_the_hermetic_lane_and_publishes_its_bundle():
@@ -206,3 +394,101 @@ def test_ci_runs_only_the_hermetic_lane_and_publishes_its_bundle():
     assert "scripts/run-scorecard.py --lane hermetic" in workflow
     assert "scorecard-hermetic" in workflow
     assert "--lane live" not in workflow
+
+
+def test_live_workflow_is_free_only_on_schedule_and_budgeted_is_receipt_gated():
+    workflow = (ROOT / ".github" / "workflows" / "scorecard-live.yml").read_text()
+
+    assert "schedule:" in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "canonical_http" in workflow
+    assert "scheduled-free" in workflow
+    assert "budgeted" in workflow
+    assert "scorecard-budgeted" in workflow
+    receipt = workflow.index("validate-scorecard-authorization.py")
+    reservation = workflow.index("reserve-budget")
+    assert receipt < reservation
+    assert "diagnostic-only" in workflow
+
+
+def test_budgeted_authorization_receipt_is_exact_digest_bound_and_single_use(tmp_path):
+    receipt = {
+        "schema": "scorecard-budget-authorization-v1",
+        "receipt_id": "receipt-001",
+        "run_id": "run-001",
+        "generation": "a" * 64,
+        "permitted_providers": ["brave"],
+        "maximum_tier": 1,
+        "call_count_cap": 28,
+        "cost_or_credit_cap": 1000,
+        "one_time_credit_providers": [],
+        "issued_at": "2026-07-29T00:00:00Z",
+    }
+    receipt_path = tmp_path / "receipt.json"
+    encoded = json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n"
+    receipt_path.write_text(encoded)
+    digest = __import__("hashlib").sha256(encoded.encode()).hexdigest()
+    command = [
+        sys.executable,
+        "scripts/validate-scorecard-authorization.py",
+        "--receipt",
+        str(receipt_path),
+        "--expected-sha256",
+        digest,
+        "--run-id",
+        "run-001",
+        "--generation",
+        "a" * 64,
+        "--consumption-dir",
+        str(tmp_path / "consumed"),
+    ]
+
+    first = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
+    reused = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
+
+    assert first.returncode == 0, first.stderr
+    assert reused.returncode != 0
+    assert "already consumed" in reused.stderr
+
+
+def test_budgeted_authorization_fails_closed_before_consumption(tmp_path):
+    receipt = {
+        "schema": "scorecard-budget-authorization-v1",
+        "receipt_id": "receipt-002",
+        "run_id": "wrong-run",
+        "generation": "b" * 64,
+        "permitted_providers": ["serper"],
+        "maximum_tier": 3,
+        "call_count_cap": 1,
+        "cost_or_credit_cap": 1,
+        "one_time_credit_providers": [],
+        "issued_at": "2026-07-29T00:00:00Z",
+    }
+    receipt_path = tmp_path / "receipt.json"
+    encoded = json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n"
+    receipt_path.write_text(encoded)
+    digest = __import__("hashlib").sha256(encoded.encode()).hexdigest()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/validate-scorecard-authorization.py",
+            "--receipt",
+            str(receipt_path),
+            "--expected-sha256",
+            digest,
+            "--run-id",
+            "run-002",
+            "--generation",
+            "b" * 64,
+            "--consumption-dir",
+            str(tmp_path / "consumed"),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode != 0
+    assert "run id" in result.stderr or "one-time" in result.stderr
+    assert not (tmp_path / "consumed").exists()

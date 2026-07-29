@@ -8,18 +8,18 @@ from argus.api.schemas import (
     ProviderTestRequest,
     SpendResolutionRequest,
 )
-from argus.broker.router import SearchBroker
-from argus.broker.budgets import PROVIDER_TIERS
-from argus.broker.execution import conservative_charge_estimate
-from argus.broker.readiness import ProbeAuthorization
-from argus.models import ProviderName, SearchMode, SearchQuery, is_adapter_provider
+from argus.models import ProviderName
+from argus.operations.provider_presentation import (
+    ProbeRejected,
+    ProviderPresentationService,
+)
 from argus.workflows import WorkflowService
 
 router = APIRouter(prefix="/admin")
 
 
-def get_broker(request: Request) -> SearchBroker:
-    return request.app.state.get_broker()
+def get_provider_presentation(request: Request) -> ProviderPresentationService:
+    return request.app.state.provider_presentation
 
 
 def get_workflows(request: Request) -> WorkflowService:
@@ -65,107 +65,31 @@ async def recover_maya_dead_letter(
 async def test_provider(
     req: ProviderTestRequest,
     request: Request,
-    broker: SearchBroker = Depends(get_broker),
+    presentation: ProviderPresentationService = Depends(get_provider_presentation),
 ):
     try:
-        pname = ProviderName(req.provider)
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Unknown provider: {req.provider}")
-
-    if not req.live:
-        decision = broker.readiness_service.authorize_probe(pname, "fixture")
-        readiness = broker.provider_readiness_projection(pname)
-        return {
-            "provider": req.provider,
-            "mode": "fixture",
-            "available": decision.allowed,
-            "status": "fixture_verified" if decision.allowed else "denied",
-            "readiness": readiness,
-            "sample_results": [],
-        }
-
-    probe_query = SearchQuery(
-        query=req.query,
-        mode=SearchMode.DISCOVERY,
-        max_results=3,
-        providers=[pname],
-        caller=getattr(request.state, "caller_identity", "admin"),
-        user_visible=False,
-    )
-    authorization = ProbeAuthorization(
-        workflow="explicit_validation", provider=pname,
-        named_quota="free_provider_request" if PROVIDER_TIERS[pname] == 0 else None,
-        idempotency_key=req.idempotency_key,
-        durable_receipt=req.durable_receipt,
-        conservative_charge=(
-            conservative_charge_estimate(pname, probe_query)
-            if PROVIDER_TIERS[pname] > 0 else None
-        ),
-    )
-    kind = "no_money_quota" if PROVIDER_TIERS[pname] == 0 else "billable_search"
-    decision = broker.readiness_service.authorize_probe(pname, kind, authorization)
-    if not decision.allowed:
-        raise HTTPException(status_code=409, detail=decision.reason)
-    query = SearchQuery(
-        query=probe_query.query,
-        mode=SearchMode.DISCOVERY,
-        max_results=3,
-        providers=[pname],
-        caller=getattr(request.state, "caller_identity", "admin"),
-        user_visible=False,
-        metadata={
-            "caller_label": "http-admin-smoke",
-            "probe_receipt": req.durable_receipt,
-            "probe_idempotency_key": req.idempotency_key,
-            "probe_provider": pname.value,
-            "probe_no_fallback": True,
-            "probe_attempt_id": decision.attempt_id,
-        },
-    )
-    response = await broker.search(query)
-    trace = response.traces[0] if response.traces else None
-
-    return {
-        "provider": req.provider,
-        "mode": "live",
-        "available": trace is not None,
-        "status": trace.status if trace else "no_trace",
-        "trace": {
-            "status": trace.status if trace else "no_trace",
-            "results_count": trace.results_count if trace else 0,
-            "latency_ms": trace.latency_ms if trace else 0,
-            "error": trace.error if trace else None,
-        },
-        "sample_results": [
-            {"url": r.url, "title": r.title, "snippet": r.snippet[:100]}
-            for r in response.results[:3]
-        ],
-    }
+        if not req.live:
+            return presentation.fixture_provider(req.provider)
+        return await presentation.live_provider(
+            provider=req.provider,
+            query_text=req.query,
+            caller=getattr(request.state, "caller_identity", "admin"),
+            idempotency_key=req.idempotency_key,
+            durable_receipt=req.durable_receipt,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"Unknown provider: {req.provider}"
+        ) from exc
+    except ProbeRejected as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/provider-spend")
 async def provider_spend(
-    broker: SearchBroker = Depends(get_broker),
-    repository=Depends(get_spend_repository),
+    presentation: ProviderPresentationService = Depends(get_provider_presentation),
 ):
-    providers = []
-    operational = []
-    for provider in ProviderName:
-        if not is_adapter_provider(provider):
-            continue
-        providers.append(
-            broker.provider_budget_projection(provider)
-        )
-        operational.append(repository.non_authoritative_operational_projection(
-            provider,
-            budget_limit=float(
-                broker.provider_budget_projection(provider).get("budget_limit") or 0
-            ),
-        ))
-    return {
-        "providers": providers,
-        "non_authoritative_operational": {"providers": operational},
-    }
+    return presentation.provider_spend()
 
 
 @router.get("/provider-spend/attempts")
@@ -239,9 +163,7 @@ async def resolve_provider_spend(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Unknown provider attempt") from exc
     except Exception as exc:
-        from argus.persistence.provider_spend import SpendConflictError
-
-        if isinstance(exc, SpendConflictError):
+        if request.app.state.provider_presentation.is_spend_conflict(exc):
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if isinstance(exc, ValueError):
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -289,9 +211,7 @@ async def record_provider_snapshot(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Unknown provider attempt") from exc
     except Exception as exc:
-        from argus.persistence.provider_spend import SpendConflictError
-
-        if isinstance(exc, SpendConflictError):
+        if request.app.state.provider_presentation.is_spend_conflict(exc):
             raise HTTPException(
                 status_code=409,
                 detail="provider reference already used",

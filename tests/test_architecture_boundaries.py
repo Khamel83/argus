@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from argus.scorecard.architecture import find_architecture_exceptions
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PRESENTER = ROOT / "argus/api/presenters.py"
@@ -21,11 +23,12 @@ PORTED_HTTP_MODULES = {
         "argus.extraction.cookies",
     },
 }
-LEGACY_ADAPTER_EXCEPTIONS = {
+PRESENTATION_ADAPTERS = {
     ROOT / "argus/api/routes_admin.py",
     ROOT / "argus/api/routes_dashboard.py",
     ROOT / "argus/api/routes_health.py",
 }
+LEGACY_ADAPTER_EXCEPTIONS: set[Path] = set()
 MCP_ADAPTERS = {
     ROOT / "argus/mcp/http_adapter.py",
     ROOT / "argus/mcp/server.py",
@@ -35,6 +38,7 @@ MCP_ROOT = ROOT / "argus/mcp"
 SCORECARD_ROOT = ROOT / "argus/scorecard"
 EXPECTED_ADAPTERS = {
     *PORTED_HTTP_MODULES,
+    *PRESENTATION_ADAPTERS,
     *LEGACY_ADAPTER_EXCEPTIONS,
     *MCP_ADAPTERS,
     ROOT / "argus/cli/main.py",
@@ -921,6 +925,10 @@ def test_transport_adapter_inventory_has_only_closed_legacy_exceptions():
                 )
             }
         assert not violations, f"{path.relative_to(ROOT)}: {sorted(violations)}"
+
+
+def test_scorecard_shared_architecture_inventory_is_empty():
+    assert find_architecture_exceptions(ROOT) == ()
 
 
 def test_workflow_modules_cannot_alias_execution_or_persistence_authority():

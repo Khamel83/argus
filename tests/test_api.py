@@ -4,7 +4,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from argus.api.schemas import SearchRequest, RecoverUrlRequest, ExpandRequest, ProviderTestRequest
+from argus.api.schemas import (
+    SearchRequest,
+    RecoverUrlRequest,
+    ExpandRequest,
+    ProviderTestRequest,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -18,6 +23,7 @@ def isolated_api_ledger(tmp_path, monkeypatch):
 
 
 # --- Schemas ---
+
 
 class TestSchemas:
     def test_search_request_valid(self):
@@ -35,7 +41,10 @@ class TestSchemas:
 
     def test_search_result_schema(self):
         from argus.api.schemas import SearchResultSchema
-        r = SearchResultSchema(url="https://example.com", title="Test", snippet="A page")
+
+        r = SearchResultSchema(
+            url="https://example.com", title="Test", snippet="A page"
+        )
         assert r.url == "https://example.com"
         assert r.score == 0.0
 
@@ -55,17 +64,19 @@ class TestSchemas:
 @pytest.mark.asyncio
 async def test_admin_provider_smoke_marks_query_operational_only():
     from argus.api.routes_admin import test_provider
+    from argus.operations.provider_presentation import ProviderPresentationService
 
     broker = MagicMock()
     broker.readiness_service.authorize_probe.return_value.allowed = True
     broker.provider_readiness_projection.return_value = {"state": "healthy"}
     request = MagicMock()
     request.state.caller_identity = "admin"
+    presentation = ProviderPresentationService(lambda: broker, MagicMock())
 
     result = await test_provider(
         ProviderTestRequest(provider="duckduckgo", query="argus"),
         request,
-        broker,
+        presentation,
     )
 
     broker.search.assert_not_called()
@@ -73,6 +84,7 @@ async def test_admin_provider_smoke_marks_query_operational_only():
 
 
 # --- API Integration ---
+
 
 class TestSearchEndpoint:
     def test_real_broker_ledger_failure_leaves_no_legacy_completed_run(
@@ -235,18 +247,21 @@ class TestSearchEndpoint:
                 raise RuntimeError("commit failed")
 
         mock_broker = MagicMock()
-        mock_broker.search = AsyncMock(return_value=SearchResponse(
-            query="test",
-            mode=SearchMode.DISCOVERY,
-            results=[],
-            total_results=0,
-            search_run_id="failed-ledger",
-        ))
+        mock_broker.search = AsyncMock(
+            return_value=SearchResponse(
+                query="test",
+                mode=SearchMode.DISCOVERY,
+                results=[],
+                total_results=0,
+                search_run_id="failed-ledger",
+            )
+        )
         mock_broker.cache = MagicMock()
         mock_broker.health_tracker = MagicMock()
         mock_broker.budget_tracker = MagicMock()
 
         from fastapi.testclient import TestClient
+
         client = TestClient(
             create_app(broker=mock_broker, search_repository=FailingRepository())
         )
@@ -269,7 +284,9 @@ class TestSearchEndpoint:
         cached_resp = SearchResponse(
             query="test",
             mode=SearchMode.DISCOVERY,
-            results=[SearchResult(url="https://example.com", title="Test", snippet="A page")],
+            results=[
+                SearchResult(url="https://example.com", title="Test", snippet="A page")
+            ],
             traces=[],
             total_results=1,
             cached=True,
@@ -281,6 +298,7 @@ class TestSearchEndpoint:
         mock_broker.budget_tracker = BudgetTracker()
 
         from fastapi.testclient import TestClient
+
         client = TestClient(create_app(broker=mock_broker))
 
         resp = client.post("/api/search", json={"query": "test", "mode": "discovery"})
@@ -298,27 +316,30 @@ class TestSearchEndpoint:
         from argus.models import ProviderName, SearchMode, SearchResponse, SearchResult
 
         mock_broker = MagicMock()
-        mock_broker.search = AsyncMock(return_value=SearchResponse(
-            query="test",
-            mode=SearchMode.DISCOVERY,
-            results=[
-                SearchResult(
-                    url="https://example.com",
-                    title="Test",
-                    snippet="A page",
-                    provider=ProviderName.DUCKDUCKGO,
-                    score=0.5,
-                    score_attribution={"duckduckgo": 0.5},
-                )
-            ],
-            total_results=1,
-            search_run_id="attribution-1",
-        ))
+        mock_broker.search = AsyncMock(
+            return_value=SearchResponse(
+                query="test",
+                mode=SearchMode.DISCOVERY,
+                results=[
+                    SearchResult(
+                        url="https://example.com",
+                        title="Test",
+                        snippet="A page",
+                        provider=ProviderName.DUCKDUCKGO,
+                        score=0.5,
+                        score_attribution={"duckduckgo": 0.5},
+                    )
+                ],
+                total_results=1,
+                search_run_id="attribution-1",
+            )
+        )
         mock_broker.cache = MagicMock()
         mock_broker.health_tracker = MagicMock()
         mock_broker.budget_tracker = MagicMock()
 
         from fastapi.testclient import TestClient
+
         client = TestClient(create_app(broker=mock_broker))
 
         resp = client.post(
@@ -343,7 +364,9 @@ class TestSearchEndpoint:
         from fastapi.testclient import TestClient
 
         client = TestClient(create_app())
-        resp = client.post("/api/search", json={"query": "test", "mode": "invalid_mode"})
+        resp = client.post(
+            "/api/search", json={"query": "test", "mode": "invalid_mode"}
+        )
         assert resp.status_code == 422
 
     @pytest.mark.asyncio
@@ -352,22 +375,27 @@ class TestSearchEndpoint:
         from argus.models import SearchResponse, SearchMode
 
         mock_broker = MagicMock()
-        mock_broker.search = AsyncMock(return_value=SearchResponse(
-            query="https://dead.com Page Title",
-            mode=SearchMode.RECOVERY,
-            results=[],
-            total_results=0,
-            cached=False,
-            search_run_id="xyz",
-        ))
+        mock_broker.search = AsyncMock(
+            return_value=SearchResponse(
+                query="https://dead.com Page Title",
+                mode=SearchMode.RECOVERY,
+                results=[],
+                total_results=0,
+                cached=False,
+                search_run_id="xyz",
+            )
+        )
         mock_broker.cache = MagicMock()
         mock_broker.health_tracker = MagicMock()
         mock_broker.budget_tracker = MagicMock()
 
         from fastapi.testclient import TestClient
+
         client = TestClient(create_app(broker=mock_broker))
 
-        resp = client.post("/api/recover-url", json={"url": "https://dead.com", "title": "Page Title"})
+        resp = client.post(
+            "/api/recover-url", json={"url": "https://dead.com", "title": "Page Title"}
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["mode"] == "recovery"
@@ -378,22 +406,27 @@ class TestSearchEndpoint:
         from argus.models import SearchResponse, SearchMode
 
         mock_broker = MagicMock()
-        mock_broker.search = AsyncMock(return_value=SearchResponse(
-            query="python web framework",
-            mode=SearchMode.DISCOVERY,
-            results=[],
-            total_results=0,
-            cached=False,
-            search_run_id="exp1",
-        ))
+        mock_broker.search = AsyncMock(
+            return_value=SearchResponse(
+                query="python web framework",
+                mode=SearchMode.DISCOVERY,
+                results=[],
+                total_results=0,
+                cached=False,
+                search_run_id="exp1",
+            )
+        )
         mock_broker.cache = MagicMock()
         mock_broker.health_tracker = MagicMock()
         mock_broker.budget_tracker = MagicMock()
 
         from fastapi.testclient import TestClient
+
         client = TestClient(create_app(broker=mock_broker))
 
-        resp = client.post("/api/expand", json={"query": "python", "context": "web framework"})
+        resp = client.post(
+            "/api/expand", json={"query": "python", "context": "web framework"}
+        )
         assert resp.status_code == 200
 
     def test_create_app_uses_lazy_singleton_broker_factory(self):
@@ -414,9 +447,12 @@ class TestHealthEndpoint:
         from argus.api.main import create_app
 
         mock_broker = MagicMock()
-        mock_broker.get_provider_status = MagicMock(return_value={"effective_status": "enabled"})
+        mock_broker.get_provider_status = MagicMock(
+            return_value={"effective_status": "enabled"}
+        )
 
         from fastapi.testclient import TestClient
+
         client = TestClient(create_app(broker=mock_broker))
 
         resp = client.get("/api/health")
@@ -429,7 +465,9 @@ class TestHealthEndpoint:
         from fastapi.testclient import TestClient
 
         mock_broker = MagicMock()
-        mock_broker.get_provider_status = MagicMock(return_value={"effective_status": "enabled"})
+        mock_broker.get_provider_status = MagicMock(
+            return_value={"effective_status": "enabled"}
+        )
         mock_broker.health_tracker.get_all_status = MagicMock(return_value={})
 
         client = TestClient(create_app(broker=mock_broker))
@@ -444,9 +482,12 @@ class TestRequestCorrelation:
         from argus.api.main import create_app
 
         mock_broker = MagicMock()
-        mock_broker.get_provider_status = MagicMock(return_value={"effective_status": "enabled"})
+        mock_broker.get_provider_status = MagicMock(
+            return_value={"effective_status": "enabled"}
+        )
 
         from fastapi.testclient import TestClient
+
         client = TestClient(create_app(broker=mock_broker))
 
         resp = client.get("/api/health", headers={"x-request-id": "test-123"})
@@ -457,9 +498,12 @@ class TestRequestCorrelation:
         from argus.api.main import create_app
 
         mock_broker = MagicMock()
-        mock_broker.get_provider_status = MagicMock(return_value={"effective_status": "enabled"})
+        mock_broker.get_provider_status = MagicMock(
+            return_value={"effective_status": "enabled"}
+        )
 
         from fastapi.testclient import TestClient
+
         client = TestClient(create_app(broker=mock_broker))
 
         resp = client.get("/api/health")
@@ -476,7 +520,9 @@ class TestRateLimitComposition:
         from argus.models import SearchMode, SearchResponse
 
         mock_broker = MagicMock()
-        mock_broker.get_provider_status = MagicMock(return_value={"effective_status": "enabled"})
+        mock_broker.get_provider_status = MagicMock(
+            return_value={"effective_status": "enabled"}
+        )
         mock_broker.search = AsyncMock(
             return_value=SearchResponse(
                 query="test",
@@ -488,7 +534,9 @@ class TestRateLimitComposition:
             )
         )
 
-        limiter = RateLimiter(max_requests=1, window_seconds=60, exempt_paths=[], exempt_tokens=[])
+        limiter = RateLimiter(
+            max_requests=1, window_seconds=60, exempt_paths=[], exempt_tokens=[]
+        )
         client = TestClient(create_app(broker=mock_broker, rate_limiter=limiter))
 
         first = client.post("/api/search", json={"query": "test", "mode": "discovery"})
@@ -517,7 +565,9 @@ class TestAuthEnforcement:
                 search_run_id="auth-1",
             )
         )
-        mock_broker.get_provider_status = MagicMock(return_value={"effective_status": "enabled"})
+        mock_broker.get_provider_status = MagicMock(
+            return_value={"effective_status": "enabled"}
+        )
         mock_broker.health_tracker = HealthTracker()
         mock_broker.budget_tracker = BudgetTracker()
         return mock_broker
@@ -529,7 +579,9 @@ class TestAuthEnforcement:
 
         monkeypatch.setenv("ARGUS_API_KEY", "caller-secret")
         monkeypatch.setenv("ARGUS_ALLOWED_HOSTS", "testserver")
-        client = TestClient(create_app(broker=self._build_broker()), client=("203.0.113.10", 50000))
+        client = TestClient(
+            create_app(broker=self._build_broker()), client=("203.0.113.10", 50000)
+        )
 
         resp = client.post("/api/search", json={"query": "test", "mode": "discovery"})
         assert resp.status_code == 401
@@ -542,7 +594,9 @@ class TestAuthEnforcement:
 
         monkeypatch.setenv("ARGUS_API_KEY", "caller-secret")
         monkeypatch.setenv("ARGUS_ALLOWED_HOSTS", "testserver")
-        client = TestClient(create_app(broker=self._build_broker()), client=("203.0.113.10", 50000))
+        client = TestClient(
+            create_app(broker=self._build_broker()), client=("203.0.113.10", 50000)
+        )
 
         bearer = client.post(
             "/api/search",
@@ -566,7 +620,9 @@ class TestAuthEnforcement:
         monkeypatch.delenv("ARGUS_API_KEY", raising=False)
         monkeypatch.delenv("ARGUS_ADMIN_API_KEY", raising=False)
         monkeypatch.setenv("ARGUS_ALLOWED_HOSTS", "testserver")
-        client = TestClient(create_app(broker=self._build_broker()), client=("203.0.113.10", 50000))
+        client = TestClient(
+            create_app(broker=self._build_broker()), client=("203.0.113.10", 50000)
+        )
 
         resp = client.post("/api/search", json={"query": "test", "mode": "discovery"})
         assert resp.status_code == 503
@@ -622,7 +678,9 @@ class TestWorkflowEndpoints:
         from argus.api.main import create_app
 
         mock_broker = MagicMock()
-        mock_broker.get_provider_status = MagicMock(return_value={"effective_status": "enabled"})
+        mock_broker.get_provider_status = MagicMock(
+            return_value={"effective_status": "enabled"}
+        )
         mock_broker.health_tracker.get_all_status = MagicMock(return_value={})
         mock_broker.budget_tracker = MagicMock()
 
@@ -645,7 +703,9 @@ class TestWorkflowEndpoints:
         app.state.get_workflows = lambda: mock_workflows
         client = TestClient(app)
 
-        resp = client.get("/api/admin/paths", headers={"X-Admin-API-Key": "admin-secret"})
+        resp = client.get(
+            "/api/admin/paths", headers={"X-Admin-API-Key": "admin-secret"}
+        )
         assert resp.status_code == 200
         assert resp.json()["data_root"] == "/tmp/argus"
 
@@ -655,19 +715,26 @@ class TestWorkflowEndpoints:
         from argus.api.main import create_app
 
         mock_broker = MagicMock()
-        mock_broker.get_provider_status = MagicMock(return_value={"effective_status": "enabled"})
+        mock_broker.get_provider_status = MagicMock(
+            return_value={"effective_status": "enabled"}
+        )
         mock_broker.health_tracker.get_all_status = MagicMock(return_value={})
         mock_broker.budget_tracker = MagicMock()
 
         mock_workflows = MagicMock()
-        mock_workflows.start_recover_article = AsyncMock(return_value=self._workflow_run())
+        mock_workflows.start_recover_article = AsyncMock(
+            return_value=self._workflow_run()
+        )
         mock_workflows.get_run = MagicMock(return_value=self._workflow_run())
 
         app = create_app(broker=mock_broker)
         app.state.get_workflows = lambda: mock_workflows
         client = TestClient(app)
 
-        resp = client.post("/api/workflows/recover-article", json={"url": "https://dead.example.com/post"})
+        resp = client.post(
+            "/api/workflows/recover-article",
+            json={"url": "https://dead.example.com/post"},
+        )
         assert resp.status_code == 200
         assert resp.json()["run_id"] == "wf-1"
         assert resp.json()["status"] == "running"
@@ -678,7 +745,9 @@ class TestWorkflowEndpoints:
         from argus.api.main import create_app
 
         mock_broker = MagicMock()
-        mock_broker.get_provider_status = MagicMock(return_value={"effective_status": "enabled"})
+        mock_broker.get_provider_status = MagicMock(
+            return_value={"effective_status": "enabled"}
+        )
         mock_broker.health_tracker.get_all_status = MagicMock(return_value={})
         mock_broker.budget_tracker = MagicMock()
 

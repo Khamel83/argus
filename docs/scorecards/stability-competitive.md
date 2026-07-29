@@ -353,6 +353,28 @@ one-time-credit providers remain disabled unless individually named. Absence,
 reuse, or mismatch fails before reservation. These requirements are a human
 promotion boundary, not an authorization supplied by a scorecard verdict.
 
+The separately defined `.github/workflows/scorecard-live.yml` is the only
+repository workflow for weekly/manual live evidence. Scheduled execution is
+hard-coded to the `free` profile, tier 0, and a zero billable-call cap. Manual
+budgeted preparation runs in the protected `scorecard-budgeted` environment
+and validates the exact receipt digest, run id, derived generation, permitted
+providers, maximum tier, call-count cap, cost/credit cap, and individually
+named one-time-credit providers before a reservation step is reachable. The
+receipt is atomically marked consumed and its digest-addressed consumption
+ledger is restored across workflow runs; absence, mismatch, or reuse exits
+before reservation. Workflow artifacts and scorecard verdicts remain
+diagnostic-only and cannot deploy or promote a release.
+
+The hermetic lane derives gate results from executable actual-versus-expected
+frozen evidence, retains the normalized evidence for every gate and corpus
+case, and reads the same closed architecture inventory as the architecture
+boundary tests. It writes to a private sibling staging directory only after
+all typed identities, synchronized generation dimensions, normalized document
+schemas, safe paths, and secret/native-payload checks pass. Verification
+requires exact agreement between the manifest file set, regular files, and
+unique canonical checksum entries, including a checksum for `manifest.json`,
+before the staged directory is atomically published.
+
 ## Explicit non-goals
 
 - No external-search-engine parity claim.

@@ -1,8 +1,10 @@
-"""Fail-closed stability evaluation over supplied evidence only."""
+"""Fail-closed stability evaluation over executable frozen evidence."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 from typing import Any, Mapping
 
 
@@ -37,6 +39,7 @@ REQUIRED_PROFILES = ("free", "budgeted")
 class GateVerdict:
     status: str
     reason: str
+    evidence: Mapping[str, Any]
 
 
 @dataclass(frozen=True)
@@ -54,16 +57,19 @@ class StabilityVerdict:
 
 def _gate_verdict(value: object) -> GateVerdict:
     if not isinstance(value, Mapping):
-        return GateVerdict("missing", "required gate evidence is absent")
+        return GateVerdict("missing", "required gate evidence is absent", {})
     status = value.get("status")
     evidence = value.get("evidence")
     if status not in {"pass", "fail", "inconclusive"}:
-        return GateVerdict("missing", "gate status is missing or invalid")
+        return GateVerdict("missing", "gate status is missing or invalid", {})
     if not isinstance(evidence, Mapping) or not evidence:
-        return GateVerdict("missing", "required gate evidence is absent")
-    if status != "pass":
-        return GateVerdict(str(status), str(value.get("reason", "gate did not pass")))
-    return GateVerdict("pass", str(value.get("reason", "passed")))
+        return GateVerdict("missing", "required gate evidence is absent", {})
+    reason = value.get("reason", "passed" if status == "pass" else "gate did not pass")
+    if not isinstance(reason, str) or not reason:
+        return GateVerdict(
+            "missing", "gate reason is missing or invalid", dict(evidence)
+        )
+    return GateVerdict(str(status), reason, dict(evidence))
 
 
 def evaluate_stability(
@@ -90,3 +96,54 @@ def evaluate_stability(
         else "unstable"
     )
     return StabilityVerdict(overall, profiles, exceptions)
+
+
+def load_frozen_stability(path: Path) -> dict[str, dict[str, dict[str, Any]]]:
+    """Evaluate actual-vs-expected frozen checks into hard-gate evidence."""
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid frozen stability evidence: {exc}") from exc
+    if not isinstance(document, Mapping) or set(document) != {"schema", "profiles"}:
+        raise ValueError("frozen stability evidence must contain exact keys")
+    if document["schema"] != "scorecard-stability-evidence-v1":
+        raise ValueError("unsupported frozen stability evidence schema")
+    profiles = document["profiles"]
+    if not isinstance(profiles, Mapping) or set(profiles) != set(REQUIRED_PROFILES):
+        raise ValueError("frozen stability evidence requires both profiles")
+    evaluated: dict[str, dict[str, dict[str, Any]]] = {}
+    for profile in REQUIRED_PROFILES:
+        gates = profiles[profile]
+        if not isinstance(gates, Mapping) or set(gates) != set(HARD_GATES):
+            raise ValueError(f"{profile} must contain every hard gate exactly once")
+        evaluated[profile] = {}
+        for gate in HARD_GATES:
+            check = gates[gate]
+            if not isinstance(check, Mapping) or set(check) != {
+                "fixture_id",
+                "actual",
+                "expected",
+            }:
+                raise ValueError(f"{profile}.{gate} has invalid fixture shape")
+            fixture_id = check["fixture_id"]
+            if not isinstance(fixture_id, str) or not fixture_id:
+                raise ValueError(f"{profile}.{gate} has invalid fixture id")
+            actual = check["actual"]
+            expected = check["expected"]
+            matched = actual == expected
+            evaluated[profile][gate] = {
+                "status": "pass" if matched else "fail",
+                "reason": (
+                    "frozen actual evidence matched expected normalized evidence"
+                    if matched
+                    else "frozen actual evidence did not match expected evidence"
+                ),
+                "evidence": {
+                    "schema": "normalized-gate-evidence-v1",
+                    "fixture_id": fixture_id,
+                    "actual": actual,
+                    "expected": expected,
+                    "matched": matched,
+                },
+            }
+    return evaluated

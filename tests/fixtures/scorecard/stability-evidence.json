@@ -1,0 +1,53 @@
+{
+  "schema": "scorecard-stability-evidence-v1",
+  "profiles": {
+    "free": {
+      "authentication": {"fixture_id": "auth-rejected-before-io", "actual": {"outcome": "authentication_rejected", "provider_attempts": 0, "persistence_writes": 0}, "expected": {"outcome": "authentication_rejected", "provider_attempts": 0, "persistence_writes": 0}},
+      "caller_attribution": {"fixture_id": "durable-caller-free", "actual": {"caller": "fixture-free", "durable": true}, "expected": {"caller": "fixture-free", "durable": true}},
+      "surface_equivalence": {"fixture_id": "seven-canonical-outcomes-free", "actual": {"cases": 7, "semantic_matches": 7}, "expected": {"cases": 7, "semantic_matches": 7}},
+      "normalized_result_integrity": {"fixture_id": "normalized-search-free", "actual": {"cases": 24, "valid": 24}, "expected": {"cases": 24, "valid": 24}},
+      "universal_provenance": {"fixture_id": "provenance-free", "actual": {"artifacts": 32, "complete": 32}, "expected": {"artifacts": 32, "complete": 32}},
+      "provider_traces": {"fixture_id": "provider-traces-free", "actual": {"eligible": 2, "represented": 2}, "expected": {"eligible": 2, "represented": 2}},
+      "partial_search": {"fixture_id": "partial-search-free", "actual": {"outcome": "degraded", "traces_complete": true}, "expected": {"outcome": "degraded", "traces_complete": true}},
+      "empty_search": {"fixture_id": "empty-search-free", "actual": {"outcome": "empty", "successful_providers": 1}, "expected": {"outcome": "empty", "successful_providers": 1}},
+      "search_evidence_floor": {"fixture_id": "search-floor-free", "actual": {"cases": 24, "passing": 24}, "expected": {"cases": 24, "passing": 24}},
+      "extraction_success": {"fixture_id": "extraction-success-free", "actual": {"outcome": "success", "complete": true}, "expected": {"outcome": "success", "complete": true}},
+      "degraded_extraction": {"fixture_id": "extraction-degraded-free", "actual": {"outcome": "degraded", "next_action": true}, "expected": {"outcome": "degraded", "next_action": true}},
+      "extraction_failure": {"fixture_id": "extraction-failed-free", "actual": {"outcome": "extraction_failed", "chain_preserved": true}, "expected": {"outcome": "extraction_failed", "chain_preserved": true}},
+      "durable_acceptance": {"fixture_id": "durable-acceptance-free", "actual": {"receipt": "fixture-receipt-free", "artifacts": 32}, "expected": {"receipt": "fixture-receipt-free", "artifacts": 32}},
+      "persistence_isolation": {"fixture_id": "persistence-isolation-free", "actual": {"profile": "test", "sqlite_isolated": true}, "expected": {"profile": "test", "sqlite_isolated": true}},
+      "provider_readiness": {"fixture_id": "provider-readiness-free", "actual": {"configured": 2, "fresh": 2}, "expected": {"configured": 2, "fresh": 2}},
+      "mode_availability": {"fixture_id": "mode-availability-free", "actual": {"modes": 4, "available": 4}, "expected": {"modes": 4, "available": 4}},
+      "policy_truth": {"fixture_id": "policy-truth-free", "actual": {"billable_attempts": 0, "skips_explicit": true}, "expected": {"billable_attempts": 0, "skips_explicit": true}},
+      "cache_eligibility": {"fixture_id": "cache-eligibility-free", "actual": {"age_reported": true, "origin_preserved": true}, "expected": {"age_reported": true, "origin_preserved": true}},
+      "cache_isolation": {"fixture_id": "cache-isolation-free", "actual": {"ineligible_crossings": 0}, "expected": {"ineligible_crossings": 0}},
+      "bounded_completion": {"fixture_id": "bounded-completion-free", "actual": {"max_seconds": 120, "timeouts_explicit": true}, "expected": {"max_seconds": 120, "timeouts_explicit": true}},
+      "recovery_authority": {"fixture_id": "recovery-authority-free", "actual": {"lane": "hermetic", "status": "not_applicable"}, "expected": {"lane": "hermetic", "status": "not_applicable"}},
+      "evidence_bundle": {"fixture_id": "bundle-contract-free", "actual": {"closed": true, "checksummed": true}, "expected": {"closed": true, "checksummed": true}}
+    },
+    "budgeted": {
+      "authentication": {"fixture_id": "auth-rejected-before-io-budgeted", "actual": {"outcome": "authentication_rejected", "provider_attempts": 0, "persistence_writes": 0}, "expected": {"outcome": "authentication_rejected", "provider_attempts": 0, "persistence_writes": 0}},
+      "caller_attribution": {"fixture_id": "durable-caller-budgeted", "actual": {"caller": "fixture-budgeted", "durable": true}, "expected": {"caller": "fixture-budgeted", "durable": true}},
+      "surface_equivalence": {"fixture_id": "seven-canonical-outcomes-budgeted", "actual": {"cases": 7, "semantic_matches": 7}, "expected": {"cases": 7, "semantic_matches": 7}},
+      "normalized_result_integrity": {"fixture_id": "normalized-search-budgeted", "actual": {"cases": 24, "valid": 24}, "expected": {"cases": 24, "valid": 24}},
+      "universal_provenance": {"fixture_id": "provenance-budgeted", "actual": {"artifacts": 32, "complete": 32}, "expected": {"artifacts": 32, "complete": 32}},
+      "provider_traces": {"fixture_id": "provider-traces-budgeted", "actual": {"eligible": 3, "represented": 3}, "expected": {"eligible": 3, "represented": 3}},
+      "partial_search": {"fixture_id": "partial-search-budgeted", "actual": {"outcome": "degraded", "traces_complete": true}, "expected": {"outcome": "degraded", "traces_complete": true}},
+      "empty_search": {"fixture_id": "empty-search-budgeted", "actual": {"outcome": "empty", "successful_providers": 1}, "expected": {"outcome": "empty", "successful_providers": 1}},
+      "search_evidence_floor": {"fixture_id": "search-floor-budgeted", "actual": {"cases": 24, "passing": 24}, "expected": {"cases": 24, "passing": 24}},
+      "extraction_success": {"fixture_id": "extraction-success-budgeted", "actual": {"outcome": "success", "complete": true}, "expected": {"outcome": "success", "complete": true}},
+      "degraded_extraction": {"fixture_id": "extraction-degraded-budgeted", "actual": {"outcome": "degraded", "next_action": true}, "expected": {"outcome": "degraded", "next_action": true}},
+      "extraction_failure": {"fixture_id": "extraction-failed-budgeted", "actual": {"outcome": "extraction_failed", "chain_preserved": true}, "expected": {"outcome": "extraction_failed", "chain_preserved": true}},
+      "durable_acceptance": {"fixture_id": "durable-acceptance-budgeted", "actual": {"receipt": "fixture-receipt-budgeted", "artifacts": 32}, "expected": {"receipt": "fixture-receipt-budgeted", "artifacts": 32}},
+      "persistence_isolation": {"fixture_id": "persistence-isolation-budgeted", "actual": {"profile": "test", "sqlite_isolated": true}, "expected": {"profile": "test", "sqlite_isolated": true}},
+      "provider_readiness": {"fixture_id": "provider-readiness-budgeted", "actual": {"configured": 3, "fresh": 3}, "expected": {"configured": 3, "fresh": 3}},
+      "mode_availability": {"fixture_id": "mode-availability-budgeted", "actual": {"modes": 4, "available": 4}, "expected": {"modes": 4, "available": 4}},
+      "policy_truth": {"fixture_id": "policy-truth-budgeted", "actual": {"reserved_calls": 3, "receipt_bound": true}, "expected": {"reserved_calls": 3, "receipt_bound": true}},
+      "cache_eligibility": {"fixture_id": "cache-eligibility-budgeted", "actual": {"age_reported": true, "origin_preserved": true}, "expected": {"age_reported": true, "origin_preserved": true}},
+      "cache_isolation": {"fixture_id": "cache-isolation-budgeted", "actual": {"ineligible_crossings": 0}, "expected": {"ineligible_crossings": 0}},
+      "bounded_completion": {"fixture_id": "bounded-completion-budgeted", "actual": {"max_seconds": 120, "timeouts_explicit": true}, "expected": {"max_seconds": 120, "timeouts_explicit": true}},
+      "recovery_authority": {"fixture_id": "recovery-authority-budgeted", "actual": {"lane": "hermetic", "status": "not_applicable"}, "expected": {"lane": "hermetic", "status": "not_applicable"}},
+      "evidence_bundle": {"fixture_id": "bundle-contract-budgeted", "actual": {"closed": true, "checksummed": true}, "expected": {"closed": true, "checksummed": true}}
+    }
+  }
+}

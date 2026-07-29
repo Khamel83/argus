@@ -1,0 +1,166 @@
+name: Live competitive scorecard (diagnostic-only)
+
+on:
+  schedule:
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Evaluation profile
+        type: choice
+        required: true
+        default: free
+        options: [free, budgeted]
+      run_id:
+        description: Immutable live run id
+        type: string
+        required: true
+      generation:
+        description: Derived 64-character benchmark generation
+        type: string
+        required: true
+      authorization_receipt:
+        description: Exact secret-free budget authorization JSON (budgeted only)
+        type: string
+        required: false
+      authorization_sha256:
+        description: Protected expected receipt SHA-256 (budgeted only)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-scorecard-${{ github.event_name }}-${{ inputs.run_id || 'scheduled-free' }}
+  cancel-in-progress: false
+
+jobs:
+  scheduled-free:
+    if: github.event_name == 'schedule' || inputs.profile == 'free'
+    runs-on: ubuntu-latest
+    environment: scorecard-free
+    env:
+      ARGUS_AUTOLOAD_DOTENV: "false"
+      ARGUS_DISABLE_SECRET_RESOLUTION: "true"
+      ARGUS_NODE_ROLE: caller
+      ARGUS_CALLER_TIER_CAPS: "scorecard-free:0"
+      SCORECARD_PROFILE: free
+      SCORECARD_MAXIMUM_TIER: "0"
+      SCORECARD_BILLABLE_CALL_CAP: "0"
+      BASELINE_URL: ${{ vars.ARGUS_SCORECARD_BASELINE_URL }}
+      CANDIDATE_URL: ${{ vars.ARGUS_SCORECARD_CANDIDATE_URL }}
+      BASELINE_TOKEN: ${{ secrets.ARGUS_SCORECARD_BASELINE_TOKEN }}
+      CANDIDATE_TOKEN: ${{ secrets.ARGUS_SCORECARD_CANDIDATE_TOKEN }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: python -m pip install uv==0.11.26
+      - name: Sync frozen dependencies
+        run: uv sync --frozen --python 3.12 --extra mcp
+      - name: Write guarded canonical_http plan
+        run: >-
+          uv run python scripts/run-scorecard.py
+          --lane live-config
+          --output .artifacts/live/config.json
+      - name: Enforce automatic free-only boundary before execution
+        run: |
+          test "$SCORECARD_PROFILE" = free
+          test "$SCORECARD_MAXIMUM_TIER" = 0
+          test "$SCORECARD_BILLABLE_CALL_CAP" = 0
+          test -n "$BASELINE_URL"
+          test -n "$CANDIDATE_URL"
+          test -n "$BASELINE_TOKEN"
+          test -n "$CANDIDATE_TOKEN"
+      - name: Execute synchronized canonical HTTP free corpus
+        run: |
+          mkdir -p .artifacts/live/baseline .artifacts/live/candidate
+          for side in baseline candidate; do
+            if [ "$side" = baseline ]; then
+              export ARGUS_AUTHORITY_URL="$BASELINE_URL"
+              export ARGUS_AUTHORITY_TOKEN="$BASELINE_TOKEN"
+            else
+              export ARGUS_AUTHORITY_URL="$CANDIDATE_URL"
+              export ARGUS_AUTHORITY_TOKEN="$CANDIDATE_TOKEN"
+            fi
+            while IFS=$'\t' read -r case_id mode query; do
+              uv run argus search \
+                --query "$query" --mode "$mode" --free \
+                --caller scorecard-free --json \
+                > ".artifacts/live/$side/$case_id.json"
+            done < <(jq -r '.search_intents[] | [.id,.mode,.hermetic_input.query] | @tsv' tests/fixtures/scorecard/corpus.json)
+          done
+      - name: Upload free live evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: live-scorecard-free-${{ inputs.run_id || 'scheduled-free' }}
+          path: .artifacts/live
+          if-no-files-found: error
+
+  budgeted:
+    if: github.event_name == 'workflow_dispatch' && inputs.profile == 'budgeted'
+    runs-on: ubuntu-latest
+    environment: scorecard-budgeted
+    env:
+      ARGUS_AUTOLOAD_DOTENV: "false"
+      ARGUS_DISABLE_SECRET_RESOLUTION: "true"
+      ARGUS_NODE_ROLE: caller
+      BASELINE_URL: ${{ vars.ARGUS_SCORECARD_BASELINE_URL }}
+      CANDIDATE_URL: ${{ vars.ARGUS_SCORECARD_CANDIDATE_URL }}
+      BASELINE_TOKEN: ${{ secrets.ARGUS_SCORECARD_BASELINE_TOKEN }}
+      CANDIDATE_TOKEN: ${{ secrets.ARGUS_SCORECARD_CANDIDATE_TOKEN }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: python -m pip install uv==0.11.26
+      - name: Sync frozen dependencies
+        run: uv sync --frozen --python 3.12 --extra mcp
+      - name: Restore immutable single-use receipt ledger
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .scorecard-consumed
+          key: scorecard-receipt-${{ inputs.authorization_sha256 }}
+      - name: Materialize secret-free authorization receipt
+        env:
+          RECEIPT: ${{ inputs.authorization_receipt }}
+        run: |
+          test -n "$RECEIPT"
+          mkdir -p .artifacts/live
+          printf '%s\n' "$RECEIPT" > .artifacts/live/authorization.json
+      - name: Validate exact receipt and consume it before reservation
+        run: |
+          uv run python scripts/validate-scorecard-authorization.py \
+            --receipt .artifacts/live/authorization.json \
+            --expected-sha256 '${{ inputs.authorization_sha256 }}' \
+            --run-id '${{ inputs.run_id }}' \
+            --generation '${{ inputs.generation }}' \
+            --consumption-dir .scorecard-consumed \
+            > .artifacts/live/approved-budget.json
+      - name: reserve-budget only after immutable receipt gate
+        run: |
+          test -s .artifacts/live/approved-budget.json
+          test -n "$BASELINE_URL"
+          test -n "$CANDIDATE_URL"
+          test -n "$BASELINE_TOKEN"
+          test -n "$CANDIDATE_TOKEN"
+          echo "reservation remains bounded by approved-budget.json"
+      - name: Write guarded canonical_http plan
+        run: >-
+          uv run python scripts/run-scorecard.py
+          --lane live-config
+          --output .artifacts/live/config.json
+      - name: Upload protected budgeted configuration
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: live-scorecard-budgeted-${{ inputs.run_id }}
+          path: .artifacts/live
+          if-no-files-found: error
+
+# This workflow produces diagnostic evidence only. It cannot authorize
+# deployment, promotion, provider purchases, or budget expansion.
