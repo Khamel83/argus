@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit
 
 import httpx
@@ -45,6 +45,37 @@ class HttpAuthorityClient:
         self._config = config
         self._transport = transport
         self._timeout_seconds = timeout_seconds
+        from argus.mcp.capabilities import HttpContractResolver
+
+        self._http_contract_resolver = HttpContractResolver(self._discover_capabilities)
+
+    @property
+    def authority_origin(self) -> str:
+        """Canonical origin used to scope in-process discovery entries."""
+        parts = urlsplit(self._config.base_url)
+        return f"{parts.scheme.lower()}://{parts.netloc.lower()}"
+
+    async def _discover_capabilities(
+        self, authority_origin: str
+    ) -> Mapping[str, object]:
+        if authority_origin != self.authority_origin:
+            raise AuthorityRequestError("Argus execution authority unavailable")
+        return await self.request("GET", "/api/capabilities")
+
+    async def resolve_http_contract(
+        self,
+        deployment_id: str | None,
+        clock: Callable[[], float],
+        *,
+        refresh: bool = False,
+    ):
+        """Discover a route family with GET only, before operation execution."""
+        return await self._http_contract_resolver.resolve_http_contract(
+            self.authority_origin,
+            deployment_id,
+            clock,
+            refresh=refresh,
+        )
 
     async def request(
         self,

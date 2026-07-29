@@ -126,6 +126,7 @@ def test_transport_adapter_inventory_has_only_closed_legacy_exceptions():
     }
     non_adapters = {
         ROOT / "argus/mcp/__init__.py",
+        ROOT / "argus/mcp/capabilities.py",
         ROOT / "argus/cli/__init__.py",
         ROOT / "argus/workflows/__init__.py",
         ROOT / "argus/workflows/models.py",
