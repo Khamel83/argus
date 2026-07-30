@@ -377,7 +377,7 @@ def test_provider_partial_loss_degrades_but_total_loss_is_unready_and_recovers()
 
 
 @pytest.mark.parametrize("health_state", ["unknown", "degraded"])
-def test_unproven_provider_health_does_not_count_as_a_usable_path(health_state):
+def test_eligible_provider_with_unproven_health_is_degraded_but_ready(health_state):
     service = _service()
     _healthy_required(service)
     service.observe_provider(
@@ -391,8 +391,9 @@ def test_unproven_provider_health_does_not_count_as_a_usable_path(health_state):
 
     status = service.full_status()
 
-    assert status["status"] == "unready"
-    assert status["reason_codes"] == ["retrieval_path"]
+    assert status["status"] == "degraded"
+    assert status["ready"] is True
+    assert "provider:duckduckgo" in status["reason_codes"]
 
 
 def test_fresh_health_tracker_projects_readiness_without_zeroed_counters():
@@ -939,7 +940,7 @@ def test_repository_refresh_updates_actual_backend_identity():
     assert service.full_status()["authority"]["backend"] == "postgresql"
 
 
-def test_fresh_provider_without_health_evidence_is_unknown_and_unready():
+def test_fresh_eligible_provider_without_health_evidence_is_degraded_but_ready():
     from argus.operations.status import refresh_operational_status
 
     service = _service()
@@ -984,8 +985,9 @@ def test_fresh_provider_without_health_evidence_is_unknown_and_unready():
         status["providers"]["duckduckgo"]["observations"]["cooldown"]["state"]
         == "unknown"
     )
-    assert status["status"] == "unready"
-    assert status["reason_codes"] == ["retrieval_path"]
+    assert status["status"] == "degraded"
+    assert status["ready"] is True
+    assert "provider:duckduckgo" in status["reason_codes"]
 
 
 def test_expired_readiness_reachability_renders_unknown_not_failed():
