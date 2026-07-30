@@ -254,7 +254,7 @@ def test_import_wrapper_requires_postgres_and_explicit_verified_backup_gate():
     assert "PGPASSWORD" not in script
 
 
-def test_operator_runbook_leaves_production_acceptance_as_explicit_gates():
+def test_operator_runbook_records_completed_gates_and_retains_destructive_gate():
     runbook = (ROOT / "ops/postgres/README.md").read_text()
 
     assert "## Code-complete acceptance" in runbook
@@ -262,9 +262,13 @@ def test_operator_runbook_leaves_production_acceptance_as_explicit_gates():
     assert "- [x] Backup and restore artifacts contain no role password verifiers" in runbook
     assert "- [x] Schema-changing promotion fails closed on stale evidence" in runbook
     assert "## Production-only acceptance gates" in runbook
-    assert "- [ ] Production tenant and role provisioning approved and completed" in runbook
-    assert "- [ ] Production import reconciliation approved and completed" in runbook
-    assert "- [ ] Production backup schedule approved and enabled" in runbook
-    assert "- [ ] Production isolated restore approved and verified" in runbook
-    assert "- [ ] Production cutover approved and completed" in runbook
+    assert "- [x] Production tenant and role provisioning approved and completed" in runbook
+    assert "- [x] Production backup schedule approved and enabled" in runbook
+    assert "- [x] Production isolated restore approved and verified" in runbook
+    assert "- [x] Production cutover approved and completed" in runbook
+    assert (
+        "- [ ] Production retention deletion/reclamation procedure approved"
+        in runbook
+    )
+    assert "Production retention is intentionally read-only" in runbook
     assert "Never run these scripts on the Mac development workstation" in runbook

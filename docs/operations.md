@@ -179,10 +179,25 @@ remote ingress is interrupted.
 
 ## 2026-07-29 walkthrough record
 
-The operator walkthrough verified the loaded digest and source revision,
-loopback-only 8270/8271 bindings, tailnet-only Tailscale Serve, distinct
-application/admin authorization, PostgreSQL schema 0009, free-only SearXNG
-search, extraction, MCP initialize/tools, durable accounting, browser resource
-limits, fresh backup/raw restore evidence, disabled Mac and OCI authorities,
-and the disabled/secret-rotated host residential worker. No paid provider was
-called.
+Wayfinder P1 completed with both production containers healthy on
+`ghcr.io/khamel83/argus@sha256:2249702ef10b4a7bcc80e47ea9de55f0c569c46d28f3eb3dfb445522e1510716`,
+source revision `edb7c926070ca051a644ae50bc647526b1f4f115`, and release-receipt
+SHA-256
+`34a8a492eba7eb784109122c6a51f38a5a8b30b6ec7c19dffa238bfafb6c805f`.
+`current.json` and `known-good.json` name that exact release with phase
+`complete`; no cutover marker remains.
+
+The exact two-run scorecard is retained at
+`/mnt/fast-storage/appdata/argus-scorecards/2026-07-29-idle-readiness-v1`.
+After 330 seconds without search traffic, all enabled free providers had
+unknown health and reachability observations while `/api/ready` correctly
+returned HTTP 200 with `status=degraded` and `ready=true`. A subsequent full
+production gate passed image/source identity, readiness, deterministic
+free-only GitHub search, MCP initialize/tools, and durable accounting. No paid
+provider was called.
+
+The broader walkthrough also verified loopback-only 8270/8271 bindings,
+tailnet-only Tailscale Serve, distinct application/admin authorization,
+PostgreSQL schema 0009, extraction, browser resource limits, fresh backup and
+isolated restore evidence, disabled Mac and OCI authorities, and the retired
+host residential worker.

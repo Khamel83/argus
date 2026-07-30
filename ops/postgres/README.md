@@ -83,14 +83,18 @@ validate the temporary `atlas-postgres` compatibility alias before migration.
 
 ## Production-only acceptance gates
 
-- [ ] Production tenant and role provisioning approved and completed
-- [ ] Production `homelab-postgres` identity and `atlas-postgres` alias approved
-- [ ] Production import reconciliation approved and completed
-- [ ] Production backup schedule approved and enabled
+- [x] Production tenant and role provisioning approved and completed
+- [x] Production `homelab-postgres` identity and `atlas-postgres` alias approved
+- [x] Fresh PostgreSQL tenant/no-import decision completed; legacy SQLite
+      remains retained and is not the runtime authority
+- [x] Production backup schedule approved and enabled
 - [ ] Production retention deletion/reclamation procedure approved and enabled
-- [ ] Production backup destination verified outside live PGDATA
-- [ ] Production isolated restore approved and verified
-- [ ] Production schema-promotion evidence reviewed
-- [ ] Production cutover approved and completed
+- [x] Production backup destination verified outside live PGDATA
+- [x] Production isolated restore approved and verified
+- [x] Production schema-promotion evidence reviewed
+- [x] Production cutover approved and completed
 
-This branch intentionally leaves every production-only box unchecked.
+Production retention is intentionally read-only. Destructive expiration and
+reclamation remain unchecked and require a separate explicit operator gate;
+Wayfinder P1 did not delete backups, production data, or the retained SQLite
+artifact.

@@ -61,10 +61,12 @@ unlimited and is distinct from numeric zero.
 - Missing, stale, or failed recovery evidence is `degraded` and
   `promotion_allowed=false`; it does not claim that production recovery is
   complete.
-- A partial provider failure is `degraded`. If no admitted retrieval path
-  with complete healthy reachability, health, cooldown, and balance evidence
-  remains, status is `unready`. Fresh-process zeroed health records are not
-  evidence: missing or degraded provider health cannot prove a usable path.
+- A configured provider with healthy capability and no explicitly unready
+  dimension remains an eligible retrieval path when health or reachability
+  evidence is missing, degraded, or stale. That path and overall readiness are
+  reported as `degraded`, never healthy, but `/api/ready` remains HTTP 200.
+  If every configured provider is explicitly unready or lacks admitted
+  capability, status is `unready`.
 - Background reachability probes run only for async-native adapters so
   lifespan shutdown can cancel and join every in-flight probe. Blocking-only
   adapters such as DuckDuckGo are not probed locally at startup; their
