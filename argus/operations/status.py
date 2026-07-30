@@ -654,7 +654,7 @@ class OperationalStatusService:
         usable = [
             provider
             for provider, state in active_provider_states.items()
-            if state == "healthy"
+            if state in {"healthy", "degraded"}
         ]
         if not usable:
             return "unready", ["retrieval_path"]
