@@ -802,6 +802,7 @@ async def test_v2_retrieval_session_is_opaque_principal_bound_and_durable():
     )
 
     session_id = operation.result["session_id"]
+    assert len(session_id) <= 64
     assert authority.owns(session_id, "maya")
     assert not authority.owns(session_id, "hermes")
     broker.search_with_session.assert_awaited_once()
