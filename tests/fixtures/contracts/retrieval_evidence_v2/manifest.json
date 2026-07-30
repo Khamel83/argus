@@ -219,7 +219,7 @@
     },
     {
       "path": "tests/test_accepted_operations.py",
-      "sha256": "add1f51022d71df7e95d57acfcd9e89dbf704163c0a573c9d32ae84b60f1c20c"
+      "sha256": "213daaf2e5ede5c85c755b395b3f6908c38c6b66b73ba0934ba452dee616683a"
     }
   ],
   "valid_vector_count": 8

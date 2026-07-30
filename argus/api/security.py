@@ -34,18 +34,18 @@ class RetrievalSessionAuthority:
         return cls(value.encode()) if len(value) >= 32 else None
 
     def issue(self, principal: str) -> str:
-        nonce = secrets.token_hex(16)
+        nonce = secrets.token_hex(8)
         principal_digest = hashlib.sha256(principal.encode()).hexdigest()[:16]
         payload = f"r2.{principal_digest}.{nonce}"
         signature = hmac.new(
             self.secret,
             payload.encode(),
             hashlib.sha256,
-        ).hexdigest()[:32]
+        ).hexdigest()[:24]
         return f"{payload}.{signature}"
 
     def owns(self, session_id: str, principal: str) -> bool:
-        if len(session_id) > 96:
+        if len(session_id) > 64:
             return False
         parts = session_id.split(".")
         if len(parts) != 4 or parts[0] != "r2":
@@ -53,8 +53,8 @@ class RetrievalSessionAuthority:
         version, principal_digest, nonce, signature = parts
         if (
             len(principal_digest) != 16
-            or len(nonce) != 32
-            or len(signature) != 32
+            or len(nonce) != 16
+            or len(signature) != 24
         ):
             return False
         expected_principal = hashlib.sha256(principal.encode()).hexdigest()[:16]
@@ -63,7 +63,7 @@ class RetrievalSessionAuthority:
             self.secret,
             payload.encode(),
             hashlib.sha256,
-        ).hexdigest()[:32]
+        ).hexdigest()[:24]
         return hmac.compare_digest(principal_digest, expected_principal) and (
             hmac.compare_digest(signature, expected_signature)
         )
