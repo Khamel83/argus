@@ -4,9 +4,9 @@ Pydantic request/response schemas for the HTTP API.
 
 import re
 from datetime import datetime
-from typing import Any, List, Optional, Set
+from typing import Any, List, Literal, Optional, Set
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from argus.extraction.rejection import RejectionAction, RejectionCode
 from argus.models import ProviderName, is_adapter_provider
@@ -150,6 +150,81 @@ class ExtractRequest(BaseModel):
         if v not in ("default", "archive_ingest"):
             raise ValueError("Invalid extraction mode")
         return v
+
+
+_RAW_FETCH_BLOCKED_HEADERS = {
+    "authorization",
+    "cookie",
+    "host",
+    "proxy-authorization",
+    "x-admin-api-key",
+    "x-api-key",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-real-ip",
+}
+
+
+class FetchRawRequest(BaseModel):
+    """Bounded browser request accepted by the Tix compatibility endpoint."""
+
+    url: str = Field(..., min_length=1, max_length=2048)
+    render: Literal["browser"] = "browser"
+    cache: bool = False
+    extractors: list[Literal["raw_html"]] = Field(default_factory=lambda: ["raw_html"])
+    impersonate: Literal["chrome"] = "chrome"
+    egress: Literal["residential", "datacenter", "unknown"] = "unknown"
+    timeout_seconds: int = Field(25, ge=1, le=30)
+    headers: dict[str, str] = Field(default_factory=dict, max_length=20)
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("URL must be a public HTTP(S) URL")
+        return value
+
+    @field_validator("headers")
+    @classmethod
+    def reject_sensitive_headers(cls, value: dict[str, str]) -> dict[str, str]:
+        blocked = sorted(
+            name for name in value if name.strip().lower() in _RAW_FETCH_BLOCKED_HEADERS
+        )
+        if blocked:
+            raise ValueError(
+                "Routing or credential forwarding headers are not allowed: "
+                + ", ".join(blocked)
+            )
+        if any(
+            not name.strip() or not isinstance(header_value, str)
+            for name, header_value in value.items()
+        ):
+            raise ValueError("headers must contain non-empty names and string values")
+        return value
+
+
+class FetchRawResponse(BaseModel):
+    status: Literal["ok", "error"]
+    http_status: int | None = Field(None, ge=100, le=599)
+    body: str = ""
+    final_url: str = ""
+    sha256: str = ""
+    render: str = "browser"
+    extractor: str = ""
+    egress: str = "unknown"
+    elapsed_ms: int = Field(0, ge=0)
+    from_cache: bool = False
+    error: str | None = None
+
+    @model_validator(mode="after")
+    def successful_fetch_requires_body(self):
+        if self.status == "ok" and not self.body.strip():
+            raise ValueError("successful raw fetch requires a non-empty body")
+        return self
 
 
 class ExtractionRejectionSchema(BaseModel):

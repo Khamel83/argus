@@ -179,6 +179,7 @@ def is_caller_path(path: str) -> bool:
         "/api/recover-url",
         "/api/expand",
         "/api/extract",
+        "/api/fetch-raw",
         "/api/assess-content",
         "/api/capabilities",
         "/api/provider-health",
