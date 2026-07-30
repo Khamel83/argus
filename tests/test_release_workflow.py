@@ -46,10 +46,12 @@ def test_release_workflow_builds_once_and_submits_a_hardened_request():
         "780049a30b6ff5c378a9e7b389d15ece7a204888 # v4.1.3"
     ) in text
     assert "tags: tag:argus-deployer" in text
-    assert "targets: homelab-ts" in text
+    assert "ping: homelab" in text
+    assert "targets:" not in text
     assert "DEPLOY_KNOWN_HOSTS" in text
     assert "DEPLOY_USER" not in text
-    assert '"argus-deploy@homelab-ts"' in text
+    assert "HostKeyAlias=homelab-ts" in text
+    assert '"argus-deploy@homelab.deer-panga.ts.net"' in text
     assert "StrictHostKeyChecking=yes" in text
     assert "argus-deploy promote " in text
     assert ":latest" not in text
