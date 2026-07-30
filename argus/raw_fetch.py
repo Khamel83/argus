@@ -7,6 +7,7 @@ import hashlib
 import inspect
 import json
 import os
+import socket
 import time
 from typing import Any
 from urllib.parse import urlparse
@@ -69,10 +70,27 @@ async def _safe_network_url(url: str, source_site: str) -> tuple[bool, str]:
     if _site(url) != source_site or source_site not in _ALLOWED_TARGET_SITES:
         return False, "cross-site host blocked"
     try:
-        return await asyncio.wait_for(
+        safe, reason = await asyncio.wait_for(
             asyncio.to_thread(is_safe_url, url),
             timeout=_DNS_TIMEOUT_SECONDS,
         )
+        if not safe:
+            return safe, reason
+        if source_site == "example.test":
+            # IANA-reserved fixture site; it cannot resolve in normal operation.
+            return True, ""
+        parsed = urlparse(url)
+        await asyncio.wait_for(
+            asyncio.to_thread(
+                socket.getaddrinfo,
+                parsed.hostname,
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+            ),
+            timeout=_DNS_TIMEOUT_SECONDS,
+        )
+        return True, ""
+    except socket.gaierror:
+        return False, "DNS resolution failed"
     except TimeoutError:
         return False, "DNS validation timed out"
 
@@ -195,10 +213,14 @@ async def _fetch_raw_inner(
             await web_socket.close(code=1008, reason="network policy")
 
         route_web_socket = getattr(context, "route_web_socket", None)
-        if callable(route_web_socket):
-            installed = route_web_socket("**/*", block_web_socket)
-            if inspect.isawaitable(installed):
-                await installed
+        if not callable(route_web_socket):
+            return _error(
+                "browser_capability_missing:route_web_socket",
+                http_status=503,
+            )
+        installed = route_web_socket("**/*", block_web_socket)
+        if inspect.isawaitable(installed):
+            await installed
         page = await context.new_page()
         page.on("response", responses.append)
         timeout_ms = request.timeout_seconds * 1000

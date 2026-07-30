@@ -533,6 +533,30 @@ async def test_raw_fetch_blocks_service_workers_and_websockets(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_raw_fetch_fails_closed_without_websocket_routing(monkeypatch):
+    from argus.raw_fetch import FetchRawRequest, fetch_raw
+
+    context = MagicMock()
+    context.route = AsyncMock()
+    context.route_web_socket = None
+    context.new_page = AsyncMock()
+    context.close = AsyncMock()
+    browser = MagicMock()
+    browser.new_context = AsyncMock(return_value=context)
+    monkeypatch.setattr("argus.raw_fetch._get_browser", AsyncMock(return_value=browser))
+    monkeypatch.setattr("argus.raw_fetch.is_safe_url", lambda url: (True, ""))
+
+    result = await fetch_raw(
+        FetchRawRequest(url="https://events.example.test/event/123")
+    )
+
+    assert result.status == "error"
+    assert result.http_status == 503
+    assert result.error == "browser_capability_missing:route_web_socket"
+    context.new_page.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_raw_fetch_overall_timeout_includes_browser_acquisition(monkeypatch):
     import asyncio
 

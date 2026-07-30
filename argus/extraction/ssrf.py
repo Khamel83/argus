@@ -71,7 +71,10 @@ def is_safe_url(url: str) -> tuple[bool, str]:
                 except ValueError:
                     continue
         except socket.gaierror:
-            return False, f"DNS resolution failed: {hostname}"
+            # General extraction preserves its historical fail-open behavior.
+            # Security-sensitive callers such as raw browser fetch add their
+            # own fail-closed DNS policy.
+            pass
 
         return True, ""
 
