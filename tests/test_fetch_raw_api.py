@@ -145,13 +145,13 @@ async def test_raw_fetch_prefers_same_site_inventory_json(monkeypatch):
     async def goto(*_args, **_kwargs):
         return page_response
 
-    async def settle(*_args, **_kwargs):
+    async def capture_window(_delay):
         for callback in responses:
             callback(inventory_response)
             callback(unrelated_response)
 
     page.goto = AsyncMock(side_effect=goto)
-    page.wait_for_load_state = AsyncMock(side_effect=settle)
+    page.wait_for_load_state = AsyncMock()
     context = MagicMock()
     context.route = AsyncMock()
     context.new_page = AsyncMock(return_value=page)
@@ -161,6 +161,7 @@ async def test_raw_fetch_prefers_same_site_inventory_json(monkeypatch):
 
     monkeypatch.setattr("argus.raw_fetch._get_browser", AsyncMock(return_value=browser))
     monkeypatch.setattr("argus.raw_fetch.is_safe_url", lambda url: (True, ""))
+    monkeypatch.setattr("argus.raw_fetch.asyncio.sleep", capture_window)
 
     result = await fetch_raw(
         FetchRawRequest(url="https://events.example.test/event/123")
@@ -169,7 +170,7 @@ async def test_raw_fetch_prefers_same_site_inventory_json(monkeypatch):
     assert result.body == '{"listings":[{"id":"listing-1"}]}'
     assert result.extractor_used == "same_site_json"
     assert result.final_url == "https://events.example.test/event/123"
-    page.wait_for_load_state.assert_awaited_once_with("networkidle", timeout=1500)
+    page.wait_for_load_state.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -197,6 +198,7 @@ async def test_raw_fetch_falls_back_to_nonempty_rendered_html(monkeypatch):
 
     monkeypatch.setattr("argus.raw_fetch._get_browser", AsyncMock(return_value=browser))
     monkeypatch.setattr("argus.raw_fetch.is_safe_url", lambda url: (True, ""))
+    monkeypatch.setattr("argus.raw_fetch.asyncio.sleep", AsyncMock())
 
     result = await fetch_raw(
         FetchRawRequest(url="https://events.example.test/event/123")
@@ -235,6 +237,7 @@ async def test_raw_fetch_reports_upstream_status_and_never_accepts_empty_body(
 
     monkeypatch.setattr("argus.raw_fetch._get_browser", AsyncMock(return_value=browser))
     monkeypatch.setattr("argus.raw_fetch.is_safe_url", lambda url: (True, ""))
+    monkeypatch.setattr("argus.raw_fetch.asyncio.sleep", AsyncMock())
 
     result = await fetch_raw(
         FetchRawRequest(url="https://events.example.test/event/123")
@@ -271,6 +274,7 @@ async def test_raw_fetch_rejects_empty_success_body(monkeypatch):
 
     monkeypatch.setattr("argus.raw_fetch._get_browser", AsyncMock(return_value=browser))
     monkeypatch.setattr("argus.raw_fetch.is_safe_url", lambda url: (True, ""))
+    monkeypatch.setattr("argus.raw_fetch.asyncio.sleep", AsyncMock())
 
     result = await fetch_raw(
         FetchRawRequest(url="https://events.example.test/event/123")
@@ -327,7 +331,7 @@ async def test_raw_fetch_installs_guard_before_navigation_and_blocks_unsafe_redi
     )
 
     assert result.status == "error"
-    assert result.error == "unsafe_redirect:loopback address"
+    assert result.error == "unsafe_redirect:cross-site host blocked"
 
 
 @pytest.mark.asyncio
@@ -355,7 +359,7 @@ async def test_raw_fetch_blocks_unsafe_subresource_before_it_is_requested(monkey
     browser = MagicMock()
     browser.new_context = AsyncMock(return_value=context)
 
-    async def settle(*_args, **_kwargs):
+    async def capture_window(*_args, **_kwargs):
         subresource = SimpleNamespace(
             request=SimpleNamespace(
                 url="http://169.254.169.254/latest/meta-data",
@@ -367,23 +371,22 @@ async def test_raw_fetch_blocks_unsafe_subresource_before_it_is_requested(monkey
         await handlers[0](subresource)
         subresource.abort.assert_awaited_once()
 
-    page.wait_for_load_state = AsyncMock(side_effect=settle)
+    page.wait_for_load_state = AsyncMock()
     monkeypatch.setattr("argus.raw_fetch._get_browser", AsyncMock(return_value=browser))
     monkeypatch.setattr(
         "argus.raw_fetch.is_safe_url",
         lambda url: (
-            (False, "link-local address")
-            if "169.254.169.254" in url
-            else (True, "")
+            (False, "link-local address") if "169.254.169.254" in url else (True, "")
         ),
     )
+    monkeypatch.setattr("argus.raw_fetch.asyncio.sleep", capture_window)
 
     result = await fetch_raw(
         FetchRawRequest(url="https://events.example.test/event/123")
     )
 
     assert result.status == "error"
-    assert result.error == "unsafe_subresource:link-local address"
+    assert result.error == "unsafe_subresource:cross-site host blocked"
     page.content.assert_not_awaited()
 
 
@@ -433,9 +436,7 @@ async def test_raw_fetch_guard_allows_non_network_browser_resources(monkeypatch)
     monkeypatch.setattr(
         "argus.raw_fetch.is_safe_url",
         lambda url: (
-            (True, "")
-            if url.startswith("https://")
-            else (False, "invalid scheme")
+            (True, "") if url.startswith("https://") else (False, "invalid scheme")
         ),
     )
 
@@ -485,17 +486,50 @@ async def test_raw_fetch_never_succeeds_after_late_unsafe_subresource(monkeypatc
     monkeypatch.setattr("argus.raw_fetch._get_browser", AsyncMock(return_value=browser))
     monkeypatch.setattr(
         "argus.raw_fetch.is_safe_url",
-        lambda url: (
-            (False, "loopback address")
-            if "127.0.0.1" in url
-            else (True, "")
-        ),
+        lambda url: (False, "loopback address") if "127.0.0.1" in url else (True, ""),
     )
 
     result = await fetch_raw(FetchRawRequest(url=document.url))
 
     assert result.status == "error"
-    assert result.error == "unsafe_subresource:loopback address"
+    assert result.error == "unsafe_subresource:cross-site host blocked"
+
+
+@pytest.mark.asyncio
+async def test_raw_fetch_blocks_service_workers_and_websockets(monkeypatch):
+    from argus.raw_fetch import FetchRawRequest, fetch_raw
+
+    document = SimpleNamespace(
+        url="https://events.example.test/event/123",
+        status=200,
+        headers={"content-type": "text/html"},
+    )
+    page = MagicMock()
+    page.url = document.url
+    page.goto = AsyncMock(return_value=document)
+    page.content = AsyncMock(return_value="<html>safe</html>")
+    page.close = AsyncMock()
+    page.on = MagicMock()
+    context = MagicMock()
+    context.route = AsyncMock()
+    websocket_handlers = []
+    context.route_web_socket = AsyncMock(
+        side_effect=lambda _pattern, handler: websocket_handlers.append(handler)
+    )
+    context.new_page = AsyncMock(return_value=page)
+    context.close = AsyncMock()
+    browser = MagicMock()
+    browser.new_context = AsyncMock(return_value=context)
+    monkeypatch.setattr("argus.raw_fetch._get_browser", AsyncMock(return_value=browser))
+    monkeypatch.setattr("argus.raw_fetch.is_safe_url", lambda url: (True, ""))
+    monkeypatch.setattr("argus.raw_fetch.asyncio.sleep", AsyncMock())
+
+    result = await fetch_raw(FetchRawRequest(url=document.url))
+
+    assert result.status == "ok"
+    assert browser.new_context.await_args.kwargs["service_workers"] == "block"
+    context.route_web_socket.assert_awaited_once()
+    assert websocket_handlers
 
 
 @pytest.mark.asyncio

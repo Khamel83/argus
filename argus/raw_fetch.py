@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import os
 import time
@@ -18,6 +19,9 @@ from argus.extraction.ssrf import is_safe_url
 
 _MAX_RESPONSE_BYTES = 5_000_000
 _SETTLE_WINDOW_MS = 1500
+_CLEANUP_TIMEOUT_SECONDS = 0.5
+_DNS_TIMEOUT_SECONDS = 2.0
+_ALLOWED_TARGET_SITES = {"seatgeek.com", "example.test"}
 _CHROME_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -58,6 +62,19 @@ def _contains_listing_or_inventory(value: Any) -> bool:
     elif isinstance(value, list):
         return any(_contains_listing_or_inventory(item) for item in value)
     return False
+
+
+async def _safe_network_url(url: str, source_site: str) -> tuple[bool, str]:
+    """Validate DNS off-loop and confine browser traffic to the caller's site."""
+    if _site(url) != source_site or source_site not in _ALLOWED_TARGET_SITES:
+        return False, "cross-site host blocked"
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(is_safe_url, url),
+            timeout=_DNS_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        return False, "DNS validation timed out"
 
 
 async def _inventory_json_body(responses: list[Any], source_url: str) -> str | None:
@@ -125,17 +142,15 @@ async def _fetch_raw_inner(
     *,
     started: float,
 ) -> FetchRawResponse:
-    safe, reason = is_safe_url(request.url)
+    source_site = _site(request.url)
+    safe, reason = await _safe_network_url(request.url, source_site)
     if not safe:
         return _error(f"unsafe_url:{reason}", http_status=400)
 
     actual_egress = _actual_egress()
     if request.egress != "unknown" and request.egress != actual_egress:
         return _error(
-            (
-                f"egress_unavailable:requested={request.egress}:"
-                f"actual={actual_egress}"
-            ),
+            (f"egress_unavailable:requested={request.egress}:actual={actual_egress}"),
             http_status=503,
         )
 
@@ -152,6 +167,7 @@ async def _fetch_raw_inner(
             "user_agent": _CHROME_USER_AGENT,
             "viewport": {"width": 1440, "height": 900},
             "locale": "en-US",
+            "service_workers": "block",
         }
         if request.headers:
             context_options["extra_http_headers"] = request.headers
@@ -163,16 +179,26 @@ async def _fetch_raw_inner(
             if _is_non_network_browser_url(request_url):
                 await route.continue_()
                 return
-            request_safe, request_reason = is_safe_url(request_url)
+            request_safe, request_reason = await _safe_network_url(
+                request_url, source_site
+            )
             if not request_safe:
-                blocked_requests.append(
-                    (resource_type, request_url, request_reason)
-                )
+                blocked_requests.append((resource_type, request_url, request_reason))
                 await route.abort()
                 return
             await route.continue_()
 
         await context.route("**/*", guard_public_requests)
+
+        async def block_web_socket(web_socket) -> None:
+            blocked_requests.append(("websocket", web_socket.url, "websocket blocked"))
+            await web_socket.close(code=1008, reason="network policy")
+
+        route_web_socket = getattr(context, "route_web_socket", None)
+        if callable(route_web_socket):
+            installed = route_web_socket("**/*", block_web_socket)
+            if inspect.isawaitable(installed):
+                await installed
         page = await context.new_page()
         page.on("response", responses.append)
         timeout_ms = request.timeout_seconds * 1000
@@ -195,7 +221,7 @@ async def _fetch_raw_inner(
             return _error("upstream_response_missing", http_status=502)
 
         final_url = getattr(page, "url", "") or getattr(document, "url", request.url)
-        safe, reason = is_safe_url(final_url)
+        safe, reason = await _safe_network_url(final_url, source_site)
         if not safe:
             return _error(
                 f"unsafe_redirect:{reason}",
@@ -203,14 +229,9 @@ async def _fetch_raw_inner(
                 final_url=final_url,
             )
 
-        try:
-            await page.wait_for_load_state(
-                "networkidle",
-                timeout=_SETTLE_WINDOW_MS,
-            )
-        except Exception as exc:
-            if type(exc).__name__ != "TimeoutError":
-                raise
+        # Keep a real bounded capture window open for timer-triggered inventory
+        # XHRs. ``networkidle`` may return early and is not a minimum wait.
+        await asyncio.sleep(_SETTLE_WINDOW_MS / 1000)
 
         blocked_error = _unsafe_request_error(
             blocked_requests,
@@ -259,7 +280,10 @@ async def _fetch_raw_inner(
             from_cache=False,
         )
     except Exception as exc:
-        if isinstance(exc, asyncio.TimeoutError) or type(exc).__name__ == "TimeoutError":
+        if (
+            isinstance(exc, asyncio.TimeoutError)
+            or type(exc).__name__ == "TimeoutError"
+        ):
             return _error(
                 "browser_timeout",
                 http_status=504,
@@ -273,12 +297,14 @@ async def _fetch_raw_inner(
     finally:
         if page is not None:
             try:
-                await page.close()
+                await asyncio.wait_for(page.close(), timeout=_CLEANUP_TIMEOUT_SECONDS)
             except Exception:
                 pass
         if context is not None:
             try:
-                await context.close()
+                await asyncio.wait_for(
+                    context.close(), timeout=_CLEANUP_TIMEOUT_SECONDS
+                )
             except Exception:
                 pass
 
