@@ -332,7 +332,7 @@ async def test_raw_fetch_installs_guard_before_navigation_and_blocks_unsafe_redi
     )
 
     assert result.status == "error"
-    assert result.error == "unsafe_redirect:cross-site host blocked"
+    assert result.error == "unsafe_redirect:loopback address"
 
 
 @pytest.mark.asyncio
@@ -387,7 +387,7 @@ async def test_raw_fetch_blocks_unsafe_subresource_before_it_is_requested(monkey
     )
 
     assert result.status == "error"
-    assert result.error == "unsafe_subresource:cross-site host blocked"
+    assert result.error == "unsafe_subresource:link-local address"
     page.content.assert_not_awaited()
 
 
@@ -493,7 +493,7 @@ async def test_raw_fetch_never_succeeds_after_late_unsafe_subresource(monkeypatc
     result = await fetch_raw(FetchRawRequest(url=document.url))
 
     assert result.status == "error"
-    assert result.error == "unsafe_subresource:cross-site host blocked"
+    assert result.error == "unsafe_subresource:loopback address"
 
 
 @pytest.mark.asyncio
