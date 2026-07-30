@@ -1072,7 +1072,7 @@ def test_retention_plan_rejects_fifo_without_mutation(tmp_path):
         plan_snapshot_retention(root, live_data=live, now=NOW)
 
     assert _filesystem_state(root) == before
-def test_restore_passes_trusted_complete_0007_schema_manifest(tmp_path):
+def test_restore_passes_trusted_complete_current_schema_manifest(tmp_path):
     from argus.recovery.records import (
         record_verified_backup,
         record_verified_restore,
@@ -1098,7 +1098,7 @@ def test_restore_passes_trusted_complete_0007_schema_manifest(tmp_path):
     def verify_argus(database, expected):
         seen.append(expected)
         return {
-            "schema_head": "0007_extraction_outcomes",
+            "schema_head": "0009_retrieval_evidence",
             "checks": checks,
         }
 
@@ -1117,6 +1117,6 @@ def test_restore_passes_trusted_complete_0007_schema_manifest(tmp_path):
         },
     )
 
-    assert seen[0]["schema_head"] == "0007_extraction_outcomes"
+    assert seen[0]["schema_head"] == "0009_retrieval_evidence"
     assert "fk_result_extraction_links_acceptance_plan" in seen[0]["constraints"]
     assert "ix_extraction_outcome_artifacts_artifact_ref" in seen[0]["indexes"]
