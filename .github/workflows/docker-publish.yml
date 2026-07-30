@@ -91,7 +91,7 @@ jobs:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:argus-deployer
-          targets: homelab-ts
+          ping: homelab
 
       - name: Submit forced-command promotion
         env:
@@ -109,5 +109,6 @@ jobs:
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts" \
-            "argus-deploy@homelab-ts" \
+            -o HostKeyAlias=homelab-ts \
+            "argus-deploy@homelab.deer-panga.ts.net" \
             "argus-deploy promote ${IMAGE_REF} ${SOURCE_REVISION} ${RECEIPT_SHA256}"
