@@ -171,6 +171,7 @@ async def test_raw_fetch_prefers_same_site_inventory_json(monkeypatch):
     assert result.extractor_used == "same_site_json"
     assert result.final_url == "https://events.example.test/event/123"
     page.wait_for_load_state.assert_not_awaited()
+    assert hasattr(responses[0], "__dict__")
 
 
 @pytest.mark.asyncio

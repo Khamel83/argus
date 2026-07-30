@@ -230,7 +230,11 @@ async def _fetch_raw_inner(
         if inspect.isawaitable(installed):
             await installed
         page = await context.new_page()
-        page.on("response", responses.append)
+
+        def capture_response(response: Any) -> None:
+            responses.append(response)
+
+        page.on("response", capture_response)
         timeout_ms = request.timeout_seconds * 1000
         try:
             document = await page.goto(
