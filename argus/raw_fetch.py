@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import inspect
 import json
 import os
@@ -80,7 +81,7 @@ async def _safe_network_url(url: str, source_site: str) -> tuple[bool, str]:
             # IANA-reserved fixture site; it cannot resolve in normal operation.
             return True, ""
         parsed = urlparse(url)
-        await asyncio.wait_for(
+        resolved = await asyncio.wait_for(
             asyncio.to_thread(
                 socket.getaddrinfo,
                 parsed.hostname,
@@ -88,6 +89,13 @@ async def _safe_network_url(url: str, source_site: str) -> tuple[bool, str]:
             ),
             timeout=_DNS_TIMEOUT_SECONDS,
         )
+        for _family, _socktype, _proto, _canonname, sockaddr in resolved:
+            try:
+                address = ipaddress.ip_address(sockaddr[0])
+            except ValueError:
+                return False, "DNS returned an invalid address"
+            if not address.is_global:
+                return False, f"non-public IP blocked:{address}"
         return True, ""
     except socket.gaierror:
         return False, "DNS resolution failed"

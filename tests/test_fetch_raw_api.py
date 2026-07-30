@@ -557,6 +557,30 @@ async def test_raw_fetch_fails_closed_without_websocket_routing(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_raw_fetch_rejects_private_second_dns_answer(monkeypatch):
+    import socket
+
+    from argus.raw_fetch import FetchRawRequest, fetch_raw
+
+    get_browser = AsyncMock()
+    monkeypatch.setattr("argus.raw_fetch._get_browser", get_browser)
+    monkeypatch.setattr("argus.raw_fetch.is_safe_url", lambda url: (True, ""))
+    monkeypatch.setattr(
+        "argus.raw_fetch.socket.getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))
+        ],
+    )
+
+    result = await fetch_raw(FetchRawRequest(url="https://seatgeek.com/event/123"))
+
+    assert result.status == "error"
+    assert result.http_status == 400
+    assert result.error == "unsafe_url:non-public IP blocked:127.0.0.1"
+    get_browser.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_raw_fetch_overall_timeout_includes_browser_acquisition(monkeypatch):
     import asyncio
 
