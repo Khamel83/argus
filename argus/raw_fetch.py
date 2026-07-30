@@ -68,8 +68,8 @@ def _contains_listing_or_inventory(value: Any) -> bool:
 
 async def _safe_network_url(url: str, source_site: str) -> tuple[bool, str]:
     """Validate DNS off-loop and confine browser traffic to the caller's site."""
-    if _site(url) != source_site or source_site not in _ALLOWED_TARGET_SITES:
-        return False, "cross-site host blocked"
+    if source_site not in _ALLOWED_TARGET_SITES:
+        return False, "target site not allowed"
     try:
         safe, reason = await asyncio.wait_for(
             asyncio.to_thread(is_safe_url, url),
@@ -96,6 +96,8 @@ async def _safe_network_url(url: str, source_site: str) -> tuple[bool, str]:
                 return False, "DNS returned an invalid address"
             if not address.is_global:
                 return False, f"non-public IP blocked:{address}"
+        if _site(url) != source_site:
+            return False, "cross-site host blocked"
         return True, ""
     except socket.gaierror:
         return False, "DNS resolution failed"
@@ -209,6 +211,12 @@ async def _fetch_raw_inner(
                 request_url, source_site
             )
             if not request_safe:
+                if request_reason == "cross-site host blocked":
+                    # Third-party page resources are unnecessary for the
+                    # same-site inventory/HTML contract. Abort them safely
+                    # without turning an otherwise valid page into an error.
+                    await route.abort()
+                    return
                 blocked_requests.append((resource_type, request_url, request_reason))
                 await route.abort()
                 return
@@ -230,7 +238,11 @@ async def _fetch_raw_inner(
         if inspect.isawaitable(installed):
             await installed
         page = await context.new_page()
-        page.on("response", responses.append)
+
+        def capture_response(response: Any) -> None:
+            responses.append(response)
+
+        page.on("response", capture_response)
         timeout_ms = request.timeout_seconds * 1000
         try:
             document = await page.goto(
