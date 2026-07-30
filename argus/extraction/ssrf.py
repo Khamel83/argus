@@ -26,7 +26,7 @@ def is_safe_url(url: str) -> tuple[bool, str]:
     try:
         parsed = urlparse(url)
 
-        if parsed.scheme not in ('http', 'https'):
+        if parsed.scheme not in ("http", "https"):
             return False, f"Invalid scheme: {parsed.scheme}"
 
         hostname = parsed.hostname
@@ -35,8 +35,14 @@ def is_safe_url(url: str) -> tuple[bool, str]:
 
         # Block internal hostnames
         internal_patterns = [
-            'localhost', 'internal', 'intranet', 'local',
-            '.local', '.internal', '.corp', '.lan',
+            "localhost",
+            "internal",
+            "intranet",
+            "local",
+            ".local",
+            ".internal",
+            ".corp",
+            ".lan",
         ]
         hostname_lower = hostname.lower()
         for pattern in internal_patterns:
@@ -46,7 +52,7 @@ def is_safe_url(url: str) -> tuple[bool, str]:
         # Resolve and check IP addresses
         try:
             resolved = socket.getaddrinfo(
-                hostname, parsed.port or (443 if parsed.scheme == 'https' else 80)
+                hostname, parsed.port or (443 if parsed.scheme == "https" else 80)
             )
             for family, _, _, _, sockaddr in resolved:
                 ip_str = sockaddr[0]
@@ -65,7 +71,9 @@ def is_safe_url(url: str) -> tuple[bool, str]:
                 except ValueError:
                     continue
         except socket.gaierror:
-            # DNS resolution failed — let the request fail naturally
+            # General extraction preserves its historical fail-open behavior.
+            # Security-sensitive callers such as raw browser fetch add their
+            # own fail-closed DNS policy.
             pass
 
         return True, ""

@@ -27,6 +27,7 @@ PRESENTATION_ADAPTERS = {
     ROOT / "argus/api/routes_admin.py",
     ROOT / "argus/api/routes_dashboard.py",
     ROOT / "argus/api/routes_health.py",
+    ROOT / "argus/api/routes_fetch_raw.py",
 }
 LEGACY_ADAPTER_EXCEPTIONS: set[Path] = set()
 MCP_ADAPTERS = {
