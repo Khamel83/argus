@@ -17,11 +17,21 @@ from argus.extraction.playwright_extractor import _get_browser
 from argus.extraction.ssrf import is_safe_url
 
 _MAX_RESPONSE_BYTES = 5_000_000
+_SETTLE_WINDOW_MS = 1500
+_CHROME_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/126.0.0.0 Safari/537.36"
+)
 
 
 def _actual_egress() -> str:
     value = os.environ.get("ARGUS_EGRESS_TYPE", "unknown").strip().lower()
     return value if value in {"residential", "datacenter"} else "unknown"
+
+
+def _is_non_network_browser_url(url: str) -> bool:
+    return urlparse(url).scheme.lower() in {"about", "blob", "data"}
 
 
 def _site(url: str) -> str:
@@ -92,18 +102,42 @@ def _error(
         status="error",
         http_status=http_status,
         final_url=final_url,
-        egress=_actual_egress(),
+        egress_used=_actual_egress(),
         elapsed_ms=elapsed_ms,
         error=error,
     )
 
 
-async def fetch_raw(request: FetchRawRequest) -> FetchRawResponse:
-    """Navigate with Argus's managed browser without entering the extractor chain."""
-    started = time.monotonic()
+def _unsafe_request_error(
+    blocked_requests: list[tuple[str, str, str]],
+    *,
+    final_url: str = "",
+) -> FetchRawResponse | None:
+    if not blocked_requests:
+        return None
+    resource_type, _url, reason = blocked_requests[0]
+    code = "unsafe_redirect" if resource_type == "document" else "unsafe_subresource"
+    return _error(f"{code}:{reason}", http_status=400, final_url=final_url)
+
+
+async def _fetch_raw_inner(
+    request: FetchRawRequest,
+    *,
+    started: float,
+) -> FetchRawResponse:
     safe, reason = is_safe_url(request.url)
     if not safe:
         return _error(f"unsafe_url:{reason}", http_status=400)
+
+    actual_egress = _actual_egress()
+    if request.egress != "unknown" and request.egress != actual_egress:
+        return _error(
+            (
+                f"egress_unavailable:requested={request.egress}:"
+                f"actual={actual_egress}"
+            ),
+            http_status=503,
+        )
 
     browser = await _get_browser()
     if browser is None:
@@ -112,19 +146,51 @@ async def fetch_raw(request: FetchRawRequest) -> FetchRawResponse:
     context = None
     page = None
     responses: list[Any] = []
+    blocked_requests: list[tuple[str, str, str]] = []
     try:
-        context_options = (
-            {"extra_http_headers": request.headers} if request.headers else {}
-        )
+        context_options: dict[str, Any] = {
+            "user_agent": _CHROME_USER_AGENT,
+            "viewport": {"width": 1440, "height": 900},
+            "locale": "en-US",
+        }
+        if request.headers:
+            context_options["extra_http_headers"] = request.headers
         context = await browser.new_context(**context_options)
+
+        async def guard_public_requests(route) -> None:
+            request_url = route.request.url
+            resource_type = getattr(route.request, "resource_type", "other")
+            if _is_non_network_browser_url(request_url):
+                await route.continue_()
+                return
+            request_safe, request_reason = is_safe_url(request_url)
+            if not request_safe:
+                blocked_requests.append(
+                    (resource_type, request_url, request_reason)
+                )
+                await route.abort()
+                return
+            await route.continue_()
+
+        await context.route("**/*", guard_public_requests)
         page = await context.new_page()
         page.on("response", responses.append)
         timeout_ms = request.timeout_seconds * 1000
-        document = await page.goto(
-            request.url,
-            wait_until="domcontentloaded",
-            timeout=timeout_ms,
-        )
+        try:
+            document = await page.goto(
+                request.url,
+                wait_until="domcontentloaded",
+                timeout=timeout_ms,
+            )
+        except Exception:
+            blocked_error = _unsafe_request_error(blocked_requests)
+            if blocked_error is not None:
+                return blocked_error
+            raise
+
+        blocked_error = _unsafe_request_error(blocked_requests)
+        if blocked_error is not None:
+            return blocked_error
         if document is None:
             return _error("upstream_response_missing", http_status=502)
 
@@ -136,6 +202,22 @@ async def fetch_raw(request: FetchRawRequest) -> FetchRawResponse:
                 http_status=400,
                 final_url=final_url,
             )
+
+        try:
+            await page.wait_for_load_state(
+                "networkidle",
+                timeout=_SETTLE_WINDOW_MS,
+            )
+        except Exception as exc:
+            if type(exc).__name__ != "TimeoutError":
+                raise
+
+        blocked_error = _unsafe_request_error(
+            blocked_requests,
+            final_url=final_url,
+        )
+        if blocked_error is not None:
+            return blocked_error
 
         document_status = getattr(document, "status", None)
         if not isinstance(document_status, int):
@@ -153,6 +235,12 @@ async def fetch_raw(request: FetchRawRequest) -> FetchRawResponse:
         extractor = "same_site_json" if body is not None else "raw_html"
         if body is None:
             body = await page.content()
+        blocked_error = _unsafe_request_error(
+            blocked_requests,
+            final_url=final_url,
+        )
+        if blocked_error is not None:
+            return blocked_error
         if not body or not body.strip():
             return _error("empty_body", http_status=502, final_url=final_url)
         if len(body.encode("utf-8")) > _MAX_RESPONSE_BYTES:
@@ -163,24 +251,24 @@ async def fetch_raw(request: FetchRawRequest) -> FetchRawResponse:
             http_status=document_status,
             body=body,
             final_url=final_url,
-            sha256=hashlib.sha256(body.encode("utf-8")).hexdigest(),
-            render="browser",
-            extractor=extractor,
-            egress=_actual_egress(),
+            body_sha256=hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            render_mode_used="browser",
+            extractor_used=extractor,
+            egress_used=actual_egress,
             elapsed_ms=int((time.monotonic() - started) * 1000),
             from_cache=False,
         )
     except Exception as exc:
-        elapsed_ms = int((time.monotonic() - started) * 1000)
-        if (
-            isinstance(exc, asyncio.TimeoutError)
-            or type(exc).__name__ == "TimeoutError"
-        ):
-            return _error("browser_timeout", http_status=504, elapsed_ms=elapsed_ms)
+        if isinstance(exc, asyncio.TimeoutError) or type(exc).__name__ == "TimeoutError":
+            return _error(
+                "browser_timeout",
+                http_status=504,
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+            )
         return _error(
             f"browser_error:{type(exc).__name__}",
             http_status=502,
-            elapsed_ms=elapsed_ms,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
         )
     finally:
         if page is not None:
@@ -193,3 +281,23 @@ async def fetch_raw(request: FetchRawRequest) -> FetchRawResponse:
                 await context.close()
             except Exception:
                 pass
+
+
+async def fetch_raw(request: FetchRawRequest) -> FetchRawResponse:
+    """Navigate with Argus's managed browser without entering the extractor chain."""
+    started = time.monotonic()
+    try:
+        async with asyncio.timeout(request.timeout_seconds):
+            return await _fetch_raw_inner(request, started=started)
+    except TimeoutError:
+        return _error(
+            "browser_timeout",
+            http_status=504,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+        )
+    except Exception as exc:
+        return _error(
+            f"browser_error:{type(exc).__name__}",
+            http_status=502,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+        )

@@ -152,18 +152,7 @@ class ExtractRequest(BaseModel):
         return v
 
 
-_RAW_FETCH_BLOCKED_HEADERS = {
-    "authorization",
-    "cookie",
-    "host",
-    "proxy-authorization",
-    "x-admin-api-key",
-    "x-api-key",
-    "x-forwarded-for",
-    "x-forwarded-host",
-    "x-forwarded-proto",
-    "x-real-ip",
-}
+_RAW_FETCH_ALLOWED_HEADERS = {"accept", "accept-language"}
 
 
 class FetchRawRequest(BaseModel):
@@ -191,13 +180,15 @@ class FetchRawRequest(BaseModel):
     @field_validator("headers")
     @classmethod
     def reject_sensitive_headers(cls, value: dict[str, str]) -> dict[str, str]:
-        blocked = sorted(
-            name for name in value if name.strip().lower() in _RAW_FETCH_BLOCKED_HEADERS
+        rejected = sorted(
+            name
+            for name in value
+            if name.strip().lower() not in _RAW_FETCH_ALLOWED_HEADERS
         )
-        if blocked:
+        if rejected:
             raise ValueError(
-                "Routing or credential forwarding headers are not allowed: "
-                + ", ".join(blocked)
+                "Only Accept and Accept-Language request headers are allowed: "
+                + ", ".join(rejected)
             )
         if any(
             not name.strip() or not isinstance(header_value, str)
@@ -212,10 +203,10 @@ class FetchRawResponse(BaseModel):
     http_status: int | None = Field(None, ge=100, le=599)
     body: str = ""
     final_url: str = ""
-    sha256: str = ""
-    render: str = "browser"
-    extractor: str = ""
-    egress: str = "unknown"
+    body_sha256: str = ""
+    render_mode_used: str = "browser"
+    extractor_used: str = ""
+    egress_used: str = "unknown"
     elapsed_ms: int = Field(0, ge=0)
     from_cache: bool = False
     error: str | None = None
