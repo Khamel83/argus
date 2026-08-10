@@ -387,6 +387,27 @@ class WorkflowRunResponse(BaseModel):
     error: Optional[str] = None
 
 
+class WorkflowStartResponse(BaseModel):
+    """Exact path-free response returned by the durable safe-start route."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    kind: Literal["build-research-pack"]
+    status: str
+    target: str
+    created_at: datetime
+    status_url: str
+    request_sha256: str
+
+
+# Descriptive aliases used by adapters/tests without introducing a second
+# response shape or changing the OpenAPI route contract.
+WorkflowSafeStartResponse = WorkflowStartResponse
+SafeWorkflowStartResponse = WorkflowStartResponse
+BuildResearchPackStartResponse = WorkflowStartResponse
+
+
 class WorkflowArtifactStatusResponse(BaseModel):
     """Path-free metadata for one allowlisted workflow artifact."""
 
@@ -415,6 +436,20 @@ class WorkflowRuntimeIdentityResponse(BaseModel):
     deployment_identity: str = "unknown"
 
 
+class WorkflowRuntimeObservationResponse(BaseModel):
+    """Live runtime observation kept separate from immutable run identity."""
+
+    persisted: WorkflowRuntimeIdentityResponse = Field(
+        default_factory=WorkflowRuntimeIdentityResponse
+    )
+    live: WorkflowRuntimeIdentityResponse = Field(
+        default_factory=WorkflowRuntimeIdentityResponse
+    )
+    persisted_runtime: WorkflowRuntimeIdentityResponse | None = None
+    live_runtime: WorkflowRuntimeIdentityResponse | None = None
+    mismatch: bool = False
+
+
 class WorkflowStatusResponse(BaseModel):
     """Safe public workflow projection for authenticated callers."""
 
@@ -439,6 +474,13 @@ class WorkflowStatusResponse(BaseModel):
     runtime: WorkflowRuntimeIdentityResponse = Field(
         default_factory=WorkflowRuntimeIdentityResponse
     )
+    runtime_observation: WorkflowRuntimeObservationResponse = Field(
+        default_factory=WorkflowRuntimeObservationResponse
+    )
+    runtime_mismatch: bool = False
+    request_sha256: Optional[str] = None
+    deadline_at: Optional[str] = None
+    research_plan: dict[str, Any] = Field(default_factory=dict)
     error_code: Optional[str] = None
 
 

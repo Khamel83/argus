@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from argus.api.schemas import (
     BuildResearchPackWorkflowRequest,
@@ -15,17 +15,20 @@ from argus.api.schemas import (
     SummarySectionSchema,
     WorkflowArtifactSchema,
     WorkflowRunResponse,
+    WorkflowStartResponse,
     SearchAndSummarizeWorkflowRequest,
     WorkflowArtifactReadResponse,
     WorkflowStatusResponse,
 )
 
 from argus.workflows import WorkflowService
+from argus.workflows.models import WorkflowStatus
 from argus.workflows.service import (
     WorkflowArtifactNotFound,
     WorkflowArtifactNotReady,
     WorkflowArtifactRangeError,
     WorkflowArtifactUnavailable,
+    WorkflowStartPersistenceError,
 )
 
 router = APIRouter()
@@ -106,16 +109,54 @@ async def build_research_pack(
     # Pydantic URL objects are intentionally retained for schema validation,
     # but the legacy service boundary consumes plain URL strings.
     payload = req.model_dump(mode="json")
+    start_kwargs = {
+        "topic": payload["topic"],
+        "official_url": payload["official_url"],
+        "max_research_pages": payload["max_research_pages"],
+        "free_only": payload["free_only"],
+        "caller_identity": getattr(request.state, "caller_identity", "") or "unknown",
+        "caller_label": payload["caller"],
+        "runtime": _runtime_projection(request),
+    }
+    if payload.get("research_targets"):
+        start_kwargs["research_targets"] = payload["research_targets"]
     run = await workflows.start_build_research_pack(
-        topic=payload["topic"],
-        official_url=payload["official_url"],
-        max_research_pages=payload["max_research_pages"],
-        free_only=payload["free_only"],
-        caller_identity=getattr(request.state, "caller_identity", "") or "unknown",
-        caller_label=payload["caller"],
-        runtime=_runtime_projection(request),
+        **start_kwargs,
     )
     return _to_response(run)
+
+
+@router.post(
+    "/workflows/build-research-pack/start",
+    response_model=WorkflowStartResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_build_research_pack(
+    req: BuildResearchPackWorkflowRequest,
+    request: Request,
+    workflows: WorkflowService = Depends(get_workflows),
+):
+    """Admit a path-free workflow only after its pending state is durable."""
+
+    try:
+        run = await workflows.start_build_research_pack_safe(
+            request=req,
+            caller_identity=getattr(request.state, "caller_identity", "") or "unknown",
+            caller_label=req.caller,
+            runtime=_runtime_projection(request),
+        )
+    except WorkflowStartPersistenceError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Workflow could not be durably accepted",
+        ) from exc
+    if run.status is WorkflowStatus.FAILED and run.error == "WorkflowStatePersistenceError":
+        raise HTTPException(
+            status_code=503,
+            detail="Workflow could not be durably accepted",
+        )
+    presenter = getattr(workflows, "safe_start_response", None)
+    return presenter(run) if callable(presenter) else WorkflowService.safe_start_response(run)
 
 
 @router.post("/workflows/search-and-summarize", response_model=WorkflowRunResponse)

@@ -12,7 +12,7 @@ import shutil
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -46,6 +46,7 @@ _ARTIFACT_MEDIA_TYPES = {
     "report": "text/markdown; charset=utf-8",
     "manifest": "application/json; charset=utf-8",
 }
+_SAFE_WORKFLOW_DEADLINE_SECONDS = 540
 # The extraction authority allows ten requests per root domain in a sixty-second
 # window.  Keep official same-domain capture conservatively below that bound
 # before composing artifacts; external research retains its caller-provided page
@@ -91,6 +92,10 @@ class WorkflowArtifactUnavailable(WorkflowArtifactError):
 
 class WorkflowArtifactRangeError(WorkflowArtifactError):
     """The requested byte limit cannot contain the next UTF-8 code point."""
+
+
+class WorkflowStartPersistenceError(RuntimeError):
+    """A safe workflow start could not be durably recorded."""
 
 
 def _json_default(value: Any):
@@ -221,6 +226,7 @@ class WorkflowService:
     ArtifactNotReady = WorkflowArtifactNotReady
     ArtifactUnavailable = WorkflowArtifactUnavailable
     ArtifactRange = WorkflowArtifactRangeError
+    StartPersistenceError = WorkflowStartPersistenceError
 
     def __init__(
         self,
@@ -233,6 +239,7 @@ class WorkflowService:
         self._accepted_operations = accepted_operations
         self._paths = corpus_paths or get_corpus_paths()
         self._runs: dict[str, WorkflowResult] = {}
+        self._tasks: dict[str, asyncio.Task] = {}
         self._progress = progress_callback
         self._caller = caller or "workflows"
 
@@ -319,6 +326,8 @@ class WorkflowService:
         return describe_corpus_paths()
 
     def get_run(self, run_id: str) -> WorkflowResult | None:
+        if not _SAFE_ID_RE.fullmatch(str(run_id)):
+            return None
         run = self._runs.get(run_id)
         if run is not None:
             return run
@@ -330,6 +339,7 @@ class WorkflowService:
         try:
             payload = json.loads(state_path.read_text(encoding="utf-8"))
             run = self._deserialize_run(payload)
+            self._interrupt_orphaned_run(run)
             self._runs[run.run_id] = run
             return run
         except Exception as exc:
@@ -431,7 +441,12 @@ class WorkflowService:
             "partial_reasons": partial_reasons,
             "degraded_reasons": degraded_reasons,
             "cost_state": self._cost_state(run),
-            "runtime": self._runtime_projection(runtime, run.metadata.get("runtime")),
+            "runtime": self._status_runtime_projection(run, runtime),
+            "runtime_observation": self._runtime_observation(run, runtime),
+            "runtime_mismatch": self._runtime_observation(run, runtime)["mismatch"],
+            "request_sha256": self._safe_request_hash(run),
+            "deadline_at": self._safe_deadline(run),
+            "research_plan": self._safe_research_plan(run),
             "error_code": run.error if run.status == WorkflowStatus.FAILED else None,
         }
 
@@ -720,6 +735,109 @@ class WorkflowService:
             ),
         }
 
+    @classmethod
+    def _status_runtime_projection(
+        cls,
+        run: WorkflowResult,
+        runtime: Mapping[str, Any] | None,
+    ) -> dict[str, str]:
+        """Prefer immutable run-start identity over the live deployment."""
+
+        persisted = run.metadata.get("runtime")
+        if isinstance(persisted, Mapping):
+            return cls._runtime_projection(None, persisted)
+        return cls._runtime_projection(runtime, None)
+
+    @classmethod
+    def _runtime_observation(
+        cls,
+        run: WorkflowResult,
+        runtime: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Expose live-versus-persisted identity as observation evidence only."""
+
+        persisted = cls._runtime_projection(None, run.metadata.get("runtime"))
+        live = cls._runtime_projection(runtime, None)
+        has_live = isinstance(runtime, Mapping) and bool(runtime)
+        has_persisted = isinstance(run.metadata.get("runtime"), Mapping)
+        mismatch = bool(has_live and has_persisted and live != persisted)
+        return {
+            "persisted": persisted,
+            "live": live,
+            "persisted_runtime": persisted,
+            "live_runtime": live,
+            "mismatch": mismatch,
+        }
+
+    @staticmethod
+    def _safe_request_hash(run: WorkflowResult) -> str | None:
+        value = run.metadata.get("request_sha256")
+        return value if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) else None
+
+    @staticmethod
+    def _safe_deadline(run: WorkflowResult) -> str | None:
+        value = run.metadata.get("deadline_at")
+        if not isinstance(value, str):
+            return None
+        parsed = _parse_dt(value)
+        if parsed is None or parsed.tzinfo is None:
+            return None
+        return parsed.astimezone(timezone.utc).isoformat()
+
+    @staticmethod
+    def _safe_research_plan(run: WorkflowResult) -> dict[str, Any]:
+        value = run.metadata.get("research_plan")
+        if not isinstance(value, Mapping):
+            return {}
+        return _plain_json_value(value)
+
+    def _is_recovery_sensitive_run(self, run: WorkflowResult) -> bool:
+        metadata = run.metadata
+        if metadata.get("safe_start") is True:
+            return True
+        targets = metadata.get("research_targets")
+        if isinstance(targets, (list, tuple)) and bool(targets):
+            return True
+        plan = metadata.get("research_plan")
+        if isinstance(plan, Mapping):
+            targets = plan.get("targets")
+            if isinstance(targets, (list, tuple)) and bool(targets):
+                return True
+        request = metadata.get("request")
+        if isinstance(request, Mapping):
+            targets = request.get("research_targets")
+            if isinstance(targets, (list, tuple)) and bool(targets):
+                return True
+        return False
+
+    def _interrupt_orphaned_run(self, run: WorkflowResult) -> None:
+        """Terminalize a reloaded safe run that has no live in-process task."""
+
+        if run.status not in {WorkflowStatus.PENDING, WorkflowStatus.RUNNING}:
+            return
+        if not self._is_recovery_sensitive_run(run):
+            return
+        live_task = self._tasks.get(run.run_id)
+        if live_task is not None and not live_task.done():
+            return
+
+        run.status = WorkflowStatus.FAILED
+        run.error = "workflow_interrupted"
+        run.finished_at = datetime.now(timezone.utc)
+        # An interrupted run has no accepted closure.  Never expose or create
+        # report/manifest artifacts while recovering the durable state.
+        run.report_path = None
+        run.manifest_path = None
+        run.artifacts = []
+        run.metadata["failure"] = {
+            "code": "workflow_interrupted",
+            "reason": "process_reload_without_live_task",
+        }
+        try:
+            self._write_run_state(run)
+        except Exception:
+            logger.exception("Failed to persist interrupted workflow %s", run.run_id)
+
     def import_legacy_docs_cache(self, source_root: str) -> dict[str, Any]:
         return mirror_legacy_docs_cache(source_root, self._paths)
 
@@ -740,14 +858,12 @@ class WorkflowService:
             caller_label=caller_label,
             runtime=runtime,
         )
-        asyncio.create_task(
-            self._execute_run(
-                run.run_id,
-                self._recover_article_impl,
-                url=url,
-                title=title,
-                domain=domain,
-            )
+        self._schedule_run(
+            run,
+            self._recover_article_impl,
+            url=url,
+            title=title,
+            domain=domain,
         )
         return run
 
@@ -768,14 +884,12 @@ class WorkflowService:
             caller_label=caller_label,
             runtime=runtime,
         )
-        asyncio.create_task(
-            self._execute_run(
-                run.run_id,
-                self._capture_site_impl,
-                url=url,
-                soft_page_limit=soft_page_limit,
-                hard_page_limit=hard_page_limit,
-            )
+        self._schedule_run(
+            run,
+            self._capture_site_impl,
+            url=url,
+            soft_page_limit=soft_page_limit,
+            hard_page_limit=hard_page_limit,
         )
         return run
 
@@ -789,6 +903,7 @@ class WorkflowService:
         caller_identity: str | None = None,
         caller_label: str = "",
         runtime: Mapping[str, Any] | None = None,
+        research_targets: list[Mapping[str, Any]] | None = None,
     ) -> WorkflowResult:
         run = self._create_run(
             WorkflowKind.BUILD_RESEARCH_PACK,
@@ -797,18 +912,147 @@ class WorkflowService:
             caller_label=caller_label,
             runtime=runtime,
             free_only=free_only,
+            extra_metadata=(
+                {"research_targets": _plain_json_value(research_targets)}
+                if research_targets
+                else None
+            ),
         )
-        asyncio.create_task(
-            self._execute_run(
-                run.run_id,
-                self._build_research_pack_impl,
-                topic=topic,
-                official_url=official_url,
-                max_research_pages=max_research_pages,
-                free_only=free_only,
-            )
+        self._schedule_run(
+            run,
+            self._build_research_pack_impl,
+            topic=topic,
+            official_url=official_url,
+            max_research_pages=max_research_pages,
+            free_only=free_only,
+            research_targets=research_targets,
         )
         return run
+
+    async def start_build_research_pack_safe(
+        self,
+        *,
+        request: Any,
+        caller_identity: str | None = None,
+        caller_label: str = "",
+        runtime: Mapping[str, Any] | None = None,
+    ) -> WorkflowResult:
+        """Durably admit a path-free v3 run before scheduling execution."""
+
+        from argus.workflows.research_targets import (
+            canonical_request_json,
+            canonical_request_projection,
+            canonical_request_sha256,
+        )
+
+        projection = canonical_request_projection(request)
+        request_json = canonical_request_json(request)
+        request_hash = canonical_request_sha256(request)
+        target_projection = projection.get("research_targets", [])
+        effective_caller_label = caller_label or str(projection.get("caller", ""))
+        plan = {
+            "contract_schema": "build-research-pack/v3",
+            "free_only": bool(projection.get("free_only", False)),
+            "caller_identity": caller_identity or self._caller,
+            "caller_label": str(projection.get("caller", "")),
+            "official_url": projection.get("official_url"),
+            "max_research_pages": projection.get("max_research_pages", 40),
+            "targets": _plain_json_value(target_projection),
+        }
+        sanitized_runtime = self._runtime_projection(runtime, None)
+        metadata = {
+            "safe_start": True,
+            "request": _plain_json_value(projection),
+            "request_projection": _plain_json_value(projection),
+            "request_json": request_json,
+            "request_sha256": request_hash,
+            "research_plan": plan,
+            "caller_identity": caller_identity or self._caller,
+            "authenticated_principal": caller_identity or self._caller,
+            "caller_label": effective_caller_label,
+            "body_caller": effective_caller_label,
+            "runtime": sanitized_runtime,
+            "start_runtime": sanitized_runtime,
+        }
+        try:
+            run = self._create_run(
+                WorkflowKind.BUILD_RESEARCH_PACK,
+                str(projection["topic"]),
+                caller_identity=caller_identity,
+                caller_label=effective_caller_label,
+                runtime=runtime,
+                free_only=bool(projection.get("free_only", False)),
+                extra_metadata=metadata,
+            )
+        except Exception as exc:
+            raise WorkflowStartPersistenceError(
+                "Workflow could not be durably accepted"
+            ) from exc
+        created_at = run.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+            run.created_at = created_at
+        deadline = created_at + timedelta(seconds=_SAFE_WORKFLOW_DEADLINE_SECONDS)
+        run.status_url = f"/api/workflows/{run.run_id}/status"
+        run.metadata["deadline_at"] = deadline.astimezone(timezone.utc).isoformat()
+        run.metadata["deadline"] = run.metadata["deadline_at"]
+        run.metadata["runtime"] = sanitized_runtime
+        # The alias makes the immutable start identity explicit to readers while
+        # retaining the existing runtime metadata contract used by manifests.
+        run.metadata["start_runtime"] = _plain_json_value(
+            run.metadata.get("runtime", sanitized_runtime)
+        )
+
+        try:
+            self._write_run_state(run)
+        except Exception:
+            run.status = WorkflowStatus.FAILED
+            run.error = "WorkflowStatePersistenceError"
+            run.finished_at = datetime.now(timezone.utc)
+            run.metadata["failure"] = {
+                "code": "WorkflowStatePersistenceError",
+                "reason": "initial_pending_state_write_failed",
+            }
+            try:
+                self._write_run_state(run)
+            except Exception as terminal_exc:
+                self._runs.pop(run.run_id, None)
+                raise WorkflowStartPersistenceError(
+                    "Workflow could not be durably accepted"
+                ) from terminal_exc
+            logger.warning(
+                "Safe workflow %s admitted only as a durable failure after pending write failure",
+                run.run_id,
+            )
+            return run
+
+        self._schedule_run(
+            run,
+            self._build_research_pack_impl,
+            topic=str(projection["topic"]),
+            official_url=projection.get("official_url"),
+            max_research_pages=int(projection.get("max_research_pages", 40)),
+            free_only=bool(projection.get("free_only", False)),
+            research_targets=target_projection,
+        )
+        return run
+
+    @staticmethod
+    def safe_start_response(run: WorkflowResult) -> dict[str, Any]:
+        """Return exactly the safe-start metadata contract."""
+
+        created_at = run.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        return {
+            "run_id": run.run_id,
+            "kind": run.kind.value,
+            "status": run.status.value,
+            "target": run.target,
+            "created_at": created_at.astimezone(timezone.utc).isoformat(),
+            "status_url": f"/api/workflows/{run.run_id}/status",
+            "request_sha256": run.metadata.get("request_sha256", ""),
+        }
 
     async def start_search_and_summarize(
         self,
@@ -830,13 +1074,11 @@ class WorkflowService:
             caller_label=caller_label,
             runtime=runtime,
         )
-        asyncio.create_task(
-            self._execute_run(
-                run.run_id,
-                self._search_and_summarize_impl,
-                query=query,
-                max_search_results=max_search_results,
-            )
+        self._schedule_run(
+            run,
+            self._search_and_summarize_impl,
+            query=query,
+            max_search_results=max_search_results,
         )
         return run
 
@@ -1134,6 +1376,7 @@ class WorkflowService:
         caller_identity: str | None = None,
         caller_label: str = "",
         runtime: Mapping[str, Any] | None = None,
+        research_targets: list[Mapping[str, Any]] | None = None,
     ) -> WorkflowResult:
         run = self._create_run(
             WorkflowKind.BUILD_RESEARCH_PACK,
@@ -1142,6 +1385,11 @@ class WorkflowService:
             caller_label=caller_label,
             runtime=runtime,
             free_only=free_only,
+            extra_metadata=(
+                {"research_targets": _plain_json_value(research_targets)}
+                if research_targets
+                else None
+            ),
         )
         return await self._execute_run(
             run.run_id,
@@ -1150,6 +1398,7 @@ class WorkflowService:
             official_url=official_url,
             max_research_pages=max_research_pages,
             free_only=free_only,
+            research_targets=research_targets,
         )
 
     def _create_run(
@@ -1161,6 +1410,7 @@ class WorkflowService:
         caller_label: str = "",
         runtime: Mapping[str, Any] | None = None,
         free_only: bool | None = None,
+        extra_metadata: Mapping[str, Any] | None = None,
     ) -> WorkflowResult:
         run_id = uuid.uuid4().hex[:12]
         slug = (
@@ -1183,6 +1433,8 @@ class WorkflowService:
             # The route may receive a richer operational status payload that can
             # contain local paths, provider details, or other sensitive values.
             metadata["runtime"] = self._runtime_projection(runtime, None)
+        if extra_metadata:
+            metadata.update(_plain_json_value(extra_metadata))
         run = WorkflowResult(
             run_id=run_id,
             kind=kind,
@@ -1194,6 +1446,20 @@ class WorkflowService:
         )
         self._runs[run_id] = run
         return run
+
+    def _schedule_run(self, run: WorkflowResult, handler, **kwargs) -> asyncio.Task:
+        """Schedule one workflow and retain its task for reload/orphan checks."""
+
+        task = asyncio.create_task(self._execute_run(run.run_id, handler, **kwargs))
+        self._tasks[run.run_id] = task
+
+        def _forget(completed: asyncio.Task) -> None:
+            current = self._tasks.get(run.run_id)
+            if current is completed:
+                self._tasks.pop(run.run_id, None)
+
+        task.add_done_callback(_forget)
+        return task
 
     def _caller_for_run(self, run: WorkflowResult) -> str:
         return str(run.metadata.get("caller_identity") or self._caller)
@@ -1390,11 +1656,14 @@ class WorkflowService:
         official_url: str | None,
         max_research_pages: int,
         free_only: bool | None = None,
+        research_targets: list[Mapping[str, Any]] | None = None,
     ):
         # The metadata copy is the durable source for every nested operation;
         # keep it synchronized for direct/internal callers of this handler.
         if free_only is not None:
             run.metadata["free_only"] = bool(free_only)
+        if research_targets:
+            run.metadata["research_targets"] = _plain_json_value(research_targets)
         self._report(0, 4, "Discovering official documentation URL...")
         official = official_url or await self._discover_official_docs_url(
             topic, run=run
@@ -1789,8 +2058,16 @@ class WorkflowService:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
         try:
-            temporary.write_text(content, encoding="utf-8")
+            with temporary.open("w", encoding="utf-8") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(temporary, path)
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         except OSError:
             try:
                 temporary.unlink(missing_ok=True)
@@ -1991,6 +2268,7 @@ class WorkflowService:
             "degraded_reasons": status["degraded_reasons"],
             "cost_state": status["cost_state"],
             "runtime": status["runtime"],
+            "research_plan": status["research_plan"],
             "error_code": status["error_code"],
         }
 
