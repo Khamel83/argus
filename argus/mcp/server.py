@@ -18,7 +18,6 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from argus.auth import AuthConfig, remote_mcp_requires_auth
-from argus.api.schemas import ResearchTarget
 from argus.logging import get_logger, setup_logging
 from argus.mcp.sessions import (
     MCP_MAX_ACTIVE_SESSIONS,
@@ -1001,6 +1000,12 @@ def serve_mcp(
     auth_config = AuthConfig.from_env()
     from argus.api.security import TransportSecurityGuard
     from argus.config import load_config
+    from argus.workflows.research_targets import ResearchTarget
+
+    # FastMCP evaluates postponed annotations against the defining module's
+    # globals while registering the nested tool.  Keep the strict model out of
+    # the import-time adapter surface, then expose it only for that registration.
+    globals()["ResearchTarget"] = ResearchTarget
 
     config = load_config()
     remotely_exposed = _mcp_remote_exposed()
