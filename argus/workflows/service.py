@@ -652,7 +652,6 @@ class WorkflowService:
         self._write_run_state(run)
         try:
             await handler(run, **kwargs)
-            run.status = WorkflowStatus.COMPLETED
         except WorkflowOperationFailure as exc:
             logger.warning(
                 "Workflow %s stopped with accepted outcome %s",
@@ -670,7 +669,8 @@ class WorkflowService:
             run.status = WorkflowStatus.FAILED
             run.error = type(exc).__name__
         finally:
-            run.finished_at = datetime.now(tz=None)
+            if run.finished_at is None:
+                run.finished_at = datetime.now(tz=None)
             self._write_run_state(run)
         return run
 
@@ -1134,6 +1134,11 @@ class WorkflowService:
         docs_cache_dir: Path | None = None,
         docs_cache_url: str | None = None,
     ) -> None:
+        # A report and manifest are terminal artifacts. Mark the run complete
+        # before rendering either one so their serialized status/timestamp
+        # cannot lag the durable run state.
+        run.status = WorkflowStatus.COMPLETED
+        run.finished_at = datetime.now(tz=None)
         report_path = Path(run.snapshot_dir) / report_name
         manifest_path = Path(run.snapshot_dir) / "manifest.json"
         report_path.write_text(self._render_report(title, run), encoding="utf-8")
@@ -1167,8 +1172,6 @@ class WorkflowService:
                 self._update_docs_cache_index(
                     docs_cache_dir.name, docs_cache_url, docs_cache_dir
                 )
-
-        self._write_run_state(run)
 
     def _write_docs_cache_dir(
         self, docs_cache_dir: Path, *, title: str, run: WorkflowResult
@@ -1226,6 +1229,7 @@ class WorkflowService:
             f"- Workflow: {run.kind.value}",
             f"- Target: {run.target}",
             f"- Status: {run.status.value}",
+            f"- Finished at: {run.finished_at.isoformat() if run.finished_at else 'unknown'}",
             f"- Snapshot: {run.snapshot_dir}",
             "",
             "## Summary",
