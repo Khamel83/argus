@@ -26,6 +26,7 @@ EXACT_EXPIRY_SOURCES = frozenset({
 MAX_EXECUTABLE_SCOPES = 32
 EXECUTABLE_REQUEST_CLASSES = ("discovery", "research", "recovery", "grounding")
 _SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_CALLER_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,99}$")
 _UNSAFE_REASON = re.compile(
     r"(?i)(?:https?://|authorization|cookie|password|secret|token|[?&][^ ]+=)"
 )
@@ -61,6 +62,16 @@ def _identifier(value: str | None, name: str) -> str:
     if not isinstance(value, str) or not _SAFE.fullmatch(value):
         raise ValueError(f"{name} must be an opaque bounded identifier")
     return value
+
+
+def safe_caller_label(value: object, *, fallback: object) -> str:
+    """Return a bounded audit label, falling back to the authenticated identity."""
+    candidate = value.strip() if isinstance(value, str) else ""
+    if _CALLER_LABEL.fullmatch(candidate):
+        return candidate
+    identity = fallback.strip() if isinstance(fallback, str) else str(fallback or "")
+    identity = identity.strip()
+    return identity if _CALLER_LABEL.fullmatch(identity) else "unknown"
 
 
 def _reason(value: str | None) -> str | None:
@@ -310,6 +321,7 @@ class ExecutionContext:
     scope: ReadinessScope | None = None
     plan_id: str = "legacy-plan"
     caller_identity: str = "legacy-caller"
+    caller_label: str = ""
     idempotency_key: str = "legacy-request"
     egress: str = "local"
     request_class: str = "discovery"
@@ -317,6 +329,11 @@ class ExecutionContext:
     contract_version: str = "unknown-contract"
 
     def __post_init__(self):
+        object.__setattr__(
+            self,
+            "caller_label",
+            safe_caller_label(self.caller_label, fallback=self.caller_identity),
+        )
         if self.scope is None:
             object.__setattr__(self, "scope", ReadinessScope(
                 egress=self.egress, request_class=self.request_class,
@@ -330,6 +347,7 @@ class ExecutionContext:
             "plan_providers": self.plan_providers, "free_only": self.free_only,
             "caller_tier_cap": self.caller_tier_cap, "scope": self.scope,
             "plan_id": self.plan_id, "caller_identity": self.caller_identity,
+            "caller_label": self.caller_label,
             "idempotency_key": self.idempotency_key, "egress": self.egress,
             "request_class": self.request_class,
             "release_revision": self.release_revision,

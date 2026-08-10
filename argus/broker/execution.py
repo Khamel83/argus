@@ -263,6 +263,7 @@ class ProviderExecutor:
                 ),
                 plan_id=str(getattr(plan, "plan_id", None) or attempt_scope),
                 caller_identity=query.caller or "unknown",
+                caller_label=query.metadata.get("caller_label"),
                 idempotency_key=f"{attempt_scope}:{pname.value}:{index}",
                 egress=planned_egress or "local",
                 request_class=plan.intent.value,
