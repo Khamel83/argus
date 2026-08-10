@@ -379,6 +379,36 @@ def test_targeted_closure_requires_bounded_execution_diagnostics(tmp_path):
     assert run.manifest_path is None
 
 
+def test_targeted_closure_accepts_aware_receipt_datetime(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].metadata["execution_evidence"]["persistence"] = {
+        "availability": "available",
+        "source": "acceptance_receipt",
+        "accepted_at": datetime(2026, 8, 9, 12, tzinfo=timezone.utc),
+    }
+
+    service._finalize_run(
+        run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+    )
+    assert run.status is WorkflowStatus.COMPLETED
+
+
+def test_targeted_closure_rejects_naive_receipt_datetime(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].metadata["execution_evidence"]["persistence"] = {
+        "availability": "available",
+        "source": "acceptance_receipt",
+        "accepted_at": datetime(2026, 8, 9, 12),
+    }
+
+    with pytest.raises(ValueError, match="provenance diagnostics"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+
+
 def test_source_date_parser_rejects_trailing_junk(tmp_path):
     service = _service()
     run = _run(tmp_path, requirement_count=1)

@@ -1858,33 +1858,71 @@ class WorkflowService:
         if not set(evidence).issubset(_TARGET_EXECUTION_EVIDENCE_FIELDS):
             return False
 
-        def bounded(value: Any, *, depth: int = 0) -> bool:
+        invalid = object()
+
+        def canonical(value: Any, *, depth: int = 0) -> tuple[Any, bool]:
             if depth > 5:
-                return False
+                return invalid, False
+            if isinstance(value, datetime):
+                if value.tzinfo is None or value.utcoffset() is None:
+                    return invalid, False
+                normalized = value.astimezone(timezone.utc).isoformat()
+                if len(normalized) > _PUBLIC_LABEL_MAX:
+                    return invalid, False
+                return normalized, True
             if isinstance(value, str):
-                return (
-                    len(value) <= _PUBLIC_BODY_MAX
-                    and not _PUBLIC_CONTROL_RE.search(value)
-                    and not _PUBLIC_SECRET_RE.search(value)
-                    and not _PUBLIC_PATH_RE.search(value)
-                )
+                if (
+                    len(value) > _PUBLIC_BODY_MAX
+                    or _PUBLIC_CONTROL_RE.search(value)
+                    or _PUBLIC_SECRET_RE.search(value)
+                    or _PUBLIC_PATH_RE.search(value)
+                ):
+                    return invalid, False
+                return value, False
             if isinstance(value, Mapping):
                 if len(value) > 64:
-                    return False
-                return all(
-                    isinstance(key, str)
-                    and len(key) <= _PUBLIC_LABEL_MAX
-                    and bounded(nested, depth=depth + 1)
-                    for key, nested in value.items()
-                )
+                    return invalid, False
+                normalized_mapping: dict[str, Any] = {}
+                changed = False
+                for key, nested in value.items():
+                    if not isinstance(key, str) or len(key) > _PUBLIC_LABEL_MAX:
+                        return invalid, False
+                    normalized_nested, nested_changed = canonical(
+                        nested, depth=depth + 1
+                    )
+                    if normalized_nested is invalid:
+                        return invalid, False
+                    normalized_mapping[key] = normalized_nested
+                    changed = changed or nested_changed
+                return (normalized_mapping if changed else value), changed
             if isinstance(value, (list, tuple, set)):
-                return len(value) <= 64 and all(
-                    bounded(nested, depth=depth + 1) for nested in value
-                )
-            return value is None or isinstance(value, (bool, int, float))
+                if len(value) > 64:
+                    return invalid, False
+                normalized_items: list[Any] = []
+                changed = False
+                for nested in value:
+                    normalized_nested, nested_changed = canonical(
+                        nested, depth=depth + 1
+                    )
+                    if normalized_nested is invalid:
+                        return invalid, False
+                    normalized_items.append(normalized_nested)
+                    changed = changed or nested_changed
+                if not changed:
+                    return value, False
+                if isinstance(value, tuple):
+                    return tuple(normalized_items), True
+                return normalized_items, True
+            if value is None or isinstance(value, (bool, int, float)):
+                return value, False
+            return invalid, False
 
-        if not bounded(evidence):
+        normalized_evidence, evidence_changed = canonical(evidence)
+        if normalized_evidence is invalid:
             return False
+        if evidence_changed and isinstance(metadata, dict):
+            metadata["execution_evidence"] = normalized_evidence
+            evidence = normalized_evidence
         diagnostics = metadata.get("execution_diagnostics")
         if not isinstance(diagnostics, (list, tuple)):
             diagnostics = evidence.get("execution_diagnostics", evidence.get("diagnostics"))
