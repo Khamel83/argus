@@ -288,6 +288,35 @@ def test_public_text_keeps_ordinary_documentation_phrases_allowed():
     assert request.topic.startswith("Basic capabilities")
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Basic dXNlcjpwYXNz",
+        "Authorization=Basic x",
+        "Authorization : Basic x",
+        "Authorization\t=\tBasic x",
+        "Authorization Basic x",
+    ],
+)
+def test_public_text_rejects_basic_authorization_variants_without_rejecting_prose(value):
+    with pytest.raises(ValidationError):
+        BuildResearchPackWorkflowRequest(topic=value)
+    with pytest.raises(ValidationError):
+        ResearchRequirement(claim_class="capabilities", query=value)
+    with pytest.raises(ValidationError):
+        ResearchTarget(
+            name=value,
+            source_prefixes=["https://example.com/"],
+            requirements=[_requirement()],
+        )
+
+    request = BuildResearchPackWorkflowRequest(
+        topic="Basic capabilities and API key rotation guidance",
+        caller="public-docs",
+    )
+    assert request.topic.startswith("Basic capabilities")
+
+
 def test_caller_label_is_bounded_and_scanned():
     with pytest.raises(ValidationError):
         BuildResearchPackWorkflowRequest(topic="t", caller="c" * 101)
@@ -436,6 +465,21 @@ def test_official_url_is_https_public_and_bounded():
     assert str(request.official_url) == "https://example.com/docs"
 
 
+def test_raw_public_url_length_is_checked_before_default_port_normalization():
+    prefix = "https://example.com:443/"
+    oversized = prefix + "a" * (2049 - len(prefix))
+    assert len(oversized) == 2049
+
+    with pytest.raises(ValidationError):
+        BuildResearchPackWorkflowRequest(topic="t", official_url=oversized)
+    with pytest.raises(ValidationError):
+        ResearchTarget(
+            name="n",
+            source_prefixes=[oversized],
+            requirements=[_requirement()],
+        )
+
+
 @pytest.mark.parametrize(
     "prefix",
     [
@@ -473,6 +517,32 @@ def test_official_url_rejects_raw_dot_traversal_and_encoded_controls(url):
 
 
 @pytest.mark.parametrize(
+    "value",
+    [
+        "-----BEGIN PGP PRIVATE KEY BLOCK-----",
+        "ssh-ed448 AAAA",
+        "ssh-sk-ecdsa-sha2-nistp256@openssh.com AAAA",
+    ],
+)
+def test_public_text_rejects_pgp_and_broader_ssh_private_key_markers(value):
+    with pytest.raises(ValidationError):
+        BuildResearchPackWorkflowRequest(topic=value)
+    with pytest.raises(ValidationError):
+        ResearchRequirement(claim_class="capabilities", query=value)
+    with pytest.raises(ValidationError):
+        ResearchTarget(
+            name=value,
+            source_prefixes=["https://example.com/"],
+            requirements=[_requirement()],
+        )
+
+    request = BuildResearchPackWorkflowRequest(
+        topic="SSH private keys are never included in public research text",
+    )
+    assert request.topic.startswith("SSH private keys")
+
+
+@pytest.mark.parametrize(
     "prefix",
     [
         "https://example.com/a/../b",
@@ -486,6 +556,34 @@ def test_official_url_rejects_raw_dot_traversal_and_encoded_controls(url):
 def test_source_prefix_rejects_raw_dot_traversal_and_encoded_controls(prefix):
     with pytest.raises(ValidationError):
         ResearchTarget(name="n", source_prefixes=[prefix], requirements=[_requirement()])
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "~alice/private/key",
+        r"~alice\private\key",
+        "//server/share/secret",
+        r"\\server\share\secret",
+        r"\\?\UNC\server\share\secret",
+    ],
+)
+def test_public_text_rejects_tilde_user_and_unc_paths_without_rejecting_urls(value):
+    with pytest.raises(ValidationError):
+        BuildResearchPackWorkflowRequest(topic=value)
+    with pytest.raises(ValidationError):
+        ResearchRequirement(claim_class="capabilities", query=value)
+    with pytest.raises(ValidationError):
+        ResearchTarget(
+            name=value,
+            source_prefixes=["https://example.com/"],
+            requirements=[_requirement()],
+        )
+
+    request = BuildResearchPackWorkflowRequest(
+        topic="See https://example.com/path and the https://example.com/docs guide",
+    )
+    assert request.topic.startswith("See https://example.com/path")
 
 
 def test_source_prefixes_normalize_default_port_host_case_idna_and_slash():

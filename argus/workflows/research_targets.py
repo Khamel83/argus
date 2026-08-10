@@ -8,6 +8,7 @@ ownership fail before a workflow operation can begin.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import ipaddress
 import json
@@ -45,7 +46,7 @@ _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _CREDENTIAL_MARKER = re.compile(
     r"(?ix)"
     r"(?:"
-    r"\bauthorization\s*:\s*(?:bearer|basic)\b"
+    r"\bauthorization\b\s*(?:[:=]\s*|\s+)(?:bearer|basic)\b"
     r"|\bbearer\s+[a-z0-9._~+/=-]+(?=$|[\s,;])"
     # A bare ``Basic capabilities`` sentence is ordinary documentation.  A
     # bare Basic credential is recognized when its base64 value has padding;
@@ -55,15 +56,19 @@ _CREDENTIAL_MARKER = re.compile(
     r"|\b(?:x[-_ ]?api[-_ ]?key|api[-_ ]?key)\b\s*(?::|=)"
     r")"
 )
+_BASIC_CREDENTIAL_TOKEN = re.compile(
+    r"(?i)\bbasic\s+([a-z0-9+/]+={0,2})(?=$|[\s,;])"
+)
 _PRIVATE_KEY_MARKER = re.compile(
-    r"(?i)-----begin[\w -]*private key-----"
-    r"|\bssh-(?:rsa|ed25519|ecdsa|dss)\b"
+    r"(?i)-----begin[\w -]*private key[\w -]*-----"
+    r"|\bssh-(?:rsa|dss|ed[0-9]+|ecdsa|xmss|sk-[a-z0-9-]+)\b"
     r"|\becdsa-sha2-[a-z0-9-]+\b"
 )
 _LOCAL_PATH_MARKER = re.compile(
     r"(?ix)"
     r"(?:"
-    r"(?:^|[\s:=\(\[\{\"'])~[\\/]"
+    r"(?:^|[\s:=\(\[\{\"'])~[a-z0-9._-]*[\\/]"
+    r"|(?:^|[\s=\(\[\{\"'])//[^\s/\\]+[\\/][^\s/\\]+"
     r"|(?:^|[\s:=\(\[\{\"'])/(?:"
     r"applications|users|volumes|dev|workspace(?:s)?|tmp|private|var|etc|home|root|opt|srv|"
     r"library|system|bin|sbin|usr|proc|run|mnt|media|data"
@@ -125,6 +130,21 @@ def _contains_encoded_control(value: str) -> bool:
     return any(_CONTROL.search(decoded) for decoded in _decoded_variants(value)[1:])
 
 
+def _contains_basic_credential(value: str) -> bool:
+    """Recognize an unpadded Basic token without flagging prose like ``Basic capabilities``."""
+
+    for match in _BASIC_CREDENTIAL_TOKEN.finditer(value):
+        token = match.group(1)
+        try:
+            padded = token + "=" * (-len(token) % 4)
+            decoded = base64.b64decode(padded, validate=True)
+        except (ValueError, base64.binascii.Error):
+            continue
+        if b":" in decoded:
+            return True
+    return False
+
+
 def _raw_path_has_dot_segment(path: str) -> bool:
     return any(segment in {".", ".."} for segment in re.split(r"[/\\]", path))
 
@@ -142,6 +162,8 @@ def validate_raw_public_https_url(value: Any, *, label: str = "URL") -> Any:
     if not isinstance(value, (str, AnyHttpUrl)):
         return value
     text = str(value)
+    if len(text) > MAX_PUBLIC_URL_LENGTH:
+        raise _raise(label, f"must be at most {MAX_PUBLIC_URL_LENGTH} characters")
     if _CONTROL.search(text) or _contains_encoded_control(text):
         raise _raise(label, "contains an ASCII or encoded control character")
     for decoded in _decoded_variants(text):
@@ -169,7 +191,7 @@ def validate_public_text(
     for candidate in _decoded_variants(value):
         if _CONTROL.search(candidate) or _contains_encoded_control(candidate):
             raise _raise(label, "contains an ASCII or encoded control character")
-        if _CREDENTIAL_MARKER.search(candidate):
+        if _CREDENTIAL_MARKER.search(candidate) or _contains_basic_credential(candidate):
             raise _raise(label, "contains a credential or bearer/API-key marker")
         if _PRIVATE_KEY_MARKER.search(candidate):
             raise _raise(label, "contains private-key material")
