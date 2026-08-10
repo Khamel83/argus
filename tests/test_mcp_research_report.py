@@ -5,7 +5,11 @@ import json
 import httpx
 import pytest
 
-from argus.authority import AuthorityClientConfig, HttpAuthorityClient
+from argus.authority import (
+    AuthorityClientConfig,
+    AuthorityRequestError,
+    HttpAuthorityClient,
+)
 from argus.mcp.http_adapter import HttpMcpAdapter
 
 
@@ -98,6 +102,29 @@ async def test_artifact_adapter_forwards_bounds_and_renders_content():
         "path": "/api/workflows/run-safe/artifacts/report",
         "query": {"offset": "4", "max_bytes": "64"},
     }
+
+
+@pytest.mark.asyncio
+async def test_artifact_adapter_preserves_authority_range_error():
+    def handler(request):
+        return httpx.Response(
+            422,
+            json={"detail": "Workflow artifact byte range is invalid"},
+        )
+
+    adapter = HttpMcpAdapter(
+        HttpAuthorityClient(
+            AuthorityClientConfig("https://authority.example", "default-token"),
+            transport=httpx.MockTransport(handler),
+        )
+    )
+
+    with pytest.raises(AuthorityRequestError) as raised:
+        await adapter.read_workflow_artifact(
+            "run-safe", artifact="report", max_bytes=1, token="scoped-token"
+        )
+
+    assert raised.value.status_code == 422
 
 
 def test_production_mcp_registers_remote_status_and_artifact_tools(monkeypatch):

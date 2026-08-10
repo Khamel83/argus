@@ -22,6 +22,7 @@ from argus.workflows import WorkflowService
 from argus.workflows.service import (
     WorkflowArtifactNotFound,
     WorkflowArtifactNotReady,
+    WorkflowArtifactRangeError,
     WorkflowArtifactUnavailable,
 )
 
@@ -181,6 +182,10 @@ async def workflow_artifact(
     except WorkflowArtifactNotReady as exc:
         raise HTTPException(
             status_code=409, detail="Workflow artifact is not ready"
+        ) from exc
+    except WorkflowArtifactRangeError as exc:
+        raise HTTPException(
+            status_code=422, detail="Workflow artifact byte range is invalid"
         ) from exc
     except WorkflowArtifactUnavailable as exc:
         raise HTTPException(
