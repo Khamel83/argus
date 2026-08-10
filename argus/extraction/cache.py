@@ -276,6 +276,43 @@ class ExtractionCache:
                 continue
             candidates.append((content, origin_identity, accepted_at, age, stored_at))
         if not candidates:
+            # Process memory is only an optimization.  After a restart or an
+            # explicit cache clear, ask the durable acceptance repository for
+            # the same one-way URL identity and re-run all policy/freshness
+            # checks below before serving the artifact.
+            finder = getattr(
+                repository,
+                "find_extraction_outcomes_by_url_identity",
+                None,
+            )
+            if callable(finder):
+                try:
+                    durable_candidates = finder(
+                        identity.normalized_url,
+                        mode=identity.mode,
+                    )
+                except TypeError:
+                    # Narrow compatibility for repository doubles that expose
+                    # the additive query without the optional mode keyword.
+                    durable_candidates = finder(identity.normalized_url)
+                for content in durable_candidates or ():
+                    if not isinstance(content, AcceptedExtractionOutcome):
+                        continue
+                    origin_identity = ExtractionCacheIdentity.from_accepted(content)
+                    if not _same_public_cache_context(identity, origin_identity):
+                        continue
+                    accepted_at = _parse_aware_timestamp(
+                        content.acceptance_receipt.accepted_at
+                    )
+                    if accepted_at is None:
+                        continue
+                    age = int((observed - accepted_at).total_seconds())
+                    if age < 0:
+                        continue
+                    candidates.append(
+                        (content, origin_identity, accepted_at, age, 0.0)
+                    )
+        if not candidates:
             return CacheDecision(
                 outcome=CacheOutcome.MISS,
                 reason="no_cache_entry",

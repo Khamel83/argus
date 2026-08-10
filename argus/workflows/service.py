@@ -259,7 +259,7 @@ class WorkflowService:
                 "mode": mode,
                 "max_results": max_results,
                 "providers": None,
-                "free_only": False,
+                "free_only": bool(run.metadata.get("free_only", False)),
                 "caller": str(run.metadata.get("caller_label") or self._caller),
                 "session_id": None,
                 "include_attribution": False,
@@ -305,6 +305,7 @@ class WorkflowService:
                 "url": url,
                 "soft_page_limit": soft_page_limit,
                 "hard_page_limit": hard_page_limit,
+                "free_only": bool(run.metadata.get("free_only", False)),
                 "caller": str(run.metadata.get("caller_label") or self._caller),
             },
         )()
@@ -784,6 +785,7 @@ class WorkflowService:
         topic: str,
         official_url: str | None = None,
         max_research_pages: int = 40,
+        free_only: bool = False,
         caller_identity: str | None = None,
         caller_label: str = "",
         runtime: Mapping[str, Any] | None = None,
@@ -794,6 +796,7 @@ class WorkflowService:
             caller_identity=caller_identity,
             caller_label=caller_label,
             runtime=runtime,
+            free_only=free_only,
         )
         asyncio.create_task(
             self._execute_run(
@@ -802,6 +805,7 @@ class WorkflowService:
                 topic=topic,
                 official_url=official_url,
                 max_research_pages=max_research_pages,
+                free_only=free_only,
             )
         )
         return run
@@ -933,6 +937,11 @@ class WorkflowService:
             composition_kwargs["allow_partial"] = allow_partial
         if minimum_artifacts is not None:
             composition_kwargs["minimum_artifacts"] = minimum_artifacts
+        # Keep the legacy call shape for runs created before the free profile
+        # seam (and for the omitted/default false path).  A true policy bit is
+        # explicit and must reach the accepted composition authority.
+        if run.metadata.get("free_only") is True:
+            composition_kwargs["free_only"] = True
         composed = await self._accepted_operations.compose_workflow(
             operation, **composition_kwargs
         )
@@ -1121,6 +1130,7 @@ class WorkflowService:
         topic: str,
         official_url: str | None = None,
         max_research_pages: int = 40,
+        free_only: bool = False,
         caller_identity: str | None = None,
         caller_label: str = "",
         runtime: Mapping[str, Any] | None = None,
@@ -1131,6 +1141,7 @@ class WorkflowService:
             caller_identity=caller_identity,
             caller_label=caller_label,
             runtime=runtime,
+            free_only=free_only,
         )
         return await self._execute_run(
             run.run_id,
@@ -1138,6 +1149,7 @@ class WorkflowService:
             topic=topic,
             official_url=official_url,
             max_research_pages=max_research_pages,
+            free_only=free_only,
         )
 
     def _create_run(
@@ -1148,6 +1160,7 @@ class WorkflowService:
         caller_identity: str | None = None,
         caller_label: str = "",
         runtime: Mapping[str, Any] | None = None,
+        free_only: bool | None = None,
     ) -> WorkflowResult:
         run_id = uuid.uuid4().hex[:12]
         slug = (
@@ -1161,6 +1174,10 @@ class WorkflowService:
             "caller_identity": caller_identity or self._caller,
             "caller_label": caller_label,
         }
+        if free_only is not None:
+            # Persist only the bounded policy bit required to replay accepted
+            # operation requests after a process reload.
+            metadata["free_only"] = bool(free_only)
         if runtime is not None:
             # Keep only the bounded identity fields before persisting the run.
             # The route may receive a richer operational status payload that can
@@ -1372,7 +1389,12 @@ class WorkflowService:
         topic: str,
         official_url: str | None,
         max_research_pages: int,
+        free_only: bool | None = None,
     ):
+        # The metadata copy is the durable source for every nested operation;
+        # keep it synchronized for direct/internal callers of this handler.
+        if free_only is not None:
+            run.metadata["free_only"] = bool(free_only)
         self._report(0, 4, "Discovering official documentation URL...")
         official = official_url or await self._discover_official_docs_url(
             topic, run=run

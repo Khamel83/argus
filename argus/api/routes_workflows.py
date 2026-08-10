@@ -110,6 +110,7 @@ async def build_research_pack(
         topic=payload["topic"],
         official_url=payload["official_url"],
         max_research_pages=payload["max_research_pages"],
+        free_only=payload["free_only"],
         caller_identity=getattr(request.state, "caller_identity", "") or "unknown",
         caller_label=payload["caller"],
         runtime=_runtime_projection(request),
