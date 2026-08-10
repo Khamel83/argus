@@ -125,11 +125,11 @@ async def search_and_summarize(
 
 def _runtime_projection(request: Request) -> dict:
     status = getattr(request.app.state, "operational_status", None)
-    snapshot = getattr(status, "snapshot", None)
-    if not callable(snapshot):
+    full_status = getattr(status, "full_status", None)
+    if not callable(full_status):
         return {}
     try:
-        payload = snapshot()
+        payload = full_status()
     except Exception:
         return {}
     return payload if isinstance(payload, dict) else {}

@@ -121,6 +121,26 @@ def test_bounded_artifact_read_returns_hash_and_pagination_metadata(tmp_path):
     assert second["truncated"] is False
 
 
+def test_bounded_artifact_read_never_splits_utf8_codepoints(tmp_path):
+    service = _service()
+    run = _run(tmp_path)
+    report = tmp_path / "SUMMARY.md"
+    report.write_text("a😀bcdef", encoding="utf-8")
+
+    page = service.read_artifact(run, "report", offset=2, max_bytes=4)
+    follow_up = service.read_artifact(
+        run,
+        "report",
+        offset=page["next_offset"],
+        max_bytes=256 * 1024,
+    )
+
+    assert page["content"] == "😀"
+    assert page["content"].encode("utf-8").decode("utf-8") == page["content"]
+    assert page["next_offset"] == 5
+    assert follow_up["content"] == "bcdef"
+
+
 def test_pending_run_cannot_read_artifact(tmp_path):
     service = _service()
     run = _run(tmp_path, status=WorkflowStatus.RUNNING)
@@ -142,11 +162,40 @@ def test_unregistered_artifact_and_containment_fail_closed(tmp_path):
         service.read_artifact(run, "report")
 
 
-def _route_client(run):
+@pytest.mark.asyncio
+async def test_finalization_failure_does_not_publish_completed_report(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("ARGUS_DATA_ROOT", str(tmp_path / "data"))
+    from tests.test_workflows import _service
+
+    service, _ = _service()
+    original = service._atomic_write_text
+
+    def fail_manifest(path, content):
+        if path.name == "manifest.json":
+            raise OSError("injected manifest failure")
+        return original(path, content)
+
+    monkeypatch.setattr(service, "_atomic_write_text", fail_manifest)
+    result = await service.build_research_pack(
+        topic="Example SDK", max_research_pages=1
+    )
+
+    assert result.status is WorkflowStatus.FAILED
+    if result.report_path:
+        report = __import__("pathlib").Path(result.report_path)
+        if report.exists():
+            assert "- Status: completed" not in report.read_text(encoding="utf-8")
+
+
+def _route_client(run, runtime=None):
     app = FastAPI()
     service = _service()
     service._runs[run.run_id] = run
     app.state.get_workflows = lambda: service
+    if runtime is not None:
+        app.state.operational_status = runtime
     from argus.api.routes_workflows import router
 
     app.include_router(router, prefix="/api")
@@ -155,7 +204,18 @@ def _route_client(run):
 
 def test_authenticated_status_and_artifact_routes_are_path_free(tmp_path):
     run = _run(tmp_path)
-    client = _route_client(run)
+
+    class Runtime:
+        def full_status(self):
+            return {
+                "build": {
+                    "version": "1.6.3",
+                    "source_revision": "a" * 40,
+                },
+                "deployment": {"deployment_id": "deploy-42"},
+            }
+
+    client = _route_client(run, Runtime())
 
     status = client.get(f"/api/workflows/{run.run_id}/status")
     artifact = client.get(
@@ -165,6 +225,12 @@ def test_authenticated_status_and_artifact_routes_are_path_free(tmp_path):
 
     assert status.status_code == 200
     assert status.json()["artifacts"][0]["sha256"]
+    assert status.json()["runtime"] == {
+        "version": "1.6.3",
+        "source_revision": "a" * 40,
+        "image_identity": "unknown",
+        "deployment_identity": "deploy-42",
+    }
     assert "snapshot_dir" not in status.json()
     assert str(tmp_path) not in status.text
     assert artifact.status_code == 200

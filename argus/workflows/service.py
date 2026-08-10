@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import shutil
 import uuid
 from collections.abc import Callable
@@ -370,10 +371,12 @@ class WorkflowService:
             else min(max(1, int(max_bytes)), _ARTIFACT_MAX_BYTES)
         )
         try:
-            with registered_path.open("rb") as handle:
-                handle.seek(bounded_offset)
-                chunk = handle.read(bounded_limit)
-        except OSError as exc:
+            read_offset, chunk = self._read_utf8_slice(
+                registered_path,
+                offset=bounded_offset,
+                max_bytes=bounded_limit,
+            )
+        except (OSError, UnicodeDecodeError) as exc:
             raise WorkflowArtifactUnavailable(
                 "workflow artifact cannot be read"
             ) from exc
@@ -385,20 +388,72 @@ class WorkflowService:
             ) from exc
         bytes_returned = len(chunk)
         total_bytes = metadata["size_bytes"]
-        truncated = bounded_offset + bytes_returned < total_bytes
+        truncated = read_offset + bytes_returned < total_bytes
         return {
             "run_id": run.run_id,
             "artifact": artifact,
             "kind": artifact,
             "media_type": metadata["media_type"],
             "total_bytes": total_bytes,
-            "offset": bounded_offset,
+            "offset": read_offset,
             "bytes_returned": bytes_returned,
             "truncated": truncated,
-            "next_offset": bounded_offset + bytes_returned if truncated else None,
+            "next_offset": read_offset + bytes_returned if truncated else None,
             "sha256": metadata["sha256"],
             "content": content,
         }
+
+    @staticmethod
+    def _utf8_boundary(path: Path, offset: int) -> int:
+        """Normalize an arbitrary byte offset to the start of its code point."""
+        if offset <= 0:
+            return 0
+        try:
+            size = path.stat().st_size
+            position = min(offset, size)
+            with path.open("rb") as handle:
+                for _ in range(3):
+                    if position == 0:
+                        break
+                    handle.seek(position)
+                    marker = handle.read(1)
+                    if not marker or marker[0] & 0xC0 != 0x80:
+                        break
+                    position -= 1
+            return position
+        except OSError:
+            raise
+
+    @classmethod
+    def _read_utf8_slice(
+        cls,
+        path: Path,
+        *,
+        offset: int,
+        max_bytes: int,
+    ) -> tuple[int, bytes]:
+        read_offset = cls._utf8_boundary(path, offset)
+        with path.open("rb") as handle:
+            handle.seek(read_offset)
+            chunk = handle.read(max_bytes)
+            if not chunk:
+                return read_offset, chunk
+            try:
+                chunk.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                if exc.reason != "unexpected end of data":
+                    raise
+                if exc.start == 0:
+                    # A single code point is larger than the requested slice.
+                    # Read only enough bytes to return that complete code point.
+                    handle.seek(read_offset)
+                    expanded = handle.read(min(4, max_bytes + 3))
+                    expanded.decode("utf-8")
+                    return read_offset, expanded
+                complete = chunk[: exc.start]
+                complete.decode("utf-8")
+                return read_offset, complete
+            return read_offset, chunk
 
     def _artifact_metadata(self, run: WorkflowResult, artifact: str) -> dict[str, Any]:
         path = self._resolve_registered_artifact(run, artifact)
@@ -998,10 +1053,12 @@ class WorkflowService:
                 "outcome": exc.outcome.value,
                 "code": exc.operation_code,
             }
+            self._rewrite_failed_artifacts(run)
         except Exception as exc:
             logger.exception("Workflow %s failed", run.run_id)
             run.status = WorkflowStatus.FAILED
             run.error = type(exc).__name__
+            self._rewrite_failed_artifacts(run)
         finally:
             if run.finished_at is None:
                 run.finished_at = datetime.now(tz=None)
@@ -1475,7 +1532,7 @@ class WorkflowService:
         run.finished_at = datetime.now(tz=None)
         report_path = Path(run.snapshot_dir) / report_name
         manifest_path = Path(run.snapshot_dir) / "manifest.json"
-        report_path.write_text(self._render_report(title, run), encoding="utf-8")
+        report_content = self._render_report(title, run)
         run.report_path = str(report_path)
         run.manifest_path = str(manifest_path)
         run.artifacts = [
@@ -1490,11 +1547,11 @@ class WorkflowService:
                 description="Structured workflow manifest",
             ),
         ]
-        manifest_path.write_text(
-            json.dumps(self._serialize_run(run), indent=2, default=_json_default)
-            + "\n",
-            encoding="utf-8",
+        manifest_content = (
+            json.dumps(self._serialize_run(run), indent=2, default=_json_default) + "\n"
         )
+        self._atomic_write_text(report_path, report_content)
+        self._atomic_write_text(manifest_path, manifest_content)
 
         if current_dir is not None:
             self._replace_directory(current_dir, Path(run.snapshot_dir))
@@ -1506,6 +1563,50 @@ class WorkflowService:
                 self._update_docs_cache_index(
                     docs_cache_dir.name, docs_cache_url, docs_cache_dir
                 )
+
+    @staticmethod
+    def _atomic_write_text(path: Path, content: str) -> None:
+        """Publish one text artifact with replace semantics."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            temporary.write_text(content, encoding="utf-8")
+            os.replace(temporary, path)
+        except OSError:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+
+    def _rewrite_failed_artifacts(self, run: WorkflowResult) -> None:
+        """Ensure a late finalization failure cannot leave completed artifacts."""
+        if run.status is not WorkflowStatus.FAILED:
+            return
+        report_path = Path(run.report_path) if run.report_path else None
+        if report_path is not None and report_path.is_file():
+            title = run.kind.value.replace("-", " ").title()
+            try:
+                first_line = report_path.read_text(encoding="utf-8").splitlines()[0]
+                title = first_line.removeprefix("# ").strip() or title
+            except (OSError, UnicodeError, IndexError):
+                pass
+            try:
+                self._atomic_write_text(report_path, self._render_report(title, run))
+            except OSError:
+                logger.warning("Failed to rewrite failed workflow report")
+        manifest_path = Path(run.manifest_path) if run.manifest_path else None
+        if manifest_path is not None and manifest_path.is_file():
+            try:
+                self._atomic_write_text(
+                    manifest_path,
+                    json.dumps(
+                        self._serialize_run(run), indent=2, default=_json_default
+                    )
+                    + "\n",
+                )
+            except OSError:
+                logger.warning("Failed to rewrite failed workflow manifest")
 
     def _write_docs_cache_dir(
         self, docs_cache_dir: Path, *, title: str, run: WorkflowResult
