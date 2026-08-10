@@ -6,6 +6,7 @@ import json
 import secrets
 import time
 from typing import Any
+from urllib.parse import quote
 
 from argus.authority import HttpAuthorityClient
 from argus.operations.presentation import (
@@ -92,6 +93,91 @@ def _workflow_markdown(payload: dict[str, Any]) -> str:
     ]
     if payload.get("error"):
         lines.append("Error: workflow failed")
+    return "\n".join(lines)
+
+
+def _workflow_start_json(payload: dict[str, Any]) -> dict[str, Any]:
+    """Render only safe start metadata from a legacy workflow response."""
+    run_id = str(payload.get("run_id", ""))
+    return {
+        "run_id": run_id,
+        "kind": payload.get("kind", "workflow"),
+        "status": payload.get("status", "unknown"),
+        "target": payload.get("target", ""),
+        "created_at": payload.get("created_at"),
+        "started_at": payload.get("started_at"),
+        "finished_at": payload.get("finished_at"),
+        "status_url": f"/api/workflows/{quote(run_id, safe='')}/status",
+    }
+
+
+def _workflow_status_markdown(payload: dict[str, Any]) -> str:
+    """Render only the safe workflow status fields supplied by the authority."""
+    lines = [
+        f"## {str(payload.get('kind', 'workflow')).replace('_', ' ').title()}",
+        f"Status: {payload.get('status', 'unknown')} | Run: {payload.get('run_id', '')}",
+        f"Target: {payload.get('target', '')}",
+        (
+            f"Sources: {payload.get('source_count', 0)} | "
+            f"Domains: {payload.get('domain_count', 0)} | "
+            f"Primary: {payload.get('primary_source_count', 0)}"
+        ),
+        f"Cost: {payload.get('cost_state', 'unavailable')}",
+    ]
+    runtime = payload.get("runtime") or {}
+    if runtime:
+        lines.append(
+            "Runtime: "
+            f"{runtime.get('version', 'unknown')} | "
+            f"revision={runtime.get('source_revision', 'unknown')} | "
+            f"image={runtime.get('image_identity', 'unknown')} | "
+            f"deployment={runtime.get('deployment_identity', 'unknown')}"
+        )
+    artifacts = payload.get("artifacts") or []
+    if artifacts:
+        lines.extend(
+            [
+                "",
+                "### Artifacts",
+                "",
+            ]
+        )
+        for artifact in artifacts:
+            availability = "available" if artifact.get("available") else "unavailable"
+            size = artifact.get("size_bytes")
+            lines.append(
+                f"- {artifact.get('kind', 'artifact')}: {availability}"
+                + (f", {size} bytes" if size is not None else "")
+                + (f", sha256={artifact['sha256']}" if artifact.get("sha256") else "")
+            )
+    reasons = [
+        *(payload.get("partial_reasons") or []),
+        *(payload.get("degraded_reasons") or []),
+    ]
+    if reasons:
+        lines.extend(["", "Reasons: " + "; ".join(str(reason) for reason in reasons)])
+    return "\n".join(lines)
+
+
+def _workflow_artifact_markdown(payload: dict[str, Any]) -> str:
+    """Render bounded artifact content with its bounded-read metadata."""
+    lines = [
+        f"## Workflow Artifact: {payload.get('artifact', payload.get('kind', 'unknown'))}",
+        f"Run: {payload.get('run_id', '')}",
+        (
+            f"Bytes: {payload.get('bytes_returned', 0)}/"
+            f"{payload.get('total_bytes', 0)} | "
+            f"offset={payload.get('offset', 0)} | "
+            f"truncated={payload.get('truncated', False)}"
+        ),
+        f"SHA-256: {payload.get('sha256', '')}",
+        "",
+        "### Content",
+        "",
+        str(payload.get("content", "")),
+    ]
+    if payload.get("next_offset") is not None:
+        lines.insert(4, f"Next offset: {payload['next_offset']}")
     return "\n".join(lines)
 
 
@@ -421,5 +507,43 @@ class HttpMcpAdapter:
             token=token,
         )
         if response_format == "json":
-            return json.dumps(response, indent=2)
+            return json.dumps(_workflow_start_json(response), indent=2)
         return _workflow_markdown(response)
+
+    async def get_workflow_status(
+        self,
+        run_id: str,
+        *,
+        response_format: str = "markdown",
+        token: str | None = None,
+    ) -> str:
+        """Read the safe workflow projection from the HTTP authority."""
+        path = f"/api/workflows/{quote(str(run_id), safe='')}/status"
+        response = await self._client.request("GET", path, token=token)
+        if response_format == "json":
+            return json.dumps(response, indent=2)
+        return _workflow_status_markdown(response)
+
+    async def read_workflow_artifact(
+        self,
+        run_id: str,
+        artifact: str = "report",
+        *,
+        offset: int = 0,
+        max_bytes: int = 65536,
+        response_format: str = "markdown",
+        token: str | None = None,
+    ) -> str:
+        """Read one bounded report/manifest slice through the HTTP authority."""
+        if artifact not in {"report", "manifest"}:
+            raise ValueError("artifact must be report or manifest")
+        safe_offset = max(0, int(offset))
+        safe_max_bytes = min(max(1, int(max_bytes)), 256 * 1024)
+        path = (
+            f"/api/workflows/{quote(str(run_id), safe='')}/artifacts/"
+            f"{quote(artifact, safe='')}?offset={safe_offset}&max_bytes={safe_max_bytes}"
+        )
+        response = await self._client.request("GET", path, token=token)
+        if response_format == "json":
+            return json.dumps(response, indent=2)
+        return _workflow_artifact_markdown(response)

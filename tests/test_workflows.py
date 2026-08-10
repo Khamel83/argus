@@ -404,6 +404,16 @@ async def test_build_research_pack_populates_docs_cache(monkeypatch, tmp_path):
         if call["max_results"] == 1
     )
 
+    import json
+    from pathlib import Path
+
+    report = Path(result.report_path).read_text(encoding="utf-8")
+    manifest = json.loads(Path(result.manifest_path).read_text(encoding="utf-8"))
+    assert "- Status: completed" in report
+    assert "- Finished at:" in report
+    assert manifest["status"] == "completed"
+    assert manifest["finished_at"] is not None
+
 
 @pytest.mark.asyncio
 async def test_search_and_summarize_workflow(monkeypatch, tmp_path):

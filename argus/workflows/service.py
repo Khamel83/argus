@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import os
+import re
 import shutil
 import uuid
 from collections.abc import Callable
@@ -33,6 +36,52 @@ from argus.workflows.models import (
 from argus.workflows.summarizer import get_summarizer
 
 logger = get_logger("workflows")
+
+_ARTIFACT_DEFAULT_BYTES = 64 * 1024
+_ARTIFACT_MAX_BYTES = 256 * 1024
+_ARTIFACT_MEDIA_TYPES = {
+    "report": "text/markdown; charset=utf-8",
+    "manifest": "application/json; charset=utf-8",
+}
+_COST_STATES = {"confirmed", "estimated", "uncertain", "unavailable"}
+_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$")
+_REVISION_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,127}$")
+_IMAGE_DIGEST_RE = re.compile(
+    r"^(?:[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*@)?sha256:[0-9a-fA-F]{64}$"
+)
+
+
+def _utf8_codepoint_width(first_byte: int) -> int:
+    if first_byte < 0x80:
+        return 1
+    if 0xC2 <= first_byte <= 0xDF:
+        return 2
+    if 0xE0 <= first_byte <= 0xEF:
+        return 3
+    if 0xF0 <= first_byte <= 0xF4:
+        return 4
+    raise UnicodeDecodeError("utf-8", bytes([first_byte]), 0, 1, "invalid start byte")
+
+
+class WorkflowArtifactError(RuntimeError):
+    """Base class for safe workflow-artifact read failures."""
+
+
+class WorkflowArtifactNotFound(WorkflowArtifactError):
+    """The run or allowlisted artifact does not exist."""
+
+
+class WorkflowArtifactNotReady(WorkflowArtifactError):
+    """The workflow has not reached a terminal state."""
+
+
+class WorkflowArtifactUnavailable(WorkflowArtifactError):
+    """A registered artifact failed containment, hashing, or decoding."""
+
+
+class WorkflowArtifactRangeError(WorkflowArtifactError):
+    """The requested byte limit cannot contain the next UTF-8 code point."""
 
 
 def _json_default(value: Any):
@@ -70,6 +119,26 @@ def _domain_root(hostname: str) -> str:
     return ".".join(parts[-2:])
 
 
+def _safe_runtime_identity(value: Any, *, kind: str) -> str:
+    """Return only bounded runtime identifiers suitable for public status."""
+    if not isinstance(value, str):
+        return "unknown"
+    candidate = value.strip()
+    if len(candidate) > 128:
+        return "unknown"
+    if kind == "version":
+        return candidate if _VERSION_RE.fullmatch(candidate) else "unknown"
+    if kind == "source_revision":
+        return candidate if _REVISION_RE.fullmatch(candidate) else "unknown"
+    if kind == "image":
+        if _IMAGE_DIGEST_RE.fullmatch(candidate):
+            return candidate
+        return candidate if _SAFE_ID_RE.fullmatch(candidate) else "unknown"
+    if kind == "deployment":
+        return candidate if _SAFE_ID_RE.fullmatch(candidate) else "unknown"
+    return "unknown"
+
+
 def _normal_url(url: str) -> str:
     """Stable local dedupe key; execution authority remains injected."""
     parsed = urlparse(url)
@@ -104,6 +173,13 @@ class WorkflowOperationFailure(RuntimeError):
 
 class WorkflowService:
     """Async workflow executor with in-memory run tracking."""
+
+    # Kept as class attributes so callers can map typed failures without
+    # importing the workflow implementation module.
+    ArtifactNotFound = WorkflowArtifactNotFound
+    ArtifactNotReady = WorkflowArtifactNotReady
+    ArtifactUnavailable = WorkflowArtifactUnavailable
+    ArtifactRange = WorkflowArtifactRangeError
 
     def __init__(
         self,
@@ -217,6 +293,388 @@ class WorkflowService:
         except Exception as exc:
             logger.warning("Failed to load persisted workflow run %s: %s", run_id, exc)
             return None
+
+    def get_public_status(
+        self,
+        run: WorkflowResult,
+        *,
+        runtime: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Return the path-free status projection used by remote callers."""
+        artifacts = []
+        for kind in ("report", "manifest"):
+            registered = next(
+                (artifact for artifact in run.artifacts if artifact.kind == kind),
+                None,
+            )
+            if registered is None or run.status not in {
+                WorkflowStatus.COMPLETED,
+                WorkflowStatus.FAILED,
+            }:
+                artifacts.append(
+                    {
+                        "kind": kind,
+                        "available": False,
+                        "description": (
+                            registered.description if registered is not None else ""
+                        ),
+                        "media_type": _ARTIFACT_MEDIA_TYPES[kind],
+                        "size_bytes": None,
+                        "sha256": None,
+                    }
+                )
+                continue
+            try:
+                metadata = self._artifact_metadata(run, kind)
+            except WorkflowArtifactNotFound:
+                metadata = {
+                    "kind": kind,
+                    "available": False,
+                    "description": registered.description,
+                    "media_type": _ARTIFACT_MEDIA_TYPES[kind],
+                    "size_bytes": None,
+                    "sha256": None,
+                }
+            artifacts.append({**metadata, "description": registered.description})
+
+        documents = list(run.documents)
+        source_urls = {
+            _normal_url(document.url)
+            for document in documents
+            if isinstance(document.url, str) and document.url
+        }
+        domains = {
+            _domain_root(document.domain or urlparse(document.url).netloc)
+            for document in documents
+            if document.url or document.domain
+        }
+        citations = []
+        for citation in run.citations:
+            evidence_ids = [citation.id]
+            document = next(
+                (item for item in documents if item.id == citation.id),
+                None,
+            )
+            if document is not None:
+                evidence_ids.extend(
+                    self._safe_evidence_ids(document.metadata.get("evidence_ids"))
+                )
+            citations.append(
+                {
+                    "id": citation.id,
+                    "title": citation.title,
+                    "url": citation.url,
+                    "disposition": citation.artifact_disposition,
+                    "evidence_ids": list(dict.fromkeys(evidence_ids)),
+                }
+            )
+
+        partial_reasons, degraded_reasons = self._status_reasons(run)
+        return {
+            "run_id": run.run_id,
+            "kind": run.kind.value,
+            "status": run.status.value,
+            "target": run.target,
+            "created_at": run.created_at.isoformat() if run.created_at else None,
+            "started_at": run.started_at.isoformat() if run.started_at else None,
+            "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            "status_url": f"/api/workflows/{run.run_id}/status",
+            "artifacts": artifacts,
+            "citations": citations,
+            "source_count": len(source_urls),
+            "domain_count": len({domain for domain in domains if domain}),
+            "primary_source_count": sum(
+                1 for document in documents if self._is_primary_source(document)
+            ),
+            "partial_reasons": partial_reasons,
+            "degraded_reasons": degraded_reasons,
+            "cost_state": self._cost_state(run),
+            "runtime": self._runtime_projection(runtime, run.metadata.get("runtime")),
+            "error_code": run.error if run.status == WorkflowStatus.FAILED else None,
+        }
+
+    def read_artifact(
+        self,
+        run: WorkflowResult,
+        artifact: str,
+        *,
+        offset: int = 0,
+        max_bytes: int | None = None,
+    ) -> dict[str, Any]:
+        """Read an allowlisted workflow artifact without exposing its path."""
+        if artifact not in _ARTIFACT_MEDIA_TYPES:
+            raise WorkflowArtifactNotFound("workflow artifact is not available")
+        if run.status not in {WorkflowStatus.COMPLETED, WorkflowStatus.FAILED}:
+            raise WorkflowArtifactNotReady("workflow artifact is not ready")
+        metadata = self._artifact_metadata(run, artifact)
+        registered_path = self._resolve_registered_artifact(run, artifact)
+        bounded_offset = max(0, int(offset))
+        bounded_limit = (
+            _ARTIFACT_DEFAULT_BYTES
+            if max_bytes is None
+            else min(max(1, int(max_bytes)), _ARTIFACT_MAX_BYTES)
+        )
+        try:
+            read_offset, chunk = self._read_utf8_slice(
+                registered_path,
+                offset=bounded_offset,
+                max_bytes=bounded_limit,
+            )
+        except (OSError, UnicodeDecodeError) as exc:
+            raise WorkflowArtifactUnavailable(
+                "workflow artifact cannot be read"
+            ) from exc
+        try:
+            content = chunk.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise WorkflowArtifactUnavailable(
+                "workflow artifact is not valid UTF-8"
+            ) from exc
+        bytes_returned = len(chunk)
+        total_bytes = metadata["size_bytes"]
+        truncated = read_offset + bytes_returned < total_bytes
+        return {
+            "run_id": run.run_id,
+            "artifact": artifact,
+            "kind": artifact,
+            "media_type": metadata["media_type"],
+            "total_bytes": total_bytes,
+            "offset": read_offset,
+            "bytes_returned": bytes_returned,
+            "truncated": truncated,
+            "next_offset": read_offset + bytes_returned if truncated else None,
+            "sha256": metadata["sha256"],
+            "content": content,
+        }
+
+    @staticmethod
+    def _utf8_boundary(path: Path, offset: int) -> int:
+        """Normalize an arbitrary byte offset to the start of its code point."""
+        if offset <= 0:
+            return 0
+        try:
+            size = path.stat().st_size
+            position = min(offset, size)
+            with path.open("rb") as handle:
+                for _ in range(3):
+                    if position == 0:
+                        break
+                    handle.seek(position)
+                    marker = handle.read(1)
+                    if not marker or marker[0] & 0xC0 != 0x80:
+                        break
+                    position -= 1
+            return position
+        except OSError:
+            raise
+
+    @classmethod
+    def _read_utf8_slice(
+        cls,
+        path: Path,
+        *,
+        offset: int,
+        max_bytes: int,
+    ) -> tuple[int, bytes]:
+        read_offset = cls._utf8_boundary(path, offset)
+        with path.open("rb") as handle:
+            handle.seek(read_offset)
+            chunk = handle.read(max_bytes)
+            if not chunk:
+                return read_offset, chunk
+            try:
+                chunk.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                if exc.reason != "unexpected end of data":
+                    raise
+                if exc.start == 0:
+                    # Do not exceed the caller's byte bound.  If the first
+                    # code point cannot fit, make the caller request a larger
+                    # page rather than returning an oversized page or
+                    # advancing past data.
+                    handle.seek(read_offset)
+                    expanded = handle.read(4)
+                    first_width = _utf8_codepoint_width(expanded[0])
+                    if len(expanded) < first_width:
+                        raise UnicodeDecodeError(
+                            "utf-8",
+                            expanded,
+                            0,
+                            len(expanded),
+                            "unexpected end of data",
+                        )
+                    expanded[:first_width].decode("utf-8")
+                    if first_width > max_bytes:
+                        raise WorkflowArtifactRangeError(
+                            "max_bytes is smaller than the next UTF-8 code point"
+                        )
+                    expanded = expanded[:first_width]
+                    return read_offset, expanded
+                complete = chunk[: exc.start]
+                complete.decode("utf-8")
+                return read_offset, complete
+            return read_offset, chunk
+
+    def _artifact_metadata(self, run: WorkflowResult, artifact: str) -> dict[str, Any]:
+        path = self._resolve_registered_artifact(run, artifact)
+        digest = hashlib.sha256()
+        total_bytes = 0
+        try:
+            with path.open("rb") as handle:
+                while chunk := handle.read(64 * 1024):
+                    digest.update(chunk)
+                    total_bytes += len(chunk)
+        except (OSError, ValueError) as exc:
+            raise WorkflowArtifactUnavailable(
+                "workflow artifact identity cannot be verified"
+            ) from exc
+        return {
+            "kind": artifact,
+            "available": True,
+            "media_type": _ARTIFACT_MEDIA_TYPES[artifact],
+            "size_bytes": total_bytes,
+            "sha256": digest.hexdigest(),
+        }
+
+    def _resolve_registered_artifact(self, run: WorkflowResult, artifact: str) -> Path:
+        registered = next(
+            (item for item in run.artifacts if item.kind == artifact),
+            None,
+        )
+        if registered is None:
+            raise WorkflowArtifactNotFound("workflow artifact is not available")
+        try:
+            snapshot = Path(run.snapshot_dir).resolve()
+            path = Path(registered.path).resolve()
+            if path == snapshot or not path.is_relative_to(snapshot):
+                raise WorkflowArtifactUnavailable(
+                    "workflow artifact failed containment verification"
+                )
+            if not path.is_file():
+                raise WorkflowArtifactNotFound("workflow artifact is not available")
+        except WorkflowArtifactUnavailable:
+            raise
+        except WorkflowArtifactNotFound:
+            raise
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise WorkflowArtifactUnavailable(
+                "workflow artifact failed containment verification"
+            ) from exc
+        return path
+
+    @staticmethod
+    def _safe_evidence_ids(value: Any) -> list[str]:
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, (list, tuple, set)):
+            return []
+        return [
+            item.strip()
+            for item in value
+            if isinstance(item, str)
+            and item.strip()
+            and len(item.strip()) <= 128
+            and all(
+                character.isalnum() or character in ":._-" for character in item.strip()
+            )
+        ]
+
+    @staticmethod
+    def _is_primary_source(document: StoredDocument) -> bool:
+        values = {
+            str(document.role or "").lower(),
+            str(document.source_type or "").lower(),
+        }
+        return bool(values & {"primary", "official", "official_doc", "official_docs"})
+
+    @classmethod
+    def _status_reasons(cls, run: WorkflowResult) -> tuple[list[str], list[str]]:
+        partial: list[str] = []
+        degraded: list[str] = []
+        for document in run.documents:
+            disposition = str(document.metadata.get("artifact_disposition", ""))
+            if disposition == "partial":
+                partial.append(f"partial_artifact:{document.id}")
+        composition = run.metadata.get("composition")
+        if isinstance(composition, dict):
+            if composition.get("outcome") == CanonicalOutcome.DEGRADED.value:
+                degraded.append("workflow_composition_degraded")
+            if composition.get("degraded_artifact_refs"):
+                degraded.append("degraded_artifacts_present")
+            if composition.get("rejected_extraction_refs"):
+                degraded.append("rejected_extractions_present")
+        for target, values in (
+            (partial, run.metadata.get("partial_reasons")),
+            (degraded, run.metadata.get("degraded_reasons")),
+        ):
+            if isinstance(values, str):
+                values = [values]
+            if isinstance(values, (list, tuple)):
+                target.extend(
+                    value.strip()
+                    for value in values
+                    if isinstance(value, str)
+                    and value.strip()
+                    and "/" not in value
+                    and "\\" not in value
+                    and len(value.strip()) <= 200
+                )
+        return list(dict.fromkeys(partial)), list(dict.fromkeys(degraded))
+
+    @classmethod
+    def _cost_state(cls, run: WorkflowResult) -> str:
+        metadata = run.metadata
+        explicit = metadata.get("cost_state")
+        if isinstance(explicit, str) and explicit in _COST_STATES:
+            return explicit
+        spend = metadata.get("spend")
+        if isinstance(spend, dict):
+            availability = spend.get("availability")
+            if availability == "available":
+                return "confirmed"
+            if availability in {"partial", "uncertain"}:
+                return "uncertain"
+        return "unavailable"
+
+    @staticmethod
+    def _runtime_projection(
+        runtime: dict[str, Any] | None,
+        metadata_runtime: Any,
+    ) -> dict[str, Any]:
+        source = runtime if isinstance(runtime, dict) else {}
+        if not source and isinstance(metadata_runtime, dict):
+            source = metadata_runtime
+        build = source.get("build") if isinstance(source.get("build"), dict) else source
+        deployment = (
+            source.get("deployment")
+            if isinstance(source.get("deployment"), dict)
+            else {}
+        )
+        image = source.get("image") if isinstance(source.get("image"), dict) else {}
+        return {
+            "version": _safe_runtime_identity(build.get("version"), kind="version"),
+            "source_revision": _safe_runtime_identity(
+                build.get("source_revision"), kind="source_revision"
+            ),
+            "image_identity": _safe_runtime_identity(
+                source.get("image_identity")
+                or source.get("image_digest")
+                or build.get("image_identity")
+                or build.get("image_digest")
+                or image.get("identity")
+                or image.get("digest")
+                or deployment.get("image_identity"),
+                kind="image",
+            ),
+            "deployment_identity": _safe_runtime_identity(
+                source.get("deployment_identity")
+                or source.get("deployment_id")
+                or deployment.get("deployment_id")
+                or deployment.get("identity")
+                or deployment.get("id"),
+                kind="deployment",
+            ),
+        }
 
     def import_legacy_docs_cache(self, source_root: str) -> dict[str, Any]:
         return mirror_legacy_docs_cache(source_root, self._paths)
@@ -652,7 +1110,6 @@ class WorkflowService:
         self._write_run_state(run)
         try:
             await handler(run, **kwargs)
-            run.status = WorkflowStatus.COMPLETED
         except WorkflowOperationFailure as exc:
             logger.warning(
                 "Workflow %s stopped with accepted outcome %s",
@@ -665,13 +1122,34 @@ class WorkflowService:
                 "outcome": exc.outcome.value,
                 "code": exc.operation_code,
             }
+            self._rewrite_failed_artifacts(run)
         except Exception as exc:
             logger.exception("Workflow %s failed", run.run_id)
             run.status = WorkflowStatus.FAILED
             run.error = type(exc).__name__
+            self._rewrite_failed_artifacts(run)
         finally:
-            run.finished_at = datetime.now(tz=None)
-            self._write_run_state(run)
+            if run.finished_at is None:
+                run.finished_at = datetime.now(tz=None)
+            try:
+                self._write_run_state(run)
+            except Exception:
+                # Artifacts may already be visible when the final state write
+                # fails.  Never leave a completed artifact paired with a
+                # running/unknown durable state.
+                logger.exception("Failed to persist terminal workflow state")
+                if run.status in {
+                    WorkflowStatus.COMPLETED,
+                    WorkflowStatus.FAILED,
+                }:
+                    if run.status is WorkflowStatus.COMPLETED:
+                        run.status = WorkflowStatus.FAILED
+                        run.error = "WorkflowStatePersistenceError"
+                    self._rewrite_failed_artifacts(run)
+                    try:
+                        self._write_run_state(run)
+                    except Exception:
+                        logger.exception("Failed to persist workflow failure state")
         return run
 
     async def _recover_article_impl(
@@ -1134,9 +1612,14 @@ class WorkflowService:
         docs_cache_dir: Path | None = None,
         docs_cache_url: str | None = None,
     ) -> None:
+        # A report and manifest are terminal artifacts. Mark the run complete
+        # before rendering either one so their serialized status/timestamp
+        # cannot lag the durable run state.
+        run.status = WorkflowStatus.COMPLETED
+        run.finished_at = datetime.now(tz=None)
         report_path = Path(run.snapshot_dir) / report_name
         manifest_path = Path(run.snapshot_dir) / "manifest.json"
-        report_path.write_text(self._render_report(title, run), encoding="utf-8")
+        report_content = self._render_report(title, run)
         run.report_path = str(report_path)
         run.manifest_path = str(manifest_path)
         run.artifacts = [
@@ -1151,11 +1634,17 @@ class WorkflowService:
                 description="Structured workflow manifest",
             ),
         ]
-        manifest_path.write_text(
-            json.dumps(self._serialize_run(run), indent=2, default=_json_default)
-            + "\n",
-            encoding="utf-8",
+        # Persist the terminal state and expected allowlisted artifact
+        # registrations before publishing either file.  A crash between these
+        # writes can only expose a completed run with unavailable artifacts,
+        # never a running run with completed artifacts.
+        self._write_run_state(run)
+        self._atomic_write_text(report_path, report_content)
+        manifest_content = (
+            json.dumps(self._public_manifest(run), indent=2, default=_json_default)
+            + "\n"
         )
+        self._atomic_write_text(manifest_path, manifest_content)
 
         if current_dir is not None:
             self._replace_directory(current_dir, Path(run.snapshot_dir))
@@ -1168,7 +1657,49 @@ class WorkflowService:
                     docs_cache_dir.name, docs_cache_url, docs_cache_dir
                 )
 
-        self._write_run_state(run)
+    @staticmethod
+    def _atomic_write_text(path: Path, content: str) -> None:
+        """Publish one text artifact with replace semantics."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            temporary.write_text(content, encoding="utf-8")
+            os.replace(temporary, path)
+        except OSError:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+
+    def _rewrite_failed_artifacts(self, run: WorkflowResult) -> None:
+        """Ensure a late finalization failure cannot leave completed artifacts."""
+        if run.status is not WorkflowStatus.FAILED:
+            return
+        report_path = Path(run.report_path) if run.report_path else None
+        if report_path is not None and report_path.is_file():
+            title = run.kind.value.replace("-", " ").title()
+            try:
+                first_line = report_path.read_text(encoding="utf-8").splitlines()[0]
+                title = first_line.removeprefix("# ").strip() or title
+            except (OSError, UnicodeError, IndexError):
+                pass
+            try:
+                self._atomic_write_text(report_path, self._render_report(title, run))
+            except OSError:
+                logger.warning("Failed to rewrite failed workflow report")
+        manifest_path = Path(run.manifest_path) if run.manifest_path else None
+        if manifest_path is not None and manifest_path.is_file():
+            try:
+                self._atomic_write_text(
+                    manifest_path,
+                    json.dumps(
+                        self._public_manifest(run), indent=2, default=_json_default
+                    )
+                    + "\n",
+                )
+            except OSError:
+                logger.warning("Failed to rewrite failed workflow manifest")
 
     def _write_docs_cache_dir(
         self, docs_cache_dir: Path, *, title: str, run: WorkflowResult
@@ -1226,7 +1757,7 @@ class WorkflowService:
             f"- Workflow: {run.kind.value}",
             f"- Target: {run.target}",
             f"- Status: {run.status.value}",
-            f"- Snapshot: {run.snapshot_dir}",
+            f"- Finished at: {run.finished_at.isoformat() if run.finished_at else 'unknown'}",
             "",
             "## Summary",
             "",
@@ -1252,15 +1783,90 @@ class WorkflowService:
             citation = citation_map[citation_id]
             lines.append(
                 f"- [{citation.id}] {citation.title} — {citation.url}\n"
-                f"  Artifact: {citation.artifact_path}"
-                + (
-                    " (PARTIAL CONTENT)"
-                    if citation.artifact_disposition == "partial"
-                    else ""
-                )
+                "  Disposition: "
+                f"{citation.artifact_disposition}"
             )
         lines.append("")
         return "\n".join(lines)
+
+    def _public_manifest(self, run: WorkflowResult) -> dict[str, Any]:
+        """Build an explicit path-free manifest for remote artifact readers."""
+        status = self.get_public_status(run)
+        artifact_index = []
+        for artifact in status["artifacts"]:
+            if artifact["kind"] == "manifest":
+                # A manifest cannot contain its own final SHA-256 without a
+                # recursive fixed point.  The status endpoint computes the
+                # truthful hash/size over the published bytes; keep the
+                # embedded index descriptive rather than publishing stale
+                # null metadata.
+                artifact_index.append(
+                    {
+                        "kind": "manifest",
+                        "available": True,
+                        "description": artifact["description"],
+                        "media_type": artifact["media_type"],
+                    }
+                )
+            else:
+                artifact_index.append(artifact)
+        sources = []
+        for document in run.documents:
+            metadata = document.metadata if isinstance(document.metadata, dict) else {}
+            safe_metadata: dict[str, Any] = {
+                "artifact_disposition": (
+                    metadata.get("artifact_disposition")
+                    if metadata.get("artifact_disposition")
+                    in {"usable", "partial", "rejected"}
+                    else "usable"
+                ),
+                "evidence_ids": self._safe_evidence_ids(metadata.get("evidence_ids")),
+            }
+            sources.append(
+                {
+                    "id": document.id,
+                    "url": document.url,
+                    "title": document.title,
+                    "word_count": document.word_count,
+                    "domain": document.domain,
+                    "role": document.role,
+                    "source_type": document.source_type,
+                    "extractor": document.extractor,
+                    "egress": document.egress,
+                    "machine": document.machine,
+                    "metadata": safe_metadata,
+                }
+            )
+        return {
+            "schema": "argus.workflow-manifest.v1",
+            "run_id": status["run_id"],
+            "kind": status["kind"],
+            "status": status["status"],
+            "target": status["target"],
+            "created_at": status["created_at"],
+            "started_at": status["started_at"],
+            "finished_at": status["finished_at"],
+            "status_url": status["status_url"],
+            "artifacts": artifact_index,
+            "sources": sources,
+            "citations": status["citations"],
+            "summary_sections": [
+                {
+                    "heading": section.heading,
+                    "body": section.body,
+                    "citation_ids": list(section.citation_ids),
+                }
+                for section in run.summary_sections
+            ],
+            "source_count": status["source_count"],
+            "domain_count": status["domain_count"],
+            "primary_source_count": status["primary_source_count"],
+            "partial_reasons": status["partial_reasons"],
+            "degraded_reasons": status["degraded_reasons"],
+            "cost_state": status["cost_state"],
+            "runtime": status["runtime"],
+            "error_code": status["error_code"],
+        }
 
     def _serialize_run(self, run: WorkflowResult) -> dict[str, Any]:
         return {
@@ -1317,8 +1923,7 @@ class WorkflowService:
     def _write_run_state(self, run: WorkflowResult) -> None:
         payload = self._serialize_run(run)
         state_path = self._paths.workflow_runs_dir / f"{run.run_id}.json"
-        state_path.parent.mkdir(parents=True, exist_ok=True)
-        state_path.write_text(
+        self._atomic_write_text(
+            state_path,
             json.dumps(payload, indent=2, default=_json_default) + "\n",
-            encoding="utf-8",
         )

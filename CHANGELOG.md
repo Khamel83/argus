@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Caller attribution on extract + workflows** — `POST /api/extract` and workflow endpoints accept `caller`; workflow-driven broker searches are tagged (`workflows` via HTTP service, `mcp` via MCP tools).
 
 ### Fixed
+- **Workflow reliability and safe artifact reads** — terminal status and
+  report/manifest serialization now agree, with bounded UTF-8 pagination,
+  path-free public artifacts, and authenticated status/read projections.
 - **Dashboard "Attempted" column** — Provider activity now excludes `status='skipped'` rows from the count. Providers that were only ever skipped (e.g. Yahoo when free results satisfy the query) no longer appear in the table at all. The column is renamed "Calls" → "Attempted" to reflect what the number means.
 - **`free_only` now applies to remote-egress searches** — the tier check previously ran after the remote-worker branch, so `free_only` (and now caller caps) never filtered searches delegated to egress workers.
 

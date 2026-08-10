@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from argus.api.schemas import (
     BuildResearchPackWorkflowRequest,
@@ -14,9 +14,17 @@ from argus.api.schemas import (
     WorkflowArtifactSchema,
     WorkflowRunResponse,
     SearchAndSummarizeWorkflowRequest,
+    WorkflowArtifactReadResponse,
+    WorkflowStatusResponse,
 )
 
 from argus.workflows import WorkflowService
+from argus.workflows.service import (
+    WorkflowArtifactNotFound,
+    WorkflowArtifactNotReady,
+    WorkflowArtifactRangeError,
+    WorkflowArtifactUnavailable,
+)
 
 router = APIRouter()
 
@@ -38,10 +46,16 @@ def _to_response(run) -> WorkflowRunResponse:
         snapshot_dir=run.snapshot_dir,
         report_path=run.report_path,
         manifest_path=run.manifest_path,
-        artifacts=[WorkflowArtifactSchema(**artifact.__dict__) for artifact in run.artifacts],
-        documents=[StoredDocumentSchema(**document.__dict__) for document in run.documents],
+        artifacts=[
+            WorkflowArtifactSchema(**artifact.__dict__) for artifact in run.artifacts
+        ],
+        documents=[
+            StoredDocumentSchema(**document.__dict__) for document in run.documents
+        ],
         citations=[CitationSchema(**citation.__dict__) for citation in run.citations],
-        summary_sections=[SummarySectionSchema(**section.__dict__) for section in run.summary_sections],
+        summary_sections=[
+            SummarySectionSchema(**section.__dict__) for section in run.summary_sections
+        ],
         metadata=run.metadata,
         error=run.error,
     )
@@ -108,6 +122,76 @@ async def search_and_summarize(
         caller_label=req.caller,
     )
     return _to_response(run)
+
+
+def _runtime_projection(request: Request) -> dict:
+    status = getattr(request.app.state, "operational_status", None)
+    full_status = getattr(status, "full_status", None)
+    if not callable(full_status):
+        return {}
+    try:
+        payload = full_status()
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+@router.get("/workflows/{run_id}/status", response_model=WorkflowStatusResponse)
+async def workflow_status_projection(
+    run_id: str,
+    request: Request,
+    workflows: WorkflowService = Depends(get_workflows),
+):
+    run = workflows.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    try:
+        return workflows.get_public_status(run, runtime=_runtime_projection(request))
+    except WorkflowArtifactUnavailable as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Workflow artifact unavailable",
+        ) from exc
+
+
+@router.get(
+    "/workflows/{run_id}/artifacts/{artifact}",
+    response_model=WorkflowArtifactReadResponse,
+)
+async def workflow_artifact(
+    run_id: str,
+    artifact: str,
+    offset: int = Query(0, ge=0),
+    max_bytes: int = Query(64 * 1024, ge=1, le=256 * 1024),
+    workflows: WorkflowService = Depends(get_workflows),
+):
+    run = workflows.get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    try:
+        return workflows.read_artifact(
+            run,
+            artifact,
+            offset=offset,
+            max_bytes=max_bytes,
+        )
+    except WorkflowArtifactNotFound as exc:
+        raise HTTPException(
+            status_code=404, detail="Workflow artifact not found"
+        ) from exc
+    except WorkflowArtifactNotReady as exc:
+        raise HTTPException(
+            status_code=409, detail="Workflow artifact is not ready"
+        ) from exc
+    except WorkflowArtifactRangeError as exc:
+        raise HTTPException(
+            status_code=422, detail="Workflow artifact byte range is invalid"
+        ) from exc
+    except WorkflowArtifactUnavailable as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Workflow artifact unavailable",
+        ) from exc
 
 
 @router.get("/workflows/{run_id}", response_model=WorkflowRunResponse)

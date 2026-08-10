@@ -1,6 +1,8 @@
 """Static security contract for release and CI workflows."""
 
+import json
 import re
+import tomllib
 from pathlib import Path
 
 import yaml
@@ -81,3 +83,16 @@ def test_release_workflow_uses_the_canonical_lowercase_repository():
     )
 
     assert payload["env"]["IMAGE_NAME"] == "khamel83/argus"
+
+
+def test_release_identity_is_1_6_3_in_user_visible_locations():
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    server = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
+    package_text = (ROOT / "argus/__init__.py").read_text(encoding="utf-8")
+    api_text = (ROOT / "argus/api/main.py").read_text(encoding="utf-8")
+
+    assert pyproject["project"]["version"] == "1.6.3"
+    assert server["version"] == "1.6.3"
+    assert server["packages"][0]["version"] == "1.6.3"
+    assert re.search(r'__version__\s*=\s*["\']1\.6\.3["\']', package_text)
+    assert re.search(r'version=["\']1\.6\.3["\']', api_text)

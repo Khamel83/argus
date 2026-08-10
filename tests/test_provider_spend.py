@@ -38,7 +38,7 @@ def _registered_readiness(tmp_path, database_name: str):
     service = ProviderReadinessService(repository=readiness)
     fixture_ref, attestation = build_fixture_attestation(
         ProviderName.BRAVE,
-        release="argus-1.6.2",
+        release="argus-1.6.3",
         provider_contract="2026-07-27-v1",
     )
     service.register_provider(ProviderRegistrationSpec(
@@ -49,7 +49,7 @@ def _registered_readiness(tmp_path, database_name: str):
         account_fingerprint=f"{database_name}-account",
         budget_limit=10.0,
         durable_spend_repository=True,
-        release_revision="argus-1.6.2",
+        release_revision="argus-1.6.3",
         contract_version="2026-07-27-v1",
         fixture_evidence_ref=fixture_ref,
         fixture_attestation=attestation,
@@ -111,7 +111,7 @@ def test_direct_reserve_settle_reconciles_protected_readiness_account_wide(
     service = ProviderReadinessService(repository=readiness)
     fixture_ref, attestation = build_fixture_attestation(
         ProviderName.BRAVE,
-        release="argus-1.6.2",
+        release="argus-1.6.3",
         provider_contract="2026-07-27-v1",
     )
     service.register_provider(ProviderRegistrationSpec(
@@ -122,7 +122,7 @@ def test_direct_reserve_settle_reconciles_protected_readiness_account_wide(
         account_fingerprint="direct-settle-account",
         budget_limit=10.0,
         durable_spend_repository=True,
-        release_revision="argus-1.6.2",
+        release_revision="argus-1.6.3",
         contract_version="2026-07-27-v1",
         fixture_evidence_ref=fixture_ref,
         fixture_attestation=attestation,
@@ -226,7 +226,7 @@ def test_terminal_exhaustion_denies_reserve_and_survives_ordinary_settlement(
     service = ProviderReadinessService(repository=readiness)
     fixture_ref, attestation = build_fixture_attestation(
         ProviderName.SERPER,
-        release="argus-1.6.2",
+        release="argus-1.6.3",
         provider_contract="2026-07-27-v1",
     )
     service.register_provider(ProviderRegistrationSpec(
@@ -237,7 +237,7 @@ def test_terminal_exhaustion_denies_reserve_and_survives_ordinary_settlement(
         account_fingerprint="terminal-account",
         budget_limit=10.0,
         durable_spend_repository=True,
-        release_revision="argus-1.6.2",
+        release_revision="argus-1.6.3",
         contract_version="2026-07-27-v1",
         fixture_evidence_ref=fixture_ref,
         fixture_attestation=attestation,
@@ -310,7 +310,7 @@ def test_recurring_terminal_expiry_allows_atomic_account_wide_reserve(
     service = ProviderReadinessService(repository=readiness)
     fixture_ref, attestation = build_fixture_attestation(
         ProviderName.BRAVE,
-        release="argus-1.6.2",
+        release="argus-1.6.3",
         provider_contract="2026-07-27-v1",
     )
     service.register_provider(ProviderRegistrationSpec(
@@ -321,7 +321,7 @@ def test_recurring_terminal_expiry_allows_atomic_account_wide_reserve(
         account_fingerprint="recurring-boundary-account",
         budget_limit=10.0,
         durable_spend_repository=True,
-        release_revision="argus-1.6.2",
+        release_revision="argus-1.6.3",
         contract_version="2026-07-27-v1",
         fixture_evidence_ref=fixture_ref,
         fixture_attestation=attestation,
