@@ -61,9 +61,7 @@ def _utf8_codepoint_width(first_byte: int) -> int:
         return 3
     if 0xF0 <= first_byte <= 0xF4:
         return 4
-    raise UnicodeDecodeError(
-        "utf-8", bytes([first_byte]), 0, 1, "invalid start byte"
-    )
+    raise UnicodeDecodeError("utf-8", bytes([first_byte]), 0, 1, "invalid start byte")
 
 
 class WorkflowArtifactError(RuntimeError):
@@ -654,9 +652,7 @@ class WorkflowService:
         )
         image = source.get("image") if isinstance(source.get("image"), dict) else {}
         return {
-            "version": _safe_runtime_identity(
-                build.get("version"), kind="version"
-            ),
+            "version": _safe_runtime_identity(build.get("version"), kind="version"),
             "source_revision": _safe_runtime_identity(
                 build.get("source_revision"), kind="source_revision"
             ),
@@ -1639,11 +1635,11 @@ class WorkflowService:
         # writes can only expose a completed run with unavailable artifacts,
         # never a running run with completed artifacts.
         self._write_run_state(run)
+        self._atomic_write_text(report_path, report_content)
         manifest_content = (
             json.dumps(self._public_manifest(run), indent=2, default=_json_default)
             + "\n"
         )
-        self._atomic_write_text(report_path, report_content)
         self._atomic_write_text(manifest_path, manifest_content)
 
         if current_dir is not None:
@@ -1693,7 +1689,9 @@ class WorkflowService:
             try:
                 self._atomic_write_text(
                     manifest_path,
-                    json.dumps(self._public_manifest(run), indent=2, default=_json_default)
+                    json.dumps(
+                        self._public_manifest(run), indent=2, default=_json_default
+                    )
                     + "\n",
                 )
             except OSError:
@@ -1818,9 +1816,7 @@ class WorkflowService:
                     in {"usable", "partial", "rejected"}
                     else "usable"
                 ),
-                "evidence_ids": self._safe_evidence_ids(
-                    metadata.get("evidence_ids")
-                ),
+                "evidence_ids": self._safe_evidence_ids(metadata.get("evidence_ids")),
             }
             sources.append(
                 {

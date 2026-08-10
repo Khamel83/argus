@@ -234,9 +234,7 @@ async def test_late_state_write_failure_persists_failed_reloadable_run(
     )
 
     assert result.status is WorkflowStatus.FAILED
-    reloaded_service = WorkflowService(
-        SimpleNamespace(), corpus_paths=paths
-    )
+    reloaded_service = WorkflowService(SimpleNamespace(), corpus_paths=paths)
     reloaded = reloaded_service.get_run(result.run_id)
     assert reloaded is not None
     assert reloaded.status is WorkflowStatus.FAILED
@@ -260,20 +258,27 @@ async def test_real_terminal_artifacts_are_path_free_and_hash_truthful(
     assert status["status_url"].endswith("/status")
     for artifact in status["artifacts"]:
         assert artifact["available"] is True
-        page = service.read_artifact(
-            result, artifact["kind"], max_bytes=256 * 1024
-        )
+        page = service.read_artifact(result, artifact["kind"], max_bytes=256 * 1024)
         assert page["bytes_returned"] == artifact["size_bytes"]
         assert page["sha256"] == artifact["sha256"]
         assert page["bytes_returned"] <= 256 * 1024
         assert str(tmp_path) not in page["content"]
 
-    manifest = service.read_artifact(
-        result, "manifest", max_bytes=256 * 1024
-    )["content"]
+    manifest = service.read_artifact(result, "manifest", max_bytes=256 * 1024)[
+        "content"
+    ]
     manifest_payload = json.loads(manifest)
     assert manifest_payload["status"] == "completed"
-    assert manifest_payload["artifacts"][-1]["available"] is True
+    report_entry = next(
+        item for item in manifest_payload["artifacts"] if item["kind"] == "report"
+    )
+    assert report_entry["available"] is True
+    assert report_entry["size_bytes"] > 0
+    assert report_entry["sha256"]
+    manifest_entry = next(
+        item for item in manifest_payload["artifacts"] if item["kind"] == "manifest"
+    )
+    assert manifest_entry["available"] is True
 
 
 def test_terminal_artifacts_are_path_free(tmp_path):
