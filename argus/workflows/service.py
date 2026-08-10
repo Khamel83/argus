@@ -611,6 +611,15 @@ class WorkflowService:
             run = self._deserialize_run(payload)
             failure_marker = self._read_failure_marker(run_id)
             if failure_marker is not None:
+                # A targeted terminal marker may be the only durable record of
+                # failure while the main state still says ``completed``. Keep
+                # the loaded artifact paths until cleanup has had a chance to
+                # remove the stale files, then apply the marker projection.
+                if (
+                    failure_marker.get("clear_artifacts") is True
+                    and self._is_targeted_run(run)
+                ):
+                    self._cleanup_failed_targeted_artifacts(run)
                 self._apply_failure_marker(run, failure_marker)
             self._interrupt_orphaned_run(run)
             self._runs[run.run_id] = run
@@ -2900,35 +2909,51 @@ class WorkflowService:
         if not self._is_targeted_run(run):
             return
 
-        targeted_dir = Path(run.snapshot_dir) / "targeted-research"
+        snapshot_root = Path(run.snapshot_dir)
+        snapshot: Path | None = None
         try:
-            if targeted_dir.is_symlink() or targeted_dir.is_file():
-                targeted_dir.unlink()
-            elif targeted_dir.is_dir():
-                shutil.rmtree(targeted_dir)
-        except OSError:
+            trusted_root = self._paths.snapshots_dir.resolve()
+            if snapshot_root.is_symlink() or not snapshot_root.is_dir():
+                raise ValueError("workflow snapshot root is not a directory")
+            snapshot = snapshot_root.resolve()
+            if snapshot == trusted_root or not snapshot.is_relative_to(trusted_root):
+                raise ValueError("workflow snapshot root is outside trusted storage")
+        except (OSError, RuntimeError, ValueError):
             logger.warning(
-                "Failed to clear targeted workflow snapshot documents for %s",
+                "Refusing to clear targeted workflow artifacts for %s: "
+                "untrusted snapshot root",
                 run.run_id,
             )
 
-        snapshot = Path(run.snapshot_dir).resolve()
-        for registered_path in (run.report_path, run.manifest_path):
-            if not registered_path:
-                continue
+        if snapshot is not None:
+            targeted_dir = snapshot / "targeted-research"
             try:
-                artifact_path = Path(registered_path).resolve()
-                if (
-                    artifact_path != snapshot
-                    and artifact_path.is_relative_to(snapshot)
-                    and artifact_path.is_file()
-                ):
-                    artifact_path.unlink()
-            except (OSError, RuntimeError, ValueError):
+                if targeted_dir.is_symlink() or targeted_dir.is_file():
+                    targeted_dir.unlink()
+                elif targeted_dir.is_dir():
+                    shutil.rmtree(targeted_dir)
+            except OSError:
                 logger.warning(
-                    "Failed to clear targeted workflow artifact for %s",
+                    "Failed to clear targeted workflow snapshot documents for %s",
                     run.run_id,
                 )
+
+            for registered_path in (run.report_path, run.manifest_path):
+                if not registered_path:
+                    continue
+                try:
+                    artifact_path = Path(registered_path).resolve()
+                    if (
+                        artifact_path != snapshot
+                        and artifact_path.is_relative_to(snapshot)
+                        and artifact_path.is_file()
+                    ):
+                        artifact_path.unlink()
+                except (OSError, RuntimeError, ValueError):
+                    logger.warning(
+                        "Failed to clear targeted workflow artifact for %s",
+                        run.run_id,
+                    )
 
         run.report_path = None
         run.manifest_path = None
@@ -3201,8 +3226,9 @@ class WorkflowService:
             "error": error,
             "finished_at": finished_at.astimezone(timezone.utc).isoformat(),
             "failure": safe_failure,
-            "clear_artifacts": safe_failure.get("reason")
-            == "running_state_write_failed",
+            "clear_artifacts": cls._is_targeted_run(run)
+            or safe_failure.get("reason")
+            in {"running_state_write_failed", "terminal_state_write_failed"},
         }
 
     def _write_failure_marker(self, run: WorkflowResult) -> None:

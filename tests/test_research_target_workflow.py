@@ -498,6 +498,155 @@ async def test_targeted_failed_run_cleans_partial_target_documents(
 
 
 @pytest.mark.asyncio
+async def test_targeted_terminal_failure_marker_cleans_stale_completed_state_on_reload(
+    monkeypatch, tmp_path
+):
+    import json
+    from pathlib import Path
+
+    from argus.workflows.models import WorkflowStatus
+    from argus.workflows.service import WorkflowService
+
+    operations = _TargetOperations(
+        [[
+            {"url": "https://docs.example.com/sdk/one", "title": "one"},
+            {"url": "https://external.example.net/source", "title": "external"},
+        ]]
+    )
+    service = _service(monkeypatch, tmp_path, operations)
+    original = service._write_run_state
+    attempts = 0
+
+    def fail_terminal_writes(run):
+        nonlocal attempts
+        attempts += 1
+        if attempts in (3, 4):
+            raise OSError("injected terminal state persistence failure")
+        return original(run)
+
+    monkeypatch.setattr(service, "_write_run_state", fail_terminal_writes)
+    result = await service.build_research_pack(
+        topic="terminal-marker-reload",
+        max_research_pages=2,
+        research_targets=[
+            _target("Docs", "https://docs.example.com/sdk/", ("capabilities", "sdk"))
+        ],
+    )
+
+    assert attempts == 4
+    assert result.status is WorkflowStatus.FAILED
+    assert result.documents == []
+    assert result.citations == []
+    assert result.summary_sections == []
+    assert result.artifacts == []
+    assert result.report_path is None
+    assert result.manifest_path is None
+
+    state_path = service._paths.workflow_runs_dir / f"{result.run_id}.json"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    # The last durable state is the completed finalization write; the failure
+    # marker must make this stale payload safe when a new service reloads it.
+    assert persisted["status"] == "completed"
+    assert persisted["documents"]
+    assert persisted["artifacts"]
+    assert persisted["report_path"]
+    assert persisted["manifest_path"]
+    marker_path = service._paths.workflow_runs_dir / f"{result.run_id}.failure.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert marker["clear_artifacts"] is True
+
+    reloaded_service = WorkflowService(
+        SimpleNamespace(),
+        corpus_paths=service._paths,
+    )
+    reloaded = reloaded_service.get_run(result.run_id)
+
+    assert reloaded is not None
+    assert reloaded.status is WorkflowStatus.FAILED
+    assert reloaded.documents == []
+    assert reloaded.citations == []
+    assert reloaded.summary_sections == []
+    assert reloaded.artifacts == []
+    assert reloaded.report_path is None
+    assert reloaded.manifest_path is None
+    snapshot_dir = Path(result.snapshot_dir)
+    assert not any((snapshot_dir / "targeted-research").rglob("*"))
+    assert not (snapshot_dir / "SUMMARY.md").exists()
+    assert not (snapshot_dir / "manifest.json").exists()
+
+
+def test_targeted_cleanup_refuses_symlinked_snapshot_root(monkeypatch, tmp_path):
+    import shutil
+    from pathlib import Path
+
+    from argus.workflows.models import (
+        CitationRef,
+        StoredDocument,
+        SummarySection,
+        WorkflowArtifact,
+        WorkflowKind,
+    )
+
+    service = _service(monkeypatch, tmp_path, _TargetOperations([]))
+    run = service._create_run(
+        WorkflowKind.BUILD_RESEARCH_PACK,
+        "symlinked-snapshot",
+        extra_metadata={
+            "research_targets": [
+                _target(
+                    "Docs",
+                    "https://docs.example.com/sdk/",
+                    ("capabilities", "sdk"),
+                )
+            ]
+        },
+    )
+    snapshot_dir = Path(run.snapshot_dir)
+    outside_dir = tmp_path / "outside-snapshot"
+    targeted_dir = outside_dir / "targeted-research"
+    targeted_dir.mkdir(parents=True)
+    outside_file = targeted_dir / "must-remain.md"
+    outside_file.write_text("outside", encoding="utf-8")
+    shutil.rmtree(snapshot_dir)
+    snapshot_dir.symlink_to(outside_dir, target_is_directory=True)
+
+    run.documents = [
+        StoredDocument(
+            id="doc-1",
+            url="https://docs.example.com/sdk/one",
+            title="one",
+            artifact_path=str(snapshot_dir / "targeted-research" / "doc-1.md"),
+        )
+    ]
+    run.citations = [
+        CitationRef(
+            id="doc-1",
+            title="one",
+            url="https://docs.example.com/sdk/one",
+            artifact_path=str(snapshot_dir / "targeted-research" / "doc-1.md"),
+        )
+    ]
+    run.summary_sections = [SummarySection(heading="Target", body="body")]
+    run.report_path = str(snapshot_dir / "SUMMARY.md")
+    run.manifest_path = str(snapshot_dir / "manifest.json")
+    run.artifacts = [
+        WorkflowArtifact(kind="report", path=run.report_path),
+        WorkflowArtifact(kind="manifest", path=run.manifest_path),
+    ]
+
+    service._cleanup_failed_targeted_artifacts(run)
+
+    assert snapshot_dir.is_symlink()
+    assert outside_file.is_file()
+    assert run.documents == []
+    assert run.citations == []
+    assert run.summary_sections == []
+    assert run.artifacts == []
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+@pytest.mark.asyncio
 async def test_targeted_service_marks_optional_external_as_degraded_and_caps_attempts(
     monkeypatch, tmp_path
 ):
