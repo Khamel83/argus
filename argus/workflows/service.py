@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import shutil
 import uuid
@@ -33,6 +34,30 @@ from argus.workflows.models import (
 from argus.workflows.summarizer import get_summarizer
 
 logger = get_logger("workflows")
+
+_ARTIFACT_DEFAULT_BYTES = 64 * 1024
+_ARTIFACT_MAX_BYTES = 256 * 1024
+_ARTIFACT_MEDIA_TYPES = {
+    "report": "text/markdown; charset=utf-8",
+    "manifest": "application/json; charset=utf-8",
+}
+_COST_STATES = {"confirmed", "estimated", "uncertain", "unavailable"}
+
+
+class WorkflowArtifactError(RuntimeError):
+    """Base class for safe workflow-artifact read failures."""
+
+
+class WorkflowArtifactNotFound(WorkflowArtifactError):
+    """The run or allowlisted artifact does not exist."""
+
+
+class WorkflowArtifactNotReady(WorkflowArtifactError):
+    """The workflow has not reached a terminal state."""
+
+
+class WorkflowArtifactUnavailable(WorkflowArtifactError):
+    """A registered artifact failed containment, hashing, or decoding."""
 
 
 def _json_default(value: Any):
@@ -104,6 +129,12 @@ class WorkflowOperationFailure(RuntimeError):
 
 class WorkflowService:
     """Async workflow executor with in-memory run tracking."""
+
+    # Kept as class attributes so callers can map typed failures without
+    # importing the workflow implementation module.
+    ArtifactNotFound = WorkflowArtifactNotFound
+    ArtifactNotReady = WorkflowArtifactNotReady
+    ArtifactUnavailable = WorkflowArtifactUnavailable
 
     def __init__(
         self,
@@ -217,6 +248,309 @@ class WorkflowService:
         except Exception as exc:
             logger.warning("Failed to load persisted workflow run %s: %s", run_id, exc)
             return None
+
+    def get_public_status(
+        self,
+        run: WorkflowResult,
+        *,
+        runtime: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Return the path-free status projection used by remote callers."""
+        artifacts = []
+        for kind in ("report", "manifest"):
+            registered = next(
+                (artifact for artifact in run.artifacts if artifact.kind == kind),
+                None,
+            )
+            if registered is None or run.status not in {
+                WorkflowStatus.COMPLETED,
+                WorkflowStatus.FAILED,
+            }:
+                artifacts.append(
+                    {
+                        "kind": kind,
+                        "available": False,
+                        "description": (
+                            registered.description if registered is not None else ""
+                        ),
+                        "media_type": _ARTIFACT_MEDIA_TYPES[kind],
+                        "size_bytes": None,
+                        "sha256": None,
+                    }
+                )
+                continue
+            try:
+                metadata = self._artifact_metadata(run, kind)
+            except WorkflowArtifactNotFound:
+                metadata = {
+                    "kind": kind,
+                    "available": False,
+                    "description": registered.description,
+                    "media_type": _ARTIFACT_MEDIA_TYPES[kind],
+                    "size_bytes": None,
+                    "sha256": None,
+                }
+            artifacts.append({**metadata, "description": registered.description})
+
+        documents = list(run.documents)
+        source_urls = {
+            _normal_url(document.url)
+            for document in documents
+            if isinstance(document.url, str) and document.url
+        }
+        domains = {
+            _domain_root(document.domain or urlparse(document.url).netloc)
+            for document in documents
+            if document.url or document.domain
+        }
+        citations = []
+        for citation in run.citations:
+            evidence_ids = [citation.id]
+            document = next(
+                (item for item in documents if item.id == citation.id),
+                None,
+            )
+            if document is not None:
+                evidence_ids.extend(
+                    self._safe_evidence_ids(document.metadata.get("evidence_ids"))
+                )
+            citations.append(
+                {
+                    "id": citation.id,
+                    "title": citation.title,
+                    "url": citation.url,
+                    "disposition": citation.artifact_disposition,
+                    "evidence_ids": list(dict.fromkeys(evidence_ids)),
+                }
+            )
+
+        partial_reasons, degraded_reasons = self._status_reasons(run)
+        return {
+            "run_id": run.run_id,
+            "kind": run.kind.value,
+            "status": run.status.value,
+            "target": run.target,
+            "created_at": run.created_at.isoformat() if run.created_at else None,
+            "started_at": run.started_at.isoformat() if run.started_at else None,
+            "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            "status_url": run.status_url,
+            "artifacts": artifacts,
+            "citations": citations,
+            "source_count": len(source_urls),
+            "domain_count": len({domain for domain in domains if domain}),
+            "primary_source_count": sum(
+                1 for document in documents if self._is_primary_source(document)
+            ),
+            "partial_reasons": partial_reasons,
+            "degraded_reasons": degraded_reasons,
+            "cost_state": self._cost_state(run),
+            "runtime": self._runtime_projection(runtime, run.metadata.get("runtime")),
+            "error_code": run.error if run.status == WorkflowStatus.FAILED else None,
+        }
+
+    def read_artifact(
+        self,
+        run: WorkflowResult,
+        artifact: str,
+        *,
+        offset: int = 0,
+        max_bytes: int | None = None,
+    ) -> dict[str, Any]:
+        """Read an allowlisted workflow artifact without exposing its path."""
+        if artifact not in _ARTIFACT_MEDIA_TYPES:
+            raise WorkflowArtifactNotFound("workflow artifact is not available")
+        if run.status not in {WorkflowStatus.COMPLETED, WorkflowStatus.FAILED}:
+            raise WorkflowArtifactNotReady("workflow artifact is not ready")
+        metadata = self._artifact_metadata(run, artifact)
+        registered_path = self._resolve_registered_artifact(run, artifact)
+        bounded_offset = max(0, int(offset))
+        bounded_limit = (
+            _ARTIFACT_DEFAULT_BYTES
+            if max_bytes is None
+            else min(max(1, int(max_bytes)), _ARTIFACT_MAX_BYTES)
+        )
+        try:
+            with registered_path.open("rb") as handle:
+                handle.seek(bounded_offset)
+                chunk = handle.read(bounded_limit)
+        except OSError as exc:
+            raise WorkflowArtifactUnavailable(
+                "workflow artifact cannot be read"
+            ) from exc
+        try:
+            content = chunk.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise WorkflowArtifactUnavailable(
+                "workflow artifact is not valid UTF-8"
+            ) from exc
+        bytes_returned = len(chunk)
+        total_bytes = metadata["size_bytes"]
+        truncated = bounded_offset + bytes_returned < total_bytes
+        return {
+            "run_id": run.run_id,
+            "artifact": artifact,
+            "kind": artifact,
+            "media_type": metadata["media_type"],
+            "total_bytes": total_bytes,
+            "offset": bounded_offset,
+            "bytes_returned": bytes_returned,
+            "truncated": truncated,
+            "next_offset": bounded_offset + bytes_returned if truncated else None,
+            "sha256": metadata["sha256"],
+            "content": content,
+        }
+
+    def _artifact_metadata(self, run: WorkflowResult, artifact: str) -> dict[str, Any]:
+        path = self._resolve_registered_artifact(run, artifact)
+        digest = hashlib.sha256()
+        total_bytes = 0
+        try:
+            with path.open("rb") as handle:
+                while chunk := handle.read(64 * 1024):
+                    digest.update(chunk)
+                    total_bytes += len(chunk)
+        except (OSError, ValueError) as exc:
+            raise WorkflowArtifactUnavailable(
+                "workflow artifact identity cannot be verified"
+            ) from exc
+        return {
+            "kind": artifact,
+            "available": True,
+            "media_type": _ARTIFACT_MEDIA_TYPES[artifact],
+            "size_bytes": total_bytes,
+            "sha256": digest.hexdigest(),
+        }
+
+    def _resolve_registered_artifact(self, run: WorkflowResult, artifact: str) -> Path:
+        registered = next(
+            (item for item in run.artifacts if item.kind == artifact),
+            None,
+        )
+        if registered is None:
+            raise WorkflowArtifactNotFound("workflow artifact is not available")
+        try:
+            snapshot = Path(run.snapshot_dir).resolve()
+            path = Path(registered.path).resolve()
+            if path == snapshot or not path.is_relative_to(snapshot):
+                raise WorkflowArtifactUnavailable(
+                    "workflow artifact failed containment verification"
+                )
+            if not path.is_file():
+                raise WorkflowArtifactUnavailable(
+                    "workflow artifact failed file verification"
+                )
+        except WorkflowArtifactUnavailable:
+            raise
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise WorkflowArtifactUnavailable(
+                "workflow artifact failed containment verification"
+            ) from exc
+        return path
+
+    @staticmethod
+    def _safe_evidence_ids(value: Any) -> list[str]:
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, (list, tuple, set)):
+            return []
+        return [
+            item.strip()
+            for item in value
+            if isinstance(item, str)
+            and item.strip()
+            and len(item.strip()) <= 128
+            and all(
+                character.isalnum() or character in ":._-" for character in item.strip()
+            )
+        ]
+
+    @staticmethod
+    def _is_primary_source(document: StoredDocument) -> bool:
+        values = {
+            str(document.role or "").lower(),
+            str(document.source_type or "").lower(),
+        }
+        return bool(values & {"primary", "official", "official_doc", "official_docs"})
+
+    @classmethod
+    def _status_reasons(cls, run: WorkflowResult) -> tuple[list[str], list[str]]:
+        partial: list[str] = []
+        degraded: list[str] = []
+        for document in run.documents:
+            disposition = str(document.metadata.get("artifact_disposition", ""))
+            if disposition == "partial":
+                partial.append(f"partial_artifact:{document.id}")
+        composition = run.metadata.get("composition")
+        if isinstance(composition, dict):
+            if composition.get("outcome") == CanonicalOutcome.DEGRADED.value:
+                degraded.append("workflow_composition_degraded")
+            if composition.get("degraded_artifact_refs"):
+                degraded.append("degraded_artifacts_present")
+            if composition.get("rejected_extraction_refs"):
+                degraded.append("rejected_extractions_present")
+        for target, values in (
+            (partial, run.metadata.get("partial_reasons")),
+            (degraded, run.metadata.get("degraded_reasons")),
+        ):
+            if isinstance(values, str):
+                values = [values]
+            if isinstance(values, (list, tuple)):
+                target.extend(
+                    value.strip()
+                    for value in values
+                    if isinstance(value, str)
+                    and value.strip()
+                    and "/" not in value
+                    and "\\" not in value
+                    and len(value.strip()) <= 200
+                )
+        return list(dict.fromkeys(partial)), list(dict.fromkeys(degraded))
+
+    @classmethod
+    def _cost_state(cls, run: WorkflowResult) -> str:
+        metadata = run.metadata
+        explicit = metadata.get("cost_state")
+        if isinstance(explicit, str) and explicit in _COST_STATES:
+            return explicit
+        spend = metadata.get("spend")
+        if isinstance(spend, dict):
+            availability = spend.get("availability")
+            if availability == "available":
+                return "confirmed"
+            if availability in {"partial", "uncertain"}:
+                return "uncertain"
+        return "unavailable"
+
+    @staticmethod
+    def _runtime_projection(
+        runtime: dict[str, Any] | None,
+        metadata_runtime: Any,
+    ) -> dict[str, Any]:
+        source = runtime if isinstance(runtime, dict) else {}
+        if not source and isinstance(metadata_runtime, dict):
+            source = metadata_runtime
+        build = source.get("build") if isinstance(source.get("build"), dict) else source
+        deployment = (
+            source.get("deployment")
+            if isinstance(source.get("deployment"), dict)
+            else {}
+        )
+        return {
+            "version": str(build.get("version") or "unknown"),
+            "source_revision": str(build.get("source_revision") or "unknown"),
+            "image_identity": str(
+                source.get("image_identity")
+                or source.get("image_digest")
+                or deployment.get("image_identity")
+                or "unknown"
+            ),
+            "deployment_identity": str(
+                source.get("deployment_identity")
+                or source.get("deployment_id")
+                or deployment.get("deployment_id")
+                or "unknown"
+            ),
+        }
 
     def import_legacy_docs_cache(self, source_root: str) -> dict[str, Any]:
         return mirror_legacy_docs_cache(source_root, self._paths)

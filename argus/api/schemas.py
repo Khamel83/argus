@@ -18,21 +18,37 @@ _VALID_PROVIDERS: Set[str] = {
 
 
 class SearchRequest(BaseModel):
-    query: str = Field(..., min_length=1, max_length=500, description="Search query string")
-    mode: str = Field("discovery", description="Search mode: recovery, discovery, grounding, research")
+    query: str = Field(
+        ..., min_length=1, max_length=500, description="Search query string"
+    )
+    mode: str = Field(
+        "discovery", description="Search mode: recovery, discovery, grounding, research"
+    )
     max_results: int = Field(10, ge=1, le=50, description="Maximum results to return")
-    providers: Optional[List[str]] = Field(None, description="Override provider routing order")
-    session_id: Optional[str] = Field(None, description="Session ID for multi-turn context")
-    include_attribution: bool = Field(False, description="Include per-provider score attribution")
-    free_only: bool = Field(False, description="Only use free (tier-0) providers: SearXNG, DuckDuckGo, Yahoo, GitHub, WolframAlpha")
-    caller: str = Field("", description="Caller identifier for attribution (e.g. 'atlas', 'media_rename')")
+    providers: Optional[List[str]] = Field(
+        None, description="Override provider routing order"
+    )
+    session_id: Optional[str] = Field(
+        None, description="Session ID for multi-turn context"
+    )
+    include_attribution: bool = Field(
+        False, description="Include per-provider score attribution"
+    )
+    free_only: bool = Field(
+        False,
+        description="Only use free (tier-0) providers: SearXNG, DuckDuckGo, Yahoo, GitHub, WolframAlpha",
+    )
+    caller: str = Field(
+        "",
+        description="Caller identifier for attribution (e.g. 'atlas', 'media_rename')",
+    )
 
     @field_validator("query")
     @classmethod
     def sanitize_query(cls, v: str) -> str:
         """Strip control characters and collapse excessive whitespace."""
-        cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', v)
-        cleaned = re.sub(r'\s{3,}', ' ', cleaned)
+        cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", v)
+        cleaned = re.sub(r"\s{3,}", " ", cleaned)
         return cleaned.strip()
 
     @field_validator("mode")
@@ -90,12 +106,19 @@ class SearchResponse(BaseModel):
 
 class RecoverUrlRequest(BaseModel):
     url: str = Field(..., min_length=1, max_length=2048, description="URL to recover")
-    title: Optional[str] = Field(None, description="Optional title hint for better results")
+    title: Optional[str] = Field(
+        None, description="Optional title hint for better results"
+    )
     domain: Optional[str] = Field(None, description="Optional domain hint")
 
 
 class ExpandRequest(BaseModel):
-    query: str = Field(..., min_length=1, max_length=500, description="Query to expand with related links")
+    query: str = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="Query to expand with related links",
+    )
     context: Optional[str] = Field(None, description="Optional context for expansion")
 
 
@@ -126,10 +149,16 @@ class ProviderSnapshotRequest(BaseModel):
 
 
 class ExtractRequest(BaseModel):
-    url: str = Field(..., min_length=1, max_length=2048, description="URL to extract content from")
-    domain: Optional[str] = Field(None, description="Domain hint for authenticated extraction (e.g. nytimes.com)")
+    url: str = Field(
+        ..., min_length=1, max_length=2048, description="URL to extract content from"
+    )
+    domain: Optional[str] = Field(
+        None, description="Domain hint for authenticated extraction (e.g. nytimes.com)"
+    )
     mode: str = Field("default", description="Extraction mode: default, archive_ingest")
-    caller: str = Field("", description="Caller identifier for attribution (e.g. 'clio-intake-extract')")
+    caller: str = Field(
+        "", description="Caller identifier for attribution (e.g. 'clio-intake-extract')"
+    )
 
     @field_validator("url")
     @classmethod
@@ -138,9 +167,12 @@ class ExtractRequest(BaseModel):
             raise ValueError("URL must start with http:// or https://")
         # Block private/internal URLs to prevent SSRF
         from urllib.parse import urlparse
+
         parsed = urlparse(v)
         hostname = parsed.hostname or ""
-        if hostname in ("localhost", "127.0.0.1", "::1") or hostname.startswith(("10.", "172.16.", "192.168.", "169.254.")):
+        if hostname in ("localhost", "127.0.0.1", "::1") or hostname.startswith(
+            ("10.", "172.16.", "192.168.", "169.254.")
+        ):
             raise ValueError("Private/internal URLs are not allowed")
         return v
 
@@ -347,18 +379,93 @@ class WorkflowRunResponse(BaseModel):
     error: Optional[str] = None
 
 
+class WorkflowArtifactStatusResponse(BaseModel):
+    """Path-free metadata for one allowlisted workflow artifact."""
+
+    kind: Literal["report", "manifest"]
+    available: bool = False
+    description: str = ""
+    media_type: str = ""
+    size_bytes: Optional[int] = Field(None, ge=0)
+    sha256: Optional[str] = None
+
+
+class WorkflowCitationResponse(BaseModel):
+    """Safe citation metadata without authority-local artifact paths."""
+
+    id: str
+    title: str
+    url: str
+    disposition: Literal["usable", "partial", "rejected"] = "usable"
+    evidence_ids: List[str] = Field(default_factory=list)
+
+
+class WorkflowRuntimeIdentityResponse(BaseModel):
+    version: str = "unknown"
+    source_revision: str = "unknown"
+    image_identity: str = "unknown"
+    deployment_identity: str = "unknown"
+
+
+class WorkflowStatusResponse(BaseModel):
+    """Safe public workflow projection for authenticated callers."""
+
+    run_id: str
+    kind: str
+    status: str
+    target: str
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    status_url: Optional[str] = None
+    artifacts: List[WorkflowArtifactStatusResponse] = Field(default_factory=list)
+    citations: List[WorkflowCitationResponse] = Field(default_factory=list)
+    source_count: int = Field(0, ge=0)
+    domain_count: int = Field(0, ge=0)
+    primary_source_count: int = Field(0, ge=0)
+    partial_reasons: List[str] = Field(default_factory=list)
+    degraded_reasons: List[str] = Field(default_factory=list)
+    cost_state: Literal["confirmed", "estimated", "uncertain", "unavailable"] = (
+        "unavailable"
+    )
+    runtime: WorkflowRuntimeIdentityResponse = Field(
+        default_factory=WorkflowRuntimeIdentityResponse
+    )
+    error_code: Optional[str] = None
+
+
+class WorkflowArtifactReadResponse(BaseModel):
+    """Bounded UTF-8 artifact slice with stable identity metadata."""
+
+    run_id: str
+    artifact: Literal["report", "manifest"]
+    kind: Literal["report", "manifest"]
+    media_type: str
+    total_bytes: int = Field(..., ge=0)
+    offset: int = Field(..., ge=0)
+    bytes_returned: int = Field(..., ge=0)
+    truncated: bool
+    next_offset: Optional[int] = Field(None, ge=0)
+    sha256: str
+    content: str
+
+
 class RecoverArticleWorkflowRequest(BaseModel):
     url: str = Field(..., min_length=1, max_length=2048)
     title: Optional[str] = None
     domain: Optional[str] = None
-    caller: str = Field("", description="Caller identifier for attribution (e.g. 'clio-workflows')")
+    caller: str = Field(
+        "", description="Caller identifier for attribution (e.g. 'clio-workflows')"
+    )
 
 
 class CaptureSiteWorkflowRequest(BaseModel):
     url: str = Field(..., min_length=1, max_length=2048)
     soft_page_limit: int = Field(75, ge=1, le=500)
     hard_page_limit: int = Field(200, ge=1, le=500)
-    caller: str = Field("", description="Caller identifier for attribution (e.g. 'clio-workflows')")
+    caller: str = Field(
+        "", description="Caller identifier for attribution (e.g. 'clio-workflows')"
+    )
 
 
 class BuildResearchPackWorkflowRequest(BaseModel):
@@ -369,14 +476,31 @@ class BuildResearchPackWorkflowRequest(BaseModel):
         official_url: Optional URL of official documentation.
         max_research_pages: Maximum number of external research pages to capture.
     """
-    topic: str = Field(..., min_length=1, max_length=200, description="Research topic name")
-    official_url: Optional[str] = Field(None, description="Official documentation URL if known")
-    max_research_pages: int = Field(40, ge=1, le=200, description="Maximum external research pages to retrieve")
-    caller: str = Field("", description="Caller identifier for attribution (e.g. 'hermes')")
 
+    topic: str = Field(
+        ..., min_length=1, max_length=200, description="Research topic name"
+    )
+    official_url: Optional[str] = Field(
+        None, description="Official documentation URL if known"
+    )
+    max_research_pages: int = Field(
+        40, ge=1, le=200, description="Maximum external research pages to retrieve"
+    )
+    caller: str = Field(
+        "", description="Caller identifier for attribution (e.g. 'hermes')"
+    )
 
 
 class SearchAndSummarizeWorkflowRequest(BaseModel):
-    query: str = Field(..., min_length=1, max_length=1000, description="Search query to research and summarize")
-    max_search_results: int = Field(5, ge=1, le=20, description="Number of search results to extract")
-    caller: str = Field("", description="Caller identifier for attribution (e.g. 'clio-workflows')")
+    query: str = Field(
+        ...,
+        min_length=1,
+        max_length=1000,
+        description="Search query to research and summarize",
+    )
+    max_search_results: int = Field(
+        5, ge=1, le=20, description="Number of search results to extract"
+    )
+    caller: str = Field(
+        "", description="Caller identifier for attribution (e.g. 'clio-workflows')"
+    )
