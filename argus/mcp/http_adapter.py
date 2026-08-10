@@ -96,6 +96,21 @@ def _workflow_markdown(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _workflow_start_json(payload: dict[str, Any]) -> dict[str, Any]:
+    """Render only safe start metadata from a legacy workflow response."""
+    run_id = str(payload.get("run_id", ""))
+    return {
+        "run_id": run_id,
+        "kind": payload.get("kind", "workflow"),
+        "status": payload.get("status", "unknown"),
+        "target": payload.get("target", ""),
+        "created_at": payload.get("created_at"),
+        "started_at": payload.get("started_at"),
+        "finished_at": payload.get("finished_at"),
+        "status_url": f"/api/workflows/{quote(run_id, safe='')}/status",
+    }
+
+
 def _workflow_status_markdown(payload: dict[str, Any]) -> str:
     """Render only the safe workflow status fields supplied by the authority."""
     lines = [
@@ -492,7 +507,7 @@ class HttpMcpAdapter:
             token=token,
         )
         if response_format == "json":
-            return json.dumps(response, indent=2)
+            return json.dumps(_workflow_start_json(response), indent=2)
         return _workflow_markdown(response)
 
     async def get_workflow_status(

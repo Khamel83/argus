@@ -55,6 +55,56 @@ async def test_status_adapter_forwards_scoped_token_and_renders_safe_json():
 
 
 @pytest.mark.asyncio
+async def test_build_json_adapter_allowlists_safe_start_projection():
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                "run_id": "run-safe",
+                "kind": "build-research-pack",
+                "status": "running",
+                "target": "Parallel",
+                "created_at": "2026-08-09T01:00:00",
+                "started_at": "2026-08-09T01:00:01",
+                "finished_at": None,
+                "status_url": "/api/workflows/run-safe",
+                "snapshot_dir": "/srv/argus/snapshots/run-safe",
+                "report_path": "/srv/argus/SUMMARY.md",
+                "manifest_path": "/srv/argus/manifest.json",
+                "artifacts": [{"path": "/srv/argus/SUMMARY.md"}],
+                "documents": [{"artifact_path": "/srv/argus/source.md"}],
+                "metadata": {"token": "secret"},
+            },
+        )
+
+    adapter = HttpMcpAdapter(
+        HttpAuthorityClient(
+            AuthorityClientConfig("https://authority.example", "default-token"),
+            transport=httpx.MockTransport(handler),
+        )
+    )
+
+    payload = json.loads(
+        await adapter.build_research_pack(
+            "Example SDK", response_format="json", token="scoped-token"
+        )
+    )
+
+    assert set(payload) == {
+        "run_id",
+        "kind",
+        "status",
+        "target",
+        "created_at",
+        "started_at",
+        "finished_at",
+        "status_url",
+    }
+    assert payload["status_url"] == "/api/workflows/run-safe/status"
+    assert "/srv/argus" not in json.dumps(payload)
+
+
+@pytest.mark.asyncio
 async def test_artifact_adapter_forwards_bounds_and_renders_content():
     observed = {}
 
