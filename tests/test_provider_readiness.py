@@ -10,7 +10,7 @@ from argus.models import ProviderName, is_adapter_provider
 
 
 UTC = timezone.utc
-ATTESTED_RELEASE = "argus-1.6.2"
+ATTESTED_RELEASE = "argus-1.6.3"
 ATTESTED_CONTRACT = "2026-07-27-v1"
 
 
@@ -977,7 +977,7 @@ def test_runtime_registry_requires_paid_key_in_addition_to_credential_fingerprin
         "ARGUS_BRAVE_CREDENTIAL_VERSION_FINGERPRINT", "brave-key-version:v1"
     )
     monkeypatch.setenv("ARGUS_BRAVE_ACCOUNT_FINGERPRINT", "brave-account:v1")
-    monkeypatch.setenv("ARGUS_RELEASE_REVISION", "argus-1.6.2")
+    monkeypatch.setenv("ARGUS_RELEASE_REVISION", ATTESTED_RELEASE)
     brave_config = ProviderConfig(
         enabled=True,
         api_key="",
