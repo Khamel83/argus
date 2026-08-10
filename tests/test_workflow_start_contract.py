@@ -253,6 +253,82 @@ async def test_running_persistence_failure_is_terminal_without_orphan_or_publica
 
 
 @pytest.mark.asyncio
+async def test_repeated_terminal_persistence_failure_retains_reloadable_failure_evidence(
+    monkeypatch, tmp_path: Path
+):
+    service = WorkflowService(SimpleNamespace(), corpus_paths=_paths(tmp_path))
+    original = service._write_run_state
+    attempts = 0
+
+    def fail_running_and_terminal_writes(run):
+        nonlocal attempts
+        attempts += 1
+        if 2 <= attempts <= 4:
+            raise OSError("injected repeated terminal persistence failure")
+        return original(run)
+
+    monkeypatch.setattr(service, "_write_run_state", fail_running_and_terminal_writes)
+    handler_called = False
+
+    async def handler(run, **kwargs):
+        del run, kwargs
+        nonlocal handler_called
+        handler_called = True
+
+    service._build_research_pack_impl = handler
+    run = await service.start_build_research_pack_safe(
+        request=BuildResearchPackWorkflowRequest(topic="repeated persistence")
+    )
+    task = service._tasks[run.run_id]
+
+    for _ in range(10):
+        await asyncio.sleep(0)
+        if task.done() and run.run_id not in service._tasks:
+            break
+    if task.done():
+        task.exception()
+
+    assert attempts == 4
+    assert not handler_called
+    assert not service._tasks
+    assert run.status is WorkflowStatus.FAILED
+    assert run.error == "WorkflowStatePersistenceError"
+    assert run.metadata["failure"] == {
+        "code": "WorkflowStatePersistenceError",
+        "reason": "running_state_write_failed",
+    }
+    snapshot = Path(run.snapshot_dir)
+    assert not (snapshot / "SUMMARY.md").exists()
+    assert not (snapshot / "manifest.json").exists()
+
+    marker_path = service._paths.workflow_runs_dir / f"{run.run_id}.failure.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert marker["run_id"] == run.run_id
+    assert marker["status"] == "failed"
+    assert marker["error"] == "WorkflowStatePersistenceError"
+    assert marker["failure"] == run.metadata["failure"]
+    assert not any(
+        key in marker for key in ("snapshot_dir", "report_path", "manifest_path")
+    )
+
+    reloaded_service = WorkflowService(SimpleNamespace(), corpus_paths=service._paths)
+    reloaded = reloaded_service.get_run(run.run_id)
+    assert reloaded is not None
+    assert reloaded.status is WorkflowStatus.FAILED
+    assert reloaded.error == "WorkflowStatePersistenceError"
+    assert reloaded.metadata["failure"] == run.metadata["failure"]
+    assert reloaded.report_path is None
+    assert reloaded.manifest_path is None
+    status = reloaded_service.get_public_status(reloaded)
+    assert status["status"] == "failed"
+    assert status["error_code"] == "WorkflowStatePersistenceError"
+    encoded = json.dumps(status).lower()
+    assert "injected repeated terminal persistence failure" not in encoded
+    assert "exception" not in encoded
+    assert "provider" not in encoded
+
+
+@pytest.mark.asyncio
 async def test_reloaded_targeted_pending_run_is_interrupted_without_operations(
     tmp_path: Path,
 ):

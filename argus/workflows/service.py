@@ -46,6 +46,8 @@ _ARTIFACT_MEDIA_TYPES = {
     "report": "text/markdown; charset=utf-8",
     "manifest": "application/json; charset=utf-8",
 }
+_WORKFLOW_FAILURE_MARKER_SCHEMA = "argus.workflow-failure.v1"
+_WORKFLOW_FAILURE_MARKER_SUFFIX = ".failure.json"
 _SAFE_WORKFLOW_DEADLINE_SECONDS = 540
 # The extraction authority allows ten requests per root domain in a sixty-second
 # window.  Keep official same-domain capture conservatively below that bound
@@ -339,6 +341,9 @@ class WorkflowService:
         try:
             payload = json.loads(state_path.read_text(encoding="utf-8"))
             run = self._deserialize_run(payload)
+            failure_marker = self._read_failure_marker(run_id)
+            if failure_marker is not None:
+                self._apply_failure_marker(run, failure_marker)
             self._interrupt_orphaned_run(run)
             self._runs[run.run_id] = run
             return run
@@ -1509,8 +1514,10 @@ class WorkflowService:
         finally:
             if run.finished_at is None:
                 run.finished_at = datetime.now(timezone.utc)
+            terminal_state_persisted = False
             try:
                 self._write_run_state(run)
+                terminal_state_persisted = True
             except Exception:
                 # Artifacts may already be visible when the final state write
                 # fails.  Never leave a completed artifact paired with a
@@ -1523,11 +1530,20 @@ class WorkflowService:
                     if run.status is WorkflowStatus.COMPLETED:
                         run.status = WorkflowStatus.FAILED
                         run.error = "WorkflowStatePersistenceError"
+                        run.metadata["failure"] = {
+                            "code": "WorkflowStatePersistenceError",
+                            "reason": "terminal_state_write_failed",
+                        }
                     self._rewrite_failed_artifacts(run)
                     try:
                         self._write_run_state(run)
+                        terminal_state_persisted = True
                     except Exception:
                         logger.exception("Failed to persist workflow failure state")
+            if terminal_state_persisted:
+                self._clear_failure_marker(run.run_id)
+            else:
+                self._write_failure_marker_safely(run)
         return run
 
     async def _recover_article_impl(
@@ -2341,6 +2357,140 @@ class WorkflowService:
             metadata=payload.get("metadata", {}),
             error=payload.get("error"),
         )
+
+    def _failure_marker_path(self, run_id: str) -> Path:
+        if not _SAFE_ID_RE.fullmatch(str(run_id)):
+            raise ValueError("invalid workflow run identifier")
+        return self._paths.workflow_runs_dir / (
+            f"{run_id}{_WORKFLOW_FAILURE_MARKER_SUFFIX}"
+        )
+
+    @staticmethod
+    def _safe_failure_marker_value(value: Any) -> str | None:
+        if not isinstance(value, str) or len(value) > 128:
+            return None
+        return value if _SAFE_ID_RE.fullmatch(value) else None
+
+    @classmethod
+    def _failure_marker_projection(cls, run: WorkflowResult) -> dict[str, Any]:
+        failure = run.metadata.get("failure")
+        safe_failure: dict[str, str] = {}
+        if isinstance(failure, Mapping):
+            for key in ("code", "reason", "outcome"):
+                value = cls._safe_failure_marker_value(failure.get(key))
+                if value is not None:
+                    safe_failure[key] = value
+        error = cls._safe_failure_marker_value(run.error)
+        if error is None:
+            error = "WorkflowStatePersistenceError"
+        if not safe_failure:
+            safe_failure = {
+                "code": error,
+                "reason": "terminal_state_write_failed",
+            }
+        finished_at = run.finished_at
+        if finished_at is None:
+            finished_at = datetime.now(timezone.utc)
+        if finished_at.tzinfo is None:
+            finished_at = finished_at.replace(tzinfo=timezone.utc)
+        return {
+            "schema": _WORKFLOW_FAILURE_MARKER_SCHEMA,
+            "run_id": run.run_id,
+            "status": WorkflowStatus.FAILED.value,
+            "error": error,
+            "finished_at": finished_at.astimezone(timezone.utc).isoformat(),
+            "failure": safe_failure,
+            "clear_artifacts": safe_failure.get("reason")
+            == "running_state_write_failed",
+        }
+
+    def _write_failure_marker(self, run: WorkflowResult) -> None:
+        """Record a bounded terminal failure when the main state is unavailable."""
+
+        marker_path = self._failure_marker_path(run.run_id)
+        marker = self._failure_marker_projection(run)
+        self._atomic_write_text(
+            marker_path,
+            json.dumps(marker, indent=2, sort_keys=True) + "\n",
+        )
+
+    def _write_failure_marker_safely(self, run: WorkflowResult) -> None:
+        try:
+            self._write_failure_marker(run)
+        except Exception:
+            # The task has already reached a stable in-memory failure.  Keep
+            # the marker attempt bounded and never surface an I/O detail to the
+            # workflow task or its caller.
+            logger.exception("Failed to persist workflow failure marker")
+
+    def _read_failure_marker(self, run_id: str) -> dict[str, Any] | None:
+        try:
+            marker_path = self._failure_marker_path(run_id)
+            if not marker_path.is_file():
+                return None
+            payload = json.loads(marker_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            logger.warning("Failed to read workflow failure marker %s", run_id)
+            return None
+        if not isinstance(payload, Mapping):
+            return None
+        if payload.get("schema") != _WORKFLOW_FAILURE_MARKER_SCHEMA:
+            return None
+        if payload.get("run_id") != run_id:
+            return None
+        if payload.get("status") != WorkflowStatus.FAILED.value:
+            return None
+        error = self._safe_failure_marker_value(payload.get("error"))
+        if error is None:
+            return None
+        failure = payload.get("failure")
+        if not isinstance(failure, Mapping):
+            return None
+        safe_failure: dict[str, str] = {}
+        for key in ("code", "reason", "outcome"):
+            value = self._safe_failure_marker_value(failure.get(key))
+            if value is not None:
+                safe_failure[key] = value
+        if not safe_failure:
+            return None
+        finished_at = _parse_dt(payload.get("finished_at"))
+        return {
+            "error": error,
+            "failure": safe_failure,
+            "finished_at": finished_at,
+            "clear_artifacts": payload.get("clear_artifacts") is True,
+        }
+
+    @staticmethod
+    def _apply_failure_marker(
+        run: WorkflowResult, marker: Mapping[str, Any]
+    ) -> None:
+        run.status = WorkflowStatus.FAILED
+        run.error = str(marker["error"])
+        finished_at = marker.get("finished_at")
+        if isinstance(finished_at, datetime):
+            if finished_at.tzinfo is None:
+                finished_at = finished_at.replace(tzinfo=timezone.utc)
+            run.finished_at = finished_at.astimezone(timezone.utc)
+        elif run.finished_at is None:
+            run.finished_at = datetime.now(timezone.utc)
+        run.metadata["failure"] = _plain_json_value(marker["failure"])
+        if marker.get("clear_artifacts") is True:
+            run.report_path = None
+            run.manifest_path = None
+            run.artifacts = []
+
+    def _clear_failure_marker(self, run_id: str) -> None:
+        try:
+            marker_path = self._failure_marker_path(run_id)
+            marker_path.unlink(missing_ok=True)
+            directory_fd = os.open(marker_path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            logger.warning("Failed to clear workflow failure marker %s", run_id)
 
     def _write_run_state(self, run: WorkflowResult) -> None:
         payload = self._serialize_run(run)
