@@ -241,6 +241,42 @@ async def test_late_state_write_failure_persists_failed_reloadable_run(
 
 
 @pytest.mark.asyncio
+async def test_handler_failure_with_terminal_write_failure_persists_failed_state(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("ARGUS_DATA_ROOT", str(tmp_path / "data"))
+    from tests.test_workflows import _service
+
+    service, _ = _service()
+    paths = service._paths
+    run = service._create_run(WorkflowKind.BUILD_RESEARCH_PACK, "Example SDK")
+    original = service._write_run_state
+    calls = 0
+
+    def fail_terminal_write(run):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected failed-state write")
+        return original(run)
+
+    async def fail_handler(run):
+        del run
+        raise ValueError("internal detail must not escape")
+
+    monkeypatch.setattr(service, "_write_run_state", fail_terminal_write)
+    result = await service._execute_run(run.run_id, fail_handler)
+
+    assert result.status is WorkflowStatus.FAILED
+    reloaded = WorkflowService(SimpleNamespace(), corpus_paths=paths).get_run(
+        result.run_id
+    )
+    assert reloaded is not None
+    assert reloaded.status is WorkflowStatus.FAILED
+    assert reloaded.error == "ValueError"
+
+
+@pytest.mark.asyncio
 async def test_real_terminal_artifacts_are_path_free_and_hash_truthful(
     monkeypatch, tmp_path
 ):

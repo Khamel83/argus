@@ -1138,9 +1138,13 @@ class WorkflowService:
                 # fails.  Never leave a completed artifact paired with a
                 # running/unknown durable state.
                 logger.exception("Failed to persist terminal workflow state")
-                if run.status is WorkflowStatus.COMPLETED:
-                    run.status = WorkflowStatus.FAILED
-                    run.error = "WorkflowStatePersistenceError"
+                if run.status in {
+                    WorkflowStatus.COMPLETED,
+                    WorkflowStatus.FAILED,
+                }:
+                    if run.status is WorkflowStatus.COMPLETED:
+                        run.status = WorkflowStatus.FAILED
+                        run.error = "WorkflowStatePersistenceError"
                     self._rewrite_failed_artifacts(run)
                     try:
                         self._write_run_state(run)
