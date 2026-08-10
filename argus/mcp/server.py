@@ -1170,6 +1170,36 @@ def serve_mcp(
                 token=_mcp_caller_token(),
             )
 
+        @mcp.tool()
+        async def get_workflow_status(
+            run_id: str,
+            response_format: str = "markdown",
+        ) -> str:
+            """Read safe research-pack status from the authenticated authority."""
+            return await backend.get_workflow_status(
+                run_id,
+                response_format=response_format,
+                token=_mcp_caller_token(),
+            )
+
+        @mcp.tool()
+        async def read_workflow_artifact(
+            run_id: str,
+            artifact: str = "report",
+            offset: int = 0,
+            max_bytes: int = 65536,
+            response_format: str = "markdown",
+        ) -> str:
+            """Read a bounded report or manifest slice from the authority."""
+            return await backend.read_workflow_artifact(
+                run_id,
+                artifact=artifact,
+                offset=offset,
+                max_bytes=max_bytes,
+                response_format=response_format,
+                token=_mcp_caller_token(),
+            )
+
     if additional_registration is not None:
         additional_registration(
             mcp,
