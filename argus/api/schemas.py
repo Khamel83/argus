@@ -481,6 +481,8 @@ class WorkflowStatusResponse(BaseModel):
     request_sha256: Optional[str] = None
     deadline_at: Optional[str] = None
     research_plan: dict[str, Any] = Field(default_factory=dict)
+    closure_audit: dict[str, int] = Field(default_factory=dict)
+    claim_evidence_matrix: List[dict[str, Any]] = Field(default_factory=list)
     error_code: Optional[str] = None
 
 

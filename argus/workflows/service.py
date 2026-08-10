@@ -13,7 +13,7 @@ import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import asdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -50,6 +50,7 @@ from argus.workflows.targeted_research import (
     flatten_requirements,
     make_target_search_requests,
     page_budget_math,
+    prefix_matches,
     plan_target_research,
 )
 
@@ -104,6 +105,49 @@ _IMAGE_DIGEST_RE = re.compile(
     r"^(?:ghcr\.io/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*@)?"
     r"sha256:[0-9a-fA-F]{64}$"
 )
+
+# Public research-pack closure is deliberately deterministic.  These values
+# are contract constants rather than values derived from the live clock.
+_PUBLIC_ARTIFACT_MAX_BYTES = 4 * 1024 * 1024
+_PUBLIC_LABEL_MAX = 100
+_PUBLIC_TITLE_MAX = 1_000
+_PUBLIC_URL_MAX = 2_048
+_PUBLIC_EXCERPT_MAX = 2_000
+_PUBLIC_SECTION_TITLE_MAX = 200
+_PUBLIC_BODY_MAX = 20_000
+_FRESHNESS_AS_OF = date(2026, 8, 9)
+_FRESHNESS_START = date(2025, 8, 9)
+_FRESHNESS_WINDOW = {
+    "start": _FRESHNESS_START.isoformat(),
+    "end": _FRESHNESS_AS_OF.isoformat(),
+    "as_of": _FRESHNESS_AS_OF.isoformat(),
+}
+_FRESHNESS_VALUES = {
+    "dated_current",
+    "observed_live_undated",
+    "stale",
+    "unknown",
+}
+_CLAIM_CLASSES = (
+    "capabilities",
+    "pricing_eligibility",
+    "privacy_data_handling",
+    "protected_execution",
+    "provenance_governance",
+)
+_PUBLIC_SECRET_RE = re.compile(
+    r"(?is)(?:authorization\s*:\s*bearer(?:\s+[A-Za-z0-9._~+/=-]{4,})?|"
+    r"bearer\s+[A-Za-z0-9._~+/=-]{4,}|"
+    r"(?:api[-_ ]?key|access[-_ ]?token|secret|password)\s*[:=]\s*\S+|"
+    r"-----BEGIN [^-]+ PRIVATE KEY-----.*?-----END [^-]+ PRIVATE KEY-----|"
+    r"-----BEGIN [^-]+ PRIVATE KEY-----)"
+)
+_PUBLIC_PATH_RE = re.compile(
+    r"(?:(?:file://)|(?:^|[\s(])(?:/Users/|/Volumes/|/private/|/tmp/|/var/|/home/)|"
+    r"(?:^|[\s(])[A-Za-z]:[\\/])"
+)
+_PUBLIC_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _utf8_codepoint_width(first_byte: int) -> int:
@@ -261,6 +305,155 @@ def _lead_text(text: str, limit: int = 280) -> str:
     if cleaned and not cleaned.endswith("."):
         cleaned += "..."
     return cleaned
+
+
+def _public_redact(value: Any, *, limit: int, fallback: str = "unknown") -> str:
+    """Return bounded text safe for a public workflow projection.
+
+    The workflow never publishes provider-native errors, paths, or credential
+    material.  Redaction happens before the byte-bound check so a malicious
+    accepted title/excerpt cannot expand an artifact past its contract limit.
+    """
+
+    if not isinstance(value, str):
+        return fallback
+    text = _PUBLIC_CONTROL_RE.sub("", value)
+    text = _PUBLIC_SECRET_RE.sub("[REDACTED]", text)
+    text = _PUBLIC_PATH_RE.sub(" [REDACTED_PATH] ", text)
+    text = " ".join(text.split()).strip()
+    if not text:
+        return fallback
+    return text[:limit]
+
+
+def _public_label(value: Any, *, fallback: str = "unknown") -> str:
+    return _public_redact(value, limit=_PUBLIC_LABEL_MAX, fallback=fallback)
+
+
+def _public_title(value: Any) -> str:
+    return _public_redact(value, limit=_PUBLIC_TITLE_MAX)
+
+
+def _public_body(value: Any) -> str:
+    return _public_redact(value, limit=_PUBLIC_BODY_MAX)
+
+
+def _public_nested(value: Any, *, depth: int = 0) -> Any:
+    """Project small provenance values without provider-native payloads."""
+
+    if depth > 2:
+        return _public_label(value)
+    if isinstance(value, Mapping):
+        projected: dict[str, Any] = {}
+        for key, nested in list(value.items())[:32]:
+            safe_key = _public_label(key)
+            if any(
+                marker in safe_key.casefold()
+                for marker in (
+                    "error",
+                    "exception",
+                    "receipt",
+                    "request_id",
+                    "database",
+                    "db_id",
+                    "path",
+                    "token",
+                    "secret",
+                    "credential",
+                    "sql",
+                )
+            ):
+                continue
+            projected[safe_key] = _public_nested(nested, depth=depth + 1)
+        return projected
+    if isinstance(value, (list, tuple, set)):
+        return [_public_nested(nested, depth=depth + 1) for nested in list(value)[:32]]
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value if value >= 0 else None
+    return _public_label(value)
+
+
+def _public_url(value: Any) -> str:
+    """Bound a URL without ever exposing local/credential-bearing values."""
+
+    if not isinstance(value, str):
+        return "[REDACTED_URL]"
+    candidate = _PUBLIC_CONTROL_RE.sub("", value).strip()
+    try:
+        parsed = urlparse(candidate)
+    except ValueError:
+        return "[REDACTED_URL]"
+    if (
+        len(candidate) > _PUBLIC_URL_MAX
+        or parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or "@" in parsed.netloc
+        or _PUBLIC_PATH_RE.search(candidate)
+    ):
+        return "[REDACTED_URL]"
+    return candidate[:_PUBLIC_URL_MAX]
+
+
+def _safe_sha256(value: Any, *, fallback: str | None = None) -> str | None:
+    if isinstance(value, str) and _SHA256_RE.fullmatch(value):
+        return value
+    return fallback
+
+
+def _public_error_code(value: Any) -> str:
+    if isinstance(value, str) and _SAFE_ID_RE.fullmatch(value):
+        return value
+    return "workflow_failed"
+
+
+def _parse_source_date(value: Any) -> date | None:
+    """Parse source-supplied date metadata, never retrieval timestamps."""
+
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+        except ValueError:
+            return None
+
+
+def _freshness_projection(source_date: Any, retrieved_at: Any) -> tuple[str, str | None]:
+    """Return frozen freshness enum plus a safe source-date string."""
+
+    parsed = _parse_source_date(source_date)
+    normalized = parsed.isoformat() if parsed is not None else None
+    if parsed is not None:
+        if _FRESHNESS_START <= parsed <= _FRESHNESS_AS_OF:
+            return "dated_current", normalized
+        if parsed < _FRESHNESS_START:
+            return "stale", normalized
+        return "unknown", normalized
+    if source_date is not None and str(source_date).strip():
+        return "unknown", None
+    if retrieved_at is not None:
+        return "observed_live_undated", None
+    return "unknown", None
+
+
+def _safe_aware_timestamp(value: Any) -> str | None:
+    parsed = _parse_dt(value)
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc).isoformat()
 
 
 class WorkflowOperationFailure(RuntimeError):
@@ -695,24 +888,29 @@ class WorkflowService:
                 )
             citations.append(
                 {
-                    "id": citation.id,
-                    "title": citation.title,
-                    "url": citation.url,
+                    "id": _public_label(citation.id),
+                    "title": _public_title(citation.title),
+                    "url": _public_url(citation.url),
                     "disposition": citation.artifact_disposition,
                     "evidence_ids": list(dict.fromkeys(evidence_ids)),
                 }
             )
 
         partial_reasons, degraded_reasons = self._status_reasons(run)
+        targeted_projection = (
+            self._targeted_research_projection(run)
+            if self._is_targeted_run(run)
+            else {}
+        )
         return {
-            "run_id": run.run_id,
+            "run_id": _public_label(run.run_id),
             "kind": run.kind.value,
             "status": run.status.value,
-            "target": run.target,
+            "target": _public_body(run.target),
             "created_at": run.created_at.isoformat() if run.created_at else None,
             "started_at": run.started_at.isoformat() if run.started_at else None,
             "finished_at": run.finished_at.isoformat() if run.finished_at else None,
-            "status_url": f"/api/workflows/{run.run_id}/status",
+            "status_url": f"/api/workflows/{_public_label(run.run_id)}/status",
             "artifacts": artifacts,
             "citations": citations,
             "source_count": len(source_urls),
@@ -728,8 +926,20 @@ class WorkflowService:
             "runtime_mismatch": self._runtime_observation(run, runtime)["mismatch"],
             "request_sha256": self._safe_request_hash(run),
             "deadline_at": self._safe_deadline(run),
-            "research_plan": self._safe_research_plan(run),
-            "error_code": run.error if run.status == WorkflowStatus.FAILED else None,
+            "research_plan": targeted_projection
+            if targeted_projection
+            else self._safe_research_plan(run),
+            "closure_audit": targeted_projection.get("closure_audit", {})
+            if targeted_projection
+            else {},
+            "claim_evidence_matrix": targeted_projection.get(
+                "claim_evidence_matrix", []
+            )
+            if targeted_projection
+            else [],
+            "error_code": _public_error_code(run.error)
+            if run.status == WorkflowStatus.FAILED and run.error
+            else None,
         }
 
     def read_artifact(
@@ -933,7 +1143,7 @@ class WorkflowService:
         for document in run.documents:
             disposition = str(document.metadata.get("artifact_disposition", ""))
             if disposition == "partial":
-                partial.append(f"partial_artifact:{document.id}")
+                partial.append(f"partial_artifact:{_public_label(document.id)}")
         composition = run.metadata.get("composition")
         if isinstance(composition, dict):
             if composition.get("outcome") == CanonicalOutcome.DEGRADED.value:
@@ -950,7 +1160,7 @@ class WorkflowService:
                 values = [values]
             if isinstance(values, (list, tuple)):
                 target.extend(
-                    value.strip()
+                    _public_label(value.strip())
                     for value in values
                     if isinstance(value, str)
                     and value.strip()
@@ -1067,7 +1277,553 @@ class WorkflowService:
         return parsed.astimezone(timezone.utc).isoformat()
 
     @staticmethod
+    def _source_text(document: StoredDocument) -> str:
+        """Read accepted source text for excerpt/hash binding.
+
+        The private artifact path is an internal input only.  Its value is
+        never returned; failures simply yield an explicit unknown excerpt.
+        """
+
+        metadata = document.metadata if isinstance(document.metadata, Mapping) else {}
+        candidate = metadata.get("source_text") or metadata.get("text")
+        if isinstance(candidate, str):
+            return candidate
+        try:
+            return Path(document.artifact_path).read_text(encoding="utf-8")
+        except (OSError, UnicodeError, TypeError):
+            return ""
+
+    @classmethod
+    def _diagnostic_projection(cls, document: StoredDocument) -> dict[str, Any]:
+        metadata = document.metadata if isinstance(document.metadata, Mapping) else {}
+        evidence = metadata.get("execution_evidence")
+        if not isinstance(evidence, Mapping):
+            evidence = {}
+        diagnostics = metadata.get("execution_diagnostics")
+        if not isinstance(diagnostics, (list, tuple)):
+            diagnostics = evidence.get("execution_diagnostics", evidence.get("diagnostics", ()))
+        if not isinstance(diagnostics, (list, tuple)):
+            diagnostics = ()
+
+        provider = metadata.get("provider") or metadata.get("retrieval_provider")
+        extractor = metadata.get("extractor")
+        cache_state = metadata.get("cache_state")
+        if cache_state not in {"hit", "miss", "ineligible", "unknown"}:
+            cache_state = evidence.get("cache_state")
+        if cache_state not in {"hit", "miss", "ineligible", "unknown"}:
+            cache_state = "unknown"
+        cache_eligibility = metadata.get("free_profile_eligible")
+        if cache_eligibility is None:
+            cache_data = evidence.get("cache_eligibility")
+            if isinstance(cache_data, Mapping):
+                cache_eligibility = cache_data.get("eligible")
+        if not isinstance(cache_eligibility, bool):
+            cache_eligibility = None
+        origin = metadata.get("cache_origin")
+        origin_provider = metadata.get("origin_provider")
+        origin_extractor = metadata.get("origin_extractor")
+        if isinstance(origin, Mapping):
+            origin_provider = origin_provider or origin.get("provider")
+            origin_extractor = origin_extractor or origin.get("extractor")
+        elif isinstance(origin, str) and origin not in {"", "none", "unknown"}:
+            origin_provider = origin_provider or origin
+        spend = metadata.get("spend_provenance")
+        if spend is None:
+            spend = evidence.get("spend_provenance")
+        if not isinstance(spend, (str, Mapping, list, tuple)):
+            spend = "unknown"
+
+        safe_diagnostics: list[dict[str, Any]] = []
+        for diagnostic in diagnostics:
+            if not isinstance(diagnostic, Mapping):
+                continue
+            safe_diagnostics.append(
+                {
+                    "provider": _public_label(diagnostic.get("provider")),
+                    "extractor": _public_label(diagnostic.get("extractor")),
+                    "status": _public_label(diagnostic.get("status")),
+                    "result_count": diagnostic.get("result_count")
+                    if isinstance(diagnostic.get("result_count"), int)
+                    and diagnostic.get("result_count") >= 0
+                    else 0,
+                    "timeout_source": _public_label(diagnostic.get("timeout_source")),
+                    "operation_latency_ms": diagnostic.get("operation_latency_ms")
+                    if isinstance(diagnostic.get("operation_latency_ms"), (int, float))
+                    and diagnostic.get("operation_latency_ms") >= 0
+                    else None,
+                    "cache_latency_ms": diagnostic.get("cache_latency_ms")
+                    if isinstance(diagnostic.get("cache_latency_ms"), (int, float))
+                    and diagnostic.get("cache_latency_ms") >= 0
+                    else None,
+                    "cache_state": diagnostic.get("cache_state")
+                    if diagnostic.get("cache_state")
+                    in {"hit", "miss", "ineligible", "unknown"}
+                    else "unknown",
+                    "cache_age": diagnostic.get("cache_age_ms")
+                    if isinstance(diagnostic.get("cache_age_ms"), (int, float))
+                    and diagnostic.get("cache_age_ms") >= 0
+                    else diagnostic.get("cache_age"),
+                    "cache_origin": _public_label(diagnostic.get("cache_origin")),
+                    "spend_provenance": _public_nested(
+                        diagnostic.get("spend_provenance")
+                    ),
+                    "freshness_age": diagnostic.get("freshness_age_ms")
+                    if isinstance(diagnostic.get("freshness_age_ms"), (int, float))
+                    and diagnostic.get("freshness_age_ms") >= 0
+                    else diagnostic.get("freshness_age"),
+                    "freshness_window": _public_redact(
+                        diagnostic.get("freshness_window"), limit=_PUBLIC_LABEL_MAX
+                    ),
+                    "freshness_reason": _public_redact(
+                        diagnostic.get("freshness_reason"), limit=_PUBLIC_LABEL_MAX
+                    ),
+                    "free_profile_eligible": diagnostic.get("free_profile_eligible")
+                    if isinstance(diagnostic.get("free_profile_eligible"), bool)
+                    else None,
+                }
+            )
+        cache_age = metadata.get("cache_age")
+        if not isinstance(cache_age, (int, float)) or cache_age < 0:
+            cache_age = metadata.get("cache_age_ms")
+        if not isinstance(cache_age, (int, float)) or cache_age < 0:
+            cache_age = None
+        return {
+            "provider": _public_label(provider),
+            "extractor": _public_label(extractor),
+            "cache_state": cache_state,
+            "cache_hit": cache_state == "hit" if cache_state != "unknown" else None,
+            "cache_eligible": cache_eligibility,
+            "cache_age": cache_age,
+            "cache_age_ms": cache_age,
+            "origin_provider": _public_label(origin_provider),
+            "origin_extractor": _public_label(origin_extractor),
+            "spend_provenance": _public_nested(spend),
+            "diagnostics": safe_diagnostics,
+            "diagnostics_complete": bool(safe_diagnostics)
+            or bool(evidence)
+            or bool(metadata.get("execution_diagnostics")),
+        }
+
+    @classmethod
+    def _source_projection(cls, document: StoredDocument) -> dict[str, Any]:
+        metadata = document.metadata if isinstance(document.metadata, Mapping) else {}
+        raw_text = cls._source_text(document)
+        public_text = _public_redact(raw_text, limit=_PUBLIC_BODY_MAX, fallback="")
+        supplied_hash = metadata.get("source_text_sha256") or metadata.get("text_sha256")
+        text_hash = (
+            supplied_hash
+            if isinstance(supplied_hash, str)
+            and _SHA256_RE.fullmatch(supplied_hash)
+            and public_text == raw_text
+            else hashlib.sha256(public_text.encode("utf-8")).hexdigest()
+        )
+        excerpt_value = metadata.get("evidence_excerpt") or metadata.get("lead_text")
+        excerpt = _public_redact(
+            excerpt_value if isinstance(excerpt_value, str) else public_text,
+            limit=_PUBLIC_EXCERPT_MAX,
+            fallback="unknown",
+        )
+        # An excerpt is only useful when it binds to the audited source text.
+        # If an upstream lead was truncated/redacted, derive a safe substring
+        # from the same public text instead of publishing an unbound claim.
+        if public_text and excerpt != "unknown" and excerpt not in public_text:
+            excerpt = public_text[:_PUBLIC_EXCERPT_MAX]
+        if public_text and excerpt == "unknown":
+            excerpt = public_text[:_PUBLIC_EXCERPT_MAX]
+        retrieved_at = _safe_aware_timestamp(
+            metadata.get("retrieved_at") or metadata.get("retrieval_timestamp")
+        )
+        freshness, source_date = _freshness_projection(
+            metadata.get("source_date"), retrieved_at
+        )
+        freshness_reason = {
+            "dated_current": "source date is inside the inclusive frozen window",
+            "observed_live_undated": "accepted live artifact has no source date",
+            "stale": "source date precedes the inclusive frozen window",
+            "unknown": "source date is missing or unparseable",
+        }[freshness]
+        diagnostics = cls._diagnostic_projection(document)
+        disposition = metadata.get("artifact_disposition")
+        if disposition not in {"usable", "partial", "rejected"}:
+            disposition = "usable"
+        return {
+            "id": _public_label(document.id),
+            "url": _public_url(document.url),
+            "title": _public_title(document.title),
+            "word_count": document.word_count if isinstance(document.word_count, int) else 0,
+            "domain": _public_label(document.domain),
+            "role": _public_label(document.role),
+            "source_type": _public_label(document.source_type),
+            "extractor": diagnostics["extractor"],
+            "egress": _public_label(document.egress),
+            "machine": _public_label(document.machine),
+            "artifact_disposition": disposition,
+            "evidence_ids": cls._safe_evidence_ids(metadata.get("evidence_ids")),
+            "evidence_excerpt": excerpt,
+            "source_text_sha256": text_hash,
+            "full_text_sha256": text_hash,
+            "retrieved_at": retrieved_at or "unknown",
+            "source_date": source_date,
+            "freshness": freshness,
+            "freshness_reason": freshness_reason,
+            "freshness_window": dict(_FRESHNESS_WINDOW),
+            "cache": {
+                "state": diagnostics["cache_state"],
+                "hit": diagnostics["cache_hit"],
+                "eligible": diagnostics["cache_eligible"],
+                "age": diagnostics["cache_age"],
+                "origin_provider": diagnostics["origin_provider"],
+                "origin_extractor": diagnostics["origin_extractor"],
+            },
+            "provenance": {
+                "provider": diagnostics["provider"],
+                "extractor": diagnostics["extractor"],
+                "spend": diagnostics["spend_provenance"],
+            },
+            "execution_diagnostics": diagnostics["diagnostics"],
+            **diagnostics,
+        }
+
+    @staticmethod
+    def _target_requirements(run: WorkflowResult) -> list[dict[str, Any]]:
+        plan = run.metadata.get("research_plan")
+        targets = plan.get("targets") if isinstance(plan, Mapping) else None
+        if not isinstance(targets, (list, tuple)):
+            targets = run.metadata.get("research_targets")
+        if not isinstance(targets, (list, tuple)):
+            return []
+        rows: list[dict[str, Any]] = []
+        for target_index, target in enumerate(targets):
+            if not isinstance(target, Mapping):
+                continue
+            requirements = target.get("requirements")
+            if not isinstance(requirements, (list, tuple)):
+                continue
+            for requirement_index, requirement in enumerate(requirements):
+                if not isinstance(requirement, Mapping):
+                    continue
+                rows.append(
+                    {
+                        "target_index": target_index,
+                        "requirement_index": requirement_index,
+                        "target_name": requirement.get("target_name", target.get("name", "unknown")),
+                        "claim_class": requirement.get("claim_class", "unknown"),
+                        "query": requirement.get("query", "unknown"),
+                        "source_prefixes": list(target.get("source_prefixes", ())),
+                        "requirement_ref": requirement.get(
+                            "requirement_ref",
+                            f"target-{target_index}-requirement-{requirement_index}",
+                        ),
+                    }
+                )
+        return rows
+
+    @classmethod
+    def _targeted_research_projection(
+        cls, run: WorkflowResult, *, status: WorkflowStatus | None = None
+    ) -> dict[str, Any]:
+        """Build the bounded v3 research-plan projection for every public surface."""
+
+        plan = run.metadata.get("research_plan")
+        if not isinstance(plan, Mapping):
+            plan = {}
+        targets = plan.get("targets")
+        if not isinstance(targets, (list, tuple)):
+            targets = run.metadata.get("research_targets", ())
+        requirements = cls._target_requirements(run)
+        documents = list(run.documents)
+        citations = {citation.id: citation for citation in run.citations}
+        document_by_ref = {
+            str(document.metadata.get("requirement_ref")): document
+            for document in documents
+            if isinstance(document.metadata, Mapping)
+            and document.metadata.get("requirement_ref")
+            and document.metadata.get("target_name") is not None
+        }
+        source_rows = {document.id: cls._source_projection(document) for document in documents}
+        targeted_documents = [
+            document
+            for document in documents
+            if isinstance(document.metadata, Mapping)
+            and document.metadata.get("target_name") is not None
+        ]
+        external_documents = [
+            document
+            for document in documents
+            if document not in targeted_documents
+        ]
+        terminal_status = status or run.status
+        completed = terminal_status is WorkflowStatus.COMPLETED
+        target_payload: list[dict[str, Any]] = []
+        matrix: list[dict[str, Any]] = []
+        covered_urls: set[str] = set()
+        for target_index, raw_target in enumerate(targets):
+            if not isinstance(raw_target, Mapping):
+                continue
+            target_name = _public_label(raw_target.get("name"))
+            prefix_values = [
+                _public_url(prefix) for prefix in raw_target.get("source_prefixes", ())
+            ]
+            requirement_payload: list[dict[str, Any]] = []
+            target_rows = [
+                requirement
+                for requirement in requirements
+                if requirement["target_index"] == target_index
+            ]
+            for requirement in target_rows:
+                requirement_ref = str(requirement["requirement_ref"])
+                document = document_by_ref.get(requirement_ref)
+                source = source_rows.get(document.id) if document is not None else None
+                citation = citations.get(document.id) if document is not None else None
+                usable = bool(
+                    completed
+                    and document is not None
+                    and citation is not None
+                    and source is not None
+                    and source["artifact_disposition"] == "usable"
+                    and source["url"] != "[REDACTED_URL]"
+                    and any(
+                        prefix_matches(prefix, source["url"])
+                        for prefix in raw_target.get("source_prefixes", ())
+                    )
+                    and _normal_url(source["url"]) not in covered_urls
+                )
+                if usable:
+                    covered_urls.add(_normal_url(source["url"]))
+                outcome = "artifact_acquired" if usable else (
+                    "not_started" if terminal_status in {WorkflowStatus.PENDING, WorkflowStatus.RUNNING} else (
+                        "extraction_failed"
+                        if run.error and "extraction" in run.error
+                        else "no_candidate"
+                    )
+                )
+                citation_ids = [document.id] if usable and document is not None else []
+                selected_urls = [source["url"]] if usable and source is not None else []
+                row = {
+                    "target": target_name,
+                    "target_name": target_name,
+                    "claim_class": _public_label(requirement["claim_class"]),
+                    "query": _public_body(requirement["query"]),
+                    "requirement_ref": _public_label(requirement_ref),
+                    "outcome": outcome,
+                    "citation_ids": citation_ids,
+                    "selected_urls": selected_urls,
+                    "artifact_disposition": source["artifact_disposition"]
+                    if source is not None
+                    else "unknown",
+                    "evidence_excerpt": source["evidence_excerpt"]
+                    if source is not None
+                    else "unknown",
+                    "source_text_sha256": source["source_text_sha256"]
+                    if source is not None
+                    else None,
+                    "retrieved_at": source["retrieved_at"] if source is not None else "unknown",
+                    "source_date": source["source_date"] if source is not None else None,
+                    "freshness": source["freshness"] if source is not None else "unknown",
+                }
+                requirement_payload.append(row)
+                matrix.append(
+                    {
+                        "target": target_name,
+                        "claim_class": row["claim_class"],
+                        "supported_observation": _public_redact(
+                            row["evidence_excerpt"], limit=_PUBLIC_EXCERPT_MAX
+                        ),
+                        "citation_id": citation_ids[0] if citation_ids else None,
+                        "url": selected_urls[0] if selected_urls else None,
+                        "artifact_disposition": row["artifact_disposition"],
+                        "retrieved_at": row["retrieved_at"],
+                        "source_date": row["source_date"],
+                        "freshness": row["freshness"],
+                    }
+                )
+            covered = completed and bool(requirement_payload) and all(
+                row["outcome"] == "artifact_acquired" for row in requirement_payload
+            )
+            observed_claims = {
+                str(row["claim_class"])
+                for row in requirement_payload
+                if row["outcome"] == "artifact_acquired"
+            }
+            target_payload.append(
+                {
+                    "name": target_name,
+                    "source_prefixes": prefix_values,
+                    "outcome": "covered" if covered else "incomplete",
+                    "requirements": requirement_payload,
+                    "unknown_claim_classes": [
+                        claim for claim in _CLAIM_CLASSES if claim not in observed_claims
+                    ],
+                }
+            )
+        targeted_research = run.metadata.get("targeted_research")
+        if not isinstance(targeted_research, Mapping):
+            targeted_research = {}
+        maximum = plan.get("max_research_pages", targeted_research.get("page_budget", 0))
+        if not isinstance(maximum, int):
+            maximum = 0
+        target_count = len(targeted_documents)
+        external_count = len(external_documents)
+        return {
+            "contract_schema": _public_label(plan.get("contract_schema", "build-research-pack/v3")),
+            "free_only": bool(plan.get("free_only", run.metadata.get("free_only", False))),
+            "caller_identity": _public_label(
+                plan.get("caller_identity", run.metadata.get("caller_identity"))
+            ),
+            "caller_label": _public_label(
+                plan.get("caller_label", run.metadata.get("caller_label")), fallback=""
+            ),
+            "official_url": _public_url(plan.get("official_url"))
+            if plan.get("official_url")
+            else None,
+            "max_research_pages": maximum,
+            "page_budget": {
+                "maximum": maximum,
+                "target_documents": target_count,
+                "external_documents": external_count,
+                "total_documents": target_count + external_count,
+                "target_candidate_attempts": targeted_research.get(
+                    "target_candidate_attempts", target_count
+                ),
+            },
+            "targets": target_payload,
+            "external_research": {
+                "selected_urls": [
+                    _public_url(document.url) for document in external_documents
+                ],
+                "excluded_target_prefixes": [
+                    prefix
+                    for target in target_payload
+                    for prefix in target.get("source_prefixes", ())
+                ],
+            },
+            "closure_audit": cls._closure_audit(run, matrix=matrix),
+            "claim_evidence_matrix": matrix,
+        }
+
+    @classmethod
+    def _closure_audit(
+        cls, run: WorkflowResult, *, matrix: list[dict[str, Any]] | None = None
+    ) -> dict[str, int]:
+        citation_ids = [citation.id for citation in run.citations]
+        report_citation_count = len(set(citation_ids))
+        source_ids = {document.id for document in run.documents}
+        unresolved_citations = sum(1 for value in citation_ids if value not in source_ids)
+        unresolved_urls = sum(
+            1
+            for citation in run.citations
+            if not any(
+                _normal_url(citation.url) == _normal_url(document.url)
+                for document in run.documents
+            )
+        )
+        rows = matrix if matrix is not None else []
+        missing = sum(1 for row in rows if not row.get("citation_id") or not row.get("url"))
+        return {
+            "report_citation_count": report_citation_count,
+            "unresolved_citation_count": unresolved_citations,
+            "unresolved_url_count": unresolved_urls,
+            "missing_requirement_citation_count": missing,
+        }
+
+    @classmethod
+    def _validate_targeted_closure(cls, run: WorkflowResult) -> None:
+        """Fail closed before rendering a targeted report/manifest."""
+
+        if not cls._is_targeted_run(run):
+            return
+        plan = cls._targeted_research_projection(run, status=WorkflowStatus.COMPLETED)
+        targets = plan.get("targets", ())
+        requirements = [
+            requirement
+            for target in targets
+            for requirement in target.get("requirements", ())
+        ]
+        if not requirements or any(
+            requirement.get("outcome") != "artifact_acquired"
+            or len(requirement.get("citation_ids", ())) != 1
+            or len(requirement.get("selected_urls", ())) != 1
+            or requirement.get("artifact_disposition") != "usable"
+            for requirement in requirements
+        ):
+            raise ValueError("research pack closure validation failed")
+        document_ids = [document.id for document in run.documents]
+        citation_ids = [citation.id for citation in run.citations]
+        if (
+            len(citation_ids) != len(set(citation_ids))
+            or len(document_ids) != len(set(document_ids))
+            or set(citation_ids) != set(document_ids)
+        ):
+            raise ValueError("research pack closure citation mismatch")
+        targeted_documents = [
+            document
+            for document in run.documents
+            if isinstance(document.metadata, Mapping)
+            and document.metadata.get("target_name") is not None
+        ]
+        external_documents = [
+            document for document in run.documents if document not in targeted_documents
+        ]
+        if len(targeted_documents) != len(requirements) or not external_documents:
+            raise ValueError("research pack closure document count mismatch")
+        seen_urls: set[str] = set()
+        for requirement in requirements:
+            citation_id = requirement["citation_ids"][0]
+            citation = next((item for item in run.citations if item.id == citation_id), None)
+            if citation is None or _normal_url(citation.url) != _normal_url(requirement["selected_urls"][0]):
+                raise ValueError("research pack closure URL mismatch")
+            normalized = _normal_url(citation.url)
+            if normalized in seen_urls:
+                raise ValueError("research pack closure URL reused")
+            seen_urls.add(normalized)
+            if not _SHA256_RE.fullmatch(str(requirement.get("source_text_sha256", ""))):
+                raise ValueError("research pack closure source hash missing")
+        for document in external_documents:
+            source = cls._source_projection(document)
+            if source["artifact_disposition"] not in {"usable", "partial"}:
+                raise ValueError("research pack external closure unavailable")
+            citation = next(
+                (item for item in run.citations if item.id == document.id), None
+            )
+            if citation is None or _normal_url(citation.url) != _normal_url(document.url):
+                raise ValueError("research pack external citation mismatch")
+            normalized = _normal_url(document.url)
+            if normalized in seen_urls:
+                raise ValueError("research pack external URL reused")
+            seen_urls.add(normalized)
+        budget = plan.get("page_budget", {})
+        if budget.get("maximum", 0) < budget.get("total_documents", 0):
+            raise ValueError("research pack page budget exceeded")
+        if not plan.get("external_research", {}).get("selected_urls"):
+            raise ValueError("research pack external closure missing")
+        for document in run.documents:
+            if not isinstance(document.metadata, Mapping):
+                raise ValueError("research pack provenance diagnostics missing")
+            source = cls._source_projection(document)
+            required_keys = (
+                "provider",
+                "extractor",
+                "source_type",
+                "retrieved_at",
+                "source_date",
+                "cache_state",
+                "cache_age",
+                "cache_origin",
+                "spend_provenance",
+                "freshness_window",
+                "freshness_reason",
+                "free_profile_eligible",
+                "execution_diagnostics",
+            )
+            if not all(key in document.metadata for key in required_keys) or not source[
+                "diagnostics_complete"
+            ]:
+                raise ValueError("research pack provenance diagnostics missing")
+
+    @staticmethod
     def _safe_research_plan(run: WorkflowResult) -> dict[str, Any]:
+        if WorkflowService._is_targeted_run(run):
+            return WorkflowService._targeted_research_projection(run)
         value = run.metadata.get("research_plan")
         if not isinstance(value, Mapping):
             return {}
@@ -2151,6 +2907,10 @@ class WorkflowService:
             raise ValueError("Research pack did not produce any saved documents")
 
         run.metadata["official_url"] = official
+        run.metadata["discovery_candidate_only"] = official
+        run.metadata["captured_official_urls"] = [
+            document.url for document in official_docs
+        ]
         run.metadata["official_docs_count"] = len(official_docs)
         run.metadata["external_research_count"] = len(research_docs)
 
@@ -2165,7 +2925,7 @@ class WorkflowService:
             SummarySection(
                 heading="Pack Composition",
                 body=(
-                    f"Official docs were captured from {official}. "
+                    "Accepted official citations were used for the pack. "
                     f"Argus also saved {len(research_docs)} external supporting sources."
                 ),
                 citation_ids=[doc.id for doc in documents[:4]],
@@ -2808,6 +3568,16 @@ class WorkflowService:
         docs_cache_dir: Path | None = None,
         docs_cache_url: str | None = None,
     ) -> None:
+        if self._is_targeted_run(run):
+            self._finalize_targeted_run(
+                run,
+                title=title,
+                report_name=report_name,
+                current_dir=current_dir,
+                docs_cache_dir=docs_cache_dir,
+                docs_cache_url=docs_cache_url,
+            )
+            return
         # A report and manifest are terminal artifacts. Mark the run complete
         # before rendering either one so their serialized status/timestamp
         # cannot lag the durable run state.
@@ -2816,6 +3586,8 @@ class WorkflowService:
         report_path = Path(run.snapshot_dir) / report_name
         manifest_path = Path(run.snapshot_dir) / "manifest.json"
         report_content = self._render_report(title, run)
+        if len(report_content.encode("utf-8")) > _PUBLIC_ARTIFACT_MAX_BYTES:
+            raise ValueError("workflow report exceeds public artifact limit")
         run.report_path = str(report_path)
         run.manifest_path = str(manifest_path)
         run.artifacts = [
@@ -2840,6 +3612,8 @@ class WorkflowService:
             json.dumps(self._public_manifest(run), indent=2, default=_json_default)
             + "\n"
         )
+        if len(manifest_content.encode("utf-8")) > _PUBLIC_ARTIFACT_MAX_BYTES:
+            raise ValueError("workflow manifest exceeds public artifact limit")
         self._atomic_write_text(manifest_path, manifest_content)
 
         if current_dir is not None:
@@ -2852,6 +3626,116 @@ class WorkflowService:
                 self._update_docs_cache_index(
                     docs_cache_dir.name, docs_cache_url, docs_cache_dir
                 )
+
+    def _finalize_targeted_run(
+        self,
+        run: WorkflowResult,
+        *,
+        title: str,
+        report_name: str,
+        current_dir: Path | None = None,
+        docs_cache_dir: Path | None = None,
+        docs_cache_url: str | None = None,
+    ) -> None:
+        """Finalize v3 artifacts as one validated, atomic public publication."""
+
+        # Validate entirely from accepted documents/citations while the run is
+        # still pending/running.  No report/manifest path is assigned on a
+        # closure failure, allowing the executor to persist status-only failure.
+        self._validate_targeted_closure(run)
+        previous = (
+            run.status,
+            run.finished_at,
+            run.report_path,
+            run.manifest_path,
+            list(run.artifacts),
+        )
+        run.status = WorkflowStatus.COMPLETED
+        run.finished_at = self._clock_now()
+        report_path = Path(run.snapshot_dir) / report_name
+        manifest_path = Path(run.snapshot_dir) / "manifest.json"
+        report_content = self._render_report(title, run)
+        if len(report_content.encode("utf-8")) > _PUBLIC_ARTIFACT_MAX_BYTES:
+            run.status, run.finished_at, run.report_path, run.manifest_path, run.artifacts = previous
+            raise ValueError("research pack report exceeds public artifact limit")
+        run.report_path = str(report_path)
+        run.manifest_path = str(manifest_path)
+        run.artifacts = [
+            WorkflowArtifact(
+                kind="report", path=str(report_path), description="Human-readable workflow report"
+            ),
+            WorkflowArtifact(
+                kind="manifest", path=str(manifest_path), description="Structured workflow manifest"
+            ),
+        ]
+        report_digest = hashlib.sha256(report_content.encode("utf-8")).hexdigest()
+        manifest_content = (
+            json.dumps(
+                self._public_manifest(
+                    run,
+                    report_metadata={
+                        "kind": "report",
+                        "available": True,
+                        "description": "Human-readable workflow report",
+                        "media_type": _ARTIFACT_MEDIA_TYPES["report"],
+                        "size_bytes": len(report_content.encode("utf-8")),
+                        "sha256": report_digest,
+                    },
+                ),
+                indent=2,
+                default=_json_default,
+            )
+            + "\n"
+        )
+        if len(manifest_content.encode("utf-8")) > _PUBLIC_ARTIFACT_MAX_BYTES:
+            run.status, run.finished_at, run.report_path, run.manifest_path, run.artifacts = previous
+            raise ValueError("research pack manifest exceeds public artifact limit")
+        # Persist the terminal registration before publication, matching the
+        # legacy crash-ordering contract.  The paired publication below still
+        # ensures a write failure cannot leave a partial targeted pack.
+        try:
+            self._write_run_state(run)
+        except Exception:
+            run.status, run.finished_at, run.report_path, run.manifest_path, run.artifacts = previous
+            raise
+        report_tmp = report_path.with_name(f".{report_path.name}.{uuid.uuid4().hex}.tmp")
+        manifest_tmp = manifest_path.with_name(
+            f".{manifest_path.name}.{uuid.uuid4().hex}.tmp"
+        )
+        try:
+            # Stage both bytes before either final name is visible.  The helper
+            # itself fsyncs each file; final renames and the directory fsync are
+            # the publication boundary.
+            self._atomic_write_text(report_tmp, report_content)
+            self._atomic_write_text(manifest_tmp, manifest_content)
+            os.replace(report_tmp, report_path)
+            os.replace(manifest_tmp, manifest_path)
+            directory_fd = os.open(report_path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except Exception:
+            for temporary in (report_tmp, manifest_tmp):
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            for published in (report_path, manifest_path):
+                try:
+                    published.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            run.status, run.finished_at, run.report_path, run.manifest_path, run.artifacts = previous
+            raise
+
+        if current_dir is not None:
+            self._replace_directory(current_dir, Path(run.snapshot_dir))
+            run.metadata["current_dir"] = str(current_dir)
+        if docs_cache_dir is not None:
+            self._write_docs_cache_dir(docs_cache_dir, title=title, run=run)
+            if docs_cache_url:
+                self._update_docs_cache_index(docs_cache_dir.name, docs_cache_url, docs_cache_dir)
 
     @staticmethod
     def _atomic_write_text(path: Path, content: str) -> None:
@@ -3030,46 +3914,146 @@ class WorkflowService:
         shutil.copytree(source, destination)
 
     def _render_report(self, title: str, run: WorkflowResult) -> str:
+        runtime = self._status_runtime_projection(run, None)
         lines = [
-            f"# {title}",
+            f"# {_public_title(title)}",
             "",
-            f"- Run ID: {run.run_id}",
-            f"- Workflow: {run.kind.value}",
-            f"- Target: {run.target}",
+            f"- Run ID: {_public_label(run.run_id)}",
+            f"- Workflow: {_public_label(run.kind.value)}",
+            f"- Topic: {_public_body(run.target)}",
             f"- Status: {run.status.value}",
+            f"- Runtime version: {_public_label(runtime.get('version'))}",
+            f"- Runtime source revision: {_public_label(runtime.get('source_revision'))}",
+            f"- Runtime image identity: {_public_label(runtime.get('image_identity'))}",
+            f"- Runtime deployment identity: {_public_label(runtime.get('deployment_identity'))}",
+            f"- Caller identity: {_public_label(run.metadata.get('caller_identity'))}",
+            f"- Caller label: {_public_label(run.metadata.get('caller_label'), fallback='')}",
+            f"- Request SHA-256: {self._safe_request_hash(run) or 'unknown'}",
             f"- Finished at: {run.finished_at.isoformat() if run.finished_at else 'unknown'}",
             "",
-            "## Summary",
-            "",
         ]
-        for section in run.summary_sections:
-            citations = " ".join(f"[{cid}]" for cid in section.citation_ids)
-            lines.append(f"### {section.heading}")
+        if self._is_targeted_run(run):
+            projection = self._targeted_research_projection(run)
+            lines.extend(["## Research Plan", ""])
+            lines.extend(
+                [
+                    f"- Contract schema: {_public_label(projection.get('contract_schema'))}",
+                    f"- Free-only: {bool(projection.get('free_only'))}",
+                    f"- Caller identity: {_public_label(projection.get('caller_identity'))}",
+                    f"- Caller label: {_public_label(projection.get('caller_label'), fallback='')}",
+                    f"- Maximum pages: {projection.get('page_budget', {}).get('maximum', 0)}",
+                ]
+            )
+            for target in projection.get("targets", ()):
+                lines.append(
+                    f"- Target {_public_label(target.get('name'))}: "
+                    f"{target.get('outcome', 'unknown')}"
+                )
+                for requirement in target.get("requirements", ()):
+                    lines.append(
+                        "  - "
+                        + " | ".join(
+                            [
+                                _public_label(requirement.get("claim_class")),
+                                _public_body(requirement.get("query")),
+                                _public_label(requirement.get("outcome")),
+                            ]
+                        )
+                    )
             lines.append("")
-            lines.append(section.body)
-            if citations:
+            lines.extend(["## Pack Composition", ""])
+            lines.append(
+                _public_body(
+                    "Accepted citations below are the only captured sources in this pack."
+                )
+            )
+            lines.append("")
+            for citation in run.citations:
+                lines.append(
+                    f"- [{_public_label(citation.id)}] {_public_title(citation.title)} — "
+                    f"{_public_url(citation.url)} ("
+                    f"{citation.artifact_disposition})"
+                )
+            lines.extend(["", "## Claim Evidence Matrix", ""])
+            lines.append(
+                "| Target | Claim class | Observation | Citation | URL | "
+                "Disposition | Retrieved | Source date | Freshness |"
+            )
+            lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+            for row in projection.get("claim_evidence_matrix", ()):
+                citation = row.get("citation_id") or "unknown"
+                url = row.get("url") or "unknown"
+                lines.append(
+                    "| "
+                    + " | ".join(
+                        [
+                            _public_label(row.get("target")),
+                            _public_label(row.get("claim_class")),
+                            _public_body(row.get("supported_observation")),
+                            _public_label(citation),
+                            _public_url(url) if url != "unknown" else "unknown",
+                            _public_label(row.get("artifact_disposition")),
+                            _public_label(row.get("retrieved_at")),
+                            _public_label(row.get("source_date")),
+                            _public_label(row.get("freshness")),
+                        ]
+                    )
+                    + " |"
+                )
+            lines.extend(["", "## Summary", ""])
+            for section in run.summary_sections:
+                heading = _public_redact(
+                    section.heading, limit=_PUBLIC_SECTION_TITLE_MAX
+                )
+                body = _public_body(section.body)
+                citations = " ".join(
+                    f"[{_public_label(cid)}]" for cid in section.citation_ids
+                )
+                lines.extend([f"### {heading}", "", body])
+                if citations:
+                    lines.extend(["", f"Citations: {citations}"])
                 lines.append("")
-                lines.append(f"Citations: {citations}")
-            lines.append("")
+        else:
+            lines.extend(["## Summary", ""])
+            for section in run.summary_sections:
+                citations = " ".join(f"[{_public_label(cid)}]" for cid in section.citation_ids)
+                lines.append(
+                    f"### {_public_redact(section.heading, limit=_PUBLIC_SECTION_TITLE_MAX)}"
+                )
+                lines.append("")
+                lines.append(_public_body(section.body))
+                if citations:
+                    lines.extend(["", f"Citations: {citations}"])
+                lines.append("")
 
-        lines.extend(
-            [
-                "## References",
-                "",
-            ]
-        )
+        lines.extend(["## References", ""])
         citation_map = {citation.id: citation for citation in run.citations}
         for citation_id in sorted(citation_map):
             citation = citation_map[citation_id]
             lines.append(
-                f"- [{citation.id}] {citation.title} — {citation.url}\n"
+                f"- [{_public_label(citation.id)}] {_public_title(citation.title)} — "
+                f"{_public_url(citation.url)}\n"
                 "  Disposition: "
                 f"{citation.artifact_disposition}"
             )
         lines.append("")
+        discovery = run.metadata.get("discovery_candidate_only")
+        if discovery:
+            lines.extend(
+                [
+                    "Discovery candidate only (not captured): "
+                    + _public_url(discovery),
+                    "",
+                ]
+            )
         return "\n".join(lines)
 
-    def _public_manifest(self, run: WorkflowResult) -> dict[str, Any]:
+    def _public_manifest(
+        self,
+        run: WorkflowResult,
+        *,
+        report_metadata: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Build an explicit path-free manifest for remote artifact readers."""
         status = self.get_public_status(run)
         artifact_index = []
@@ -3088,10 +4072,15 @@ class WorkflowService:
                         "media_type": artifact["media_type"],
                     }
                 )
+            elif artifact["kind"] == "report" and report_metadata is not None:
+                artifact_index.append(dict(report_metadata))
             else:
                 artifact_index.append(artifact)
         sources = []
         for document in run.documents:
+            if self._is_targeted_run(run):
+                sources.append(self._source_projection(document))
+                continue
             metadata = document.metadata if isinstance(document.metadata, dict) else {}
             safe_metadata: dict[str, Any] = {
                 "artifact_disposition": (
@@ -3104,20 +4093,25 @@ class WorkflowService:
             }
             sources.append(
                 {
-                    "id": document.id,
-                    "url": document.url,
-                    "title": document.title,
+                    "id": _public_label(document.id),
+                    "url": _public_url(document.url),
+                    "title": _public_title(document.title),
                     "word_count": document.word_count,
-                    "domain": document.domain,
-                    "role": document.role,
-                    "source_type": document.source_type,
-                    "extractor": document.extractor,
-                    "egress": document.egress,
-                    "machine": document.machine,
+                    "domain": _public_label(document.domain),
+                    "role": _public_label(document.role),
+                    "source_type": _public_label(document.source_type),
+                    "extractor": _public_label(document.extractor),
+                    "egress": _public_label(document.egress),
+                    "machine": _public_label(document.machine),
                     "metadata": safe_metadata,
                 }
             )
-        return {
+        targeted_projection = (
+            self._targeted_research_projection(run)
+            if self._is_targeted_run(run)
+            else {}
+        )
+        manifest = {
             "schema": "argus.workflow-manifest.v1",
             "run_id": status["run_id"],
             "kind": status["kind"],
@@ -3132,9 +4126,11 @@ class WorkflowService:
             "citations": status["citations"],
             "summary_sections": [
                 {
-                    "heading": section.heading,
-                    "body": section.body,
-                    "citation_ids": list(section.citation_ids),
+                    "heading": _public_redact(
+                        section.heading, limit=_PUBLIC_SECTION_TITLE_MAX
+                    ),
+                    "body": _public_body(section.body),
+                    "citation_ids": [_public_label(cid) for cid in section.citation_ids],
                 }
                 for section in run.summary_sections
             ],
@@ -3148,6 +4144,25 @@ class WorkflowService:
             "research_plan": status["research_plan"],
             "error_code": status["error_code"],
         }
+        if targeted_projection:
+            manifest.update(
+                {
+                    "closure_audit": targeted_projection["closure_audit"],
+                    "claim_evidence_matrix": targeted_projection[
+                        "claim_evidence_matrix"
+                    ],
+                    "external_research": targeted_projection["external_research"],
+                    "request_sha256": status["request_sha256"],
+                    "deadline_at": status["deadline_at"],
+                }
+            )
+        discovery_candidate = run.metadata.get("discovery_candidate_only")
+        if discovery_candidate:
+            manifest["discovery_candidate_only"] = _public_url(discovery_candidate)
+            manifest["captured_urls"] = [
+                _public_url(document.url) for document in run.documents
+            ]
+        return manifest
 
     def _serialize_run(self, run: WorkflowResult) -> dict[str, Any]:
         return {
