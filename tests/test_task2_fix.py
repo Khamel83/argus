@@ -1,6 +1,8 @@
 """Regression coverage for Task 2 workflow, clock, and cache seams."""
 
 import asyncio
+import hashlib
+import json
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -307,3 +309,142 @@ def test_accepted_cache_lookup_filters_url_identity_before_bounded_newest_rows(
     assert [item.acceptance_receipt.receipt_ref for item in matches] == [
         origin.acceptance_receipt.receipt_ref
     ]
+
+
+@pytest.mark.parametrize("legacy_identity", ["bare", "missing"])
+def test_accepted_cache_lookup_normalizes_legacy_url_hash_identity(
+    tmp_path, legacy_identity
+):
+    """Legacy bare/missing identities still resolve the accepted URL exactly."""
+    from sqlalchemy import select
+
+    from argus.extraction.extractor import _finalize_accepted_extraction
+    from argus.persistence.search_ledger import (
+        ExtractionOutcomeAcceptanceRow,
+        ExtractionOutcomePlanRow,
+        _canonical_json,
+        create_search_ledger_repository,
+    )
+
+    repository = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / f'legacy-{legacy_identity}.db'}",
+        create_schema=True,
+    )
+    source_url = "https://example.com/identity-target?x=1"
+    accepted_content = _finalize_accepted_extraction(
+        ExtractedContent(
+            url=source_url,
+            title="Legacy identity target",
+            text="legacy identity target content " * 50,
+            word_count=150,
+            extractor=ExtractorName.TRAFILATURA,
+        ),
+        url=source_url,
+        mode="default",
+        caller="task2-fix",
+        request_id=f"legacy-{legacy_identity}-request",
+        latency_ms=1,
+        repository=repository,
+    )
+    receipt_ref = accepted_content.acceptance_receipt.receipt_ref
+    target_identity = "sha256:" + hashlib.sha256(source_url.encode()).hexdigest()
+    with repository.session_factory.begin() as session:
+        plan = session.scalar(
+            select(ExtractionOutcomePlanRow).where(
+                ExtractionOutcomePlanRow.extraction_run_id
+                == accepted_content.extraction_run_id
+            )
+        )
+        acceptance = session.scalar(
+            select(ExtractionOutcomeAcceptanceRow).where(
+                ExtractionOutcomeAcceptanceRow.receipt_ref == receipt_ref
+            )
+        )
+        assert plan is not None
+        assert acceptance is not None
+        state = json.loads(acceptance.projection_json)
+        state["plan"]["normalized_url"] = source_url
+        plan.normalized_url = source_url
+        plan.plan_json = _canonical_json(state["plan"])
+        if legacy_identity == "bare":
+            state["normalized_url_identity"] = target_identity.removeprefix(
+                "sha256:"
+            )
+        else:
+            state.pop("normalized_url_identity")
+        acceptance.projection_json = _canonical_json(state)
+
+    matches = repository.find_extraction_outcomes_by_url_identity(
+        target_identity,
+        mode="default",
+    )
+
+    assert [item.acceptance_receipt.receipt_ref for item in matches] == [receipt_ref]
+    assert matches[0].normalized_url_identity == target_identity
+
+
+def test_accepted_cache_lookup_keeps_mode_boundary_and_rejects_sql_metacharacters(
+    tmp_path,
+):
+    """Legacy URL hashes never cross mode or become a SQL predicate."""
+    from sqlalchemy import select
+
+    from argus.extraction.extractor import _finalize_accepted_extraction
+    from argus.persistence.search_ledger import (
+        ExtractionOutcomeAcceptanceRow,
+        ExtractionOutcomePlanRow,
+        _canonical_json,
+        create_search_ledger_repository,
+    )
+
+    repository = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'legacy-boundary.db'}",
+        create_schema=True,
+    )
+    source_url = "https://example.com/identity-target?x=1"
+    accepted_content = _finalize_accepted_extraction(
+        ExtractedContent(
+            url=source_url,
+            title="Legacy mode target",
+            text="legacy mode target content " * 50,
+            word_count=150,
+            extractor=ExtractorName.TRAFILATURA,
+        ),
+        url=source_url,
+        mode="archive_ingest",
+        caller="task2-fix",
+        request_id="legacy-mode-request",
+        latency_ms=1,
+        repository=repository,
+    )
+    receipt_ref = accepted_content.acceptance_receipt.receipt_ref
+    target_identity = "sha256:" + hashlib.sha256(source_url.encode()).hexdigest()
+    with repository.session_factory.begin() as session:
+        plan = session.scalar(
+            select(ExtractionOutcomePlanRow).where(
+                ExtractionOutcomePlanRow.extraction_run_id
+                == accepted_content.extraction_run_id
+            )
+        )
+        acceptance = session.scalar(
+            select(ExtractionOutcomeAcceptanceRow).where(
+                ExtractionOutcomeAcceptanceRow.receipt_ref == receipt_ref
+            )
+        )
+        assert plan is not None
+        assert acceptance is not None
+        state = json.loads(acceptance.projection_json)
+        state["plan"]["normalized_url"] = source_url
+        state.pop("normalized_url_identity")
+        plan.normalized_url = source_url
+        plan.plan_json = _canonical_json(state["plan"])
+        acceptance.projection_json = _canonical_json(state)
+
+    assert repository.find_extraction_outcomes_by_url_identity(
+        target_identity,
+        mode="default",
+    ) == []
+    assert repository.find_extraction_outcomes_by_url_identity(
+        'sha256:%" OR 1=1 --',
+        mode="archive_ingest",
+    ) == []

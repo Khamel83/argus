@@ -874,6 +874,24 @@ def _extraction_source_fingerprint(state: dict) -> str:
     return acceptance_fingerprint(source)
 
 
+def _canonical_extraction_url_identity(value: object) -> str | None:
+    """Return the typed URL identity for a current or legacy hash value."""
+    if not isinstance(value, str):
+        return None
+    digest = value.removeprefix("sha256:")
+    if len(digest) != 64 or any(
+        character not in "0123456789abcdef" for character in digest
+    ):
+        return None
+    return "sha256:" + digest
+
+
+def _extraction_url_identity_for_url(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 def _deserialize_extraction_projection(state: dict):
     from decimal import Decimal
 
@@ -2101,7 +2119,10 @@ class SqlAlchemySearchLedgerRepository:
         returns only exact matches.  Policy eligibility remains in the cache
         layer, where the current request and origin evidence are both typed.
         """
-        if not isinstance(normalized_url_identity, str):
+        normalized_url_identity = _canonical_extraction_url_identity(
+            normalized_url_identity
+        )
+        if normalized_url_identity is None:
             return []
         with self.session_factory() as session:
             statement = (
@@ -2159,19 +2180,21 @@ class SqlAlchemySearchLedgerRepository:
         matches = []
         for plan_row, acceptance in rows:
             state = _parse_json_value(acceptance.projection_json)
-            candidate_identity = (
-                state.get("normalized_url_identity")
-                if isinstance(state, dict)
-                else None
-            )
-            if not isinstance(candidate_identity, str):
+            candidate_identity = None
+            if isinstance(state, dict):
+                candidate_identity = state.get("normalized_url_identity")
+            if candidate_identity is None:
                 # Legacy rows did not persist the typed identity separately;
-                # retain a conservative URL-hash fallback for those rows.
-                candidate_identity = (
-                    "sha256:"
-                    + hashlib.sha256(
-                        plan_row.normalized_url.encode("utf-8")
-                    ).hexdigest()
+                # hash the exact URL projection retained by the plan row.
+                candidate_identity = _extraction_url_identity_for_url(
+                    plan_row.normalized_url
+                )
+            else:
+                # Older projections stored the bare URL SHA-256.  Normalize
+                # only the two known representations; malformed values do not
+                # fall back to a different source URL.
+                candidate_identity = _canonical_extraction_url_identity(
+                    candidate_identity
                 )
             if candidate_identity != normalized_url_identity:
                 continue
@@ -2181,9 +2204,13 @@ class SqlAlchemySearchLedgerRepository:
                     ExtractionAcceptanceReceipt,
                 )
 
-                projection = _deserialize_extraction_projection(
-                    state
-                )
+                if not isinstance(state, dict):
+                    continue
+                # Keep the returned accepted outcome on the current typed
+                # identity contract even when the durable row was legacy.
+                state = dict(state)
+                state["normalized_url_identity"] = normalized_url_identity
+                projection = _deserialize_extraction_projection(state)
                 receipt = ExtractionAcceptanceReceipt(
                     receipt_ref=acceptance.receipt_ref,
                     accepted_at=_utc_isoformat(acceptance.accepted_at),
