@@ -679,19 +679,21 @@ class WorkflowService:
 
     @staticmethod
     def _runtime_projection(
-        runtime: dict[str, Any] | None,
+        runtime: Mapping[str, Any] | None,
         metadata_runtime: Any,
     ) -> dict[str, Any]:
-        source = runtime if isinstance(runtime, dict) else {}
-        if not source and isinstance(metadata_runtime, dict):
+        source = runtime if isinstance(runtime, Mapping) else {}
+        if not source and isinstance(metadata_runtime, Mapping):
             source = metadata_runtime
-        build = source.get("build") if isinstance(source.get("build"), dict) else source
+        build = (
+            source.get("build") if isinstance(source.get("build"), Mapping) else source
+        )
         deployment = (
             source.get("deployment")
-            if isinstance(source.get("deployment"), dict)
+            if isinstance(source.get("deployment"), Mapping)
             else {}
         )
-        image = source.get("image") if isinstance(source.get("image"), dict) else {}
+        image = source.get("image") if isinstance(source.get("image"), Mapping) else {}
         return {
             "version": _safe_runtime_identity(build.get("version"), kind="version"),
             "source_revision": _safe_runtime_identity(
@@ -728,12 +730,14 @@ class WorkflowService:
         domain: str | None = None,
         caller_identity: str | None = None,
         caller_label: str = "",
+        runtime: Mapping[str, Any] | None = None,
     ) -> WorkflowResult:
         run = self._create_run(
             WorkflowKind.RECOVER_ARTICLE,
             url,
             caller_identity=caller_identity,
             caller_label=caller_label,
+            runtime=runtime,
         )
         asyncio.create_task(
             self._execute_run(
@@ -754,12 +758,14 @@ class WorkflowService:
         hard_page_limit: int = 200,
         caller_identity: str | None = None,
         caller_label: str = "",
+        runtime: Mapping[str, Any] | None = None,
     ) -> WorkflowResult:
         run = self._create_run(
             WorkflowKind.CAPTURE_SITE,
             url,
             caller_identity=caller_identity,
             caller_label=caller_label,
+            runtime=runtime,
         )
         asyncio.create_task(
             self._execute_run(
@@ -780,12 +786,14 @@ class WorkflowService:
         max_research_pages: int = 40,
         caller_identity: str | None = None,
         caller_label: str = "",
+        runtime: Mapping[str, Any] | None = None,
     ) -> WorkflowResult:
         run = self._create_run(
             WorkflowKind.BUILD_RESEARCH_PACK,
             topic,
             caller_identity=caller_identity,
             caller_label=caller_label,
+            runtime=runtime,
         )
         asyncio.create_task(
             self._execute_run(
@@ -805,6 +813,7 @@ class WorkflowService:
         max_search_results: int = 5,
         caller_identity: str | None = None,
         caller_label: str = "",
+        runtime: Mapping[str, Any] | None = None,
     ) -> WorkflowResult:
         """Start a background search-and-summarize workflow.
 
@@ -815,6 +824,7 @@ class WorkflowService:
             query,
             caller_identity=caller_identity,
             caller_label=caller_label,
+            runtime=runtime,
         )
         asyncio.create_task(
             self._execute_run(
@@ -833,6 +843,7 @@ class WorkflowService:
         max_search_results: int = 5,
         caller_identity: str | None = None,
         caller_label: str = "",
+        runtime: Mapping[str, Any] | None = None,
     ) -> WorkflowResult:
         """Run a search-and-summarize workflow synchronously and return the result."""
         run = self._create_run(
@@ -840,6 +851,7 @@ class WorkflowService:
             query,
             caller_identity=caller_identity,
             caller_label=caller_label,
+            runtime=runtime,
         )
         return await self._execute_run(
             run.run_id,
@@ -1065,12 +1077,14 @@ class WorkflowService:
         domain: str | None = None,
         caller_identity: str | None = None,
         caller_label: str = "",
+        runtime: Mapping[str, Any] | None = None,
     ) -> WorkflowResult:
         run = self._create_run(
             WorkflowKind.RECOVER_ARTICLE,
             url,
             caller_identity=caller_identity,
             caller_label=caller_label,
+            runtime=runtime,
         )
         return await self._execute_run(
             run.run_id, self._recover_article_impl, url=url, title=title, domain=domain
@@ -1084,12 +1098,14 @@ class WorkflowService:
         hard_page_limit: int = 200,
         caller_identity: str | None = None,
         caller_label: str = "",
+        runtime: Mapping[str, Any] | None = None,
     ) -> WorkflowResult:
         run = self._create_run(
             WorkflowKind.CAPTURE_SITE,
             url,
             caller_identity=caller_identity,
             caller_label=caller_label,
+            runtime=runtime,
         )
         return await self._execute_run(
             run.run_id,
@@ -1107,12 +1123,14 @@ class WorkflowService:
         max_research_pages: int = 40,
         caller_identity: str | None = None,
         caller_label: str = "",
+        runtime: Mapping[str, Any] | None = None,
     ) -> WorkflowResult:
         run = self._create_run(
             WorkflowKind.BUILD_RESEARCH_PACK,
             topic,
             caller_identity=caller_identity,
             caller_label=caller_label,
+            runtime=runtime,
         )
         return await self._execute_run(
             run.run_id,
@@ -1129,6 +1147,7 @@ class WorkflowService:
         *,
         caller_identity: str | None = None,
         caller_label: str = "",
+        runtime: Mapping[str, Any] | None = None,
     ) -> WorkflowResult:
         run_id = uuid.uuid4().hex[:12]
         slug = (
@@ -1138,6 +1157,15 @@ class WorkflowService:
         )
         snapshot_dir = self._paths.snapshots_dir / kind.value / slug / run_id
         snapshot_dir.mkdir(parents=True, exist_ok=True)
+        metadata = {
+            "caller_identity": caller_identity or self._caller,
+            "caller_label": caller_label,
+        }
+        if runtime is not None:
+            # Keep only the bounded identity fields before persisting the run.
+            # The route may receive a richer operational status payload that can
+            # contain local paths, provider details, or other sensitive values.
+            metadata["runtime"] = self._runtime_projection(runtime, None)
         run = WorkflowResult(
             run_id=run_id,
             kind=kind,
@@ -1145,10 +1173,7 @@ class WorkflowService:
             target=target,
             status_url=f"/api/workflows/{run_id}",
             snapshot_dir=str(snapshot_dir),
-            metadata={
-                "caller_identity": caller_identity or self._caller,
-                "caller_label": caller_label,
-            },
+            metadata=metadata,
         )
         self._runs[run_id] = run
         return run

@@ -1,7 +1,9 @@
 """Safe research-pack status and artifact projections."""
 
+import asyncio
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 from urllib.parse import urlparse
 
@@ -528,6 +530,153 @@ def test_authenticated_status_and_artifact_routes_are_path_free(tmp_path):
     assert artifact.status_code == 200
     assert artifact.json()["bytes_returned"] == 8
     assert "path" not in artifact.json()
+
+
+class _RecordingWorkflowStarts:
+    """Capture start-route kwargs without scheduling real retrieval work."""
+
+    def __init__(self):
+        self.runtime_values = []
+
+    async def _start(self, **kwargs):
+        self.runtime_values.append(kwargs.pop("runtime"))
+        return WorkflowResult(
+            run_id=f"run-{len(self.runtime_values)}",
+            kind=WorkflowKind.BUILD_RESEARCH_PACK,
+            status=WorkflowStatus.PENDING,
+            target="target",
+        )
+
+    async def start_recover_article(self, **kwargs):
+        return await self._start(**kwargs)
+
+    async def start_capture_site(self, **kwargs):
+        return await self._start(**kwargs)
+
+    async def start_build_research_pack(self, **kwargs):
+        return await self._start(**kwargs)
+
+    async def start_search_and_summarize(self, **kwargs):
+        return await self._start(**kwargs)
+
+
+class _RuntimeStatus:
+    def full_status(self):
+        return {
+            "build": {
+                "version": "1.6.3",
+                "source_revision": "a" * 40,
+                "image_identity": "ghcr.io/khamel83/argus@sha256:" + "b" * 64,
+                "source_path": "/srv/argus/source",
+            },
+            "deployment": {
+                "deployment_id": "deploy-43",
+                "database_url": "postgresql://user:secret@example/db",
+            },
+            "secret": "do-not-publish",
+        }
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        (
+            "/api/workflows/recover-article",
+            {"url": "https://dead.example/post"},
+        ),
+        (
+            "/api/workflows/capture-site",
+            {"url": "https://docs.example"},
+        ),
+        (
+            "/api/workflows/build-research-pack",
+            {"topic": "Argus"},
+        ),
+        (
+            "/api/workflows/search-and-summarize",
+            {"query": "Argus"},
+        ),
+    ],
+)
+def test_start_routes_capture_only_sanitized_runtime_identity(path, payload):
+    workflows = _RecordingWorkflowStarts()
+    app = FastAPI()
+    app.state.get_workflows = lambda: workflows
+    app.state.operational_status = _RuntimeStatus()
+    from argus.api.routes_workflows import router
+
+    app.include_router(router, prefix="/api")
+    response = TestClient(app).post(path, json=payload)
+
+    assert response.status_code == 200
+    assert workflows.runtime_values == [
+        {
+            "version": "1.6.3",
+            "source_revision": "a" * 40,
+            "image_identity": "ghcr.io/khamel83/argus@sha256:" + "b" * 64,
+            "deployment_identity": "deploy-43",
+        }
+    ]
+    assert "do-not-publish" not in response.text
+    assert "/srv/argus" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_started_workflow_persists_runtime_identity_before_background_execution(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("ARGUS_DATA_ROOT", str(tmp_path / "data"))
+    from tests.test_workflows import _service
+
+    service, _ = _service()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    runtime = _RuntimeStatus().full_status()
+    expected_runtime = {
+        "version": "1.6.3",
+        "source_revision": "a" * 40,
+        "image_identity": "ghcr.io/khamel83/argus@sha256:" + "b" * 64,
+        "deployment_identity": "deploy-43",
+    }
+
+    async def blocked_handler(run, **kwargs):
+        del kwargs
+        assert run.metadata["runtime"] == expected_runtime
+        entered.set()
+        await release.wait()
+        run.summary_sections = []
+        service._finalize_run(
+            run,
+            title="Runtime identity",
+            report_name="report.md",
+        )
+
+    service._build_research_pack_impl = blocked_handler
+    run = await service.start_build_research_pack(
+        topic="Argus",
+        runtime=runtime,
+    )
+
+    assert run.status is WorkflowStatus.PENDING
+    assert run.metadata["runtime"] == expected_runtime
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    release.set()
+
+    async def wait_for_terminal():
+        while run.status not in {WorkflowStatus.COMPLETED, WorkflowStatus.FAILED}:
+            await asyncio.sleep(0)
+
+    await asyncio.wait_for(wait_for_terminal(), timeout=1)
+    assert run.status is WorkflowStatus.COMPLETED
+    manifest = json.loads(Path(run.manifest_path).read_text(encoding="utf-8"))
+    assert manifest["runtime"] == expected_runtime
+
+    reloaded_service = WorkflowService(SimpleNamespace(), corpus_paths=service._paths)
+    reloaded = reloaded_service.get_run(run.run_id)
+    assert reloaded is not None
+    assert reloaded_service.get_public_status(reloaded)["runtime"] == expected_runtime
+    assert "/srv/argus" not in json.dumps(manifest)
+    assert "do-not-publish" not in json.dumps(manifest)
 
 
 def test_artifact_routes_map_unknown_pending_and_invalid_requests(tmp_path):
