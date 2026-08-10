@@ -6,10 +6,17 @@ import re
 from datetime import datetime
 from typing import Any, List, Literal, Optional, Set
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from argus.extraction.rejection import RejectionAction, RejectionCode
 from argus.models import ProviderName, is_adapter_provider
+from argus.workflows.research_targets import (
+    ResearchRequirement,  # noqa: F401 - public schema re-export
+    ResearchTarget,
+    validate_prefixes,
+    validate_public_https_url,
+    validate_public_text,
+)
 
 _VALID_MODES: Set[str] = {"recovery", "discovery", "grounding", "research"}
 _VALID_PROVIDERS: Set[str] = {
@@ -477,18 +484,77 @@ class BuildResearchPackWorkflowRequest(BaseModel):
         max_research_pages: Maximum number of external research pages to capture.
     """
 
+    model_config = ConfigDict(extra="forbid", strict=True)
+
     topic: str = Field(
         ..., min_length=1, max_length=200, description="Research topic name"
     )
-    official_url: Optional[str] = Field(
-        None, description="Official documentation URL if known"
+    official_url: AnyHttpUrl | None = Field(
+        None,
+        max_length=2048,
+        description="Canonical public HTTPS URL for legacy official discovery",
     )
     max_research_pages: int = Field(
         40, ge=1, le=200, description="Maximum external research pages to retrieve"
     )
-    caller: str = Field(
-        "", description="Caller identifier for attribution (e.g. 'hermes')"
+    research_targets: list[ResearchTarget] = Field(
+        default_factory=list,
+        max_length=8,
+        description="Mandatory target-specific research requirements",
     )
+    free_only: bool = False
+    caller: str = Field(
+        "",
+        max_length=100,
+        description="Caller identifier for attribution (e.g. 'hermes')",
+    )
+
+    @field_validator("topic")
+    @classmethod
+    def validate_topic(cls, value: str) -> str:
+        return validate_public_text(value, label="topic")
+
+    @field_validator("caller")
+    @classmethod
+    def validate_caller(cls, value: str) -> str:
+        return validate_public_text(value, label="caller label", allow_empty=True)
+
+    @field_validator("official_url")
+    @classmethod
+    def validate_official_url(cls, value: AnyHttpUrl | None) -> AnyHttpUrl | None:
+        if value is None:
+            return value
+        return validate_public_https_url(value, label="official URL")
+
+    @model_validator(mode="after")
+    def validate_research_plan(self) -> "BuildResearchPackWorkflowRequest":
+        names = [target.name.casefold() for target in self.research_targets]
+        if len(names) != len(set(names)):
+            raise ValueError("research target names must be unique (case-folded)")
+
+        requirement_count = sum(
+            len(target.requirements) for target in self.research_targets
+        )
+        if requirement_count > 16:
+            raise ValueError("research plan must contain at most 16 requirements")
+        if self.research_targets and requirement_count + 1 > self.max_research_pages:
+            raise ValueError(
+                "max_research_pages must reserve one external page after all target requirements"
+            )
+        if self.official_url is not None and self.research_targets:
+            raise ValueError(
+                "official_url and research_targets are mutually exclusive when official_url is non-null"
+            )
+
+        all_prefixes = [
+            prefix
+            for target in self.research_targets
+            for prefix in target.source_prefixes
+        ]
+        # Target-level validation catches local overlap; this second pass makes
+        # ownership disjoint across the complete plan as well.
+        validate_prefixes(all_prefixes, label="research target source prefixes")
+        return self
 
 
 class SearchAndSummarizeWorkflowRequest(BaseModel):
