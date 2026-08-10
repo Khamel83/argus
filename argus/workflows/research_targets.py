@@ -48,16 +48,17 @@ _CREDENTIAL_MARKER = re.compile(
     r"(?:"
     r"\bauthorization\b\s*(?:[:=]\s*|\s+)(?:bearer|basic)\b"
     r"|\bbearer\s+[a-z0-9._~+/=-]+(?=$|[\s,;])"
-    # A bare ``Basic capabilities`` sentence is ordinary documentation.  A
-    # bare Basic credential is recognized when its base64 value has padding;
-    # the explicit Authorization-header branch above rejects header forms
-    # regardless of whether a value is present.
-    r"|\bbasic\s+[a-z0-9+/]{2,}={1,2}(?=$|[\s,;])"
+    # A bare ``Basic capabilities`` sentence is ordinary documentation.  The
+    # decoder below recognizes padded and unpadded Basic tokens; this branch
+    # keeps padded, base64-like tokens fail-closed even when decoding is
+    # inconclusive.  The explicit Authorization-header branch above rejects
+    # header forms regardless of whether a value is present.
+    r"|\bbasic\s+[a-z0-9+/]{2,}={1,2}(?=$|[^a-z0-9+/=])"
     r"|\b(?:x[-_ ]?api[-_ ]?key|api[-_ ]?key)\b\s*(?::|=)"
     r")"
 )
 _BASIC_CREDENTIAL_TOKEN = re.compile(
-    r"(?i)\bbasic\s+([a-z0-9+/]+={0,2})(?=$|[\s,;])"
+    r"(?i)\bbasic\s+([a-z0-9+/]+={0,2})(?=$|[^a-z0-9+/=])"
 )
 _PRIVATE_KEY_MARKER = re.compile(
     r"(?i)-----begin[\w -]*private key[\w -]*-----"

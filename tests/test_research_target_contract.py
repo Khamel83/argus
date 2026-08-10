@@ -317,6 +317,64 @@ def test_public_text_rejects_basic_authorization_variants_without_rejecting_pros
     assert request.topic.startswith("Basic capabilities")
 
 
+@pytest.mark.parametrize("suffix", [".", ")", "]", ":", "。", "!", "?"])
+def test_public_text_rejects_unpadded_basic_credentials_before_punctuation(suffix):
+    value = f"Basic dXNlcjpwYXNz{suffix}"
+
+    with pytest.raises(ValidationError):
+        BuildResearchPackWorkflowRequest(topic=value)
+    with pytest.raises(ValidationError):
+        ResearchRequirement(claim_class="capabilities", query=value)
+    with pytest.raises(ValidationError):
+        ResearchTarget(
+            name=value,
+            source_prefixes=["https://example.com/"],
+            requirements=[_requirement()],
+        )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Authorization: Basic dXNlcjpwYXNz.",
+        "Authorization=Basic dXNlcjpwYXNz)",
+        "Authorization Basic dXNlcjpwYXNz]",
+    ],
+)
+def test_public_text_keeps_explicit_authorization_forms_fail_closed(value):
+    with pytest.raises(ValidationError):
+        BuildResearchPackWorkflowRequest(topic=value)
+    with pytest.raises(ValidationError):
+        ResearchRequirement(claim_class="capabilities", query=value)
+    with pytest.raises(ValidationError):
+        ResearchTarget(
+            name=value,
+            source_prefixes=["https://example.com/"],
+            requirements=[_requirement()],
+        )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Basic capabilities and API key rotation guidance",
+        "Basic auth concepts for HTTPS documentation",
+        "See https://example.com/docs for ordinary HTTPS documentation.",
+    ],
+)
+def test_public_text_keeps_ordinary_prose_and_https_documentation(value):
+    request = BuildResearchPackWorkflowRequest(topic=value, caller="public-docs")
+    assert request.topic == value
+    requirement = ResearchRequirement(claim_class="capabilities", query=value)
+    assert requirement.query == value
+    target = ResearchTarget(
+        name=value,
+        source_prefixes=["https://example.com/"],
+        requirements=[_requirement()],
+    )
+    assert target.name == value
+
+
 def test_caller_label_is_bounded_and_scanned():
     with pytest.raises(ValidationError):
         BuildResearchPackWorkflowRequest(topic="t", caller="c" * 101)
