@@ -2915,10 +2915,15 @@ class WorkflowService:
             trusted_root = self._paths.snapshots_dir.resolve()
             if snapshot_root.is_symlink() or not snapshot_root.is_dir():
                 raise ValueError("workflow snapshot root is not a directory")
-            snapshot = snapshot_root.resolve()
-            if snapshot == trusted_root or not snapshot.is_relative_to(trusted_root):
+            resolved_snapshot = snapshot_root.resolve()
+            if (
+                resolved_snapshot == trusted_root
+                or not resolved_snapshot.is_relative_to(trusted_root)
+            ):
                 raise ValueError("workflow snapshot root is outside trusted storage")
+            snapshot = resolved_snapshot
         except (OSError, RuntimeError, ValueError):
+            snapshot = None
             logger.warning(
                 "Refusing to clear targeted workflow artifacts for %s: "
                 "untrusted snapshot root",

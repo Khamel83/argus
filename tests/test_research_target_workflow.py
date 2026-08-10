@@ -646,6 +646,78 @@ def test_targeted_cleanup_refuses_symlinked_snapshot_root(monkeypatch, tmp_path)
     assert run.manifest_path is None
 
 
+def test_targeted_cleanup_refuses_real_outside_snapshot_root(monkeypatch, tmp_path):
+    from argus.workflows.models import (
+        CitationRef,
+        StoredDocument,
+        SummarySection,
+        WorkflowArtifact,
+        WorkflowKind,
+    )
+
+    service = _service(monkeypatch, tmp_path, _TargetOperations([]))
+    run = service._create_run(
+        WorkflowKind.BUILD_RESEARCH_PACK,
+        "outside-snapshot",
+        extra_metadata={
+            "research_targets": [
+                _target(
+                    "Docs",
+                    "https://docs.example.com/sdk/",
+                    ("capabilities", "sdk"),
+                )
+            ]
+        },
+    )
+    outside_dir = tmp_path / "outside-snapshot"
+    targeted_dir = outside_dir / "targeted-research"
+    targeted_dir.mkdir(parents=True)
+    outside_files = (
+        targeted_dir / "must-remain.md",
+        outside_dir / "SUMMARY.md",
+        outside_dir / "manifest.json",
+    )
+    outside_files[0].write_text("outside target", encoding="utf-8")
+    outside_files[1].write_text("outside report", encoding="utf-8")
+    outside_files[2].write_text("outside manifest", encoding="utf-8")
+    run.snapshot_dir = str(outside_dir)
+
+    run.documents = [
+        StoredDocument(
+            id="doc-1",
+            url="https://docs.example.com/sdk/one",
+            title="one",
+            artifact_path=str(outside_files[0]),
+        )
+    ]
+    run.citations = [
+        CitationRef(
+            id="doc-1",
+            title="one",
+            url="https://docs.example.com/sdk/one",
+            artifact_path=str(outside_files[0]),
+        )
+    ]
+    run.summary_sections = [SummarySection(heading="Target", body="body")]
+    run.report_path = str(outside_files[1])
+    run.manifest_path = str(outside_files[2])
+    run.artifacts = [
+        WorkflowArtifact(kind="report", path=run.report_path),
+        WorkflowArtifact(kind="manifest", path=run.manifest_path),
+    ]
+
+    service._cleanup_failed_targeted_artifacts(run)
+
+    assert all(path.is_file() for path in outside_files)
+    assert targeted_dir.is_dir()
+    assert run.documents == []
+    assert run.citations == []
+    assert run.summary_sections == []
+    assert run.artifacts == []
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
 @pytest.mark.asyncio
 async def test_targeted_service_marks_optional_external_as_degraded_and_caps_attempts(
     monkeypatch, tmp_path
