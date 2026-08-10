@@ -107,6 +107,7 @@ jobs:
           printf '%s\n' "$DEPLOY_KEY" > "$RUNNER_TEMP/ssh/deploy_key"
           printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/ssh/known_hosts"
           promotion_status=255
+          transport_failures=0
           for attempt in {1..60}; do
             set +e
             ssh -i "$RUNNER_TEMP/ssh/deploy_key" \
@@ -128,7 +129,17 @@ jobs:
               0)
                 exit 0
                 ;;
-              75|255)
+              75)
+                transport_failures=0
+                if [[ "$attempt" -lt 60 ]]; then
+                  sleep 30
+                fi
+                ;;
+              255)
+                transport_failures=$((transport_failures + 1))
+                if [[ "$transport_failures" -ge 5 ]]; then
+                  exit 255
+                fi
                 if [[ "$attempt" -lt 60 ]]; then
                   sleep 30
                 fi

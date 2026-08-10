@@ -1,7 +1,9 @@
 """Static security contract for release and CI workflows."""
 
 import json
+import os
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -70,8 +72,58 @@ def test_release_workflow_keeps_the_synchronous_promotion_session_alive():
     assert "ServerAliveCountMax=10" in text
     assert "TCPKeepAlive=yes" in text
     assert "for attempt in {1..60}" in text
-    assert "75|255)" in text
+    assert "transport_failures=0" in text
+    assert 'if [[ "$transport_failures" -ge 5 ]]' in text
     assert 'exit "$promotion_status"' in text
+
+
+def test_release_workflow_retry_loop_is_bounded_and_fail_closed(tmp_path):
+    payload = yaml.safe_load(
+        (WORKFLOWS / "docker-publish.yml").read_text(encoding="utf-8")
+    )
+    submit = next(
+        step["run"]
+        for step in payload["jobs"]["promote"]["steps"]
+        if step.get("name") == "Submit forced-command promotion"
+    )
+    retry_loop = submit[submit.index("promotion_status=255") :]
+    fake_ssh = r'''
+read -r -a fake_statuses <<<"$FAKE_SSH_STATUSES"
+fake_index=0
+ssh() {
+  local status="${fake_statuses[$fake_index]}"
+  printf '%s\n' "$status" >>"$FAKE_SSH_CALLS"
+  if [[ "$fake_index" -lt "$((${#fake_statuses[@]} - 1))" ]]; then
+    fake_index=$((fake_index + 1))
+  fi
+  return "$status"
+}
+sleep() { :; }
+'''
+
+    cases = (
+        ("255 75 0", 0, 3),
+        ("2", 2, 1),
+        ("255", 255, 5),
+    )
+    for index, (statuses, expected_status, expected_calls) in enumerate(cases):
+        calls = tmp_path / f"calls-{index}"
+        result = subprocess.run(
+            ["/bin/bash", "-c", f"{fake_ssh}\n{retry_loop}"],
+            env={
+                **os.environ,
+                "FAKE_SSH_CALLS": str(calls),
+                "FAKE_SSH_STATUSES": statuses,
+                "IMAGE_REF": "ghcr.io/khamel83/argus@sha256:" + "a" * 64,
+                "RECEIPT_SHA256": "b" * 64,
+                "RUNNER_TEMP": str(tmp_path),
+                "SOURCE_REVISION": "c" * 40,
+            },
+            check=False,
+        )
+
+        assert result.returncode == expected_status
+        assert len(calls.read_text(encoding="utf-8").splitlines()) == expected_calls
 
 
 def test_release_workflow_permissions_are_job_scoped_and_minimal():
