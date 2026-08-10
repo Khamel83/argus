@@ -1,7 +1,7 @@
 """Safe research-pack status and artifact projections."""
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from types import MappingProxyType, SimpleNamespace
 from urllib.parse import urlparse
 
@@ -295,6 +295,10 @@ async def test_real_terminal_artifacts_are_path_free_and_hash_truthful(
     status = service.get_public_status(result)
     assert status["status"] == "completed"
     assert status["status_url"].endswith("/status")
+    for timestamp_key in ("created_at", "started_at", "finished_at"):
+        timestamp = datetime.fromisoformat(status[timestamp_key])
+        assert timestamp.tzinfo is not None
+        assert timestamp.utcoffset() == timezone.utc.utcoffset(timestamp)
     for artifact in status["artifacts"]:
         assert artifact["available"] is True
         page = service.read_artifact(result, artifact["kind"], max_bytes=256 * 1024)
@@ -308,6 +312,10 @@ async def test_real_terminal_artifacts_are_path_free_and_hash_truthful(
     ]
     manifest_payload = json.loads(manifest)
     assert manifest_payload["status"] == "completed"
+    for timestamp_key in ("created_at", "started_at", "finished_at"):
+        timestamp = datetime.fromisoformat(manifest_payload[timestamp_key])
+        assert timestamp.tzinfo is not None
+        assert timestamp.utcoffset() == timezone.utc.utcoffset(timestamp)
     report_entry = next(
         item for item in manifest_payload["artifacts"] if item["kind"] == "report"
     )
@@ -373,6 +381,28 @@ def test_invalid_runtime_metadata_fails_closed(tmp_path):
         "image_identity": "unknown",
         "deployment_identity": "unknown",
     }
+
+
+@pytest.mark.parametrize(
+    "image_identity",
+    [
+        "argus:latest",
+        "docker.io/khamel83/argus@sha256:" + "a" * 64,
+        "ghcr.io/khamel83/argus@sha256:" + "a" * 63,
+    ],
+)
+def test_runtime_image_projection_rejects_noncanonical_identity(
+    tmp_path, image_identity
+):
+    service = _service()
+    run = _run(tmp_path)
+
+    payload = service.get_public_status(
+        run,
+        runtime={"build": {"image_identity": image_identity}},
+    )
+
+    assert payload["runtime"]["image_identity"] == "unknown"
 
 
 def test_status_projection_reports_truthful_evidence_and_runtime_metrics(tmp_path):

@@ -12,7 +12,7 @@ import shutil
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -56,7 +56,8 @@ _VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$")
 _REVISION_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,127}$")
 _IMAGE_DIGEST_RE = re.compile(
-    r"^(?:[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*@)?sha256:[0-9a-fA-F]{64}$"
+    r"^(?:ghcr\.io/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*@)?"
+    r"sha256:[0-9a-fA-F]{64}$"
 )
 
 
@@ -173,9 +174,7 @@ def _safe_runtime_identity(value: Any, *, kind: str) -> str:
     if kind == "source_revision":
         return candidate if _REVISION_RE.fullmatch(candidate) else "unknown"
     if kind == "image":
-        if _IMAGE_DIGEST_RE.fullmatch(candidate):
-            return candidate
-        return candidate if _SAFE_ID_RE.fullmatch(candidate) else "unknown"
+        return candidate if _IMAGE_DIGEST_RE.fullmatch(candidate) else "unknown"
     if kind == "deployment":
         return candidate if _SAFE_ID_RE.fullmatch(candidate) else "unknown"
     return "unknown"
@@ -1160,7 +1159,7 @@ class WorkflowService:
     async def _execute_run(self, run_id: str, handler, **kwargs) -> WorkflowResult:
         run = self._runs[run_id]
         run.status = WorkflowStatus.RUNNING
-        run.started_at = datetime.now(tz=None)
+        run.started_at = datetime.now(timezone.utc)
         self._write_run_state(run)
         try:
             await handler(run, **kwargs)
@@ -1184,7 +1183,7 @@ class WorkflowService:
             self._rewrite_failed_artifacts(run)
         finally:
             if run.finished_at is None:
-                run.finished_at = datetime.now(tz=None)
+                run.finished_at = datetime.now(timezone.utc)
             try:
                 self._write_run_state(run)
             except Exception:
@@ -1696,7 +1695,7 @@ class WorkflowService:
         # before rendering either one so their serialized status/timestamp
         # cannot lag the durable run state.
         run.status = WorkflowStatus.COMPLETED
-        run.finished_at = datetime.now(tz=None)
+        run.finished_at = datetime.now(timezone.utc)
         report_path = Path(run.snapshot_dir) / report_name
         manifest_path = Path(run.snapshot_dir) / "manifest.json"
         report_content = self._render_report(title, run)
@@ -1975,7 +1974,8 @@ class WorkflowService:
             kind=WorkflowKind(payload["kind"]),
             status=WorkflowStatus(payload["status"]),
             target=payload["target"],
-            created_at=_parse_dt(payload.get("created_at")) or datetime.now(tz=None),
+            created_at=_parse_dt(payload.get("created_at"))
+            or datetime.now(timezone.utc),
             started_at=_parse_dt(payload.get("started_at")),
             finished_at=_parse_dt(payload.get("finished_at")),
             status_url=payload.get("status_url"),

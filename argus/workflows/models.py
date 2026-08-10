@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -72,7 +72,7 @@ class WorkflowResult:
     kind: WorkflowKind
     status: WorkflowStatus
     target: str
-    created_at: datetime = field(default_factory=lambda: datetime.now(tz=None))
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     started_at: datetime | None = None
     finished_at: datetime | None = None
     status_url: str | None = None
