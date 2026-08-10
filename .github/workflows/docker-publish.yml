@@ -106,13 +106,36 @@ jobs:
           install -m 0600 /dev/null "$RUNNER_TEMP/ssh/deploy_key"
           printf '%s\n' "$DEPLOY_KEY" > "$RUNNER_TEMP/ssh/deploy_key"
           printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/ssh/known_hosts"
-          ssh -i "$RUNNER_TEMP/ssh/deploy_key" \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts" \
-            -o HostKeyAlias=homelab-ts \
-            -o ServerAliveInterval=30 \
-            -o ServerAliveCountMax=10 \
-            -o TCPKeepAlive=yes \
-            "argus-deploy@homelab.deer-panga.ts.net" \
-            "argus-deploy promote ${IMAGE_REF} ${SOURCE_REVISION} ${RECEIPT_SHA256}"
+          promotion_status=255
+          for attempt in {1..60}; do
+            set +e
+            ssh -i "$RUNNER_TEMP/ssh/deploy_key" \
+              -o BatchMode=yes \
+              -o ConnectTimeout=10 \
+              -o ConnectionAttempts=1 \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts" \
+              -o HostKeyAlias=homelab-ts \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=10 \
+              -o TCPKeepAlive=yes \
+              "argus-deploy@homelab.deer-panga.ts.net" \
+              "argus-deploy promote ${IMAGE_REF} ${SOURCE_REVISION} ${RECEIPT_SHA256}"
+            promotion_status=$?
+            set -e
+            case "$promotion_status" in
+              0)
+                exit 0
+                ;;
+              75|255)
+                if [[ "$attempt" -lt 60 ]]; then
+                  sleep 30
+                fi
+                ;;
+              *)
+                exit "$promotion_status"
+                ;;
+            esac
+          done
+          exit "$promotion_status"

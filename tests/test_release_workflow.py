@@ -69,6 +69,9 @@ def test_release_workflow_keeps_the_synchronous_promotion_session_alive():
     assert "ServerAliveInterval=30" in text
     assert "ServerAliveCountMax=10" in text
     assert "TCPKeepAlive=yes" in text
+    assert "for attempt in {1..60}" in text
+    assert "75|255)" in text
+    assert 'exit "$promotion_status"' in text
 
 
 def test_release_workflow_permissions_are_job_scoped_and_minimal():
