@@ -260,6 +260,104 @@ def test_click_usage_errors_remain_exit_two(monkeypatch):
     assert authority.calls == []
 
 
+def test_build_research_pack_cli_forwards_targets_on_safe_start(monkeypatch):
+    authority = _Authority(
+        _Selection("1", "/api", "ready"),
+        {
+            "run_id": "cli-targeted",
+            "kind": "build-research-pack",
+            "status": "pending",
+            "target": "Targeted research",
+            "created_at": "2026-08-10T01:00:00+00:00",
+            "status_url": "/api/workflows/cli-targeted/status",
+            "request_sha256": "c" * 64,
+        },
+    )
+    target = {
+        "name": "Example",
+        "source_prefixes": ["https://example.com/docs/"],
+        "requirements": [
+            {"claim_class": "capabilities", "query": "what it does"}
+        ],
+    }
+
+    result = _invoke(
+        monkeypatch,
+        authority,
+        [
+            "build-research-pack",
+            "--topic",
+            "Targeted research",
+            "--research-target-json",
+            json.dumps(target),
+            "--free-only",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["request_sha256"] == "c" * 64
+    assert authority.calls == [
+        (
+            "post-v1",
+            (
+                "POST",
+                "/api/workflows/build-research-pack/start",
+                {
+                    "topic": "Targeted research",
+                    "official_url": None,
+                    "max_research_pages": 40,
+                    "research_targets": [target],
+                    "free_only": True,
+                    "caller": "cli",
+                },
+                None,
+            ),
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "target_json",
+    [
+        "not-json",
+        json.dumps({"name": "Example"}),
+        json.dumps(
+            {
+                "name": "Example",
+                "source_prefixes": ["https://example.com/"],
+                "requirements": [
+                    {
+                        "claim_class": "capabilities",
+                        "query": "what it does",
+                    }
+                ],
+                "unexpected": True,
+            }
+        ),
+    ],
+)
+def test_build_research_pack_cli_rejects_bad_target_before_http(
+    monkeypatch, target_json
+):
+    authority = _Authority(_Selection("1", "/api", "ready"), {})
+
+    result = _invoke(
+        monkeypatch,
+        authority,
+        [
+            "build-research-pack",
+            "--topic",
+            "Targeted research",
+            "--research-target-json",
+            target_json,
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert authority.calls == []
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("offset", [-1, 0])
 async def test_cli_uses_shared_reader_at_and_below_11_mib(offset):

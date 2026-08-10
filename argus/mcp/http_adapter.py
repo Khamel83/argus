@@ -97,8 +97,21 @@ def _workflow_markdown(payload: dict[str, Any]) -> str:
 
 
 def _workflow_start_json(payload: dict[str, Any]) -> dict[str, Any]:
-    """Render only safe start metadata from a legacy workflow response."""
+    """Render only safe start metadata from an authority response."""
     run_id = str(payload.get("run_id", ""))
+    if "request_sha256" in payload:
+        return {
+            "run_id": run_id,
+            "kind": payload.get("kind", "workflow"),
+            "status": payload.get("status", "unknown"),
+            "target": payload.get("target", ""),
+            "created_at": payload.get("created_at"),
+            "status_url": payload.get(
+                "status_url",
+                f"/api/workflows/{quote(run_id, safe='')}/status",
+            ),
+            "request_sha256": payload.get("request_sha256", ""),
+        }
     return {
         "run_id": run_id,
         "kind": payload.get("kind", "workflow"),
@@ -109,6 +122,32 @@ def _workflow_start_json(payload: dict[str, Any]) -> dict[str, Any]:
         "finished_at": payload.get("finished_at"),
         "status_url": f"/api/workflows/{quote(run_id, safe='')}/status",
     }
+
+
+def _build_research_pack_payload(
+    *,
+    topic: str,
+    official_url: str | None,
+    max_research_pages: int,
+    research_targets: list[dict[str, Any]] | None,
+    free_only: bool,
+    caller_label: str,
+) -> dict[str, Any]:
+    """Validate and JSON-project one build request before HTTP transport."""
+
+    from argus.api.schemas import BuildResearchPackWorkflowRequest
+
+    request = BuildResearchPackWorkflowRequest.model_validate(
+        {
+            "topic": topic,
+            "official_url": official_url,
+            "max_research_pages": max_research_pages,
+            "research_targets": research_targets or [],
+            "free_only": free_only,
+            "caller": caller_label,
+        }
+    )
+    return request.model_dump(mode="json")
 
 
 def _workflow_status_markdown(payload: dict[str, Any]) -> str:
@@ -159,6 +198,15 @@ def _workflow_status_markdown(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _workflow_status_json(payload: dict[str, Any]) -> str:
+    """Serialize the path-free status schema and discard authority extras."""
+
+    from argus.api.schemas import WorkflowStatusResponse
+
+    safe = WorkflowStatusResponse.model_validate(payload)
+    return json.dumps(safe.model_dump(mode="json"), indent=2)
+
+
 def _workflow_artifact_markdown(payload: dict[str, Any]) -> str:
     """Render bounded artifact content with its bounded-read metadata."""
     lines = [
@@ -179,6 +227,15 @@ def _workflow_artifact_markdown(payload: dict[str, Any]) -> str:
     if payload.get("next_offset") is not None:
         lines.insert(4, f"Next offset: {payload['next_offset']}")
     return "\n".join(lines)
+
+
+def _workflow_artifact_json(payload: dict[str, Any]) -> str:
+    """Serialize the bounded artifact schema and discard authority extras."""
+
+    from argus.api.schemas import WorkflowArtifactReadResponse
+
+    safe = WorkflowArtifactReadResponse.model_validate(payload)
+    return json.dumps(safe.model_dump(mode="json"), indent=2)
 
 
 class HttpMcpAdapter:
@@ -491,19 +548,26 @@ class HttpMcpAdapter:
         *,
         official_url: str | None = None,
         max_research_pages: int = 40,
+        research_targets: list[dict[str, Any]] | None = None,
+        free_only: bool = False,
         response_format: str = "markdown",
         caller_label: str = "mcp",
+        caller_identity: str = "mcp",
         token: str | None = None,
     ) -> str:
+        del caller_identity
+        payload = _build_research_pack_payload(
+            topic=topic,
+            official_url=official_url,
+            max_research_pages=max_research_pages,
+            research_targets=research_targets,
+            free_only=free_only,
+            caller_label=caller_label,
+        )
         response = await self._client.request(
             "POST",
-            "/api/workflows/build-research-pack",
-            payload={
-                "topic": topic,
-                "official_url": official_url,
-                "max_research_pages": max_research_pages,
-                "caller": caller_label,
-            },
+            "/api/workflows/build-research-pack/start",
+            payload=payload,
             token=token,
         )
         if response_format == "json":
@@ -521,7 +585,7 @@ class HttpMcpAdapter:
         path = f"/api/workflows/{quote(str(run_id), safe='')}/status"
         response = await self._client.request("GET", path, token=token)
         if response_format == "json":
-            return json.dumps(response, indent=2)
+            return _workflow_status_json(response)
         return _workflow_status_markdown(response)
 
     async def read_workflow_artifact(
@@ -537,13 +601,24 @@ class HttpMcpAdapter:
         """Read one bounded report/manifest slice through the HTTP authority."""
         if artifact not in {"report", "manifest"}:
             raise ValueError("artifact must be report or manifest")
-        safe_offset = max(0, int(offset))
-        safe_max_bytes = min(max(1, int(max_bytes)), 256 * 1024)
+        if (
+            isinstance(offset, bool)
+            or not isinstance(offset, int)
+            or isinstance(max_bytes, bool)
+            or not isinstance(max_bytes, int)
+        ):
+            raise ValueError("offset and max_bytes must be integers")
+        safe_offset = offset
+        safe_max_bytes = max_bytes
+        if safe_offset < 0:
+            raise ValueError("offset must be non-negative")
+        if not 1 <= safe_max_bytes <= 256 * 1024:
+            raise ValueError("max_bytes must be between 1 and 262144")
         path = (
             f"/api/workflows/{quote(str(run_id), safe='')}/artifacts/"
             f"{quote(artifact, safe='')}?offset={safe_offset}&max_bytes={safe_max_bytes}"
         )
         response = await self._client.request("GET", path, token=token)
         if response_format == "json":
-            return json.dumps(response, indent=2)
+            return _workflow_artifact_json(response)
         return _workflow_artifact_markdown(response)

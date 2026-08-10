@@ -49,6 +49,52 @@ def _emit_json(payload):
     click.echo(json.dumps(payload, indent=2))
 
 
+def _build_research_pack_payload(
+    *,
+    topic: str,
+    official_url: str | None,
+    max_research_pages: int,
+    research_target_json: tuple[str, ...],
+    free_only: bool,
+) -> dict:
+    """Parse CLI target JSON and validate the complete request before HTTP."""
+
+    from pydantic import ValidationError
+
+    from argus.api.schemas import BuildResearchPackWorkflowRequest
+
+    targets = []
+    for index, raw_target in enumerate(research_target_json, 1):
+        try:
+            target = json.loads(raw_target)
+        except json.JSONDecodeError as exc:
+            raise click.ClickException(
+                f"Invalid --research-target-json value {index}: malformed JSON"
+            ) from exc
+        if not isinstance(target, dict):
+            raise click.ClickException(
+                f"Invalid --research-target-json value {index}: expected a JSON object"
+            )
+        targets.append(target)
+
+    try:
+        request = BuildResearchPackWorkflowRequest.model_validate(
+            {
+                "topic": topic,
+                "official_url": official_url,
+                "max_research_pages": max_research_pages,
+                "research_targets": targets,
+                "free_only": free_only,
+                "caller": "cli",
+            }
+        )
+    except ValidationError as exc:
+        raise click.ClickException(
+            "Invalid build-research-pack request or research target"
+        ) from exc
+    return request.model_dump(mode="json")
+
+
 def _cli_unready(detail: str):
     """Return the one bounded v2 shape available before execution starts."""
     request_id = f"cli-{secrets.token_hex(8)}"
@@ -613,20 +659,44 @@ def capture_site(url, soft_page_limit, hard_page_limit, as_json):
 @click.option(
     "--max-research-pages", default=40, type=int, help="Max non-official research pages"
 )
+@click.option(
+    "--research-target-json",
+    multiple=True,
+    help="Repeatable JSON object describing one mandatory research target",
+)
+@click.option(
+    "--free-only",
+    is_flag=True,
+    help="Only use free (tier-0) providers and extractors",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def build_research_pack(topic, official_url, max_research_pages, as_json):
+def build_research_pack(
+    topic,
+    official_url,
+    max_research_pages,
+    research_target_json,
+    free_only,
+    as_json,
+):
     """Build a local pack with official docs plus external research."""
+    payload = _build_research_pack_payload(
+        topic=topic,
+        official_url=official_url,
+        max_research_pages=max_research_pages,
+        research_target_json=research_target_json,
+        free_only=free_only,
+    )
+    path = (
+        "/api/workflows/build-research-pack/start"
+        if research_target_json or free_only
+        else "/api/workflows/build-research-pack"
+    )
     authority = _require_http_authority()
     result = _run(
         authority.request(
             "POST",
-            "/api/workflows/build-research-pack",
-            payload={
-                "topic": topic,
-                "official_url": official_url,
-                "max_research_pages": max_research_pages,
-                "caller": "cli",
-            },
+            path,
+            payload=payload,
         )
     )
     _print_workflow_payload(result, as_json)

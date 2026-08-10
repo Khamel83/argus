@@ -18,6 +18,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from argus.auth import AuthConfig, remote_mcp_requires_auth
+from argus.api.schemas import ResearchTarget
 from argus.logging import get_logger, setup_logging
 from argus.mcp.sessions import (
     MCP_MAX_ACTIVE_SESSIONS,
@@ -1158,6 +1159,8 @@ def serve_mcp(
             topic: str,
             official_url: str = None,
             max_research_pages: int = 40,
+            research_targets: list[ResearchTarget] = None,
+            free_only: bool = False,
             response_format: str = "markdown",
             caller: str = "mcp",
         ) -> str:
@@ -1165,8 +1168,15 @@ def serve_mcp(
                 topic,
                 official_url=official_url,
                 max_research_pages=max_research_pages,
+                research_targets=(
+                    [target.model_dump(mode="json") for target in research_targets]
+                    if research_targets
+                    else None
+                ),
+                free_only=free_only,
                 response_format=response_format,
                 caller_label=caller,
+                caller_identity=_mcp_caller_identity(),
                 token=_mcp_caller_token(),
             )
 
