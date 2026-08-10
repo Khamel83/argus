@@ -98,6 +98,44 @@ _TARGET_EXECUTION_DIAGNOSTIC_FIELDS = frozenset(
         "source_type",
     }
 )
+_TARGET_EXECUTION_EVIDENCE_FIELDS = frozenset(
+    {
+        "schema",
+        "source",
+        "operation_id",
+        "observation",
+        "attempts",
+        "timing",
+        "cache",
+        "spend",
+        "freshness",
+        "persistence",
+        "provider",
+        "extractor",
+        "egress",
+        "machine",
+        "source_type",
+        "retrieved_at",
+        "source_date",
+        "text_sha256",
+        "result_count",
+        "timeout_source",
+        "operation_latency_ms",
+        "cache_latency_ms",
+        "cache_eligibility",
+        "cache_age",
+        "cache_state",
+        "cache_origin",
+        "spend_provenance",
+        "freshness_age_ms",
+        "freshness_age",
+        "freshness_window",
+        "freshness_reason",
+        "free_profile_eligible",
+        "diagnostics",
+        "execution_diagnostics",
+    }
+)
 _VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$")
 _REVISION_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,127}$")
@@ -115,6 +153,9 @@ _PUBLIC_URL_MAX = 2_048
 _PUBLIC_EXCERPT_MAX = 2_000
 _PUBLIC_SECTION_TITLE_MAX = 200
 _PUBLIC_BODY_MAX = 20_000
+_PUBLIC_CITATION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,99}$")
+_SUMMARY_URL_RE = re.compile(r"https?://[^\s<>\"']+")
+_SUMMARY_CITATION_RE = re.compile(r"\[(S[A-Za-z0-9._:@+-]{0,127})\]")
 _FRESHNESS_AS_OF = date(2026, 8, 9)
 _FRESHNESS_START = date(2025, 8, 9)
 _FRESHNESS_WINDOW = {
@@ -338,6 +379,52 @@ def _public_body(value: Any) -> str:
     return _public_redact(value, limit=_PUBLIC_BODY_MAX)
 
 
+def _public_full_text(value: Any) -> str:
+    """Redact source text without applying the public excerpt/body cap."""
+
+    if not isinstance(value, str):
+        return ""
+    # The public artifact cap is enforced after rendering.  Hashing the full
+    # redacted source here keeps the evidence identity independent of the
+    # bounded excerpt shown in the manifest.
+    return _public_redact(value, limit=max(len(value), _PUBLIC_BODY_MAX), fallback="")
+
+
+def _public_https_url(value: Any) -> bool:
+    """Return whether a source URL meets the public canonical-HTTPS contract."""
+
+    if not isinstance(value, str) or not value or len(value) > _PUBLIC_URL_MAX:
+        return False
+    if _PUBLIC_CONTROL_RE.search(value) or _PUBLIC_PATH_RE.search(value):
+        return False
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return False
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or "@" in parsed.netloc
+        or parsed.query
+        or parsed.fragment
+    ):
+        return False
+    hostname = parsed.hostname.lower().rstrip(".")
+    if hostname in {"localhost", "localhost.localdomain"}:
+        return False
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        address = None
+    if address is not None and (
+        address.is_private or address.is_loopback or address.is_link_local or address.is_reserved
+    ):
+        return False
+    return True
+
+
 def _public_nested(value: Any, *, depth: int = 0) -> Any:
     """Project small provenance values without provider-native payloads."""
 
@@ -421,7 +508,9 @@ def _parse_source_date(value: Any) -> date | None:
         return None
     text = value.strip()
     try:
-        return date.fromisoformat(text[:10])
+        # Date-only values must be exact.  Slicing the first ten characters
+        # would silently accept values such as ``2026-08-09 (estimated)``.
+        return date.fromisoformat(text)
     except ValueError:
         try:
             return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
@@ -1277,21 +1366,25 @@ class WorkflowService:
         return parsed.astimezone(timezone.utc).isoformat()
 
     @staticmethod
-    def _source_text(document: StoredDocument) -> str:
-        """Read accepted source text for excerpt/hash binding.
+    def _source_text(document: StoredDocument) -> str | None:
+        """Read accepted source text from the persisted artifact only.
 
-        The private artifact path is an internal input only.  Its value is
-        never returned; failures simply yield an explicit unknown excerpt.
+        Metadata is an untrusted claim and cannot establish excerpt or hash
+        identity.  Stored workflow artifacts may include a private markdown
+        header; strip that wrapper so the hash remains bound to the accepted
+        full extracted text rather than to a caller-controlled metadata field.
         """
 
-        metadata = document.metadata if isinstance(document.metadata, Mapping) else {}
-        candidate = metadata.get("source_text") or metadata.get("text")
-        if isinstance(candidate, str):
-            return candidate
         try:
-            return Path(document.artifact_path).read_text(encoding="utf-8")
+            raw = Path(document.artifact_path).read_text(encoding="utf-8")
         except (OSError, UnicodeError, TypeError):
-            return ""
+            return None
+        if not raw:
+            return raw
+        marker = f"\n- Word count: {document.word_count}\n\n"
+        if marker in raw:
+            return raw.split(marker, 1)[1].rstrip("\n")
+        return raw
 
     @classmethod
     def _diagnostic_projection(cls, document: StoredDocument) -> dict[str, Any]:
@@ -1408,28 +1501,51 @@ class WorkflowService:
     def _source_projection(cls, document: StoredDocument) -> dict[str, Any]:
         metadata = document.metadata if isinstance(document.metadata, Mapping) else {}
         raw_text = cls._source_text(document)
-        public_text = _public_redact(raw_text, limit=_PUBLIC_BODY_MAX, fallback="")
-        supplied_hash = metadata.get("source_text_sha256") or metadata.get("text_sha256")
+        artifact_available = raw_text is not None
+        public_text = _public_full_text(raw_text) if raw_text is not None else ""
         text_hash = (
-            supplied_hash
-            if isinstance(supplied_hash, str)
+            hashlib.sha256(public_text.encode("utf-8")).hexdigest()
+            if artifact_available
+            else None
+        )
+        supplied_hash = metadata.get("source_text_sha256")
+        if supplied_hash is None:
+            supplied_hash = metadata.get("full_text_sha256")
+        if supplied_hash is None:
+            supplied_hash = metadata.get("text_sha256")
+        raw_hash = (
+            hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
+            if raw_text is not None
+            else None
+        )
+        hash_matches = bool(
+            artifact_available
+            and isinstance(supplied_hash, str)
             and _SHA256_RE.fullmatch(supplied_hash)
-            and public_text == raw_text
-            else hashlib.sha256(public_text.encode("utf-8")).hexdigest()
+            and supplied_hash in {text_hash, raw_hash}
         )
         excerpt_value = metadata.get("evidence_excerpt") or metadata.get("lead_text")
+        supplied_excerpt = isinstance(excerpt_value, str) and bool(excerpt_value.strip())
         excerpt = _public_redact(
-            excerpt_value if isinstance(excerpt_value, str) else public_text,
+            excerpt_value if supplied_excerpt else public_text,
             limit=_PUBLIC_EXCERPT_MAX,
             fallback="unknown",
         )
-        # An excerpt is only useful when it binds to the audited source text.
-        # If an upstream lead was truncated/redacted, derive a safe substring
-        # from the same public text instead of publishing an unbound claim.
-        if public_text and excerpt != "unknown" and excerpt not in public_text:
+        # ``_lead_text`` appends an ellipsis when it truncates/normalizes an
+        # accepted body.  The ellipsis is presentation, not source evidence;
+        # remove it when the remaining prefix is an exact artifact substring.
+        if excerpt.endswith("...") and excerpt[:-3] in public_text:
+            excerpt = excerpt[:-3]
+        excerpt_bound = bool(public_text and excerpt != "unknown" and excerpt in public_text)
+        if public_text and not supplied_excerpt:
             excerpt = public_text[:_PUBLIC_EXCERPT_MAX]
-        if public_text and excerpt == "unknown":
+            excerpt_bound = bool(excerpt)
+        elif supplied_excerpt and not excerpt_bound:
+            # An upstream lead can contain a summary marker or redacted value
+            # that is not verbatim source text.  Publish a bounded prefix from
+            # the audited artifact instead of carrying the unbound claim.
             excerpt = public_text[:_PUBLIC_EXCERPT_MAX]
+            excerpt_bound = bool(excerpt)
         retrieved_at = _safe_aware_timestamp(
             metadata.get("retrieved_at") or metadata.get("retrieval_timestamp")
         )
@@ -1462,6 +1578,9 @@ class WorkflowService:
             "evidence_excerpt": excerpt,
             "source_text_sha256": text_hash,
             "full_text_sha256": text_hash,
+            "artifact_available": artifact_available,
+            "hash_matches": hash_matches,
+            "excerpt_bound": excerpt_bound,
             "retrieved_at": retrieved_at or "unknown",
             "source_date": source_date,
             "freshness": freshness,
@@ -1726,6 +1845,109 @@ class WorkflowService:
             "missing_requirement_citation_count": missing,
         }
 
+    @staticmethod
+    def _execution_diagnostics_complete(document: StoredDocument) -> bool:
+        """Validate the bounded accepted execution evidence before projection."""
+
+        metadata = document.metadata if isinstance(document.metadata, Mapping) else {}
+        evidence = metadata.get("execution_evidence")
+        if not isinstance(evidence, Mapping):
+            return False
+        if evidence.get("schema") != "argus-execution-evidence-v1":
+            return False
+        if not set(evidence).issubset(_TARGET_EXECUTION_EVIDENCE_FIELDS):
+            return False
+
+        def bounded(value: Any, *, depth: int = 0) -> bool:
+            if depth > 5:
+                return False
+            if isinstance(value, str):
+                return (
+                    len(value) <= _PUBLIC_BODY_MAX
+                    and not _PUBLIC_CONTROL_RE.search(value)
+                    and not _PUBLIC_SECRET_RE.search(value)
+                    and not _PUBLIC_PATH_RE.search(value)
+                )
+            if isinstance(value, Mapping):
+                if len(value) > 64:
+                    return False
+                return all(
+                    isinstance(key, str)
+                    and len(key) <= _PUBLIC_LABEL_MAX
+                    and bounded(nested, depth=depth + 1)
+                    for key, nested in value.items()
+                )
+            if isinstance(value, (list, tuple, set)):
+                return len(value) <= 64 and all(
+                    bounded(nested, depth=depth + 1) for nested in value
+                )
+            return value is None or isinstance(value, (bool, int, float))
+
+        if not bounded(evidence):
+            return False
+        diagnostics = metadata.get("execution_diagnostics")
+        if not isinstance(diagnostics, (list, tuple)):
+            diagnostics = evidence.get("execution_diagnostics", evidence.get("diagnostics"))
+        if not isinstance(diagnostics, (list, tuple)) or not diagnostics:
+            return False
+        for diagnostic in diagnostics:
+            if not isinstance(diagnostic, Mapping):
+                return False
+            keys = set(diagnostic)
+            if keys != set(_TARGET_EXECUTION_DIAGNOSTIC_FIELDS):
+                return False
+            for key, value in diagnostic.items():
+                if isinstance(value, str):
+                    if len(value) > _PUBLIC_LABEL_MAX:
+                        return False
+                    if (
+                        _PUBLIC_CONTROL_RE.search(value)
+                        or _PUBLIC_SECRET_RE.search(value)
+                        or _PUBLIC_PATH_RE.search(value)
+                    ):
+                        return False
+                elif value is not None and key in {
+                    "result_count",
+                    "operation_latency_ms",
+                    "cache_latency_ms",
+                    "cache_age_ms",
+                    "freshness_age_ms",
+                }:
+                    if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+                        return False
+            if diagnostic.get("cache_state") not in {"hit", "miss", "ineligible", "unknown"}:
+                return False
+            if not isinstance(diagnostic.get("result_count"), int) or diagnostic["result_count"] < 0:
+                return False
+            if not isinstance(diagnostic.get("free_profile_eligible"), bool) and diagnostic.get(
+                "free_profile_eligible"
+            ) is not None:
+                return False
+        return True
+
+    @staticmethod
+    def _summary_closure_is_bound(
+        run: WorkflowResult, accepted_ids: set[str], accepted_urls: set[str]
+    ) -> bool:
+        """Ensure summary prose cites only accepted URLs and citation IDs."""
+
+        for section in run.summary_sections:
+            if not isinstance(section.heading, str):
+                return False
+            if not isinstance(section.body, str):
+                return False
+            for citation_id in section.citation_ids:
+                if not isinstance(citation_id, str) or citation_id not in accepted_ids:
+                    return False
+            for match in _SUMMARY_URL_RE.finditer(section.body):
+                candidate = match.group(0).rstrip(".,;:!?)]}>")
+                if not _public_https_url(candidate) or _normal_url(candidate) not in accepted_urls:
+                    return False
+            for match in _SUMMARY_CITATION_RE.finditer(section.body):
+                if match.group(1) not in accepted_ids:
+                    return False
+        return True
+
     @classmethod
     def _validate_targeted_closure(cls, run: WorkflowResult) -> None:
         """Fail closed before rendering a targeted report/manifest."""
@@ -1749,6 +1971,12 @@ class WorkflowService:
             raise ValueError("research pack closure validation failed")
         document_ids = [document.id for document in run.documents]
         citation_ids = [citation.id for citation in run.citations]
+        if any(
+            not isinstance(identifier, str)
+            or not _PUBLIC_CITATION_ID_RE.fullmatch(identifier)
+            for identifier in [*document_ids, *citation_ids]
+        ):
+            raise ValueError("research pack closure citation identifier invalid")
         if (
             len(citation_ids) != len(set(citation_ids))
             or len(document_ids) != len(set(document_ids))
@@ -1770,7 +1998,12 @@ class WorkflowService:
         for requirement in requirements:
             citation_id = requirement["citation_ids"][0]
             citation = next((item for item in run.citations if item.id == citation_id), None)
-            if citation is None or _normal_url(citation.url) != _normal_url(requirement["selected_urls"][0]):
+            if (
+                citation is None
+                or not _public_https_url(citation.url)
+                or not _public_https_url(requirement["selected_urls"][0])
+                or _normal_url(citation.url) != _normal_url(requirement["selected_urls"][0])
+            ):
                 raise ValueError("research pack closure URL mismatch")
             normalized = _normal_url(citation.url)
             if normalized in seen_urls:
@@ -1778,6 +2011,11 @@ class WorkflowService:
             seen_urls.add(normalized)
             if not _SHA256_RE.fullmatch(str(requirement.get("source_text_sha256", ""))):
                 raise ValueError("research pack closure source hash missing")
+            source = cls._source_projection(
+                next(document for document in targeted_documents if document.id == citation_id)
+            )
+            if not source["artifact_available"] or not source["hash_matches"] or not source["excerpt_bound"]:
+                raise ValueError("research pack closure source evidence mismatch")
         for document in external_documents:
             source = cls._source_projection(document)
             if source["artifact_disposition"] not in {"usable", "partial"}:
@@ -1785,8 +2023,15 @@ class WorkflowService:
             citation = next(
                 (item for item in run.citations if item.id == document.id), None
             )
-            if citation is None or _normal_url(citation.url) != _normal_url(document.url):
-                raise ValueError("research pack external citation mismatch")
+            if (
+                citation is None
+                or not _public_https_url(document.url)
+                or not _public_https_url(citation.url)
+                or _normal_url(citation.url) != _normal_url(document.url)
+            ):
+                raise ValueError("research pack closure external citation mismatch")
+            if not source["artifact_available"] or not source["hash_matches"] or not source["excerpt_bound"]:
+                raise ValueError("research pack closure external source evidence mismatch")
             normalized = _normal_url(document.url)
             if normalized in seen_urls:
                 raise ValueError("research pack external URL reused")
@@ -1815,10 +2060,12 @@ class WorkflowService:
                 "free_profile_eligible",
                 "execution_diagnostics",
             )
-            if not all(key in document.metadata for key in required_keys) or not source[
-                "diagnostics_complete"
-            ]:
+            if not all(key in document.metadata for key in required_keys) or not cls._execution_diagnostics_complete(document):
                 raise ValueError("research pack provenance diagnostics missing")
+        accepted_ids = set(citation_ids)
+        accepted_urls = {_normal_url(citation.url) for citation in run.citations}
+        if not cls._summary_closure_is_bound(run, accepted_ids, accepted_urls):
+            raise ValueError("research pack closure summary citation mismatch")
 
     @staticmethod
     def _safe_research_plan(run: WorkflowResult) -> dict[str, Any]:
@@ -2854,11 +3101,13 @@ class WorkflowService:
         if research_targets:
             run.metadata["research_targets"] = _plain_json_value(research_targets)
         self._report(0, 4, "Discovering official documentation URL...")
-        official = official_url or await self._discover_official_docs_url(
+        supplied_official_url = official_url is not None
+        official = official_url if supplied_official_url else await self._discover_official_docs_url(
             topic, run=run
         )
         if not official:
             raise ValueError("Could not determine an official documentation URL")
+        official_required_urls = (official,) if supplied_official_url else ()
 
         self._report(1, 4, f"Capturing official docs from {official}...")
         official_docs, official_citations = await self._capture_site_documents(
@@ -2869,10 +3118,16 @@ class WorkflowService:
             source_type="official_docs",
             soft_page_limit=_OFFICIAL_CAPTURE_PAGE_LIMIT,
             hard_page_limit=_OFFICIAL_CAPTURE_PAGE_LIMIT,
-            required_urls=(),
+            required_urls=official_required_urls,
             allow_partial=True,
             minimum_artifacts=1,
         )
+        if supplied_official_url and not any(
+            _normal_url(document.url) == _normal_url(official)
+            and document.metadata.get("artifact_disposition") in {"usable", "partial"}
+            for document in official_docs
+        ):
+            raise ValueError("caller-supplied official URL lacks accepted evidence")
         self._report(
             2,
             4,

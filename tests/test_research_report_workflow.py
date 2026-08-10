@@ -1106,7 +1106,7 @@ async def test_research_pack_ignores_diagnostic_first_artifact_and_bounds_captur
     )
     assert official_call["max_results"] <= 8
     assert len(official_call["selection_urls"]) <= 8
-    assert official_call["required_urls"] == ()
+    assert official_call["required_urls"] == ("https://docs.example.com/guide",)
     assert official_call["minimum_artifacts"] == 1
     assert official_call["allow_partial"] is True
     assert external_call["max_results"] == 5
@@ -1151,6 +1151,6 @@ async def test_research_pack_all_rejected_artifacts_fails_without_synthesis(
     assert summarizer.calls == 0
     assert len(operations.compose_calls) == 1
     assert operations.compose_calls[0]["scope"] == "official"
-    assert operations.compose_calls[0]["required_urls"] == ()
+    assert operations.compose_calls[0]["required_urls"] == ("https://docs.example.com/guide",)
     assert operations.compose_calls[0]["minimum_artifacts"] == 1
     assert operations.compose_calls[0]["allow_partial"] is True

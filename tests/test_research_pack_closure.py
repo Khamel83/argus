@@ -72,13 +72,16 @@ def _run(tmp_path: Path, requirement_count: int = 1) -> WorkflowResult:
             "operation_latency_ms": 1,
             "cache_latency_ms": 1,
             "cache_state": "miss",
-            "cache_age": None,
+            "cache_age_ms": None,
             "cache_origin": "none",
             "spend_provenance": "not_applicable",
-            "freshness_age": None,
+            "freshness_age_ms": None,
             "freshness_window": "2025-08-09/2026-08-09",
             "freshness_reason": "source date is absent",
             "free_profile_eligible": True,
+            "egress": "residential",
+            "machine": "test-machine",
+            "source_type": "targeted_first_party",
         }
         metadata = {
             "target_name": "Docs",
@@ -104,7 +107,10 @@ def _run(tmp_path: Path, requirement_count: int = 1) -> WorkflowResult:
             "freshness_reason": "source date is absent",
             "free_profile_eligible": True,
             "execution_diagnostics": [diagnostics],
-            "execution_evidence": {"diagnostics": [diagnostics]},
+            "execution_evidence": {
+                "schema": "argus-execution-evidence-v1",
+                "diagnostics": [diagnostics],
+            },
         }
         documents.append(
             StoredDocument(
@@ -151,6 +157,8 @@ def _run(tmp_path: Path, requirement_count: int = 1) -> WorkflowResult:
             "claim_class": "external-secondary",
             "requirement_ref": "external-0",
             "source_type": "external_research",
+            "text_sha256": hashlib.sha256(external_text.encode()).hexdigest(),
+            "source_text_sha256": hashlib.sha256(external_text.encode()).hexdigest(),
         }
     )
     documents.append(
@@ -316,3 +324,116 @@ def test_public_projection_redacts_paths_and_caps_public_strings(tmp_path):
     assert "supersecret" not in payload
     assert "private/path" not in payload
     assert len(payload.encode("utf-8")) < 4 * 1024 * 1024
+
+    report = Path(run.report_path).read_text(encoding="utf-8")
+    assert str(tmp_path) not in report
+    assert "private/path" not in report
+
+
+def test_targeted_closure_recomputes_source_hash_from_artifact(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].metadata["source_text_sha256"] = "0" * 64
+
+    with pytest.raises(ValueError, match="closure"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+def test_targeted_closure_rejects_missing_source_artifact(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    Path(run.documents[0].artifact_path).unlink()
+
+    with pytest.raises(ValueError, match="closure"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+def test_targeted_closure_requires_bounded_execution_diagnostics(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].metadata["execution_diagnostics"] = [
+        {
+            "provider": "test",
+            "extractor": "test-extractor",
+            "status": "success",
+            "junk": "Authorization: Bearer should-not-be-accepted",
+        }
+    ]
+    run.documents[0].metadata["execution_evidence"] = {
+        "diagnostics": run.documents[0].metadata["execution_diagnostics"]
+    }
+
+    with pytest.raises(ValueError, match="provenance diagnostics"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+def test_source_date_parser_rejects_trailing_junk(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].metadata["source_date"] = "2026-08-09 trailing-junk"
+
+    service._finalize_run(
+        run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+    )
+    manifest = json.loads(Path(run.manifest_path).read_text(encoding="utf-8"))
+    source = manifest["sources"][0]
+    assert source["source_date"] is None
+    assert source["freshness"] == "unknown"
+
+
+def test_targeted_closure_rejects_non_public_external_url(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    external = run.documents[-1]
+    external.url = "file:///tmp/not-public"
+    run.citations[-1].url = external.url
+
+    with pytest.raises(ValueError, match="closure"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+def test_targeted_closure_audits_summary_urls_and_citation_ids(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.summary_sections[0].body = (
+        "Unsupported https://unaccepted.example.invalid/item [S999]"
+    )
+
+    with pytest.raises(ValueError, match="closure"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+def test_targeted_closure_rejects_overlong_citation_ids(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    long_id = "S" + ("x" * 150)
+    run.documents[-1].id = long_id
+    run.citations[-1].id = long_id
+    run.summary_sections[0].citation_ids[-1] = long_id
+
+    with pytest.raises(ValueError, match="citation"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
