@@ -1120,6 +1120,7 @@ class WorkflowService:
             self._write_run_state(run)
         except Exception:
             logger.exception("Failed to persist interrupted workflow %s", run.run_id)
+            self._write_failure_marker_safely(run)
 
     def import_legacy_docs_cache(self, source_root: str) -> dict[str, Any]:
         return mirror_legacy_docs_cache(source_root, self._paths)
@@ -2909,13 +2910,25 @@ class WorkflowService:
         if not self._is_targeted_run(run):
             return
 
-        snapshot_root = Path(run.snapshot_dir)
+        expected_snapshot = Path(
+            os.path.abspath(
+                self._paths.snapshots_dir
+                / run.kind.value
+                / _slug_from_url(run.target)
+                / run.run_id
+            )
+        )
+        snapshot_root = Path(os.path.abspath(run.snapshot_dir))
         snapshot: Path | None = None
         try:
-            trusted_root = self._paths.snapshots_dir.resolve()
+            if snapshot_root != expected_snapshot:
+                raise ValueError("workflow snapshot root does not belong to run")
             if snapshot_root.is_symlink() or not snapshot_root.is_dir():
                 raise ValueError("workflow snapshot root is not a directory")
             resolved_snapshot = snapshot_root.resolve()
+            if resolved_snapshot != snapshot_root:
+                raise ValueError("workflow snapshot root contains a symlink")
+            trusted_root = Path(os.path.abspath(self._paths.snapshots_dir)).resolve()
             if (
                 resolved_snapshot == trusted_root
                 or not resolved_snapshot.is_relative_to(trusted_root)
@@ -3158,6 +3171,16 @@ class WorkflowService:
         }
 
     def _deserialize_run(self, payload: dict[str, Any]) -> WorkflowResult:
+        metadata = payload.get("metadata", {})
+        if isinstance(metadata, Mapping):
+            metadata = dict(metadata)
+            # Monotonic values belong to the process that created them and are
+            # meaningless after a reload.  The persisted aware wall deadline
+            # is the restart-safe source of truth; _ensure_target_deadline()
+            # will derive a fresh local anchor when execution needs one.
+            metadata.pop("_deadline_monotonic", None)
+        else:
+            metadata = {}
         return WorkflowResult(
             run_id=payload["run_id"],
             kind=WorkflowKind(payload["kind"]),
@@ -3185,7 +3208,7 @@ class WorkflowService:
                 SummarySection(**section)
                 for section in payload.get("summary_sections", [])
             ],
-            metadata=payload.get("metadata", {}),
+            metadata=metadata,
             error=payload.get("error"),
         )
 

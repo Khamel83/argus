@@ -718,6 +718,114 @@ def test_targeted_cleanup_refuses_real_outside_snapshot_root(monkeypatch, tmp_pa
     assert run.manifest_path is None
 
 
+def test_targeted_cleanup_refuses_another_run_snapshot(monkeypatch, tmp_path):
+    from pathlib import Path
+
+    from argus.workflows.models import WorkflowArtifact, WorkflowKind
+
+    service = _service(monkeypatch, tmp_path, _TargetOperations([]))
+    target_metadata = {
+        "research_targets": [
+            _target(
+                "Docs",
+                "https://docs.example.com/sdk/",
+                ("capabilities", "sdk"),
+            )
+        ]
+    }
+    run_one = service._create_run(
+        WorkflowKind.BUILD_RESEARCH_PACK,
+        "shared-snapshot",
+        extra_metadata=target_metadata,
+    )
+    run_two = service._create_run(
+        WorkflowKind.BUILD_RESEARCH_PACK,
+        "shared-snapshot",
+        extra_metadata=target_metadata,
+    )
+
+    run_one_snapshot = Path(run_one.snapshot_dir)
+    targeted_dir = run_one_snapshot / "targeted-research"
+    targeted_dir.mkdir(parents=True, exist_ok=True)
+    evidence_path = targeted_dir / "run-one.md"
+    report_path = run_one_snapshot / "SUMMARY.md"
+    manifest_path = run_one_snapshot / "manifest.json"
+    for path in (evidence_path, report_path, manifest_path):
+        path.write_text("run one evidence", encoding="utf-8")
+
+    run_two.snapshot_dir = run_one.snapshot_dir
+    run_two.report_path = str(report_path)
+    run_two.manifest_path = str(manifest_path)
+    run_two.artifacts = [
+        WorkflowArtifact(kind="report", path=str(report_path)),
+        WorkflowArtifact(kind="manifest", path=str(manifest_path)),
+    ]
+
+    service._cleanup_failed_targeted_artifacts(run_two)
+
+    assert evidence_path.is_file()
+    assert report_path.is_file()
+    assert manifest_path.is_file()
+
+
+def test_reloaded_target_deadline_discards_process_monotonic_anchor(
+    monkeypatch, tmp_path
+):
+    from datetime import datetime, timezone
+
+    from argus.workflows.models import WorkflowKind, WorkflowStatus
+    from argus.workflows.service import WorkflowService
+
+    class Clock:
+        def __init__(self, monotonic):
+            self.monotonic_value = monotonic
+            self.current = datetime(2026, 8, 10, tzinfo=timezone.utc)
+
+        def now(self):
+            return self.current
+
+        def monotonic(self):
+            return self.monotonic_value
+
+    first_clock = Clock(100.0)
+    base_service = _service(monkeypatch, tmp_path, _TargetOperations([]))
+    service = WorkflowService(
+        SimpleNamespace(),
+        corpus_paths=base_service._paths,
+        clock=first_clock,
+    )
+    run = service._create_run(
+        WorkflowKind.BUILD_RESEARCH_PACK,
+        "deadline-reload",
+        extra_metadata={
+            "research_targets": [
+                _target(
+                    "Docs",
+                    "https://docs.example.com/sdk/",
+                    ("capabilities", "sdk"),
+                )
+            ]
+        },
+    )
+    run.status = WorkflowStatus.COMPLETED
+    service._write_run_state(run)
+    persisted_anchor = run.metadata["_deadline_monotonic"]
+
+    reloaded_service = WorkflowService(
+        SimpleNamespace(),
+        corpus_paths=base_service._paths,
+        clock=Clock(10_000.0),
+    )
+    reloaded = reloaded_service.get_run(run.run_id)
+
+    assert reloaded is not None
+    assert reloaded.metadata.get("_deadline_monotonic") is None
+    remaining = reloaded_service._remaining_workflow_seconds(reloaded)
+    assert remaining == pytest.approx(540.0)
+    assert reloaded.metadata["_deadline_monotonic"] == pytest.approx(10_540.0)
+    assert persisted_anchor == pytest.approx(640.0)
+
+
 @pytest.mark.asyncio
 async def test_targeted_service_marks_optional_external_as_degraded_and_caps_attempts(
     monkeypatch, tmp_path

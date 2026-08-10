@@ -360,6 +360,71 @@ async def test_reloaded_targeted_pending_run_is_interrupted_without_operations(
     assert not Path(run.snapshot_dir, "manifest.json").exists()
 
 
+@pytest.mark.asyncio
+async def test_orphan_interruption_write_failure_leaves_reloadable_failure_marker(
+    monkeypatch, tmp_path: Path
+):
+    service = WorkflowService(SimpleNamespace(), corpus_paths=_paths(tmp_path))
+    service._schedule_run = lambda *args, **kwargs: None
+    run = await service.start_build_research_pack_safe(
+        request=_target_request(),
+        caller_identity="mac-agents",
+        caller_label="body-label",
+    )
+    state_path = service._paths.workflow_runs_dir / f"{run.run_id}.json"
+    assert json.loads(state_path.read_text(encoding="utf-8"))["status"] == "pending"
+
+    recovering = WorkflowService(SimpleNamespace(), corpus_paths=service._paths)
+
+    def fail_orphan_interruption_write(run):
+        del run
+        raise OSError("injected orphan interruption persistence failure")
+
+    monkeypatch.setattr(recovering, "_write_run_state", fail_orphan_interruption_write)
+    interrupted = recovering.get_run(run.run_id)
+
+    assert interrupted is not None
+    assert interrupted.status is WorkflowStatus.FAILED
+    assert interrupted.error == "workflow_interrupted"
+    marker_path = service._paths.workflow_runs_dir / f"{run.run_id}.failure.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert set(marker) == {
+        "clear_artifacts",
+        "error",
+        "failure",
+        "finished_at",
+        "run_id",
+        "schema",
+        "status",
+    }
+    assert marker["schema"] == "argus.workflow-failure.v1"
+    assert marker["run_id"] == run.run_id
+    assert marker["status"] == "failed"
+    assert marker["error"] == "workflow_interrupted"
+    assert marker["failure"] == {
+        "code": "workflow_interrupted",
+        "reason": "process_reload_without_live_task",
+    }
+    assert marker["clear_artifacts"] is True
+    assert not any(
+        key in marker for key in ("snapshot_dir", "report_path", "manifest_path")
+    )
+    assert json.loads(state_path.read_text(encoding="utf-8"))["status"] == "pending"
+
+    reloaded = WorkflowService(SimpleNamespace(), corpus_paths=service._paths).get_run(
+        run.run_id
+    )
+    assert reloaded is not None
+    assert reloaded.status is WorkflowStatus.FAILED
+    assert reloaded.error == "workflow_interrupted"
+    assert reloaded.metadata["failure"] == marker["failure"]
+    assert reloaded.artifacts == []
+    assert reloaded.report_path is None
+    assert reloaded.manifest_path is None
+    assert not Path(run.snapshot_dir, "SUMMARY.md").exists()
+    assert not Path(run.snapshot_dir, "manifest.json").exists()
+
+
 def test_terminal_status_prefers_persisted_runtime_and_reports_live_mismatch(tmp_path):
     service = WorkflowService(SimpleNamespace(), corpus_paths=_paths(tmp_path))
     run = WorkflowResult(
