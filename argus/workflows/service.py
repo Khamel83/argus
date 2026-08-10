@@ -1468,8 +1468,10 @@ class WorkflowService:
         run = self._runs[run_id]
         run.status = WorkflowStatus.RUNNING
         run.started_at = datetime.now(timezone.utc)
-        self._write_run_state(run)
+        running_state_persisted = False
         try:
+            self._write_run_state(run)
+            running_state_persisted = True
             await handler(run, **kwargs)
         except WorkflowOperationFailure as exc:
             logger.warning(
@@ -1485,9 +1487,24 @@ class WorkflowService:
             }
             self._rewrite_failed_artifacts(run)
         except Exception as exc:
-            logger.exception("Workflow %s failed", run.run_id)
+            if not running_state_persisted:
+                logger.exception(
+                    "Failed to persist running state for workflow %s", run.run_id
+                )
+                run.error = "WorkflowStatePersistenceError"
+                run.metadata["failure"] = {
+                    "code": "WorkflowStatePersistenceError",
+                    "reason": "running_state_write_failed",
+                }
+                # No handler has run when the RUNNING transition cannot be
+                # recorded. Keep the safe terminal projection artifact-free.
+                run.report_path = None
+                run.manifest_path = None
+                run.artifacts = []
+            else:
+                logger.exception("Workflow %s failed", run.run_id)
+                run.error = type(exc).__name__
             run.status = WorkflowStatus.FAILED
-            run.error = type(exc).__name__
             self._rewrite_failed_artifacts(run)
         finally:
             if run.finished_at is None:

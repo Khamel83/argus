@@ -187,6 +187,72 @@ async def test_initial_persistence_failure_is_terminal_and_reloadable(
 
 
 @pytest.mark.asyncio
+async def test_running_persistence_failure_is_terminal_without_orphan_or_publication(
+    monkeypatch, tmp_path: Path
+):
+    service = WorkflowService(SimpleNamespace(), corpus_paths=_paths(tmp_path))
+    original = service._write_run_state
+    attempts = 0
+
+    def fail_running_transition(run):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 2:
+            raise OSError("injected running transition persistence failure")
+        return original(run)
+
+    monkeypatch.setattr(service, "_write_run_state", fail_running_transition)
+    handler_called = False
+
+    async def handler(run, **kwargs):
+        del run, kwargs
+        nonlocal handler_called
+        handler_called = True
+
+    service._build_research_pack_impl = handler
+    run = await service.start_build_research_pack_safe(
+        request=BuildResearchPackWorkflowRequest(topic="running persistence")
+    )
+    task = service._tasks[run.run_id]
+
+    for _ in range(10):
+        await asyncio.sleep(0)
+        if task.done() and run.run_id not in service._tasks:
+            break
+    if task.done():
+        # Retrieve any pre-fix task exception so the regression asserts the
+        # durable/public state rather than relying on an event-loop warning.
+        task.exception()
+
+    assert attempts >= 3
+    assert not handler_called
+    assert not service._tasks
+    assert run.status is WorkflowStatus.FAILED
+    assert run.error == "WorkflowStatePersistenceError"
+    assert run.metadata["failure"] == {
+        "code": "WorkflowStatePersistenceError",
+        "reason": "running_state_write_failed",
+    }
+
+    state = json.loads(
+        (service._paths.workflow_runs_dir / f"{run.run_id}.json").read_text()
+    )
+    assert state["status"] == "failed"
+    assert state["error"] == "WorkflowStatePersistenceError"
+    snapshot = Path(run.snapshot_dir)
+    assert not (snapshot / "SUMMARY.md").exists()
+    assert not (snapshot / "manifest.json").exists()
+
+    status = service.get_public_status(run)
+    encoded = json.dumps(status).lower()
+    assert status["error_code"] == "WorkflowStatePersistenceError"
+    assert all(not artifact["available"] for artifact in status["artifacts"])
+    assert "injected running transition persistence failure" not in encoded
+    assert "exception" not in encoded
+    assert "provider" not in encoded
+
+
+@pytest.mark.asyncio
 async def test_reloaded_targeted_pending_run_is_interrupted_without_operations(
     tmp_path: Path,
 ):
