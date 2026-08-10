@@ -36,6 +36,18 @@ def _error(outcome, request_id):
     )
 
 
+def test_target_requirement_request_ids_bind_receipt_and_reference():
+    from argus.workflows.targeted_research import derive_requirement_request_id
+
+    first = derive_requirement_request_id("receipt-a", "target-0-requirement-0")
+    second = derive_requirement_request_id("receipt-b", "target-0-requirement-0")
+    repeat = derive_requirement_request_id("receipt-a", "target-0-requirement-0")
+
+    assert first == repeat
+    assert first != second
+    assert first != "workflow-run"
+
+
 def _projection(accepted):
     values = {
         field.name: getattr(accepted, field.name)

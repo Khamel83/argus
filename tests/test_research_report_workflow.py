@@ -28,6 +28,15 @@ def _service() -> WorkflowService:
     return WorkflowService(SimpleNamespace())
 
 
+def test_target_failure_codes_are_not_rewritten_as_legacy_composition_codes():
+    assert WorkflowService._target_authority_failure("unready") is True
+    assert WorkflowService._target_authority_failure("persistence_failed") is True
+    assert WorkflowService._target_authority_failure("contract_error") is True
+    assert WorkflowService._target_authority_failure(
+        "workflow_required_target_unready"
+    ) is False
+
+
 def _run(tmp_path, *, status=WorkflowStatus.COMPLETED):
     tmp_path.mkdir(parents=True, exist_ok=True)
     report = tmp_path / "SUMMARY.md"

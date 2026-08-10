@@ -37,6 +37,15 @@ from argus.workflows.models import (
     WorkflowStatus,
 )
 from argus.workflows.summarizer import get_summarizer
+from argus.workflows.targeted_research import (
+    TargetCandidateFailure,
+    TargetResearchPlan,
+    TargetWorkflowFailure,
+    flatten_requirements,
+    make_target_search_requests,
+    page_budget_math,
+    plan_target_research,
+)
 
 logger = get_logger("workflows")
 
@@ -259,6 +268,7 @@ class WorkflowService:
         query: str,
         mode: str,
         max_results: int,
+        request_id: str | None = None,
     ):
         request = type(
             "WorkflowSearchRequest",
@@ -277,7 +287,7 @@ class WorkflowService:
         return await self._accepted_operations.search(
             request,
             principal=self._caller_for_run(run),
-            request_id=uuid.uuid4().hex,
+            request_id=request_id or uuid.uuid4().hex,
         )
 
     async def _operation_recover(
@@ -1169,12 +1179,13 @@ class WorkflowService:
         required_urls: tuple[str, ...] | None = None,
         allow_partial: bool | None = None,
         minimum_artifacts: int | None = None,
+        request_id: str | None = None,
     ) -> tuple[list[StoredDocument], list[CitationRef]]:
         """Build documents solely from the accepted composition projection."""
         composition_kwargs = {
             "max_results": max_results,
             "principal": self._caller_for_run(run),
-            "request_id": run.run_id,
+            "request_id": request_id or run.run_id,
         }
         if selection_urls is not None:
             composition_kwargs["selection_urls"] = selection_urls
@@ -1478,6 +1489,20 @@ class WorkflowService:
             self._write_run_state(run)
             running_state_persisted = True
             await handler(run, **kwargs)
+        except TargetWorkflowFailure as exc:
+            logger.warning(
+                "Targeted workflow %s stopped with stable code %s",
+                run.run_id,
+                exc.code,
+            )
+            run.status = WorkflowStatus.FAILED
+            run.error = exc.code
+            run.metadata["failure"] = {
+                "code": exc.code,
+                "reason": "targeted_research_failure",
+            }
+            self._hide_target_composition_diagnostics(run)
+            self._rewrite_failed_artifacts(run)
         except WorkflowOperationFailure as exc:
             logger.warning(
                 "Workflow %s stopped with accepted outcome %s",
@@ -1691,6 +1716,15 @@ class WorkflowService:
         free_only: bool | None = None,
         research_targets: list[Mapping[str, Any]] | None = None,
     ):
+        if research_targets:
+            return await self._build_targeted_research_pack_impl(
+                run,
+                topic=topic,
+                max_research_pages=max_research_pages,
+                free_only=free_only,
+                research_targets=research_targets,
+            )
+
         # The metadata copy is the durable source for every nested operation;
         # keep it synchronized for direct/internal callers of this handler.
         if free_only is not None:
@@ -1786,6 +1820,236 @@ class WorkflowService:
             docs_cache_dir=cache_dir,
             docs_cache_url=official,
         )
+
+    @staticmethod
+    def _target_authority_failure(code: str | None) -> bool:
+        if not code:
+            return False
+        return code in {
+            "unready",
+            "persistence_failed",
+            "invalid_request",
+            "authentication_rejected",
+            "policy_rejected",
+            "providers_failed",
+            "contract_error",
+            "accepted_contract_error",
+        } or "contract" in code.lower()
+
+    @staticmethod
+    def _target_disposition_is_usable(documents: list[StoredDocument]) -> bool:
+        return any(
+            str(document.metadata.get("artifact_disposition", "")).lower()
+            == "usable"
+            for document in documents
+        )
+
+    @staticmethod
+    def _hide_target_composition_diagnostics(run: WorkflowResult) -> None:
+        """Keep failed candidate details out of public run state and reports."""
+
+        for key in (
+            "compositions",
+            "composition",
+            "composition_receipt_ref",
+        ):
+            run.metadata.pop(key, None)
+
+    async def _compose_target_candidate(
+        self,
+        run: WorkflowResult,
+        operation: AcceptedOperation,
+        *,
+        candidate_url: str,
+        request_id: str,
+        citation_start: int,
+        required: bool,
+    ) -> tuple[list[StoredDocument], list[CitationRef]]:
+        """Try one receipt-bound candidate, translating only target-local failures."""
+
+        try:
+            documents, citations = await self._compose_search_documents(
+                run,
+                operation,
+                max_results=1,
+                section="targeted-research",
+                role="target_research" if required else "external_research",
+                source_type="targeted_research" if required else "external_research",
+                selection_urls=(candidate_url,),
+                required_urls=(candidate_url,),
+                allow_partial=False,
+                minimum_artifacts=1,
+                citation_start=citation_start,
+                request_id=request_id,
+            )
+        except WorkflowOperationFailure as exc:
+            code = exc.operation_code
+            self._hide_target_composition_diagnostics(run)
+            bare_code = (
+                code.removeprefix("workflow_composition_")
+                if isinstance(code, str)
+                else code
+            )
+            if self._target_authority_failure(bare_code):
+                raise TargetWorkflowFailure(bare_code) from exc
+            raise TargetCandidateFailure(requirement_ref="target") from exc
+        self._hide_target_composition_diagnostics(run)
+        if not documents or not self._target_disposition_is_usable(documents):
+            raise TargetCandidateFailure(requirement_ref="target")
+        if any(_normal_url(document.url) != _normal_url(candidate_url) for document in documents):
+            raise TargetCandidateFailure(requirement_ref="target")
+        return documents, citations
+
+    async def _build_targeted_research_pack_impl(
+        self,
+        run: WorkflowResult,
+        *,
+        topic: str,
+        max_research_pages: int,
+        free_only: bool | None,
+        research_targets: list[Mapping[str, Any]],
+    ) -> WorkflowResult:
+        """Execute a deterministic target-first research pack.
+
+        Task 6 owns overall deadline/concurrency.  This implementation is
+        intentionally sequential: each accepted requirement search is followed
+        by bounded candidate retries, then one mandatory/optional external pass.
+        """
+
+        effective_free_only = bool(free_only)
+        run.metadata["free_only"] = effective_free_only
+        run.metadata["research_targets"] = _plain_json_value(research_targets)
+        requirements = flatten_requirements(research_targets)
+        # Validate the page budget before any accepted search is attempted.
+        page_budget_math(len(requirements), max_research_pages)
+
+        self._report(0, 4, "Searching receipt-bound target requirements...")
+        search_requests = make_target_search_requests(
+            research_targets,
+            free_only=effective_free_only,
+            caller=str(run.metadata.get("caller_label") or self._caller),
+        )
+        accepted_searches: list[Any] = []
+        for request in search_requests:
+            try:
+                operation = await self._operation_search(
+                    run,
+                    query=request.query,
+                    mode="research",
+                    max_results=8,
+                    request_id=request.request_id,
+                )
+            except (asyncio.TimeoutError, TimeoutError) as exc:
+                raise TargetWorkflowFailure(
+                    "workflow_required_target_search_timeout",
+                    requirement_ref=request.requirement_ref,
+                ) from exc
+            accepted_searches.append(operation)
+
+        plan: TargetResearchPlan = plan_target_research(
+            research_targets,
+            accepted_searches,
+            max_research_pages=max_research_pages,
+            free_only=effective_free_only,
+            caller=str(run.metadata.get("caller_label") or self._caller),
+        )
+        self._report(1, 4, "Extracting required target artifacts...")
+        documents: list[StoredDocument] = []
+        citations: list[CitationRef] = []
+        for selection in plan.requirements:
+            usable: tuple[list[StoredDocument], list[CitationRef]] | None = None
+            for candidate in selection.candidates:
+                try:
+                    usable = await self._compose_target_candidate(
+                        run,
+                        accepted_searches[selection.search_index],
+                        candidate_url=candidate.url,
+                        request_id=selection.request_id,
+                        citation_start=len(documents),
+                        required=True,
+                    )
+                    break
+                except TargetCandidateFailure:
+                    continue
+            if usable is None:
+                raise TargetWorkflowFailure(
+                    "workflow_required_target_extraction_failed",
+                    requirement_ref=selection.requirement_ref,
+                )
+            target_documents, target_citations = usable
+            documents.extend(target_documents[:1])
+            citations.extend(target_citations[:1])
+
+        self._report(2, 4, "Extracting independent external evidence...")
+        external_documents: list[StoredDocument] = []
+        external_citations: list[CitationRef] = []
+        # The planner returns up to four candidates.  At most one mandatory and
+        # one optional external artifact are published, while retries remain
+        # bounded by that four-candidate selection.
+        external_slots = min(2, plan.page_math.external_page_slots)
+        for candidate in plan.external_candidates:
+            if len(external_documents) >= external_slots:
+                break
+            try:
+                operation_index = next(
+                    index
+                    for index, operation in enumerate(accepted_searches)
+                    if any(
+                        _normal_url(str(item.get("url", "")))
+                        == _normal_url(candidate.url)
+                        for item in (operation.result or {}).get("results", ())
+                        if isinstance(item, Mapping)
+                    )
+                )
+                extracted = await self._compose_target_candidate(
+                    run,
+                    accepted_searches[operation_index],
+                    candidate_url=candidate.url,
+                    request_id=f"{candidate.requirement_ref}-{len(external_documents)}",
+                    citation_start=len(documents) + len(external_documents),
+                    required=len(external_documents) == 0,
+                )
+            except TargetCandidateFailure:
+                continue
+            external_documents.extend(extracted[0][:1])
+            external_citations.extend(extracted[1][:1])
+
+        if not external_documents:
+            raise TargetWorkflowFailure("workflow_external_evidence_extraction_failed")
+        if len(external_documents) < external_slots:
+            run.metadata["degraded_reasons"] = ["degraded_external_unavailable"]
+
+        documents.extend(external_documents)
+        citations.extend(external_citations)
+        run.documents = documents
+        run.citations = citations
+        run.metadata["targeted_research"] = {
+            "requirement_count": len(plan.requirements),
+            "target_document_count": len(documents) - len(external_documents),
+            "external_document_count": len(external_documents),
+            "external_candidate_limit": len(plan.external_candidates),
+            "page_budget": max_research_pages,
+        }
+        run.summary_sections = [
+            SummarySection(
+                heading="Targeted Research",
+                body=(
+                    f"Saved one usable artifact for each of {len(plan.requirements)} "
+                    f"target requirements and {len(external_documents)} independent "
+                    "external source(s)."
+                ),
+                citation_ids=[document.id for document in documents[:4]],
+            )
+        ]
+        self._report(3, 4, "Generating targeted research report...")
+        pack_dir = self._paths.research_dir / "packs" / _slug_from_url(topic)
+        self._finalize_run(
+            run,
+            title=f"Research Pack: {topic}",
+            report_name="SUMMARY.md",
+            current_dir=pack_dir,
+        )
+        return run
 
     async def _discover_official_docs_url(
         self, topic: str, *, run: WorkflowResult
