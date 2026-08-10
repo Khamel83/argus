@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import json
 import os
 import re
 import shutil
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+from tld import get_fld
 
 from argus.corpus import (
     CorpusPaths,
@@ -43,6 +46,11 @@ _ARTIFACT_MEDIA_TYPES = {
     "report": "text/markdown; charset=utf-8",
     "manifest": "application/json; charset=utf-8",
 }
+# The extraction authority allows ten requests per root domain in a sixty-second
+# window.  Keep official same-domain capture conservatively below that bound
+# before composing artifacts; external research retains its caller-provided page
+# limit.
+_OFFICIAL_CAPTURE_PAGE_LIMIT = 8
 _COST_STATES = {"confirmed", "estimated", "uncertain", "unavailable"}
 _VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$")
 _REVISION_RE = re.compile(r"^[0-9a-fA-F]{40}$")
@@ -87,9 +95,22 @@ class WorkflowArtifactRangeError(WorkflowArtifactError):
 def _json_default(value: Any):
     if isinstance(value, datetime):
         return value.isoformat()
+    if isinstance(value, Mapping):
+        return dict(value)
     if hasattr(value, "value"):
         return value.value
     raise TypeError(f"Unsupported JSON value: {type(value)!r}")
+
+
+def _plain_json_value(value: Any) -> Any:
+    """Copy mapping/list containers into response-safe native containers."""
+    if isinstance(value, Mapping):
+        return {key: _plain_json_value(nested) for key, nested in value.items()}
+    if isinstance(value, list):
+        return [_plain_json_value(nested) for nested in value]
+    if isinstance(value, tuple):
+        return tuple(_plain_json_value(nested) for nested in value)
+    return value
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -112,8 +133,29 @@ def _slug_from_url(url: str) -> str:
 
 
 def _domain_root(hostname: str) -> str:
-    host = hostname.lower().lstrip("www.")
-    parts = [p for p in host.split(".") if p]
+    raw = str(hostname).strip().lower().rstrip(".")
+    if not raw:
+        return ""
+    try:
+        parsed = urlparse(raw if "://" in raw else f"//{raw}")
+        host = parsed.hostname or raw
+    except ValueError:
+        host = raw
+    host = host.strip().lower().rstrip(".")
+    if not host:
+        return ""
+    try:
+        ipaddress.ip_address(host)
+        return host
+    except ValueError:
+        pass
+    try:
+        registrable = get_fld(host, fix_protocol=True)
+    except Exception:
+        registrable = None
+    if isinstance(registrable, str) and registrable:
+        return registrable.lower().rstrip(".")
+    parts = [part for part in host.split(".") if part]
     if len(parts) <= 2:
         return host
     return ".".join(parts[-2:])
@@ -862,6 +904,9 @@ class WorkflowService:
         source_type: str,
         selection_urls: tuple[str, ...] | None = None,
         citation_start: int = 0,
+        required_urls: tuple[str, ...] | None = None,
+        allow_partial: bool | None = None,
+        minimum_artifacts: int | None = None,
     ) -> tuple[list[StoredDocument], list[CitationRef]]:
         """Build documents solely from the accepted composition projection."""
         composition_kwargs = {
@@ -871,6 +916,12 @@ class WorkflowService:
         }
         if selection_urls is not None:
             composition_kwargs["selection_urls"] = selection_urls
+        if required_urls is not None:
+            composition_kwargs["required_urls"] = required_urls
+        if allow_partial is not None:
+            composition_kwargs["allow_partial"] = allow_partial
+        if minimum_artifacts is not None:
+            composition_kwargs["minimum_artifacts"] = minimum_artifacts
         composed = await self._accepted_operations.compose_workflow(
             operation, **composition_kwargs
         )
@@ -888,8 +939,11 @@ class WorkflowService:
             "rejected_extraction_refs": list(
                 projection.get("rejected_extraction_refs", ())
             ),
-            "composition_trace": list(projection.get("composition_trace", ())),
-            "links": [dict(link) for link in projection.get("links", ())],
+            "composition_trace": [
+                _plain_json_value(trace)
+                for trace in projection.get("composition_trace", ())
+            ],
+            "links": [_plain_json_value(link) for link in projection.get("links", ())],
         }
         composition_records = run.metadata.setdefault("compositions", [])
         composition_records.append(composition_record)
@@ -1309,8 +1363,11 @@ class WorkflowService:
             section="official-docs",
             role="official_doc",
             source_type="official_docs",
-            soft_page_limit=50,
-            hard_page_limit=120,
+            soft_page_limit=_OFFICIAL_CAPTURE_PAGE_LIMIT,
+            hard_page_limit=_OFFICIAL_CAPTURE_PAGE_LIMIT,
+            required_urls=(),
+            allow_partial=True,
+            minimum_artifacts=1,
         )
         self._report(
             2,
@@ -1333,6 +1390,9 @@ class WorkflowService:
             citation_start=len(official_citations),
             soft_page_limit=max_research_pages,
             hard_page_limit=max_research_pages,
+            required_urls=(),
+            allow_partial=True,
+            minimum_artifacts=1,
         )
         self._report(
             3, 4, f"Captured {len(research_docs)} external pages, generating summary..."
@@ -1409,20 +1469,25 @@ class WorkflowService:
             run,
             query=f"{topic} documentation tutorial guide comparison best practices",
             mode="research",
-            max_results=max(limit * 2, 20),
+            max_results=min(max(limit * 2, 20), 50),
         )
         results = (operation.result or {}).get("results", ())
         urls: list[str] = []
         seen: set[str] = set()
+        domain_counts: dict[str, int] = {}
         for result in results:
             result_url = str(result["url"])
             normalized = _normal_url(result_url)
             if normalized in seen:
                 continue
             seen.add(normalized)
-            if _domain_root(urlparse(result_url).netloc) == official_root:
+            result_root = _domain_root(urlparse(result_url).netloc)
+            if result_root == official_root:
+                continue
+            if domain_counts.get(result_root, 0) >= 2:
                 continue
             urls.append(result_url)
+            domain_counts[result_root] = domain_counts.get(result_root, 0) + 1
             if len(urls) >= limit:
                 break
         return operation, urls
@@ -1437,6 +1502,9 @@ class WorkflowService:
         source_type: str,
         soft_page_limit: int,
         hard_page_limit: int,
+        required_urls: tuple[str, ...] | None = None,
+        allow_partial: bool | None = None,
+        minimum_artifacts: int | None = None,
     ) -> tuple[list[StoredDocument], list[CitationRef]]:
         retrieval, candidates = await self._discover_site_urls(
             url,
@@ -1453,6 +1521,9 @@ class WorkflowService:
             retrieval=retrieval,
             soft_page_limit=soft_page_limit,
             hard_page_limit=hard_page_limit,
+            required_urls=required_urls,
+            allow_partial=allow_partial,
+            minimum_artifacts=minimum_artifacts,
         )
 
     async def _capture_explicit_urls(
@@ -1467,6 +1538,9 @@ class WorkflowService:
         citation_start: int = 0,
         soft_page_limit: int | None = None,
         hard_page_limit: int | None = None,
+        required_urls: tuple[str, ...] | None = None,
+        allow_partial: bool | None = None,
+        minimum_artifacts: int | None = None,
     ) -> tuple[list[StoredDocument], list[CitationRef]]:
         documents: list[StoredDocument] = []
         citations: list[CitationRef] = []
@@ -1486,6 +1560,9 @@ class WorkflowService:
                 source_type=source_type,
                 selection_urls=tuple(bounded_urls),
                 citation_start=citation_start,
+                required_urls=required_urls,
+                allow_partial=allow_partial,
+                minimum_artifacts=minimum_artifacts,
             )
 
         for i, candidate_url in enumerate(bounded_urls):
@@ -1509,6 +1586,9 @@ class WorkflowService:
                 source_type=source_type,
                 selection_urls=(candidate_url,),
                 citation_start=citation_start + len(documents),
+                required_urls=required_urls,
+                allow_partial=allow_partial,
+                minimum_artifacts=minimum_artifacts,
             )
             documents.extend(captured)
             citations.extend(captured_citations)
