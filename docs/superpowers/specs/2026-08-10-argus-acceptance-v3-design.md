@@ -288,7 +288,12 @@ the remaining budget reaches zero, and global timeout persists
 `workflow_deadline_exceeded`. Cancellation is awaited before final state is
 written so no background accepted call continues after terminal timeout. The
 aware-UTC deadline is persisted with the run and restored on service reload;
-failed runs expose only incomplete safe status and never write report/manifest.
+the workflow is never silently restarted after process loss. A reloaded
+targeted run still marked `pending` or `running` with no live in-process task is
+atomically terminalized as `workflow_interrupted`, retains the original
+deadline/runtime/request evidence, starts no accepted operation, and writes no
+report/manifest. Other failed runs likewise expose only incomplete safe status
+and never write report/manifest.
 Targeted mode does not write the legacy single-official docs-cache alias.
 
 ### Legacy single-official mode
