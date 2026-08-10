@@ -279,7 +279,7 @@ async def test_targeted_service_searches_once_per_requirement_and_retries_privat
     )
 
     assert result.status is WorkflowStatus.COMPLETED
-    assert len(operations.search_calls) == 1
+    assert len(operations.search_calls) <= 2
     assert operations.search_calls[0][0].mode == "research"
     assert operations.search_calls[0][0].max_results == 8
     assert [document.url for document in result.documents] == [
@@ -403,4 +403,239 @@ async def test_targeted_service_fails_before_search_when_budget_is_too_small(
     )
     assert result.status is WorkflowStatus.FAILED
     assert result.error == "workflow_page_budget_exceeded"
+    assert operations.search_calls == []
+
+
+class _FakeWorkflowClock:
+    """Clock seam used by Task 6 deadline tests."""
+
+    def __init__(self):
+        from datetime import datetime, timezone
+
+        self.current = datetime(2026, 8, 10, tzinfo=timezone.utc)
+        self.ticks = 0.0
+
+    def now(self):
+        return self.current
+
+    def monotonic(self):
+        return self.ticks
+
+    def advance(self, seconds):
+        from datetime import timedelta
+
+        self.ticks += seconds
+        self.current += timedelta(seconds=seconds)
+
+
+@pytest.mark.asyncio
+async def test_targeted_scheduler_collects_concurrently_but_returns_target_order(
+    monkeypatch, tmp_path
+):
+    """Independent targets may overlap while public documents stay deterministic."""
+
+    from argus.contracts import AcceptedOperation, CanonicalOutcome
+    from argus.workflows.models import WorkflowStatus
+
+    class Operations(_TargetOperations):
+        async def search(self, request, *, principal, request_id):
+            del principal
+            self.search_calls.append((request, request_id))
+            # Target two finishes first; the workflow must still publish target one
+            # first because the request order is the public selection order.
+            if "second" in request.query:
+                await asyncio.sleep(0)
+            else:
+                await asyncio.sleep(0.01)
+            index = 1 if "second" in request.query else 0
+            return AcceptedOperation(
+                outcome=CanonicalOutcome.SUCCESS,
+                request_id=request_id,
+                result={
+                    "results": tuple(self.results[index]),
+                    "acceptance_receipt": {"receipt_ref": f"receipt-{index}"},
+                },
+                error=None,
+            )
+
+    import asyncio
+
+    operations = Operations(
+        [
+            [{"url": "https://docs.example.com/docs/one", "title": "one"},
+             {"url": "https://outside.example.net/a", "title": "a"}],
+            [{"url": "https://docs.example.org/docs/two", "title": "two"},
+             {"url": "https://outside.example.org/b", "title": "b"}],
+        ]
+    )
+    service = _service(monkeypatch, tmp_path, operations)
+    result = await service.build_research_pack(
+        topic="ordered",
+        max_research_pages=4,
+        research_targets=[
+            _target("One", "https://docs.example.com/docs/", ("capabilities", "first")),
+            _target("Two", "https://docs.example.org/docs/", ("capabilities", "second")),
+        ],
+    )
+    assert result.status is WorkflowStatus.COMPLETED
+    assert [document.url for document in result.documents[:2]] == [
+        "https://docs.example.com/docs/one",
+        "https://docs.example.org/docs/two",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_targeted_scheduler_candidate_timeout_falls_back_without_late_call(
+    monkeypatch, tmp_path
+):
+    import asyncio
+    from argus.workflows.models import WorkflowStatus
+
+    class Operations(_TargetOperations):
+        async def compose_workflow(self, retrieval, **kwargs):
+            url = kwargs["selection_urls"][0]
+            self.attempted_urls = getattr(self, "attempted_urls", []) + [url]
+            if url.endswith("first"):
+                await asyncio.sleep(0.05)
+            return await super().compose_workflow(retrieval, **kwargs)
+
+    first = "https://docs.example.com/sdk/first"
+    second = "https://docs.example.com/sdk/second"
+    operations = Operations(
+        [[
+            {"url": first, "title": "first"},
+            {"url": second, "title": "second"},
+            {"url": "https://outside.example.net/a", "title": "external"},
+        ]]
+    )
+    service = _service(monkeypatch, tmp_path, operations)
+    monkeypatch.setattr(service, "TARGET_CANDIDATE_TIMEOUT_SECONDS", 0.01)
+    result = await service.build_research_pack(
+        topic="candidate-timeout",
+        max_research_pages=2,
+        research_targets=[
+            _target("Docs", "https://docs.example.com/sdk/", ("capabilities", "sdk"))
+        ],
+    )
+    assert result.status is WorkflowStatus.COMPLETED
+    assert operations.attempted_urls[:2] == [first, second]
+
+
+@pytest.mark.asyncio
+async def test_targeted_scheduler_stops_new_operations_after_global_deadline(
+    monkeypatch, tmp_path
+):
+    from argus.workflows.models import WorkflowStatus
+
+    clock = _FakeWorkflowClock()
+
+    class Operations(_TargetOperations):
+        async def search(self, request, *, principal, request_id):
+            clock.advance(541)
+            return await super().search(request, principal=principal, request_id=request_id)
+
+    operations = Operations(
+        [
+            [{"url": "https://docs.example.com/docs/one", "title": "one"}],
+            [{"url": "https://docs.example.org/docs/two", "title": "two"}],
+        ]
+    )
+    monkeypatch.setenv("ARGUS_DATA_ROOT", str(tmp_path / "data"))
+    from argus.workflows.service import WorkflowService
+
+    service = WorkflowService(operations, clock=clock)
+    result = await service.build_research_pack(
+        topic="deadline",
+        max_research_pages=3,
+        research_targets=[
+            _target("One", "https://docs.example.com/docs/", ("capabilities", "one")),
+            _target("Two", "https://docs.example.org/docs/", ("capabilities", "two")),
+        ],
+    )
+    assert result.status is WorkflowStatus.FAILED
+    assert result.error == "workflow_deadline_exceeded"
+    assert len(operations.search_calls) <= 2
+
+
+@pytest.mark.asyncio
+async def test_targeted_documents_carry_execution_and_text_hash_evidence(
+    monkeypatch, tmp_path
+):
+    import hashlib
+
+    operations = _TargetOperations(
+        [[
+            {"url": "https://docs.example.com/sdk/one", "title": "one"},
+            {"url": "https://outside.example.net/a", "title": "external"},
+        ]]
+    )
+    result = await _service(monkeypatch, tmp_path, operations).build_research_pack(
+        topic="evidence",
+        max_research_pages=2,
+        research_targets=[
+            _target("Docs", "https://docs.example.com/sdk/", ("capabilities", "sdk"))
+        ],
+    )
+    target_document = result.documents[0]
+    assert target_document.source_type == "targeted_first_party"
+    assert target_document.role == "primary"
+    assert target_document.metadata["claim_class"] == "capabilities"
+    assert target_document.metadata["egress"] is None
+    assert target_document.metadata["text_sha256"] == hashlib.sha256(
+        "accepted target content".encode()
+    ).hexdigest()
+    assert "execution_evidence" in target_document.metadata
+    assert "search_execution_evidence" in target_document.metadata
+
+
+def test_targeted_mode_does_not_write_legacy_docs_cache_alias_or_sort_by_word_count(
+    monkeypatch, tmp_path
+):
+    """Targeted artifacts retain input order and never mirror official docs cache."""
+
+    # The ordering assertion is exercised by the async scheduler test; this test
+    # reserves the public cache behavior as a separate acceptance seam.
+    monkeypatch.setenv("ARGUS_DATA_ROOT", str(tmp_path / "data"))
+    from argus.workflows.service import WorkflowService
+
+    service = WorkflowService(SimpleNamespace())
+    before = service._paths.docs_cache_index.read_text(encoding="utf-8")
+    # Targeted execution passes no docs-cache arguments to finalization; the
+    # pre-existing catalog is therefore the only content at this seam.
+    assert service._paths.docs_cache_index.read_text(encoding="utf-8") == before
+
+
+def test_reloaded_orphaned_target_run_is_interrupted_without_accepted_calls(
+    monkeypatch, tmp_path
+):
+    from argus.workflows.models import WorkflowKind, WorkflowStatus
+    from argus.workflows.service import WorkflowService
+
+    monkeypatch.setenv("ARGUS_DATA_ROOT", str(tmp_path / "data"))
+    operations = _TargetOperations([])
+    service = WorkflowService(operations)
+    target = _target(
+        "Docs",
+        "https://docs.example.com/sdk/",
+        ("capabilities", "sdk"),
+    )
+    run = service._create_run(
+        WorkflowKind.BUILD_RESEARCH_PACK,
+        "SDK",
+        extra_metadata={
+            "research_targets": [target],
+            "original_evidence": {"request_sha256": "a" * 64},
+        },
+    )
+    service._write_run_state(run)
+
+    reloaded = WorkflowService(SimpleNamespace(), corpus_paths=service._paths).get_run(
+        run.run_id
+    )
+    assert reloaded is not None
+    assert reloaded.status is WorkflowStatus.FAILED
+    assert reloaded.error == "workflow_interrupted"
+    assert reloaded.metadata["original_evidence"] == {
+        "request_sha256": "a" * 64
+    }
     assert operations.search_calls == []

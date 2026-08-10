@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import asdict
@@ -41,6 +42,11 @@ from argus.workflows.targeted_research import (
     TargetCandidateFailure,
     TargetResearchPlan,
     TargetWorkflowFailure,
+    TARGET_CANDIDATE_COMPOSITION_TIMEOUT_SECONDS,
+    TARGET_EXTERNAL_REMAINDER_TIMEOUT_SECONDS,
+    TARGET_GLOBAL_CONCURRENCY,
+    TARGET_REQUIREMENT_SEARCH_TIMEOUT_SECONDS,
+    TARGET_WORKFLOW_DEADLINE_SECONDS,
     flatten_requirements,
     make_target_search_requests,
     page_budget_math,
@@ -57,7 +63,11 @@ _ARTIFACT_MEDIA_TYPES = {
 }
 _WORKFLOW_FAILURE_MARKER_SCHEMA = "argus.workflow-failure.v1"
 _WORKFLOW_FAILURE_MARKER_SUFFIX = ".failure.json"
-_SAFE_WORKFLOW_DEADLINE_SECONDS = 540
+_SAFE_WORKFLOW_DEADLINE_SECONDS = TARGET_WORKFLOW_DEADLINE_SECONDS
+_TARGET_SEARCH_TIMEOUT_SECONDS = TARGET_REQUIREMENT_SEARCH_TIMEOUT_SECONDS
+_TARGET_CANDIDATE_TIMEOUT_SECONDS = TARGET_CANDIDATE_COMPOSITION_TIMEOUT_SECONDS
+_TARGET_EXTERNAL_TIMEOUT_SECONDS = TARGET_EXTERNAL_REMAINDER_TIMEOUT_SECONDS
+_TARGET_GLOBAL_CONCURRENCY = TARGET_GLOBAL_CONCURRENCY
 # The extraction authority allows ten requests per root domain in a sixty-second
 # window.  Keep official same-domain capture conservatively below that bound
 # before composing artifacts; external research retains its caller-provided page
@@ -107,6 +117,18 @@ class WorkflowArtifactRangeError(WorkflowArtifactError):
 
 class WorkflowStartPersistenceError(RuntimeError):
     """A safe workflow start could not be durably recorded."""
+
+
+class _RealWorkflowClock:
+    """Small injectable clock seam shared by workflow persistence and deadlines."""
+
+    @staticmethod
+    def now() -> datetime:
+        return datetime.now(timezone.utc)
+
+    @staticmethod
+    def monotonic() -> float:
+        return time.monotonic()
 
 
 def _json_default(value: Any):
@@ -231,6 +253,14 @@ class WorkflowOperationFailure(RuntimeError):
 class WorkflowService:
     """Async workflow executor with in-memory run tracking."""
 
+    # Public names make the bounded execution contract easy to inspect and to
+    # shorten in hermetic tests without patching asyncio's global clock.
+    TARGET_SEARCH_TIMEOUT_SECONDS = _TARGET_SEARCH_TIMEOUT_SECONDS
+    TARGET_CANDIDATE_TIMEOUT_SECONDS = _TARGET_CANDIDATE_TIMEOUT_SECONDS
+    TARGET_EXTERNAL_TIMEOUT_SECONDS = _TARGET_EXTERNAL_TIMEOUT_SECONDS
+    TARGET_WORKFLOW_TIMEOUT_SECONDS = _SAFE_WORKFLOW_DEADLINE_SECONDS
+    TARGET_GLOBAL_CONCURRENCY = _TARGET_GLOBAL_CONCURRENCY
+
     # Kept as class attributes so callers can map typed failures without
     # importing the workflow implementation module.
     ArtifactNotFound = WorkflowArtifactNotFound
@@ -246,6 +276,8 @@ class WorkflowService:
         corpus_paths: CorpusPaths | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
         caller: str = "workflows",
+        clock: Any | None = None,
+        clock_provider: Any | None = None,
     ):
         self._accepted_operations = accepted_operations
         self._paths = corpus_paths or get_corpus_paths()
@@ -253,6 +285,13 @@ class WorkflowService:
         self._tasks: dict[str, asyncio.Task] = {}
         self._progress = progress_callback
         self._caller = caller or "workflows"
+        self._clock = clock_provider or clock or _RealWorkflowClock()
+        # The global semaphore is shared by all runs owned by this service.  A
+        # target lock is scoped to a run, so independent targets may overlap
+        # while a single target can never have two accepted calls in flight.
+        self._target_global_semaphore = asyncio.Semaphore(self.TARGET_GLOBAL_CONCURRENCY)
+        self._target_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        self._operation_tasks: dict[str, set[asyncio.Task]] = {}
 
     def _report(self, current: int, total: int, message: str) -> None:
         if self._progress:
@@ -260,6 +299,202 @@ class WorkflowService:
                 self._progress(current, total, message)
             except Exception:
                 pass
+
+    def _clock_now(self) -> datetime:
+        """Return an aware UTC timestamp from the injected clock."""
+        provider = self._clock
+        value = getattr(provider, "now", None)
+        if callable(value):
+            value = value()
+        elif getattr(provider, "utc_now", None) is not None:
+            value = getattr(provider, "utc_now")
+            if callable(value):
+                value = value()
+        else:
+            value = datetime.now(timezone.utc)
+        if not isinstance(value, datetime):
+            value = datetime.now(timezone.utc)
+        if value.tzinfo is None or value.utcoffset() is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    def _clock_monotonic(self) -> float:
+        provider = self._clock
+        value = getattr(provider, "monotonic", None)
+        try:
+            value = value() if callable(value) else float(value)
+            return float(value)
+        except (TypeError, ValueError):
+            return time.monotonic()
+
+    @staticmethod
+    def _is_targeted_run(run: WorkflowResult) -> bool:
+        targets = run.metadata.get("research_targets")
+        if isinstance(targets, (list, tuple)) and bool(targets):
+            return True
+        plan = run.metadata.get("research_plan")
+        return isinstance(plan, Mapping) and bool(plan.get("targets"))
+
+    def _ensure_target_deadline(self, run: WorkflowResult) -> None:
+        """Create/preserve the persisted aware-UTC deadline for targeted runs."""
+        if not self._is_targeted_run(run):
+            return
+        raw = run.metadata.get("deadline_at")
+        deadline = _parse_dt(raw)
+        if deadline is None or deadline.tzinfo is None or deadline.utcoffset() is None:
+            deadline = self._clock_now() + timedelta(
+                seconds=float(self.TARGET_WORKFLOW_TIMEOUT_SECONDS)
+            )
+            run.metadata["deadline_at"] = deadline.astimezone(timezone.utc).isoformat()
+            run.metadata["deadline"] = run.metadata["deadline_at"]
+        else:
+            deadline = deadline.astimezone(timezone.utc)
+            run.metadata["deadline_at"] = deadline.isoformat()
+            run.metadata.setdefault("deadline", run.metadata["deadline_at"])
+        anchor = run.metadata.get("_deadline_monotonic")
+        if not isinstance(anchor, (int, float)):
+            remaining = max(0.0, (deadline - self._clock_now()).total_seconds())
+            run.metadata["_deadline_monotonic"] = self._clock_monotonic() + remaining
+
+    def _remaining_workflow_seconds(self, run: WorkflowResult) -> float:
+        self._ensure_target_deadline(run)
+        anchor = run.metadata.get("_deadline_monotonic")
+        if isinstance(anchor, (int, float)):
+            monotonic_remaining = float(anchor) - self._clock_monotonic()
+        else:
+            deadline = _parse_dt(run.metadata.get("deadline_at"))
+            monotonic_remaining = (
+                (deadline.astimezone(timezone.utc) - self._clock_now()).total_seconds()
+                if deadline is not None and deadline.tzinfo is not None
+                else float(self.TARGET_WORKFLOW_TIMEOUT_SECONDS)
+            )
+        # Wall-clock comparison is the restart-safe source of truth.  During a
+        # live run, taking the minimum also makes a clock that jumps forward
+        # fail closed instead of granting extra execution time.
+        deadline = _parse_dt(run.metadata.get("deadline_at"))
+        if deadline is not None and deadline.tzinfo is not None:
+            wall_remaining = (
+                deadline.astimezone(timezone.utc) - self._clock_now()
+            ).total_seconds()
+            return min(monotonic_remaining, wall_remaining)
+        return monotonic_remaining
+
+    def _check_target_budget(self, run: WorkflowResult) -> float:
+        remaining = self._remaining_workflow_seconds(run)
+        if remaining <= 0:
+            run.metadata.setdefault("timeout_source", "workflow_deadline")
+            raise TargetWorkflowFailure("workflow_deadline_exceeded")
+        return remaining
+
+    @staticmethod
+    def _record_target_timeout(run: WorkflowResult, source: str) -> None:
+        run.metadata.setdefault("target_timeout_events", []).append(
+            {"source": source, "at": run.metadata.get("deadline_at")}
+        )
+
+    def _operation_task_set(self, run_id: str) -> set[asyncio.Task]:
+        return self._operation_tasks.setdefault(run_id, set())
+
+    async def _cancel_outstanding_operations(self, run_id: str) -> None:
+        tasks = list(self._operation_tasks.get(run_id, ()))
+        if not tasks:
+            self._operation_tasks.pop(run_id, None)
+            return
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._operation_tasks.pop(run_id, None)
+
+    async def _invoke_target_operation(
+        self,
+        run: WorkflowResult,
+        *,
+        target_key: str,
+        operation_factory,
+        timeout_seconds: float,
+        timeout_code: str,
+        deadline_marker: str | None = None,
+    ):
+        """Run one accepted call under target/global locks and remaining budget."""
+        remaining = self._check_target_budget(run)
+        if deadline_marker:
+            marker = run.metadata.get(deadline_marker)
+            if not isinstance(marker, (int, float)):
+                marker = self._clock_monotonic() + min(
+                    remaining, float(timeout_seconds)
+                )
+                run.metadata[deadline_marker] = marker
+            remaining = min(remaining, float(marker) - self._clock_monotonic())
+            if remaining <= 0:
+                raise TargetWorkflowFailure("workflow_deadline_exceeded")
+        timeout = min(float(timeout_seconds), remaining)
+        lock = self._target_locks.setdefault((run.run_id, target_key), asyncio.Lock())
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=timeout)
+        except asyncio.TimeoutError as exc:
+            if self._remaining_workflow_seconds(run) <= 0:
+                raise TargetWorkflowFailure("workflow_deadline_exceeded") from exc
+            self._record_target_timeout(run, timeout_code)
+            raise TargetWorkflowFailure(timeout_code) from exc
+        try:
+            remaining = self._check_target_budget(run)
+            timeout = min(float(timeout_seconds), remaining)
+            if deadline_marker:
+                marker = run.metadata.get(deadline_marker)
+                if isinstance(marker, (int, float)):
+                    timeout = min(timeout, float(marker) - self._clock_monotonic())
+            if timeout <= 0:
+                raise TargetWorkflowFailure("workflow_deadline_exceeded")
+            async with self._target_global_semaphore:
+                remaining = self._check_target_budget(run)
+                timeout = min(timeout, remaining)
+                if timeout <= 0:
+                    raise TargetWorkflowFailure("workflow_deadline_exceeded")
+                operation_started = self._clock_monotonic()
+                operation_started_at = self._clock_now()
+                task = asyncio.create_task(operation_factory())
+                self._operation_task_set(run.run_id).add(task)
+                try:
+                    result = await asyncio.wait_for(task, timeout=timeout)
+                except asyncio.TimeoutError as exc:
+                    # wait_for waits for cancellation of the wrapped task, but
+                    # gather again to make the cancellation proof explicit.
+                    if not task.done():
+                        task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                    if self._remaining_workflow_seconds(run) <= 0:
+                        raise TargetWorkflowFailure(
+                            "workflow_deadline_exceeded"
+                        ) from exc
+                    self._record_target_timeout(run, timeout_code)
+                    raise TargetWorkflowFailure(timeout_code) from exc
+                except asyncio.CancelledError:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                    raise
+                finally:
+                    self._operation_task_set(run.run_id).discard(task)
+                operation_elapsed = max(
+                    self._clock_monotonic() - operation_started,
+                    (self._clock_now() - operation_started_at).total_seconds(),
+                )
+                if operation_elapsed >= float(timeout_seconds):
+                    if self._remaining_workflow_seconds(run) <= 0:
+                        raise TargetWorkflowFailure("workflow_deadline_exceeded")
+                    self._record_target_timeout(run, timeout_code)
+                    raise TargetWorkflowFailure(timeout_code)
+                if self._remaining_workflow_seconds(run) <= 0:
+                    raise TargetWorkflowFailure("workflow_deadline_exceeded")
+                if deadline_marker:
+                    marker = run.metadata.get(deadline_marker)
+                    if isinstance(marker, (int, float)) and (
+                        marker - self._clock_monotonic() <= 0
+                    ):
+                        raise TargetWorkflowFailure("workflow_deadline_exceeded")
+                return result
+        finally:
+            lock.release()
 
     async def _operation_search(
         self,
@@ -838,7 +1073,7 @@ class WorkflowService:
 
         run.status = WorkflowStatus.FAILED
         run.error = "workflow_interrupted"
-        run.finished_at = datetime.now(timezone.utc)
+        run.finished_at = self._clock_now()
         # An interrupted run has no accepted closure.  Never expose or create
         # report/manifest artifacts while recovering the durable state.
         run.report_path = None
@@ -1007,10 +1242,13 @@ class WorkflowService:
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=timezone.utc)
             run.created_at = created_at
-        deadline = created_at + timedelta(seconds=_SAFE_WORKFLOW_DEADLINE_SECONDS)
+        deadline = created_at + timedelta(seconds=self.TARGET_WORKFLOW_TIMEOUT_SECONDS)
         run.status_url = f"/api/workflows/{run.run_id}/status"
         run.metadata["deadline_at"] = deadline.astimezone(timezone.utc).isoformat()
         run.metadata["deadline"] = run.metadata["deadline_at"]
+        run.metadata["_deadline_monotonic"] = self._clock_monotonic() + float(
+            self.TARGET_WORKFLOW_TIMEOUT_SECONDS
+        )
         run.metadata["runtime"] = sanitized_runtime
         # The alias makes the immutable start identity explicit to readers while
         # retaining the existing runtime metadata contract used by manifests.
@@ -1023,7 +1261,7 @@ class WorkflowService:
         except Exception:
             run.status = WorkflowStatus.FAILED
             run.error = "WorkflowStatePersistenceError"
-            run.finished_at = datetime.now(timezone.utc)
+            run.finished_at = self._clock_now()
             run.metadata["failure"] = {
                 "code": "WorkflowStatePersistenceError",
                 "reason": "initial_pending_state_write_failed",
@@ -1300,25 +1538,87 @@ class WorkflowService:
         citations: list[CitationRef] = []
         output_dir = Path(run.snapshot_dir) / section
         output_dir.mkdir(parents=True, exist_ok=True)
+        retrieval_projection = operation.result if isinstance(operation.result, Mapping) else {}
+        retrieval_execution_evidence = retrieval_projection.get("execution_evidence")
+        if not isinstance(retrieval_execution_evidence, Mapping):
+            retrieval_execution_evidence = {}
         for ordinal, artifact in enumerate(
             projection["artifacts"],
             start=citation_start + 1,
         ):
+            artifact_text = str(artifact.get("text", ""))
+            execution_evidence = artifact.get("execution_evidence")
+            if not isinstance(execution_evidence, Mapping):
+                execution_evidence = {}
+            execution_diagnostics = artifact.get("execution_diagnostics")
+            if not isinstance(execution_diagnostics, (list, tuple)):
+                execution_diagnostics = execution_evidence.get(
+                    "execution_diagnostics",
+                    execution_evidence.get("diagnostics", ()),
+                )
+            retrieval_timestamp = artifact.get("retrieved_at") or artifact.get(
+                "retrieval_timestamp"
+            )
+            text_sha256 = artifact.get("text_sha256") or hashlib.sha256(
+                artifact_text.encode("utf-8")
+            ).hexdigest()
+            artifact_metadata = {
+                "artifact_disposition": artifact["disposition"],
+                "lead_text": _lead_text(artifact_text),
+                "provider": artifact.get("provider"),
+                "retrieval_provider": artifact.get("retrieval_provider"),
+                "retrieval_egress": artifact.get("retrieval_egress"),
+                "retrieval_machine": artifact.get("retrieval_machine"),
+                "retrieval_source_type": artifact.get("retrieval_source_type"),
+                "extractor": artifact.get("extractor"),
+                "egress": artifact.get("egress"),
+                "machine": artifact.get("machine"),
+                "source_type": artifact.get("source_type") or source_type,
+                "retrieved_at": retrieval_timestamp,
+                "retrieval_timestamp": retrieval_timestamp,
+                "source_date": artifact.get("source_date"),
+                "text_sha256": text_sha256,
+                "source_text_sha256": artifact.get("source_text_sha256", text_sha256),
+                "result_count": artifact.get("result_count", 1),
+                "execution_evidence": _plain_json_value(execution_evidence),
+                "search_execution_evidence": _plain_json_value(
+                    retrieval_execution_evidence
+                ),
+                "execution_diagnostics": _plain_json_value(execution_diagnostics),
+                "timeout_source": artifact.get(
+                    "timeout_source", execution_evidence.get("timeout_source")
+                ),
+                "operation_latency_ms": artifact.get(
+                    "operation_latency_ms", execution_evidence.get("operation_latency_ms")
+                ),
+                "cache_latency_ms": artifact.get(
+                    "cache_latency_ms", execution_evidence.get("cache_latency_ms")
+                ),
+                "cache_state": artifact.get("cache_state"),
+                "cache_age": artifact.get("cache_age"),
+                "cache_origin": artifact.get("cache_origin"),
+                "spend_provenance": _plain_json_value(
+                    artifact.get("spend_provenance")
+                ),
+                "freshness_age": artifact.get("freshness_age"),
+                "freshness_window": artifact.get("freshness_window"),
+                "freshness_reason": artifact.get("freshness_reason"),
+                "free_profile_eligible": artifact.get("free_profile_eligible"),
+            }
             document = self._store_document(
                 output_dir,
                 citation_id=f"S{ordinal}",
                 url=artifact["url"],
                 title=artifact["title"],
-                text=artifact["text"],
+                text=artifact_text,
                 word_count=artifact["word_count"],
                 domain=urlparse(artifact["url"]).netloc.lower().lstrip("www."),
                 role=role,
                 source_type=source_type,
                 extractor=artifact["extractor"],
-                metadata={
-                    "artifact_disposition": artifact["disposition"],
-                    "lead_text": _lead_text(artifact["text"]),
-                },
+                egress=artifact.get("egress"),
+                machine=artifact.get("machine"),
+                metadata=artifact_metadata,
             )
             documents.append(document)
             citations.append(
@@ -1456,10 +1756,13 @@ class WorkflowService:
             kind=kind,
             status=WorkflowStatus.PENDING,
             target=target,
+            created_at=self._clock_now(),
             status_url=f"/api/workflows/{run_id}",
             snapshot_dir=str(snapshot_dir),
             metadata=metadata,
         )
+        if self._is_targeted_run(run):
+            self._ensure_target_deadline(run)
         self._runs[run_id] = run
         return run
 
@@ -1483,7 +1786,9 @@ class WorkflowService:
     async def _execute_run(self, run_id: str, handler, **kwargs) -> WorkflowResult:
         run = self._runs[run_id]
         run.status = WorkflowStatus.RUNNING
-        run.started_at = datetime.now(timezone.utc)
+        run.started_at = self._clock_now()
+        self._ensure_target_deadline(run)
+        self._operation_task_set(run_id)
         running_state_persisted = False
         try:
             self._write_run_state(run)
@@ -1502,6 +1807,23 @@ class WorkflowService:
                 "reason": "targeted_research_failure",
             }
             self._hide_target_composition_diagnostics(run)
+            self._rewrite_failed_artifacts(run)
+        except asyncio.CancelledError:
+            # A caller cancellation is terminal for a targeted workflow as
+            # well.  Do not let a child accepted call outlive its terminal
+            # state write, and preserve the stable deadline code when the
+            # scheduler was cancelled at the workflow boundary.
+            await self._cancel_outstanding_operations(run_id)
+            run.status = WorkflowStatus.FAILED
+            run.error = (
+                "workflow_deadline_exceeded"
+                if self._is_targeted_run(run)
+                else "workflow_cancelled"
+            )
+            run.metadata["failure"] = {
+                "code": run.error,
+                "reason": "workflow_task_cancelled",
+            }
             self._rewrite_failed_artifacts(run)
         except WorkflowOperationFailure as exc:
             logger.warning(
@@ -1537,8 +1859,12 @@ class WorkflowService:
             run.status = WorkflowStatus.FAILED
             self._rewrite_failed_artifacts(run)
         finally:
+            # Await every in-flight accepted task before making the terminal
+            # state durable.  This is the cancellation proof for global and
+            # phase timeout paths.
+            await self._cancel_outstanding_operations(run_id)
             if run.finished_at is None:
-                run.finished_at = datetime.now(timezone.utc)
+                run.finished_at = self._clock_now()
             terminal_state_persisted = False
             try:
                 self._write_run_state(run)
@@ -1873,8 +2199,10 @@ class WorkflowService:
                 operation,
                 max_results=1,
                 section="targeted-research",
-                role="target_research" if required else "external_research",
-                source_type="targeted_research" if required else "external_research",
+                role="primary" if required else "external_research",
+                source_type=(
+                    "targeted_first_party" if required else "external_research"
+                ),
                 selection_urls=(candidate_url,),
                 required_urls=(candidate_url,),
                 allow_partial=False,
@@ -1909,83 +2237,156 @@ class WorkflowService:
         free_only: bool | None,
         research_targets: list[Mapping[str, Any]],
     ) -> WorkflowResult:
-        """Execute a deterministic target-first research pack.
-
-        Task 6 owns overall deadline/concurrency.  This implementation is
-        intentionally sequential: each accepted requirement search is followed
-        by bounded candidate retries, then one mandatory/optional external pass.
-        """
+        """Execute a target-first pack with bounded concurrent target lanes."""
 
         effective_free_only = bool(free_only)
         run.metadata["free_only"] = effective_free_only
         run.metadata["research_targets"] = _plain_json_value(research_targets)
+        self._ensure_target_deadline(run)
         requirements = flatten_requirements(research_targets)
         # Validate the page budget before any accepted search is attempted.
         page_budget_math(len(requirements), max_research_pages)
-
-        self._report(0, 4, "Searching receipt-bound target requirements...")
+        caller = str(run.metadata.get("caller_label") or self._caller)
         search_requests = make_target_search_requests(
             research_targets,
             free_only=effective_free_only,
-            caller=str(run.metadata.get("caller_label") or self._caller),
+            caller=caller,
         )
-        accepted_searches: list[Any] = []
-        for request in search_requests:
-            try:
-                operation = await self._operation_search(
+
+        self._report(0, 4, "Searching receipt-bound target requirements...")
+        accepted_searches: list[Any | None] = [None] * len(search_requests)
+        grouped: dict[int, list[tuple[int, Any]]] = {}
+        for index, request in enumerate(search_requests):
+            requirement = requirements[index]
+            grouped.setdefault(requirement.target_index, []).append((index, request))
+
+        async def search_target(target_index: int, requests: list[tuple[int, Any]]):
+            for index, request in requests:
+                accepted_searches[index] = await self._invoke_target_operation(
                     run,
-                    query=request.query,
-                    mode="research",
-                    max_results=8,
-                    request_id=request.request_id,
+                    target_key=f"target-{target_index}",
+                    timeout_seconds=self.TARGET_SEARCH_TIMEOUT_SECONDS,
+                    timeout_code="workflow_required_target_search_timeout",
+                    operation_factory=lambda request=request: self._operation_search(
+                        run,
+                        query=request.query,
+                        mode="research",
+                        max_results=8,
+                        request_id=request.request_id,
+                    ),
                 )
-            except (asyncio.TimeoutError, TimeoutError) as exc:
-                raise TargetWorkflowFailure(
-                    "workflow_required_target_search_timeout",
-                    requirement_ref=request.requirement_ref,
-                ) from exc
-            accepted_searches.append(operation)
+
+        search_tasks = [
+            asyncio.create_task(search_target(target_index, requests))
+            for target_index, requests in grouped.items()
+        ]
+        try:
+            if search_tasks:
+                await asyncio.gather(*search_tasks)
+        except BaseException:
+            for task in search_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*search_tasks, return_exceptions=True)
+            raise
+        if any(operation is None for operation in accepted_searches):
+            raise TargetWorkflowFailure("workflow_required_target_unready")
 
         plan: TargetResearchPlan = plan_target_research(
             research_targets,
             accepted_searches,
             max_research_pages=max_research_pages,
             free_only=effective_free_only,
-            caller=str(run.metadata.get("caller_label") or self._caller),
+            caller=caller,
         )
+        run.metadata["targeted_research"] = {
+            "requirement_count": len(plan.requirements),
+            "target_candidate_attempts": 0,
+            "external_candidate_limit": len(plan.external_candidates),
+            "page_budget": max_research_pages,
+        }
         self._report(1, 4, "Extracting required target artifacts...")
+
+        requirement_documents: dict[int, tuple[list[StoredDocument], list[CitationRef]]] = {}
+        target_groups: dict[int, list[tuple[int, Any]]] = {}
+        for selection_index, selection in enumerate(plan.requirements):
+            target_groups.setdefault(selection.requirement.target_index, []).append(
+                (selection_index, selection)
+            )
+
+        async def compose_target(
+            target_index: int,
+            selections: list[tuple[int, Any]],
+        ):
+            for selection_index, selection in selections:
+                usable: tuple[list[StoredDocument], list[CitationRef]] | None = None
+                for candidate in selection.candidates:
+                    run.metadata["targeted_research"]["target_candidate_attempts"] += 1
+                    try:
+                        usable = await self._invoke_target_operation(
+                            run,
+                            target_key=f"target-{target_index}",
+                            timeout_seconds=self.TARGET_CANDIDATE_TIMEOUT_SECONDS,
+                            timeout_code="target_candidate_timeout",
+                            operation_factory=lambda selection=selection, candidate=candidate, selection_index=selection_index: self._compose_target_candidate(
+                                run,
+                                accepted_searches[selection.search_index],
+                                candidate_url=candidate.url,
+                                request_id=selection.request_id,
+                                citation_start=selection_index,
+                                required=True,
+                            ),
+                        )
+                    except TargetCandidateFailure:
+                        continue
+                    except TargetWorkflowFailure as exc:
+                        if exc.code == "target_candidate_timeout":
+                            continue
+                        raise
+                    if usable is not None:
+                        break
+                if usable is None:
+                    raise TargetWorkflowFailure(
+                        "workflow_required_target_extraction_failed",
+                        requirement_ref=selection.requirement_ref,
+                    )
+                docs, cits = usable
+                for document in docs[:1]:
+                    document.metadata.update(
+                        {
+                            "target_name": selection.requirement.target_name,
+                            "claim_class": selection.requirement.claim_class,
+                            "requirement_ref": selection.requirement_ref,
+                            "target_index": selection.requirement.target_index,
+                            "requirement_index": selection.requirement.requirement_index,
+                        }
+                    )
+                requirement_documents[selection_index] = (docs[:1], cits[:1])
+
+        composition_tasks = [
+            asyncio.create_task(compose_target(target_index, selections))
+            for target_index, selections in target_groups.items()
+        ]
+        try:
+            if composition_tasks:
+                await asyncio.gather(*composition_tasks)
+        except BaseException:
+            for task in composition_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*composition_tasks, return_exceptions=True)
+            raise
+
         documents: list[StoredDocument] = []
         citations: list[CitationRef] = []
-        for selection in plan.requirements:
-            usable: tuple[list[StoredDocument], list[CitationRef]] | None = None
-            for candidate in selection.candidates:
-                try:
-                    usable = await self._compose_target_candidate(
-                        run,
-                        accepted_searches[selection.search_index],
-                        candidate_url=candidate.url,
-                        request_id=selection.request_id,
-                        citation_start=len(documents),
-                        required=True,
-                    )
-                    break
-                except TargetCandidateFailure:
-                    continue
-            if usable is None:
-                raise TargetWorkflowFailure(
-                    "workflow_required_target_extraction_failed",
-                    requirement_ref=selection.requirement_ref,
-                )
-            target_documents, target_citations = usable
-            documents.extend(target_documents[:1])
-            citations.extend(target_citations[:1])
+        for selection_index in range(len(plan.requirements)):
+            target_documents, target_citations = requirement_documents[selection_index]
+            documents.extend(target_documents)
+            citations.extend(target_citations)
 
         self._report(2, 4, "Extracting independent external evidence...")
         external_documents: list[StoredDocument] = []
         external_citations: list[CitationRef] = []
-        # The planner returns up to four candidates.  At most one mandatory and
-        # one optional external artifact are published, while retries remain
-        # bounded by that four-candidate selection.
         external_slots = min(2, plan.page_math.external_page_slots)
         for candidate in plan.external_candidates:
             if len(external_documents) >= external_slots:
@@ -2001,18 +2402,38 @@ class WorkflowService:
                         if isinstance(item, Mapping)
                     )
                 )
-                extracted = await self._compose_target_candidate(
+                extracted = await self._invoke_target_operation(
                     run,
-                    accepted_searches[operation_index],
-                    candidate_url=candidate.url,
-                    request_id=f"{candidate.requirement_ref}-{len(external_documents)}",
-                    citation_start=len(documents) + len(external_documents),
-                    required=len(external_documents) == 0,
+                    target_key="external",
+                    timeout_seconds=self.TARGET_EXTERNAL_TIMEOUT_SECONDS,
+                    timeout_code="external_remainder_timeout",
+                    deadline_marker="_target_external_deadline_monotonic",
+                    operation_factory=lambda candidate=candidate, operation_index=operation_index: self._compose_target_candidate(
+                        run,
+                        accepted_searches[operation_index],
+                        candidate_url=candidate.url,
+                        request_id=f"{candidate.requirement_ref}-{len(external_documents)}",
+                        citation_start=len(documents) + len(external_documents),
+                        required=len(external_documents) == 0,
+                    ),
                 )
             except TargetCandidateFailure:
                 continue
-            external_documents.extend(extracted[0][:1])
-            external_citations.extend(extracted[1][:1])
+            except TargetWorkflowFailure as exc:
+                if exc.code == "external_remainder_timeout":
+                    break
+                raise
+            external_docs, external_cits = extracted
+            for document in external_docs[:1]:
+                document.metadata.update(
+                    {
+                        "target_name": None,
+                        "claim_class": "external-secondary",
+                        "requirement_ref": candidate.requirement_ref,
+                    }
+                )
+            external_documents.extend(external_docs[:1])
+            external_citations.extend(external_cits[:1])
 
         if not external_documents:
             raise TargetWorkflowFailure("workflow_external_evidence_extraction_failed")
@@ -2023,13 +2444,12 @@ class WorkflowService:
         citations.extend(external_citations)
         run.documents = documents
         run.citations = citations
-        run.metadata["targeted_research"] = {
-            "requirement_count": len(plan.requirements),
-            "target_document_count": len(documents) - len(external_documents),
-            "external_document_count": len(external_documents),
-            "external_candidate_limit": len(plan.external_candidates),
-            "page_budget": max_research_pages,
-        }
+        run.metadata["targeted_research"].update(
+            {
+                "target_document_count": len(documents) - len(external_documents),
+                "external_document_count": len(external_documents),
+            }
+        )
         run.summary_sections = [
             SummarySection(
                 heading="Targeted Research",
@@ -2042,6 +2462,7 @@ class WorkflowService:
             )
         ]
         self._report(3, 4, "Generating targeted research report...")
+        self._check_target_budget(run)
         pack_dir = self._paths.research_dir / "packs" / _slug_from_url(topic)
         self._finalize_run(
             run,
@@ -2308,7 +2729,7 @@ class WorkflowService:
         # before rendering either one so their serialized status/timestamp
         # cannot lag the durable run state.
         run.status = WorkflowStatus.COMPLETED
-        run.finished_at = datetime.now(timezone.utc)
+        run.finished_at = self._clock_now()
         report_path = Path(run.snapshot_dir) / report_name
         manifest_path = Path(run.snapshot_dir) / "manifest.json"
         report_content = self._render_report(title, run)
@@ -2438,7 +2859,7 @@ class WorkflowService:
     def _update_docs_cache_index(self, slug: str, source_url: str, path: Path) -> None:
         index_path = self._paths.docs_cache_index
         existing = index_path.read_text(encoding="utf-8").splitlines()
-        row = f"| {slug} | {source_url} | {datetime.now(tz=None).date().isoformat()} | {path} |"
+        row = f"| {slug} | {source_url} | {self._clock_now().date().isoformat()} | {path} |"
         filtered = [line for line in existing if not line.startswith(f"| {slug} |")]
         filtered.append(row)
         index_path.write_text("\n".join(filtered) + "\n", encoding="utf-8")
@@ -2597,7 +3018,7 @@ class WorkflowService:
             status=WorkflowStatus(payload["status"]),
             target=payload["target"],
             created_at=_parse_dt(payload.get("created_at"))
-            or datetime.now(timezone.utc),
+            or self._clock_now(),
             started_at=_parse_dt(payload.get("started_at")),
             finished_at=_parse_dt(payload.get("finished_at")),
             status_url=payload.get("status_url"),
