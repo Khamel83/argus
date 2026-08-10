@@ -213,6 +213,42 @@ async def test_real_authority_hashes_frozen_retrieval_and_returns_full_projectio
 
 
 @pytest.mark.asyncio
+async def test_workflow_composition_propagates_free_only_to_extraction(
+    tmp_path,
+):
+    from tests.test_extraction_composition import _link
+
+    link = _link()
+    service, repository = _real_authority(tmp_path, [link])
+    retrieval = _accepted_retrieval(
+        repository,
+        ({"url": "https://example.com/1", "title": "Article"},),
+    )
+    service.extract = AsyncMock(
+        return_value=AcceptedOperation(
+            outcome=CanonicalOutcome.SUCCESS,
+            request_id="workflow-extract",
+            result={
+                "extraction_run_id": link.accepted_outcome.extraction_run_id,
+            },
+            error=None,
+        )
+    )
+
+    composed = await service.compose_workflow(
+        retrieval,
+        max_results=1,
+        free_only=True,
+        principal="workflow-test",
+        request_id="compose-free",
+    )
+
+    assert composed.outcome is CanonicalOutcome.SUCCESS
+    extraction_request = service.extract.await_args.args[0]
+    assert extraction_request.free_only is True
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("links", "kwargs", "expected"),
     (

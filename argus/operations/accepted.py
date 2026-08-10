@@ -488,14 +488,25 @@ def _extraction_execution_evidence(result) -> dict[str, object]:
             successful=frozenset({"success", "content", "cache"}),
             allowed=allowed_extraction_statuses,
         )
-        attempts.append(
-            {
-                "extractor": attempt.extractor,
-                "status": status,
-                "reason_code": reason_code,
-                "latency_ms": attempt.latency_ms,
-            }
-        )
+        if status == "policy_skipped":
+            bounded_reason = attempt.failure_summary
+            if bounded_reason in {
+                "free_only",
+                "jina_disabled",
+                "caller_tier_cap",
+                "provider_unavailable",
+                "policy_skipped",
+            }:
+                reason_code = bounded_reason
+        attempt_projection = {
+            "extractor": attempt.extractor,
+            "status": status,
+            "reason_code": reason_code,
+            "latency_ms": attempt.latency_ms,
+        }
+        if status == "policy_skipped" or attempt.extractor == "cache":
+            attempt_projection["attempted"] = False
+        attempts.append(attempt_projection)
     component_timing = (
         _available(
             sum(attempt.latency_ms for attempt in result.attempts),
@@ -610,7 +621,13 @@ def _extraction_execution_evidence(result) -> dict[str, object]:
             "wall_ms": wall_timing,
         },
         "cache": {
-            "status": "hit" if result.cache_hit else "miss",
+            "status": (
+                "hit"
+                if result.cache_hit
+                else "ineligible"
+                if cache_decision == "hit_ineligible"
+                else "miss"
+            ),
             "source": "cache_hit",
             "decision": cache_decision,
             "age_ms": cache_age,
@@ -988,7 +1005,7 @@ class AcceptedOperationService:
                 _SITE_ACQUISITION_SEARCH_RESULT_LIMIT,
             ),
             providers=None,
-            free_only=False,
+            free_only=getattr(request, "free_only", False),
             caller=request.caller,
             session_id=None,
             include_attribution=False,
@@ -1333,6 +1350,11 @@ class AcceptedOperationService:
                 "repository": self._repository_provider(),
                 "authority_capability": _HTTP_API_AUTHORITY_CAPABILITY,
             }
+            # ``ExtractRequest`` predates the accepted free-profile seam. Only
+            # forward the additive flag when the caller supplied it so legacy
+            # injected extractors keep their existing call contract.
+            if hasattr(request, "free_only"):
+                kwargs["free_only"] = request.free_only
             if (
                 self._registration == AcceptedOperationRegistration.complete()
                 and extractor is extract_url
@@ -1388,6 +1410,7 @@ class AcceptedOperationService:
         max_results: int,
         principal: str,
         request_id: str,
+        free_only: bool = False,
         selection_urls: tuple[str, ...] | None = None,
         required_urls: tuple[str, ...] | None = None,
         allow_partial: bool = True,
@@ -1441,6 +1464,7 @@ class AcceptedOperationService:
                 max_results=max_results,
                 principal=principal,
                 request_id=request_id,
+                free_only=free_only,
                 selection_urls=selection_urls,
                 required_urls=required_urls,
                 allow_partial=allow_partial,
@@ -1452,6 +1476,7 @@ class AcceptedOperationService:
                 max_results=max_results,
                 principal=principal,
                 request_id=request_id,
+                free_only=free_only,
                 selection_urls=selection_urls,
                 required_urls=required_urls,
                 allow_partial=allow_partial,
@@ -1465,6 +1490,7 @@ class AcceptedOperationService:
         max_results: int,
         principal: str,
         request_id: str,
+        free_only: bool = False,
         selection_urls: tuple[str, ...] | None = None,
         required_urls: tuple[str, ...] | None = None,
         allow_partial: bool = True,
@@ -1710,7 +1736,12 @@ class AcceptedOperationService:
         reuse_by_identity: dict[tuple[str, str], int] = {}
         for ordinal, (ref, item) in enumerate(zip(refs, selected, strict=True)):
             extraction = await self.extract(
-                SimpleNamespace(url=item["url"], domain=None, mode="default"),
+                SimpleNamespace(
+                    url=item["url"],
+                    domain=None,
+                    mode="default",
+                    free_only=free_only,
+                ),
                 principal=principal,
                 request_id=f"{request_id}-{ordinal}",
             )

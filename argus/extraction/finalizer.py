@@ -351,6 +351,17 @@ def _validate_inputs(
             0,
             31_536_000,
         )
+        or not _safe_label(plan.profile)
+        or not _plain_int(plan.effective_max_provider_tier, 0, 3)
+        or not isinstance(plan.provider_restrictions, tuple)
+        or any(not _safe_label(value) for value in plan.provider_restrictions)
+        or not isinstance(plan.eligible_extractors, tuple)
+        or any(not _safe_label(value) for value in plan.eligible_extractors)
+        or not _plain_int(plan.freshness_window_seconds, 0, 31_536_000)
+        or (
+            plan.original_evidence_ref is not None
+            and not _safe_ref(plan.original_evidence_ref)
+        )
         or not _plain_int(plan.deadline_ms, 1, 120_000)
         or not _plain_int(raw.operation_latency_ms, 0, _MAX_LATENCY_MS)
     ):
@@ -398,6 +409,8 @@ def _validate_inputs(
         CacheOutcome,
     ):
         raise ExtractionContractRejected()
+    if cache.reason is not None and not _safe_label(cache.reason):
+        raise ExtractionContractRejected()
     if cache.outcome is CacheOutcome.MISS:
         if (
             cache.origin_run_ref is not None
@@ -444,6 +457,26 @@ def _validate_inputs(
                 0,
                 31_536_000,
             )
+            or not _safe_label(origin.profile)
+            or not _plain_int(origin.effective_max_provider_tier, 0, 3)
+            or not isinstance(origin.provider_restrictions, tuple)
+            or any(
+                not _safe_label(value)
+                for value in origin.provider_restrictions
+            )
+            or not isinstance(origin.eligible_extractors, tuple)
+            or any(
+                not _safe_label(value) for value in origin.eligible_extractors
+            )
+            or not _plain_int(
+                origin.freshness_window_seconds,
+                0,
+                31_536_000,
+            )
+            or (
+                origin.original_evidence_ref is not None
+                and not _safe_ref(origin.original_evidence_ref)
+            )
             or not isinstance(origin.cache_created_at, str)
             or not origin.cache_created_at
             or not isinstance(origin.steps, tuple)
@@ -477,6 +510,12 @@ def _validate_inputs(
             privacy_scope=origin.privacy_scope,
             partial_allowed=origin.partial_allowed,
             cache_max_age_seconds=origin.cache_max_age_seconds,
+            profile=origin.profile,
+            effective_max_provider_tier=origin.effective_max_provider_tier,
+            provider_restrictions=origin.provider_restrictions,
+            eligible_extractors=origin.eligible_extractors,
+            freshness_window_seconds=origin.freshness_window_seconds,
+            original_evidence_ref=origin.original_evidence_ref,
         )
         if cache.current_identity != expected_current_identity:
             raise ExtractionContractRejected()
