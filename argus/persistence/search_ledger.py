@@ -2114,10 +2114,47 @@ class SqlAlchemySearchLedgerRepository:
             )
             if mode is not None:
                 statement = statement.where(ExtractionOutcomePlanRow.mode == mode)
-            statement = statement.order_by(
-                ExtractionOutcomeAcceptanceRow.accepted_at.desc()
-            ).limit(128)
-            rows = session.execute(statement).all()
+            # New projections persist the one-way identity in their accepted
+            # JSON envelope.  Keep that predicate in SQL so unrelated newer
+            # receipts cannot consume the bounded result window before the
+            # identity is checked.  The identity is a fixed ``sha256:`` plus
+            # hex value, but escape LIKE metacharacters defensively because
+            # this is still caller-provided input at the repository boundary.
+            identity_fragment = _canonical_json(
+                {"normalized_url_identity": normalized_url_identity}
+            )[1:-1]
+            identity_fragment = (
+                identity_fragment.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
+            identity_match = ExtractionOutcomeAcceptanceRow.projection_json.like(
+                f"%{identity_fragment}%",
+                escape="\\",
+            )
+            identity_rows = session.execute(
+                statement.where(identity_match)
+                .order_by(ExtractionOutcomeAcceptanceRow.accepted_at.desc())
+                .limit(128)
+            ).all()
+
+            # Rows written before the typed identity was added are retained by
+            # the legacy URL-hash fallback below.  Fetch only the unused part
+            # of the same bounded window so legacy compatibility cannot turn
+            # this cache lookup into an unbounded scan.
+            legacy_rows = []
+            remaining = 128 - len(identity_rows)
+            if remaining:
+                legacy_rows = session.execute(
+                    statement.where(~identity_match)
+                    .order_by(ExtractionOutcomeAcceptanceRow.accepted_at.desc())
+                    .limit(remaining)
+                ).all()
+            rows = sorted(
+                [*identity_rows, *legacy_rows],
+                key=lambda pair: pair[1].accepted_at,
+                reverse=True,
+            )
 
         matches = []
         for plan_row, acceptance in rows:

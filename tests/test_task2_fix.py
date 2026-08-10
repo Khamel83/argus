@@ -1,8 +1,9 @@
 """Regression coverage for Task 2 workflow, clock, and cache seams."""
 
 import asyncio
+from copy import deepcopy
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
@@ -207,3 +208,102 @@ async def test_accepted_cache_reload_uses_utc_receipt_age_and_no_second_extracto
     # elapsed-time range rather than shifting by the PDT offset.
     assert second.accepted_execution_evidence.cache_age_seconds <= 5
     assert trafilatura.await_count == 1
+
+
+def test_accepted_cache_lookup_filters_url_identity_before_bounded_newest_rows(
+    tmp_path,
+):
+    """An older matching receipt remains visible behind 128 newer misses."""
+    from argus.extraction.extractor import _finalize_accepted_extraction
+    from argus.persistence.search_ledger import (
+        ExtractionOutcomeAcceptanceRow,
+        ExtractionOutcomePlanRow,
+        _canonical_json,
+        _extraction_projection_state,
+        acceptance_fingerprint,
+        create_search_ledger_repository,
+    )
+
+    repository = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'bounded-cache-lookup.db'}",
+        create_schema=True,
+    )
+    source_url = "https://example.com/bounded-cache-target"
+    accepted_content = _finalize_accepted_extraction(
+        ExtractedContent(
+            url=source_url,
+            title="Bounded cache target",
+            text="durable target content " * 50,
+            word_count=150,
+            extractor=ExtractorName.TRAFILATURA,
+        ),
+        url=source_url,
+        mode="default",
+        caller="task2-fix",
+        request_id="bounded-cache-target-request",
+        latency_ms=1,
+        repository=repository,
+    )
+    origin = repository.load_extraction_outcome_by_receipt(
+        accepted_content.acceptance_receipt.receipt_ref
+    )
+    assert origin is not None
+    target_identity = origin.normalized_url_identity
+    assert target_identity
+
+    base_state = _extraction_projection_state(origin)
+    newer_than_target = datetime.now(timezone.utc) + timedelta(days=1)
+    with repository.session_factory.begin() as session:
+        for index in range(129):
+            state = deepcopy(base_state)
+            run_id = f"unrelated-cache-run-{index:03d}"
+            plan_ref = f"unrelated-cache-plan-{index:03d}"
+            plan_id = f"unrelated-cache-row-{index:03d}"
+            state["extraction_run_id"] = run_id
+            state["request_id"] = f"unrelated-cache-request-{index:03d}"
+            state["plan_ref"] = plan_ref
+            state["plan"]["plan_ref"] = plan_ref
+            state["plan"]["normalized_url"] = (
+                f"https://unrelated.example/{index}"
+            )
+            state["normalized_url_identity"] = (
+                "sha256:" + f"{index + 1:064x}"
+            )
+            session.add(
+                ExtractionOutcomePlanRow(
+                    id=plan_id,
+                    plan_ref=plan_ref,
+                    extraction_run_id=run_id,
+                    request_id=state["request_id"],
+                    normalized_url=state["plan"]["normalized_url"],
+                    access_scope=state["plan"]["access_scope"],
+                    mode=state["plan"]["mode"],
+                    plan_json=_canonical_json(state["plan"]),
+                    source_fingerprint=acceptance_fingerprint(state),
+                    created_at=newer_than_target,
+                )
+            )
+            session.add(
+                ExtractionOutcomeAcceptanceRow(
+                    receipt_ref=f"unrelated-cache-receipt-{index:03d}",
+                    plan_id=plan_id,
+                    outcome=state["outcome"],
+                    artifact_disposition=state["artifact_disposition"],
+                    outcome_policy_version=(
+                        state["extraction_outcome_policy_version"]
+                    ),
+                    projection_json=_canonical_json(state),
+                    acceptance_fingerprint=acceptance_fingerprint(state),
+                    accepted_at=newer_than_target + timedelta(seconds=index),
+                    scope=origin.acceptance_receipt.scope,
+                )
+            )
+
+    matches = repository.find_extraction_outcomes_by_url_identity(
+        target_identity,
+        mode="default",
+    )
+
+    assert [item.acceptance_receipt.receipt_ref for item in matches] == [
+        origin.acceptance_receipt.receipt_ref
+    ]
