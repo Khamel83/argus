@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from argus.api.schemas import (
@@ -73,6 +75,7 @@ async def recover_article(
         domain=req.domain,
         caller_identity=getattr(request.state, "caller_identity", "") or "unknown",
         caller_label=req.caller,
+        runtime=_runtime_projection(request),
     )
     return _to_response(run)
 
@@ -89,6 +92,7 @@ async def capture_site(
         hard_page_limit=req.hard_page_limit,
         caller_identity=getattr(request.state, "caller_identity", "") or "unknown",
         caller_label=req.caller,
+        runtime=_runtime_projection(request),
     )
     return _to_response(run)
 
@@ -105,6 +109,7 @@ async def build_research_pack(
         max_research_pages=req.max_research_pages,
         caller_identity=getattr(request.state, "caller_identity", "") or "unknown",
         caller_label=req.caller,
+        runtime=_runtime_projection(request),
     )
     return _to_response(run)
 
@@ -120,6 +125,7 @@ async def search_and_summarize(
         max_search_results=req.max_search_results,
         caller_identity=getattr(request.state, "caller_identity", "") or "unknown",
         caller_label=req.caller,
+        runtime=_runtime_projection(request),
     )
     return _to_response(run)
 
@@ -131,9 +137,11 @@ def _runtime_projection(request: Request) -> dict:
         return {}
     try:
         payload = full_status()
+        if not isinstance(payload, Mapping):
+            return {}
+        return WorkflowService._runtime_projection(payload, None)
     except Exception:
         return {}
-    return payload if isinstance(payload, dict) else {}
 
 
 @router.get("/workflows/{run_id}/status", response_model=WorkflowStatusResponse)
