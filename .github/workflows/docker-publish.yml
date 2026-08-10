@@ -77,6 +77,7 @@ jobs:
   promote:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 50
     if: github.ref == 'refs/heads/main'
     environment: production
     concurrency:
@@ -110,5 +111,8 @@ jobs:
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts" \
             -o HostKeyAlias=homelab-ts \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=10 \
+            -o TCPKeepAlive=yes \
             "argus-deploy@homelab.deer-panga.ts.net" \
             "argus-deploy promote ${IMAGE_REF} ${SOURCE_REVISION} ${RECEIPT_SHA256}"

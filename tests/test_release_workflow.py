@@ -62,6 +62,15 @@ def test_release_workflow_builds_once_and_submits_a_hardened_request():
     assert text.count("docker/build-push-action@") == 1
 
 
+def test_release_workflow_keeps_the_synchronous_promotion_session_alive():
+    text = (WORKFLOWS / "docker-publish.yml").read_text(encoding="utf-8")
+
+    assert "timeout-minutes: 50" in text
+    assert "ServerAliveInterval=30" in text
+    assert "ServerAliveCountMax=10" in text
+    assert "TCPKeepAlive=yes" in text
+
+
 def test_release_workflow_permissions_are_job_scoped_and_minimal():
     path = WORKFLOWS / "docker-publish.yml"
     payload = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -72,6 +81,7 @@ def test_release_workflow_permissions_are_job_scoped_and_minimal():
         "packages": "write",
     }
     assert payload["jobs"]["promote"]["permissions"] == {"contents": "read"}
+    assert payload["jobs"]["promote"]["timeout-minutes"] == 50
     assert payload["jobs"]["promote"]["if"] == (
         "github.ref == 'refs/heads/main'"
     )
