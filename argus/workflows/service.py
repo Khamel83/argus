@@ -1099,13 +1099,14 @@ class WorkflowService:
         run.finished_at = self._clock_now()
         # An interrupted run has no accepted closure.  Never expose or create
         # report/manifest artifacts while recovering the durable state.
-        run.report_path = None
-        run.manifest_path = None
-        run.artifacts = []
         run.metadata["failure"] = {
             "code": "workflow_interrupted",
             "reason": "process_reload_without_live_task",
         }
+        self._cleanup_failed_targeted_artifacts(run)
+        run.report_path = None
+        run.manifest_path = None
+        run.artifacts = []
         try:
             self._write_run_state(run)
         except Exception:
@@ -1889,6 +1890,8 @@ class WorkflowService:
             # state durable.  This is the cancellation proof for global and
             # phase timeout paths.
             await self._cancel_outstanding_operations(run_id)
+            if run.status is WorkflowStatus.FAILED:
+                self._cleanup_failed_targeted_artifacts(run)
             if run.finished_at is None:
                 run.finished_at = self._clock_now()
             terminal_state_persisted = False
@@ -1911,6 +1914,7 @@ class WorkflowService:
                             "code": "WorkflowStatePersistenceError",
                             "reason": "terminal_state_write_failed",
                         }
+                    self._cleanup_failed_targeted_artifacts(run)
                     self._rewrite_failed_artifacts(run)
                     try:
                         self._write_run_state(run)
@@ -2890,6 +2894,49 @@ class WorkflowService:
                 )
             except OSError:
                 logger.warning("Failed to rewrite failed workflow manifest")
+
+    def _cleanup_failed_targeted_artifacts(self, run: WorkflowResult) -> None:
+        """Remove private target evidence before persisting a targeted failure."""
+        if not self._is_targeted_run(run):
+            return
+
+        targeted_dir = Path(run.snapshot_dir) / "targeted-research"
+        try:
+            if targeted_dir.is_symlink() or targeted_dir.is_file():
+                targeted_dir.unlink()
+            elif targeted_dir.is_dir():
+                shutil.rmtree(targeted_dir)
+        except OSError:
+            logger.warning(
+                "Failed to clear targeted workflow snapshot documents for %s",
+                run.run_id,
+            )
+
+        snapshot = Path(run.snapshot_dir).resolve()
+        for registered_path in (run.report_path, run.manifest_path):
+            if not registered_path:
+                continue
+            try:
+                artifact_path = Path(registered_path).resolve()
+                if (
+                    artifact_path != snapshot
+                    and artifact_path.is_relative_to(snapshot)
+                    and artifact_path.is_file()
+                ):
+                    artifact_path.unlink()
+            except (OSError, RuntimeError, ValueError):
+                logger.warning(
+                    "Failed to clear targeted workflow artifact for %s",
+                    run.run_id,
+                )
+
+        run.report_path = None
+        run.manifest_path = None
+        run.artifacts = []
+        run.documents = []
+        run.citations = []
+        run.summary_sections = []
+        self._hide_target_composition_diagnostics(run)
 
     def _write_docs_cache_dir(
         self, docs_cache_dir: Path, *, title: str, run: WorkflowResult

@@ -446,6 +446,58 @@ async def test_targeted_service_fails_closed_when_candidate_evidence_is_missing(
 
 
 @pytest.mark.asyncio
+async def test_targeted_failed_run_cleans_partial_target_documents(
+    monkeypatch, tmp_path
+):
+    import json
+    from pathlib import Path
+
+    from argus.workflows.models import WorkflowStatus
+
+    first = "https://docs.example.com/sdk/one"
+    second = "https://docs.example.org/sdk/two"
+    operations = _TargetOperations(
+        [
+            [
+                {"url": first, "title": "one"},
+                {"url": "https://external.example.net/source", "title": "external"},
+            ],
+            [{"url": second, "title": "two"}],
+        ],
+        failed_urls={second},
+    )
+    service = _service(monkeypatch, tmp_path, operations)
+
+    result = await service.build_research_pack(
+        topic="partial-target-failure",
+        max_research_pages=3,
+        research_targets=[
+            _target("First", "https://docs.example.com/sdk/", ("capabilities", "first")),
+            _target("Second", "https://docs.example.org/sdk/", ("capabilities", "second")),
+        ],
+    )
+
+    assert result.status is WorkflowStatus.FAILED
+    assert result.error == "workflow_required_target_extraction_failed"
+    assert result.documents == []
+    assert result.artifacts == []
+    assert result.report_path is None
+    assert result.manifest_path is None
+
+    snapshot_dir = Path(result.snapshot_dir)
+    targeted_dir = snapshot_dir / "targeted-research"
+    assert not any(path.is_file() for path in targeted_dir.rglob("*"))
+    state_path = service._paths.workflow_runs_dir / f"{result.run_id}.json"
+    assert state_path.is_file()
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    assert persisted["status"] == "failed"
+    assert persisted["documents"] == []
+    assert persisted["artifacts"] == []
+    assert persisted["report_path"] is None
+    assert persisted["manifest_path"] is None
+
+
+@pytest.mark.asyncio
 async def test_targeted_service_marks_optional_external_as_degraded_and_caps_attempts(
     monkeypatch, tmp_path
 ):
