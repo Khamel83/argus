@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Caller attribution on extract + workflows** — `POST /api/extract` and workflow endpoints accept `caller`; workflow-driven broker searches are tagged (`workflows` via HTTP service, `mcp` via MCP tools).
 
 ### Fixed
+- **Maya outbox receipt timeout** — HTTP reads now honor the configured delivery
+  deadline, avoiding premature retries for slower Maya responses while retaining
+  bounded wall-clock and receipt budgets.
 - **Workflow reliability and safe artifact reads** — terminal status and
   report/manifest serialization now agree, with bounded UTF-8 pagination,
   path-free public artifacts, and authenticated status/read projections.
