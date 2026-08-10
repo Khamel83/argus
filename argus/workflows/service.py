@@ -74,6 +74,29 @@ _TARGET_GLOBAL_CONCURRENCY = TARGET_GLOBAL_CONCURRENCY
 # limit.
 _OFFICIAL_CAPTURE_PAGE_LIMIT = 8
 _COST_STATES = {"confirmed", "estimated", "uncertain", "unavailable"}
+_TARGET_EXECUTION_EVIDENCE_MISSING = "workflow_target_execution_evidence_missing"
+_TARGET_EXECUTION_DIAGNOSTIC_FIELDS = frozenset(
+    {
+        "provider",
+        "extractor",
+        "status",
+        "result_count",
+        "timeout_source",
+        "operation_latency_ms",
+        "cache_latency_ms",
+        "cache_state",
+        "cache_age_ms",
+        "cache_origin",
+        "spend_provenance",
+        "freshness_age_ms",
+        "freshness_window",
+        "freshness_reason",
+        "free_profile_eligible",
+        "egress",
+        "machine",
+        "source_type",
+    }
+)
 _VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$")
 _REVISION_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,127}$")
@@ -1418,6 +1441,7 @@ class WorkflowService:
         allow_partial: bool | None = None,
         minimum_artifacts: int | None = None,
         request_id: str | None = None,
+        require_target_execution_evidence: bool = False,
     ) -> tuple[list[StoredDocument], list[CitationRef]]:
         """Build documents solely from the accepted composition projection."""
         composition_kwargs = {
@@ -1534,6 +1558,8 @@ class WorkflowService:
                 CanonicalOutcome.PERSISTENCE_FAILED,
                 CanonicalOutcome.PERSISTENCE_FAILED.value,
             )
+        if require_target_execution_evidence:
+            self._validate_target_execution_evidence(projection.get("artifacts"))
         documents: list[StoredDocument] = []
         citations: list[CitationRef] = []
         output_dir = Path(run.snapshot_dir) / section
@@ -2171,6 +2197,48 @@ class WorkflowService:
         )
 
     @staticmethod
+    def _validate_target_execution_evidence(
+        artifacts: object,
+    ) -> None:
+        """Reject targeted artifacts without their accepted diagnostic chain.
+
+        The accepted composition projection is the only authority for target
+        artifacts.  Do not infer a successful provider/extractor path from an
+        empty mapping or from a zero-cost/nullable field: the evidence and its
+        per-attempt diagnostic records must be explicitly present.  Nullable
+        values (for example, no cache age on a miss) remain valid as long as
+        their keys are present in the mapping.
+        """
+
+        if not isinstance(artifacts, (list, tuple)) or not artifacts:
+            raise TargetWorkflowFailure(_TARGET_EXECUTION_EVIDENCE_MISSING)
+
+        for artifact in artifacts:
+            if not isinstance(artifact, Mapping):
+                raise TargetWorkflowFailure(_TARGET_EXECUTION_EVIDENCE_MISSING)
+            execution_evidence = artifact.get("execution_evidence")
+            if not isinstance(execution_evidence, Mapping) or not execution_evidence:
+                raise TargetWorkflowFailure(_TARGET_EXECUTION_EVIDENCE_MISSING)
+
+            execution_diagnostics = artifact.get("execution_diagnostics")
+            if not isinstance(execution_diagnostics, (list, tuple)):
+                execution_diagnostics = execution_evidence.get(
+                    "execution_diagnostics",
+                    execution_evidence.get("diagnostics"),
+                )
+            if (
+                not isinstance(execution_diagnostics, (list, tuple))
+                or not execution_diagnostics
+                or any(not isinstance(item, Mapping) for item in execution_diagnostics)
+            ):
+                raise TargetWorkflowFailure(_TARGET_EXECUTION_EVIDENCE_MISSING)
+            if any(
+                not _TARGET_EXECUTION_DIAGNOSTIC_FIELDS.issubset(item)
+                for item in execution_diagnostics
+            ):
+                raise TargetWorkflowFailure(_TARGET_EXECUTION_EVIDENCE_MISSING)
+
+    @staticmethod
     def _hide_target_composition_diagnostics(run: WorkflowResult) -> None:
         """Keep failed candidate details out of public run state and reports."""
 
@@ -2209,6 +2277,7 @@ class WorkflowService:
                 minimum_artifacts=1,
                 citation_start=citation_start,
                 request_id=request_id,
+                require_target_execution_evidence=True,
             )
         except WorkflowOperationFailure as exc:
             code = exc.operation_code

@@ -30,6 +30,57 @@ def _accepted(*urls: str, receipt: str = "receipt-1"):
     )
 
 
+def _target_execution_evidence():
+    """Return an explicit v3 diagnostic projection for accepted fake artifacts."""
+
+    diagnostic = {
+        "provider": None,
+        "extractor": "test",
+        "status": "success",
+        "result_count": 1,
+        "timeout_source": None,
+        "operation_latency_ms": None,
+        "cache_latency_ms": None,
+        "cache_state": "miss",
+        "cache_age_ms": None,
+        "cache_origin": None,
+        "spend_provenance": "not_applicable",
+        "freshness_age_ms": None,
+        "freshness_window": None,
+        "freshness_reason": "not_applicable",
+        "free_profile_eligible": None,
+        "egress": None,
+        "machine": None,
+        "source_type": "targeted_first_party",
+    }
+    return {
+        "schema": "argus-execution-evidence-v1",
+        "source": "ExtractedContent",
+        "provider": None,
+        "extractor": "test",
+        "egress": None,
+        "machine": None,
+        "source_type": "targeted_first_party",
+        "retrieved_at": None,
+        "source_date": None,
+        "result_count": 1,
+        "timeout_source": None,
+        "operation_latency_ms": None,
+        "cache_latency_ms": None,
+        "cache_state": "miss",
+        "cache_age": None,
+        "cache_origin": None,
+        "spend_provenance": "not_applicable",
+        "freshness_age": None,
+        "freshness_window": None,
+        "freshness_reason": "not_applicable",
+        "free_profile_eligible": None,
+        "cache_eligibility": {"eligible": None, "reason": "not_applicable"},
+        "diagnostics": (diagnostic,),
+        "execution_diagnostics": (diagnostic,),
+    }
+
+
 def test_target_planner_keeps_input_order_and_exact_accepted_urls():
     from argus.workflows.targeted_research import plan_target_research
 
@@ -151,11 +202,20 @@ def test_target_planner_rejects_budget_overrun_without_frozen_15_requirement_con
 
 
 class _TargetOperations:
-    def __init__(self, results, *, failed_urls=(), timeout=False, unready=False):
+    def __init__(
+        self,
+        results,
+        *,
+        failed_urls=(),
+        timeout=False,
+        unready=False,
+        omit_execution_evidence=False,
+    ):
         self.results = tuple(results)
         self.failed_urls = set(failed_urls)
         self.timeout = timeout
         self.unready = unready
+        self.omit_execution_evidence = omit_execution_evidence
         self.search_calls = []
         self.compose_calls = []
 
@@ -216,6 +276,18 @@ class _TargetOperations:
                     detail="candidate failed",
                 ),
             )
+        artifact = {
+            "url": url,
+            "title": "Accepted",
+            "text": "accepted target content",
+            "word_count": 3,
+            "disposition": "usable",
+            "extractor": "test",
+        }
+        if not self.omit_execution_evidence:
+            execution_evidence = _target_execution_evidence()
+            artifact["execution_evidence"] = execution_evidence
+            artifact["execution_diagnostics"] = execution_evidence["execution_diagnostics"]
         return AcceptedOperation(
             outcome=CanonicalOutcome.SUCCESS,
             request_id=request_id,
@@ -226,16 +298,7 @@ class _TargetOperations:
                 "rejected_extraction_refs": (),
                 "composition_trace": ("artifact_floor_met",),
                 "links": ({"artifact_disposition": "usable"},),
-                "artifacts": (
-                    {
-                        "url": url,
-                        "title": "Accepted",
-                        "text": "accepted target content",
-                        "word_count": 3,
-                        "disposition": "usable",
-                        "extractor": "test",
-                    },
-                ),
+                "artifacts": (artifact,),
             },
             error=None,
         )
@@ -351,6 +414,35 @@ async def test_targeted_service_reports_all_failed_candidates_without_leaking_di
     assert result.error == "workflow_required_target_extraction_failed"
     assert first not in result.metadata.get("failure", {})
     assert second not in result.metadata.get("failure", {})
+
+
+@pytest.mark.asyncio
+async def test_targeted_service_fails_closed_when_candidate_evidence_is_missing(
+    monkeypatch, tmp_path
+):
+    from argus.workflows.models import WorkflowStatus
+
+    operations = _TargetOperations(
+        [[
+            {"url": "https://docs.example.com/sdk/one", "title": "one"},
+            {"url": "https://external.example.net/source", "title": "external"},
+        ]],
+        omit_execution_evidence=True,
+    )
+    result = await _service(monkeypatch, tmp_path, operations).build_research_pack(
+        topic="missing-evidence",
+        max_research_pages=2,
+        research_targets=[
+            _target("Docs", "https://docs.example.com/sdk/", ("capabilities", "sdk"))
+        ],
+    )
+
+    assert result.status is WorkflowStatus.FAILED
+    assert result.error == "workflow_target_execution_evidence_missing"
+    assert result.artifacts == []
+    assert result.documents == []
+    assert result.report_path is None
+    assert result.manifest_path is None
 
 
 @pytest.mark.asyncio
