@@ -15,9 +15,10 @@ import re
 from collections.abc import Mapping, Sequence
 from enum import Enum
 from typing import Any, Literal
-from urllib.parse import SplitResult, urlsplit
+from urllib.parse import SplitResult, unquote, urlsplit
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator, model_validator
+from tld import parse_tld
 
 
 ClaimClass = Literal[
@@ -44,64 +45,113 @@ _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _CREDENTIAL_MARKER = re.compile(
     r"(?ix)"
     r"(?:"
-    r"\bauthorization\s*:\s*bearer\b"
-    r"|\bbearer\s+[a-z0-9._~+/=-]{8,}\b"
-    r"|\b(?:x[-_ ]?api[-_ ]?key|api[-_ ]?key)\s*[:=]"
+    r"\bauthorization\s*:\s*(?:bearer|basic)\b"
+    r"|\bbearer\s+[a-z0-9._~+/=-]+(?=$|[\s,;])"
+    # A bare ``Basic capabilities`` sentence is ordinary documentation.  A
+    # bare Basic credential is recognized when its base64 value has padding;
+    # the explicit Authorization-header branch above rejects header forms
+    # regardless of whether a value is present.
+    r"|\bbasic\s+[a-z0-9+/]{2,}={1,2}(?=$|[\s,;])"
+    r"|\b(?:x[-_ ]?api[-_ ]?key|api[-_ ]?key)\b\s*(?::|=)"
     r")"
 )
 _PRIVATE_KEY_MARKER = re.compile(
-    r"(?i)-----begin[\w ]*private key-----|\bssh-(?:rsa|ed25519|ecdsa)\b"
+    r"(?i)-----begin[\w -]*private key-----"
+    r"|\bssh-(?:rsa|ed25519|ecdsa|dss)\b"
+    r"|\becdsa-sha2-[a-z0-9-]+\b"
 )
 _LOCAL_PATH_MARKER = re.compile(
     r"(?ix)"
     r"(?:"
-    r"(?:^|[\s:=])~[\\/]"
-    r"|(?:^|[\s:=])/[a-z0-9._-]*(?:users|volumes|private|tmp|var|etc|home|root|opt|srv)/"
-    r"|(?:^|[\s:=])[a-z]:[\\/]"
-    r"|(?:^|[\s:=])\\\\"
-    r"|(?:^|[\s:=])\.\.?[\\/]"
+    r"(?:^|[\s:=\(\[\{\"'])~[\\/]"
+    r"|(?:^|[\s:=\(\[\{\"'])/(?:"
+    r"applications|users|volumes|dev|workspace(?:s)?|tmp|private|var|etc|home|root|opt|srv|"
+    r"library|system|bin|sbin|usr|proc|run|mnt|media|data"
+    r")(?:[\\/]|$)"
+    r"|(?:^|[\s:=\(\[\{\"'])[a-z]:[\\/]"
+    r"|(?:^|[\s:=\(\[\{\"'])\\\\"
+    r"|(?:^|[\s:=\(\[\{\"'])\.\.?[\\/]"
     r")"
+)
+_FILE_URI_MARKER = re.compile(r"(?i)\bfile:\s*//")
+_PERCENT_CONTROL_MARKER = re.compile(r"(?i)%(?:0[0-9a-f]|1[0-9a-f]|7f)")
+_BACKSLASH_CONTROL_MARKER = re.compile(
+    r"(?i)\\(?:[0nrt]|x(?:0[0-9a-f]|1[0-9a-f]|7f)|u(?:000[0-9a-f]|001[0-9a-f]|007f))"
 )
 _DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
-# A DNS name with no registrable label is not a public host.  The list covers
-# the common multi-label public suffixes that can otherwise pass a simple
-# ``labels >= 2`` check; single-label suffixes are rejected separately.
-_PUBLIC_SUFFIX_ONLY = frozenset(
+# RFC/IANA special-use names are not public acquisition targets even when a
+# PSL implementation happens to return a registrable-looking result for them.
+_SPECIAL_USE_SUFFIXES = frozenset(
     {
-        "ac.uk",
-        "co.uk",
-        "gov.uk",
-        "ltd.uk",
-        "me.uk",
-        "net.uk",
-        "org.uk",
-        "plc.uk",
-        "sch.uk",
-        "com.au",
-        "net.au",
-        "org.au",
-        "co.jp",
-        "ne.jp",
-        "or.jp",
-        "co.nz",
-        "net.nz",
-        "org.nz",
-        "co.za",
-        "com.br",
-        "com.cn",
-        "com.hk",
-        "com.mx",
-        "com.sg",
-        "com.tr",
-        "co.in",
-        "co.kr",
+        "alt",
+        "corp",
+        "example",
+        "home.arpa",
+        "internal",
+        "invalid",
+        "lan",
+        "local",
+        "localhost",
+        "localdomain",
+        "onion",
+        "private",
+        "test",
     }
 )
 
 
 def _raise(label: str, reason: str) -> ValueError:
     return ValueError(f"{label} {reason}")
+
+
+def _decoded_variants(value: str) -> tuple[str, ...]:
+    """Return the raw value and a small bounded set of percent-decoded forms."""
+
+    variants = [value]
+    current = value
+    for _ in range(3):
+        decoded = unquote(current)
+        if decoded == current:
+            break
+        variants.append(decoded)
+        current = decoded
+    return tuple(variants)
+
+
+def _contains_encoded_control(value: str) -> bool:
+    if _PERCENT_CONTROL_MARKER.search(value) or _BACKSLASH_CONTROL_MARKER.search(value):
+        return True
+    return any(_CONTROL.search(decoded) for decoded in _decoded_variants(value)[1:])
+
+
+def _raw_path_has_dot_segment(path: str) -> bool:
+    return any(segment in {".", ".."} for segment in re.split(r"[/\\]", path))
+
+
+def validate_raw_public_https_url(value: Any, *, label: str = "URL") -> Any:
+    """Reject unsafe raw URL spellings before Pydantic canonicalization.
+
+    ``AnyHttpUrl`` normalizes literal and encoded dot segments.  This guard is
+    deliberately run in ``mode='before'`` validators and again by the pure
+    URL helpers so callers cannot bypass it by handing them a raw string.
+    """
+
+    if value is None:
+        return value
+    if not isinstance(value, (str, AnyHttpUrl)):
+        return value
+    text = str(value)
+    if _CONTROL.search(text) or _contains_encoded_control(text):
+        raise _raise(label, "contains an ASCII or encoded control character")
+    for decoded in _decoded_variants(text):
+        try:
+            path = urlsplit(decoded).path
+        except ValueError as exc:
+            raise _raise(label, "is not a valid URL") from exc
+        if _raw_path_has_dot_segment(path):
+            raise _raise(label, "must not contain dot path segments")
+    return value
 
 
 def validate_public_text(
@@ -116,14 +166,17 @@ def validate_public_text(
         raise _raise(label, "must be a string")
     if not allow_empty and not value.strip():
         raise _raise(label, "must not be blank")
-    if _CONTROL.search(value):
-        raise _raise(label, "contains an ASCII control character")
-    if _CREDENTIAL_MARKER.search(value):
-        raise _raise(label, "contains a credential or bearer/API-key marker")
-    if _PRIVATE_KEY_MARKER.search(value):
-        raise _raise(label, "contains private-key material")
-    if _LOCAL_PATH_MARKER.search(value):
-        raise _raise(label, "contains a local absolute-path marker")
+    for candidate in _decoded_variants(value):
+        if _CONTROL.search(candidate) or _contains_encoded_control(candidate):
+            raise _raise(label, "contains an ASCII or encoded control character")
+        if _CREDENTIAL_MARKER.search(candidate):
+            raise _raise(label, "contains a credential or bearer/API-key marker")
+        if _PRIVATE_KEY_MARKER.search(candidate):
+            raise _raise(label, "contains private-key material")
+        if _FILE_URI_MARKER.search(candidate):
+            raise _raise(label, "contains a file URI")
+        if _LOCAL_PATH_MARKER.search(candidate):
+            raise _raise(label, "contains a local absolute-path marker")
     return value
 
 
@@ -144,16 +197,17 @@ def _idna_host(host: str, *, label: str) -> str:
         address = None
     if address is not None:
         raise _raise(label, "must not be an IP address")
-    if (
-        normalized == "localhost"
-        or normalized.endswith(".localhost")
-        or normalized.endswith(".local")
-        or normalized.endswith(".internal")
-        or normalized.endswith(".lan")
-        or normalized in {"broadcasthost", "ip6-localhost"}
+    if normalized in {"broadcasthost", "ip6-localhost"} or any(
+        normalized == suffix or normalized.endswith(f".{suffix}")
+        for suffix in _SPECIAL_USE_SUFFIXES
     ):
         raise _raise(label, "must be a public hostname")
-    if len(normalized.split(".")) < 2 or normalized in _PUBLIC_SUFFIX_ONLY:
+    tld_name, domain, _subdomain = parse_tld(
+        f"https://{normalized}",
+        fail_silently=True,
+        search_private=True,
+    )
+    if not tld_name or not domain or domain == tld_name:
         raise _raise(label, "must not be a public-suffix-only hostname")
     return normalized
 
@@ -163,6 +217,7 @@ def _split_public_https(value: Any, *, label: str) -> tuple[str, SplitResult, st
 
     if not isinstance(value, (str, AnyHttpUrl)):
         raise _raise(label, "must be an HTTP(S) URL")
+    validate_raw_public_https_url(value, label=label)
     text = str(value)
     if len(text) > MAX_PUBLIC_URL_LENGTH:
         raise _raise(label, f"must be at most {MAX_PUBLIC_URL_LENGTH} characters")
@@ -326,6 +381,14 @@ class ResearchTarget(BaseModel):
     source_prefixes: list[AnyHttpUrl] = Field(..., min_length=1, max_length=4)
     requirements: list[ResearchRequirement] = Field(..., min_length=1, max_length=3)
 
+    @field_validator("source_prefixes", mode="before")
+    @classmethod
+    def validate_raw_source_prefixes(cls, value: Any) -> Any:
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            for index, prefix in enumerate(value):
+                validate_raw_public_https_url(prefix, label=f"source prefix {index}")
+        return value
+
     @field_validator("name")
     @classmethod
     def validate_name(cls, value: str) -> str:
@@ -444,6 +507,7 @@ __all__ = [
     "validate_prefixes",
     "validate_source_prefixes",
     "validate_public_https_url",
+    "validate_raw_public_https_url",
     "validate_public_text",
     "url_matches_prefix",
 ]

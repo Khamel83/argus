@@ -103,12 +103,15 @@ async def build_research_pack(
     request: Request,
     workflows: WorkflowService = Depends(get_workflows),
 ):
+    # Pydantic URL objects are intentionally retained for schema validation,
+    # but the legacy service boundary consumes plain URL strings.
+    payload = req.model_dump(mode="json")
     run = await workflows.start_build_research_pack(
-        topic=req.topic,
-        official_url=req.official_url,
-        max_research_pages=req.max_research_pages,
+        topic=payload["topic"],
+        official_url=payload["official_url"],
+        max_research_pages=payload["max_research_pages"],
         caller_identity=getattr(request.state, "caller_identity", "") or "unknown",
-        caller_label=req.caller,
+        caller_label=payload["caller"],
         runtime=_runtime_projection(request),
     )
     return _to_response(run)

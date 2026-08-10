@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
+from argus.api import routes_workflows
 from argus.api.schemas import (
     BuildResearchPackWorkflowRequest,
     ResearchRequirement,
@@ -246,6 +248,46 @@ def test_public_topic_target_and_requirement_strings_reject_controls_credentials
         )
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Bearer x",
+        "Authorization: Basic YQ==",
+        "Basic YQ==",
+        "api_key=x",
+        "X-API-Key: x",
+        "-----BEGIN OPENSSH PRIVATE KEY-----",
+        "ssh-ed25519 AAAA",
+        "/Applications/Argus/config.json",
+        "/Volumes/Secrets/token.txt",
+        "/dev/null",
+        "/workspace/project/.env",
+        "/tmp/argus-token",
+        "file://example.com/public",
+        "query%0d%0aAuthorization: Bearer x",
+    ],
+)
+def test_public_text_rejects_short_auth_markers_encoded_controls_and_common_paths(value):
+    with pytest.raises(ValidationError):
+        BuildResearchPackWorkflowRequest(topic=value)
+    with pytest.raises(ValidationError):
+        ResearchRequirement(claim_class="capabilities", query=value)
+    with pytest.raises(ValidationError):
+        ResearchTarget(
+            name=value,
+            source_prefixes=["https://example.com/"],
+            requirements=[_requirement()],
+        )
+
+
+def test_public_text_keeps_ordinary_documentation_phrases_allowed():
+    request = BuildResearchPackWorkflowRequest(
+        topic="Basic capabilities and API key rotation guidance",
+        caller="public-docs",
+    )
+    assert request.topic.startswith("Basic capabilities")
+
+
 def test_caller_label_is_bounded_and_scanned():
     with pytest.raises(ValidationError):
         BuildResearchPackWorkflowRequest(topic="t", caller="c" * 101)
@@ -370,6 +412,10 @@ def test_official_url_and_targets_are_mutually_exclusive_but_explicit_null_is_va
         "https://10.0.0.4/",
         "https://com/",
         "https://co.uk/",
+        "https://foo.test/",
+        "https://foo.invalid/",
+        "https://foo.home.arpa/",
+        "https://github.io/",
     ],
 )
 def test_official_url_rejects_noncanonical_or_nonpublic_https(url):
@@ -410,12 +456,44 @@ def test_source_prefix_rejects_noncanonical_or_nonpublic_https(prefix):
         ResearchTarget(name="n", source_prefixes=[prefix], requirements=[_requirement()])
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com/a/../b",
+        "https://example.com/a/%2e%2e/b",
+        "https://example.com/a/%2E%2E%2Fb",
+        "https://example.com/a/..%2Fsecret",
+        "https://example.com/a/%0d%0aX",
+        "https://example.com/a/%250aX",
+    ],
+)
+def test_official_url_rejects_raw_dot_traversal_and_encoded_controls(url):
+    with pytest.raises(ValidationError):
+        BuildResearchPackWorkflowRequest(topic="t", official_url=url)
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "https://example.com/a/../b",
+        "https://example.com/a/%2e%2e/b",
+        "https://example.com/a/%2E%2E%2Fb",
+        "https://example.com/a/..%2Fsecret",
+        "https://example.com/a/%0d%0aX",
+        "https://example.com/a/%250aX",
+    ],
+)
+def test_source_prefix_rejects_raw_dot_traversal_and_encoded_controls(prefix):
+    with pytest.raises(ValidationError):
+        ResearchTarget(name="n", source_prefixes=[prefix], requirements=[_requirement()])
+
+
 def test_source_prefixes_normalize_default_port_host_case_idna_and_slash():
     assert normalize_source_prefix("HTTPS://EXAMPLE.COM:443/docs/") == (
         "https://example.com/docs"
     )
-    assert normalize_source_prefix("https://bücher.example/") == (
-        "https://xn--bcher-kva.example"
+    assert normalize_source_prefix("https://bücher.example.com/") == (
+        "https://xn--bcher-kva.example.com"
     )
 
 
@@ -467,8 +545,8 @@ def test_prefix_matching_normalizes_host_port_idna_and_trailing_slash():
         "https://example.com/docs/child",
     )
     assert prefix_matches(
-        "https://bücher.example/",
-        "https://xn--bcher-kva.example/",
+        "https://bücher.example.com/",
+        "https://xn--bcher-kva.example.com/",
     )
 
 
@@ -523,3 +601,29 @@ def test_canonical_projection_accepts_json_mode_mapping():
     projection = canonical_request_projection(request.model_dump(mode="json"))
     assert projection["official_url"] is None
     assert isinstance(projection["research_targets"][0]["source_prefixes"][0], str)
+
+
+@pytest.mark.asyncio
+async def test_legacy_build_route_serializes_official_url_before_service(monkeypatch):
+    captured = {}
+
+    class FakeWorkflows:
+        async def start_build_research_pack(self, **kwargs):
+            captured.update(kwargs)
+            return captured
+
+    monkeypatch.setattr(routes_workflows, "_to_response", lambda run: run)
+    request = SimpleNamespace(
+        state=SimpleNamespace(caller_identity="principal"),
+        app=SimpleNamespace(state=SimpleNamespace()),
+    )
+    req = BuildResearchPackWorkflowRequest(
+        topic="legacy",
+        official_url="https://EXAMPLE.com/docs",
+    )
+
+    response = await routes_workflows.build_research_pack(req, request, FakeWorkflows())
+
+    assert response is captured
+    assert captured["official_url"] == "https://example.com/docs"
+    assert isinstance(captured["official_url"], str)

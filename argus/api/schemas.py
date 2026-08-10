@@ -15,6 +15,7 @@ from argus.workflows.research_targets import (
     ResearchTarget,
     validate_prefixes,
     validate_public_https_url,
+    validate_raw_public_https_url,
     validate_public_text,
 )
 
@@ -525,6 +526,11 @@ class BuildResearchPackWorkflowRequest(BaseModel):
         if value is None:
             return value
         return validate_public_https_url(value, label="official URL")
+
+    @field_validator("official_url", mode="before")
+    @classmethod
+    def validate_raw_official_url(cls, value: Any) -> Any:
+        return validate_raw_public_https_url(value, label="official URL")
 
     @model_validator(mode="after")
     def validate_research_plan(self) -> "BuildResearchPackWorkflowRequest":
