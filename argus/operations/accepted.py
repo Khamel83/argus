@@ -41,6 +41,9 @@ class AcceptedAuthorityConfigurationError(RuntimeError):
     """The atomic evidence authority was requested without every dependency."""
 
 
+_SITE_ACQUISITION_SEARCH_RESULT_LIMIT = 50
+
+
 @dataclass(frozen=True, slots=True)
 class _WorkflowRetrievalView:
     outcome: CanonicalOutcome
@@ -980,7 +983,10 @@ class AcceptedOperationService:
         search_request = SimpleNamespace(
             query=request.url,
             mode="discovery",
-            max_results=request.hard_page_limit,
+            max_results=min(
+                request.hard_page_limit,
+                _SITE_ACQUISITION_SEARCH_RESULT_LIMIT,
+            ),
             providers=None,
             free_only=False,
             caller=request.caller,
