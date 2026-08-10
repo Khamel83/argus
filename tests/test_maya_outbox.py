@@ -2,9 +2,11 @@ import hashlib
 import json
 import time
 import tracemalloc
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
-from threading import Barrier
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Barrier, Thread
 from urllib.parse import quote
 
 import httpx
@@ -44,6 +46,49 @@ def _maya_receipt(*, pages=0, duplicate=False):
         "children_added": 0 if duplicate else pages,
         "received_at": "2026-07-23T12:01:00Z",
     }
+
+
+@contextmanager
+def _delayed_maya_server(*, delay_seconds, response_body=None):
+    requests = []
+    encoded_response = json.dumps(response_body or _maya_receipt()).encode()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            content_length = int(self.headers.get("content-length", "0"))
+            payload = json.loads(self.rfile.read(content_length))
+            received_at = time.monotonic()
+            time.sleep(delay_seconds)
+            requests.append(
+                {
+                    "payload": payload,
+                    "response_delay": time.monotonic() - received_at,
+                }
+            )
+            try:
+                self.send_response(201)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(encoded_response)))
+                self.end_headers()
+                self.wfile.write(encoded_response)
+            except OSError:
+                # A bounded client timeout may close the socket before the
+                # delayed test server writes its response.
+                pass
+
+        def log_message(self, *args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.daemon_threads = True
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}/captures", requests
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 def test_repository_clock_drives_acceptance_and_extraction_outbox_timestamps(
@@ -1290,6 +1335,89 @@ def test_extraction_and_maya_outbox_roll_back_as_one_transaction(tmp_path):
     with repository.session_factory() as session:
         assert session.scalar(select(func.count()).select_from(ExtractionRunRow)) == 0
         assert session.scalar(select(func.count()).select_from(DeliveryIntentRow)) == 0
+
+
+def test_delayed_maya_receipt_within_total_timeout_is_acknowledged(tmp_path):
+    from argus.persistence.maya_outbox import MayaOutboxDispatcher
+
+    repository = _repository(tmp_path)
+    repository.accept(SearchQuery(query="delayed receipt"), _response())
+
+    with _delayed_maya_server(delay_seconds=1.1) as (endpoint, requests):
+        started = time.perf_counter()
+        dispatcher = MayaOutboxDispatcher(
+            repository,
+            endpoint=endpoint,
+            token="test-token",
+            timeout_seconds=2.0,
+            clock=lambda: datetime(2026, 7, 23, 12, 0),
+        )
+
+        assert dispatcher.run_once() == {"acknowledged": 1}
+        elapsed = time.perf_counter() - started
+
+    row = _outbox_row(repository)
+    assert row.status == "acknowledged"
+    assert len(requests) == 1
+    assert requests[0]["response_delay"] > 1.0
+    assert elapsed < dispatcher.timeout_seconds
+    assert (
+        requests[0]["payload"]["idempotency_key"]
+        == json.loads(row.payload_json)["idempotency_key"]
+    )
+
+
+def test_maya_delivery_total_timeout_remains_bounded(tmp_path):
+    from argus.persistence.maya_outbox import MayaOutboxDispatcher
+
+    repository = _repository(tmp_path)
+    repository.accept(SearchQuery(query="deadline bound"), _response())
+    timeout_seconds = 0.2
+
+    with _delayed_maya_server(delay_seconds=0.8) as (endpoint, _requests):
+        started = time.perf_counter()
+        dispatcher = MayaOutboxDispatcher(
+            repository,
+            endpoint=endpoint,
+            token="test-token",
+            timeout_seconds=timeout_seconds,
+            clock=lambda: datetime(2026, 7, 23, 12, 0),
+        )
+
+        assert dispatcher.run_once() == {"retried": 1}
+        elapsed = time.perf_counter() - started
+
+    row = _outbox_row(repository)
+    assert elapsed < 0.6
+    assert row.status == "retry"
+    assert row.attempt_count == 1
+    assert row.last_error_code == "maya_unavailable"
+
+
+def test_maya_receipt_response_budget_remains_bounded(tmp_path):
+    from argus.persistence.maya_outbox import (
+        _MAYA_RECEIPT_MAX_BYTES,
+        MayaOutboxDispatcher,
+    )
+
+    repository = _repository(tmp_path)
+    repository.accept(SearchQuery(query="receipt budget"), _response())
+    oversized_receipt = b"x" * (_MAYA_RECEIPT_MAX_BYTES + 1)
+    dispatcher = MayaOutboxDispatcher(
+        repository,
+        endpoint="http://maya/captures",
+        token="test-token",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(201, content=oversized_receipt)
+        ),
+        clock=lambda: datetime(2026, 7, 23, 12, 0),
+    )
+
+    assert dispatcher.run_once() == {"retried": 1}
+    row = _outbox_row(repository)
+    assert row.status == "retry"
+    assert row.last_error_code == "maya_unavailable"
+    assert row.last_error_summary == "DecodingError"
 
 
 def test_transient_failure_is_restart_safe_and_replays_the_same_idempotency_key(

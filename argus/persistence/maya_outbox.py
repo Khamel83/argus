@@ -632,7 +632,10 @@ class MayaOutboxDispatcher:
             transport=self.transport,
             timeout=httpx.Timeout(
                 self.timeout_seconds,
-                read=min(1.0, self.timeout_seconds),
+                # Slow Maya startup/read latency may exceed one second; the
+                # stream wrapper below still checks the total wall deadline
+                # and enforces the receipt byte budget.
+                read=self.timeout_seconds,
             ),
         ) as client:
             for index, item in enumerate(claimed):
