@@ -331,6 +331,78 @@ def test_invalid_runtime_metadata_fails_closed(tmp_path):
     }
 
 
+def test_status_projection_reports_truthful_evidence_and_runtime_metrics(tmp_path):
+    service = _service()
+    run = _run(tmp_path)
+    second = tmp_path / "s2.md"
+    second.write_text("second source", encoding="utf-8")
+    third = tmp_path / "s3.md"
+    third.write_text("third source", encoding="utf-8")
+    run.documents.extend(
+        [
+            StoredDocument(
+                id="S2",
+                url="https://docs.example.com/other",
+                title="Other docs",
+                artifact_path=str(second),
+                domain="docs.example.com",
+                role="source",
+                source_type="web",
+            ),
+            StoredDocument(
+                id="S3",
+                url="https://www.example.net/official",
+                title="Official source",
+                artifact_path=str(third),
+                domain="www.example.net",
+                role="official",
+                source_type="official",
+            ),
+        ]
+    )
+    run.metadata.update(
+        {
+            "composition": {
+                "outcome": "degraded",
+                "degraded_artifact_refs": ["A2"],
+                "rejected_extraction_refs": ["E3"],
+            },
+            "partial_reasons": ["source_text_incomplete"],
+            "degraded_reasons": ["provider_degraded"],
+            "cost_state": "uncertain",
+        }
+    )
+
+    payload = service.get_public_status(
+        run,
+        runtime={
+            "build": {
+                "version": "1.6.3",
+                "source_revision": "b" * 40,
+                "image_identity": "sha256:" + "c" * 64,
+            },
+            "deployment": {"deployment_id": "deploy-43"},
+        },
+    )
+
+    assert payload["source_count"] == 3
+    assert payload["domain_count"] == 2
+    assert payload["primary_source_count"] == 2
+    assert "partial_artifact:S1" in payload["partial_reasons"]
+    assert "source_text_incomplete" in payload["partial_reasons"]
+    assert "workflow_composition_degraded" in payload["degraded_reasons"]
+    assert "degraded_artifacts_present" in payload["degraded_reasons"]
+    assert "rejected_extractions_present" in payload["degraded_reasons"]
+    assert "provider_degraded" in payload["degraded_reasons"]
+    assert payload["cost_state"] == "uncertain"
+    assert payload["runtime"] == {
+        "version": "1.6.3",
+        "source_revision": "b" * 40,
+        "image_identity": "sha256:" + "c" * 64,
+        "deployment_identity": "deploy-43",
+    }
+
+
 def _route_client(run, runtime=None):
     app = FastAPI()
     service = _service()

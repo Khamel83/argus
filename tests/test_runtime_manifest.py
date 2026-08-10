@@ -48,6 +48,15 @@ def _manifest(lock_path, browser_root=None) -> dict[str, object]:
     }
 
 
+def test_release_version_is_current_without_rewriting_historical_manifest_fixture(
+    tmp_path,
+):
+    from argus import __version__
+
+    assert __version__ == "1.6.3"
+    assert _manifest(tmp_path / "uv.lock")["package_version"] == "1.6.2"
+
+
 def test_image_admission_accepts_a_complete_baked_manifest(tmp_path):
     from argus.runtime_manifest import admit_runtime_manifest
 
@@ -156,11 +165,15 @@ def test_production_image_admission_rejects_a_local_revision_marker(tmp_path):
 
 
 def test_development_image_validation_is_explicit_and_not_production_admission(tmp_path):
+    from argus import __version__
     from argus.cli.main import cli
 
     manifest_path = tmp_path / "runtime-manifest.json"
     manifest = _manifest(tmp_path / "uv.lock")
     manifest["source_revision"] = "local-compose-build"
+    # The shared helper intentionally preserves the historical 1.6.2
+    # attestation; this live CLI invocation must match the current package.
+    manifest["package_version"] = __version__
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     result = CliRunner().invoke(
