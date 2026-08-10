@@ -211,6 +211,33 @@ Return:
 The prompt cannot compensate for missing evidence. The report must say what it
 could not establish.
 
+## Frozen benchmark invocation
+
+The first production acceptance run uses these inputs, fixed before the run:
+
+- workflow topic: `Managed web research and extraction stacks for AI agents`;
+- official URL: omitted, so Argus must discover and record its choice;
+- maximum external research pages: `12`;
+- question: `As of 2026-08-09, should a small operator keep a thin self-hosted
+  Argus retrieval governance gateway, or replace it with a managed vendor stack
+  for broad web research and difficult-page extraction?`;
+- decision or use: `Choose keep, narrow, replace, or a time-bounded experiment,
+  with an explicit implementation recommendation.`;
+- as-of date: `2026-08-09`;
+- scope and exclusions: `Compare documented search/research, page extraction,
+  protected-site or residential execution, source and execution provenance,
+  budget controls, recurring/free credits, privacy or retention, and operating
+  burden. Exclude product purchases, account changes, personal data, and claims
+  not supported by the returned pack.`; and
+- constraints: `Use the existing mac-agents tier-1 cap. Do not invoke tier-3
+  one-time-credit providers. Label promotional eligibility, pricing, privacy,
+  and unsupported parity claims as uncertain unless a current primary source
+  in the pack proves them.`
+
+The synthesis receives only the remotely read report and manifest from this
+run. Separate market research may be used to evaluate alternatives after the
+Argus score is frozen, but it cannot repair or raise the Argus acceptance score.
+
 ## Predetermined acceptance hurdle
 
 The release passes only if every hard gate passes and the research score is at
@@ -311,4 +338,3 @@ and restarting Argus; accepted or delivered records are never deleted.
 - an authenticated, draining Argus-to-Maya outbox;
 - before/after operational evidence and rollback identifiers; and
 - the benchmark research report with an honest pass/fail score.
-
