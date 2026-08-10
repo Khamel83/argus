@@ -1,5 +1,6 @@
 """Truthful, cached operational status behavior."""
 
+import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
@@ -2081,6 +2082,62 @@ def test_missing_manifest_does_not_invent_optional_capabilities(tmp_path):
     )
 
     assert service.full_status()["capabilities"] == {}
+
+
+@pytest.mark.parametrize(
+    ("image_identity", "expected"),
+    [
+        (
+            "ghcr.io/khamel83/argus@sha256:" + "a" * 64,
+            "ghcr.io/khamel83/argus@sha256:" + "a" * 64,
+        ),
+        ("sha256:" + "b" * 64, "sha256:" + "b" * 64),
+        ("ghcr.io/khamel83/argus:latest", "unknown"),
+        ("docker.io/khamel83/argus@sha256:" + "c" * 64, "unknown"),
+        ("ghcr.io/khamel83/argus@sha256:" + "d" * 63, "unknown"),
+        ("token=secret", "unknown"),
+    ],
+)
+def test_environment_image_identity_is_immutable_and_publicly_projectable(
+    tmp_path, image_identity, expected
+):
+    from argus import __version__
+    from argus.operations.status import create_operational_status
+    from argus.workflows.service import WorkflowService
+
+    manifest = tmp_path / "runtime-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "source_revision": "e" * 40,
+                "lock_sha256": "f" * 64,
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = create_operational_status(
+        {
+            "ARGUS_RUNTIME_MANIFEST": str(manifest),
+            "ARGUS_IMAGE_IDENTITY": image_identity,
+            "ARGUS_DEPLOYMENT_ID": "deploy-tonight",
+        }
+    )
+
+    full_status = service.full_status()
+    assert full_status["build"] == {
+        "version": __version__,
+        "source_revision": "e" * 40,
+        "lock_sha256": "f" * 64,
+        "manifest_source": "runtime_manifest",
+        "image_identity": expected,
+    }
+    assert full_status["deployment"]["deployment_id"] == "deploy-tonight"
+    assert WorkflowService._runtime_projection(full_status, None) == {
+        "version": __version__,
+        "source_revision": "e" * 40,
+        "image_identity": expected,
+        "deployment_identity": "deploy-tonight",
+    }
 
 
 def test_sqlite_marks_postgresql_not_applicable():

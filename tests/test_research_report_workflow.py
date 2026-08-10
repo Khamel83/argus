@@ -1,13 +1,16 @@
 """Safe research-pack status and artifact projections."""
 
 import json
-from datetime import datetime
-from types import SimpleNamespace
+from datetime import datetime, timezone
+from types import MappingProxyType, SimpleNamespace
+from urllib.parse import urlparse
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from argus.contracts import AcceptedOperation, CanonicalOutcome
+from argus.operations.accepted import _operation_error
 from argus.workflows.models import (
     CitationRef,
     StoredDocument,
@@ -292,6 +295,10 @@ async def test_real_terminal_artifacts_are_path_free_and_hash_truthful(
     status = service.get_public_status(result)
     assert status["status"] == "completed"
     assert status["status_url"].endswith("/status")
+    for timestamp_key in ("created_at", "started_at", "finished_at"):
+        timestamp = datetime.fromisoformat(status[timestamp_key])
+        assert timestamp.tzinfo is not None
+        assert timestamp.utcoffset() == timezone.utc.utcoffset(timestamp)
     for artifact in status["artifacts"]:
         assert artifact["available"] is True
         page = service.read_artifact(result, artifact["kind"], max_bytes=256 * 1024)
@@ -305,6 +312,10 @@ async def test_real_terminal_artifacts_are_path_free_and_hash_truthful(
     ]
     manifest_payload = json.loads(manifest)
     assert manifest_payload["status"] == "completed"
+    for timestamp_key in ("created_at", "started_at", "finished_at"):
+        timestamp = datetime.fromisoformat(manifest_payload[timestamp_key])
+        assert timestamp.tzinfo is not None
+        assert timestamp.utcoffset() == timezone.utc.utcoffset(timestamp)
     report_entry = next(
         item for item in manifest_payload["artifacts"] if item["kind"] == "report"
     )
@@ -370,6 +381,28 @@ def test_invalid_runtime_metadata_fails_closed(tmp_path):
         "image_identity": "unknown",
         "deployment_identity": "unknown",
     }
+
+
+@pytest.mark.parametrize(
+    "image_identity",
+    [
+        "argus:latest",
+        "docker.io/khamel83/argus@sha256:" + "a" * 64,
+        "ghcr.io/khamel83/argus@sha256:" + "a" * 63,
+    ],
+)
+def test_runtime_image_projection_rejects_noncanonical_identity(
+    tmp_path, image_identity
+):
+    service = _service()
+    run = _run(tmp_path)
+
+    payload = service.get_public_status(
+        run,
+        runtime={"build": {"image_identity": image_identity}},
+    )
+
+    assert payload["runtime"]["image_identity"] == "unknown"
 
 
 def test_status_projection_reports_truthful_evidence_and_runtime_metrics(tmp_path):
@@ -531,3 +564,435 @@ def test_artifact_routes_map_unknown_pending_and_invalid_requests(tmp_path):
         ).status_code
         == 422
     )
+
+
+class _MappingProxyOperations:
+    """Live-shaped accepted operations for terminal-state serialization tests."""
+
+    async def search(self, request, *, principal, request_id):
+        del principal
+        return AcceptedOperation(
+            outcome=CanonicalOutcome.SUCCESS,
+            request_id=request_id,
+            result={
+                "results": ({"url": request.query, "title": "Captured"},),
+                "acceptance_receipt": {"receipt_ref": f"receipt:{request_id}"},
+            },
+            error=None,
+        )
+
+    async def acquire_site(self, request, *, principal, request_id):
+        return await self.search(
+            SimpleNamespace(query=request.url),
+            principal=principal,
+            request_id=request_id,
+        )
+
+    async def compose_workflow(
+        self,
+        retrieval,
+        *,
+        max_results,
+        principal,
+        request_id,
+        **kwargs,
+    ):
+        del retrieval, max_results, principal, kwargs
+        # AcceptedOperation freezes this nested result into mappingproxy values,
+        # matching the live accepted-composition projection.
+        result = {
+            "composition_receipt_ref": "composition:mappingproxy",
+            "accepted_artifact_refs": (),
+            "degraded_artifact_refs": (),
+            "rejected_extraction_refs": ("extract:mappingproxy",),
+            "composition_trace": (MappingProxyType({"step": "artifact_floor_unmet"}),),
+            "links": (
+                MappingProxyType(
+                    {
+                        "result_cluster_ref": "cluster:mappingproxy",
+                        "artifact_disposition": "diagnostic_only",
+                        "metadata": MappingProxyType({"reason": "rejected"}),
+                    }
+                ),
+            ),
+            "artifacts": (),
+        }
+        return AcceptedOperation(
+            outcome=CanonicalOutcome.EXTRACTION_FAILED,
+            request_id=request_id,
+            result=result,
+            error=_operation_error(
+                CanonicalOutcome.EXTRACTION_FAILED,
+                request_id=request_id,
+                detail="workflow composition failed",
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_failed_mappingproxy_composition_persists_terminal_state_and_legacy_get(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("ARGUS_DATA_ROOT", str(tmp_path / "data"))
+    operations = _MappingProxyOperations()
+    service = WorkflowService(operations)
+
+    result = await service.capture_site(
+        url="https://mappingproxy.example/docs",
+        soft_page_limit=1,
+        hard_page_limit=1,
+    )
+
+    assert result.status is WorkflowStatus.FAILED
+    from argus.workflows import service as workflow_service
+
+    assert json.loads(
+        json.dumps(
+            {"failure": MappingProxyType({"nested": {"code": "rejected"}})},
+            default=workflow_service._json_default,
+        )
+    ) == {"failure": {"nested": {"code": "rejected"}}}
+
+    def legacy_response(workflows):
+        app = FastAPI()
+        app.state.get_workflows = lambda: workflows
+        from argus.api.routes_workflows import router
+
+        app.include_router(router, prefix="/api")
+        return TestClient(app).get(f"/api/workflows/{result.run_id}")
+
+    in_memory_response = legacy_response(service)
+    assert in_memory_response.status_code == 200
+    assert in_memory_response.json()["status"] == "failed"
+
+    reloaded_service = WorkflowService(operations, corpus_paths=service._paths)
+    reloaded = reloaded_service.get_run(result.run_id)
+    assert reloaded is not None
+    assert reloaded.status is WorkflowStatus.FAILED
+    assert reloaded.metadata["composition"]["links"][0]["metadata"] == {
+        "reason": "rejected"
+    }
+
+    response = legacy_response(reloaded_service)
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+
+
+class _ResearchPackOperations:
+    """Small accepted-operation double with diagnostic/usable projections."""
+
+    def __init__(self, *, all_rejected=False, research_results=None):
+        self.all_rejected = all_rejected
+        self.acquire_calls = []
+        self.search_calls = []
+        self.compose_calls = []
+        self.research_results = tuple(
+            research_results
+            if research_results is not None
+            else (
+                {"url": "https://blog.example.net/one", "title": "Blog One"},
+                {"url": "https://blog.example.net/two", "title": "Blog Two"},
+                {"url": "https://blog.example.net/three", "title": "Blog Three"},
+                {"url": "https://notes.example.org/one", "title": "Notes One"},
+                {"url": "https://notes.example.org/two", "title": "Notes Two"},
+                {"url": "https://notes.example.org/three", "title": "Notes Three"},
+                {"url": "https://research.other.com/one", "title": "Research One"},
+            )
+        )
+
+    @staticmethod
+    def _operation(request_id, results, *, scope):
+        return AcceptedOperation(
+            outcome=CanonicalOutcome.SUCCESS,
+            request_id=request_id,
+            result={
+                "results": tuple(results),
+                "acceptance_receipt": {"receipt_ref": f"receipt:{request_id}"},
+                "scope": scope,
+            },
+            error=None,
+        )
+
+    async def search(self, request, *, principal, request_id):
+        del principal
+        self.search_calls.append(request)
+        if request.mode == "research":
+            return self._operation(request_id, self.research_results, scope="external")
+        return self._operation(
+            request_id,
+            ({"url": request.query, "title": "Captured"},),
+            scope="external",
+        )
+
+    async def acquire_site(self, request, *, principal, request_id):
+        del principal
+        self.acquire_calls.append(request)
+        results = (
+            {
+                "url": "https://docs.example.com/diagnostic",
+                "title": "Diagnostic Home",
+            },
+            {"url": "https://docs.example.com/guide", "title": "Guide"},
+        )
+        return self._operation(request_id, results, scope="official")
+
+    async def compose_workflow(
+        self,
+        retrieval,
+        *,
+        max_results,
+        principal,
+        request_id,
+        selection_urls=None,
+        **kwargs,
+    ):
+        del principal
+        results = retrieval.result["results"]
+        selected = (
+            tuple(
+                next(item for item in results if item["url"] == url)
+                for url in selection_urls
+            )
+            if selection_urls is not None
+            else tuple(results[:max_results])
+        )
+        scope = retrieval.result["scope"]
+        self.compose_calls.append(
+            {
+                "scope": scope,
+                "max_results": max_results,
+                "selection_urls": selection_urls,
+                **kwargs,
+            }
+        )
+        if scope == "official":
+            should_fail = self.all_rejected or kwargs.get("required_urls") is None
+            dispositions = (
+                ("diagnostic_only", "diagnostic_only")
+                if should_fail
+                else ("diagnostic_only", "partial")
+            )
+            outcome = (
+                CanonicalOutcome.EXTRACTION_FAILED
+                if should_fail
+                else CanonicalOutcome.DEGRADED
+            )
+        else:
+            dispositions = tuple("usable" for _ in selected)
+            outcome = CanonicalOutcome.SUCCESS
+        links = tuple(
+            {
+                "result_cluster_ref": f"cluster-{ordinal}",
+                "artifact_disposition": dispositions[ordinal],
+            }
+            for ordinal in range(len(selected))
+        )
+        artifacts = tuple(
+            {
+                "url": item["url"],
+                "title": item["title"],
+                "text": "accepted content " * 40,
+                "word_count": 80,
+                "disposition": dispositions[ordinal],
+                "extractor": "trafilatura",
+            }
+            for ordinal, item in enumerate(selected)
+            if dispositions[ordinal] in {"usable", "partial"}
+        )
+        result = {
+            "composition_receipt_ref": f"composition:{request_id}",
+            "accepted_artifact_refs": tuple(
+                f"artifact-{ordinal}"
+                for ordinal, disposition in enumerate(dispositions)
+                if disposition == "usable"
+            ),
+            "degraded_artifact_refs": tuple(
+                f"artifact-{ordinal}"
+                for ordinal, disposition in enumerate(dispositions)
+                if disposition == "partial"
+            ),
+            "rejected_extraction_refs": tuple(
+                f"extract-{ordinal}"
+                for ordinal, disposition in enumerate(dispositions)
+                if disposition == "diagnostic_only"
+            ),
+            "composition_trace": ("artifact_floor_met",),
+            "links": links,
+            "artifacts": artifacts,
+        }
+        return AcceptedOperation(
+            outcome=outcome,
+            request_id=request_id,
+            result=result,
+            error=(
+                None
+                if outcome in {CanonicalOutcome.SUCCESS, CanonicalOutcome.DEGRADED}
+                else _operation_error(
+                    outcome,
+                    request_id=request_id,
+                    detail="workflow composition failed",
+                )
+            ),
+        )
+
+
+def test_domain_root_uses_registrable_domains_and_safe_fallback():
+    from argus.workflows import service as workflow_service
+
+    assert workflow_service._domain_root("docs.foo.co.uk") == "foo.co.uk"
+    assert workflow_service._domain_root("api.bar.co.uk") == "bar.co.uk"
+    assert workflow_service._domain_root("www.weird.com") == "weird.com"
+    assert workflow_service._domain_root("wwwweird.com") == "wwwweird.com"
+    assert workflow_service._domain_root("localhost") == "localhost"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", (40, 200))
+async def test_research_url_planner_caps_search_request_and_selection(
+    monkeypatch, tmp_path, limit
+):
+    monkeypatch.setenv("ARGUS_DATA_ROOT", str(tmp_path / "data"))
+    operations = _ResearchPackOperations()
+    service = WorkflowService(operations)
+    run = service._create_run(WorkflowKind.BUILD_RESEARCH_PACK, "Example SDK")
+
+    _retrieval, urls = await service._discover_research_urls(
+        "Example SDK",
+        official_url="https://docs.example.com/guide",
+        limit=limit,
+        run=run,
+    )
+
+    request = next(item for item in operations.search_calls if item.mode == "research")
+    assert request.max_results == 50
+    assert len(urls) <= limit
+
+
+@pytest.mark.asyncio
+async def test_research_url_selection_excludes_official_registrable_domain(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("ARGUS_DATA_ROOT", str(tmp_path / "data"))
+    operations = _ResearchPackOperations(
+        research_results=(
+            {"url": "https://docs.foo.co.uk/official", "title": "Official"},
+            {"url": "https://a.foo.co.uk/also-official", "title": "Official"},
+            {"url": "https://bar.co.uk/one", "title": "Bar One"},
+            {"url": "https://a.bar.co.uk/two", "title": "Bar Two"},
+            {"url": "https://b.bar.co.uk/three", "title": "Bar Three"},
+            {"url": "https://other.co.uk/one", "title": "Other One"},
+        )
+    )
+    service = WorkflowService(operations)
+    run = service._create_run(WorkflowKind.BUILD_RESEARCH_PACK, "Example SDK")
+
+    _retrieval, urls = await service._discover_research_urls(
+        "Example SDK",
+        official_url="https://docs.foo.co.uk/guide",
+        limit=3,
+        run=run,
+    )
+
+    assert urls == [
+        "https://bar.co.uk/one",
+        "https://a.bar.co.uk/two",
+        "https://other.co.uk/one",
+    ]
+
+
+class _NoopSummarizer:
+    def __init__(self):
+        self.calls = 0
+
+    async def summarize(self, **kwargs):
+        self.calls += 1
+        return []
+
+
+@pytest.mark.asyncio
+async def test_research_pack_ignores_diagnostic_first_artifact_and_bounds_capture(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("ARGUS_DATA_ROOT", str(tmp_path / "data"))
+    operations = _ResearchPackOperations()
+    summarizer = _NoopSummarizer()
+    monkeypatch.setattr("argus.workflows.service.get_summarizer", lambda: summarizer)
+    service = WorkflowService(operations)
+
+    result = await service.build_research_pack(
+        topic="Example SDK",
+        official_url="https://docs.example.com/guide",
+        max_research_pages=5,
+    )
+
+    assert result.status is WorkflowStatus.COMPLETED
+    assert {document.url for document in result.documents} == {
+        "https://docs.example.com/guide",
+        "https://blog.example.net/one",
+        "https://blog.example.net/two",
+        "https://notes.example.org/one",
+        "https://notes.example.org/two",
+        "https://research.other.com/one",
+    }
+    assert all(
+        __import__("pathlib").Path(document.artifact_path).exists()
+        for document in result.documents
+    )
+    assert summarizer.calls == 1
+
+    official_call = next(
+        call for call in operations.compose_calls if call["scope"] == "official"
+    )
+    external_call = next(
+        call for call in operations.compose_calls if call["scope"] == "external"
+    )
+    assert official_call["max_results"] <= 8
+    assert len(official_call["selection_urls"]) <= 8
+    assert official_call["required_urls"] == ()
+    assert official_call["minimum_artifacts"] == 1
+    assert official_call["allow_partial"] is True
+    assert external_call["max_results"] == 5
+    assert len(external_call["selection_urls"]) == 5
+    assert external_call["selection_urls"] == (
+        "https://blog.example.net/one",
+        "https://blog.example.net/two",
+        "https://notes.example.org/one",
+        "https://notes.example.org/two",
+        "https://research.other.com/one",
+    )
+    assert external_call["required_urls"] == ()
+    roots = [
+        ".".join(urlparse(url).netloc.split(".")[-2:])
+        for url in external_call["selection_urls"]
+    ]
+    assert all(roots.count(root) <= 2 for root in set(roots))
+    assert operations.acquire_calls[0].soft_page_limit == 8
+    assert operations.acquire_calls[0].hard_page_limit == 8
+
+
+@pytest.mark.asyncio
+async def test_research_pack_all_rejected_artifacts_fails_without_synthesis(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("ARGUS_DATA_ROOT", str(tmp_path / "data"))
+    operations = _ResearchPackOperations(all_rejected=True)
+    summarizer = _NoopSummarizer()
+    monkeypatch.setattr("argus.workflows.service.get_summarizer", lambda: summarizer)
+    service = WorkflowService(operations)
+
+    result = await service.build_research_pack(
+        topic="Example SDK",
+        official_url="https://docs.example.com/guide",
+        max_research_pages=5,
+    )
+
+    assert result.status is WorkflowStatus.FAILED
+    assert result.documents == []
+    assert result.report_path is None
+    assert result.manifest_path is None
+    assert summarizer.calls == 0
+    assert len(operations.compose_calls) == 1
+    assert operations.compose_calls[0]["scope"] == "official"
+    assert operations.compose_calls[0]["required_urls"] == ()
+    assert operations.compose_calls[0]["minimum_artifacts"] == 1
+    assert operations.compose_calls[0]["allow_partial"] is True

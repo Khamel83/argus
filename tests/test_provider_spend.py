@@ -1251,6 +1251,128 @@ async def test_executor_reserves_before_provider_and_settles_known_charge(tmp_pa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_name", "cost_usd"),
+    [
+        (ProviderName.BRAVE, 0.25),
+        (ProviderName.DUCKDUCKGO, None),
+    ],
+)
+async def test_executor_persists_authenticated_identity_and_caller_label(
+    tmp_path, provider_name, cost_usd
+):
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.models import ProviderStatus
+
+    repository = _repository(tmp_path)
+
+    class Provider:
+        name = provider_name
+
+        def is_available(self):
+            return True
+
+        def status(self):
+            return ProviderStatus.ENABLED
+
+        async def search(self, query):
+            return [], ProviderTrace(
+                provider=self.name,
+                status="success",
+                credit_info=(
+                    {"cost_usd": cost_usd} if cost_usd is not None else None
+                ),
+            )
+
+    budgets = BudgetTracker()
+    budgets.set_budget(ProviderName.BRAVE, 10.0)
+    executor = ProviderExecutor(
+        providers={provider_name: Provider()},
+        health_tracker=HealthTracker(),
+        budget_tracker=budgets,
+        spend_repository=repository,
+    )
+
+    await execute_with_plan(
+        executor,
+        SearchQuery(
+            query="accepted workflow query",
+            caller="mac-agents",
+            metadata={
+                "caller_label": "tonight-acceptance",
+                "attempt_scope": "accepted-workflow",
+            },
+        ),
+        [provider_name],
+    )
+
+    attempt = repository.list_attempts(provider=provider_name)[0]
+    assert attempt.caller_identity == "mac-agents"
+    assert attempt.caller_label == "tonight-acceptance"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "caller_label",
+    [None, {"caller": "admin"}, 42, "label with spaces", "x" * 101],
+)
+async def test_malformed_caller_label_falls_back_without_changing_identity(
+    tmp_path, caller_label
+):
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.models import ProviderStatus
+
+    repository = _repository(tmp_path)
+
+    class Provider:
+        name = ProviderName.BRAVE
+
+        def is_available(self):
+            return True
+
+        def status(self):
+            return ProviderStatus.ENABLED
+
+        async def search(self, query):
+            return [], ProviderTrace(
+                provider=self.name,
+                status="success",
+                credit_info={"cost_usd": 0.25},
+            )
+
+    budgets = BudgetTracker()
+    budgets.set_budget(ProviderName.BRAVE, 10.0)
+    executor = ProviderExecutor(
+        providers={ProviderName.BRAVE: Provider()},
+        health_tracker=HealthTracker(),
+        budget_tracker=budgets,
+        spend_repository=repository,
+        caller_tier_caps={"mac-agents": 1},
+    )
+
+    await execute_with_plan(
+        executor,
+        SearchQuery(
+            query="malicious label",
+            caller="mac-agents",
+            metadata={
+                "caller_label": caller_label,
+                "attempt_scope": f"malicious-{type(caller_label).__name__}",
+            },
+        ),
+        [ProviderName.BRAVE],
+    )
+
+    attempt = repository.list_attempts(provider=ProviderName.BRAVE)[0]
+    assert attempt.caller_identity == "mac-agents"
+    assert attempt.caller_label == "mac-agents"
+
+
+@pytest.mark.asyncio
 async def test_executor_leaves_uncertain_charge_when_provider_acceptance_crashes(
     tmp_path,
 ):

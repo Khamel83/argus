@@ -20,6 +20,10 @@ _STATES = {"healthy", "degraded", "unready", "unknown", "disabled"}
 _SAFE_CORRELATION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _FULL_REVISION = re.compile(r"^[0-9a-f]{40}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
+_IMAGE_IDENTITY = re.compile(
+    r"^(?:ghcr\.io/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*@)?"
+    r"sha256:[0-9a-fA-F]{64}$"
+)
 _SENSITIVE_REASON = re.compile(
     r"(?i)(?:https?://|authorization|cookie|password|passwd|secret|token|"
     r"\bquery\b|\burl\b|(?:^|[\s,;])[^=\s]+=[^\s]+)"
@@ -88,6 +92,14 @@ def _sanitize_reason(value: object) -> str | None:
 def _safe_identity(value: object, *, default: str = "unknown") -> str:
     candidate = str(value or "").strip()
     return candidate if _SAFE_CORRELATION.fullmatch(candidate) else default
+
+
+def _safe_image_identity(value: object) -> str:
+    """Expose only immutable image digests from environment configuration."""
+    if not isinstance(value, str):
+        return "unknown"
+    candidate = value.strip()
+    return candidate if _IMAGE_IDENTITY.fullmatch(candidate) else "unknown"
 
 
 def safe_correlation_id(value: object | None) -> str:
@@ -781,6 +793,9 @@ def create_operational_status(
                 lock_digest
                 if isinstance(lock_digest, str) and _DIGEST.fullmatch(lock_digest)
                 else "unknown"
+            ),
+            "image_identity": _safe_image_identity(
+                values.get("ARGUS_IMAGE_IDENTITY")
             ),
             "manifest_source": ("runtime_manifest" if manifest else "package_metadata"),
         },
