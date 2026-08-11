@@ -174,6 +174,8 @@ def _validate_evaluator(value: object) -> dict[str, Any]:
         "web_enabled",
         "tools_enabled",
         "memory_enabled",
+        "provider_enabled",
+        "database_enabled",
         "spend_authority",
         "prompt_sha256",
         "prompt_bytes_sha256",
@@ -189,7 +191,13 @@ def _validate_evaluator(value: object) -> dict[str, Any]:
         raise ContractError("evaluator sampling must remain unmodified")
     if any(
         evaluator[key] is not False
-        for key in ("web_enabled", "tools_enabled", "memory_enabled")
+        for key in (
+            "web_enabled",
+            "tools_enabled",
+            "memory_enabled",
+            "provider_enabled",
+            "database_enabled",
+        )
     ):
         raise ContractError("evaluator web/tools/memory capabilities must be disabled")
     if evaluator["spend_authority"] != "none":

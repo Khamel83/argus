@@ -45,6 +45,18 @@ _OPAQUE_KEYS = {
     "request_id",
     "receipt_id",
 }
+_OPAQUE_CANONICAL = {
+    "id": "id",
+    "runid": "run_id",
+    "operationid": "operation_id",
+    "attemptid": "attempt_id",
+    "reservationid": "reservation_id",
+    "captureid": "capture_id",
+    "idempotencykey": "idempotency_key",
+    "sessionid": "session_id",
+    "requestid": "request_id",
+    "receiptid": "receipt_id",
+}
 _MUTABLE_KEYS = {
     "updated_at",
     "last_seen_at",
@@ -123,12 +135,14 @@ def _sanitize(value: Any, *, path: str = "row") -> Any:
                 "cache_status",
             }:
                 raise ObservationError(f"sensitive field at {path}.{key}")
-            if normalized in _OPAQUE_KEYS:
+            opaque_name = "".join(char for char in normalized if char.isalnum())
+            canonical_opaque = _OPAQUE_CANONICAL.get(opaque_name)
+            if canonical_opaque is not None:
                 if not isinstance(nested, str) or not nested:
                     raise ObservationError(
                         f"opaque field {path}.{key} must be a string"
                     )
-                output[f"{normalized}_sha256"] = hash_opaque(nested)
+                output[f"{canonical_opaque}_sha256"] = hash_opaque(nested)
             else:
                 output[key] = _sanitize(nested, path=f"{path}.{key}")
         return output
@@ -367,6 +381,8 @@ def validate_transport_pages(
 ) -> dict[str, Any]:
     """Validate a contiguous UTF-8 artifact page stream and its terminal hash."""
 
+    if max_pages < 1 or max_pages > 64 or max_bytes < 1 or max_bytes > 4 * 1024 * 1024:
+        raise ObservationError("transport bounds cannot be widened")
     if not pages or len(pages) > max_pages:
         raise ObservationError("transport page count is outside bound")
     if not isinstance(expected_sha256, str) or not re.fullmatch(

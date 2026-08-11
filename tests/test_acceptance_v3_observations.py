@@ -60,6 +60,15 @@ def test_snapshot_rejects_sqlite_and_secrets():
         build_snapshot("x", [{"authorization": "Bearer secret"}])
 
 
+def test_snapshot_hashes_camel_case_opaque_identifiers_without_raw_values():
+    snapshot = build_snapshot("x", [{"runId": "raw-run", "captureId": "raw-capture"}])
+    row = snapshot["rows"][0]
+    assert "raw-run" not in repr(snapshot)
+    assert "raw-capture" not in repr(snapshot)
+    assert row["run_id_sha256"] == hash_opaque("raw-run")
+    assert row["capture_id_sha256"] == hash_opaque("raw-capture")
+
+
 def test_spend_delta_rejects_every_forbidden_new_row_and_unledgered_billable_call():
     before = [{"id": "old", "observed_at": "2026-08-10T20:00:00Z"}]
     after = before + [
@@ -339,3 +348,35 @@ def test_execute_cycle_fails_closed_when_no_injected_preflight(tmp_path):
     )
     assert result["status"] == "preflight_failed"
     assert result["verdict"] == "FAIL"
+
+
+def test_execute_cycle_rejects_non_global_guard_before_any_adapter_post(tmp_path):
+    runner = _runner_module()
+
+    class BadGuard:
+        def __init__(self):
+            self.posts = 0
+
+        def preflight(self):
+            return {
+                "status": "ready",
+                "execution_contract": {"guard_path": str(tmp_path / "guard.json")},
+                "execution_contract_path": str(tmp_path / "contract.json"),
+                "guard_path": str(tmp_path / "guard.json"),
+            }
+
+        def post_search(self, body):
+            self.posts += 1
+            raise AssertionError("guard rejection must precede POST")
+
+    adapter = BadGuard()
+    result = runner.execute_cycle(
+        adapter,
+        output=tmp_path / "bundle",
+        nonce="nonce-1234",
+        marker_dir=tmp_path / "markers",
+        workflow_body=b"{}",
+        run_binding_path=tmp_path / "run.json",
+    )
+    assert result["status"] == "preflight_failed"
+    assert adapter.posts == 0

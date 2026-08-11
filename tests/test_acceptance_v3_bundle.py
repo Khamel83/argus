@@ -15,6 +15,7 @@ from argus.acceptance_v3.bundle import (
     verify_bundle,
     write_bundle,
 )
+from argus.acceptance_v3.contract import canonical_hash
 
 
 def _recovery(reason: str):
@@ -22,7 +23,11 @@ def _recovery(reason: str):
         "status": "not_applicable",
         "reason": reason,
         "proof": "no mutation",
-        "proof_sha256": "d" * 64,
+        "proof_sha256": canonical_hash("no mutation"),
+        "no_change": True,
+        "change_count": 0,
+        "before_sha256": "e" * 64,
+        "after_sha256": "e" * 64,
     }
 
 
@@ -294,6 +299,28 @@ def test_binary_or_text_artifact_secret_and_local_path_is_rejected(tmp_path):
     }
     with pytest.raises(BundleError):
         write_bundle(tmp_path / "leak", payload)
+
+
+def test_complete_recovery_requires_all_promotion_receipts(tmp_path):
+    payload = {
+        "manifest": _manifest(status="preflight_failed"),
+        "gates": _gates("FAIL"),
+        "score": {"status": "not_run", "reason": "failed", "cells": None},
+        "claim_support": {
+            "status": "not_run",
+            "reason": "failed",
+            "requirements": None,
+        },
+        "recovery": {
+            "status": "complete",
+            "reason": "restored",
+            "proof": "restored",
+            "proof_sha256": canonical_hash("restored"),
+        },
+        "artifacts": {"status.json": b'{"status":"preflight_failed"}'},
+    }
+    with pytest.raises(BundleError, match="backup_sha256"):
+        write_bundle(tmp_path / "missing-recovery", payload)
 
 
 @pytest.mark.parametrize(

@@ -24,6 +24,7 @@ from argus.acceptance_v3.bundle import (
 )
 from argus.acceptance_v3.contract import (
     ContractError,
+    GLOBAL_GUARD_PATH,
     bind_returned_run,
     canonical_hash,
     create_global_guard,
@@ -31,7 +32,11 @@ from argus.acceptance_v3.contract import (
     write_execution_contract,
     write_phase_marker,
 )
-from argus.acceptance_v3.observations import ObservationError, replay_capture_evidence
+from argus.acceptance_v3.observations import (
+    ObservationError,
+    replay_capture_evidence,
+    validate_transport_pages,
+)
 
 
 class AcceptanceAdapters(Protocol):
@@ -53,7 +58,7 @@ class CycleAdapters(AcceptanceAdapters, Protocol):
 
     def poll_status(self, run_id: str) -> Mapping[str, Any]: ...
 
-    def read_artifact(self, run_id: str, transport: str) -> bytes: ...
+    def read_artifact(self, run_id: str, transport: str) -> Mapping[str, Any]: ...
 
     def evaluate(self, artifact: bytes) -> Mapping[str, Any]: ...
 
@@ -116,10 +121,74 @@ def _failure_payload(
             "status": "not_applicable",
             "reason": "no mutation",
             "proof": "no mutation",
-            "proof_sha256": "0" * 64,
+            "proof_sha256": canonical_hash("no mutation"),
+            "no_change": True,
+            "change_count": 0,
+            "before_sha256": "0" * 64,
+            "after_sha256": "0" * 64,
         },
         "artifacts": artifacts,
     }
+
+
+def _read_bound_artifact(adapters: CycleAdapters, run_id: str, transport: str) -> bytes:
+    projection = adapters.read_artifact(run_id, transport)
+    if not isinstance(projection, Mapping):
+        raise ValueError("artifact adapter must return a page projection")
+    pages = projection.get("pages")
+    expected_sha256 = projection.get("sha256")
+    if not isinstance(pages, list) or not isinstance(expected_sha256, str):
+        raise ValueError("artifact projection is missing pages/hash")
+    validate_transport_pages(pages, expected_sha256=expected_sha256)
+    try:
+        return "".join(page["data"] for page in pages).encode("utf-8")
+    except (KeyError, TypeError, UnicodeError) as exc:
+        raise ValueError("artifact projection page data is invalid") from exc
+
+
+def _verify_evaluator_result(
+    evaluation: Mapping[str, Any],
+    execution_contract: Mapping[str, Any],
+    artifact: bytes,
+) -> None:
+    expected = execution_contract.get("evaluator")
+    actual = evaluation.get("evaluator")
+    if not isinstance(expected, Mapping) or not isinstance(actual, Mapping):
+        raise ValueError("evaluator identity is missing")
+    for key in (
+        "version",
+        "model",
+        "reasoning_effort",
+        "sampling",
+        "web_enabled",
+        "tools_enabled",
+        "memory_enabled",
+        "provider_enabled",
+        "database_enabled",
+        "spend_authority",
+        "prompt_sha256",
+        "prompt_bytes_sha256",
+        "settings_sha256",
+        "run_receipt_sha256",
+    ):
+        if actual.get(key) != expected.get(key):
+            raise ValueError(f"evaluator identity mismatch: {key}")
+    if evaluation.get("artifact_sha256") != hashlib.sha256(artifact).hexdigest():
+        raise ValueError("evaluator artifact receipt mismatch")
+    if (
+        any(
+            actual.get(key) is not False
+            for key in (
+                "web_enabled",
+                "tools_enabled",
+                "memory_enabled",
+                "provider_enabled",
+                "database_enabled",
+            )
+        )
+        or actual.get("spend_authority") != "none"
+    ):
+        raise ValueError("evaluator capability isolation is incomplete")
 
 
 def execute_cycle(
@@ -165,26 +234,88 @@ def execute_cycle(
             "preflight_failed",
             "preflight did not provide immutable execution contract and guard",
         )
+    if (
+        guard_path != GLOBAL_GUARD_PATH
+        or execution_contract.get("guard_path") != GLOBAL_GUARD_PATH
+    ):
+        return publish(
+            "preflight_failed", "preflight guard path is not the frozen global guard"
+        )
+    evidence_root_value = execution_contract.get("evidence_root")
+    if not isinstance(evidence_root_value, str):
+        return publish(
+            "preflight_failed", "execution contract evidence root is missing"
+        )
+    evidence_root = Path(evidence_root_value)
+    expected_contract_path = evidence_root / "execution-contract.json"
+    expected_marker_dir = evidence_root / "markers"
+    expected_binding_path = evidence_root / "returned-run.json"
+    expected_output = evidence_root / "bundle"
+    if (
+        Path(contract_path) != expected_contract_path
+        or Path(contract_path).resolve(strict=False) != Path(contract_path)
+        or marker_dir != expected_marker_dir
+        or run_binding_path != expected_binding_path
+        or output != expected_output
+    ):
+        return publish(
+            "preflight_failed",
+            "cycle paths are not fixed descendants of the evidence root",
+        )
+    for name in ("snapshot", "poll_status", "read_artifact", "evaluate", "rollback"):
+        if not callable(getattr(adapters, name, None)):
+            return publish("preflight_failed", f"required adapter missing: {name}")
+    try:
+        pre_snapshot = adapters.snapshot("pre_canary")
+        if not isinstance(pre_snapshot, Mapping):
+            return publish("preflight_failed", "pre-canary snapshot is not an object")
+        snapshots = execution_contract.get("snapshots")
+        if not isinstance(snapshots, Mapping) or pre_snapshot.get(
+            "sha256"
+        ) != snapshots.get("pre_canary_sha256"):
+            return publish(
+                "preflight_failed", "pre-canary snapshot is not contract-bound"
+            )
+        start_body = execution_contract.get("start_body")
+        expected_request_sha256 = execution_contract.get("request_sha256")
+        if not isinstance(start_body, Mapping) or not isinstance(
+            expected_request_sha256, str
+        ):
+            return publish(
+                "preflight_failed", "execution contract start identity is incomplete"
+            )
+        derived_workflow_body = _wire_bytes(start_body)
+        if workflow_body != derived_workflow_body:
+            return publish(
+                "preflight_failed",
+                "caller workflow body does not match the immutable start body",
+            )
+    except Exception as exc:
+        return publish(
+            "preflight_failed", f"preflight snapshot failed: {type(exc).__name__}"
+        )
     try:
         prepare_guard = getattr(adapters, "prepare_guard", None)
         if callable(prepare_guard):
-            prepared = prepare_guard(
+            advisory = prepare_guard(
                 execution_contract,
                 contract_path=Path(contract_path),
                 guard_path=Path(guard_path),
             )
-            if not isinstance(prepared, Mapping):
+            if not isinstance(advisory, Mapping):
                 raise ContractError("injected guard preparation returned no receipt")
-        else:
-            write_execution_contract(Path(contract_path), execution_contract)
-            guard = create_global_guard(Path(guard_path), execution_contract)
-            prepared = {
-                "created": True,
-                "o_excl": True,
-                "contract_path": str(contract_path),
-                "guard_path": str(guard_path),
-                "execution_contract_sha256": guard["execution_contract_sha256"],
-            }
+        # The harness, never an injected adapter, owns the immutable writes.
+        # An adapter may provide read-only planning above, but it cannot fake
+        # O_EXCL/fsync evidence or bypass the exact global guard.
+        write_execution_contract(Path(contract_path), execution_contract)
+        guard = create_global_guard(Path(guard_path), execution_contract)
+        prepared = {
+            "created": True,
+            "o_excl": True,
+            "contract_path": str(contract_path),
+            "guard_path": str(guard_path),
+            "execution_contract_sha256": guard["execution_contract_sha256"],
+        }
         _verify_prepared_guard(
             prepared,
             execution_contract,
@@ -196,20 +327,15 @@ def execute_cycle(
             "preflight_failed",
             f"contract/guard preparation failed: {type(exc).__name__}",
         )
-    for name in ("snapshot", "poll_status", "read_artifact", "evaluate", "rollback"):
-        if not callable(getattr(adapters, name, None)):
-            return publish("preflight_failed", f"required adapter missing: {name}")
     try:
-        pre_snapshot = adapters.snapshot("pre_canary")
-        if not isinstance(pre_snapshot, Mapping):
-            return publish("preflight_failed", "pre-canary snapshot is not an object")
         side_effects_started = True
         canary = dispatch_canary(
             adapters,
             nonce=nonce,
             marker_dir=marker_dir,
-            workflow_body=workflow_body,
+            workflow_body=derived_workflow_body,
             run_binding_path=run_binding_path,
+            expected_request_sha256=expected_request_sha256,
         )
         post_canary_snapshot = adapters.snapshot("post_canary")
         if not isinstance(post_canary_snapshot, Mapping):
@@ -231,8 +357,8 @@ def execute_cycle(
             ):
                 return publish("rollback_incomplete", "rollback did not complete")
             return publish("FAIL", reason)
-        http_artifact = adapters.read_artifact(run_id, "http")
-        mcp_artifact = adapters.read_artifact(run_id, "mcp")
+        http_artifact = _read_bound_artifact(adapters, run_id, "http")
+        mcp_artifact = _read_bound_artifact(adapters, run_id, "mcp")
         if (
             not isinstance(http_artifact, bytes)
             or not isinstance(mcp_artifact, bytes)
@@ -253,6 +379,7 @@ def execute_cycle(
                 "evaluator did not return a scored identity",
                 artifact=http_artifact,
             )
+        _verify_evaluator_result(evaluation, execution_contract, http_artifact)
         payload = evaluation.get("bundle_payload")
         if not isinstance(payload, Mapping):
             return publish(
@@ -260,6 +387,22 @@ def execute_cycle(
                 "evaluator returned no bound bundle payload",
                 artifact=http_artifact,
             )
+        score_document = payload.get("score")
+        score_evaluator = (
+            score_document.get("evaluator")
+            if isinstance(score_document, Mapping)
+            else None
+        )
+        if not isinstance(score_evaluator, Mapping):
+            raise ValueError("bundle score is missing evaluator identity")
+        for key in (
+            "model",
+            "prompt_sha256",
+            "settings_sha256",
+            "run_receipt_sha256",
+        ):
+            if score_evaluator.get(key) != execution_contract["evaluator"].get(key):
+                raise ValueError(f"bundle evaluator identity mismatch: {key}")
         write_bundle(output, payload)
         return verify_bundle(output)
     except (ObservationError, ContractError, ValueError) as exc:
@@ -407,6 +550,7 @@ def dispatch_canary(
     marker_dir: Path,
     workflow_body: bytes,
     run_binding_path: Path | None = None,
+    expected_request_sha256: str | None = None,
 ) -> CanaryResult:
     """Dispatch the exact three canary POSTs and one start POST once each."""
 
@@ -414,6 +558,12 @@ def dispatch_canary(
         raise ObservationError("workflow identity binding path is required")
     if not isinstance(workflow_body, bytes) or not workflow_body:
         raise ObservationError("workflow body must be non-empty bytes")
+    try:
+        parsed_workflow = json.loads(workflow_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ObservationError("workflow body must be canonical UTF-8 JSON") from exc
+    if not isinstance(parsed_workflow, Mapping):
+        raise ObservationError("workflow body must be a JSON object")
     fixture = dict(build_canary_fixture(nonce))
     started = completed = _aware_now()
     maya = dict(fixture["maya_body"])
@@ -496,6 +646,11 @@ def dispatch_canary(
         or any(char not in "0123456789abcdef" for char in request_sha256)
     ):
         raise ObservationError("workflow identity request hash is invalid")
+    if (
+        expected_request_sha256 is not None
+        and request_sha256 != expected_request_sha256
+    ):
+        raise ObservationError("workflow identity request hash mismatch")
     expected_body_sha256 = _wire_hash(workflow_body)
     if body_sha256 != expected_body_sha256:
         raise ObservationError("workflow identity body hash mismatch")
@@ -559,7 +714,11 @@ def _fixture_payload() -> dict[str, Any]:
             "status": "not_applicable",
             "reason": "no mutation",
             "proof": "no mutation",
-            "proof_sha256": "0" * 64,
+            "proof_sha256": canonical_hash("no mutation"),
+            "no_change": True,
+            "change_count": 0,
+            "before_sha256": "0" * 64,
+            "after_sha256": "0" * 64,
         },
         "artifacts": {"status.json": b'{"status":"preflight_failed"}'},
     }

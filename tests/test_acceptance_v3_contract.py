@@ -58,6 +58,8 @@ def _contract() -> dict[str, object]:
             "web_enabled": False,
             "tools_enabled": False,
             "memory_enabled": False,
+            "provider_enabled": False,
+            "database_enabled": False,
             "spend_authority": "none",
             "prompt_sha256": "4" * 64,
             "prompt_bytes_sha256": "4" * 64,

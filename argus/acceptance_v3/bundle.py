@@ -69,8 +69,12 @@ TERMINAL_BRANCHES = frozenset(
         "rollback_incomplete",
     }
 )
-FROZEN_GATE_DEFINITIONS_SHA256 = canonical_hash(FROZEN_GATE_DEFINITIONS)
-FROZEN_RUBRIC_SHA256 = canonical_hash(dict(RUBRIC_CELLS))
+FROZEN_GATE_DEFINITIONS_SHA256 = (
+    "067161ca8c97ce290c2ac7f7bbd93c868e4c9d07ddd81588f876718ea0d3cd80"
+)
+FROZEN_RUBRIC_SHA256 = (
+    "9922c3d77999860e8df3435b8cd827cdb5a47fd84cbda92666d028689484f76e"
+)
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SENSITIVE_TEXT = re.compile(
     r"(?:\bbearer\s+|\bbasic\s+|\bcookie\s*[:=]|\b(?:password|secret|api[_-]?key|authorization|private[_-]?key|raw[_-]?exception|stacktrace)\s*[:=]|-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:traceback|exception|stack trace)\b|(?:postgres(?:ql)?|pg)://|\bssh://|\bfile://)",
@@ -206,6 +210,8 @@ def evaluate_gates(
             raise BundleError("gates must contain exactly the eight v3 gates")
     for name in EIGHT_GATES:
         gate = normalized[name]
+        if set(gate) != {"status", "reason", "evidence"}:
+            raise BundleError(f"gate {name} has unexpected fields")
         if gate.get("status") not in {"PASS", "FAIL", "PENDING"}:
             raise BundleError(f"invalid status for gate {name}")
         if (
@@ -222,6 +228,8 @@ def evaluate_gates(
         ):
             raise BundleError(f"gate {name} requires evidence locators")
     statuses = [normalized[name]["status"] for name in EIGHT_GATES]
+    if canonical_hash(FROZEN_GATE_DEFINITIONS) != FROZEN_GATE_DEFINITIONS_SHA256:
+        raise BundleError("frozen v3 gate definitions changed")
     verdict = "PASS" if all(status == "PASS" for status in statuses) else "FAIL"
     return {
         "schema": "argus-acceptance-v3/gates",
@@ -235,6 +243,8 @@ def evaluate_gates(
 def calculate_score(score: Mapping[str, Any]) -> int:
     """Recompute the six-cell frozen score; ``not_run`` has no numeric zero."""
 
+    if canonical_hash(dict(RUBRIC_CELLS)) != FROZEN_RUBRIC_SHA256:
+        raise BundleError("frozen v3 rubric changed")
     if score.get("status") == "not_run":
         raise BundleError("score is not_run")
     if score.get("status") != "scored":
@@ -389,6 +399,29 @@ def _validate_recovery(value: object) -> None:
         raise BundleError("recovery evidence proof is required")
     if not isinstance(proof_sha256, str) or not _SHA256.fullmatch(proof_sha256):
         raise BundleError("recovery evidence proof hash is required")
+    if proof_sha256 != canonical_hash(proof):
+        raise BundleError("recovery evidence proof hash mismatch")
+    if status == "not_applicable":
+        if value.get("no_change") is not True or value.get("change_count") != 0:
+            raise BundleError("not_applicable recovery needs explicit no-change proof")
+        before = value.get("before_sha256")
+        after = value.get("after_sha256")
+        if (
+            not isinstance(before, str)
+            or not _SHA256.fullmatch(before)
+            or before != after
+        ):
+            raise BundleError("not_applicable recovery hashes must be identical")
+    if status == "complete":
+        for key in (
+            "backup_sha256",
+            "restore_sha256",
+            "schema_sha256",
+            "identity_sha256",
+            "soak_sha256",
+        ):
+            if not isinstance(value.get(key), str) or not _SHA256.fullmatch(value[key]):
+                raise BundleError(f"complete recovery is missing {key}")
 
 
 def derive_verdict(
