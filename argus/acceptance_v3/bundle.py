@@ -735,6 +735,7 @@ def build_canary_fixture(
     }
     return {
         "query": query,
+        "query_sha256": canonical_hash(query),
         "search_body": search_body,
         "search_body_sha256": canonical_hash(search_body),
         "maya_body": maya_body,

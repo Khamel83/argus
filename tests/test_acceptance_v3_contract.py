@@ -98,7 +98,8 @@ def _contract() -> dict[str, object]:
         },
         canary={
             "query_sha256": "8" * 64,
-            "body_sha256": "9" * 64,
+            "search_body_sha256": "9" * 64,
+            "maya_body_sha256": "b" * 64,
             "idempotency_key_sha256": "a" * 64,
         },
         artifact_hashes={

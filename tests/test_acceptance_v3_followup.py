@@ -77,15 +77,21 @@ def test_workflow_artifact_reader_requires_kind_and_transport_arguments():
     assert runner._artifact_reader_signature_valid(LegacyReader()) is False
 
 
-def test_strict_canary_binds_contract_hashes_and_safe_pending_start(tmp_path):
+def test_strict_canary_binds_contract_hashes_and_safe_pending_start(
+    tmp_path, monkeypatch
+):
     runner = _runner_module()
     timestamp = "2026-08-10T20:00:00Z"
+    monkeypatch.setattr(runner, "_aware_now", lambda: "2026-08-10T20:00:01Z")
     fixture = build_canary_fixture(
         "nonce-1234", started_at=timestamp, completed_at=timestamp
     )
 
     class Adapter:
         maya_calls = 0
+
+        def __init__(self):
+            self.maya_bodies = []
 
         def post_search(self, body):
             return {
@@ -104,6 +110,7 @@ def test_strict_canary_binds_contract_hashes_and_safe_pending_start(tmp_path):
 
         def post_maya(self, body):
             self.maya_calls += 1
+            self.maya_bodies.append(body)
             return {
                 "status": 201 if self.maya_calls == 1 else 200,
                 "duplicate": self.maya_calls != 1,
@@ -130,21 +137,25 @@ def test_strict_canary_binds_contract_hashes_and_safe_pending_start(tmp_path):
                 "body_sha256": sha256(body).hexdigest(),
             }
 
+    adapter = Adapter()
     result = runner.dispatch_canary(
-        Adapter(),
+        adapter,
         nonce="nonce-1234",
         marker_dir=tmp_path / "markers",
         workflow_body=b"{}",
         run_binding_path=tmp_path / "run.json",
         expected_canary={
             "query_sha256": runner.canonical_hash(fixture["query"]),
-            "body_sha256": fixture["maya_body_sha256"],
+            "search_body_sha256": fixture["search_body_sha256"],
+            "maya_body_sha256": fixture["maya_body_sha256"],
             "idempotency_key_sha256": fixture["idempotency_key_sha256"],
         },
         canary_timestamp=timestamp,
         require_safe_start=True,
     )
     assert result.workflow_response["status"] == "pending"
+    expected_maya = runner._wire_bytes(fixture["maya_body"])
+    assert adapter.maya_bodies == [expected_maya, expected_maya]
 
 
 def test_rollback_receipt_requires_baseline_and_quiescence_proof():

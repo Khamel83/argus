@@ -240,6 +240,25 @@ def _validate_hash_map(value: object, label: str, required: set[str]) -> dict[st
     return mapping
 
 
+def _validate_canary(value: object) -> dict[str, str]:
+    """Validate separate query/search/Maya/idempotency canary bindings."""
+
+    canary = _mapping(value, "canary")
+    _exact_keys(
+        canary,
+        {
+            "query_sha256",
+            "search_body_sha256",
+            "maya_body_sha256",
+            "idempotency_key_sha256",
+        },
+        "canary",
+    )
+    for key, digest in canary.items():
+        _sha(digest, f"canary.{key}")
+    return {key: str(value) for key, value in canary.items()}
+
+
 def _validate_endpoint_entry(value: object, label: str) -> dict[str, Any]:
     """Validate one endpoint's path and shape/pagination/envelope bindings.
 
@@ -556,11 +575,7 @@ def validate_execution_contract(value: object) -> dict[str, Any]:
             "observed_at",
         },
     )
-    _validate_hash_map(
-        contract["canary"],
-        "canary",
-        {"query_sha256", "body_sha256", "idempotency_key_sha256"},
-    )
+    _validate_canary(contract["canary"])
     _timestamp(contract["snapshots"]["observed_at"], "snapshots.observed_at")
     _validate_artifact_hashes(contract["artifact_hashes"])
     _validate_negative_probe(contract["negative_probe"])

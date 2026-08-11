@@ -1102,32 +1102,38 @@ def dispatch_canary(
         raise ObservationError("workflow body must be canonical UTF-8 JSON") from exc
     if not isinstance(parsed_workflow, Mapping):
         raise ObservationError("workflow body must be a JSON object")
+    # Resolve one timestamp before constructing the fixture.  The timestamp is
+    # part of the canonical Maya body, so deriving it twice would silently
+    # break the frozen contract hash while still issuing a valid request.
+    final_timestamp = canary_timestamp or _aware_now()
     fixture = dict(
         build_canary_fixture(
             nonce,
-            started_at=canary_timestamp,
-            completed_at=canary_timestamp,
+            started_at=final_timestamp,
+            completed_at=final_timestamp,
         )
     )
-    if expected_canary is not None:
-        if (
-            expected_canary.get("query_sha256") != canonical_hash(fixture["query"])
-            or expected_canary.get("body_sha256")
-            not in {
-                canonical_hash(fixture["maya_body"]),
-                canonical_hash(fixture["search_body"]),
-            }
-            or expected_canary.get("idempotency_key_sha256")
-            != canonical_hash(fixture["maya_body"]["idempotency_key"])
-        ):
-            raise ObservationError("canary request identity is not contract-bound")
-    started = completed = _aware_now()
     maya = dict(fixture["maya_body"])
-    maya["started_at"] = started
-    maya["completed_at"] = completed
-    fixture["maya_body"] = maya
-    fixture["maya_body_sha256"] = canonical_hash(maya)
     maya_body = _wire_bytes(maya)
+    actual_canary_hashes = {
+        "query_sha256": canonical_hash(fixture["query"]),
+        "search_body_sha256": canonical_hash(fixture["search_body"]),
+        "maya_body_sha256": canonical_hash(maya),
+        "idempotency_key_sha256": canonical_hash(maya["idempotency_key"]),
+    }
+    if expected_canary is not None:
+        required_canary = {
+            "query_sha256",
+            "search_body_sha256",
+            "maya_body_sha256",
+            "idempotency_key_sha256",
+        }
+        if (
+            set(expected_canary) != required_canary
+            or dict(expected_canary) != actual_canary_hashes
+        ):
+            raise ObservationError("final canary wire bodies are not contract-bound")
+    fixture.update(actual_canary_hashes)
     if marker_dir.exists() and marker_dir.is_symlink():
         raise ObservationError("canary marker directory must not be a symlink")
     marker_dir.mkdir(parents=True, exist_ok=True)
@@ -1153,13 +1159,13 @@ def dispatch_canary(
     write_phase_marker(
         marker_dir / "maya-first.json",
         phase="maya-first",
-        identity={"body_sha256": canonical_hash(maya)},
+        identity={"body_sha256": actual_canary_hashes["maya_body_sha256"]},
     )
     first = adapters.post_maya(maya_body)
     write_phase_marker(
         marker_dir / "maya-replay.json",
         phase="maya-replay",
-        identity={"body_sha256": canonical_hash(maya)},
+        identity={"body_sha256": actual_canary_hashes["maya_body_sha256"]},
     )
     replay = adapters.post_maya(maya_body)
     maya_evidence = replay_capture_evidence(
@@ -1240,7 +1246,7 @@ def dispatch_canary(
             topic=workflow_response["target"],
             request_sha256=request_sha256,
             body_sha256=body_sha256,
-            dispatched_at=started,
+            dispatched_at=final_timestamp,
         )
     except ContractError as exc:
         raise ObservationError(f"workflow identity binding failed: {exc}") from exc
