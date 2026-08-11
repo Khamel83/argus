@@ -376,6 +376,199 @@ def test_public_projection_redacts_private_source_markers(tmp_path):
     assert "db_id=internal" not in report
 
 
+@pytest.mark.parametrize(
+    "private_path",
+    [
+        "/applications/private/secret",
+        "/Library/private/secret",
+        "/library/private/secret",
+        "/System/private/secret",
+        "/system/private/secret",
+        "/bin/private/tool",
+        "/sbin/private/tool",
+        "/proc/private/status",
+        "/media/private/file",
+        "/workspaces/private/file",
+    ],
+)
+def test_public_projection_redacts_case_insensitive_local_paths(tmp_path, private_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].title = private_path
+
+    service._finalize_run(
+        run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+    )
+
+    payload = Path(run.manifest_path).read_text(encoding="utf-8")
+    report = Path(run.report_path).read_text(encoding="utf-8")
+    assert private_path not in payload
+    assert private_path not in report
+
+
+@pytest.mark.parametrize("private_root", ["/applications", "/Library", "/system", "/bin"])
+def test_targeted_closure_rejects_case_insensitive_diagnostic_paths(
+    tmp_path, private_root
+):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].metadata["execution_diagnostics"][0]["provider"] = (
+        f"provider={private_root}/provider"
+    )
+
+    with pytest.raises(ValueError, match="provenance diagnostics"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+def test_public_projection_redacts_case_insensitive_source_paths(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    document = run.documents[0]
+    private_text = "Accepted observation from /Library/private/source."
+    Path(document.artifact_path).write_text(private_text, encoding="utf-8")
+    source_hash = hashlib.sha256(private_text.encode()).hexdigest()
+    document.metadata["source_text_sha256"] = source_hash
+    document.metadata["text_sha256"] = source_hash
+
+    service._finalize_run(
+        run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+    )
+
+    payload = Path(run.manifest_path).read_text(encoding="utf-8")
+    report = Path(run.report_path).read_text(encoding="utf-8")
+    assert "/Library/private/source" not in payload
+    assert "/Library/private/source" not in report
+
+
+def test_public_projection_keeps_url_paths_public(tmp_path):
+    del tmp_path
+    public_url = "https://example.com/Library/docs"
+    from argus.workflows.service import _public_clean
+
+    assert _public_clean(public_url) == public_url
+
+
+@pytest.mark.parametrize(
+    "path_like",
+    [
+        "~alice/private/key",
+        "../private/token",
+        r"..\private\token",
+        "%2FUsers%2Falice%2Fprivate%2Fsecret",
+        "file%3A%2F%2Ftmp%2Fprivate%2Fsecret",
+        "C%3A%5CUsers%5Calice%5Cprivate%5Csecret",
+    ],
+)
+def test_public_projection_redacts_encoded_and_relative_paths(path_like):
+    from argus.workflows.service import _public_clean
+
+    cleaned = _public_clean(f"Evidence {path_like}")
+    assert path_like not in cleaned
+    assert "private" not in cleaned.casefold()
+
+
+def test_public_projection_keeps_percent_encoded_https_url_intact():
+    from argus.workflows.service import _public_clean
+
+    for public_url in (
+        "https://example.com/docs%20Library",
+        "https://example.com/../private",
+        "https://example.com/%2E%2E%2Fprivate",
+    ):
+        assert _public_clean(public_url) == public_url
+
+
+@pytest.mark.parametrize(
+    "private_url",
+    [
+        "https://example.com/docs%0Aprivate",
+        "https://example.com/docs\nprivate",
+        "https://example.com/docs\tprivate",
+    ],
+)
+def test_public_url_rejects_controls(private_url):
+    from argus.workflows.service import _public_url
+
+    assert _public_url(private_url) == "[REDACTED_URL]"
+
+
+@pytest.mark.parametrize("encoded_control", ["%0A", "%0D", "%09"])
+def test_public_projection_redacts_percent_encoded_controls(encoded_control):
+    from argus.workflows.service import _public_clean
+
+    cleaned = _public_clean(f"Evidence {encoded_control} secret")
+    assert encoded_control not in cleaned
+    assert not any(character in cleaned for character in "\r\n\t")
+
+
+@pytest.mark.parametrize(
+    "credential",
+    [
+        "Basic YWxpY2U6c2VjcmV0",
+        "Basic YWxpY2U6c2VjcmU=",
+        "Basic YWxpY2U6c2VjcmV0MQ==",
+        "Basic YWxpY2U6c2VjcmV0.",
+        "Basic YWxpY2U6c2VjcmV0)",
+        "Basic%20YWxpY2U6c2VjcmV0.",
+        "Cookie: session=supersecret",
+        "X-Auth-Token: supersecret",
+        "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC7 user@host",
+    ],
+)
+def test_public_projection_redacts_credential_markers(tmp_path, credential):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].title = credential
+
+    service._finalize_run(
+        run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+    )
+
+    payload = Path(run.manifest_path).read_text(encoding="utf-8")
+    report = Path(run.report_path).read_text(encoding="utf-8")
+    assert credential not in payload
+    assert credential not in report
+
+
+def test_public_projection_redacts_credentials_in_source_text(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    document = run.documents[0]
+    private_text = "Accepted observation Cookie: session=supersecret."
+    Path(document.artifact_path).write_text(private_text, encoding="utf-8")
+    source_hash = hashlib.sha256(private_text.encode()).hexdigest()
+    document.metadata["source_text_sha256"] = source_hash
+    document.metadata["text_sha256"] = source_hash
+
+    service._finalize_run(
+        run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+    )
+
+    payload = Path(run.manifest_path).read_text(encoding="utf-8")
+    report = Path(run.report_path).read_text(encoding="utf-8")
+    assert "Cookie: session=supersecret" not in payload
+    assert "Cookie: session=supersecret" not in report
+
+
+def test_targeted_closure_rejects_credentials_in_diagnostics(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].metadata["execution_diagnostics"][0]["provider"] = (
+        "X-Auth-Token: supersecret"
+    )
+
+    with pytest.raises(ValueError, match="provenance diagnostics"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
 def test_targeted_closure_recomputes_source_hash_from_artifact(tmp_path):
     service = _service()
     run = _run(tmp_path, requirement_count=1)
@@ -616,6 +809,21 @@ def test_targeted_closure_rejects_nonfinite_execution_diagnostic(tmp_path):
     run.documents[0].metadata["execution_diagnostics"][0]["operation_latency_ms"] = float(
         "nan"
     )
+
+    with pytest.raises(ValueError, match="provenance diagnostics"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+def test_targeted_closure_rejects_nonfinite_nested_diagnostic_spend(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].metadata["execution_diagnostics"][0]["spend_provenance"] = {
+        "amount": float("inf")
+    }
 
     with pytest.raises(ValueError, match="provenance diagnostics"):
         service._finalize_run(

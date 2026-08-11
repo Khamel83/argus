@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import ipaddress
 import json
@@ -17,7 +18,7 @@ from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from tld import get_fld
 
@@ -181,17 +182,24 @@ _PUBLIC_SECRET_RE = re.compile(
     r"(?is)(?:authorization\s*:\s*bearer(?:\s+[A-Za-z0-9._~+/=-]{4,})?|"
     r"bearer\s+[A-Za-z0-9._~+/=-]{4,}|"
     r"(?:api[-_ ]?key|access[-_ ]?token|secret|password)\s*[:=]\s*\S+|"
+    r"(?:cookie|set-cookie|x-auth-token|x-api-key|x-session(?:[-_ ]?(?:id|token))?|session(?:[-_ ]?(?:id|token))?)\s*[:=]\s*\S+|"
+    r"(?:ssh-(?:rsa|ed25519|ecdsa|dss)|ecdsa-sha2-[A-Za-z0-9-]+)\s+[A-Za-z0-9+/]+={0,2}(?:\s+\S+)?|"
     r"-----BEGIN [^-]+ PRIVATE KEY-----.*?-----END [^-]+ PRIVATE KEY-----|"
     r"-----BEGIN [^-]+ PRIVATE KEY-----)"
 )
+_PUBLIC_BASIC_RE = re.compile(
+    r"(?i)\bbasic\s+([A-Za-z0-9+/]+={0,2})(?=$|[^A-Za-z0-9+/=])"
+)
 _PUBLIC_PATH_RE = re.compile(
     r"(?:file://[^\s<>\"']+|"
-    r"(?<![A-Za-z0-9_])(?:/Users/|/Volumes/|/private/|/tmp/|/var/|/home/|"
-    r"/opt/|/srv/|/etc/|/root/|/usr/|/Applications/|/dev/|/workspace/|"
-    r"/mnt/|/run/|/data/)[^\s<>\"']*|"
+    r"(?<![A-Za-z0-9_./])(?:/Users/|/Volumes/|/private/|/tmp/|/var/|/home/|"
+    r"/opt/|/srv/|/etc/|/root/|/usr/|/Applications/|/Library/|/System/|"
+    r"/bin/|/sbin/|/proc/|/media/|/dev/|/workspace(?:s)?/|/mnt/|/run/|/data/)[^\s<>\"']*|"
+    r"(?<![A-Za-z0-9_/.:])(?:~[A-Za-z0-9._-]*[\\/]|\.{1,2}[\\/])[^\s<>\"']*|"
     r"(?<![:A-Za-z0-9_])//[^/\s<>\"']+/[^\s<>\"']*|"
     r"(?<![A-Za-z0-9_])\\\\[^\\\s<>\"']+\\[^\s<>\"']*|"
-    r"(?<![A-Za-z0-9_])[A-Za-z]:[\\/][^\s<>\"']*)"
+    r"(?<![A-Za-z0-9_])[A-Za-z]:[\\/][^\s<>\"']*)",
+    re.IGNORECASE,
 )
 _PUBLIC_PRIVATE_DIAGNOSTIC_RE = re.compile(
     r"(?i)(?:^|[^a-z0-9])"
@@ -207,6 +215,7 @@ _PRIVATE_EVIDENCE_KEYS = frozenset(
     {"receipt_ref", "request_id", "operation_id", "db_id", "database_id", "sql_id"}
 )
 _PUBLIC_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_PUBLIC_DECODED_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -367,13 +376,93 @@ def _lead_text(text: str, limit: int = 280) -> str:
     return cleaned
 
 
+def _basic_credential_match(value: str) -> bool:
+    """Recognize Basic credentials without redacting ordinary prose."""
+
+    for match in _PUBLIC_BASIC_RE.finditer(value):
+        raw_token = match.group(1).rstrip("=")
+        if len(raw_token) < 8:
+            continue
+        padded = raw_token + ("=" * ((4 - len(raw_token) % 4) % 4))
+        try:
+            decoded = base64.b64decode(padded, validate=True)
+        except (ValueError, base64.binascii.Error):
+            continue
+        if b":" in decoded:
+            return True
+    return False
+
+
+def _public_unquote(value: str) -> str:
+    """Decode bounded percent-encoding layers for private-value detection."""
+
+    decoded = value
+    for _ in range(3):
+        unquoted = unquote(decoded)
+        if unquoted == decoded:
+            break
+        decoded = unquoted
+    return decoded
+
+
+def _public_path_match(value: Any) -> bool:
+    """Detect local paths in raw or bounded percent-decoded text."""
+
+    if not isinstance(value, str):
+        return False
+    if _PUBLIC_PATH_RE.search(value):
+        return True
+    decoded = _public_unquote(value)
+    return decoded != value and bool(_PUBLIC_PATH_RE.search(decoded))
+
+
+def _public_control_match(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    if _PUBLIC_DECODED_CONTROL_RE.search(value):
+        return True
+    decoded = _public_unquote(value)
+    return decoded != value and bool(_PUBLIC_DECODED_CONTROL_RE.search(decoded))
+
+
+def _public_decoded_hazard(value: str) -> bool:
+    decoded = _public_unquote(value)
+    if decoded == value:
+        return False
+    return bool(
+        _PUBLIC_DECODED_CONTROL_RE.search(decoded)
+        or _PUBLIC_SECRET_RE.search(decoded)
+        or _basic_credential_match(decoded)
+        or _PUBLIC_PATH_RE.search(decoded)
+        or _PUBLIC_PRIVATE_VALUE_RE.search(decoded)
+    )
+
+
+def _redact_basic(match: re.Match[str]) -> str:
+    return "Basic [REDACTED]" if _basic_credential_match(match.group(0)) else match.group(0)
+
+
+def _public_secret_match(value: str) -> bool:
+    if not isinstance(value, str):
+        return False
+    decoded = _public_unquote(value)
+    return bool(
+        _PUBLIC_SECRET_RE.search(value)
+        or _basic_credential_match(value)
+        or (decoded != value and (_PUBLIC_SECRET_RE.search(decoded) or _basic_credential_match(decoded)))
+    )
+
+
 def _public_clean(value: Any, *, fallback: str = "unknown") -> str:
     """Normalize and redact text before any public length bound is applied."""
 
     if not isinstance(value, str):
         return fallback
     text = _PUBLIC_CONTROL_RE.sub("", value)
+    if _public_decoded_hazard(text):
+        text = _PUBLIC_DECODED_CONTROL_RE.sub("", _public_unquote(text))
     text = _PUBLIC_SECRET_RE.sub("[REDACTED]", text)
+    text = _PUBLIC_BASIC_RE.sub(_redact_basic, text)
     text = _PUBLIC_PATH_RE.sub(" [REDACTED_PATH] ", text)
     text = _PUBLIC_PRIVATE_VALUE_RE.sub("[REDACTED]", text)
     text = " ".join(text.split()).strip()
@@ -419,7 +508,7 @@ def _public_https_url(value: Any) -> bool:
 
     if not isinstance(value, str) or not value or len(value) > _PUBLIC_URL_MAX:
         return False
-    if _PUBLIC_CONTROL_RE.search(value) or _PUBLIC_PATH_RE.search(value):
+    if _public_control_match(value) or _public_path_match(value):
         return False
     try:
         parsed = urlparse(value)
@@ -502,10 +591,11 @@ def _public_url(value: Any) -> str:
         len(candidate) > _PUBLIC_URL_MAX
         or parsed.scheme.lower() not in {"http", "https"}
         or not parsed.hostname
+        or _public_control_match(candidate)
         or parsed.username is not None
         or parsed.password is not None
         or "@" in parsed.netloc
-        or _PUBLIC_PATH_RE.search(candidate)
+        or _public_path_match(candidate)
     ):
         return "[REDACTED_URL]"
     return candidate[:_PUBLIC_URL_MAX]
@@ -1241,9 +1331,9 @@ class WorkflowService:
             and all(
                 character.isalnum() or character in ":._-" for character in item.strip()
             )
-            and not _PUBLIC_CONTROL_RE.search(item.strip())
-            and not _PUBLIC_SECRET_RE.search(item.strip())
-            and not _PUBLIC_PATH_RE.search(item.strip())
+            and not _public_control_match(item.strip())
+            and not _public_secret_match(item.strip())
+            and not _public_path_match(item.strip())
             and not _PUBLIC_PRIVATE_DIAGNOSTIC_RE.search(item.strip())
             and not _PUBLIC_PRIVATE_VALUE_RE.search(item.strip())
         ]
@@ -1598,9 +1688,9 @@ class WorkflowService:
             # redacted, so publish only the audited artifact prefix.  Other
             # arbitrary summaries remain unbound and fail closure.
             if (
-                _PUBLIC_SECRET_RE.search(excerpt_value or "")
-                or _PUBLIC_PATH_RE.search(excerpt_value or "")
-                or _PUBLIC_CONTROL_RE.search(excerpt_value or "")
+                _public_secret_match(excerpt_value or "")
+                    or _public_path_match(excerpt_value or "")
+                or _public_control_match(excerpt_value or "")
             ):
                 excerpt = public_text[:_PUBLIC_EXCERPT_MAX]
                 excerpt_bound = bool(excerpt)
@@ -1941,9 +2031,9 @@ class WorkflowService:
             if isinstance(value, str):
                 if (
                     len(value) > _PUBLIC_BODY_MAX
-                    or _PUBLIC_CONTROL_RE.search(value)
-                    or _PUBLIC_SECRET_RE.search(value)
-                    or _PUBLIC_PATH_RE.search(value)
+                    or _public_control_match(value)
+                    or _public_secret_match(value)
+                    or _public_path_match(value)
                     or (
                         _PUBLIC_PRIVATE_DIAGNOSTIC_RE.search(value)
                         and not allow_private
@@ -2038,13 +2128,15 @@ class WorkflowService:
                     if len(value) > _PUBLIC_LABEL_MAX:
                         return False
                     if (
-                        _PUBLIC_CONTROL_RE.search(value)
-                        or _PUBLIC_SECRET_RE.search(value)
-                        or _PUBLIC_PATH_RE.search(value)
+                        _public_control_match(value)
+                        or _public_secret_match(value)
+                        or _public_path_match(value)
                         or _PUBLIC_PRIVATE_DIAGNOSTIC_RE.search(value)
                         or _PUBLIC_PRIVATE_VALUE_RE.search(value)
                     ):
                         return False
+                elif key == "spend_provenance" and not finite_nested(value):
+                    return False
                 elif value is not None and key in {
                     "result_count",
                     "operation_latency_ms",
@@ -2233,9 +2325,9 @@ class WorkflowService:
         if any(
             not isinstance(identifier, str)
             or not _PUBLIC_CITATION_ID_RE.fullmatch(identifier)
-            or _PUBLIC_CONTROL_RE.search(identifier)
-            or _PUBLIC_SECRET_RE.search(identifier)
-            or _PUBLIC_PATH_RE.search(identifier)
+            or _public_control_match(identifier)
+            or _public_secret_match(identifier)
+            or _public_path_match(identifier)
             or _PUBLIC_PRIVATE_DIAGNOSTIC_RE.search(identifier)
             or _PUBLIC_PRIVATE_VALUE_RE.search(identifier)
             for identifier in [*document_ids, *citation_ids]
