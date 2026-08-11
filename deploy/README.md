@@ -1,6 +1,23 @@
-# Argus canonical deployment (mac mini)
+# Argus production deployment (Homelab authority)
 
-See `docs/adr/0001-canonical-deployment.md` for why.
+The production authority is the Homelab Compose deployment, reached through
+the canonical Tailscale HTTPS endpoints:
+
+- HTTP authority: `https://homelab.deer-panga.ts.net:8443`
+- MCP adapter: `https://homelab.deer-panga.ts.net:8443/mcp`
+
+The MCP adapter is a stateless execution edge over the HTTP authority. The
+deployed listener currently exposes the verified MCP `2025-11-25`
+compatibility contract; the 2026-07-28 stateless revision is a separate
+migration target documented in
+`docs/research/2026-08-11-mcp-stateless-production-authority.md`.
+
+See `docs/adr/0001-canonical-deployment.md` for historical context.
+
+## Historical standalone Mac mini setup
+
+The launchd commands below are for explicit standalone development or legacy
+recovery only; they are not the current production deployment.
 
 ```bash
 # one-time setup, from the service checkout
