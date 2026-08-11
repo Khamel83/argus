@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import pytest
 
+import argus.acceptance_v3.contract as contract_module
+
 from argus.acceptance_v3.contract import (
     CYCLE_ID,
     FROZEN_ENDPOINT_PATHS,
@@ -27,8 +29,20 @@ from argus.acceptance_v3.contract import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolated_trusted_state(tmp_path, monkeypatch):
+    """Keep filesystem contract tests portable without changing production paths."""
+
+    trusted = tmp_path / "state"
+    trusted.mkdir(mode=0o700)
+    monkeypatch.setattr(contract_module, "TRUSTED_EVIDENCE_PARENT", trusted)
+
+
 def _contract() -> dict[str, object]:
-    root = Path("/Users/macmini/.local/state/argus-acceptance-v3-contract-root")
+    root = (
+        contract_module.TRUSTED_EVIDENCE_PARENT
+        / "argus-acceptance-v3-contract-root"
+    )
     root.mkdir(parents=True, exist_ok=True)
     os.chmod(root, 0o700)
     return build_execution_contract(
@@ -168,19 +182,19 @@ def test_compact_canonical_json_preserves_null_and_absent_and_hashes_exact_bytes
 
 def test_evidence_root_is_private_non_symlink_and_rejects_existing_symlink(tmp_path):
     root = create_evidence_root(
-        Path("/Users/macmini/.local/state"),
+        contract_module.TRUSTED_EVIDENCE_PARENT,
         name=f"argus-acceptance-v3-test-{tmp_path.parent.name}-{tmp_path.name}",
     )
     assert root.is_dir()
     assert not root.is_symlink()
     assert os.stat(root).st_mode & 0o777 == 0o700
     link = (
-        Path("/Users/macmini/.local/state")
+        contract_module.TRUSTED_EVIDENCE_PARENT
         / f"argus-acceptance-v3-link-{tmp_path.parent.name}-{tmp_path.name}"
     )
     link.symlink_to(root, target_is_directory=True)
     with pytest.raises(ContractError, match="symlink"):
-        create_evidence_root(Path("/Users/macmini/.local/state"), name=link.name)
+        create_evidence_root(contract_module.TRUSTED_EVIDENCE_PARENT, name=link.name)
 
 
 def test_o_excl_json_write_fsyncs_and_second_bind_cannot_replace(tmp_path):
@@ -296,6 +310,6 @@ def test_execution_contract_binds_the_frozen_endpoint_set_and_request_keys():
 
 
 def test_evidence_root_rejects_lexical_parent_traversal():
-    parent = Path("/Users/macmini/.local/state") / "nested" / ".."
+    parent = contract_module.TRUSTED_EVIDENCE_PARENT / "nested" / ".."
     with pytest.raises(ContractError, match="trusted"):
         create_evidence_root(parent, name="argus-acceptance-v3-traversal")
