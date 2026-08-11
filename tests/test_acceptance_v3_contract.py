@@ -26,7 +26,7 @@ from argus.acceptance_v3.contract import (
 
 
 def _contract() -> dict[str, object]:
-    root = Path("/tmp/argus-acceptance-v3-contract-root")
+    root = Path("/Users/macmini/.local/state/argus-acceptance-v3-contract-root")
     root.mkdir(parents=True, exist_ok=True)
     os.chmod(root, 0o700)
     return build_execution_contract(
@@ -143,14 +143,20 @@ def test_compact_canonical_json_preserves_null_and_absent_and_hashes_exact_bytes
 
 
 def test_evidence_root_is_private_non_symlink_and_rejects_existing_symlink(tmp_path):
-    root = create_evidence_root(tmp_path)
+    root = create_evidence_root(
+        Path("/Users/macmini/.local/state"),
+        name=f"argus-acceptance-v3-test-{tmp_path.parent.name}-{tmp_path.name}",
+    )
     assert root.is_dir()
     assert not root.is_symlink()
     assert os.stat(root).st_mode & 0o777 == 0o700
-    link = tmp_path / "link"
+    link = (
+        Path("/Users/macmini/.local/state")
+        / f"argus-acceptance-v3-link-{tmp_path.parent.name}-{tmp_path.name}"
+    )
     link.symlink_to(root, target_is_directory=True)
     with pytest.raises(ContractError, match="symlink"):
-        create_evidence_root(tmp_path, name="link")
+        create_evidence_root(Path("/Users/macmini/.local/state"), name=link.name)
 
 
 def test_o_excl_json_write_fsyncs_and_second_bind_cannot_replace(tmp_path):
@@ -230,5 +236,16 @@ def test_execution_contract_rejects_empty_endpoints_extra_snapshot_fields_and_un
         )
     with pytest.raises(ContractError):
         validate_execution_contract({**contract, "evidence_root": "relative/root"})
+    with pytest.raises(ContractError, match="trusted"):
+        validate_execution_contract(
+            {**contract, "evidence_root": "/private/tmp/argus-untrusted"}
+        )
     with pytest.raises(ContractError):
         validate_execution_contract({**contract, "guard_path": "relative/guard.json"})
+    with pytest.raises(ContractError, match="frozen"):
+        validate_execution_contract(
+            {
+                **contract,
+                "guard_path": "/Users/macmini/.local/state/./argus-tonight-final-score-v3-started.json",
+            }
+        )

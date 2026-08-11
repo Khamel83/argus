@@ -23,6 +23,7 @@ SCHEMA = "build-research-pack/v3"
 GLOBAL_GUARD_PATH = (
     "/Users/macmini/.local/state/argus-tonight-final-score-v3-started.json"
 )
+TRUSTED_EVIDENCE_PARENT = Path("/Users/macmini/.local/state")
 EVIDENCE_ROOT_MODE = 0o700
 EVIDENCE_FILE_MODE = 0o600
 
@@ -369,15 +370,26 @@ def _validate_evidence_root(value: object) -> str:
     path = Path(value)
     if not path.is_absolute():
         raise ContractError("evidence_root must be absolute")
+    trusted_parent = TRUSTED_EVIDENCE_PARENT
+    try:
+        trusted_resolved = trusted_parent.resolve(strict=True)
+        lexical_resolved = path.resolve(strict=True)
+        path.relative_to(trusted_parent)
+    except (OSError, ValueError) as exc:
+        raise ContractError(
+            "evidence_root must be beneath the trusted state root"
+        ) from exc
+    if (
+        path == trusted_parent
+        or lexical_resolved != path
+        or lexical_resolved == trusted_resolved
+    ):
+        raise ContractError("evidence_root must be a fresh trusted child directory")
     # The root itself must be real.  A platform temporary directory may have
     # a harmless symlinked ancestor (for example /tmp -> /private/tmp), so
     # ancestor symlinks are checked by the creator but are not rejected here.
     if path.is_symlink():
         raise ContractError("evidence_root must not be a symlink")
-    try:
-        path.resolve(strict=True)
-    except OSError as exc:
-        raise ContractError("evidence_root must resolve to a directory") from exc
     if not path.is_dir():
         raise ContractError("evidence_root must be a directory")
     try:
@@ -392,18 +404,10 @@ def _validate_evidence_root(value: object) -> str:
 def _validate_guard_path(value: object) -> str:
     if not isinstance(value, str) or not value:
         raise ContractError("guard_path is required")
-    path = Path(value)
-    if not path.is_absolute():
-        raise ContractError("guard_path must be absolute")
-    _assert_not_symlink(path)
-    try:
-        resolved = path.resolve(strict=False)
-        expected = Path(GLOBAL_GUARD_PATH).resolve(strict=False)
-    except OSError as exc:
-        raise ContractError("guard_path cannot be resolved") from exc
-    if resolved != expected:
+    if value != GLOBAL_GUARD_PATH:
         raise ContractError("guard_path is not the frozen v3 global guard")
-    return str(path)
+    _assert_not_symlink(Path(value))
+    return value
 
 
 def _validate_artifact_hashes(value: object) -> dict[str, str]:
@@ -622,6 +626,14 @@ def create_evidence_root(base: Path | str, *, name: str | None = None) -> Path:
     """Create a fresh trusted mode-0700 evidence directory beneath ``base``."""
 
     parent = Path(base)
+    try:
+        parent.relative_to(TRUSTED_EVIDENCE_PARENT)
+    except ValueError as exc:
+        raise ContractError(
+            "evidence parent must be beneath the trusted state root"
+        ) from exc
+    if parent.is_symlink():
+        raise ContractError("evidence parent must not be a symlink")
     if parent.exists() and (parent.is_symlink() or not parent.is_dir()):
         raise ContractError("evidence parent must be a real directory")
     parent.mkdir(parents=True, exist_ok=True, mode=EVIDENCE_ROOT_MODE)

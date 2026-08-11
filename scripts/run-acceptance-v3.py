@@ -26,6 +26,8 @@ from argus.acceptance_v3.contract import (
     ContractError,
     bind_returned_run,
     canonical_hash,
+    create_global_guard,
+    write_execution_contract,
     write_phase_marker,
 )
 from argus.acceptance_v3.observations import ObservationError, replay_capture_evidence
@@ -149,6 +151,38 @@ def execute_cycle(
     if not isinstance(preflight, Mapping) or preflight.get("status") != "ready":
         return publish(
             "preflight_failed", "preflight did not establish ready authority"
+        )
+    execution_contract = preflight.get("execution_contract")
+    contract_path = preflight.get("execution_contract_path")
+    guard_path = preflight.get("guard_path")
+    if (
+        not isinstance(execution_contract, Mapping)
+        or not isinstance(contract_path, str)
+        or not isinstance(guard_path, str)
+    ):
+        return publish(
+            "preflight_failed",
+            "preflight did not provide immutable execution contract and guard",
+        )
+    try:
+        prepare_guard = getattr(adapters, "prepare_guard", None)
+        if callable(prepare_guard):
+            prepared = prepare_guard(
+                execution_contract,
+                contract_path=Path(contract_path),
+                guard_path=Path(guard_path),
+            )
+            if not isinstance(prepared, Mapping) or not prepared.get(
+                "execution_contract_sha256"
+            ):
+                raise ContractError("injected guard preparation returned no receipt")
+        else:
+            write_execution_contract(Path(contract_path), execution_contract)
+            create_global_guard(Path(guard_path), execution_contract)
+    except (ContractError, OSError, ValueError) as exc:
+        return publish(
+            "preflight_failed",
+            f"contract/guard preparation failed: {type(exc).__name__}",
         )
     for name in ("snapshot", "poll_status", "read_artifact", "evaluate", "rollback"):
         if not callable(getattr(adapters, name, None)):
