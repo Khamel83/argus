@@ -355,10 +355,14 @@ def _verify_prepared_guard(
         raise ContractError("global guard identity mismatch")
 
 
-def _require_search_canary(response: Mapping[str, Any]) -> None:
+def _require_search_canary(
+    response: Mapping[str, Any], *, expected_body_sha256: str
+) -> None:
     required = {
         "status",
         "cached",
+        "caller",
+        "body_sha256",
         "traces",
         "accepted_operations",
         "plan_batches",
@@ -371,6 +375,10 @@ def _require_search_canary(response: Mapping[str, Any]) -> None:
         raise ObservationError("canary search response identity is incomplete")
     if response.get("status") != 200 or response.get("cached") is not False:
         raise ObservationError("canary search must be one uncached HTTP 200")
+    if response.get("caller") != "mac-agents":
+        raise ObservationError("canary search caller identity is not mac-agents")
+    if response.get("body_sha256") != expected_body_sha256:
+        raise ObservationError("canary search body hash mismatch")
     traces = response.get("traces")
     if not isinstance(traces, list) or len(traces) != 1:
         raise ObservationError("canary search must have exactly one provider trace")
@@ -431,7 +439,10 @@ def dispatch_canary(
         identity={"body_sha256": canonical_hash(fixture["search_body"])},
     )
     search_response = adapters.post_search(fixture["search_body"])
-    _require_search_canary(search_response)
+    _require_search_canary(
+        search_response,
+        expected_body_sha256=canonical_hash(fixture["search_body"]),
+    )
 
     write_phase_marker(
         marker_dir / "maya-first.json",

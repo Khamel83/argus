@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+import json
 import math
 import re
 from typing import Any, Iterable, Mapping, Sequence
@@ -409,6 +410,16 @@ def replay_capture_evidence(
     if not isinstance(body, bytes) or not body:
         raise ObservationError("Maya body must be non-empty bytes")
     body_sha256 = hashlib.sha256(body).hexdigest()
+    idempotency_key_sha256: str | None = None
+    try:
+        decoded_body = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        decoded_body = None
+    if isinstance(decoded_body, Mapping) and "idempotency_key" in decoded_body:
+        key = decoded_body["idempotency_key"]
+        if not isinstance(key, str) or not key:
+            raise ObservationError("Maya idempotency key is invalid")
+        idempotency_key_sha256 = hash_opaque(key)
     for label, response in (
         ("first", first_response),
         ("replay", replay_response),
@@ -432,6 +443,9 @@ def replay_capture_evidence(
             raise ObservationError("canary Maya capture must contain zero pages")
         if response.get("body_sha256") != body_sha256:
             raise ObservationError("Maya response body hash mismatch")
+        if idempotency_key_sha256 is not None:
+            if response.get("idempotency_key_sha256") != idempotency_key_sha256:
+                raise ObservationError("Maya response idempotency hash mismatch")
     if (
         first_response.get("status") != 201
         or first_response.get("duplicate") is not False

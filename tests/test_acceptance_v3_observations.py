@@ -208,6 +208,8 @@ def test_injected_canary_dispatches_exactly_three_canary_posts_and_one_start(tmp
             return {
                 "status": 200,
                 "cached": False,
+                "caller": "mac-agents",
+                "body_sha256": runner.canonical_hash(body),
                 "traces": [{"provider": "github", "status": "empty"}],
                 "accepted_operations": 1,
                 "plan_batches": 1,
@@ -224,6 +226,9 @@ def test_injected_canary_dispatches_exactly_three_canary_posts_and_one_start(tmp
                 "duplicate": self.maya != 1,
                 "capture_id": "capture-1",
                 "capture_id_sha256": sha256(b"capture-1").hexdigest(),
+                "idempotency_key_sha256": sha256(
+                    json.loads(body)["idempotency_key"].encode()
+                ).hexdigest(),
                 "caller": "argus",
                 "pages": [],
                 "body_sha256": sha256(body).hexdigest(),
