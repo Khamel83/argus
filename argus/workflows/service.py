@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import ipaddress
 import json
+import math
 import os
 import re
 import shutil
@@ -154,8 +155,8 @@ _PUBLIC_EXCERPT_MAX = 2_000
 _PUBLIC_SECTION_TITLE_MAX = 200
 _PUBLIC_BODY_MAX = 20_000
 _PUBLIC_CITATION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@+-]{0,99}$")
-_SUMMARY_URL_RE = re.compile(r"https?://[^\s<>\"']+")
-_SUMMARY_CITATION_RE = re.compile(r"\[(S[A-Za-z0-9._:@+-]{0,127})\]")
+_SUMMARY_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+_SUMMARY_CITATION_RE = re.compile(r"\[([A-Za-z0-9][A-Za-z0-9._:@+-]{0,99})\]")
 _FRESHNESS_AS_OF = date(2026, 8, 9)
 _FRESHNESS_START = date(2025, 8, 9)
 _FRESHNESS_WINDOW = {
@@ -184,8 +185,26 @@ _PUBLIC_SECRET_RE = re.compile(
     r"-----BEGIN [^-]+ PRIVATE KEY-----)"
 )
 _PUBLIC_PATH_RE = re.compile(
-    r"(?:(?:file://)|(?:^|[\s(])(?:/Users/|/Volumes/|/private/|/tmp/|/var/|/home/)|"
-    r"(?:^|[\s(])[A-Za-z]:[\\/])"
+    r"(?:file://[^\s<>\"']+|"
+    r"(?<![A-Za-z0-9_])(?:/Users/|/Volumes/|/private/|/tmp/|/var/|/home/|"
+    r"/opt/|/srv/|/etc/|/root/|/usr/|/Applications/|/dev/|/workspace/|"
+    r"/mnt/|/run/|/data/)[^\s<>\"']*|"
+    r"(?<![:A-Za-z0-9_])//[^/\s<>\"']+/[^\s<>\"']*|"
+    r"(?<![A-Za-z0-9_])\\\\[^\\\s<>\"']+\\[^\s<>\"']*|"
+    r"(?<![A-Za-z0-9_])[A-Za-z]:[\\/][^\s<>\"']*)"
+)
+_PUBLIC_PRIVATE_DIAGNOSTIC_RE = re.compile(
+    r"(?i)(?:^|[^a-z0-9])"
+    r"(?:receipt|request[_ -]?id|database|db[_ -]?id|sql|internal(?:[_ -]?(?:id|ref))?)"
+    r"(?:\s*[:=-]\s*|\s+(?:id|ref)\b)"
+)
+_PUBLIC_PRIVATE_VALUE_RE = re.compile(
+    r"(?i)(?:^|[^a-z0-9])"
+    r"(?:receipt|request[_ -]?id|database|db[_ -]?id|sql|internal(?:[_ -]?(?:id|ref))?)"
+    r"(?:\s*[:=-]\s*|\s+(?:id|ref)\b)\S+"
+)
+_PRIVATE_EVIDENCE_KEYS = frozenset(
+    {"receipt_ref", "request_id", "operation_id", "db_id", "database_id", "sql_id"}
 )
 _PUBLIC_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -348,23 +367,30 @@ def _lead_text(text: str, limit: int = 280) -> str:
     return cleaned
 
 
-def _public_redact(value: Any, *, limit: int, fallback: str = "unknown") -> str:
-    """Return bounded text safe for a public workflow projection.
-
-    The workflow never publishes provider-native errors, paths, or credential
-    material.  Redaction happens before the byte-bound check so a malicious
-    accepted title/excerpt cannot expand an artifact past its contract limit.
-    """
+def _public_clean(value: Any, *, fallback: str = "unknown") -> str:
+    """Normalize and redact text before any public length bound is applied."""
 
     if not isinstance(value, str):
         return fallback
     text = _PUBLIC_CONTROL_RE.sub("", value)
     text = _PUBLIC_SECRET_RE.sub("[REDACTED]", text)
     text = _PUBLIC_PATH_RE.sub(" [REDACTED_PATH] ", text)
+    text = _PUBLIC_PRIVATE_VALUE_RE.sub("[REDACTED]", text)
     text = " ".join(text.split()).strip()
     if not text:
         return fallback
-    return text[:limit]
+    return text
+
+
+def _public_redact(value: Any, *, limit: int, fallback: str = "unknown") -> str:
+    """Return bounded text safe for a public workflow projection.
+
+    The workflow never publishes provider-native errors, paths, or credential
+    material.  Redaction happens before the public length bound so a malicious
+    accepted title/excerpt cannot expand an artifact past its contract limit.
+    """
+
+    return _public_clean(value, fallback=fallback)[:limit]
 
 
 def _public_label(value: Any, *, fallback: str = "unknown") -> str:
@@ -382,12 +408,10 @@ def _public_body(value: Any) -> str:
 def _public_full_text(value: Any) -> str:
     """Redact source text without applying the public excerpt/body cap."""
 
-    if not isinstance(value, str):
-        return ""
     # The public artifact cap is enforced after rendering.  Hashing the full
     # redacted source here keeps the evidence identity independent of the
-    # bounded excerpt shown in the manifest.
-    return _public_redact(value, limit=max(len(value), _PUBLIC_BODY_MAX), fallback="")
+    # bounded excerpt shown in the manifest, even when redaction expands text.
+    return _public_clean(value, fallback="")
 
 
 def _public_https_url(value: Any) -> bool:
@@ -458,6 +482,8 @@ def _public_nested(value: Any, *, depth: int = 0) -> Any:
     if isinstance(value, bool) or value is None:
         return value
     if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
         return value if value >= 0 else None
     return _public_label(value)
 
@@ -1211,10 +1237,15 @@ class WorkflowService:
             for item in value
             if isinstance(item, str)
             and item.strip()
-            and len(item.strip()) <= 128
+            and len(item.strip()) <= _PUBLIC_LABEL_MAX
             and all(
                 character.isalnum() or character in ":._-" for character in item.strip()
             )
+            and not _PUBLIC_CONTROL_RE.search(item.strip())
+            and not _PUBLIC_SECRET_RE.search(item.strip())
+            and not _PUBLIC_PATH_RE.search(item.strip())
+            and not _PUBLIC_PRIVATE_DIAGNOSTIC_RE.search(item.strip())
+            and not _PUBLIC_PRIVATE_VALUE_RE.search(item.strip())
         ]
 
     @staticmethod
@@ -1366,7 +1397,9 @@ class WorkflowService:
         return parsed.astimezone(timezone.utc).isoformat()
 
     @staticmethod
-    def _source_text(document: StoredDocument) -> str | None:
+    def _source_text(
+        document: StoredDocument, *, snapshot_dir: str | Path | None = None
+    ) -> str | None:
         """Read accepted source text from the persisted artifact only.
 
         Metadata is an untrusted claim and cannot establish excerpt or hash
@@ -1376,14 +1409,27 @@ class WorkflowService:
         """
 
         try:
-            raw = Path(document.artifact_path).read_text(encoding="utf-8")
-        except (OSError, UnicodeError, TypeError):
+            artifact_path = Path(document.artifact_path).resolve()
+            if snapshot_dir is not None:
+                snapshot = Path(snapshot_dir).resolve()
+                if (
+                    artifact_path == snapshot
+                    or not artifact_path.is_relative_to(snapshot)
+                    or not artifact_path.is_file()
+                ):
+                    return None
+            raw = artifact_path.read_text(encoding="utf-8")
+        except (OSError, RuntimeError, ValueError, UnicodeError, TypeError):
             return None
         if not raw:
             return raw
         marker = f"\n- Word count: {document.word_count}\n\n"
         if marker in raw:
-            return raw.split(marker, 1)[1].rstrip("\n")
+            text = raw.split(marker, 1)[1]
+            # The artifact writer appends one newline after the source body.
+            # Remove only that delimiter; any newline owned by the accepted
+            # source must remain part of the hash-bound text.
+            return text[:-1] if text.endswith("\n") else text
         return raw
 
     @classmethod
@@ -1498,9 +1544,14 @@ class WorkflowService:
         }
 
     @classmethod
-    def _source_projection(cls, document: StoredDocument) -> dict[str, Any]:
+    def _source_projection(
+        cls,
+        document: StoredDocument,
+        *,
+        snapshot_dir: str | Path | None = None,
+    ) -> dict[str, Any]:
         metadata = document.metadata if isinstance(document.metadata, Mapping) else {}
-        raw_text = cls._source_text(document)
+        raw_text = cls._source_text(document, snapshot_dir=snapshot_dir)
         artifact_available = raw_text is not None
         public_text = _public_full_text(raw_text) if raw_text is not None else ""
         text_hash = (
@@ -1541,11 +1592,21 @@ class WorkflowService:
             excerpt = public_text[:_PUBLIC_EXCERPT_MAX]
             excerpt_bound = bool(excerpt)
         elif supplied_excerpt and not excerpt_bound:
-            # An upstream lead can contain a summary marker or redacted value
-            # that is not verbatim source text.  Publish a bounded prefix from
-            # the audited artifact instead of carrying the unbound claim.
-            excerpt = public_text[:_PUBLIC_EXCERPT_MAX]
-            excerpt_bound = bool(excerpt)
+            # An upstream lead that is not an exact artifact substring is an
+            # unbound claim.  Preserve the safe legacy path for a lead that
+            # contained a credential/path marker: the marker is intentionally
+            # redacted, so publish only the audited artifact prefix.  Other
+            # arbitrary summaries remain unbound and fail closure.
+            if (
+                _PUBLIC_SECRET_RE.search(excerpt_value or "")
+                or _PUBLIC_PATH_RE.search(excerpt_value or "")
+                or _PUBLIC_CONTROL_RE.search(excerpt_value or "")
+            ):
+                excerpt = public_text[:_PUBLIC_EXCERPT_MAX]
+                excerpt_bound = bool(excerpt)
+            else:
+                excerpt = "unknown"
+                excerpt_bound = False
         retrieved_at = _safe_aware_timestamp(
             metadata.get("retrieved_at") or metadata.get("retrieval_timestamp")
         )
@@ -1561,7 +1622,7 @@ class WorkflowService:
         diagnostics = cls._diagnostic_projection(document)
         disposition = metadata.get("artifact_disposition")
         if disposition not in {"usable", "partial", "rejected"}:
-            disposition = "usable"
+            disposition = "unknown"
         return {
             "id": _public_label(document.id),
             "url": _public_url(document.url),
@@ -1659,7 +1720,12 @@ class WorkflowService:
             and document.metadata.get("requirement_ref")
             and document.metadata.get("target_name") is not None
         }
-        source_rows = {document.id: cls._source_projection(document) for document in documents}
+        source_rows = {
+            document.id: cls._source_projection(
+                document, snapshot_dir=run.snapshot_dir
+            )
+            for document in documents
+        }
         targeted_documents = [
             document
             for document in documents
@@ -1860,7 +1926,9 @@ class WorkflowService:
 
         invalid = object()
 
-        def canonical(value: Any, *, depth: int = 0) -> tuple[Any, bool]:
+        def canonical(
+            value: Any, *, depth: int = 0, allow_private: bool = False
+        ) -> tuple[Any, bool]:
             if depth > 5:
                 return invalid, False
             if isinstance(value, datetime):
@@ -1876,6 +1944,14 @@ class WorkflowService:
                     or _PUBLIC_CONTROL_RE.search(value)
                     or _PUBLIC_SECRET_RE.search(value)
                     or _PUBLIC_PATH_RE.search(value)
+                    or (
+                        _PUBLIC_PRIVATE_DIAGNOSTIC_RE.search(value)
+                        and not allow_private
+                    )
+                    or (
+                        _PUBLIC_PRIVATE_VALUE_RE.search(value)
+                        and not allow_private
+                    )
                 ):
                     return invalid, False
                 return value, False
@@ -1888,7 +1964,9 @@ class WorkflowService:
                     if not isinstance(key, str) or len(key) > _PUBLIC_LABEL_MAX:
                         return invalid, False
                     normalized_nested, nested_changed = canonical(
-                        nested, depth=depth + 1
+                        nested,
+                        depth=depth + 1,
+                        allow_private=allow_private or key in _PRIVATE_EVIDENCE_KEYS,
                     )
                     if normalized_nested is invalid:
                         return invalid, False
@@ -1902,7 +1980,7 @@ class WorkflowService:
                 changed = False
                 for nested in value:
                     normalized_nested, nested_changed = canonical(
-                        nested, depth=depth + 1
+                        nested, depth=depth + 1, allow_private=allow_private
                     )
                     if normalized_nested is invalid:
                         return invalid, False
@@ -1913,6 +1991,8 @@ class WorkflowService:
                 if isinstance(value, tuple):
                     return tuple(normalized_items), True
                 return normalized_items, True
+            if isinstance(value, float) and not math.isfinite(value):
+                return invalid, False
             if value is None or isinstance(value, (bool, int, float)):
                 return value, False
             return invalid, False
@@ -1928,6 +2008,25 @@ class WorkflowService:
             diagnostics = evidence.get("execution_diagnostics", evidence.get("diagnostics"))
         if not isinstance(diagnostics, (list, tuple)) or not diagnostics:
             return False
+
+        def finite_nested(value: Any, *, depth: int = 0) -> bool:
+            if depth > 6:
+                return False
+            if isinstance(value, float):
+                return math.isfinite(value)
+            if isinstance(value, Mapping):
+                return all(
+                    finite_nested(nested, depth=depth + 1)
+                    for nested in value.values()
+                )
+            if isinstance(value, (list, tuple, set)):
+                return all(
+                    finite_nested(nested, depth=depth + 1) for nested in value
+                )
+            return True
+
+        if not finite_nested(metadata.get("spend_provenance")):
+            return False
         for diagnostic in diagnostics:
             if not isinstance(diagnostic, Mapping):
                 return False
@@ -1942,6 +2041,8 @@ class WorkflowService:
                         _PUBLIC_CONTROL_RE.search(value)
                         or _PUBLIC_SECRET_RE.search(value)
                         or _PUBLIC_PATH_RE.search(value)
+                        or _PUBLIC_PRIVATE_DIAGNOSTIC_RE.search(value)
+                        or _PUBLIC_PRIVATE_VALUE_RE.search(value)
                     ):
                         return False
                 elif value is not None and key in {
@@ -1951,7 +2052,12 @@ class WorkflowService:
                     "cache_age_ms",
                     "freshness_age_ms",
                 }:
-                    if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+                    if (
+                        not isinstance(value, (int, float))
+                        or isinstance(value, bool)
+                        or value < 0
+                        or (isinstance(value, float) and not math.isfinite(value))
+                    ):
                         return False
             if diagnostic.get("cache_state") not in {"hit", "miss", "ineligible", "unknown"}:
                 return False
@@ -1960,6 +2066,25 @@ class WorkflowService:
             if not isinstance(diagnostic.get("free_profile_eligible"), bool) and diagnostic.get(
                 "free_profile_eligible"
             ) is not None:
+                return False
+        for key in (
+            "result_count",
+            "operation_latency_ms",
+            "cache_latency_ms",
+            "cache_age",
+            "cache_age_ms",
+            "freshness_age",
+            "freshness_age_ms",
+        ):
+            value = metadata.get(key)
+            if value is None:
+                continue
+            if (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or value < 0
+                or (isinstance(value, float) and not math.isfinite(value))
+            ):
                 return False
         return True
 
@@ -1974,6 +2099,10 @@ class WorkflowService:
                 return False
             if not isinstance(section.body, str):
                 return False
+            if not isinstance(section.citation_ids, (list, tuple, set)):
+                return False
+            if section.body.strip() and not section.citation_ids:
+                return False
             for citation_id in section.citation_ids:
                 if not isinstance(citation_id, str) or citation_id not in accepted_ids:
                     return False
@@ -1985,6 +2114,98 @@ class WorkflowService:
                 if match.group(1) not in accepted_ids:
                     return False
         return True
+
+    @classmethod
+    def _public_urls_are_bound(cls, value: Any, accepted_urls: set[str]) -> bool:
+        """Reject every public absolute URL not represented by a citation."""
+
+        if isinstance(value, Mapping):
+            return all(
+                cls._public_urls_are_bound(nested, accepted_urls)
+                for nested in value.values()
+            )
+        if isinstance(value, (list, tuple, set)):
+            return all(
+                cls._public_urls_are_bound(nested, accepted_urls) for nested in value
+            )
+        if not isinstance(value, str):
+            return True
+        for match in _SUMMARY_URL_RE.finditer(value):
+            candidate = match.group(0).rstrip(".,;:!?)]}>")
+            if not _public_https_url(candidate):
+                return False
+            if _normal_url(candidate) not in accepted_urls:
+                return False
+        return True
+
+    @staticmethod
+    def _retrieval_timestamp_is_bound(
+        document: StoredDocument, source: Mapping[str, Any]
+    ) -> bool:
+        """Require public metadata to match the accepted receipt timestamp."""
+
+        metadata = document.metadata if isinstance(document.metadata, Mapping) else {}
+        metadata_values = [
+            metadata.get("retrieved_at"),
+            metadata.get("retrieval_timestamp"),
+        ]
+        metadata_timestamps: list[str] = []
+        for value in metadata_values:
+            if value is None:
+                continue
+            timestamp = _safe_aware_timestamp(value)
+            if timestamp is None:
+                return False
+            metadata_timestamps.append(timestamp)
+        if not metadata_timestamps or len(set(metadata_timestamps)) != 1:
+            return False
+
+        evidence = metadata.get("execution_evidence")
+        if not isinstance(evidence, Mapping):
+            return False
+        accepted_values = [evidence.get("retrieved_at")]
+        persistence = evidence.get("persistence")
+        if isinstance(persistence, Mapping):
+            accepted_values.append(persistence.get("accepted_at"))
+        accepted_timestamps: list[str] = []
+        for value in accepted_values:
+            if value is None:
+                continue
+            timestamp = _safe_aware_timestamp(value)
+            if timestamp is None:
+                return False
+            accepted_timestamps.append(timestamp)
+        if not accepted_timestamps or len(set(accepted_timestamps)) != 1:
+            return False
+        return metadata_timestamps[0] == accepted_timestamps[0] == source.get(
+            "retrieved_at"
+        )
+
+    @classmethod
+    def _source_provenance_is_valid(
+        cls, source: Mapping[str, Any], document: StoredDocument | None = None
+    ) -> bool:
+        """Require a public source identity and an aware receipt timestamp."""
+
+        source_type = source.get("source_type")
+        if (
+            not isinstance(source_type, str)
+            or not source_type.strip()
+            or source_type.strip().casefold() == "unknown"
+        ):
+            return False
+        retrieved_at = source.get("retrieved_at")
+        if not isinstance(retrieved_at, str) or retrieved_at == "unknown":
+            return False
+        parsed = _parse_dt(retrieved_at)
+        valid_timestamp = bool(
+            parsed is not None
+            and parsed.tzinfo is not None
+            and parsed.utcoffset() is not None
+        )
+        if not valid_timestamp:
+            return False
+        return document is None or cls._retrieval_timestamp_is_bound(document, source)
 
     @classmethod
     def _validate_targeted_closure(cls, run: WorkflowResult) -> None:
@@ -2012,6 +2233,11 @@ class WorkflowService:
         if any(
             not isinstance(identifier, str)
             or not _PUBLIC_CITATION_ID_RE.fullmatch(identifier)
+            or _PUBLIC_CONTROL_RE.search(identifier)
+            or _PUBLIC_SECRET_RE.search(identifier)
+            or _PUBLIC_PATH_RE.search(identifier)
+            or _PUBLIC_PRIVATE_DIAGNOSTIC_RE.search(identifier)
+            or _PUBLIC_PRIVATE_VALUE_RE.search(identifier)
             for identifier in [*document_ids, *citation_ids]
         ):
             raise ValueError("research pack closure citation identifier invalid")
@@ -2021,6 +2247,8 @@ class WorkflowService:
             or set(citation_ids) != set(document_ids)
         ):
             raise ValueError("research pack closure citation mismatch")
+        accepted_ids = set(citation_ids)
+        accepted_urls = {_normal_url(citation.url) for citation in run.citations}
         targeted_documents = [
             document
             for document in run.documents
@@ -2049,13 +2277,34 @@ class WorkflowService:
             seen_urls.add(normalized)
             if not _SHA256_RE.fullmatch(str(requirement.get("source_text_sha256", ""))):
                 raise ValueError("research pack closure source hash missing")
-            source = cls._source_projection(
-                next(document for document in targeted_documents if document.id == citation_id)
+            document = next(
+                document for document in targeted_documents if document.id == citation_id
             )
-            if not source["artifact_available"] or not source["hash_matches"] or not source["excerpt_bound"]:
+            metadata = document.metadata if isinstance(document.metadata, Mapping) else {}
+            if metadata.get("artifact_disposition") != "usable":
+                raise ValueError("research pack closure artifact disposition missing")
+            source = cls._source_projection(
+                document, snapshot_dir=run.snapshot_dir
+            )
+            if not cls._source_provenance_is_valid(source, document):
+                if not cls._retrieval_timestamp_is_bound(document, source):
+                    raise ValueError(
+                        "research pack provenance diagnostics missing: retrieved_at invalid"
+                    )
+                raise ValueError("research pack provenance diagnostics missing: source provenance invalid")
+            if (
+                not source["artifact_available"]
+                or not source["hash_matches"]
+                or not source["excerpt_bound"]
+            ):
                 raise ValueError("research pack closure source evidence mismatch")
+            if not cls._public_urls_are_bound(source.get("evidence_excerpt"), accepted_urls):
+                raise ValueError("research pack closure public URL mismatch")
         for document in external_documents:
-            source = cls._source_projection(document)
+            metadata = document.metadata if isinstance(document.metadata, Mapping) else {}
+            if metadata.get("artifact_disposition") not in {"usable", "partial"}:
+                raise ValueError("research pack closure external artifact disposition missing")
+            source = cls._source_projection(document, snapshot_dir=run.snapshot_dir)
             if source["artifact_disposition"] not in {"usable", "partial"}:
                 raise ValueError("research pack external closure unavailable")
             citation = next(
@@ -2068,8 +2317,22 @@ class WorkflowService:
                 or _normal_url(citation.url) != _normal_url(document.url)
             ):
                 raise ValueError("research pack closure external citation mismatch")
-            if not source["artifact_available"] or not source["hash_matches"] or not source["excerpt_bound"]:
+            if not cls._source_provenance_is_valid(source, document):
+                if not cls._retrieval_timestamp_is_bound(document, source):
+                    raise ValueError(
+                        "research pack provenance diagnostics missing: retrieved_at invalid"
+                    )
+                raise ValueError(
+                    "research pack provenance diagnostics missing: external source provenance invalid"
+                )
+            if (
+                not source["artifact_available"]
+                or not source["hash_matches"]
+                or not source["excerpt_bound"]
+            ):
                 raise ValueError("research pack closure external source evidence mismatch")
+            if not cls._public_urls_are_bound(source.get("evidence_excerpt"), accepted_urls):
+                raise ValueError("research pack closure public URL mismatch")
             normalized = _normal_url(document.url)
             if normalized in seen_urls:
                 raise ValueError("research pack external URL reused")
@@ -2082,7 +2345,7 @@ class WorkflowService:
         for document in run.documents:
             if not isinstance(document.metadata, Mapping):
                 raise ValueError("research pack provenance diagnostics missing")
-            source = cls._source_projection(document)
+            source = cls._source_projection(document, snapshot_dir=run.snapshot_dir)
             required_keys = (
                 "provider",
                 "extractor",
@@ -2098,12 +2361,70 @@ class WorkflowService:
                 "free_profile_eligible",
                 "execution_diagnostics",
             )
-            if not all(key in document.metadata for key in required_keys) or not cls._execution_diagnostics_complete(document):
+            provenance_fields = ("provider", "extractor", "source_type", "egress", "machine")
+            if (
+                not cls._source_provenance_is_valid(source, document)
+                or not all(key in document.metadata for key in required_keys)
+                or any(
+                    not isinstance(document.metadata.get(key), str)
+                    or not document.metadata[key].strip()
+                    for key in provenance_fields
+                )
+                or not cls._execution_diagnostics_complete(document)
+            ):
                 raise ValueError("research pack provenance diagnostics missing")
-        accepted_ids = set(citation_ids)
-        accepted_urls = {_normal_url(citation.url) for citation in run.citations}
+            raw_evidence_ids = document.metadata.get("evidence_ids")
+            if raw_evidence_ids is not None:
+                evidence_values = (
+                    [raw_evidence_ids]
+                    if isinstance(raw_evidence_ids, str)
+                    else list(raw_evidence_ids)
+                    if isinstance(raw_evidence_ids, (list, tuple, set))
+                    else None
+                )
+                if evidence_values is None or len(
+                    cls._safe_evidence_ids(raw_evidence_ids)
+                ) != len(evidence_values):
+                    raise ValueError("research pack provenance evidence identifier invalid")
         if not cls._summary_closure_is_bound(run, accepted_ids, accepted_urls):
             raise ValueError("research pack closure summary citation mismatch")
+        visible_values: list[Any] = [
+            run.target,
+            run.metadata.get("caller_identity"),
+            run.metadata.get("caller_label"),
+        ]
+        plan_metadata = run.metadata.get("research_plan")
+        if isinstance(plan_metadata, Mapping):
+            for target in plan_metadata.get("targets", ()):
+                if not isinstance(target, Mapping):
+                    continue
+                visible_values.append(target.get("name"))
+                for requirement in target.get("requirements", ()):
+                    if isinstance(requirement, Mapping):
+                        visible_values.extend(
+                            (requirement.get("target_name"), requirement.get("query"))
+                        )
+        for document in run.documents:
+            visible_values.append(document.title)
+            metadata = document.metadata if isinstance(document.metadata, Mapping) else {}
+            visible_values.extend(
+                metadata.get(key)
+                for key in (
+                    "provider",
+                    "retrieval_provider",
+                    "extractor",
+                    "cache_origin",
+                    "spend_provenance",
+                    "execution_evidence",
+                    "execution_diagnostics",
+                )
+            )
+        visible_values.extend(citation.title for citation in run.citations)
+        if not all(
+            cls._public_urls_are_bound(value, accepted_urls)
+            for value in visible_values
+        ):
+            raise ValueError("research pack closure public URL mismatch")
 
     @staticmethod
     def _safe_research_plan(run: WorkflowResult) -> dict[str, Any]:
@@ -2637,21 +2958,45 @@ class WorkflowService:
             retrieval_timestamp = artifact.get("retrieved_at") or artifact.get(
                 "retrieval_timestamp"
             )
+            if retrieval_timestamp is None:
+                retrieval_timestamp = execution_evidence.get("retrieved_at")
+            if retrieval_timestamp is None:
+                persistence = execution_evidence.get("persistence")
+                if isinstance(persistence, Mapping):
+                    retrieval_timestamp = persistence.get("accepted_at")
+            provider = (
+                artifact.get("provider")
+                or execution_evidence.get("provider")
+                or "unknown"
+            )
+            extractor = (
+                artifact.get("extractor")
+                or execution_evidence.get("extractor")
+                or "unknown"
+            )
+            egress = artifact.get("egress") or execution_evidence.get("egress") or "unknown"
+            machine = artifact.get("machine") or execution_evidence.get("machine") or "unknown"
+            artifact_source_type = (
+                artifact.get("source_type")
+                or execution_evidence.get("source_type")
+                or source_type
+                or "unknown"
+            )
             text_sha256 = artifact.get("text_sha256") or hashlib.sha256(
                 artifact_text.encode("utf-8")
             ).hexdigest()
             artifact_metadata = {
                 "artifact_disposition": artifact["disposition"],
                 "lead_text": _lead_text(artifact_text),
-                "provider": artifact.get("provider"),
+                "provider": provider,
                 "retrieval_provider": artifact.get("retrieval_provider"),
                 "retrieval_egress": artifact.get("retrieval_egress"),
                 "retrieval_machine": artifact.get("retrieval_machine"),
                 "retrieval_source_type": artifact.get("retrieval_source_type"),
-                "extractor": artifact.get("extractor"),
-                "egress": artifact.get("egress"),
-                "machine": artifact.get("machine"),
-                "source_type": artifact.get("source_type") or source_type,
+                "extractor": extractor,
+                "egress": egress,
+                "machine": machine,
+                "source_type": artifact_source_type,
                 "retrieved_at": retrieval_timestamp,
                 "retrieval_timestamp": retrieval_timestamp,
                 "source_date": artifact.get("source_date"),
@@ -2693,9 +3038,9 @@ class WorkflowService:
                 domain=urlparse(artifact["url"]).netloc.lower().lstrip("www."),
                 role=role,
                 source_type=source_type,
-                extractor=artifact["extractor"],
-                egress=artifact.get("egress"),
-                machine=artifact.get("machine"),
+                extractor=extractor,
+                egress=egress,
+                machine=machine,
                 metadata=artifact_metadata,
             )
             documents.append(document)
@@ -3980,6 +4325,22 @@ class WorkflowService:
             )
             + "\n"
         )
+        accepted_urls = {_normal_url(citation.url) for citation in run.citations}
+        if not self._public_urls_are_bound(report_content, accepted_urls):
+            run.status, run.finished_at, run.report_path, run.manifest_path, run.artifacts = previous
+            raise ValueError("research pack closure public URL mismatch")
+        allowed_plan_urls = set(accepted_urls)
+        plan_metadata = self._targeted_research_projection(run)
+        if isinstance(plan_metadata, Mapping):
+            for target in plan_metadata.get("targets", ()):
+                if not isinstance(target, Mapping):
+                    continue
+                for prefix in target.get("source_prefixes", ()):
+                    if _public_https_url(prefix):
+                        allowed_plan_urls.add(_normal_url(prefix))
+        if not self._public_urls_are_bound(manifest_content, allowed_plan_urls):
+            run.status, run.finished_at, run.report_path, run.manifest_path, run.artifacts = previous
+            raise ValueError("research pack closure public URL mismatch")
         if len(manifest_content.encode("utf-8")) > _PUBLIC_ARTIFACT_MAX_BYTES:
             run.status, run.finished_at, run.report_path, run.manifest_path, run.artifacts = previous
             raise ValueError("research pack manifest exceeds public artifact limit")
@@ -4372,7 +4733,9 @@ class WorkflowService:
         sources = []
         for document in run.documents:
             if self._is_targeted_run(run):
-                sources.append(self._source_projection(document))
+                sources.append(
+                    self._source_projection(document, snapshot_dir=run.snapshot_dir)
+                )
                 continue
             metadata = document.metadata if isinstance(document.metadata, dict) else {}
             safe_metadata: dict[str, Any] = {

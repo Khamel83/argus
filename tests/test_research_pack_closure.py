@@ -110,6 +110,7 @@ def _run(tmp_path: Path, requirement_count: int = 1) -> WorkflowResult:
             "execution_evidence": {
                 "schema": "argus-execution-evidence-v1",
                 "diagnostics": [diagnostics],
+                "retrieved_at": retrieved_at,
             },
         }
         documents.append(
@@ -330,6 +331,51 @@ def test_public_projection_redacts_paths_and_caps_public_strings(tmp_path):
     assert "private/path" not in report
 
 
+def test_public_projection_redacts_assignment_bound_paths(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].title = "title=/Users/private/secret"
+    service._finalize_run(run, title="Research Pack: Managed research", report_name="SUMMARY.md")
+
+    payload = Path(run.manifest_path).read_text(encoding="utf-8")
+    report = Path(run.report_path).read_text(encoding="utf-8")
+    assert "/Users/private/secret" not in payload
+    assert "/Users/private/secret" not in report
+
+
+@pytest.mark.parametrize(
+    "private_path", ["/opt/private/secret", "title=//server/share/secret"]
+)
+def test_public_projection_redacts_additional_private_paths(tmp_path, private_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].title = private_path
+    service._finalize_run(run, title="Research Pack: Managed research", report_name="SUMMARY.md")
+
+    payload = Path(run.manifest_path).read_text(encoding="utf-8")
+    report = Path(run.report_path).read_text(encoding="utf-8")
+    assert private_path not in payload
+    assert private_path not in report
+
+
+def test_public_projection_redacts_private_source_markers(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    document = run.documents[0]
+    private_text = "Accepted observation receipt:secret db_id=internal."
+    Path(document.artifact_path).write_text(private_text, encoding="utf-8")
+    source_hash = hashlib.sha256(private_text.encode()).hexdigest()
+    document.metadata["source_text_sha256"] = source_hash
+    document.metadata["text_sha256"] = source_hash
+
+    service._finalize_run(run, title="Research Pack: Managed research", report_name="SUMMARY.md")
+
+    payload = Path(run.manifest_path).read_text(encoding="utf-8")
+    report = Path(run.report_path).read_text(encoding="utf-8")
+    assert "receipt:secret" not in payload
+    assert "db_id=internal" not in report
+
+
 def test_targeted_closure_recomputes_source_hash_from_artifact(tmp_path):
     service = _service()
     run = _run(tmp_path, requirement_count=1)
@@ -385,6 +431,7 @@ def test_targeted_closure_accepts_aware_receipt_datetime(tmp_path):
     run.documents[0].metadata["execution_evidence"]["persistence"] = {
         "availability": "available",
         "source": "acceptance_receipt",
+        "receipt_ref": "receipt:evidence",
         "accepted_at": datetime(2026, 8, 9, 12, tzinfo=timezone.utc),
     }
 
@@ -407,6 +454,32 @@ def test_targeted_closure_rejects_naive_receipt_datetime(tmp_path):
         service._finalize_run(
             run, title="Research Pack: Managed research", report_name="SUMMARY.md"
         )
+
+
+def test_targeted_closure_rejects_receipt_timestamp_mismatch(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].metadata["retrieved_at"] = "2026-08-09T12:01:00+00:00"
+
+    with pytest.raises(ValueError, match="provenance diagnostics"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+def test_targeted_closure_requires_receipt_timestamp_in_evidence(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].metadata["execution_evidence"].pop("retrieved_at")
+
+    with pytest.raises(ValueError, match="provenance diagnostics"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
 
 
 def test_source_date_parser_rejects_trailing_junk(tmp_path):
@@ -444,6 +517,290 @@ def test_targeted_closure_audits_summary_urls_and_citation_ids(tmp_path):
     run.summary_sections[0].body = (
         "Unsupported https://unaccepted.example.invalid/item [S999]"
     )
+
+    with pytest.raises(ValueError, match="closure"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+def test_targeted_closure_rejects_material_summary_without_citation(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.summary_sections[0] = SummarySection(
+        heading="Material claim",
+        body="The accepted artifact establishes a material claim.",
+        citation_ids=[],
+    )
+
+    with pytest.raises(ValueError, match="closure"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+def test_targeted_closure_audits_uppercase_unaccepted_summary_url(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.summary_sections[0] = SummarySection(
+        heading="Material claim",
+        body="See HTTPS://unaccepted.example.invalid/item for the claim.",
+        citation_ids=["S1"],
+    )
+
+    with pytest.raises(ValueError, match="closure"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+def test_targeted_closure_audits_generic_unknown_citation_marker(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.summary_sections[0] = SummarySection(
+        heading="Material claim",
+        body="The accepted artifact supports this statement [X999].",
+        citation_ids=["S1"],
+    )
+
+    with pytest.raises(ValueError, match="closure"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+@pytest.mark.parametrize(
+    "field", ["target", "query", "document_title", "citation_title", "diagnostic"]
+)
+def test_targeted_closure_rejects_unaccepted_public_urls(tmp_path, field):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    unaccepted = "https://unaccepted.example.invalid/private"
+    if field == "target":
+        run.target = unaccepted
+    elif field == "query":
+        run.metadata["research_plan"]["targets"][0]["requirements"][0]["query"] = unaccepted
+    elif field == "document_title":
+        run.documents[0].title = unaccepted
+    elif field == "citation_title":
+        run.citations[0].title = unaccepted
+    else:
+        run.documents[0].metadata["execution_diagnostics"][0]["provider"] = unaccepted
+
+    with pytest.raises(ValueError, match="public URL"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+def test_public_redaction_full_text_does_not_truncate_expansion():
+    from argus.workflows.service import _public_full_text
+
+    raw = ("a" * 19_995) + "secret=x"
+    assert _public_full_text(raw) == ("a" * 19_995) + "[REDACTED]"
+
+
+def test_targeted_closure_rejects_nonfinite_execution_diagnostic(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].metadata["execution_diagnostics"][0]["operation_latency_ms"] = float(
+        "nan"
+    )
+
+    with pytest.raises(ValueError, match="provenance diagnostics"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+def test_targeted_closure_rejects_nonfinite_nested_spend(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].metadata["spend_provenance"] = {"actual_usd": float("inf")}
+
+    with pytest.raises(ValueError, match="provenance diagnostics"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+def test_targeted_closure_rejects_assignment_bound_diagnostic_path(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].metadata["execution_diagnostics"][0]["provider"] = (
+        "provider=/Users/private/provider"
+    )
+
+    with pytest.raises(ValueError, match="provenance diagnostics"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+def test_targeted_closure_rejects_unbound_lead_text(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].metadata["lead_text"] = "Unsupported summary claim"
+
+    with pytest.raises(ValueError, match="closure"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+def test_targeted_closure_rejects_nonfinite_top_level_cache_age(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].metadata["cache_age"] = float("inf")
+
+    with pytest.raises(ValueError, match="provenance diagnostics"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+@pytest.mark.parametrize(
+    "private_value",
+    ["receipt:internal-1", "request_id=internal-1", "database=internal", "sql=SELECT 1"],
+)
+def test_targeted_closure_rejects_private_diagnostic_value_markers(
+    tmp_path, private_value
+):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].metadata["execution_diagnostics"][0]["provider"] = private_value
+
+    with pytest.raises(ValueError, match="provenance diagnostics"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+def test_targeted_closure_rejects_private_citation_id(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    private_id = "receipt:internal"
+    run.documents[-1].id = private_id
+    run.citations[-1].id = private_id
+    run.summary_sections[0].citation_ids[-1] = private_id
+
+    with pytest.raises(ValueError, match="citation"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+def test_targeted_closure_rejects_private_evidence_id(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].metadata["evidence_ids"] = ["receipt:internal"]
+
+    with pytest.raises(ValueError, match="evidence identifier"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+@pytest.mark.parametrize("artifact_kind", ["outside", "symlink"])
+def test_targeted_closure_rejects_artifact_outside_snapshot(tmp_path, artifact_kind):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    outside = tmp_path.parent / f"outside-{artifact_kind}.md"
+    outside.write_text("Accepted observation for requirement 0.", encoding="utf-8")
+    artifact = outside
+    if artifact_kind == "symlink":
+        artifact = tmp_path / "linked-source.md"
+        artifact.symlink_to(outside)
+    run.documents[0].artifact_path = str(artifact)
+    run.documents[0].metadata["source_text_sha256"] = hashlib.sha256(
+        outside.read_bytes()
+    ).hexdigest()
+    run.documents[0].metadata["text_sha256"] = run.documents[0].metadata[
+        "source_text_sha256"
+    ]
+
+    with pytest.raises(ValueError, match="closure"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+def test_targeted_closure_preserves_source_owned_trailing_newline(tmp_path):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    document = run.documents[0]
+    source = "Accepted observation for requirement 0.\n"
+    wrapper = "\n".join(
+        [
+            "# Page 0",
+            "",
+            "- URL: https://docs.example.com/docs/page-0",
+            f"- Word count: {document.word_count}",
+            "",
+            source,
+            "",
+        ]
+    )
+    Path(document.artifact_path).write_text(wrapper, encoding="utf-8")
+    source_hash = hashlib.sha256(source.encode()).hexdigest()
+    document.metadata["source_text_sha256"] = source_hash
+    document.metadata["text_sha256"] = source_hash
+
+    service._finalize_run(
+        run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+    )
+    assert run.status is WorkflowStatus.COMPLETED
+
+
+@pytest.mark.parametrize("retrieved_at", ["not-a-timestamp", datetime(2026, 8, 9, 12)])
+def test_targeted_closure_requires_aware_retrieved_at(tmp_path, retrieved_at):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[0].metadata["retrieved_at"] = retrieved_at
+
+    with pytest.raises(ValueError, match="retrieved"):
+        service._finalize_run(
+            run, title="Research Pack: Managed research", report_name="SUMMARY.md"
+        )
+    assert run.report_path is None
+    assert run.manifest_path is None
+
+
+@pytest.mark.parametrize("document_index", [0, -1])
+def test_targeted_closure_requires_explicit_artifact_disposition(
+    tmp_path, document_index
+):
+    service = _service()
+    run = _run(tmp_path, requirement_count=1)
+    run.documents[document_index].metadata.pop("artifact_disposition")
 
     with pytest.raises(ValueError, match="closure"):
         service._finalize_run(

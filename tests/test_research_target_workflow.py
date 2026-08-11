@@ -34,7 +34,7 @@ def _target_execution_evidence():
     """Return an explicit v3 diagnostic projection for accepted fake artifacts."""
 
     diagnostic = {
-        "provider": None,
+        "provider": "test-provider",
         "extractor": "test",
         "status": "success",
         "result_count": 1,
@@ -49,19 +49,19 @@ def _target_execution_evidence():
         "freshness_window": None,
         "freshness_reason": "not_applicable",
         "free_profile_eligible": None,
-        "egress": None,
-        "machine": None,
+        "egress": "unknown",
+        "machine": "unknown",
         "source_type": "targeted_first_party",
     }
     return {
         "schema": "argus-execution-evidence-v1",
         "source": "ExtractedContent",
-        "provider": None,
+        "provider": "test-provider",
         "extractor": "test",
-        "egress": None,
-        "machine": None,
+        "egress": "unknown",
+        "machine": "unknown",
         "source_type": "targeted_first_party",
-        "retrieved_at": None,
+        "retrieved_at": "2026-08-09T12:00:00+00:00",
         "source_date": None,
         "result_count": 1,
         "timeout_source": None,
@@ -1053,7 +1053,7 @@ async def test_targeted_documents_carry_execution_and_text_hash_evidence(
     assert target_document.source_type == "targeted_first_party"
     assert target_document.role == "primary"
     assert target_document.metadata["claim_class"] == "capabilities"
-    assert target_document.metadata["egress"] is None
+    assert target_document.metadata["egress"] == "unknown"
     assert target_document.metadata["text_sha256"] == hashlib.sha256(
         "accepted target content".encode()
     ).hexdigest()
