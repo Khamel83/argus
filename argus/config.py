@@ -339,7 +339,7 @@ class EnvironmentConfigLoader:
                     )
                 )
 
-        # Parse ARGUS_CALLER_TIER_CAPS=clio*:1,hermes*:1
+        # Parse ARGUS_CALLER_TIER_CAPS=hermes*:1,mac-agents:1,maya:1
         # fnmatch pattern -> max provider tier that caller may use.
         _caps_raw = self.get_str("ARGUS_CALLER_TIER_CAPS", "")
         _caller_tier_caps: dict[str, int] = {}

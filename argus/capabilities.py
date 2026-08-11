@@ -54,7 +54,7 @@ MCP_RELEASE_DESCRIPTOR_PATH = (
     Path(__file__).resolve().parent / "mcp/release_descriptor.json"
 )
 _MCP_RELEASE_DESCRIPTOR_SHA256 = (
-    "679728d897ac24bca9eb2547c6e9ef7d819ef76605863b401bd7f36475793e56"
+    "678769b4e18610c6b9939b9543971e20041e8d2b941a41d66fa83e9944db757d"
 )
 _MCP_TRANSPORT_FIELD_TYPES = {
     "endpoint": str,

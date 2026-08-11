@@ -5,8 +5,8 @@ Last production-safe walkthrough: **2026-07-29**
 This is the canonical operator guide for Argus. Homelab Docker is the sole
 production execution authority. The Mac is source and development only. Maya
 owns user-visible retrieval history; Argus owns retrieval execution and its
-PostgreSQL evidence. The former Mac launchd authority, OCI authority, Clio
-caller, and host residential worker are retired and are not fallbacks.
+PostgreSQL evidence. The former Mac launchd authority, OCI authority, and host
+residential worker are retired and are not fallbacks.
 
 ## Production topology
 

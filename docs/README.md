@@ -31,6 +31,7 @@ Top-level entry points live at the repo root:
 - [PUBLICITY-CHECKLIST.md](PUBLICITY-CHECKLIST.md) — project-internal launch / publicity checklist
 - [roadmaps/](roadmaps/) — long-range roadmap documents
 - [research/](research/) — research notes used while building features
+- [research/2026-08-11-mcp-stateless-production-authority.md](research/2026-08-11-mcp-stateless-production-authority.md) — MCP 2026-07-28 compatibility boundary and adoption gates
 
 Auto-generated and operator-local docs (e.g. `LLM-OVERVIEW.md`, session logs) live
 at the repo root or are gitignored — see `.gitignore`.

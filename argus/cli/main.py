@@ -1236,15 +1236,15 @@ def mcp_check():
 
     # 1. MCP package
     try:
-        import mcp.server.fastmcp  # noqa: F401
+        import mcp.server  # noqa: F401
 
         checks.append(("MCP package", True, "installed"))
     except ImportError:
         checks.append(("MCP package", False, "pip install 'argus-search[mcp]'"))
 
-    # 2. FastMCP Context (for progress notifications)
+    # 2. MCPServer Context (for progress notifications)
     try:
-        from mcp.server.fastmcp import Context  # noqa: F401
+        from mcp.server.mcpserver.context import Context  # noqa: F401
 
         checks.append(("Progress notifications", True, "Context available"))
     except Exception:

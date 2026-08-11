@@ -417,7 +417,7 @@ different session with the same ID is reported as conflicting.
 
 ### MCP
 
-MCP is a stateless protocol adapter over the authenticated HTTP API. It does
+MCP is a stateless execution adapter over the authenticated HTTP API. It does
 not construct providers or a broker and does not own browser, database,
 budget, session, health, or outbox state. Configure the adapter process with:
 
@@ -425,6 +425,14 @@ budget, session, health, or outbox state. Configure the adapter process with:
 export ARGUS_AUTHORITY_URL=http://argus-api:8000
 export ARGUS_AUTHORITY_TOKEN=replace-with-a-scoped-caller-token
 ```
+
+The deployed production endpoint supports both the verified MCP `2025-11-25`
+compatibility contract and the MCP `2026-07-28` stateless transport revision.
+The newer path is one-shot and does not require an initialize handshake or
+`Mcp-Session-Id`; durable policy, budgets, sessions, and evidence remain owned
+by the HTTP authority. See
+[`docs/research/2026-08-11-mcp-stateless-production-authority.md`](docs/research/2026-08-11-mcp-stateless-production-authority.md)
+for the source-backed boundary and required no-spend probes.
 
 **Option A — Local adapter (stdio)**
 

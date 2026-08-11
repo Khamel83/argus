@@ -84,7 +84,7 @@ from.
 
 ### Caller attribution
 
-Every HTTP/MCP/CLI entry point accepts a `caller` string (e.g. `clio-lane-b`,
+Every HTTP/MCP/CLI entry point accepts a `caller` string (e.g. `maya-lane-b`,
 `hermes`, `mcp`) persisted with each search for the per-caller dashboard.
 Fleet callers must always set it; unattributed traffic shows as `unknown`.
 
@@ -93,7 +93,7 @@ Fleet callers must always set it; unattributed traffic shows as `unknown`.
 Server-side spending guardrail: `ARGUS_CALLER_TIER_CAPS` maps fnmatch
 caller patterns to a maximum provider tier. Motivated by the 2026-05
 unexplained Valyu credit burn (see hermes `docs/ARGUS-VALVU-AUDIT.md`):
-automated callers (Clio jobs, Hermes) are capped at tier 1 so one-time
+automated callers (Maya jobs, Hermes) are capped at tier 1 so one-time
 credits (tier 3) can only be spent by interactive/uncapped callers.
 
 ### Canonical deployment
@@ -101,6 +101,6 @@ credits (tier 3) can only be spent by interactive/uncapped callers.
 One Argus for the fleet: digest-addressed Homelab Docker, with HTTP and MCP
 host backends on loopback ports 8270/8271 and tailnet-only Tailscale Serve
 HTTPS ingress. PostgreSQL and SearXNG remain Docker-internal. The Mac is
-development only; Mac launchd, OCI, Clio, and the host residential worker are
+development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.

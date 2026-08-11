@@ -303,7 +303,7 @@ def doctor(*, as_json):
         checks.append(("DuckDuckGo", False, str(exc)))
 
     try:
-        import mcp.server.fastmcp  # noqa: F401
+        import mcp.server  # noqa: F401
 
         checks.append(("MCP package", True, "installed"))
     except ImportError:

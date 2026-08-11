@@ -165,7 +165,7 @@ class ExtractRequest(BaseModel):
     )
     mode: str = Field("default", description="Extraction mode: default, archive_ingest")
     caller: str = Field(
-        "", description="Caller identifier for attribution (e.g. 'clio-intake-extract')"
+        "", description="Caller identifier for attribution (e.g. 'maya-intake-extract')"
     )
 
     @field_validator("url")
@@ -507,7 +507,7 @@ class RecoverArticleWorkflowRequest(BaseModel):
     title: Optional[str] = None
     domain: Optional[str] = None
     caller: str = Field(
-        "", description="Caller identifier for attribution (e.g. 'clio-workflows')"
+        "", description="Caller identifier for attribution (e.g. 'maya-workflows')"
     )
 
 
@@ -516,7 +516,7 @@ class CaptureSiteWorkflowRequest(BaseModel):
     soft_page_limit: int = Field(75, ge=1, le=500)
     hard_page_limit: int = Field(200, ge=1, le=500)
     caller: str = Field(
-        "", description="Caller identifier for attribution (e.g. 'clio-workflows')"
+        "", description="Caller identifier for attribution (e.g. 'maya-workflows')"
     )
 
 
@@ -618,5 +618,5 @@ class SearchAndSummarizeWorkflowRequest(BaseModel):
         5, ge=1, le=20, description="Number of search results to extract"
     )
     caller: str = Field(
-        "", description="Caller identifier for attribution (e.g. 'clio-workflows')"
+        "", description="Caller identifier for attribution (e.g. 'maya-workflows')"
     )

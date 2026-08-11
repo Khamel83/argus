@@ -1,13 +1,14 @@
 {
   "descriptor_version": 1,
-  "transport_version": "2025-11-25",
+  "transport_version": "2026-07-28",
   "transport": {
     "endpoint": "/mcp",
     "protocol_versions": [
       "2024-11-05",
       "2025-03-26",
       "2025-06-18",
-      "2025-11-25"
+      "2025-11-25",
+      "2026-07-28"
     ],
     "methods": [
       "POST",
