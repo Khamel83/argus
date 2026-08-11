@@ -5,6 +5,7 @@ from __future__ import annotations
 from hashlib import sha256
 import json
 import os
+from pathlib import Path
 import pytest
 
 from argus.acceptance_v3.contract import (
@@ -18,12 +19,16 @@ from argus.acceptance_v3.contract import (
     canonical_hash,
     create_evidence_root,
     create_global_guard,
+    validate_execution_contract,
     bind_returned_run,
     write_immutable_json,
 )
 
 
 def _contract() -> dict[str, object]:
+    root = Path("/tmp/argus-acceptance-v3-contract-root")
+    root.mkdir(parents=True, exist_ok=True)
+    os.chmod(root, 0o700)
     return build_execution_contract(
         request={"topic": "topic", "official_url": None},
         start_body={"topic": "topic", "official_url": None},
@@ -46,13 +51,28 @@ def _contract() -> dict[str, object]:
             "release_receipt_sha256": "3" * 64,
         },
         evaluator={
+            "version": "acceptance-v3-evaluator-1",
             "model": "gpt-5.6-sol",
             "reasoning_effort": "xhigh",
+            "sampling": "no_override",
+            "web_enabled": False,
+            "tools_enabled": False,
+            "memory_enabled": False,
+            "spend_authority": "none",
             "prompt_sha256": "4" * 64,
+            "prompt_bytes_sha256": "4" * 64,
             "settings_sha256": "5" * 64,
             "run_receipt_sha256": "6" * 64,
         },
-        snapshots={"pre_canary_sha256": "7" * 64},
+        snapshots={
+            "pre_canary_sha256": "7" * 64,
+            "topology_sha256": "8" * 64,
+            "provider_sha256": "9" * 64,
+            "extractor_sha256": "a" * 64,
+            "corpus_sha256": "b" * 64,
+            "authority_sha256": "c" * 64,
+            "observed_at": "2026-08-10T20:00:00Z",
+        },
         canary={
             "query_sha256": "8" * 64,
             "body_sha256": "9" * 64,
@@ -78,7 +98,39 @@ def _contract() -> dict[str, object]:
             "before_snapshot_sha256": "3" * 64,
             "after_snapshot_sha256": "4" * 64,
         },
-        evidence_root="/private/evidence",
+        topology={
+            "egress": "unknown",
+            "machine": "fixture",
+            "node_role": "primary",
+            "residential_policy": "fallback",
+        },
+        policy={
+            "profile": "free",
+            "free_only": True,
+            "caller_identity": "mac-agents",
+            "tier_cap": 1,
+            "you_contents_enabled": False,
+            "eligible_providers": ["github"],
+            "eligible_extractors": ["trafilatura"],
+            "policy_skipped": ["jina", "valyu", "firecrawl", "you"],
+            "diagnostics_complete": True,
+        },
+        corpus={
+            "version": "v3",
+            "request_sha256": "5" * 64,
+            "corpus_sha256": "6" * 64,
+            "target_count": 5,
+            "requirement_count": 15,
+            "external_page_budget": 17,
+        },
+        authority={
+            "evidence_authority": True,
+            "database_authority": "postgresql",
+            "sqlite_fallback": False,
+            "observed_at": "2026-08-10T20:00:00Z",
+            "snapshot_sha256": "d" * 64,
+        },
+        evidence_root=str(root),
     )
 
 
@@ -161,3 +213,22 @@ def test_execution_contract_rejects_missing_or_extra_identity_before_guard():
             artifact_hashes={},
             negative_probe={},
         )
+
+
+def test_execution_contract_rejects_empty_endpoints_extra_snapshot_fields_and_unsafe_roots():
+    contract = _contract()
+    with pytest.raises(ContractError):
+        validate_execution_contract(
+            {**contract, "endpoints": {}, "endpoint_hashes": {}}
+        )
+    with pytest.raises(ContractError):
+        validate_execution_contract(
+            {
+                **contract,
+                "snapshots": {"pre_canary_sha256": "7" * 64, "unexpected": "x"},
+            }
+        )
+    with pytest.raises(ContractError):
+        validate_execution_contract({**contract, "evidence_root": "relative/root"})
+    with pytest.raises(ContractError):
+        validate_execution_contract({**contract, "guard_path": "relative/guard.json"})

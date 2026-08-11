@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -54,6 +55,10 @@ RUBRIC_CELLS = (
     ("execution_delivery", 20),
     ("provenance_cost_truth", 10),
 )
+_COMPLETED_REQUIRED_REQUIREMENTS = 15
+_COMPLETED_MIN_URLS = 5
+_COMPLETED_MIN_DOMAINS = 3
+_COMPLETED_MIN_PRIMARY = 2
 TERMINAL_BRANCHES = frozenset(
     {
         "completed",
@@ -68,7 +73,7 @@ FROZEN_GATE_DEFINITIONS_SHA256 = canonical_hash(FROZEN_GATE_DEFINITIONS)
 FROZEN_RUBRIC_SHA256 = canonical_hash(dict(RUBRIC_CELLS))
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SENSITIVE_TEXT = re.compile(
-    r"(?:\bbearer\s+|\bbasic\s+|-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:password|secret|api[_-]?key|cookie|authorization)\s*[:=])",
+    r"(?:\bbearer\s+|\bbasic\s+|\bcookie\s*[:=]|\b(?:password|secret|api[_-]?key|authorization|private[_-]?key|raw[_-]?exception|stacktrace)\s*[:=]|-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:traceback|exception|stack trace)\b|(?:postgres(?:ql)?|pg)://|\bssh://|\bfile://)",
     re.IGNORECASE,
 )
 _OPAQUE_KEY_NAMES = {
@@ -81,9 +86,25 @@ _OPAQUE_KEY_NAMES = {
     "receiptid",
 }
 _ABSOLUTE_PATH = re.compile(
-    r"(?:^|[\s'(\[])(?:/(?:Users|Volumes|private|tmp|var|opt|srv|etc|root|usr|Applications|Library|System|bin|sbin|proc|data|workspace|mnt|run|media)/|[A-Za-z]:[\\/]|\\\\)",
+    r"(?:^|[\s'(\[])(?:/(?:Users|Volumes|private|tmp|var|opt|srv|etc|root|usr|Applications|Library|System|bin|sbin|proc|data|workspace|mnt|run|media)/|[A-Za-z]:[\\/]|\\\\|~/(?:\.\.?/)?|\.\.?/|%2f(?:Users|Volumes|private|tmp|var|opt|srv|etc|root|usr)(?:%2f|/))",
     re.IGNORECASE,
 )
+
+
+def _safe_text(value: str, *, location: str) -> None:
+    if any(ord(char) < 32 and char not in "\t\n\r" for char in value):
+        raise BundleError(f"control character at {location}")
+    if _SENSITIVE_TEXT.search(value) or _ABSOLUTE_PATH.search(value):
+        raise BundleError(f"sensitive/local value at {location}")
+
+
+def _safe_bytes(value: bytes, *, location: str) -> str:
+    try:
+        text = value.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise BundleError(f"{location} is not safe UTF-8 text") from exc
+    _safe_text(text, location=location)
+    return text
 
 
 def _safe_json(value: Any, *, location: str = "document") -> None:
@@ -112,10 +133,8 @@ def _safe_json(value: Any, *, location: str = "document") -> None:
     elif isinstance(value, (list, tuple)):
         for index, nested in enumerate(value):
             _safe_json(nested, location=f"{location}[{index}]")
-    elif isinstance(value, str) and (
-        _SENSITIVE_TEXT.search(value) or _ABSOLUTE_PATH.search(value)
-    ):
-        raise BundleError(f"sensitive/local value at {location}")
+    elif isinstance(value, str):
+        _safe_text(value, location=location)
 
 
 def _load_json(path: Path) -> Any:
@@ -270,6 +289,97 @@ def terminal_sections(status: str, reason: str) -> dict[str, Any]:
     }
 
 
+_SECTION_NAMES = {"artifact", "claim_support", "synthesis", "scoring"}
+
+
+def _validate_terminal_documents(
+    *,
+    status: str,
+    sections: Mapping[str, Any],
+    score: Mapping[str, Any],
+    claim_support: Mapping[str, Any],
+) -> None:
+    """Enforce the status/section/document state machine before publication."""
+
+    if set(sections) != _SECTION_NAMES:
+        raise BundleError("manifest sections are incomplete")
+    if status == "completed":
+        if any(
+            not isinstance(value, str) or not value or value == "not_run"
+            for value in sections.values()
+        ):
+            raise BundleError("completed bundle requires every artifact section")
+        if score.get("status") != "scored":
+            raise BundleError("completed bundle requires scored evaluation")
+        if claim_support.get("status") != "scored":
+            raise BundleError("completed bundle requires scored claim support")
+        return
+    if status == "evaluator_not_run":
+        if (
+            not isinstance(sections["artifact"], str)
+            or not sections["artifact"]
+            or sections["artifact"] == "not_run"
+            or any(sections[key] != "not_run" for key in _SECTION_NAMES - {"artifact"})
+        ):
+            raise BundleError(
+                "evaluator_not_run must retain a completed artifact and not_run evaluation"
+            )
+    elif any(value != "not_run" for value in sections.values()):
+        raise BundleError("pre-artifact terminal branch cannot fabricate sections")
+    if score.get("status") != "not_run" or score.get("cells") is not None:
+        raise BundleError("terminal non-completed branch requires not_run score")
+    if (
+        claim_support.get("status") != "not_run"
+        or claim_support.get("requirements") is not None
+    ):
+        raise BundleError("terminal non-completed branch requires not_run claims")
+
+
+def _locator_candidates(locator: str) -> tuple[str, ...]:
+    if locator.startswith("artifacts/"):
+        return (locator,)
+    return (locator, f"artifacts/{locator}")
+
+
+def _locator_exists(locator: object, files: Mapping[str, bytes]) -> bool:
+    if not isinstance(locator, str) or not locator or locator == "not_run":
+        return False
+    try:
+        candidates = _locator_candidates(_relative(locator))
+    except BundleError:
+        return False
+    return any(candidate in files for candidate in candidates)
+
+
+def _validate_section_locators(
+    sections: Mapping[str, Any], files: Mapping[str, bytes], *, status: str
+) -> None:
+    if status not in {"completed", "evaluator_not_run"}:
+        return
+    for name, locator in sections.items():
+        if locator == "not_run":
+            continue
+        if not _locator_exists(locator, files):
+            raise BundleError(f"section locator does not exist: {name}")
+
+
+def _validate_recovery(value: object) -> None:
+    if not isinstance(value, Mapping):
+        raise BundleError("recovery evidence must be an object")
+    status = value.get("status")
+    if status not in {"not_applicable", "complete", "failed", "not_run"}:
+        raise BundleError("recovery evidence status is invalid")
+    reason = value.get("reason")
+    if not isinstance(reason, str) or not reason or len(reason) > 500:
+        raise BundleError("recovery evidence reason is invalid")
+    proof = value.get("proof")
+    proof_sha256 = value.get("proof_sha256")
+    if not isinstance(proof, str) or not proof:
+        raise BundleError("recovery evidence proof is required")
+    if not isinstance(proof_sha256, str) or not _SHA256.fullmatch(proof_sha256):
+        raise BundleError("recovery evidence proof hash is required")
+
+
 def derive_verdict(
     *,
     status: str,
@@ -284,6 +394,10 @@ def derive_verdict(
         return "rollback_incomplete"
     if status == "pre_artifact_not_run":
         return "not_run"
+    if status in {"evaluator_not_run", "preflight_failed", "FAIL"}:
+        return "FAIL"
+    if status != "completed" or not artifact_complete:
+        return "FAIL"
     if gates_verdict != "PASS":
         return "FAIL"
     if score.get("status") != "scored" or claim_support.get("status") != "scored":
@@ -324,22 +438,41 @@ def minimum_evidence(
 
     accepted: list[Mapping[str, Any]] = []
     seen: set[str] = set()
+    source_hashes: set[str] = set()
     for source in sources:
         if source.get("disposition") != "usable":
             continue
         url = source.get("url")
-        if not isinstance(url, str) or not url.startswith("https://") or url in seen:
+        if not isinstance(url, str) or url in seen:
             continue
         parsed = urlsplit(url)
-        if parsed.username or parsed.password or not parsed.hostname:
+        if not _is_public_https_url(parsed):
             continue
-        required = {"provider", "extractor", "egress", "machine", "source_type"}
+        required = {
+            "provider",
+            "extractor",
+            "egress",
+            "machine",
+            "source_type",
+            "degraded",
+            "source_text_sha256",
+            "citation_id",
+        }
         if not required.issubset(source) or any(
-            not source.get(key) for key in required
+            not source.get(key) for key in required - {"degraded"}
         ):
             raise BundleError("usable source lacks complete provenance")
+        if not isinstance(source["degraded"], bool):
+            raise BundleError("usable source degraded label is invalid")
+        if not isinstance(source["source_text_sha256"], str) or not _SHA256.fullmatch(
+            source["source_text_sha256"]
+        ):
+            raise BundleError("usable source text hash is invalid")
+        if not isinstance(source["citation_id"], str) or not source["citation_id"]:
+            raise BundleError("usable source citation ID is invalid")
         accepted.append(source)
         seen.add(url)
+        source_hashes.add(source["source_text_sha256"])
     domains = {
         _registrable_domain(urlsplit(source["url"]).hostname or "")
         for source in accepted
@@ -353,6 +486,7 @@ def minimum_evidence(
         "covered_requirements": covered_requirements,
         "closure_leaks": 0,
         "degraded_unlabelled": 0,
+        "source_text_sha256": sorted(source_hashes),
     }
     if (
         len(accepted) < min_urls
@@ -364,8 +498,75 @@ def minimum_evidence(
     return result
 
 
+def _manifest_claim_bindings(
+    manifest: Mapping[str, Any], sources: Sequence[Mapping[str, Any]]
+) -> tuple[set[str], dict[str, str]]:
+    requirements = manifest.get("target_requirements")
+    if (
+        not isinstance(requirements, list)
+        or len(requirements) != _COMPLETED_REQUIRED_REQUIREMENTS
+        or any(not isinstance(item, str) or not item for item in requirements)
+        or len(set(requirements)) != len(requirements)
+    ):
+        raise BundleError("manifest must declare exactly 15 target requirements")
+    citation_urls = manifest.get("citation_urls")
+    if not isinstance(citation_urls, Mapping):
+        raise BundleError("manifest must declare citation URL bindings")
+    if set(citation_urls) != {f"S{i}" for i in range(_COMPLETED_REQUIRED_REQUIREMENTS)}:
+        raise BundleError("manifest citation IDs are incomplete")
+    source_urls = {
+        source.get("url") for source in sources if source.get("disposition") == "usable"
+    }
+    normalized: dict[str, str] = {}
+    for citation_id, url in citation_urls.items():
+        if not isinstance(url, str) or not _is_public_https_url(urlsplit(url)):
+            raise BundleError("manifest citation URL is not public HTTPS")
+        if url not in source_urls:
+            raise BundleError("manifest citation URL is not bound to a source")
+        normalized[citation_id] = url
+    return set(requirements), normalized
+
+
+def _is_public_https_url(parsed: Any) -> bool:
+    """Return whether a source URL is safe to count toward evidence floors."""
+
+    if (
+        parsed.scheme.lower() != "https"
+        or parsed.username
+        or parsed.password
+        or not parsed.hostname
+        or parsed.query
+        or parsed.fragment
+    ):
+        return False
+    host = parsed.hostname.rstrip(".").lower()
+    if host in {"localhost", "localhost.localdomain"} or host.endswith(
+        (".local", ".internal", ".localhost", ".test", ".invalid", ".example")
+    ):
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return "." in host and all(
+            label and len(label) <= 63 for label in host.split(".")
+        )
+    return not (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_unspecified
+        or address.is_multicast
+    )
+
+
 def validate_claim_support(
-    value: Mapping[str, Any], *, required_requirements: int = 15
+    value: Mapping[str, Any],
+    *,
+    required_requirements: int = 15,
+    source_hashes: set[str] | None = None,
+    requirement_ids: set[str] | None = None,
+    citation_urls: Mapping[str, str] | None = None,
 ) -> None:
     if value.get("status") not in {"scored", "not_run"}:
         raise BundleError("claim support status is invalid")
@@ -379,6 +580,7 @@ def validate_claim_support(
     if not isinstance(rows, list) or len(rows) != required_requirements:
         raise BundleError("claim support must bind every target requirement")
     seen: set[str] = set()
+    citation_seen: set[str] = set()
     for row in rows:
         if not isinstance(row, Mapping):
             raise BundleError("claim support row is invalid")
@@ -386,6 +588,8 @@ def validate_claim_support(
         if not isinstance(identifier, str) or not identifier or identifier in seen:
             raise BundleError("claim support requirement IDs must be unique")
         seen.add(identifier)
+        if requirement_ids is not None and identifier not in requirement_ids:
+            raise BundleError("claim support requirement ID is not in the manifest")
         if row.get("disposition") not in {"supported", "partial", "unsupported"}:
             raise BundleError("claim support disposition is invalid")
         if (
@@ -400,16 +604,36 @@ def validate_claim_support(
             raise BundleError("claim support source hash is invalid")
         if not isinstance(row.get("citation_id"), str) or not row["citation_id"]:
             raise BundleError("claim support citation ID is required")
+        if row["citation_id"] in citation_seen:
+            raise BundleError("claim support citation IDs must be unique")
+        citation_seen.add(row["citation_id"])
+        if citation_urls is not None and row["citation_id"] not in citation_urls:
+            raise BundleError("claim support citation ID is not in the manifest")
         citation_url = row.get("citation_url")
-        if not isinstance(citation_url, str) or not citation_url.startswith("https://"):
+        if not isinstance(citation_url, str) or not _is_public_https_url(
+            urlsplit(citation_url)
+        ):
             raise BundleError("claim support citation URL is required")
+        if (
+            citation_urls is not None
+            and citation_urls[row["citation_id"]] != citation_url
+        ):
+            raise BundleError("claim support citation URL does not match the manifest")
+        if source_hashes is not None and row["source_text_sha256"] not in source_hashes:
+            raise BundleError("claim support source hash is not bound to a source")
         evaluator = row.get("evaluator")
         if (
             not isinstance(evaluator, Mapping)
             or evaluator.get("model") != "gpt-5.6-sol"
+            or not _SHA256.fullmatch(str(evaluator.get("prompt_sha256", "")))
+            or not _SHA256.fullmatch(str(evaluator.get("settings_sha256", "")))
             or not _SHA256.fullmatch(str(evaluator.get("run_receipt_sha256", "")))
         ):
             raise BundleError("claim support evaluator identity is invalid")
+    if requirement_ids is not None and seen != requirement_ids:
+        raise BundleError("claim support requirement set does not match manifest")
+    if citation_urls is not None and citation_seen != set(citation_urls):
+        raise BundleError("claim support citation set does not match manifest")
 
 
 def build_canary_fixture(
@@ -526,19 +750,6 @@ def write_bundle(output: Path | str, payload: Mapping[str, Any]) -> None:
         raise BundleError(
             "manifest must declare all artifact/synthesis/scoring sections"
         )
-    if status == "evaluator_not_run":
-        if (
-            sections["artifact"] == "not_run"
-            or sections["claim_support"] != "not_run"
-            or sections["scoring"] != "not_run"
-        ):
-            raise BundleError(
-                "evaluator_not_run must retain completed artifact and not_run evaluation"
-            )
-    elif status != "completed" and any(
-        value != "not_run" for value in sections.values()
-    ):
-        raise BundleError("pre-artifact terminal branch cannot fabricate sections")
     if (
         manifest.get("competitive_baseline") != "not_applicable"
         or manifest.get("competitive_pair") != "not_applicable"
@@ -554,11 +765,62 @@ def write_bundle(output: Path | str, payload: Mapping[str, Any]) -> None:
     else:
         if score_value.get("cells") is not None:
             raise BundleError("not_run score must not have rubric cells")
-    validate_claim_support(payload["claim_support"])
+    claim_support_value = payload["claim_support"]
+    if not isinstance(claim_support_value, Mapping):
+        raise BundleError("claim support must be an object")
+    _validate_terminal_documents(
+        status=status,
+        sections=sections,
+        score=score_value,
+        claim_support=claim_support_value,
+    )
+    _validate_recovery(payload["recovery"])
+    evidence_result: dict[str, Any] | None = None
+    if status == "completed":
+        sources = manifest.get("sources")
+        if not isinstance(sources, list):
+            raise BundleError("completed bundle requires manifest source rows")
+        required_requirements = manifest.get(
+            "required_requirements", _COMPLETED_REQUIRED_REQUIREMENTS
+        )
+        covered_requirements = manifest.get(
+            "covered_requirements", _COMPLETED_REQUIRED_REQUIREMENTS
+        )
+        if (
+            isinstance(required_requirements, bool)
+            or not isinstance(required_requirements, int)
+            or isinstance(covered_requirements, bool)
+            or not isinstance(covered_requirements, int)
+        ):
+            raise BundleError("manifest requirement counts are invalid")
+        if (
+            required_requirements != _COMPLETED_REQUIRED_REQUIREMENTS
+            or covered_requirements != _COMPLETED_REQUIRED_REQUIREMENTS
+        ):
+            raise BundleError("completed bundle must cover all 15 requirements")
+        evidence_result = minimum_evidence(
+            sources,
+            required_requirements=required_requirements,
+            covered_requirements=covered_requirements,
+            min_urls=_COMPLETED_MIN_URLS,
+            min_domains=_COMPLETED_MIN_DOMAINS,
+            min_primary=_COMPLETED_MIN_PRIMARY,
+        )
+        requirement_ids, citation_urls = _manifest_claim_bindings(manifest, sources)
+        validate_claim_support(
+            claim_support_value,
+            required_requirements=required_requirements,
+            source_hashes=set(evidence_result["source_text_sha256"]),
+            requirement_ids=requirement_ids,
+            citation_urls=citation_urls,
+        )
+        manifest["evidence_minimum"] = evidence_result
+    else:
+        validate_claim_support(claim_support_value)
     _safe_json(manifest)
     _safe_json(gates)
     _safe_json(score_value)
-    _safe_json(payload["claim_support"])
+    _safe_json(claim_support_value)
     _safe_json(payload["recovery"])
     staging = Path(
         tempfile.mkdtemp(prefix=f".{target.name}.staging-", dir=str(target.parent))
@@ -585,17 +847,23 @@ def write_bundle(output: Path | str, payload: Mapping[str, Any]) -> None:
                 raise BundleError("artifact payload must be bytes")
             if len(value) > 4 * 1024 * 1024:
                 raise BundleError("artifact exceeds 4 MiB bound")
-            # JSON-looking artifacts are parsed and scanned; binary pages remain
-            # bounded bytes and are covered by the checksum below.
+            text = _safe_bytes(value, location=relative)
             if relative.endswith(".json"):
                 try:
-                    parsed = json.loads(value.decode("utf-8"))
+                    parsed = json.loads(text)
                 except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                     raise BundleError(
                         f"artifact {relative} is not strict JSON"
                     ) from exc
                 _safe_json(parsed, location=relative)
             files[relative] = value
+        _validate_section_locators(sections, files, status=status)
+        if status in {"completed", "evaluator_not_run"}:
+            for name, gate in gates["gates"].items():
+                if any(
+                    not _locator_exists(locator, files) for locator in gate["evidence"]
+                ):
+                    raise BundleError(f"gate {name} evidence locator does not exist")
         manifest["files"] = [*sorted(files), "checksums.sha256"]
         _safe_json(manifest)
         files["manifest.json"] = canonical_bytes(manifest)
@@ -648,12 +916,15 @@ def verify_bundle(output: Path | str) -> dict[str, Any]:
             raise BundleError("bundle contains a symlink or non-file")
         relative = path.relative_to(root).as_posix()
         if relative != "checksums.sha256":
-            actual[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+            data = path.read_bytes()
+            _safe_bytes(data, location=relative)
+            actual[relative] = hashlib.sha256(data).hexdigest()
     if set(actual) != set(checksums):
         raise BundleError("checksums do not cover exactly every other file")
     if actual != checksums:
         raise BundleError("bundle checksum mismatch")
     manifest = _load_json(root / "manifest.json")
+    _safe_json(manifest, location="manifest.json")
     if manifest.get("schema") != SCHEMA:
         raise BundleError("invalid acceptance manifest schema")
     if (
@@ -675,11 +946,70 @@ def verify_bundle(output: Path | str) -> dict[str, Any]:
     ]:
         raise BundleError("manifest file declaration is not checksum-closed")
     gates_doc = _load_json(root / "gates.json")
+    _safe_json(gates_doc, location="gates.json")
     gates = evaluate_gates(gates_doc.get("gates", gates_doc))
     score = _load_json(root / "score.json")
+    _safe_json(score, location="score.json")
     claim_support = _load_json(root / "claim-support.json")
-    validate_claim_support(claim_support)
+    _safe_json(claim_support, location="claim-support.json")
+    recovery = _load_json(root / "recovery-evidence.json")
+    _safe_json(recovery, location="recovery-evidence.json")
+    for relative in checksums:
+        if relative.startswith("artifacts/") and relative.endswith(".json"):
+            parsed = _load_json(root / relative)
+            _safe_json(parsed, location=relative)
     status = manifest.get("status")
+    _validate_terminal_documents(
+        status=status,
+        sections=sections,
+        score=score,
+        claim_support=claim_support,
+    )
+    _validate_recovery(recovery)
+    evidence_result: dict[str, Any] | None = None
+    if status == "completed":
+        sources = manifest.get("sources")
+        if not isinstance(sources, list):
+            raise BundleError("completed bundle requires manifest source rows")
+        required_requirements = manifest.get(
+            "required_requirements", _COMPLETED_REQUIRED_REQUIREMENTS
+        )
+        covered_requirements = manifest.get(
+            "covered_requirements", _COMPLETED_REQUIRED_REQUIREMENTS
+        )
+        if (
+            required_requirements != _COMPLETED_REQUIRED_REQUIREMENTS
+            or covered_requirements != _COMPLETED_REQUIRED_REQUIREMENTS
+        ):
+            raise BundleError("completed bundle must cover all 15 requirements")
+        evidence_result = minimum_evidence(
+            sources,
+            required_requirements=required_requirements,
+            covered_requirements=covered_requirements,
+            min_urls=_COMPLETED_MIN_URLS,
+            min_domains=_COMPLETED_MIN_DOMAINS,
+            min_primary=_COMPLETED_MIN_PRIMARY,
+        )
+        requirement_ids, citation_urls = _manifest_claim_bindings(manifest, sources)
+        validate_claim_support(
+            claim_support,
+            required_requirements=required_requirements,
+            source_hashes=set(evidence_result["source_text_sha256"]),
+            requirement_ids=requirement_ids,
+            citation_urls=citation_urls,
+        )
+    else:
+        validate_claim_support(claim_support)
+    _validate_section_locators(
+        sections,
+        {relative: b"" for relative in checksums},
+        status=status,
+    )
+    if status in {"completed", "evaluator_not_run"}:
+        files = {relative: b"" for relative in checksums}
+        for name, gate in gates["gates"].items():
+            if any(not _locator_exists(locator, files) for locator in gate["evidence"]):
+                raise BundleError(f"gate {name} evidence locator does not exist")
     verdict = derive_verdict(
         status=status,
         gates_verdict=gates["verdict"],

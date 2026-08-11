@@ -26,6 +26,11 @@ _SENSITIVE_KEY_WORDS = (
     "payload",
     "connection",
     "sql",
+    "private",
+    "raw_exception",
+    "stacktrace",
+    "traceback",
+    "exception",
 )
 _OPAQUE_KEYS = {
     "id",
@@ -48,6 +53,14 @@ _MUTABLE_KEYS = {
     "status",
 }
 _SAFE_STATUSES = {"success", "empty", "failed", "policy_skipped", "cache", "accepted"}
+_SENSITIVE_VALUE = re.compile(
+    r"(?:\bbearer\s+|\bbasic\s+|\bcookie\s*[:=]|\b(?:api[_-]?key|password|secret|authorization|private[_-]?key|raw[_-]?exception)\s*[:=]|-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:traceback|exception|stack trace)\b|(?:postgres(?:ql)?|pg)://|\bssh://|\bfile://)",
+    re.IGNORECASE,
+)
+_LOCAL_VALUE = re.compile(
+    r"(?:^|[\s'\[(])(?:/(?:Users|Volumes|private|tmp|var|opt|srv|etc|root|usr|workspace|run|data)/|[A-Za-z]:[\\/]|\\\\|~/(?:\.\.?/)?|\.\.?/|%2f(?:Users|Volumes|private|tmp|var|opt|srv|etc|root|usr)(?:%2f|/))",
+    re.IGNORECASE,
+)
 
 
 def _utc(value: object, label: str) -> datetime:
@@ -83,7 +96,16 @@ def _key_is_sensitive(key: str) -> bool:
     normalized = "".join(char for char in key.lower() if char.isalnum())
     if normalized in {"tokencount", "tokenbalance", "tokenlimit"}:
         return False
-    return any(word in normalized for word in _SENSITIVE_KEY_WORDS)
+    if normalized in {
+        "apikey",
+        "privatekey",
+        "rawexception",
+        "stacktrace",
+        "traceback",
+        "exception",
+    }:
+        return True
+    return any(word.replace("_", "") in normalized for word in _SENSITIVE_KEY_WORDS)
 
 
 def _sanitize(value: Any, *, path: str = "row") -> Any:
@@ -116,6 +138,8 @@ def _sanitize(value: Any, *, path: str = "row") -> Any:
     if isinstance(value, str):
         if any(ord(char) < 32 and char not in "\t\n\r" for char in value):
             raise ObservationError(f"control character at {path}")
+        if _SENSITIVE_VALUE.search(value) or _LOCAL_VALUE.search(value):
+            raise ObservationError(f"sensitive/local value at {path}")
     return value
 
 
@@ -230,11 +254,15 @@ def audit_spend_delta(
             ("charge", "actual_nonzero"),
         ):
             amount = row.get(field, 0)
-            if (
-                isinstance(amount, (int, float))
-                and not isinstance(amount, bool)
-                and amount != 0
-            ):
+            if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+                violations.append(
+                    {"code": "invalid_amount", "row": hash_opaque(identity)}
+                )
+            elif not math.isfinite(float(amount)) or amount < 0:
+                violations.append(
+                    {"code": "invalid_amount", "row": hash_opaque(identity)}
+                )
+            elif amount != 0:
                 violations.append({"code": code, "row": hash_opaque(identity)})
         status = str(row.get("status", row.get("spend_status", ""))).lower()
         if status in {"uncertain", "unsettled", "pending", "unknown"}:
@@ -267,6 +295,15 @@ def audit_spend_delta(
     return violations
 
 
+def assert_spend_delta(violations: Sequence[Mapping[str, Any]]) -> None:
+    """Raise on any spend/audit violation instead of silently ignoring it."""
+
+    if not isinstance(violations, Sequence):
+        raise ObservationError("spend violations must be a sequence")
+    if violations:
+        raise ObservationError("spend delta contains forbidden rows")
+
+
 def compare_predecessors(
     before: Sequence[Mapping[str, Any]],
     after: Sequence[Mapping[str, Any]],
@@ -294,9 +331,30 @@ def validate_cache_trace(trace: Mapping[str, Any]) -> None:
         raise ObservationError("cache hit must record attempted=false")
     if status == "hit" and trace.get("eligible") is not True:
         raise ObservationError("cache hit must be positively eligible")
-    required = {"status", "attempted", "eligible"}
+    required = {
+        "status",
+        "attempted",
+        "eligible",
+        "age_seconds",
+        "origin",
+        "spend_provenance",
+    }
     if not required.issubset(trace):
         raise ObservationError("cache trace is incomplete")
+    if status == "hit":
+        age = trace["age_seconds"]
+        if isinstance(age, bool) or not isinstance(age, (int, float)):
+            raise ObservationError("cache hit age is invalid")
+        if not math.isfinite(float(age)) or age < 0:
+            raise ObservationError("cache hit age is invalid")
+        if not isinstance(trace["origin"], str) or not trace["origin"]:
+            raise ObservationError("cache hit origin is required")
+        provenance = trace["spend_provenance"]
+        if (
+            not isinstance(provenance, Mapping)
+            or provenance.get("ledgered") is not True
+        ):
+            raise ObservationError("cache hit spend provenance is incomplete")
 
 
 def validate_transport_pages(
@@ -350,15 +408,35 @@ def replay_capture_evidence(
 ) -> dict[str, Any]:
     if not isinstance(body, bytes) or not body:
         raise ObservationError("Maya body must be non-empty bytes")
+    body_sha256 = hashlib.sha256(body).hexdigest()
+    for label, response in (
+        ("first", first_response),
+        ("replay", replay_response),
+    ):
+        if not isinstance(response, Mapping):
+            raise ObservationError(f"{label} Maya response must be an object")
+        for field in (
+            "status",
+            "duplicate",
+            "capture_id",
+            "caller",
+            "pages",
+            "body_sha256",
+            "capture_id_sha256",
+        ):
+            if field not in response:
+                raise ObservationError(f"Maya response identity is incomplete: {field}")
+        if response.get("caller") != "argus":
+            raise ObservationError("Maya capture caller is not argus")
+        if response.get("pages") != []:
+            raise ObservationError("canary Maya capture must contain zero pages")
+        if response.get("body_sha256") != body_sha256:
+            raise ObservationError("Maya response body hash mismatch")
     if (
         first_response.get("status") != 201
         or first_response.get("duplicate") is not False
     ):
         raise ObservationError("first Maya capture must be 201/nonduplicate")
-    if first_response.get("caller", "argus") != "argus":
-        raise ObservationError("Maya capture caller is not argus")
-    if first_response.get("pages", []) != [] or replay_response.get("pages", []) != []:
-        raise ObservationError("canary Maya capture must contain zero pages")
     if (
         replay_response.get("status") != 200
         or replay_response.get("duplicate") is not True
@@ -369,9 +447,14 @@ def replay_capture_evidence(
         raise ObservationError("first Maya capture ID is missing")
     if replay_response.get("capture_id") != capture_id:
         raise ObservationError("Maya replay changed capture ID")
+    expected_capture_hash = hash_opaque(capture_id)
+    if first_response.get("capture_id_sha256") != expected_capture_hash:
+        raise ObservationError("first Maya capture hash mismatch")
+    if replay_response.get("capture_id_sha256") != expected_capture_hash:
+        raise ObservationError("Maya replay capture hash mismatch")
     return {
-        "body_sha256": hashlib.sha256(body).hexdigest(),
-        "capture_id_sha256": hash_opaque(capture_id),
+        "body_sha256": body_sha256,
+        "capture_id_sha256": expected_capture_hash,
         "duplicate": True,
     }
 
@@ -381,13 +464,25 @@ def scan_log_window(
     *,
     allowed_request_hashes: set[str],
     max_records: int = 10_000,
+    window_start: datetime | str | None = None,
+    window_end: datetime | str | None = None,
 ) -> dict[str, Any]:
     """Redact and hash a bounded log window, allowing only predeclared auth probes."""
 
     if len(logs) > max_records:
         raise ObservationError("log window exceeds record bound")
+    if any(
+        not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
+        for value in allowed_request_hashes
+    ):
+        raise ObservationError("allowed request hashes are invalid")
+    start = _utc(window_start, "window_start") if window_start is not None else None
+    end = _utc(window_end, "window_end") if window_end is not None else None
+    if start is not None and end is not None and end < start:
+        raise ObservationError("log window is reversed")
     sanitized: list[dict[str, Any]] = []
     unexpected: list[dict[str, Any]] = []
+    allowed_seen: set[str] = set()
     for record in logs:
         if not isinstance(record, Mapping):
             raise ObservationError("log record must be an object")
@@ -395,23 +490,30 @@ def scan_log_window(
         request_hash = record.get("request_hash")
         if status in {421, 500, 501, 502, 503, 504}:
             unexpected.append({"status": str(status)})
-        elif status in {401, 403} and request_hash not in allowed_request_hashes:
-            unexpected.append({"status": str(status)})
-        cleaned = {
-            key: value for key, value in record.items() if key not in _OPAQUE_KEYS
-        }
-        for key, value in tuple(cleaned.items()):
-            if isinstance(value, str):
-                value = re.sub(r"(?i)\b(?:bearer|basic)\s+\S+", "[REDACTED]", value)
-                value = re.sub(
-                    r"(?i)(?:/Users/|/Volumes/|/private/|[A-Za-z]:[\\/])\S*",
-                    "[REDACTED_PATH]",
-                    value,
+        elif status in {401, 403}:
+            if request_hash not in allowed_request_hashes:
+                unexpected.append({"status": str(status)})
+            elif request_hash in allowed_seen:
+                unexpected.append({"status": str(status), "reason": "auth loop"})
+            else:
+                allowed_seen.add(request_hash)
+        if (start is not None or end is not None) and "at" not in record:
+            unexpected.append({"status": str(status), "reason": "timestamp missing"})
+        elif "at" in record:
+            try:
+                observed = _utc(record["at"], "log timestamp")
+            except ObservationError:
+                unexpected.append(
+                    {"status": str(status), "reason": "timestamp invalid"}
                 )
-                cleaned[key] = value
-        if isinstance(request_hash, str):
-            cleaned["request_hash"] = request_hash
-        sanitized.append(_sanitize(cleaned, path="log"))
+            else:
+                if start is not None and observed < start:
+                    unexpected.append(
+                        {"status": str(status), "reason": "before window"}
+                    )
+                if end is not None and observed > end:
+                    unexpected.append({"status": str(status), "reason": "after window"})
+        sanitized.append(_sanitize(record, path="log"))
     if unexpected:
         raise ObservationError(f"unexpected log events: {unexpected}")
     return {"records": sanitized, "unexpected": [], "sha256": canonical_hash(sanitized)}
@@ -450,7 +552,9 @@ def validate_unauth_probe(
         raise ObservationError("unauthenticated probe must be 401 or 403")
     if redirected or session_issued or side_effect_delta != 0:
         raise ObservationError("unauthenticated probe had a side effect")
-    if not isinstance(response_sha256, str) or len(response_sha256) != 64:
+    if not isinstance(response_sha256, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", response_sha256
+    ):
         raise ObservationError("unauthenticated probe response hash is invalid")
     return {
         "status": status,

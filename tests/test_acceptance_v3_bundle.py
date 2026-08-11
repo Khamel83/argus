@@ -17,9 +17,18 @@ from argus.acceptance_v3.bundle import (
 )
 
 
+def _recovery(reason: str):
+    return {
+        "status": "not_applicable",
+        "reason": reason,
+        "proof": "no mutation",
+        "proof_sha256": "d" * 64,
+    }
+
+
 def _gates(status: str = "PASS"):
     return {
-        name: {"status": status, "reason": "fixture", "evidence": ["x.json"]}
+        name: {"status": status, "reason": "fixture", "evidence": ["report.json"]}
         for name in EIGHT_GATES
     }
 
@@ -45,12 +54,39 @@ def _manifest(*, status="completed"):
             "synthesis": "not_run",
             "scoring": "not_run",
         }
+    domains = [
+        "one.example.com",
+        "two.example.com",
+        "three.example.net",
+        "four.example.net",
+        "five.example.org",
+    ]
     return {
         "schema": "argus-acceptance-v3/free-targeted",
         "status": status,
         "sections": sections,
         "competitive_baseline": "not_applicable",
         "competitive_pair": "not_applicable",
+        "required_requirements": 15,
+        "covered_requirements": 15,
+        "sources": [
+            {
+                "url": f"https://{domains[i]}/a",
+                "disposition": "usable",
+                "primary": i < 2,
+                "provider": "github",
+                "extractor": "trafilatura",
+                "egress": "unknown",
+                "machine": "fixture",
+                "source_type": "search",
+                "degraded": False,
+                "source_text_sha256": "a" * 64,
+                "citation_id": f"S{i}",
+            }
+            for i in range(5)
+        ],
+        "target_requirements": [f"r{i}" for i in range(15)],
+        "citation_urls": {f"S{i}": f"https://{domains[i % 5]}/a" for i in range(15)},
     }
 
 
@@ -59,7 +95,12 @@ def _score():
         "status": "scored",
         "cells": {name: points for name, points in RUBRIC_CELLS},
         "total": 100,
-        "evaluator": {"model": "gpt-5.6-sol", "prompt_sha256": "a" * 64},
+        "evaluator": {
+            "model": "gpt-5.6-sol",
+            "prompt_sha256": "a" * 64,
+            "settings_sha256": "b" * 64,
+            "run_receipt_sha256": "c" * 64,
+        },
     }
 
 
@@ -73,8 +114,13 @@ def _claim_support():
                 "reason": "fixture",
                 "source_text_sha256": "a" * 64,
                 "citation_id": f"S{i}",
-                "citation_url": f"https://example{i}.com/source",
-                "evaluator": {"model": "gpt-5.6-sol", "run_receipt_sha256": "b" * 64},
+                "citation_url": f"https://{['one.example.com', 'two.example.com', 'three.example.net', 'four.example.net', 'five.example.org'][i % 5]}/a",
+                "evaluator": {
+                    "model": "gpt-5.6-sol",
+                    "prompt_sha256": "c" * 64,
+                    "settings_sha256": "d" * 64,
+                    "run_receipt_sha256": "b" * 64,
+                },
             }
             for i in range(15)
         ],
@@ -142,6 +188,9 @@ def test_minimum_evidence_recomputes_usable_source_floor_and_primary_floor():
             "egress": "unknown",
             "machine": "fixture",
             "source_type": "search",
+            "degraded": False,
+            "source_text_sha256": "a" * 64,
+            "citation_id": f"S{i}",
         }
         for i in range(5)
     ]
@@ -162,7 +211,7 @@ def test_bundle_checksums_all_other_files_and_verdict_is_derived(tmp_path):
         "gates": _gates(),
         "score": _score(),
         "claim_support": _claim_support(),
-        "recovery": {"status": "not_applicable", "reason": "no changes"},
+        "recovery": _recovery("no changes"),
         "artifacts": {"report.json": b'{"ok":true}', "workflow.json": b"{}"},
     }
     write_bundle(output, payload)
@@ -185,7 +234,7 @@ def test_manifest_declares_exact_checksum_closed_file_set_and_raw_opaque_ids_are
         "gates": _gates(),
         "score": _score(),
         "claim_support": _claim_support(),
-        "recovery": {"status": "not_applicable", "reason": "no changes"},
+        "recovery": _recovery("no changes"),
         "artifacts": {"report.json": b'{"ok":true}'},
     }
     write_bundle(output, payload)
@@ -200,6 +249,51 @@ def test_manifest_declares_exact_checksum_closed_file_set_and_raw_opaque_ids_are
             tmp_path / "opaque",
             {**payload, "artifacts": {"bad.json": b'{"run_id":"raw"}'}},
         )
+
+
+def test_completed_bundle_cannot_pass_with_not_run_sections_or_missing_floor(tmp_path):
+    payload = {
+        "manifest": {
+            **_manifest(),
+            "sections": {
+                key: "not_run"
+                for key in ("artifact", "claim_support", "synthesis", "scoring")
+            },
+        },
+        "gates": _gates(),
+        "score": _score(),
+        "claim_support": _claim_support(),
+        "recovery": _recovery("no changes"),
+        "artifacts": {"report.json": b'{"ok":true}'},
+    }
+    with pytest.raises(BundleError):
+        write_bundle(tmp_path / "contradictory", payload)
+
+
+def test_terminal_failure_status_cannot_become_pass_from_pass_documents(tmp_path):
+    payload = {
+        "manifest": {**_manifest(status="FAIL")},
+        "gates": _gates(),
+        "score": _score(),
+        "claim_support": _claim_support(),
+        "recovery": _recovery("no changes"),
+        "artifacts": {"report.json": b'{"ok":true}'},
+    }
+    with pytest.raises(BundleError):
+        write_bundle(tmp_path / "contradictory", payload)
+
+
+def test_binary_or_text_artifact_secret_and_local_path_is_rejected(tmp_path):
+    payload = {
+        "manifest": _manifest(),
+        "gates": _gates(),
+        "score": _score(),
+        "claim_support": _claim_support(),
+        "recovery": _recovery("no changes"),
+        "artifacts": {"notes.txt": b"Bearer leaked /Users/macmini/private"},
+    }
+    with pytest.raises(BundleError):
+        write_bundle(tmp_path / "leak", payload)
 
 
 @pytest.mark.parametrize(
@@ -220,8 +314,13 @@ def test_terminal_branches_emit_not_run_or_fail_without_fabricating_score(
         "gates": _gates("FAIL"),
         "score": {"status": "not_run", "reason": status, "cells": None},
         "claim_support": {"status": "not_run", "reason": status, "requirements": None},
-        "recovery": {"status": "not_applicable", "reason": status},
-        "artifacts": {"status.json": json.dumps({"status": status}).encode()},
+        "recovery": _recovery(status),
+        "artifacts": {
+            "status.json": json.dumps({"status": status}).encode(),
+            **(
+                {"report.json": b'{"ok":true}'} if status == "evaluator_not_run" else {}
+            ),
+        },
     }
     write_bundle(output, payload)
     assert verify_bundle(output)["verdict"] == expected

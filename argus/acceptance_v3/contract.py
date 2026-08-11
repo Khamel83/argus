@@ -166,26 +166,244 @@ def _validate_rollback(value: object) -> dict[str, Any]:
 def _validate_evaluator(value: object) -> dict[str, Any]:
     evaluator = _mapping(value, "evaluator")
     required = {
+        "version",
         "model",
         "reasoning_effort",
+        "sampling",
+        "web_enabled",
+        "tools_enabled",
+        "memory_enabled",
+        "spend_authority",
         "prompt_sha256",
+        "prompt_bytes_sha256",
         "settings_sha256",
         "run_receipt_sha256",
     }
     _exact_keys(evaluator, required, "evaluator")
+    if evaluator["version"] != "acceptance-v3-evaluator-1":
+        raise ContractError("evaluator version is not frozen")
     if evaluator["model"] != "gpt-5.6-sol" or evaluator["reasoning_effort"] != "xhigh":
         raise ContractError("evaluator identity is not the frozen evaluator")
+    if evaluator["sampling"] != "no_override":
+        raise ContractError("evaluator sampling must remain unmodified")
+    if any(
+        evaluator[key] is not False
+        for key in ("web_enabled", "tools_enabled", "memory_enabled")
+    ):
+        raise ContractError("evaluator web/tools/memory capabilities must be disabled")
+    if evaluator["spend_authority"] != "none":
+        raise ContractError("evaluator spend authority must be none")
     for key in ("prompt_sha256", "settings_sha256", "run_receipt_sha256"):
         _sha(evaluator[key], f"evaluator.{key}")
+    _sha(evaluator["prompt_bytes_sha256"], "evaluator.prompt_bytes_sha256")
     return evaluator
 
 
 def _validate_hash_map(value: object, label: str, required: set[str]) -> dict[str, Any]:
     mapping = _mapping(value, label)
-    if not required.issubset(mapping):
-        raise ContractError(f"{label} is missing required identity hashes")
+    _exact_keys(mapping, required, label)
     _validate_identity_hashes(mapping, label)
     return mapping
+
+
+def _validate_endpoint_entry(value: object, label: str) -> dict[str, Any]:
+    """Validate one endpoint's path and shape/pagination/envelope bindings.
+
+    The persisted contract deliberately stores hashes rather than request
+    payloads.  This keeps the contract value-free while still binding every
+    transport shape that a caller is allowed to use.
+    """
+
+    endpoint = _mapping(value, label)
+    required = {
+        "path",
+        "request_sha256",
+        "pagination_sha256",
+        "envelope_normalization_sha256",
+    }
+    _exact_keys(endpoint, required, label)
+    path = endpoint["path"]
+    if not isinstance(path, str) or not path.startswith("/") or len(path) > 512:
+        raise ContractError(f"{label}.path must be a bounded relative API path")
+    if any(ord(char) < 0x20 for char in path):
+        raise ContractError(f"{label}.path contains a control character")
+    for key in (
+        "request_sha256",
+        "pagination_sha256",
+        "envelope_normalization_sha256",
+    ):
+        _sha(endpoint[key], f"{label}.{key}")
+    return endpoint
+
+
+def _validate_topology(value: object) -> dict[str, Any]:
+    topology = _mapping(value, "topology")
+    _exact_keys(
+        topology,
+        {"egress", "machine", "node_role", "residential_policy"},
+        "topology",
+    )
+    if topology["egress"] not in {"residential", "datacenter", "unknown"}:
+        raise ContractError("topology.egress is invalid")
+    if topology["node_role"] not in {"primary", "caller", "worker"}:
+        raise ContractError("topology.node_role is invalid")
+    if topology["residential_policy"] not in {
+        "off",
+        "fallback",
+        "prefer_on_datacenter",
+        "prefer_for_domains",
+        "always",
+    }:
+        raise ContractError("topology.residential_policy is invalid")
+    if (
+        not isinstance(topology["machine"], str)
+        or not topology["machine"]
+        or len(topology["machine"]) > 128
+    ):
+        raise ContractError("topology.machine is required")
+    return topology
+
+
+def _validate_policy(value: object) -> dict[str, Any]:
+    policy = _mapping(value, "policy")
+    _exact_keys(
+        policy,
+        {
+            "profile",
+            "free_only",
+            "caller_identity",
+            "tier_cap",
+            "you_contents_enabled",
+            "eligible_providers",
+            "eligible_extractors",
+            "policy_skipped",
+            "diagnostics_complete",
+        },
+        "policy",
+    )
+    if policy["profile"] != PROFILE or policy["free_only"] is not True:
+        raise ContractError("policy must be the free-only profile")
+    if policy["caller_identity"] != "mac-agents" or policy["tier_cap"] != 1:
+        raise ContractError("policy caller identity/cap is not frozen")
+    if policy["you_contents_enabled"] is not False:
+        raise ContractError("You Contents must be disabled")
+    if policy["diagnostics_complete"] is not True:
+        raise ContractError("policy diagnostics must be complete")
+    for key in ("eligible_providers", "eligible_extractors", "policy_skipped"):
+        items = policy[key]
+        if not isinstance(items, list) or any(
+            not isinstance(item, str) or not item for item in items
+        ):
+            raise ContractError(f"policy.{key} must be a string list")
+    if policy["eligible_providers"] != ["github"]:
+        raise ContractError("policy eligible providers are not the frozen free set")
+    if policy["eligible_extractors"] != ["trafilatura"]:
+        raise ContractError("policy eligible extractors are not the frozen free set")
+    if policy["policy_skipped"] != ["jina", "valyu", "firecrawl", "you"]:
+        raise ContractError("policy skipped providers are not frozen")
+    return policy
+
+
+def _validate_corpus(value: object) -> dict[str, Any]:
+    corpus = _mapping(value, "corpus")
+    _exact_keys(
+        corpus,
+        {
+            "version",
+            "request_sha256",
+            "corpus_sha256",
+            "target_count",
+            "requirement_count",
+            "external_page_budget",
+        },
+        "corpus",
+    )
+    if corpus["version"] != "v3":
+        raise ContractError("corpus version must be v3")
+    _sha(corpus["request_sha256"], "corpus.request_sha256")
+    _sha(corpus["corpus_sha256"], "corpus.corpus_sha256")
+    for key in ("target_count", "requirement_count", "external_page_budget"):
+        if (
+            isinstance(corpus[key], bool)
+            or not isinstance(corpus[key], int)
+            or corpus[key] < 0
+        ):
+            raise ContractError(f"corpus.{key} must be a non-negative integer")
+    if (
+        corpus["target_count"] != 5
+        or corpus["requirement_count"] != 15
+        or corpus["external_page_budget"] != 17
+        or corpus["external_page_budget"] < corpus["requirement_count"] + 1
+    ):
+        raise ContractError("corpus bounds are not the frozen 5/15/17 fixture")
+    return corpus
+
+
+def _validate_authority(value: object) -> dict[str, Any]:
+    authority = _mapping(value, "authority")
+    _exact_keys(
+        authority,
+        {
+            "evidence_authority",
+            "database_authority",
+            "sqlite_fallback",
+            "observed_at",
+            "snapshot_sha256",
+        },
+        "authority",
+    )
+    if authority["evidence_authority"] is not True:
+        raise ContractError("evidence authority must be active")
+    if authority["database_authority"] != "postgresql":
+        raise ContractError("PostgreSQL authority is required")
+    if authority["sqlite_fallback"] is not False:
+        raise ContractError("SQLite fallback is forbidden")
+    _timestamp(authority["observed_at"], "authority.observed_at")
+    _sha(authority["snapshot_sha256"], "authority.snapshot_sha256")
+    return authority
+
+
+def _validate_evidence_root(value: object) -> str:
+    if not isinstance(value, str) or not value:
+        raise ContractError("evidence_root is required")
+    path = Path(value)
+    if not path.is_absolute():
+        raise ContractError("evidence_root must be absolute")
+    # The root itself must be real.  A platform temporary directory may have
+    # a harmless symlinked ancestor (for example /tmp -> /private/tmp), so
+    # ancestor symlinks are checked by the creator but are not rejected here.
+    if path.is_symlink():
+        raise ContractError("evidence_root must not be a symlink")
+    try:
+        path.resolve(strict=True)
+    except OSError as exc:
+        raise ContractError("evidence_root must resolve to a directory") from exc
+    if not path.is_dir():
+        raise ContractError("evidence_root must be a directory")
+    try:
+        mode = path.stat().st_mode & 0o7777
+    except OSError as exc:
+        raise ContractError("evidence_root cannot be inspected") from exc
+    if mode != EVIDENCE_ROOT_MODE:
+        raise ContractError("evidence_root must have mode 0700")
+    return str(path)
+
+
+def _validate_guard_path(value: object) -> str:
+    if not isinstance(value, str) or not value:
+        raise ContractError("guard_path is required")
+    path = Path(value)
+    if not path.is_absolute():
+        raise ContractError("guard_path must be absolute")
+    _assert_not_symlink(path)
+    try:
+        resolved = path.resolve(strict=False)
+        expected = Path(GLOBAL_GUARD_PATH).resolve(strict=False)
+    except OSError as exc:
+        raise ContractError("guard_path cannot be resolved") from exc
+    if resolved != expected:
+        raise ContractError("guard_path is not the frozen v3 global guard")
+    return str(path)
 
 
 def _validate_artifact_hashes(value: object) -> dict[str, str]:
@@ -242,6 +460,7 @@ def validate_execution_contract(value: object) -> dict[str, Any]:
         "topology",
         "policy",
         "corpus",
+        "authority",
         "evidence_root",
         "guard_path",
     }
@@ -262,29 +481,46 @@ def validate_execution_contract(value: object) -> dict[str, Any]:
     _sha(contract["start_body_sha256"], "start_body_sha256")
     endpoints = _mapping(contract["endpoints"], "endpoints")
     endpoint_hashes = _mapping(contract["endpoint_hashes"], "endpoint_hashes")
+    if not endpoints:
+        raise ContractError("endpoints must contain at least one bound endpoint")
     if set(endpoints) != set(endpoint_hashes):
         raise ContractError("endpoint hash set mismatch")
     for name, endpoint in endpoints.items():
-        if not isinstance(endpoint, str) or not endpoint.startswith("/"):
-            raise ContractError(f"endpoint {name} must be a relative API path")
+        if not isinstance(name, str) or not name:
+            raise ContractError("endpoint names must be non-empty strings")
+        _validate_endpoint_entry(endpoint, f"endpoints.{name}")
         if endpoint_hashes[name] != canonical_hash(endpoint):
             raise ContractError(f"endpoint hash mismatch for {name}")
     _validate_candidate(contract["candidate"])
     _validate_rollback(contract["rollback"])
     _validate_evaluator(contract["evaluator"])
-    _validate_hash_map(contract["snapshots"], "snapshots", {"pre_canary_sha256"})
+    _validate_hash_map(
+        contract["snapshots"],
+        "snapshots",
+        {
+            "pre_canary_sha256",
+            "topology_sha256",
+            "provider_sha256",
+            "extractor_sha256",
+            "corpus_sha256",
+            "authority_sha256",
+            "observed_at",
+        },
+    )
     _validate_hash_map(
         contract["canary"],
         "canary",
         {"query_sha256", "body_sha256", "idempotency_key_sha256"},
     )
+    _timestamp(contract["snapshots"]["observed_at"], "snapshots.observed_at")
     _validate_artifact_hashes(contract["artifact_hashes"])
     _validate_negative_probe(contract["negative_probe"])
-    for name in ("topology", "policy", "corpus"):
-        _mapping(contract[name], name)
-    for field in ("evidence_root", "guard_path"):
-        if not isinstance(contract[field], str) or not contract[field]:
-            raise ContractError(f"{field} is required")
+    _validate_topology(contract["topology"])
+    _validate_policy(contract["policy"])
+    _validate_corpus(contract["corpus"])
+    _validate_authority(contract["authority"])
+    _validate_evidence_root(contract["evidence_root"])
+    _validate_guard_path(contract["guard_path"])
     return contract
 
 
@@ -292,7 +528,7 @@ def build_execution_contract(
     *,
     request: Mapping[str, Any],
     start_body: Mapping[str, Any],
-    endpoints: Mapping[str, str],
+    endpoints: Mapping[str, Any],
     candidate: Mapping[str, Any],
     rollback: Mapping[str, Any],
     evaluator: Mapping[str, Any],
@@ -303,6 +539,7 @@ def build_execution_contract(
     topology: Mapping[str, Any] | None = None,
     policy: Mapping[str, Any] | None = None,
     corpus: Mapping[str, Any] | None = None,
+    authority: Mapping[str, Any] | None = None,
     evidence_root: str = "",
     guard_path: str = GLOBAL_GUARD_PATH,
 ) -> dict[str, Any]:
@@ -315,7 +552,24 @@ def build_execution_contract(
 
     if not isinstance(request, Mapping) or not isinstance(start_body, Mapping):
         raise ContractError("request and start_body must be objects")
-    endpoint_map = dict(endpoints)
+    endpoint_map: dict[str, dict[str, Any]] = {}
+    for name, value in dict(endpoints).items():
+        # Keep the builder convenient for a caller that only has endpoint
+        # paths, while persisting the strict four-field identity entry.
+        if isinstance(value, str):
+            if not value.startswith("/"):
+                raise ContractError(f"endpoint {name} must be a relative API path")
+            value = {
+                "path": value,
+                "request_sha256": canonical_hash({"endpoint": name, "path": value}),
+                "pagination_sha256": canonical_hash(
+                    {"endpoint": name, "pagination": "frozen-v3"}
+                ),
+                "envelope_normalization_sha256": canonical_hash(
+                    {"endpoint": name, "envelope": "frozen-v3"}
+                ),
+            }
+        endpoint_map[name] = dict(value)
     result = {
         "cycle_id": CYCLE_ID,
         "profile": PROFILE,
@@ -338,6 +592,7 @@ def build_execution_contract(
         "topology": dict(topology or {}),
         "policy": dict(policy or {}),
         "corpus": dict(corpus or {}),
+        "authority": dict(authority or {}),
         "evidence_root": evidence_root,
         "guard_path": guard_path,
     }

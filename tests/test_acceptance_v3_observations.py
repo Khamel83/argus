@@ -107,7 +107,16 @@ def test_predecessor_immutable_fields_and_cache_hit_attempted_false():
     after = [{"id": "a", "immutable": "changed", "count": 1}]
     with pytest.raises(ObservationError, match="immutable"):
         compare_predecessors(before, after)
-    validate_cache_trace({"status": "hit", "attempted": False, "eligible": True})
+    validate_cache_trace(
+        {
+            "status": "hit",
+            "attempted": False,
+            "eligible": True,
+            "age_seconds": 0,
+            "origin": "postgresql",
+            "spend_provenance": {"ledgered": True},
+        }
+    )
     with pytest.raises(ObservationError, match="attempted"):
         validate_cache_trace({"status": "hit", "attempted": True, "eligible": True})
 
@@ -130,17 +139,44 @@ def test_transport_pages_require_contiguous_utf8_bounded_pages_and_terminal_hash
 
 
 def test_maya_replay_is_byte_identical_and_one_duplicate():
-    first = {"status": 201, "duplicate": False, "capture_id": "capture"}
-    replay = {"status": 200, "duplicate": True, "capture_id": "capture"}
+    body = b'{"query":"canary"}'
+    body_sha256 = sha256(body).hexdigest()
+    capture_sha256 = sha256(b"capture").hexdigest()
+    first = {
+        "status": 201,
+        "duplicate": False,
+        "capture_id": "capture",
+        "capture_id_sha256": capture_sha256,
+        "caller": "argus",
+        "pages": [],
+        "body_sha256": body_sha256,
+    }
+    replay = {
+        "status": 200,
+        "duplicate": True,
+        "capture_id": "capture",
+        "capture_id_sha256": capture_sha256,
+        "caller": "argus",
+        "pages": [],
+        "body_sha256": body_sha256,
+    }
     evidence = replay_capture_evidence(
-        body=b'{"query":"canary"}', first_response=first, replay_response=replay
+        body=body, first_response=first, replay_response=replay
     )
     assert evidence["duplicate"] is True
     with pytest.raises(ObservationError, match="capture"):
         replay_capture_evidence(
-            body=b"x",
+            body=body,
             first_response=first,
-            replay_response={"status": 200, "duplicate": True, "capture_id": "other"},
+            replay_response={
+                "status": 200,
+                "duplicate": True,
+                "capture_id": "other",
+                "capture_id_sha256": sha256(b"other").hexdigest(),
+                "caller": "argus",
+                "pages": [],
+                "body_sha256": body_sha256,
+            },
         )
 
 
@@ -160,6 +196,8 @@ def test_injected_canary_dispatches_exactly_three_canary_posts_and_one_start(tmp
     runner = _runner_module()
 
     class Adapter:
+        maya_calls = 0
+
         def __init__(self):
             self.search = 0
             self.maya = 0
@@ -171,6 +209,9 @@ def test_injected_canary_dispatches_exactly_three_canary_posts_and_one_start(tmp
                 "status": 200,
                 "cached": False,
                 "traces": [{"provider": "github", "status": "empty"}],
+                "accepted_operations": 1,
+                "plan_batches": 1,
+                "batches": 1,
                 "paid_attempts": 0,
                 "non_github_batches": 0,
                 "legacy_delivery_intent": False,
@@ -182,8 +223,10 @@ def test_injected_canary_dispatches_exactly_three_canary_posts_and_one_start(tmp
                 "status": 201 if self.maya == 1 else 200,
                 "duplicate": self.maya != 1,
                 "capture_id": "capture-1",
+                "capture_id_sha256": sha256(b"capture-1").hexdigest(),
                 "caller": "argus",
                 "pages": [],
+                "body_sha256": sha256(body).hexdigest(),
             }
 
         def post_workflow_start(self, body):
@@ -193,7 +236,8 @@ def test_injected_canary_dispatches_exactly_three_canary_posts_and_one_start(tmp
                 "run_id": "run-1",
                 "kind": "build-research-pack",
                 "target": "topic",
-                "request_sha256": "a" * 64,
+                "request_sha256": runner.canonical_hash(json.loads(body)),
+                "body_sha256": sha256(body).hexdigest(),
             }
 
     adapter = Adapter()
@@ -202,6 +246,7 @@ def test_injected_canary_dispatches_exactly_three_canary_posts_and_one_start(tmp
         nonce="nonce-1234",
         marker_dir=tmp_path / "markers",
         workflow_body=json.dumps({"topic": "topic"}).encode(),
+        run_binding_path=tmp_path / "run.json",
     )
     assert result.fixture["search_body"]["providers"] == ["github"]
     assert (adapter.search, adapter.maya, adapter.start) == (1, 2, 1)
@@ -230,6 +275,62 @@ def test_injected_timeout_is_consumed_once_and_never_retried(tmp_path):
             nonce="nonce-1234",
             marker_dir=tmp_path / "markers",
             workflow_body=b"{}",
+            run_binding_path=tmp_path / "run.json",
         )
     assert adapter.calls == 1
     assert (tmp_path / "markers" / "github-canary.json").is_file()
+
+
+def test_canary_requires_explicit_workflow_identity_before_binding(tmp_path):
+    runner = _runner_module()
+
+    class Adapter:
+        def __init__(self):
+            self.maya_calls = 0
+
+        def post_search(self, body):
+            return {
+                "status": 200,
+                "cached": False,
+                "traces": [{"provider": "github", "status": "empty"}],
+                "paid_attempts": 0,
+                "non_github_batches": 0,
+                "legacy_delivery_intent": False,
+            }
+
+        def post_maya(self, body):
+            self.maya_calls += 1
+            return {
+                "status": 201 if self.maya_calls == 1 else 200,
+                "duplicate": self.maya_calls != 1,
+                "capture_id": "capture-1",
+                "caller": "argus",
+                "pages": [],
+            }
+
+        def post_workflow_start(self, body):
+            return {"status": 202, "run_id": "run-1"}
+
+    with pytest.raises(ObservationError, match="identity"):
+        _ = runner.dispatch_canary(
+            Adapter(),
+            nonce="nonce-1234",
+            marker_dir=tmp_path / "markers",
+            workflow_body=b"{}",
+            run_binding_path=tmp_path / "run.json",
+        )
+
+
+def test_execute_cycle_fails_closed_when_no_injected_preflight(tmp_path):
+    runner = _runner_module()
+
+    result = runner.execute_cycle(
+        object(),
+        output=tmp_path / "bundle",
+        nonce="nonce-1234",
+        marker_dir=tmp_path / "markers",
+        workflow_body=b"{}",
+        run_binding_path=tmp_path / "run.json",
+    )
+    assert result["status"] == "preflight_failed"
+    assert result["verdict"] == "FAIL"
