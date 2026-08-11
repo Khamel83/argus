@@ -208,7 +208,7 @@ async def test_paid_mcp_live_probe_requires_reservation_and_has_no_fallback():
     broker.search.assert_not_called()
     fixture_ref, fixture_attestation = build_fixture_attestation(
         ProviderName.BRAVE,
-        release="argus-1.6.3",
+        release="argus-1.6.4",
         provider_contract="2026-07-27-v1",
     )
     broker.readiness_service.register_provider(
@@ -220,7 +220,7 @@ async def test_paid_mcp_live_probe_requires_reservation_and_has_no_fallback():
             account_fingerprint="test-account",
             budget_limit=10.0,
             durable_spend_repository=True,
-        release_revision="argus-1.6.3",
+        release_revision="argus-1.6.4",
             contract_version="2026-07-27-v1",
             fixture_evidence_ref=fixture_ref,
             fixture_attestation=fixture_attestation,

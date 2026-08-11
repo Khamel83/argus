@@ -11,7 +11,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Protocol
 
@@ -112,7 +112,27 @@ async def _acquire_file_lock(path: Path):
 
 
 def _system_now() -> datetime:
-    return datetime.now(tz=None)
+    return datetime.now(timezone.utc)
+
+
+def _as_utc_datetime(value: datetime) -> datetime:
+    """Normalize legacy naive/provider-local clocks to an aware UTC value.
+
+    SQLite's ``DateTime`` column historically round-trips values as naive
+    datetimes.  Treat those legacy values as UTC (the repository has always
+    intended its clock to represent UTC) while converting any aware value
+    explicitly before persistence.
+    """
+    if not isinstance(value, datetime):
+        raise TypeError("ledger clock must return a datetime")
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _utc_isoformat(value: datetime) -> str:
+    """Serialize receipt timestamps as canonical UTC ``...Z`` strings."""
+    return _as_utc_datetime(value).isoformat().replace("+00:00", "Z")
 
 
 def _bounded_engine_options(url: str) -> dict:
@@ -854,6 +874,24 @@ def _extraction_source_fingerprint(state: dict) -> str:
     return acceptance_fingerprint(source)
 
 
+def _canonical_extraction_url_identity(value: object) -> str | None:
+    """Return the typed URL identity for a current or legacy hash value."""
+    if not isinstance(value, str):
+        return None
+    digest = value.removeprefix("sha256:")
+    if len(digest) != 64 or any(
+        character not in "0123456789abcdef" for character in digest
+    ):
+        return None
+    return "sha256:" + digest
+
+
+def _extraction_url_identity_for_url(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 def _deserialize_extraction_projection(state: dict):
     from decimal import Decimal
 
@@ -1236,6 +1274,13 @@ class SearchLedgerRepository(Protocol):
         self, query: SearchQuery, response: SearchResponse
     ) -> AcceptanceReceipt: ...
 
+    def find_extraction_outcomes_by_url_identity(
+        self,
+        normalized_url_identity: str,
+        *,
+        mode: str | None = None,
+    ) -> list: ...
+
     def operational_status(
         self,
         *,
@@ -1260,7 +1305,9 @@ class SqlAlchemySearchLedgerRepository:
         clock: Callable[[], datetime] = _system_now,
     ):
         self.session_factory = session_factory
-        self.clock = clock
+        # Normalize injected legacy-naive clocks once at the repository
+        # boundary so every persisted timestamp has UTC semantics.
+        self.clock = lambda: _as_utc_datetime(clock())
         self._extraction_finalization_locks: dict[str, threading.Lock] = {}
         self._extraction_finalization_locks_guard = threading.Lock()
 
@@ -1388,7 +1435,7 @@ class SqlAlchemySearchLedgerRepository:
             access_scope=access_scope,
             privacy_scope=privacy_scope,
             authentication_scope_fingerprint=fingerprint,
-            issued_at=issued_at.isoformat(),
+            issued_at=_utc_isoformat(issued_at),
         )
         return AuthenticationScope(
             fingerprint=receipt.authentication_scope_fingerprint,
@@ -1413,7 +1460,7 @@ class SqlAlchemySearchLedgerRepository:
                 access_scope=row.access_scope,
                 privacy_scope=row.privacy_scope,
                 authentication_scope_fingerprint=(row.authentication_scope_fingerprint),
-                issued_at=row.issued_at.isoformat(),
+                issued_at=_utc_isoformat(row.issued_at),
             )
 
     def accept(self, query: SearchQuery, response: SearchResponse) -> AcceptanceReceipt:
@@ -1782,7 +1829,7 @@ class SqlAlchemySearchLedgerRepository:
                         )
                         receipt = ExtractionAcceptanceReceipt(
                             receipt_ref=acceptance.receipt_ref,
-                            accepted_at=acceptance.accepted_at.isoformat() + "Z",
+                            accepted_at=_utc_isoformat(acceptance.accepted_at),
                             scope=acceptance.scope,
                         )
                         return AcceptedExtractionOutcome.accepted(
@@ -1825,7 +1872,7 @@ class SqlAlchemySearchLedgerRepository:
                     )
                 receipt = ExtractionAcceptanceReceipt(
                     receipt_ref=receipt_ref,
-                    accepted_at=now.isoformat() + "Z",
+                    accepted_at=_utc_isoformat(now),
                     scope=scope,
                 )
                 return AcceptedExtractionOutcome.accepted(projection, receipt)
@@ -1896,7 +1943,7 @@ class SqlAlchemySearchLedgerRepository:
                     )
                 return ExtractionAcceptanceReceipt(
                     receipt_ref=acceptance.receipt_ref,
-                    accepted_at=acceptance.accepted_at.isoformat() + "Z",
+                    accepted_at=_utc_isoformat(acceptance.accepted_at),
                     scope=acceptance.scope,
                 )
 
@@ -1927,7 +1974,7 @@ class SqlAlchemySearchLedgerRepository:
             )
         return ExtractionAcceptanceReceipt(
             receipt_ref=receipt_ref,
-            accepted_at=now.isoformat() + "Z",
+            accepted_at=_utc_isoformat(now),
             scope=scope,
         )
 
@@ -1958,7 +2005,7 @@ class SqlAlchemySearchLedgerRepository:
             projection = _deserialize_extraction_projection(state)
             receipt = ExtractionAcceptanceReceipt(
                 receipt_ref=acceptance.receipt_ref,
-                accepted_at=acceptance.accepted_at.isoformat() + "Z",
+                accepted_at=_utc_isoformat(acceptance.accepted_at),
                 scope=acceptance.scope,
             )
             return AcceptedExtractionOutcome.accepted(projection, receipt)
@@ -2041,7 +2088,7 @@ class SqlAlchemySearchLedgerRepository:
                 return None
             return {
                 "receipt_ref": row.receipt_ref,
-                "accepted_at": row.accepted_at.isoformat() + "Z",
+                "accepted_at": _utc_isoformat(row.accepted_at),
                 "scope": (
                     "sqlite_development"
                     if session.get_bind().dialect.name == "sqlite"
@@ -2058,6 +2105,123 @@ class SqlAlchemySearchLedgerRepository:
                 receipt_ref,
             )
 
+    def find_extraction_outcomes_by_url_identity(
+        self,
+        normalized_url_identity: str,
+        *,
+        mode: str | None = None,
+    ) -> list:
+        """Find durably accepted extraction outcomes for a cache URL identity.
+
+        The accepted cache intentionally stores a one-way URL identity rather
+        than a raw URL.  The repository is the only component allowed to scan
+        durable extraction rows, so it hashes the bounded persisted URL and
+        returns only exact matches.  Policy eligibility remains in the cache
+        layer, where the current request and origin evidence are both typed.
+        """
+        normalized_url_identity = _canonical_extraction_url_identity(
+            normalized_url_identity
+        )
+        if normalized_url_identity is None:
+            return []
+        with self.session_factory() as session:
+            statement = (
+                select(ExtractionOutcomePlanRow, ExtractionOutcomeAcceptanceRow)
+                .join(
+                    ExtractionOutcomeAcceptanceRow,
+                    ExtractionOutcomeAcceptanceRow.plan_id
+                    == ExtractionOutcomePlanRow.id,
+                )
+            )
+            if mode is not None:
+                statement = statement.where(ExtractionOutcomePlanRow.mode == mode)
+            # New projections persist the one-way identity in their accepted
+            # JSON envelope.  Keep that predicate in SQL so unrelated newer
+            # receipts cannot consume the bounded result window before the
+            # identity is checked.  The identity is a fixed ``sha256:`` plus
+            # hex value, but escape LIKE metacharacters defensively because
+            # this is still caller-provided input at the repository boundary.
+            identity_fragment = _canonical_json(
+                {"normalized_url_identity": normalized_url_identity}
+            )[1:-1]
+            identity_fragment = (
+                identity_fragment.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
+            identity_match = ExtractionOutcomeAcceptanceRow.projection_json.like(
+                f"%{identity_fragment}%",
+                escape="\\",
+            )
+            identity_rows = session.execute(
+                statement.where(identity_match)
+                .order_by(ExtractionOutcomeAcceptanceRow.accepted_at.desc())
+                .limit(128)
+            ).all()
+
+            # Rows written before the typed identity was added are retained by
+            # the legacy URL-hash fallback below.  Fetch only the unused part
+            # of the same bounded window so legacy compatibility cannot turn
+            # this cache lookup into an unbounded scan.
+            legacy_rows = []
+            remaining = 128 - len(identity_rows)
+            if remaining:
+                legacy_rows = session.execute(
+                    statement.where(~identity_match)
+                    .order_by(ExtractionOutcomeAcceptanceRow.accepted_at.desc())
+                    .limit(remaining)
+                ).all()
+            rows = sorted(
+                [*identity_rows, *legacy_rows],
+                key=lambda pair: pair[1].accepted_at,
+                reverse=True,
+            )
+
+        matches = []
+        for plan_row, acceptance in rows:
+            state = _parse_json_value(acceptance.projection_json)
+            candidate_identity = None
+            if isinstance(state, dict):
+                candidate_identity = state.get("normalized_url_identity")
+            if candidate_identity is None:
+                # Legacy rows did not persist the typed identity separately;
+                # hash the exact URL projection retained by the plan row.
+                candidate_identity = _extraction_url_identity_for_url(
+                    plan_row.normalized_url
+                )
+            else:
+                # Older projections stored the bare URL SHA-256.  Normalize
+                # only the two known representations; malformed values do not
+                # fall back to a different source URL.
+                candidate_identity = _canonical_extraction_url_identity(
+                    candidate_identity
+                )
+            if candidate_identity != normalized_url_identity:
+                continue
+            try:
+                from argus.extraction.outcomes import (
+                    AcceptedExtractionOutcome,
+                    ExtractionAcceptanceReceipt,
+                )
+
+                if not isinstance(state, dict):
+                    continue
+                # Keep the returned accepted outcome on the current typed
+                # identity contract even when the durable row was legacy.
+                state = dict(state)
+                state["normalized_url_identity"] = normalized_url_identity
+                projection = _deserialize_extraction_projection(state)
+                receipt = ExtractionAcceptanceReceipt(
+                    receipt_ref=acceptance.receipt_ref,
+                    accepted_at=_utc_isoformat(acceptance.accepted_at),
+                    scope=acceptance.scope,
+                )
+                matches.append(AcceptedExtractionOutcome.accepted(projection, receipt))
+            except (KeyError, TypeError, ValueError):
+                # Legacy/incomplete rows are not eligible cache evidence.
+                continue
+        return matches
+
     @staticmethod
     def _load_extraction_outcome_by_receipt_in_session(session, receipt_ref):
         from argus.extraction.outcomes import (
@@ -2073,7 +2237,7 @@ class SqlAlchemySearchLedgerRepository:
         )
         receipt = ExtractionAcceptanceReceipt(
             receipt_ref=acceptance.receipt_ref,
-            accepted_at=acceptance.accepted_at.isoformat() + "Z",
+            accepted_at=_utc_isoformat(acceptance.accepted_at),
             scope=acceptance.scope,
         )
         return AcceptedExtractionOutcome.accepted(projection, receipt)
@@ -2164,7 +2328,7 @@ class SqlAlchemySearchLedgerRepository:
             if existing is not None:
                 return CompositionAcceptanceReceipt(
                     receipt_ref=existing.receipt_ref,
-                    accepted_at=existing.accepted_at.isoformat() + "Z",
+                    accepted_at=_utc_isoformat(existing.accepted_at),
                     scope="sqlite_development"
                     if session.get_bind().dialect.name == "sqlite"
                     else "postgresql_authority",
@@ -2215,7 +2379,7 @@ class SqlAlchemySearchLedgerRepository:
                         )
                     return CompositionAcceptanceReceipt(
                         receipt_ref=existing.receipt_ref,
-                        accepted_at=existing.accepted_at.isoformat() + "Z",
+                        accepted_at=_utc_isoformat(existing.accepted_at),
                         scope=(
                             "sqlite_development"
                             if dialect == "sqlite"
@@ -2276,7 +2440,7 @@ class SqlAlchemySearchLedgerRepository:
                         ExtractionAcceptanceReceipt(
                             receipt_ref=accepted_pair[0].receipt_ref,
                             accepted_at=(
-                                accepted_pair[0].accepted_at.isoformat() + "Z"
+                                _utc_isoformat(accepted_pair[0].accepted_at)
                             ),
                             scope=accepted_pair[0].scope,
                         ),
@@ -2343,7 +2507,7 @@ class SqlAlchemySearchLedgerRepository:
         )
         return CompositionAcceptanceReceipt(
             receipt_ref=receipt_ref,
-            accepted_at=now.isoformat() + "Z",
+            accepted_at=_utc_isoformat(now),
             scope=scope,
         )
 

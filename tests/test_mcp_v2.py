@@ -658,6 +658,140 @@ def test_standalone_development_registers_only_usable_v1_tools(monkeypatch):
     assert not any(name.endswith("_v2") for name in names)
 
 
+@pytest.mark.asyncio
+async def test_production_build_tool_forwards_targeted_request_and_principal(
+    monkeypatch,
+):
+    from mcp.server.auth.provider import AccessToken
+
+    from argus.mcp.http_adapter import HttpMcpAdapter
+    import argus.mcp.server as server
+
+    observed = {}
+
+    class RecordingBackend(HttpMcpAdapter):
+        def __init__(self):
+            pass
+
+        async def build_research_pack(self, topic, **kwargs):
+            observed["topic"] = topic
+            observed.update(kwargs)
+            return "safe-start"
+
+        async def search_health(self, **_kwargs):
+            return "healthy"
+
+        async def search_budgets(self, **_kwargs):
+            return "budgets"
+
+    monkeypatch.setattr(
+        server,
+        "_mcp_access_token",
+        lambda: AccessToken(
+            token="protected-token",
+            client_id="authenticated-principal",
+            scopes=["mcp"],
+        ),
+    )
+    registered = _capture_real_mcp_server(monkeypatch, RecordingBackend())
+    target = {
+        "name": "Example",
+        "source_prefixes": ["https://example.com/docs/"],
+        "requirements": [
+            {"claim_class": "capabilities", "query": "what it does"}
+        ],
+    }
+
+    content, structured = await registered.call_tool(
+        "build_research_pack",
+        {
+            "topic": "Targeted research",
+            "research_targets": [target],
+            "free_only": True,
+            "caller": "tonight-acceptance-v3",
+            "response_format": "json",
+        },
+    )
+
+    assert content[0].text == "safe-start"
+    assert structured == {"result": "safe-start"}
+    assert observed == {
+        "topic": "Targeted research",
+        "official_url": None,
+        "max_research_pages": 40,
+        "research_targets": [target],
+        "free_only": True,
+        "response_format": "json",
+        "caller_label": "tonight-acceptance-v3",
+        "caller_identity": "authenticated-principal",
+        "token": "protected-token",
+    }
+
+    tool = next(
+        tool
+        for tool in registered._tool_manager.list_tools()
+        if tool.name == "build_research_pack"
+    )
+    assert {
+        "research_targets",
+        "free_only",
+    }.issubset(tool.parameters["properties"])
+
+
+@pytest.mark.asyncio
+async def test_standalone_build_tool_validates_and_forwards_targeted_request(
+    monkeypatch,
+):
+    from argus import development_mcp_tools as tools
+
+    observed = {}
+
+    class FakeService:
+        def __init__(self, *_args, **kwargs):
+            observed["service_caller"] = kwargs["caller"]
+
+        async def build_research_pack(self, **kwargs):
+            observed["request"] = kwargs
+            return object()
+
+    monkeypatch.setattr(tools, "WorkflowService", FakeService)
+    monkeypatch.setattr(
+        tools,
+        "_serialize_workflow",
+        lambda _result: "standalone-result",
+    )
+    target = {
+        "name": "Example",
+        "source_prefixes": ["https://example.com/docs/"],
+        "requirements": [
+            {"claim_class": "capabilities", "query": "what it does"}
+        ],
+    }
+
+    result = await tools.build_research_pack(
+        object(),
+        "Targeted research",
+        research_targets=[target],
+        free_only=True,
+        caller_identity="authenticated-principal",
+        caller_label="tonight-acceptance-v3",
+    )
+
+    assert result == "standalone-result"
+    assert observed == {
+        "service_caller": "authenticated-principal",
+        "request": {
+            "topic": "Targeted research",
+            "official_url": None,
+            "max_research_pages": 40,
+            "research_targets": [target],
+            "free_only": True,
+            "caller_identity": "authenticated-principal",
+            "caller_label": "tonight-acceptance-v3",
+        },
+    }
+
+
 @pytest.mark.parametrize("standalone_value", (None, "false", "0"))
 def test_direct_development_launcher_rejects_without_explicit_opt_in(
     monkeypatch,

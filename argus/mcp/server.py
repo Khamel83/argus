@@ -1000,6 +1000,12 @@ def serve_mcp(
     auth_config = AuthConfig.from_env()
     from argus.api.security import TransportSecurityGuard
     from argus.config import load_config
+    from argus.workflows.research_targets import ResearchTarget
+
+    # FastMCP evaluates postponed annotations against the defining module's
+    # globals while registering the nested tool.  Keep the strict model out of
+    # the import-time adapter surface, then expose it only for that registration.
+    globals()["ResearchTarget"] = ResearchTarget
 
     config = load_config()
     remotely_exposed = _mcp_remote_exposed()
@@ -1158,6 +1164,8 @@ def serve_mcp(
             topic: str,
             official_url: str = None,
             max_research_pages: int = 40,
+            research_targets: list[ResearchTarget] = None,
+            free_only: bool = False,
             response_format: str = "markdown",
             caller: str = "mcp",
         ) -> str:
@@ -1165,8 +1173,15 @@ def serve_mcp(
                 topic,
                 official_url=official_url,
                 max_research_pages=max_research_pages,
+                research_targets=(
+                    [target.model_dump(mode="json") for target in research_targets]
+                    if research_targets
+                    else None
+                ),
+                free_only=free_only,
                 response_format=response_format,
                 caller_label=caller,
+                caller_identity=_mcp_caller_identity(),
                 token=_mcp_caller_token(),
             )
 

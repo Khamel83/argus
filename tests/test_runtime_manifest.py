@@ -53,7 +53,7 @@ def test_release_version_is_current_without_rewriting_historical_manifest_fixtur
 ):
     from argus import __version__
 
-    assert __version__ == "1.6.3"
+    assert __version__ == "1.6.4"
     assert _manifest(tmp_path / "uv.lock")["package_version"] == "1.6.2"
 
 

@@ -395,7 +395,42 @@ def _search_execution_evidence(
             "SearchResponse does not expose accepted spend accounting"
         )
         cache_decision = None
-    return {
+    diagnostics = tuple(
+        {
+            "provider": attempt["provider"],
+            "extractor": None,
+            "status": attempt["status"],
+            "result_count": attempt["results_count"],
+            "timeout_source": (
+                attempt["reason_code"]
+                if attempt["status"] == "timeout"
+                else None
+            ),
+            "operation_latency_ms": attempt["latency_ms"],
+            "cache_latency_ms": None,
+            "cache_state": "hit" if response.cached else "miss",
+            "cache_age_ms": (
+                accepted_evidence.cache_age_ms
+                if evidence_bound
+                else None
+            ),
+            "cache_origin": accepted_evidence.cache_origin if evidence_bound else None,
+            "spend_provenance": (
+                accepted_evidence.spend_accounting_source
+                if evidence_bound
+                else "unavailable"
+            ),
+            "freshness_age_ms": None,
+            "freshness_window": None,
+            "freshness_reason": "source date is not part of search result evidence",
+            "free_profile_eligible": None,
+            "egress": None,
+            "machine": None,
+            "source_type": "search",
+        }
+        for attempt in attempts
+    )
+    execution = {
         "schema": "argus-execution-evidence-v1",
         "source": "SearchResponse",
         "operation_id": _operation_id_evidence(
@@ -457,7 +492,50 @@ def _search_execution_evidence(
         "spend": spend,
         "freshness": _freshness_from_observation(observation),
         "persistence": persistence,
+        # Additive v3 diagnostics; legacy nested fields remain byte-compatible.
+        "provider": tuple(attempt["provider"] for attempt in attempts),
+        "extractor": None,
+        "egress": tuple(
+            result.metadata.get("egress")
+            for result in response.results
+            if getattr(result, "metadata", None)
+        ),
+        "machine": tuple(
+            result.metadata.get("machine")
+            for result in response.results
+            if getattr(result, "metadata", None)
+        ),
+        "source_type": "search",
+        "result_count": response.total_results,
+        "timeout_source": next(
+            (
+                attempt["reason_code"]
+                for attempt in attempts
+                if attempt["status"] == "timeout"
+            ),
+            None,
+        ),
+        "operation_latency_ms": max(
+            (trace.latency_ms for trace in response.traces),
+            default=None,
+        ),
+        "cache_latency_ms": None,
+        "cache_eligibility": {
+            "eligible": accepted_evidence.cache_eligible if evidence_bound else None,
+            "reason": (
+                "accepted cache decision"
+                if evidence_bound
+                else "accepted cache eligibility is unavailable"
+            ),
+        },
+        "freshness_age_ms": None,
+        "freshness_window": None,
+        "freshness_reason": "source date is not part of search result evidence",
+        "free_profile_eligible": None,
+        "diagnostics": diagnostics,
     }
+    execution["execution_diagnostics"] = diagnostics
+    return execution
 
 
 def _extraction_execution_evidence(result) -> dict[str, object]:
@@ -488,14 +566,25 @@ def _extraction_execution_evidence(result) -> dict[str, object]:
             successful=frozenset({"success", "content", "cache"}),
             allowed=allowed_extraction_statuses,
         )
-        attempts.append(
-            {
-                "extractor": attempt.extractor,
-                "status": status,
-                "reason_code": reason_code,
-                "latency_ms": attempt.latency_ms,
-            }
-        )
+        if status == "policy_skipped":
+            bounded_reason = attempt.failure_summary
+            if bounded_reason in {
+                "free_only",
+                "jina_disabled",
+                "caller_tier_cap",
+                "provider_unavailable",
+                "policy_skipped",
+            }:
+                reason_code = bounded_reason
+        attempt_projection = {
+            "extractor": attempt.extractor,
+            "status": status,
+            "reason_code": reason_code,
+            "latency_ms": attempt.latency_ms,
+        }
+        if status == "policy_skipped" or attempt.extractor == "cache":
+            attempt_projection["attempted"] = False
+        attempts.append(attempt_projection)
     component_timing = (
         _available(
             sum(attempt.latency_ms for attempt in result.attempts),
@@ -596,7 +685,45 @@ def _extraction_execution_evidence(result) -> dict[str, object]:
             "extraction_run_id is an identifier, not durable acceptance proof"
         )
         cache_decision = None
-    return {
+    provider = None
+    extractor = result.extractor.value if getattr(result, "extractor", None) else None
+    source_type = getattr(result, "source_type", None)
+    egress = getattr(result, "egress", None)
+    machine = getattr(result, "machine", None)
+    timeout_source = next(
+        (
+            attempt.get("reason_code")
+            for attempt in attempts
+            if attempt.get("status") == "timeout"
+        ),
+        None,
+    )
+    diagnostics = tuple(
+        {
+            "extractor": attempt["extractor"],
+            "provider": provider,
+            "status": attempt["status"],
+            "result_count": 1 if attempt["status"] in {"success", "content", "cache"} else 0,
+            "timeout_source": timeout_source,
+            "operation_latency_ms": attempt["latency_ms"],
+            "cache_latency_ms": (
+                attempt["latency_ms"] if attempt["extractor"] == "cache" else None
+            ),
+            "cache_state": "hit" if attempt["extractor"] == "cache" else "miss",
+            "cache_age_ms": None,
+            "cache_origin": getattr(result, "cache_source_extractor", None),
+            "spend_provenance": "accepted_execution_evidence",
+            "freshness_age_ms": None,
+            "freshness_window": None,
+            "freshness_reason": "source date is carried by the accepted artifact",
+            "free_profile_eligible": None,
+            "egress": egress,
+            "machine": machine,
+            "source_type": source_type,
+        }
+        for attempt in attempts
+    )
+    execution = {
         "schema": "argus-execution-evidence-v1",
         "source": "ExtractedContent",
         "operation_id": _operation_id_evidence(
@@ -610,15 +737,73 @@ def _extraction_execution_evidence(result) -> dict[str, object]:
             "wall_ms": wall_timing,
         },
         "cache": {
-            "status": "hit" if result.cache_hit else "miss",
+            "status": (
+                "hit"
+                if result.cache_hit
+                else "ineligible"
+                if cache_decision == "hit_ineligible"
+                else "miss"
+            ),
             "source": "cache_hit",
             "decision": cache_decision,
             "age_ms": cache_age,
+            "origin": getattr(result, "cache_source_extractor", None),
+            "origin_spend": _unavailable(
+                "accepted extraction origin spend is not exposed"
+            ),
+            "eligible": (
+                cache_decision not in {"hit_ineligible", "policy_skipped"}
+                if cache_decision is not None
+                else None
+            ),
         },
         "spend": spend,
         "freshness": _freshness_from_observation(observation),
         "persistence": persistence,
+        # Additive v3 diagnostics.  The v1 nested projections above retain
+        # their exact shape for existing transport consumers.
+        "provider": provider,
+        "extractor": extractor,
+        "egress": egress,
+        "machine": machine,
+        "source_type": source_type,
+        "retrieved_at": (
+            result.acceptance_receipt.accepted_at
+            if getattr(result, "acceptance_receipt", None) is not None
+            else None
+        ),
+        "source_date": getattr(result, "date", None),
+        "text_sha256": hashlib.sha256(
+            str(getattr(result, "text", "")).encode("utf-8")
+        ).hexdigest(),
+        "result_count": 1 if result.text else 0,
+        "timeout_source": timeout_source,
+        "operation_latency_ms": (
+            accepted_evidence.operation_latency_ms
+            if evidence_bound
+            else None
+        ),
+        "cache_latency_ms": None,
+        "cache_eligibility": {
+            "eligible": (
+                cache_decision not in {"hit_ineligible", "policy_skipped"}
+                if cache_decision is not None
+                else None
+            ),
+            "reason": (
+                "accepted cache decision"
+                if cache_decision is not None
+                else "accepted cache eligibility is unavailable"
+            ),
+        },
+        "freshness_age_ms": None,
+        "freshness_window": None,
+        "freshness_reason": "source date is carried by the accepted artifact",
+        "free_profile_eligible": None,
+        "diagnostics": diagnostics,
     }
+    execution["execution_diagnostics"] = diagnostics
+    return execution
 
 
 def _search_projection(
@@ -642,6 +827,22 @@ def _search_projection(
                 "egress": (result.metadata.get("egress") if result.metadata else None),
                 "machine": (
                     result.metadata.get("machine") if result.metadata else None
+                ),
+                "source_type": (
+                    result.metadata.get("source_type", "search")
+                    if result.metadata
+                    else "search"
+                ),
+                "retrieved_at": (
+                    response.created_at.isoformat()
+                    if isinstance(response.created_at, datetime)
+                    else response.created_at
+                ),
+                "source_date": (
+                    result.metadata.get("source_date").isoformat()
+                    if result.metadata
+                    and isinstance(result.metadata.get("source_date"), datetime)
+                    else result.metadata.get("source_date") if result.metadata else None
                 ),
                 "score_attribution": (
                     dict(result.score_attribution) if include_attribution else {}
@@ -722,11 +923,91 @@ def _extract_projection(result) -> dict[str, object]:
         "source_type": getattr(result, "source_type", None),
         "egress": getattr(result, "egress", None),
         "machine": getattr(result, "machine", None),
+        "provider": None,
+        "retrieved_at": (
+            result.acceptance_receipt.accepted_at
+            if getattr(result, "acceptance_receipt", None) is not None
+            else None
+        ),
+        "source_date": getattr(result, "date", None),
+        "text_sha256": hashlib.sha256(
+            str(getattr(result, "text", "")).encode("utf-8")
+        ).hexdigest(),
+        "result_count": 1 if getattr(result, "text", "") else 0,
         "auth_used": getattr(result, "auth_used", False),
         "cookies_used": getattr(result, "cookies_used", False),
         "archive_used": getattr(result, "archive_used", False),
         "cost": getattr(result, "cost", 0.0),
         "execution_evidence": _extraction_execution_evidence(result),
+    }
+
+
+def _workflow_artifact_projection(typed, item, result_cluster_ref: str) -> dict[str, object]:
+    """Project accepted extraction facts needed by workflow evidence consumers."""
+    artifact = typed.artifact
+    if artifact is None:
+        return {
+            "result_cluster_ref": result_cluster_ref,
+            "artifact_ref": None,
+            "content_identity": None,
+            "url": item["url"],
+            "title": "",
+            "text": "",
+            "word_count": 0,
+            "disposition": typed.artifact_disposition.value,
+            "extractor": typed.selected_extractor,
+            "execution_evidence": None,
+            "text_sha256": hashlib.sha256(b"").hexdigest(),
+            "source_date": None,
+            "retrieved_at": typed.acceptance_receipt.accepted_at,
+            "egress": None,
+            "machine": None,
+            "source_type": None,
+        }
+    legacy = typed.to_legacy_extracted_content()
+    execution_evidence = _extraction_execution_evidence(legacy)
+    text = artifact.text
+    provenance = artifact.provenance
+    text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return {
+        "result_cluster_ref": result_cluster_ref,
+        "artifact_ref": artifact.artifact_ref,
+        "content_identity": artifact.content_identity,
+        "url": item["url"],
+        "title": artifact.title,
+        "text": text,
+        "word_count": artifact.word_count,
+        "disposition": typed.artifact_disposition.value,
+        "extractor": typed.selected_extractor,
+        "provider": item.get("provider") or provenance.source_type,
+        "retrieval_provider": item.get("provider"),
+        "retrieval_egress": item.get("egress"),
+        "retrieval_machine": item.get("machine"),
+        "retrieval_source_type": item.get("source_type", "search"),
+        "egress": provenance.egress,
+        "machine": provenance.machine,
+        "source_type": provenance.source_type,
+        "source_date": artifact.published_date or item.get("source_date"),
+        "retrieved_at": item.get("retrieved_at") or typed.acceptance_receipt.accepted_at,
+        "retrieval_timestamp": item.get("retrieved_at") or typed.acceptance_receipt.accepted_at,
+        "text_sha256": text_sha256,
+        "source_text_sha256": text_sha256,
+        "result_count": 1,
+        "execution_evidence": execution_evidence,
+        "execution_diagnostics": execution_evidence.get(
+            "execution_diagnostics", execution_evidence.get("diagnostics", ())
+        ),
+        "cache_state": execution_evidence.get("cache", {}).get("status"),
+        "cache_age": execution_evidence.get("cache", {}).get("age_ms"),
+        "cache_origin": execution_evidence.get("cache", {}).get("origin"),
+        "spend_provenance": execution_evidence.get("spend"),
+        "timeout_source": execution_evidence.get("timeout_source"),
+        "operation_latency_ms": execution_evidence.get("operation_latency_ms"),
+        "cache_latency_ms": execution_evidence.get("cache_latency_ms"),
+        "freshness_age": execution_evidence.get("freshness_age_ms"),
+        "freshness_window": execution_evidence.get("freshness_window"),
+        "freshness_reason": execution_evidence.get("freshness_reason"),
+        "free_profile_eligible": execution_evidence.get("free_profile_eligible"),
     }
 
 
@@ -803,6 +1084,7 @@ class AcceptedOperationService:
         request_id: str,
         include_attribution: bool,
         session_id: str | None,
+        free_profile_eligible: bool | None = None,
     ) -> AcceptedOperation:
         outcome = execution.outcome
         if execution.response is None or execution.receipt is None:
@@ -823,6 +1105,22 @@ class AcceptedOperationService:
             acceptance_receipt=execution.receipt,
         )
         result["session_id"] = session_id
+        result["free_profile_eligible"] = free_profile_eligible
+        execution_evidence = result.get("execution_evidence")
+        if isinstance(execution_evidence, dict):
+            execution_evidence["free_profile_eligible"] = free_profile_eligible
+            diagnostics = execution_evidence.get("diagnostics")
+            if isinstance(diagnostics, (list, tuple)):
+                enriched = tuple(
+                    {
+                        **item,
+                        "free_profile_eligible": free_profile_eligible,
+                    }
+                    for item in diagnostics
+                    if isinstance(item, Mapping)
+                )
+                execution_evidence["diagnostics"] = enriched
+                execution_evidence["execution_diagnostics"] = enriched
         result["acceptance_receipt"] = {
             "receipt_ref": execution.receipt.receipt_ref,
             "accepted_at": execution.receipt.accepted_at.isoformat(),
@@ -949,6 +1247,7 @@ class AcceptedOperationService:
                 request_id=request_id,
                 include_attribution=request.include_attribution,
                 session_id=session_id,
+                free_profile_eligible=bool(getattr(request, "free_only", False)),
             )
         if session_id:
             response, session_id = await broker.search_with_session(
@@ -970,6 +1269,7 @@ class AcceptedOperationService:
             request_id=request_id,
             include_attribution=request.include_attribution,
             session_id=session_id,
+            free_profile_eligible=bool(getattr(request, "free_only", False)),
         )
 
     async def acquire_site(
@@ -988,7 +1288,7 @@ class AcceptedOperationService:
                 _SITE_ACQUISITION_SEARCH_RESULT_LIMIT,
             ),
             providers=None,
-            free_only=False,
+            free_only=getattr(request, "free_only", False),
             caller=request.caller,
             session_id=None,
             include_attribution=False,
@@ -1149,6 +1449,7 @@ class AcceptedOperationService:
         request_id: str,
         include_attribution: bool,
         session_id: str | None = None,
+        free_profile_eligible: bool | None = None,
     ) -> AcceptedOperation:
         outcome = _search_outcome(response)
         result = _search_projection(
@@ -1156,6 +1457,10 @@ class AcceptedOperationService:
             include_attribution=include_attribution,
         )
         result["session_id"] = session_id
+        result["free_profile_eligible"] = free_profile_eligible
+        execution_evidence = result.get("execution_evidence")
+        if isinstance(execution_evidence, dict):
+            execution_evidence["free_profile_eligible"] = free_profile_eligible
         try:
             receipt = self._repository_provider().accept(query, response)
         except Exception:
@@ -1249,6 +1554,7 @@ class AcceptedOperationService:
                 request_id=request_id,
                 include_attribution=False,
                 session_id=None,
+                free_profile_eligible=bool(getattr(request, "free_only", False)),
             )
         response = await self._broker_provider().search(query, persist_legacy=False)
         if not response.results:
@@ -1333,6 +1639,11 @@ class AcceptedOperationService:
                 "repository": self._repository_provider(),
                 "authority_capability": _HTTP_API_AUTHORITY_CAPABILITY,
             }
+            # ``ExtractRequest`` predates the accepted free-profile seam. Only
+            # forward the additive flag when the caller supplied it so legacy
+            # injected extractors keep their existing call contract.
+            if hasattr(request, "free_only"):
+                kwargs["free_only"] = request.free_only
             if (
                 self._registration == AcceptedOperationRegistration.complete()
                 and extractor is extract_url
@@ -1355,6 +1666,23 @@ class AcceptedOperationService:
                 ),
             )
         projection = _extract_projection(result)
+        free_profile_eligible = bool(getattr(request, "free_only", False))
+        execution_evidence = projection.get("execution_evidence")
+        if isinstance(execution_evidence, dict):
+            execution_evidence["free_profile_eligible"] = free_profile_eligible
+            diagnostics = execution_evidence.get("diagnostics")
+            if isinstance(diagnostics, (list, tuple)):
+                enriched = tuple(
+                    {
+                        **item,
+                        "free_profile_eligible": free_profile_eligible,
+                    }
+                    for item in diagnostics
+                    if isinstance(item, Mapping)
+                )
+                execution_evidence["diagnostics"] = enriched
+                execution_evidence["execution_diagnostics"] = enriched
+        projection["free_profile_eligible"] = free_profile_eligible
         disposition = getattr(result, "artifact_disposition", None)
         disposition_value = getattr(disposition, "value", disposition)
         accepted_outcome = getattr(result, "accepted_outcome", None)
@@ -1388,6 +1716,7 @@ class AcceptedOperationService:
         max_results: int,
         principal: str,
         request_id: str,
+        free_only: bool = False,
         selection_urls: tuple[str, ...] | None = None,
         required_urls: tuple[str, ...] | None = None,
         allow_partial: bool = True,
@@ -1441,6 +1770,7 @@ class AcceptedOperationService:
                 max_results=max_results,
                 principal=principal,
                 request_id=request_id,
+                free_only=free_only,
                 selection_urls=selection_urls,
                 required_urls=required_urls,
                 allow_partial=allow_partial,
@@ -1452,6 +1782,7 @@ class AcceptedOperationService:
                 max_results=max_results,
                 principal=principal,
                 request_id=request_id,
+                free_only=free_only,
                 selection_urls=selection_urls,
                 required_urls=required_urls,
                 allow_partial=allow_partial,
@@ -1465,6 +1796,7 @@ class AcceptedOperationService:
         max_results: int,
         principal: str,
         request_id: str,
+        free_only: bool = False,
         selection_urls: tuple[str, ...] | None = None,
         required_urls: tuple[str, ...] | None = None,
         allow_partial: bool = True,
@@ -1656,17 +1988,11 @@ class AcceptedOperationService:
                     )
                 item = selected_by_ref[link_state["result_cluster_ref"]]
                 projected_artifacts.append(
-                    {
-                        "result_cluster_ref": link_state["result_cluster_ref"],
-                        "artifact_ref": typed.artifact.artifact_ref,
-                        "content_identity": typed.artifact.content_identity,
-                        "url": item["url"],
-                        "title": typed.artifact.title,
-                        "text": typed.artifact.text,
-                        "word_count": typed.artifact.word_count,
-                        "disposition": typed.artifact_disposition.value,
-                        "extractor": typed.selected_extractor,
-                    }
+                    _workflow_artifact_projection(
+                        typed,
+                        item,
+                        link_state["result_cluster_ref"],
+                    )
                 )
             receipt_state = {
                 key: resumed[key] for key in ("receipt_ref", "accepted_at", "scope")
@@ -1710,7 +2036,12 @@ class AcceptedOperationService:
         reuse_by_identity: dict[tuple[str, str], int] = {}
         for ordinal, (ref, item) in enumerate(zip(refs, selected, strict=True)):
             extraction = await self.extract(
-                SimpleNamespace(url=item["url"], domain=None, mode="default"),
+                SimpleNamespace(
+                    url=item["url"],
+                    domain=None,
+                    mode="default",
+                    free_only=free_only,
+                ),
                 principal=principal,
                 request_id=f"{request_id}-{ordinal}",
             )
@@ -1777,17 +2108,7 @@ class AcceptedOperationService:
                 ArtifactDisposition.PARTIAL,
             }:
                 projected_artifacts.append(
-                    {
-                        "result_cluster_ref": ref,
-                        "artifact_ref": artifact.artifact_ref,
-                        "content_identity": artifact.content_identity,
-                        "url": item["url"],
-                        "title": artifact.title,
-                        "text": artifact.text,
-                        "word_count": artifact.word_count,
-                        "disposition": typed.artifact_disposition.value,
-                        "extractor": typed.selected_extractor,
-                    }
+                    _workflow_artifact_projection(typed, item, ref)
                 )
         try:
             composition = compose_retrieval_evidence(view, tuple(links), requirement)

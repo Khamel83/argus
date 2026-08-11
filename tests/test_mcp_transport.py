@@ -1,4 +1,7 @@
 import asyncio
+import os
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Lock
 
@@ -13,6 +16,41 @@ SUPPORTED_PROTOCOLS = (
     "2025-06-18",
     "2025-11-25",
 )
+
+
+def test_fresh_production_mcp_import_does_not_load_authority_modules():
+    """Importing the stateless adapter must not initialize local authority code."""
+
+    script = r'''
+import importlib.abc
+import sys
+
+
+class ForbiddenAuthorityImport(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "argus.config" or fullname.startswith("argus.extraction"):
+            raise AssertionError(f"forbidden authority import: {fullname}")
+        return None
+
+
+sys.meta_path.insert(0, ForbiddenAuthorityImport())
+import argus.mcp.server  # noqa: E402
+
+assert "argus.config" not in sys.modules
+assert not any(
+    name == "argus.extraction" or name.startswith("argus.extraction.")
+    for name in sys.modules
+)
+'''
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=os.path.dirname(os.path.dirname(__file__)),
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
 
 
 class ManualClock:

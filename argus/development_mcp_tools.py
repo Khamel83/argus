@@ -605,23 +605,40 @@ async def build_research_pack(
     topic: str,
     official_url: Optional[str] = None,
     max_research_pages: int = 40,
+    research_targets: list[dict[str, Any]] | None = None,
+    free_only: bool = False,
     response_format: str = "markdown",
     ctx: Any = None,
     caller_identity: str = "local-mcp",
     caller_label: str = "",
 ) -> str:
     """Build a combined official-docs and external-research pack."""
+    from argus.api.schemas import BuildResearchPackWorkflowRequest
+
+    request = BuildResearchPackWorkflowRequest.model_validate(
+        {
+            "topic": topic,
+            "official_url": official_url,
+            "max_research_pages": max_research_pages,
+            "research_targets": research_targets or [],
+            "free_only": free_only,
+            "caller": caller_label,
+        }
+    )
+    payload = request.model_dump(mode="json")
     service = WorkflowService(
         create_development_accepted_operation_service(broker),
         progress_callback=_make_progress_callback(ctx),
         caller=caller_identity,
     )
     result = await service.build_research_pack(
-        topic=topic,
-        official_url=official_url,
-        max_research_pages=max_research_pages,
+        topic=payload["topic"],
+        official_url=payload["official_url"],
+        max_research_pages=payload["max_research_pages"],
+        research_targets=payload["research_targets"],
+        free_only=payload["free_only"],
         caller_identity=caller_identity,
-        caller_label=caller_label,
+        caller_label=payload["caller"],
     )
     if response_format == "json":
         return _serialize_workflow_json(result)
@@ -705,6 +722,7 @@ def register_standalone_tools(
     caller_identity: Callable[[], str],
 ) -> None:
     """Register development-only tools without granting authority to MCP modules."""
+    from argus.api.schemas import ResearchTarget
     from argus import development_mcp_resources as resources
 
     @mcp.tool()
@@ -756,6 +774,8 @@ def register_standalone_tools(
         topic: str,
         official_url: str = None,
         max_research_pages: int = 40,
+        research_targets: list[ResearchTarget] = None,
+        free_only: bool = False,
         response_format: str = "markdown",
         caller: str = "mcp",
         ctx: McpContext = None,
@@ -765,6 +785,12 @@ def register_standalone_tools(
             topic,
             official_url=official_url,
             max_research_pages=max_research_pages,
+            research_targets=(
+                [target.model_dump(mode="json") for target in research_targets]
+                if research_targets
+                else None
+            ),
+            free_only=free_only,
             response_format=response_format,
             ctx=ctx,
             caller_identity=caller_identity(),

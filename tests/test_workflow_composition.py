@@ -36,6 +36,18 @@ def _error(outcome, request_id):
     )
 
 
+def test_target_requirement_request_ids_bind_receipt_and_reference():
+    from argus.workflows.targeted_research import derive_requirement_request_id
+
+    first = derive_requirement_request_id("receipt-a", "target-0-requirement-0")
+    second = derive_requirement_request_id("receipt-b", "target-0-requirement-0")
+    repeat = derive_requirement_request_id("receipt-a", "target-0-requirement-0")
+
+    assert first == repeat
+    assert first != second
+    assert first != "workflow-run"
+
+
 def _projection(accepted):
     values = {
         field.name: getattr(accepted, field.name)
@@ -210,6 +222,42 @@ async def test_real_authority_hashes_frozen_retrieval_and_returns_full_projectio
     assert composed.result["composite_outcome"] == "success"
     assert composed.result["composition_outcome"] == "success"
     assert composed.result["artifacts"][0]["artifact_ref"] == "artifact-1"
+
+
+@pytest.mark.asyncio
+async def test_workflow_composition_propagates_free_only_to_extraction(
+    tmp_path,
+):
+    from tests.test_extraction_composition import _link
+
+    link = _link()
+    service, repository = _real_authority(tmp_path, [link])
+    retrieval = _accepted_retrieval(
+        repository,
+        ({"url": "https://example.com/1", "title": "Article"},),
+    )
+    service.extract = AsyncMock(
+        return_value=AcceptedOperation(
+            outcome=CanonicalOutcome.SUCCESS,
+            request_id="workflow-extract",
+            result={
+                "extraction_run_id": link.accepted_outcome.extraction_run_id,
+            },
+            error=None,
+        )
+    )
+
+    composed = await service.compose_workflow(
+        retrieval,
+        max_results=1,
+        free_only=True,
+        principal="workflow-test",
+        request_id="compose-free",
+    )
+
+    assert composed.outcome is CanonicalOutcome.SUCCESS
+    extraction_request = service.extract.await_args.args[0]
+    assert extraction_request.free_only is True
 
 
 @pytest.mark.asyncio

@@ -127,10 +127,24 @@ class ExtractionPlan:
         ANONYMOUS_AUTHENTICATION_SCOPE
     )
     cache_max_age_seconds: int = 604_800
+    # Additive policy facts used by the accepted extraction cache.  Defaults
+    # preserve the v1 autonomous/legacy plan contract.
+    effective_max_provider_tier: int = 3
+    provider_restrictions: tuple[str, ...] = ()
+    eligible_extractors: tuple[str, ...] = ()
+    freshness_window_seconds: int = 604_800
+    original_evidence_ref: str | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.candidates, list):
             object.__setattr__(self, "candidates", tuple(self.candidates))
+        for field_name in (
+            "provider_restrictions",
+            "eligible_extractors",
+        ):
+            value = getattr(self, field_name)
+            if isinstance(value, list):
+                object.__setattr__(self, field_name, tuple(value))
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +170,12 @@ class CacheOriginEvidence:
     partial_allowed: bool
     cache_created_at: str
     cache_max_age_seconds: int = 604_800
+    profile: str = "autonomous"
+    effective_max_provider_tier: int = 3
+    provider_restrictions: tuple[str, ...] = ()
+    eligible_extractors: tuple[str, ...] = ()
+    freshness_window_seconds: int = 604_800
+    original_evidence_ref: str | None = None
 
     @classmethod
     def from_accepted(
@@ -200,6 +220,12 @@ class CacheOriginEvidence:
             partial_allowed=identity.partial_allowed,
             cache_created_at=durable.acceptance_receipt.accepted_at,
             cache_max_age_seconds=identity.cache_max_age_seconds,
+            profile=identity.profile,
+            effective_max_provider_tier=identity.effective_max_provider_tier,
+            provider_restrictions=identity.provider_restrictions,
+            eligible_extractors=identity.eligible_extractors,
+            freshness_window_seconds=identity.freshness_window_seconds,
+            original_evidence_ref=identity.original_evidence_ref,
         )
 
 
@@ -210,6 +236,7 @@ class CacheDecision:
     age_seconds: int | None = None
     origin_evidence: CacheOriginEvidence | None = None
     current_identity: object | None = None
+    reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -496,6 +523,13 @@ class AcceptedExtractionOutcome:
                         else step.decision.value
                     ),
                     latency_ms=step.latency_ms or 0,
+                    failure_summary=(
+                        step.policy_rule_ref.removeprefix("extract-").removesuffix(
+                            "-v1"
+                        )
+                        if step.decision is ExtractorExecutionDecision.POLICY_SKIPPED
+                        else None
+                    ),
                 )
                 for step in self.steps
             ],
@@ -510,6 +544,9 @@ class AcceptedExtractionOutcome:
         legacy.artifact_disposition = self.artifact_disposition
         legacy.acceptance_receipt = self.acceptance_receipt
         legacy.accepted_outcome = self.outcome
+        legacy.cache_hit = self.cache_decision.outcome is CacheOutcome.HIT_ELIGIBLE
+        legacy.cache_source_extractor = self.selected_extractor if legacy.cache_hit else None
+        legacy.extractors_tried = [step.extractor for step in self.steps]
         invoked_steps = tuple(
             step
             for step in self.steps

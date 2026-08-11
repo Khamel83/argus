@@ -900,6 +900,8 @@ def test_transport_adapter_inventory_has_only_closed_legacy_exceptions():
         ROOT / "argus/cli/__init__.py",
         ROOT / "argus/workflows/__init__.py",
         ROOT / "argus/workflows/models.py",
+        ROOT / "argus/workflows/research_targets.py",
+        ROOT / "argus/workflows/targeted_research.py",
         ROOT / "argus/workflows/summarizer.py",
     }
     assert discovered - non_adapters == EXPECTED_ADAPTERS

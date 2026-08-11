@@ -121,3 +121,62 @@ async def test_site_acquisition_caps_search_without_reducing_discovery_limit(
         item["url"].startswith("https://example.test")
         for item in operation.result["results"]
     )
+
+
+@pytest.mark.asyncio
+async def test_site_acquisition_propagates_free_only_to_accepted_search(monkeypatch):
+    queries = []
+
+    async def search_accepted(query, **_kwargs):
+        queries.append(query)
+        return AcceptedSearchExecution(
+            outcome=CanonicalOutcome.EMPTY,
+            reason="empty",
+            response=SearchResponse(
+                query=query.query,
+                mode=SearchMode.DISCOVERY,
+                results=(),
+                traces=[],
+                total_results=0,
+                search_run_id="site-search-free",
+                created_at=datetime(2026, 8, 9, tzinfo=timezone.utc),
+            ),
+            receipt=AcceptanceReceipt(
+                receipt_ref="site-search-free",
+                accepted_at=datetime(2026, 8, 9, tzinfo=timezone.utc),
+                acceptance_fingerprint="a" * 64,
+            ),
+        )
+
+    broker = MagicMock()
+    broker.search_accepted = AsyncMock(side_effect=search_accepted)
+    service = AcceptedOperationService(
+        broker_provider=lambda: broker,
+        repository_provider=MagicMock(),
+        registration=AcceptedOperationRegistration.complete(),
+    )
+    service._evidence_repository = MagicMock()
+    service._evidence_repository.accept.return_value = AcceptanceReceipt(
+        receipt_ref="site-receipt-free",
+        accepted_at=datetime(2026, 8, 9, tzinfo=timezone.utc),
+        acceptance_fingerprint="b" * 64,
+    )
+    monkeypatch.setattr(
+        "argus.operations.accepted.discover_site_urls",
+        AsyncMock(return_value=()),
+    )
+
+    operation = await service.acquire_site(
+        SimpleNamespace(
+            url="https://example.test",
+            soft_page_limit=2,
+            hard_page_limit=10,
+            caller="workflow-test",
+            free_only=True,
+        ),
+        principal="workflow-test",
+        request_id="site-acquisition-free",
+    )
+
+    assert operation.outcome is CanonicalOutcome.SUCCESS
+    assert queries and queries[0].free_only is True

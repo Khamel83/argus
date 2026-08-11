@@ -1,4 +1,4 @@
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 import json
 from pathlib import Path
@@ -19,6 +19,44 @@ from argus.models import (
 EVIDENCE_FIXTURES = (
     Path(__file__).parent / "fixtures/contracts/retrieval_evidence_v2"
 )
+
+
+@pytest.mark.asyncio
+async def test_accepted_extract_propagates_free_only_to_extractor():
+    from argus.extraction.models import ExtractedContent, ExtractorName
+    from argus.operations.accepted import AcceptedOperationService
+
+    seen = {}
+
+    async def extractor(url, **kwargs):
+        seen.update(kwargs)
+        return ExtractedContent(
+            url=url,
+            title="Accepted",
+            text="accepted extraction content",
+            word_count=3,
+            extractor=ExtractorName.TRAFILATURA,
+        )
+
+    service = AcceptedOperationService(
+        broker_provider=lambda: MagicMock(),
+        repository_provider=lambda: MagicMock(),
+        extractor=extractor,
+    )
+    operation = await service.extract(
+        SimpleNamespace(
+            url="https://example.test/article",
+            domain=None,
+            mode="default",
+            caller="caller",
+            free_only=True,
+        ),
+        principal="principal",
+        request_id="request-free-extract",
+    )
+
+    assert operation.outcome is CanonicalOutcome.SUCCESS
+    assert seen["free_only"] is True
 
 
 def _search_response(*, results: bool = True) -> SearchResponse:

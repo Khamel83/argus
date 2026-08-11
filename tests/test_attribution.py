@@ -2,8 +2,6 @@
 
 import math
 
-import pytest
-
 from argus.attribution.shapley import rrf_attribution, shapley_sample
 
 RRF_K = 60

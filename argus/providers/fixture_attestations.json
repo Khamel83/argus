@@ -13,7 +13,7 @@
         "golden_contract_sha256": "545daf280b3166356bbb3c35f4f416a46f26e367d7bc67f19e2dbf00d59da2ac",
         "provider": "brave",
         "provider_contract": "2026-07-27-v1",
-        "release": "argus-1.6.3",
+        "release": "argus-1.6.4",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
         "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
@@ -32,7 +32,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:b48a0cc1b6afaca75046bfea97045946afafd95ceee982e5"
+      "evidence_ref": "attestation:8246f8cccbc206c820b8736d9416dab501017d2bbbe1c256"
     },
     "duckduckgo": {
       "attestation": {
@@ -45,7 +45,7 @@
         "golden_contract_sha256": "545daf280b3166356bbb3c35f4f416a46f26e367d7bc67f19e2dbf00d59da2ac",
         "provider": "duckduckgo",
         "provider_contract": "2026-07-27-v1",
-        "release": "argus-1.6.3",
+        "release": "argus-1.6.4",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
         "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
@@ -64,7 +64,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:2e9cedf99b160c3ed27be4c1ca6affe0ba57833d4ea97f91"
+      "evidence_ref": "attestation:1d818955e993ea12e259cb96a3146b4ceb2e8ee7e63621d8"
     },
     "exa": {
       "attestation": {
@@ -77,7 +77,7 @@
         "golden_contract_sha256": "545daf280b3166356bbb3c35f4f416a46f26e367d7bc67f19e2dbf00d59da2ac",
         "provider": "exa",
         "provider_contract": "2026-07-27-v1",
-        "release": "argus-1.6.3",
+        "release": "argus-1.6.4",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
         "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
@@ -96,7 +96,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:ee136848f0621e3d951c5d175c2eab71c386740bf897be37"
+      "evidence_ref": "attestation:4544a5693f2bd973f22e8a5696679473e04cc1b05bf6b72c"
     },
     "github": {
       "attestation": {
@@ -109,7 +109,7 @@
         "golden_contract_sha256": "545daf280b3166356bbb3c35f4f416a46f26e367d7bc67f19e2dbf00d59da2ac",
         "provider": "github",
         "provider_contract": "2026-07-27-v1",
-        "release": "argus-1.6.3",
+        "release": "argus-1.6.4",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
         "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
@@ -128,7 +128,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:3491ef7eb051c0d9150647ca03eb7b4651dd1b808192cab1"
+      "evidence_ref": "attestation:5b959cf097aa7d388bf816087097ad63b52ff7885d4aad05"
     },
     "linkup": {
       "attestation": {
@@ -141,7 +141,7 @@
         "golden_contract_sha256": "545daf280b3166356bbb3c35f4f416a46f26e367d7bc67f19e2dbf00d59da2ac",
         "provider": "linkup",
         "provider_contract": "2026-07-27-v1",
-        "release": "argus-1.6.3",
+        "release": "argus-1.6.4",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
         "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
@@ -160,7 +160,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:eb6c42fdea52bd113a2a297a4518cc1cffde95ef545afd8d"
+      "evidence_ref": "attestation:33765c6648b90b434790574c93af4f9d8c6c04b955d96af3"
     },
     "parallel": {
       "attestation": {
@@ -173,7 +173,7 @@
         "golden_contract_sha256": "545daf280b3166356bbb3c35f4f416a46f26e367d7bc67f19e2dbf00d59da2ac",
         "provider": "parallel",
         "provider_contract": "2026-07-27-v1",
-        "release": "argus-1.6.3",
+        "release": "argus-1.6.4",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
         "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
@@ -192,7 +192,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:edfa6380ed167eb5cece0d79ef759b71aaf12ecc8a9c33bf"
+      "evidence_ref": "attestation:9e7ac81d261cd732252f174cbce848d119e4d28767e34407"
     },
     "searchapi": {
       "attestation": {
@@ -205,7 +205,7 @@
         "golden_contract_sha256": "545daf280b3166356bbb3c35f4f416a46f26e367d7bc67f19e2dbf00d59da2ac",
         "provider": "searchapi",
         "provider_contract": "2026-07-27-v1",
-        "release": "argus-1.6.3",
+        "release": "argus-1.6.4",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
         "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
@@ -224,7 +224,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:813ad059bc5782fc1f61370a06d72d52673bb0452ead0a65"
+      "evidence_ref": "attestation:fb116b8a51c31f2c967782dcde1f9aa89bd6a8e109743636"
     },
     "searxng": {
       "attestation": {
@@ -237,7 +237,7 @@
         "golden_contract_sha256": "545daf280b3166356bbb3c35f4f416a46f26e367d7bc67f19e2dbf00d59da2ac",
         "provider": "searxng",
         "provider_contract": "2026-07-27-v1",
-        "release": "argus-1.6.3",
+        "release": "argus-1.6.4",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
         "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
@@ -256,7 +256,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:d8db48bda4439ebda8ebe50b281fe3726e24ff141848a8bb"
+      "evidence_ref": "attestation:cc8592016068d47aee6169c2258388054b718e192d306fa6"
     },
     "serper": {
       "attestation": {
@@ -269,7 +269,7 @@
         "golden_contract_sha256": "545daf280b3166356bbb3c35f4f416a46f26e367d7bc67f19e2dbf00d59da2ac",
         "provider": "serper",
         "provider_contract": "2026-07-27-v1",
-        "release": "argus-1.6.3",
+        "release": "argus-1.6.4",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
         "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
@@ -288,7 +288,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:b62661d9e484cf7f36bf2f31aacc4cce93ab27a278d215eb"
+      "evidence_ref": "attestation:dc69cce16fc0d56ec06f34d0ce27f28c38b40f47ae2947e9"
     },
     "tavily": {
       "attestation": {
@@ -301,7 +301,7 @@
         "golden_contract_sha256": "545daf280b3166356bbb3c35f4f416a46f26e367d7bc67f19e2dbf00d59da2ac",
         "provider": "tavily",
         "provider_contract": "2026-07-27-v1",
-        "release": "argus-1.6.3",
+        "release": "argus-1.6.4",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
         "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
@@ -320,7 +320,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:1a2e0ed0ee9bf991b1d01a9c0f65c049ac4903a38d8b001c"
+      "evidence_ref": "attestation:123451f37105fdb5dee5f81a4efe85bc0333463b7a3c8605"
     },
     "valyu": {
       "attestation": {
@@ -333,7 +333,7 @@
         "golden_contract_sha256": "545daf280b3166356bbb3c35f4f416a46f26e367d7bc67f19e2dbf00d59da2ac",
         "provider": "valyu",
         "provider_contract": "2026-07-27-v1",
-        "release": "argus-1.6.3",
+        "release": "argus-1.6.4",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
         "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
@@ -352,7 +352,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:2e7f28eebe10ed2d6ee86a61a59cf46397539c91b51afc66"
+      "evidence_ref": "attestation:4f98a8ac2d2f097f00e23ef707ffa55e4814543af85e7887"
     },
     "wolfram": {
       "attestation": {
@@ -365,7 +365,7 @@
         "golden_contract_sha256": "545daf280b3166356bbb3c35f4f416a46f26e367d7bc67f19e2dbf00d59da2ac",
         "provider": "wolfram",
         "provider_contract": "2026-07-27-v1",
-        "release": "argus-1.6.3",
+        "release": "argus-1.6.4",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
         "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
@@ -384,7 +384,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:dacaf073af29cf3b4d72d697e83550ad74c2cf2f282835fd"
+      "evidence_ref": "attestation:384f4423cddd2752aae0dfe92bb2ab6e0b1a8572724830d7"
     },
     "yahoo": {
       "attestation": {
@@ -397,7 +397,7 @@
         "golden_contract_sha256": "545daf280b3166356bbb3c35f4f416a46f26e367d7bc67f19e2dbf00d59da2ac",
         "provider": "yahoo",
         "provider_contract": "2026-07-27-v1",
-        "release": "argus-1.6.3",
+        "release": "argus-1.6.4",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
         "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
@@ -416,7 +416,7 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:7f34e7690be7537d3f6e3969db3198b0489be1ee554441ad"
+      "evidence_ref": "attestation:4d4c4494d91c2539d407a3fdc06b4c36eafd0ee8a7ddf6f5"
     },
     "you": {
       "attestation": {
@@ -429,7 +429,7 @@
         "golden_contract_sha256": "545daf280b3166356bbb3c35f4f416a46f26e367d7bc67f19e2dbf00d59da2ac",
         "provider": "you",
         "provider_contract": "2026-07-27-v1",
-        "release": "argus-1.6.3",
+        "release": "argus-1.6.4",
         "request_contract": "search-query-v1",
         "response_contract": "provider-batch-v1",
         "shared_adapter_sha256": "2e44e51b3e368df3ba5bd33774f27082119f6a1838fb0aa6e7161521f4370253",
@@ -448,9 +448,9 @@
           "providers/fixture_attestation.py"
         ]
       },
-      "evidence_ref": "attestation:46b013e7f02dd3479da3841bebaac472d62b07cd2023190c"
+      "evidence_ref": "attestation:5060952a45108baebdb2b2dd005530b3053703335185dcdd"
     }
   },
-  "release_revision": "argus-1.6.3",
+  "release_revision": "argus-1.6.4",
   "schema_version": 1
 }

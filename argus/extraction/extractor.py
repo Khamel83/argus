@@ -52,6 +52,10 @@ JINA_READER_URL = "https://r.jina.ai/"
 _cache = ExtractionCache(
     ttl_hours=int(os.getenv("ARGUS_EXTRACTION_CACHE_TTL_HOURS", "168"))
 )
+# Accepted extraction cache.  Entries are published only after the typed
+# outcome has been durably accepted; each lookup revalidates that receipt in
+# the caller's repository.
+_accepted_cache = ExtractionCache()
 
 # Shared domain rate limiter — 10 requests per minute per domain
 _domain_limiter = DomainRateLimiter(
@@ -67,6 +71,34 @@ _jina_call_count = 0
 _jina_accumulated_tokens = 0
 _JINA_SYNC_INTERVAL = 10
 _TOKENS_PER_WORD = 1.3
+
+
+def _accepted_cache_identity(url: str, mode: str, free_only: bool):
+    """Build the stable policy identity used before accepted extraction."""
+    from argus.extraction.cache import ExtractionCacheIdentity
+
+    return ExtractionCacheIdentity(
+        normalized_url=(
+            "sha256:" + hashlib.sha256(url.encode("utf-8")).hexdigest()
+        ),
+        mode=mode,
+        access_scope="public",
+        authentication_scope_fingerprint="anonymous",
+        cache_policy_version="accepted-extraction-cache-v1",
+        extraction_plan_version="1",
+        quality_policy_version="quality-v1",
+        completeness_policy_version="completeness-v1",
+        outcome_policy_version="extraction-outcome-v1",
+        privacy_scope="public",
+        partial_allowed=True,
+        cache_max_age_seconds=604_800,
+        profile="free" if free_only else "autonomous",
+        effective_max_provider_tier=0 if free_only else 3,
+        provider_restrictions=(),
+        eligible_extractors=(),
+        freshness_window_seconds=604_800,
+        original_evidence_ref=None,
+    )
 
 
 def _run_quality_gate(content: str, url: str, extractor_name: str) -> tuple[bool, str]:
@@ -223,6 +255,7 @@ async def _extract_url_unpersisted(
     domain: str = None,
     mode: str = "default",
     *,
+    free_only: bool = False,
     allow_legacy_cache: bool = True,
     allow_legacy_cache_writes: bool = True,
 ) -> ExtractedContent:
@@ -302,6 +335,7 @@ async def _extract_url_unpersisted(
 
     extractors_tried = []
     attempts: list[ExtractionAttempt] = []
+    policy_skipped: set[str] = set()
     best_result = None  # Keep the best (longest) result even if quality fails
     best_quality_result = None
 
@@ -369,6 +403,31 @@ async def _extract_url_unpersisted(
             failure_summary=reason or "quality_gate_failed",
         )
         result.attempts = list(attempts)
+
+    def record_policy_skip(name: str, reason: str) -> None:
+        """Record a policy decision without invoking the extractor helper."""
+        if name in policy_skipped:
+            return
+        policy_skipped.add(name)
+        extractors_tried.append(name)
+        attempts.append(
+            ExtractionAttempt(
+                extractor=name,
+                status="policy_skipped",
+                latency_ms=0,
+                failure_summary=reason,
+            )
+        )
+
+    def external_policy_reason(name: str) -> str | None:
+        if free_only:
+            return "free_only"
+        jina_disabled = not config.jina.enabled or os.getenv(
+            "ARGUS_JINA_ENABLED", ""
+        ).lower() in {"0", "false", "no"}
+        if name == "jina" and jina_disabled:
+            return "jina_disabled"
+        return None
 
     # Phase 4: Residential Egress Policy
     res_policy = config.residential.policy
@@ -498,10 +557,16 @@ async def _extract_url_unpersisted(
     ]
 
     for step_num, step_name, static_extractor in external_steps:
+        reason = external_policy_reason(step_name)
         # For archive_ingest mode, we try archive recovery before paid APIs
         if mode == "archive_ingest" and step_num == 7:
             # We'll come back to paid APIs if archives fail
+            if reason is not None:
+                record_policy_skip(step_name, reason)
             break
+        if reason is not None:
+            record_policy_skip(step_name, reason)
+            continue
 
         try:
             current_extractor = static_extractor
@@ -566,6 +631,10 @@ async def _extract_url_unpersisted(
     # If archive_ingest and we haven't tried paid APIs yet, try them now
     if mode == "archive_ingest":
         for step_num, step_name, static_extractor in external_steps:
+            reason = external_policy_reason(step_name)
+            if reason is not None:
+                record_policy_skip(step_name, reason)
+                continue
             try:
                 current_extractor = static_extractor
                 if step_name == "jina":
@@ -653,6 +722,7 @@ async def extract_url(
     mode: str = "default",
     *,
     caller: str = "",
+    free_only: bool = False,
     repository=None,
     authority_capability: object | None = None,
     use_evidence_authority: bool = False,
@@ -663,29 +733,86 @@ async def extract_url(
 
     extraction_execution_allowed(authority_capability=authority_capability)
     started = time.perf_counter()
+    if repository is None and use_evidence_authority:
+        from argus.persistence.search_ledger import (
+            create_search_ledger_repository,
+        )
+
+        repository = create_search_ledger_repository()
+    accepted_cache_decision = None
+    accepted_cache_now = None
+    if use_evidence_authority:
+        from argus.extraction.outcomes import CacheOutcome
+
+        cache_identity = _accepted_cache_identity(url, mode, free_only)
+        accepted_cache_now = datetime.now(timezone.utc)
+        cache_decision = _accepted_cache.decide(
+            cache_identity,
+            acceptance_repository=repository,
+            now=accepted_cache_now,
+        )
+        if cache_decision.outcome is CacheOutcome.HIT_INELIGIBLE:
+            accepted_cache_decision = cache_decision
+        if cache_decision.outcome is CacheOutcome.HIT_ELIGIBLE:
+            origin = repository.load_extraction_outcome_by_receipt(
+                cache_decision.origin_evidence.acceptance_receipt.receipt_ref
+            )
+            if origin is not None:
+                from dataclasses import replace
+
+                accepted = replace(origin, cache_decision=cache_decision)
+                projected = accepted.to_legacy_extracted_content()
+                projected.url = url
+                projected.cache_hit = True
+                projected.cache_source_extractor = (
+                    projected.extractor.value if projected.extractor else None
+                )
+                projected.extractors_tried = ["cache"]
+                projected.attempts = [
+                    ExtractionAttempt(
+                        extractor="cache",
+                        status="success",
+                        latency_ms=0,
+                    )
+                ]
+                return projected
     result = await _extract_url_unpersisted(
         url,
         domain=domain,
         mode=mode,
+        free_only=free_only,
         allow_legacy_cache=not use_evidence_authority,
         allow_legacy_cache_writes=not use_evidence_authority,
     )
+    if use_evidence_authority:
+        projected = _finalize_accepted_extraction(
+            result,
+            url=url,
+            mode=mode,
+            caller=caller,
+            free_only=free_only,
+            request_id=request_id or uuid.uuid4().hex,
+            latency_ms=round((time.perf_counter() - started) * 1000),
+            repository=repository,
+            cache_decision=accepted_cache_decision,
+            cache_now=accepted_cache_now,
+        )
+        loader = getattr(repository, "load_extraction_outcome_by_receipt", None)
+        if callable(loader) and projected.acceptance_receipt is not None:
+            accepted = loader(projected.acceptance_receipt.receipt_ref)
+            if accepted is not None:
+                _accepted_cache.put(
+                    _accepted_cache_identity(url, mode, free_only),
+                    accepted,
+                    acceptance_repository=repository,
+                )
+        return projected
     if repository is None:
         from argus.persistence.search_ledger import (
             create_search_ledger_repository,
         )
 
         repository = create_search_ledger_repository()
-    if use_evidence_authority:
-        return _finalize_accepted_extraction(
-            result,
-            url=url,
-            mode=mode,
-            caller=caller,
-            request_id=request_id or uuid.uuid4().hex,
-            latency_ms=round((time.perf_counter() - started) * 1000),
-            repository=repository,
-        )
     receipt = repository.record_extraction(
         url=url,
         domain=domain,
@@ -707,6 +834,9 @@ def _finalize_accepted_extraction(
     request_id: str,
     latency_ms: int,
     repository,
+    free_only: bool = False,
+    cache_decision=None,
+    cache_now: datetime | None = None,
 ) -> ExtractedContent:
     """Adapt bounded chain evidence into the canonical extraction finalizer."""
     from argus.extraction.finalizer import finalize_extraction
@@ -749,8 +879,36 @@ def _finalize_accepted_extraction(
         egress=evidence_label(result.egress, "unknown"),
         machine=evidence_label(result.machine, "unknown"),
     )
+    policy_reasons = {}
+    for attempt in result.attempts:
+        if attempt.status != "policy_skipped":
+            continue
+        reason = attempt.failure_summary
+        policy_reasons[attempt.extractor] = (
+            reason
+            if reason
+            in {
+                "free_only",
+                "jina_disabled",
+                "caller_tier_cap",
+                "provider_unavailable",
+                "policy_skipped",
+            }
+            else "policy_skipped"
+        )
     decisions = []
     for ordinal, attempt in enumerate(result.attempts):
+        if attempt.status == "policy_skipped":
+            reason = policy_reasons[attempt.extractor]
+            decisions.append(
+                ExtractorDecision(
+                    ordinal=ordinal,
+                    extractor=attempt.extractor,
+                    decision=ExtractorExecutionDecision.POLICY_SKIPPED,
+                    policy_rule_ref=f"extract-{reason}-v1",
+                )
+            )
+            continue
         decisions.append(
             ExtractorDecision(
                 ordinal=ordinal,
@@ -863,7 +1021,11 @@ def _finalize_accepted_extraction(
             ) or (AttemptOutcome.UNKNOWN_FAILURE,)
             terminal = TerminalCause(
                 kind=TerminalCauseKind.CHAIN_EXHAUSTED,
-                invoked_ordinals=tuple(step.ordinal for step in decisions),
+                invoked_ordinals=tuple(
+                    step.ordinal
+                    for step in decisions
+                    if step.decision is ExtractorExecutionDecision.INVOKED
+                ),
                 distinct_attempt_outcomes=outcomes,
             )
     plan = ExtractionPlan(
@@ -874,8 +1036,27 @@ def _finalize_accepted_extraction(
         candidates=tuple(
             ExtractionCandidate(
                 extractor=name,
-                eligible=True,
-                spend_class="metered" if result.cost else "free",
+                eligible=not any(
+                    attempt.extractor == name
+                    and attempt.status == "policy_skipped"
+                    for attempt in result.attempts
+                ),
+                spend_class=(
+                    "policy_skipped"
+                    if any(
+                        attempt.extractor == name
+                        and attempt.status == "policy_skipped"
+                        for attempt in result.attempts
+                    )
+                    else "metered"
+                    if result.cost
+                    else "free"
+                ),
+                policy_rule_ref=(
+                    f"extract-{policy_reasons[name]}-v1"
+                    if name in policy_reasons
+                    else None
+                ),
             )
             for name in dict.fromkeys(candidate_names)
         ),
@@ -886,8 +1067,13 @@ def _finalize_accepted_extraction(
         partial_allowed=True,
         deadline_ms=120_000,
         caller=caller,
-        profile="autonomous",
+        profile="free" if free_only else "autonomous",
         privacy_scope="public",
+        effective_max_provider_tier=0 if free_only else 3,
+        provider_restrictions=(),
+        eligible_extractors=(),
+        freshness_window_seconds=604_800,
+        original_evidence_ref=None,
     )
     accepted = finalize_extraction(
         ExtractionRequest(
@@ -896,12 +1082,13 @@ def _finalize_accepted_extraction(
             normalized_url=url,
             access_scope="public",
             caller=caller,
-            profile="autonomous",
+            profile="free" if free_only else "autonomous",
             privacy_scope="public",
         ),
         plan,
         RawExtractionResult(
-            cache_decision=CacheDecision(outcome=CacheOutcome.MISS),
+            cache_decision=cache_decision
+            or CacheDecision(outcome=CacheOutcome.MISS),
             steps=tuple(decisions),
             artifact=artifact,
             selected_extractor=selected if artifact is not None else None,
@@ -910,7 +1097,7 @@ def _finalize_accepted_extraction(
         ),
         OutcomePolicy(version="extraction-outcome-v1"),
         repository=repository,
-        clock=lambda: datetime.now(timezone.utc).isoformat(),
+        clock=lambda: (cache_now or datetime.now(timezone.utc)).isoformat(),
     )
     return accepted.to_legacy_extracted_content()
 

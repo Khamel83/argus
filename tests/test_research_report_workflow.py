@@ -28,6 +28,15 @@ def _service() -> WorkflowService:
     return WorkflowService(SimpleNamespace())
 
 
+def test_target_failure_codes_are_not_rewritten_as_legacy_composition_codes():
+    assert WorkflowService._target_authority_failure("unready") is True
+    assert WorkflowService._target_authority_failure("persistence_failed") is True
+    assert WorkflowService._target_authority_failure("contract_error") is True
+    assert WorkflowService._target_authority_failure(
+        "workflow_required_target_unready"
+    ) is False
+
+
 def _run(tmp_path, *, status=WorkflowStatus.COMPLETED):
     tmp_path.mkdir(parents=True, exist_ok=True)
     report = tmp_path / "SUMMARY.md"
@@ -453,7 +462,7 @@ def test_status_projection_reports_truthful_evidence_and_runtime_metrics(tmp_pat
         run,
         runtime={
             "build": {
-                "version": "1.6.3",
+                "version": "1.6.4",
                 "source_revision": "b" * 40,
                 "image_identity": "sha256:" + "c" * 64,
             },
@@ -472,7 +481,7 @@ def test_status_projection_reports_truthful_evidence_and_runtime_metrics(tmp_pat
     assert "provider_degraded" in payload["degraded_reasons"]
     assert payload["cost_state"] == "uncertain"
     assert payload["runtime"] == {
-        "version": "1.6.3",
+        "version": "1.6.4",
         "source_revision": "b" * 40,
         "image_identity": "sha256:" + "c" * 64,
         "deployment_identity": "deploy-43",
@@ -499,7 +508,7 @@ def test_authenticated_status_and_artifact_routes_are_path_free(tmp_path):
         def full_status(self):
             return {
                 "build": {
-                    "version": "1.6.3",
+                    "version": "1.6.4",
                     "source_revision": "a" * 40,
                 },
                 "deployment": {"deployment_id": "deploy-42"},
@@ -516,7 +525,7 @@ def test_authenticated_status_and_artifact_routes_are_path_free(tmp_path):
     assert status.status_code == 200
     assert status.json()["artifacts"][0]["sha256"]
     assert status.json()["runtime"] == {
-        "version": "1.6.3",
+        "version": "1.6.4",
         "source_revision": "a" * 40,
         "image_identity": "unknown",
         "deployment_identity": "deploy-42",
@@ -564,7 +573,7 @@ class _RuntimeStatus:
     def full_status(self):
         return {
             "build": {
-                "version": "1.6.3",
+                "version": "1.6.4",
                 "source_revision": "a" * 40,
                 "image_identity": "ghcr.io/khamel83/argus@sha256:" + "b" * 64,
                 "source_path": "/srv/argus/source",
@@ -611,7 +620,7 @@ def test_start_routes_capture_only_sanitized_runtime_identity(path, payload):
     assert response.status_code == 200
     assert workflows.runtime_values == [
         {
-            "version": "1.6.3",
+            "version": "1.6.4",
             "source_revision": "a" * 40,
             "image_identity": "ghcr.io/khamel83/argus@sha256:" + "b" * 64,
             "deployment_identity": "deploy-43",
@@ -633,7 +642,7 @@ async def test_started_workflow_persists_runtime_identity_before_background_exec
     release = asyncio.Event()
     runtime = _RuntimeStatus().full_status()
     expected_runtime = {
-        "version": "1.6.3",
+        "version": "1.6.4",
         "source_revision": "a" * 40,
         "image_identity": "ghcr.io/khamel83/argus@sha256:" + "b" * 64,
         "deployment_identity": "deploy-43",
@@ -1097,7 +1106,7 @@ async def test_research_pack_ignores_diagnostic_first_artifact_and_bounds_captur
     )
     assert official_call["max_results"] <= 8
     assert len(official_call["selection_urls"]) <= 8
-    assert official_call["required_urls"] == ()
+    assert official_call["required_urls"] == ("https://docs.example.com/guide",)
     assert official_call["minimum_artifacts"] == 1
     assert official_call["allow_partial"] is True
     assert external_call["max_results"] == 5
@@ -1142,6 +1151,6 @@ async def test_research_pack_all_rejected_artifacts_fails_without_synthesis(
     assert summarizer.calls == 0
     assert len(operations.compose_calls) == 1
     assert operations.compose_calls[0]["scope"] == "official"
-    assert operations.compose_calls[0]["required_urls"] == ()
+    assert operations.compose_calls[0]["required_urls"] == ("https://docs.example.com/guide",)
     assert operations.compose_calls[0]["minimum_artifacts"] == 1
     assert operations.compose_calls[0]["allow_partial"] is True

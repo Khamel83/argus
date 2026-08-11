@@ -1477,6 +1477,84 @@ def test_policy_complete_cache_preserves_exact_accepted_origin_lineage():
     ) is None
 
 
+def test_accepted_cache_policy_identity_and_paid_origin_free_hit():
+    from datetime import datetime, timezone
+    from argus.extraction.cache import ExtractionCache, ExtractionCacheIdentity
+
+    repository = MemoryOutcomeRepository(accepted_at="2026-07-27T12:00:00Z")
+    origin = _finalize(_raw(artifact=_artifact()), repository=repository)
+    identity = ExtractionCacheIdentity.from_accepted(origin)
+    cache = ExtractionCache(acceptance_repository=repository)
+    cache.put(identity, origin)
+
+    free = replace(
+        identity,
+        profile="free",
+        effective_max_provider_tier=0,
+        freshness_window_seconds=60,
+    )
+    decision = cache.decide(
+        free,
+        acceptance_repository=repository,
+        now=datetime(2026, 7, 27, 12, 0, 30, tzinfo=timezone.utc),
+    )
+
+    assert decision.outcome is CacheOutcome.HIT_ELIGIBLE
+    assert decision.origin_run_ref == origin.extraction_run_id
+    assert decision.origin_evidence is not None
+    assert decision.origin_evidence.acceptance_receipt == origin.acceptance_receipt
+
+    restricted = replace(free, provider_restrictions=("jina",))
+    denied = cache.decide(
+        restricted,
+        acceptance_repository=repository,
+        now=datetime(2026, 7, 27, 12, 0, 30, tzinfo=timezone.utc),
+    )
+    assert denied.outcome is CacheOutcome.HIT_INELIGIBLE
+    assert denied.reason == "policy_ineligible"
+    assert denied.origin_run_ref == origin.extraction_run_id
+    assert denied.age_seconds == 30
+    assert denied.origin_evidence is not None
+    assert denied.origin_evidence.acceptance_receipt == origin.acceptance_receipt
+    assert denied.current_identity == restricted
+
+    eligible_set_denied = cache.decide(
+        replace(free, eligible_extractors=("jina",)),
+        acceptance_repository=repository,
+        now=datetime(2026, 7, 27, 12, 0, 30, tzinfo=timezone.utc),
+    )
+    assert eligible_set_denied.outcome is CacheOutcome.HIT_INELIGIBLE
+
+    tier_boundary_denied = cache.decide(
+        replace(free, effective_max_provider_tier=1),
+        acceptance_repository=repository,
+        now=datetime(2026, 7, 27, 12, 0, 30, tzinfo=timezone.utc),
+    )
+    assert tier_boundary_denied.outcome is CacheOutcome.HIT_INELIGIBLE
+
+    mode_mismatch = cache.decide(
+        replace(free, mode="research"),
+        acceptance_repository=repository,
+        now=datetime(2026, 7, 27, 12, 0, 30, tzinfo=timezone.utc),
+    )
+    assert mode_mismatch.outcome is CacheOutcome.MISS
+
+    original_evidence_mismatch = cache.decide(
+        replace(free, original_evidence_ref="evidence-1"),
+        acceptance_repository=repository,
+        now=datetime(2026, 7, 27, 12, 0, 30, tzinfo=timezone.utc),
+    )
+    assert original_evidence_mismatch.outcome is CacheOutcome.MISS
+
+    stale = replace(free, freshness_window_seconds=10)
+    stale_decision = cache.decide(
+        stale,
+        acceptance_repository=repository,
+        now=datetime(2026, 7, 27, 12, 0, 30, tzinfo=timezone.utc),
+    )
+    assert stale_decision.outcome is CacheOutcome.HIT_INELIGIBLE
+
+
 @pytest.mark.asyncio
 async def test_archive_creation_requires_verified_durable_authority_before_post(
     monkeypatch,

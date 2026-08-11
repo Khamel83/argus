@@ -4,6 +4,7 @@ import json
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from argus.authority import (
     AuthorityClientConfig,
@@ -11,6 +12,19 @@ from argus.authority import (
     HttpAuthorityClient,
 )
 from argus.mcp.http_adapter import HttpMcpAdapter
+
+
+def _target_payload(*, extra: dict | None = None) -> dict:
+    target = {
+        "name": "Example",
+        "source_prefixes": ["https://example.com/docs/"],
+        "requirements": [
+            {"claim_class": "capabilities", "query": "what it does"}
+        ],
+    }
+    if extra:
+        target.update(extra)
+    return target
 
 
 @pytest.mark.asyncio
@@ -32,7 +46,7 @@ async def test_status_adapter_forwards_scoped_token_and_renders_safe_json():
                 "source_count": 1,
                 "domain_count": 1,
                 "cost_state": "unavailable",
-                "runtime": {"version": "1.6.3"},
+                "runtime": {"version": "1.6.4"},
             },
         )
 
@@ -105,6 +119,88 @@ async def test_build_json_adapter_allowlists_safe_start_projection():
 
 
 @pytest.mark.asyncio
+async def test_targeted_build_adapter_forwards_strict_json_request_to_safe_start():
+    observed = {}
+
+    def handler(request):
+        observed["authorization"] = request.headers["authorization"]
+        observed["path"] = request.url.path
+        observed["payload"] = request.read().decode("utf-8")
+        return httpx.Response(
+            202,
+            json={
+                "run_id": "run-targeted",
+                "kind": "build-research-pack",
+                "status": "pending",
+                "target": "Targeted research",
+                "created_at": "2026-08-10T01:00:00+00:00",
+                "status_url": "/api/workflows/run-targeted/status",
+                "request_sha256": "b" * 64,
+            },
+        )
+
+    adapter = HttpMcpAdapter(
+        HttpAuthorityClient(
+            AuthorityClientConfig("https://authority.example", "default-token"),
+            transport=httpx.MockTransport(handler),
+        )
+    )
+
+    result = json.loads(
+        await adapter.build_research_pack(
+            "Targeted research",
+            max_research_pages=17,
+            research_targets=[_target_payload()],
+            free_only=True,
+            caller_label="tonight-acceptance-v3",
+            caller_identity="authenticated-principal",
+            response_format="json",
+            token="scoped-token",
+        )
+    )
+
+    assert result["request_sha256"] == "b" * 64
+    assert observed["authorization"] == "Bearer scoped-token"
+    assert observed["path"] == "/api/workflows/build-research-pack/start"
+    assert json.loads(observed["payload"]) == {
+        "topic": "Targeted research",
+        "official_url": None,
+        "max_research_pages": 17,
+        "research_targets": [_target_payload()],
+        "free_only": True,
+        "caller": "tonight-acceptance-v3",
+    }
+    assert "response_format" not in observed["payload"]
+    assert "authenticated-principal" not in observed["payload"]
+
+
+@pytest.mark.asyncio
+async def test_targeted_build_adapter_rejects_unknown_target_before_http():
+    called = False
+
+    def handler(_request):
+        nonlocal called
+        called = True
+        return httpx.Response(500)
+
+    adapter = HttpMcpAdapter(
+        HttpAuthorityClient(
+            AuthorityClientConfig("https://authority.example", "default-token"),
+            transport=httpx.MockTransport(handler),
+        )
+    )
+
+    with pytest.raises(ValidationError):
+        await adapter.build_research_pack(
+            "Targeted research",
+            research_targets=[_target_payload(extra={"unexpected": "reject"})],
+            token="scoped-token",
+        )
+
+    assert called is False
+
+
+@pytest.mark.asyncio
 async def test_artifact_adapter_forwards_bounds_and_renders_content():
     observed = {}
 
@@ -152,6 +248,54 @@ async def test_artifact_adapter_forwards_bounds_and_renders_content():
         "path": "/api/workflows/run-safe/artifacts/report",
         "query": {"offset": "4", "max_bytes": "64"},
     }
+
+
+@pytest.mark.asyncio
+async def test_artifact_json_adapter_preserves_pagination_metadata_without_paths():
+    observed = {}
+
+    def handler(request):
+        observed["query"] = dict(request.url.params)
+        return httpx.Response(
+            200,
+            json={
+                "run_id": "run-safe",
+                "artifact": "manifest",
+                "kind": "manifest",
+                "media_type": "application/json",
+                "total_bytes": 12,
+                "offset": 4,
+                "bytes_returned": 8,
+                "truncated": True,
+                "next_offset": 12,
+                "sha256": "d" * 64,
+                "content": '{"safe":true}',
+                "path": "/srv/argus/manifest.json",
+            },
+        )
+
+    adapter = HttpMcpAdapter(
+        HttpAuthorityClient(
+            AuthorityClientConfig("https://authority.example", "default-token"),
+            transport=httpx.MockTransport(handler),
+        )
+    )
+
+    payload = json.loads(
+        await adapter.read_workflow_artifact(
+            "run-safe",
+            artifact="manifest",
+            offset=4,
+            max_bytes=64,
+            response_format="json",
+            token="scoped-token",
+        )
+    )
+
+    assert payload["next_offset"] == 12
+    assert payload["content"] == '{"safe":true}'
+    assert "path" not in payload
+    assert observed["query"] == {"offset": "4", "max_bytes": "64"}
 
 
 @pytest.mark.asyncio

@@ -242,8 +242,14 @@ _CHAIN_EXTRACTORS = [
 
 
 @pytest.fixture
-def mock_chain():
+def mock_chain(monkeypatch):
     """Fixture that patches all chain extractors. Use parametrize or override."""
+    # Jina is hermetically disabled by the suite environment; chain-order
+    # fixtures opt in explicitly so normal-mode legacy tests remain honest.
+    monkeypatch.setenv("ARGUS_JINA_ENABLED", "true")
+    from argus.config import reset_config
+
+    reset_config()
     patches = []
     mocks = {}
 
@@ -439,6 +445,7 @@ class TestExtractUrl:
 
         monkeypatch.setenv("ARGUS_CRAWL4AI_ENABLED", "true")
         monkeypatch.setenv("ARGUS_YOU_CONTENTS_ENABLED", "true")
+        monkeypatch.setenv("ARGUS_JINA_ENABLED", "true")
         monkeypatch.setenv("ARGUS_RESIDENTIAL_POLICY", "fallback")
         monkeypatch.setattr("argus.extraction.residential_extractor._is_configured", lambda: True)
         _cache.clear()
@@ -460,6 +467,174 @@ class TestExtractUrl:
             "wayback",
             "archive_is",
         ]
+
+    @pytest.mark.asyncio
+    async def test_free_only_skips_billable_extractors_before_call(
+        self,
+        mock_chain,
+        monkeypatch,
+    ):
+        from argus.extraction.extractor import _extract_url_unpersisted, _cache, _domain_limiter
+
+        monkeypatch.setenv("ARGUS_CRAWL4AI_ENABLED", "true")
+        monkeypatch.setenv("ARGUS_YOU_CONTENTS_ENABLED", "true")
+        monkeypatch.setenv("ARGUS_JINA_ENABLED", "true")
+        monkeypatch.setenv("JINA_API_KEY", "credential-present")
+        monkeypatch.setenv("VALYU_API_KEY", "credential-present")
+        monkeypatch.setenv("FIRECRAWL_API_KEY", "credential-present")
+        monkeypatch.setenv("YOU_API_KEY", "credential-present")
+        _cache.clear()
+        _domain_limiter.clear()
+
+        result = await _extract_url_unpersisted(
+            "https://example.com/free-only",
+            free_only=True,
+            allow_legacy_cache=False,
+            allow_legacy_cache_writes=False,
+        )
+
+        assert result.error is not None
+        skipped = {
+            attempt.extractor: attempt
+            for attempt in result.attempts
+            if attempt.extractor
+            in {"jina", "valyu_contents", "firecrawl", "you_contents"}
+        }
+        assert set(skipped) == {"jina", "valyu_contents", "firecrawl", "you_contents"}
+        assert all(attempt.status == "policy_skipped" for attempt in skipped.values())
+        assert all(
+            mock_chain[name].await_count == 0
+            for name in ("jina", "valyu_contents", "firecrawl", "you_contents")
+        )
+
+    @pytest.mark.asyncio
+    async def test_disabled_jina_is_not_invoked_in_normal_mode(
+        self,
+        mock_chain,
+        monkeypatch,
+    ):
+        from argus.config import reset_config
+        from argus.extraction.extractor import _extract_url_unpersisted, _cache, _domain_limiter
+
+        monkeypatch.setenv("ARGUS_JINA_ENABLED", "false")
+        reset_config()
+        _cache.clear()
+        _domain_limiter.clear()
+
+        await _extract_url_unpersisted(
+            "https://example.com/jina-disabled",
+            allow_legacy_cache=False,
+            allow_legacy_cache_writes=False,
+        )
+
+        assert mock_chain["jina"].await_count == 0
+
+    @pytest.mark.asyncio
+    async def test_accepted_extraction_reuses_durable_cache_hit(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        from argus.extraction import extractor as extraction_module
+        from argus.persistence.search_ledger import create_search_ledger_repository
+
+        repository = create_search_ledger_repository(
+            f"sqlite:///{tmp_path / 'accepted-extraction-cache.db'}"
+        )
+        good = ExtractedContent(
+            url="https://example.com/cacheable",
+            title="Cacheable",
+            text=_good_text(150),
+            word_count=150,
+            extractor=ExtractorName.TRAFILATURA,
+        )
+        trafilatura = AsyncMock(return_value=good)
+        monkeypatch.setattr(extraction_module, "_extract_trafilatura", trafilatura)
+        monkeypatch.setenv("ARGUS_RESIDENTIAL_POLICY", "off")
+        monkeypatch.setenv("ARGUS_JINA_ENABLED", "false")
+        from argus.config import reset_config
+
+        reset_config()
+
+        first = await extraction_module.extract_url(
+            good.url,
+            caller="cache-test",
+            repository=repository,
+            use_evidence_authority=True,
+            request_id="accepted-cache-first",
+        )
+        second = await extraction_module.extract_url(
+            good.url,
+            caller="cache-test",
+            free_only=True,
+            repository=repository,
+            use_evidence_authority=True,
+            request_id="accepted-cache-second",
+        )
+
+        assert first.text == second.text
+        assert second.cache_hit is True
+        assert len(second.attempts) == 1
+        assert [attempt.extractor for attempt in second.attempts] == ["cache"]
+        from argus.operations.accepted import _extraction_execution_evidence
+
+        assert _extraction_execution_evidence(second)[
+            "attempts"
+        ][0]["attempted"] is False
+        assert trafilatura.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_free_only_policy_skips_are_durable_and_not_invoked(
+        self,
+        mock_chain,
+        monkeypatch,
+        tmp_path,
+    ):
+        from argus.extraction import extractor as extraction_module
+        from argus.persistence.search_ledger import create_search_ledger_repository
+
+        monkeypatch.setenv("ARGUS_CRAWL4AI_ENABLED", "true")
+        monkeypatch.setenv("ARGUS_YOU_CONTENTS_ENABLED", "true")
+        monkeypatch.setenv("ARGUS_JINA_ENABLED", "true")
+        from argus.config import reset_config
+
+        reset_config()
+        repository = create_search_ledger_repository(
+            f"sqlite:///{tmp_path / 'free-only-accepted.db'}"
+        )
+        result = await extraction_module.extract_url(
+            "https://example.com/free-only-accepted",
+            caller="free-only-test",
+            free_only=True,
+            repository=repository,
+            use_evidence_authority=True,
+            request_id="free-only-accepted",
+        )
+
+        paid_attempts = {
+            attempt.extractor: attempt
+            for attempt in result.attempts
+            if attempt.extractor
+            in {"jina", "valyu_contents", "firecrawl", "you_contents"}
+        }
+        assert set(paid_attempts) == {
+            "jina",
+            "valyu_contents",
+            "firecrawl",
+            "you_contents",
+        }
+        assert all(
+            attempt.status == "policy_skipped"
+            and attempt.failure_summary == "free_only"
+            for attempt in paid_attempts.values()
+        )
+        assert result.accepted_execution_evidence.extractor_call_count == sum(
+            attempt.status != "policy_skipped" for attempt in result.attempts
+        )
+        assert all(
+            mock_chain[name].await_count == 0
+            for name in ("jina", "valyu_contents", "firecrawl", "you_contents")
+        )
 
 
 # --- Extraction Cache ---

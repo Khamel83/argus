@@ -1,7 +1,7 @@
 import pytest
 import httpx
 from unittest.mock import AsyncMock, patch, MagicMock
-from argus.models import ProviderName, SearchQuery, SearchMode, ProviderStatus
+from argus.models import ProviderName, SearchQuery, SearchMode
 from argus.config import EgressNode
 
 
