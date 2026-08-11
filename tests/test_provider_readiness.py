@@ -10,7 +10,7 @@ from argus.models import ProviderName, is_adapter_provider
 
 
 UTC = timezone.utc
-ATTESTED_RELEASE = "argus-1.6.3"
+ATTESTED_RELEASE = "argus-1.6.4"
 ATTESTED_CONTRACT = "2026-07-27-v1"
 
 

@@ -46,7 +46,7 @@ async def test_status_adapter_forwards_scoped_token_and_renders_safe_json():
                 "source_count": 1,
                 "domain_count": 1,
                 "cost_state": "unavailable",
-                "runtime": {"version": "1.6.3"},
+                "runtime": {"version": "1.6.4"},
             },
         )
 

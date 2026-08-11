@@ -462,7 +462,7 @@ def test_status_projection_reports_truthful_evidence_and_runtime_metrics(tmp_pat
         run,
         runtime={
             "build": {
-                "version": "1.6.3",
+                "version": "1.6.4",
                 "source_revision": "b" * 40,
                 "image_identity": "sha256:" + "c" * 64,
             },
@@ -481,7 +481,7 @@ def test_status_projection_reports_truthful_evidence_and_runtime_metrics(tmp_pat
     assert "provider_degraded" in payload["degraded_reasons"]
     assert payload["cost_state"] == "uncertain"
     assert payload["runtime"] == {
-        "version": "1.6.3",
+        "version": "1.6.4",
         "source_revision": "b" * 40,
         "image_identity": "sha256:" + "c" * 64,
         "deployment_identity": "deploy-43",
@@ -508,7 +508,7 @@ def test_authenticated_status_and_artifact_routes_are_path_free(tmp_path):
         def full_status(self):
             return {
                 "build": {
-                    "version": "1.6.3",
+                    "version": "1.6.4",
                     "source_revision": "a" * 40,
                 },
                 "deployment": {"deployment_id": "deploy-42"},
@@ -525,7 +525,7 @@ def test_authenticated_status_and_artifact_routes_are_path_free(tmp_path):
     assert status.status_code == 200
     assert status.json()["artifacts"][0]["sha256"]
     assert status.json()["runtime"] == {
-        "version": "1.6.3",
+        "version": "1.6.4",
         "source_revision": "a" * 40,
         "image_identity": "unknown",
         "deployment_identity": "deploy-42",
@@ -573,7 +573,7 @@ class _RuntimeStatus:
     def full_status(self):
         return {
             "build": {
-                "version": "1.6.3",
+                "version": "1.6.4",
                 "source_revision": "a" * 40,
                 "image_identity": "ghcr.io/khamel83/argus@sha256:" + "b" * 64,
                 "source_path": "/srv/argus/source",
@@ -620,7 +620,7 @@ def test_start_routes_capture_only_sanitized_runtime_identity(path, payload):
     assert response.status_code == 200
     assert workflows.runtime_values == [
         {
-            "version": "1.6.3",
+            "version": "1.6.4",
             "source_revision": "a" * 40,
             "image_identity": "ghcr.io/khamel83/argus@sha256:" + "b" * 64,
             "deployment_identity": "deploy-43",
@@ -642,7 +642,7 @@ async def test_started_workflow_persists_runtime_identity_before_background_exec
     release = asyncio.Event()
     runtime = _RuntimeStatus().full_status()
     expected_runtime = {
-        "version": "1.6.3",
+        "version": "1.6.4",
         "source_revision": "a" * 40,
         "image_identity": "ghcr.io/khamel83/argus@sha256:" + "b" * 64,
         "deployment_identity": "deploy-43",

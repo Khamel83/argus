@@ -210,7 +210,7 @@ wheels = [
 
 [[package]]
 name = "argus-search"
-version = "1.6.3"
+version = "1.6.4"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
