@@ -27,6 +27,7 @@ from argus.acceptance_v3.contract import (
     bind_returned_run,
     canonical_hash,
     create_global_guard,
+    validate_execution_contract,
     write_execution_contract,
     write_phase_marker,
 )
@@ -172,13 +173,24 @@ def execute_cycle(
                 contract_path=Path(contract_path),
                 guard_path=Path(guard_path),
             )
-            if not isinstance(prepared, Mapping) or not prepared.get(
-                "execution_contract_sha256"
-            ):
+            if not isinstance(prepared, Mapping):
                 raise ContractError("injected guard preparation returned no receipt")
         else:
             write_execution_contract(Path(contract_path), execution_contract)
-            create_global_guard(Path(guard_path), execution_contract)
+            guard = create_global_guard(Path(guard_path), execution_contract)
+            prepared = {
+                "created": True,
+                "o_excl": True,
+                "contract_path": str(contract_path),
+                "guard_path": str(guard_path),
+                "execution_contract_sha256": guard["execution_contract_sha256"],
+            }
+        _verify_prepared_guard(
+            prepared,
+            execution_contract,
+            contract_path=Path(contract_path),
+            guard_path=Path(guard_path),
+        )
     except (ContractError, OSError, ValueError) as exc:
         return publish(
             "preflight_failed",
@@ -294,6 +306,53 @@ def _wire_bytes(value: Mapping[str, Any]) -> bytes:
 
 def _wire_hash(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def _verify_prepared_guard(
+    prepared: Mapping[str, Any],
+    execution_contract: Mapping[str, Any],
+    *,
+    contract_path: Path,
+    guard_path: Path,
+) -> None:
+    """Verify a guard receipt by rereading the exact fsynced files."""
+
+    if prepared.get("created") is not True or prepared.get("o_excl") is not True:
+        raise ContractError("guard receipt does not prove immutable O_EXCL creation")
+    if prepared.get("contract_path") != str(contract_path) or prepared.get(
+        "guard_path"
+    ) != str(guard_path):
+        raise ContractError("guard receipt paths do not match the contract")
+    if contract_path.is_symlink() or guard_path.is_symlink():
+        raise ContractError("guard files must not be symlinks")
+    if not contract_path.is_file() or not guard_path.is_file():
+        raise ContractError("guard files are missing")
+    if (
+        contract_path.stat().st_mode & 0o7777 != 0o600
+        or guard_path.stat().st_mode & 0o7777 != 0o600
+    ):
+        raise ContractError("guard files must have mode 0600")
+    try:
+        persisted = json.loads(contract_path.read_text(encoding="utf-8"))
+        guard = json.loads(guard_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ContractError("guard files are not canonical JSON") from exc
+    checked = validate_execution_contract(persisted)
+    if canonical_hash(checked) != canonical_hash(execution_contract):
+        raise ContractError("persisted execution contract hash mismatch")
+    contract_hash = canonical_hash(checked)
+    if prepared.get("execution_contract_sha256") != contract_hash:
+        raise ContractError("guard receipt contract hash mismatch")
+    if (
+        not isinstance(guard, Mapping)
+        or guard.get("execution_contract_sha256") != contract_hash
+    ):
+        raise ContractError("global guard is not bound to the execution contract")
+    if (
+        guard.get("cycle_id") != checked["cycle_id"]
+        or guard.get("schema") != checked["schema"]
+    ):
+        raise ContractError("global guard identity mismatch")
 
 
 def _require_search_canary(response: Mapping[str, Any]) -> None:
