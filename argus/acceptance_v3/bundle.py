@@ -8,6 +8,7 @@ existing semantics and bytes.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
 import hashlib
 import ipaddress
 import json
@@ -700,8 +701,6 @@ def build_canary_fixture(
         "caller": "tonight-acceptance-v3-canary",
     }
     if started_at is None and completed_at is None:
-        from datetime import datetime, timezone
-
         started_at = completed_at = (
             datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         )

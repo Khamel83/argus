@@ -66,6 +66,10 @@ _MUTABLE_KEYS = {
     "status",
 }
 _SAFE_STATUSES = {"success", "empty", "failed", "policy_skipped", "cache", "accepted"}
+MAX_TRANSPORT_PAGE_BYTES = 65_536
+MAX_TRANSPORT_PAGES = 64
+MAX_TRANSPORT_BYTES = 4 * 1024 * 1024
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SENSITIVE_VALUE = re.compile(
     r"(?:\bbearer\s+|\bbasic\s+|\bcookie\s*[:=]|\b(?:api[_-]?key|password|secret|authorization|private[_-]?key|raw[_-]?exception)\s*[:=]|-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:traceback|exception|stack trace)\b|(?:postgres(?:ql)?|pg)://|\bssh://|\bfile://)",
     re.IGNORECASE,
@@ -376,12 +380,22 @@ def validate_transport_pages(
     pages: Sequence[Mapping[str, Any]],
     *,
     expected_sha256: str,
-    max_pages: int = 64,
-    max_bytes: int = 4 * 1024 * 1024,
+    max_pages: int = MAX_TRANSPORT_PAGES,
+    max_bytes: int = MAX_TRANSPORT_BYTES,
+    max_page_bytes: int = MAX_TRANSPORT_PAGE_BYTES,
+    expected_total_bytes: int | None = None,
+    expected_terminal_offset: int | None = None,
 ) -> dict[str, Any]:
     """Validate a contiguous UTF-8 artifact page stream and its terminal hash."""
 
-    if max_pages < 1 or max_pages > 64 or max_bytes < 1 or max_bytes > 4 * 1024 * 1024:
+    if (
+        max_pages < 1
+        or max_pages > MAX_TRANSPORT_PAGES
+        or max_bytes < 1
+        or max_bytes > MAX_TRANSPORT_BYTES
+        or max_page_bytes < 1
+        or max_page_bytes > MAX_TRANSPORT_PAGE_BYTES
+    ):
         raise ObservationError("transport bounds cannot be widened")
     if not pages or len(pages) > max_pages:
         raise ObservationError("transport page count is outside bound")
@@ -392,6 +406,7 @@ def validate_transport_pages(
     offset = 0
     chunks: list[bytes] = []
     terminal_count = 0
+    terminal_hash_claim: object = None
     for index, page in enumerate(pages):
         if not isinstance(page, Mapping):
             raise ObservationError("transport page must be an object")
@@ -401,6 +416,15 @@ def validate_transport_pages(
         if not isinstance(data, str):
             raise ObservationError("transport page data must be UTF-8 text")
         encoded = data.encode("utf-8")
+        if len(encoded) > max_page_bytes:
+            raise ObservationError("transport page exceeds byte bound")
+        declared_bytes = page.get("bytes")
+        if declared_bytes is not None and (
+            isinstance(declared_bytes, bool)
+            or not isinstance(declared_bytes, int)
+            or declared_bytes != len(encoded)
+        ):
+            raise ObservationError("transport page byte count mismatch")
         chunks.append(encoded)
         offset += len(encoded)
         if offset > max_bytes:
@@ -410,13 +434,186 @@ def validate_transport_pages(
             terminal_count += 1
             if index != len(pages) - 1:
                 raise ObservationError("terminal page is not last")
+            terminal_hash_claim = page.get("sha256")
     if terminal_count != 1:
         raise ObservationError("transport stream needs one terminal page")
     payload = b"".join(chunks)
     digest = hashlib.sha256(payload).hexdigest()
     if digest != expected_sha256:
         raise ObservationError("terminal artifact hash mismatch")
+    if terminal_hash_claim is not None and terminal_hash_claim != digest:
+        raise ObservationError("terminal page hash mismatch")
+    if expected_total_bytes is not None:
+        if (
+            isinstance(expected_total_bytes, bool)
+            or not isinstance(expected_total_bytes, int)
+            or expected_total_bytes != len(payload)
+        ):
+            raise ObservationError("terminal artifact byte count mismatch")
+    if expected_terminal_offset is not None:
+        if (
+            isinstance(expected_terminal_offset, bool)
+            or not isinstance(expected_terminal_offset, int)
+            or expected_terminal_offset != len(payload)
+        ):
+            raise ObservationError("terminal artifact offset mismatch")
     return {"pages": len(pages), "bytes": len(payload), "sha256": digest}
+
+
+def validate_snapshot_projection(
+    snapshot: Mapping[str, Any], *, expected_sha256: str | None = None
+) -> None:
+    """Validate a value-free PostgreSQL snapshot rather than a ``valid`` flag.
+
+    Acceptance snapshots are persisted observations.  A caller cannot turn an
+    arbitrary assertion into evidence by setting ``valid=true``: the
+    projection must carry the database authority, UTC clock, bounded query
+    settings, rows, and a digest over the complete projection.
+    """
+
+    if not isinstance(snapshot, Mapping):
+        raise ObservationError("snapshot projection must be an object")
+    required = {
+        "schema",
+        "kind",
+        "authority",
+        "database_timezone",
+        "observed_at",
+        "statement_timeout_ms",
+        "lock_timeout_ms",
+        "rows",
+        "sha256",
+    }
+    if not required.issubset(snapshot):
+        raise ObservationError("snapshot projection is incomplete")
+    if snapshot.get("schema") != "argus-acceptance-v3/snapshot":
+        raise ObservationError("snapshot schema is invalid")
+    if snapshot.get("authority") != "postgresql":
+        raise ObservationError("snapshot PostgreSQL authority is required")
+    if snapshot.get("database_timezone") != "UTC":
+        raise ObservationError("snapshot database timezone must be UTC")
+    if (
+        snapshot.get("statement_timeout_ms") != 15_000
+        or snapshot.get("lock_timeout_ms") != 2_000
+    ):
+        raise ObservationError("snapshot query timeout bounds are invalid")
+    if not isinstance(snapshot.get("kind"), str) or not snapshot["kind"]:
+        raise ObservationError("snapshot kind is required")
+    rows = snapshot.get("rows")
+    if not isinstance(rows, list):
+        raise ObservationError("snapshot rows must be a list")
+    digest = snapshot.get("sha256")
+    if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+        raise ObservationError("snapshot hash is invalid")
+    if expected_sha256 is not None and digest != expected_sha256:
+        raise ObservationError("snapshot hash is not contract-bound")
+    try:
+        timestamp = _utc(snapshot.get("observed_at"), "snapshot observed_at")
+    except ObservationError:
+        raise
+    if _iso(timestamp) != snapshot.get("observed_at"):
+        raise ObservationError("snapshot timestamp is not canonical UTC")
+    # Recompute the hash over the exact producer shape (the producer adds the
+    # digest after hashing the projection).  This also rejects a value-only
+    # ``{"valid": true}`` assertion with a forged digest.
+    unsigned = dict(snapshot)
+    unsigned.pop("sha256", None)
+    if canonical_hash(unsigned) != digest:
+        raise ObservationError("snapshot hash does not cover its contents")
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise ObservationError("snapshot row must be an object")
+        # Reuse the redaction scanner without rewriting the persisted row.
+        _sanitize(row, path="snapshot.row")
+
+
+def _valid_digest(value: object) -> bool:
+    return isinstance(value, str) and bool(_SHA256.fullmatch(value))
+
+
+def validate_preflight_observations(observations: Mapping[str, Any]) -> None:
+    """Require substantive, value-free authority observations before canary POSTs."""
+
+    required = {
+        "spend",
+        "balance",
+        "outbox",
+        "policy",
+        "logs",
+        "unauth_probe",
+        "audit",
+        "network",
+    }
+    if not isinstance(observations, Mapping) or set(observations) != required:
+        raise ObservationError("preflight observations are incomplete")
+    for name, value in observations.items():
+        if not isinstance(value, Mapping) or value.get("valid") is not True:
+            raise ObservationError(f"preflight {name} observation is not valid")
+        if set(value) <= {"valid"}:
+            raise ObservationError(f"preflight {name} observation has no contents")
+        digest = value.get("sha256", value.get("snapshot_sha256"))
+        if digest is not None and not _valid_digest(digest):
+            raise ObservationError(f"preflight {name} observation hash is invalid")
+        if name == "outbox":
+            for key in ("pending", "retry", "dead_letter"):
+                count = value.get(key)
+                if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                    raise ObservationError("preflight outbox counts are invalid")
+        elif name == "policy":
+            if value.get("free_only") is not True or value.get("caller") not in {
+                "mac-agents",
+                "mac-agents-canary",
+            }:
+                raise ObservationError("preflight policy identity is invalid")
+            if value.get("tier_cap") != 1:
+                raise ObservationError("preflight policy tier cap is invalid")
+        elif name == "unauth_probe":
+            if value.get("status") not in {401, 403}:
+                raise ObservationError("preflight unauthenticated probe is invalid")
+            if (
+                value.get("redirected") is not False
+                or value.get("session_issued") is not False
+                or value.get("side_effect_delta") != 0
+            ):
+                raise ObservationError(
+                    "preflight unauthenticated probe had side effects"
+                )
+            if not _valid_digest(value.get("response_sha256")):
+                raise ObservationError(
+                    "preflight unauthenticated response hash is missing"
+                )
+        elif name == "logs":
+            if (
+                not isinstance(value.get("records"), list)
+                or value.get("unexpected", []) != []
+            ):
+                raise ObservationError("preflight log evidence is incomplete")
+        elif name == "network":
+            traces = value.get("traces", value.get("attempts"))
+            if not isinstance(traces, list):
+                raise ObservationError("preflight network traces are missing")
+            for trace in traces:
+                if not isinstance(trace, Mapping):
+                    raise ObservationError("preflight network trace is invalid")
+                attempted = trace.get("attempted", True)
+                tier = trace.get("tier", trace.get("provider_tier"))
+                if attempted and (
+                    isinstance(tier, bool)
+                    or not isinstance(tier, (int, float))
+                    or tier > 0
+                ):
+                    raise ObservationError("preflight network trace is billable")
+                if attempted and not trace.get("provider"):
+                    raise ObservationError("preflight network trace lacks provider")
+        else:
+            rows = value.get("rows", value.get("records", value.get("delta")))
+            if rows is None:
+                raise ObservationError(f"preflight {name} observation has no rows")
+            if name in {"spend", "audit"} and value.get("violations", []) not in (
+                [],
+                None,
+            ):
+                raise ObservationError(f"preflight {name} contains violations")
 
 
 def normalize_transport_envelope(value: object) -> Mapping[str, Any]:
