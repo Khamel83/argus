@@ -10,6 +10,8 @@ import pytest
 
 from argus.acceptance_v3.contract import (
     CYCLE_ID,
+    FROZEN_ENDPOINT_PATHS,
+    FROZEN_REQUEST_KEYS,
     GLOBAL_GUARD_PATH,
     PROFILE,
     SCHEMA,
@@ -30,9 +32,28 @@ def _contract() -> dict[str, object]:
     root.mkdir(parents=True, exist_ok=True)
     os.chmod(root, 0o700)
     return build_execution_contract(
-        request={"topic": "topic", "official_url": None},
-        start_body={"topic": "topic", "official_url": None},
-        endpoints={"start": "/api/workflows/build-research-pack/start"},
+        request={
+            "topic": "topic",
+            "official_url": None,
+            "max_research_pages": 17,
+            "research_targets": [],
+            "free_only": True,
+            "caller": "tonight-acceptance-v3",
+        },
+        start_body={
+            "topic": "topic",
+            "official_url": None,
+            "max_research_pages": 17,
+            "research_targets": [],
+            "free_only": True,
+            "caller": "tonight-acceptance-v3",
+        },
+        endpoints={
+            "start": "/api/workflows/build-research-pack/start",
+            "status": "/api/workflows/{run_id}/status",
+            "report": "/api/workflows/{run_id}/artifacts/report",
+            "manifest": "/api/workflows/{run_id}/artifacts/manifest",
+        },
         candidate={
             "version": "1.6.4",
             "source_revision": "a" * 40,
@@ -251,3 +272,29 @@ def test_execution_contract_rejects_empty_endpoints_extra_snapshot_fields_and_un
                 "guard_path": "/Users/macmini/.local/state/./argus-tonight-final-score-v3-started.json",
             }
         )
+
+
+def test_execution_contract_binds_the_frozen_endpoint_set_and_request_keys():
+    contract = _contract()
+    assert set(contract["request"]) == FROZEN_REQUEST_KEYS
+    assert set(contract["start_body"]) == FROZEN_REQUEST_KEYS
+    assert {
+        endpoint["path"] for endpoint in contract["endpoints"].values()
+    } == FROZEN_ENDPOINT_PATHS
+    contract["endpoints"]["legacy"] = {
+        "path": "/api/workflows/build-research-pack",
+        "request_sha256": "a" * 64,
+        "pagination_sha256": "b" * 64,
+        "envelope_normalization_sha256": "c" * 64,
+    }
+    contract["endpoint_hashes"]["legacy"] = canonical_hash(
+        contract["endpoints"]["legacy"]
+    )
+    with pytest.raises(ContractError, match="frozen"):
+        validate_execution_contract(contract)
+
+
+def test_evidence_root_rejects_lexical_parent_traversal():
+    parent = Path("/Users/macmini/.local/state") / "nested" / ".."
+    with pytest.raises(ContractError, match="trusted"):
+        create_evidence_root(parent, name="argus-acceptance-v3-traversal")

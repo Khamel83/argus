@@ -393,6 +393,8 @@ def validate_transport_pages(
     chunks: list[bytes] = []
     terminal_count = 0
     for index, page in enumerate(pages):
+        if not isinstance(page, Mapping):
+            raise ObservationError("transport page must be an object")
         if page.get("offset") != offset:
             raise ObservationError("transport page offsets are not contiguous")
         data = page.get("data")
@@ -415,6 +417,40 @@ def validate_transport_pages(
     if digest != expected_sha256:
         raise ObservationError("terminal artifact hash mismatch")
     return {"pages": len(pages), "bytes": len(payload), "sha256": digest}
+
+
+def normalize_transport_envelope(value: object) -> Mapping[str, Any]:
+    """Extract the workflow projection from HTTP/MCP envelope metadata.
+
+    HTTP status headers, JSON-RPC IDs, MCP session fields, and ``TextContent``
+    wrappers are transport metadata.  They must not be compared as artifact
+    bytes; only the bounded JSON projection they carry is evidence.
+    """
+
+    if not isinstance(value, Mapping):
+        raise ObservationError("transport envelope must be an object")
+    if value.get("isError") is True:
+        raise ObservationError("MCP transport returned an error envelope")
+    current: object = value
+    if isinstance(current, Mapping) and isinstance(current.get("result"), Mapping):
+        current = current["result"]
+    if isinstance(current, Mapping) and "content" in current:
+        content = current.get("content")
+        if not isinstance(content, list) or len(content) != 1:
+            raise ObservationError("transport envelope must contain one content item")
+        item = content[0]
+        if not isinstance(item, Mapping) or item.get("type") != "text":
+            raise ObservationError("transport envelope content must be TextContent")
+        text = item.get("text")
+        if not isinstance(text, str) or len(text.encode("utf-8")) > 4 * 1024 * 1024:
+            raise ObservationError("transport TextContent exceeds bound")
+        try:
+            current = json.loads(text)
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise ObservationError("transport TextContent is not strict JSON") from exc
+    if not isinstance(current, Mapping):
+        raise ObservationError("transport envelope projection must be an object")
+    return current
 
 
 def replay_capture_evidence(

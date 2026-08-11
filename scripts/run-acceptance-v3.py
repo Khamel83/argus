@@ -13,8 +13,10 @@ from datetime import datetime, timezone
 import argparse
 import hashlib
 import importlib
+import inspect
 import json
 from pathlib import Path
+import time
 from typing import Any, Mapping, Protocol
 
 from argus.acceptance_v3.bundle import (
@@ -34,6 +36,7 @@ from argus.acceptance_v3.contract import (
 )
 from argus.acceptance_v3.observations import (
     ObservationError,
+    normalize_transport_envelope,
     replay_capture_evidence,
     validate_transport_pages,
 )
@@ -65,6 +68,14 @@ class CycleAdapters(AcceptanceAdapters, Protocol):
     def rollback(self, reason: str) -> Mapping[str, Any]: ...
 
 
+CLIENT_DEADLINE_SECONDS = 600.0
+WORKFLOW_DEADLINE_SECONDS = 540.0
+STATUS_REQUEST_TIMEOUT_SECONDS = 120.0
+MAX_STATUS_POLLS = 600
+_PENDING_STATUSES = frozenset({"pending", "running", "in_progress", "queued"})
+_TERMINAL_STATUSES = frozenset({"completed", "failed", "timeout", "timed_out"})
+
+
 @dataclass(frozen=True)
 class CanaryResult:
     fixture: Mapping[str, Any]
@@ -74,7 +85,11 @@ class CanaryResult:
 
 
 def _failure_payload(
-    status: str, reason: str, *, artifact: bytes | None = None
+    status: str,
+    reason: str,
+    *,
+    artifact: bytes | None = None,
+    recovery: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create a machine-readable non-fabricating branch payload."""
 
@@ -99,6 +114,7 @@ def _failure_payload(
     }
     if status == "evaluator_not_run":
         artifacts["report.json"] = artifact or b'{"status":"artifact_complete"}'
+    recovery_document = dict(recovery or _no_change_recovery(reason))
     return {
         "manifest": {
             "schema": "argus-acceptance-v3/free-targeted",
@@ -117,24 +133,91 @@ def _failure_payload(
             "reason": reason,
             "requirements": None,
         },
-        "recovery": {
-            "status": "not_applicable",
-            "reason": "no mutation",
-            "proof": "no mutation",
-            "proof_sha256": canonical_hash("no mutation"),
-            "no_change": True,
-            "change_count": 0,
-            "before_sha256": "0" * 64,
-            "after_sha256": "0" * 64,
-        },
+        "recovery": recovery_document,
         "artifacts": artifacts,
     }
 
 
+def _no_change_recovery(reason: str) -> dict[str, Any]:
+    """Return the only valid no-mutation recovery document.
+
+    This is used exclusively by preflight branches.  Once a canary or start
+    request has been dispatched, callers must use the rollback receipt helper
+    below; emitting this document would falsely claim that no state changed.
+    """
+
+    proof = f"no mutation before side effects: {reason}"
+    return {
+        "status": "not_applicable",
+        "reason": reason,
+        "proof": proof,
+        "proof_sha256": canonical_hash(proof),
+        "no_change": True,
+        "change_count": 0,
+        "before_sha256": "0" * 64,
+        "after_sha256": "0" * 64,
+    }
+
+
+def _rollback_recovery(
+    rollback: object, reason: str
+) -> tuple[bool, dict[str, Any]]:
+    """Normalize a caller rollback receipt without inventing restoration proof."""
+
+    if not isinstance(rollback, Mapping):
+        proof = f"rollback receipt unavailable: {reason}"
+        return False, {
+            "status": "failed",
+            "reason": reason,
+            "proof": proof,
+            "proof_sha256": canonical_hash(proof),
+            "no_change": False,
+        }
+    proof = rollback.get("proof")
+    if not isinstance(proof, str) or not proof:
+        proof = f"rollback receipt incomplete: {reason}"
+    proof_hash = rollback.get("proof_sha256")
+    proof_hash_valid = (
+        isinstance(proof_hash, str)
+        and proof_hash == canonical_hash(proof)
+    )
+    complete = rollback.get("status") == "complete" and proof_hash_valid
+    required_hashes = (
+        "backup_sha256",
+        "restore_sha256",
+        "schema_sha256",
+        "identity_sha256",
+        "soak_sha256",
+    )
+    if complete and not all(
+        isinstance(rollback.get(key), str)
+        and len(rollback[key]) == 64
+        and all(char in "0123456789abcdef" for char in rollback[key])
+        for key in required_hashes
+    ):
+        complete = False
+    document: dict[str, Any] = {
+        "status": "complete" if complete else "failed",
+        "reason": str(rollback.get("reason") or reason),
+        "proof": proof,
+        "proof_sha256": canonical_hash(proof),
+        "no_change": False,
+    }
+    if isinstance(rollback.get("change_count"), int) and not isinstance(
+        rollback["change_count"], bool
+    ):
+        document["change_count"] = rollback["change_count"]
+    for key in required_hashes + ("before_sha256", "after_sha256"):
+        value = rollback.get(key)
+        if isinstance(value, str) and len(value) == 64 and all(
+            char in "0123456789abcdef" for char in value
+        ):
+            document[key] = value
+    return complete, document
+
+
 def _read_bound_artifact(adapters: CycleAdapters, run_id: str, transport: str) -> bytes:
-    projection = adapters.read_artifact(run_id, transport)
-    if not isinstance(projection, Mapping):
-        raise ValueError("artifact adapter must return a page projection")
+    projection = normalize_transport_envelope(adapters.read_artifact(run_id, transport))
     pages = projection.get("pages")
     expected_sha256 = projection.get("sha256")
     if not isinstance(pages, list) or not isinstance(expected_sha256, str):
@@ -144,6 +227,19 @@ def _read_bound_artifact(adapters: CycleAdapters, run_id: str, transport: str) -
         return "".join(page["data"] for page in pages).encode("utf-8")
     except (KeyError, TypeError, UnicodeError) as exc:
         raise ValueError("artifact projection page data is invalid") from exc
+
+
+def _semantic_artifacts_equal(left: bytes, right: bytes) -> bool:
+    """Compare normalized artifact payloads, not HTTP/MCP envelope bytes."""
+
+    if left == right:
+        return True
+    try:
+        left_value = json.loads(left.decode("utf-8"))
+        right_value = json.loads(right.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return canonical_hash(left_value) == canonical_hash(right_value)
 
 
 def _verify_evaluator_result(
@@ -175,6 +271,25 @@ def _verify_evaluator_result(
             raise ValueError(f"evaluator identity mismatch: {key}")
     if evaluation.get("artifact_sha256") != hashlib.sha256(artifact).hexdigest():
         raise ValueError("evaluator artifact receipt mismatch")
+    artifact_hashes = execution_contract.get("artifact_hashes")
+    if not isinstance(artifact_hashes, Mapping) or evaluation.get(
+        "evaluator_sha256"
+    ) != artifact_hashes.get("evaluator_sha256"):
+        raise ValueError("evaluator implementation hash is not contract-bound")
+    capabilities = actual.get("capabilities")
+    if capabilities is not None:
+        if not isinstance(capabilities, Mapping):
+            raise ValueError("evaluator capabilities projection is invalid")
+        for key in (
+            "web",
+            "tools",
+            "memory",
+            "provider",
+            "database",
+            "spend",
+        ):
+            if capabilities.get(key, False) is not False:
+                raise ValueError("evaluator capability isolation is incomplete")
     if (
         any(
             actual.get(key) is not False
@@ -189,6 +304,144 @@ def _verify_evaluator_result(
         or actual.get("spend_authority") != "none"
     ):
         raise ValueError("evaluator capability isolation is incomplete")
+
+
+def _invoke_poll(adapters: CycleAdapters, run_id: str, timeout: float) -> Mapping[str, Any]:
+    """Call an injected status adapter with its finite request timeout.
+
+    Test and production adapters have historically exposed both a one-argument
+    and a keyword-timeout form.  Supporting both keeps the seam small while
+    ensuring a reviewed transport can never silently omit its deadline.
+    """
+
+    poll = adapters.poll_status
+    try:
+        parameters = inspect.signature(poll).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    if "timeout_seconds" in parameters:
+        value = poll(run_id, timeout_seconds=timeout)
+    elif "timeout" in parameters:
+        value = poll(run_id, timeout=timeout)
+    else:
+        value = poll(run_id)
+    if not isinstance(value, Mapping):
+        raise ValueError("workflow status projection is not an object")
+    return value
+
+
+def _workflow_time(value: object, label: str) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError(f"workflow {label} is missing")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"workflow {label} is invalid") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"workflow {label} must be aware UTC")
+    if parsed.utcoffset().total_seconds() != 0:
+        raise ValueError(f"workflow {label} must be UTC")
+    return parsed.astimezone(timezone.utc)
+
+
+def _validate_workflow_deadline(terminal: Mapping[str, Any]) -> None:
+    """Require the workflow's persisted interval to fit the 540s bound."""
+
+    started = terminal.get("started_at", terminal.get("created_at"))
+    finished = terminal.get("finished_at", terminal.get("completed_at"))
+    if started is None and finished is None:
+        # The adapter may expose only a terminal status in a hermetic unit
+        # fixture.  The client monotonic deadline still bounds that call.
+        return
+    if started is None or finished is None:
+        raise ValueError("workflow terminal interval is incomplete")
+    elapsed = (_workflow_time(finished, "finished_at") - _workflow_time(started, "started_at")).total_seconds()
+    if elapsed < 0 or elapsed > WORKFLOW_DEADLINE_SECONDS:
+        raise TimeoutError("workflow exceeded the 540-second deadline")
+
+
+def _poll_workflow(
+    adapters: CycleAdapters,
+    run_id: str,
+    *,
+    dispatched_monotonic: float | None = None,
+) -> Mapping[str, Any]:
+    """Poll a run with finite client/request deadlines and no side-effect retry."""
+
+    start = time.monotonic() if dispatched_monotonic is None else dispatched_monotonic
+    client_deadline = start + CLIENT_DEADLINE_SECONDS
+    for _ in range(MAX_STATUS_POLLS):
+        remaining = client_deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("workflow client deadline exceeded")
+        terminal = _invoke_poll(
+            adapters, run_id, min(STATUS_REQUEST_TIMEOUT_SECONDS, remaining)
+        )
+        status = terminal.get("status")
+        if status in _TERMINAL_STATUSES:
+            _validate_workflow_deadline(terminal)
+            return terminal
+        if status not in _PENDING_STATUSES:
+            raise ValueError("workflow status is outside the frozen terminal set")
+    raise TimeoutError("workflow poll loop exhausted its bounded attempts")
+
+
+def _rollback_and_publish(
+    adapters: CycleAdapters,
+    *,
+    status: str,
+    reason: str,
+    output: Path,
+    artifact: bytes | None = None,
+) -> Mapping[str, Any]:
+    """Perform exactly one recovery attempt and publish its proof."""
+
+    try:
+        receipt = adapters.rollback(reason)
+    except Exception as exc:
+        receipt = {
+            "status": "failed",
+            "reason": f"rollback adapter failed: {type(exc).__name__}",
+            "proof": f"rollback adapter failed: {type(exc).__name__}",
+        }
+    complete, recovery = _rollback_recovery(receipt, reason)
+    terminal_status = status if complete else "rollback_incomplete"
+    payload = _failure_payload(
+        terminal_status,
+        reason if complete else str(recovery.get("reason", reason)),
+        artifact=artifact,
+        recovery=recovery,
+    )
+    write_bundle(output, payload)
+    return verify_bundle(output)
+
+
+_REQUIRED_PREFLIGHT_OBSERVATIONS = frozenset(
+    {"spend", "balance", "outbox", "policy", "logs", "unauth_probe", "audit"}
+)
+
+
+def _preflight_observations_ready(preflight: Mapping[str, Any]) -> bool:
+    """Require every no-spend/authority predicate before any canary POST."""
+
+    observations = preflight.get("observations", preflight.get("evidence"))
+    if not isinstance(observations, Mapping):
+        return False
+    if set(observations) != _REQUIRED_PREFLIGHT_OBSERVATIONS:
+        return False
+    for value in observations.values():
+        if isinstance(value, Mapping):
+            if value.get("valid") is True or value.get("status") in {
+                "ok",
+                "clean",
+                "pass",
+                "ready",
+            }:
+                continue
+            return False
+        if value is not True:
+            return False
+    return True
 
 
 def execute_cycle(
@@ -207,8 +460,19 @@ def execute_cycle(
     and returns; the harness never retries an ambiguous side effect.
     """
 
-    def publish(status: str, reason: str, *, artifact: bytes | None = None):
-        write_bundle(output, _failure_payload(status, reason, artifact=artifact))
+    def publish(
+        status: str,
+        reason: str,
+        *,
+        artifact: bytes | None = None,
+        recovery: Mapping[str, Any] | None = None,
+    ):
+        write_bundle(
+            output,
+            _failure_payload(
+                status, reason, artifact=artifact, recovery=recovery
+            ),
+        )
         return verify_bundle(output)
 
     side_effects_started = False
@@ -233,6 +497,17 @@ def execute_cycle(
         return publish(
             "preflight_failed",
             "preflight did not provide immutable execution contract and guard",
+        )
+    try:
+        execution_contract = validate_execution_contract(execution_contract)
+    except ContractError as exc:
+        return publish(
+            "preflight_failed", f"execution contract is not frozen: {type(exc).__name__}"
+        )
+    if not _preflight_observations_ready(preflight):
+        return publish(
+            "preflight_failed",
+            "required spend/balance/outbox/policy/log/unauth/audit evidence is incomplete",
         )
     if (
         guard_path != GLOBAL_GUARD_PATH
@@ -283,6 +558,10 @@ def execute_cycle(
         ):
             return publish(
                 "preflight_failed", "execution contract start identity is incomplete"
+            )
+        if set(start_body) != set(execution_contract["request"]):
+            return publish(
+                "preflight_failed", "request and start-body key sets differ"
             )
         derived_workflow_body = _wire_bytes(start_body)
         if workflow_body != derived_workflow_body:
@@ -341,22 +620,22 @@ def execute_cycle(
         if not isinstance(post_canary_snapshot, Mapping):
             raise ValueError("post-canary snapshot is not an object")
         run_id = str(canary.workflow_response["run_id"])
-        terminal = adapters.poll_status(run_id)
-        if not isinstance(terminal, Mapping) or terminal.get("status") not in {
-            "completed",
-            "failed",
-        }:
-            reason = "workflow did not reach completed status"
-            try:
-                rollback = adapters.rollback(reason)
-            except Exception:
-                return publish("rollback_incomplete", "rollback adapter failed")
-            if (
-                not isinstance(rollback, Mapping)
-                or rollback.get("status") != "complete"
-            ):
-                return publish("rollback_incomplete", "rollback did not complete")
-            return publish("FAIL", reason)
+        try:
+            terminal = _poll_workflow(adapters, run_id)
+        except (TimeoutError, ValueError, ObservationError) as exc:
+            return _rollback_and_publish(
+                adapters,
+                status="pre_artifact_not_run",
+                reason=f"workflow polling terminated: {type(exc).__name__}",
+                output=output,
+            )
+        if terminal.get("status") != "completed":
+            return _rollback_and_publish(
+                adapters,
+                status="pre_artifact_not_run",
+                reason=f"workflow terminal status: {terminal.get('status')}",
+                output=output,
+            )
         http_artifact = _read_bound_artifact(adapters, run_id, "http")
         mcp_artifact = _read_bound_artifact(adapters, run_id, "mcp")
         if (
@@ -364,7 +643,7 @@ def execute_cycle(
             or not isinstance(mcp_artifact, bytes)
             or not http_artifact
             or not mcp_artifact
-            or http_artifact != mcp_artifact
+            or not _semantic_artifacts_equal(http_artifact, mcp_artifact)
         ):
             raise ValueError(
                 "artifact transport did not return byte-identical evidence"
@@ -372,19 +651,41 @@ def execute_cycle(
         post_benchmark_snapshot = adapters.snapshot("post_benchmark")
         if not isinstance(post_benchmark_snapshot, Mapping):
             raise ValueError("post-benchmark snapshot is not an object")
-        evaluation = adapters.evaluate(http_artifact)
-        if not isinstance(evaluation, Mapping) or evaluation.get("status") != "scored":
-            return publish(
-                "evaluator_not_run",
-                "evaluator did not return a scored identity",
+        try:
+            evaluation = adapters.evaluate(http_artifact)
+        except Exception as exc:
+            return _rollback_and_publish(
+                adapters,
+                status="evaluator_not_run",
+                reason=f"evaluator unavailable: {type(exc).__name__}",
+                output=output,
                 artifact=http_artifact,
             )
-        _verify_evaluator_result(evaluation, execution_contract, http_artifact)
+        if not isinstance(evaluation, Mapping) or evaluation.get("status") != "scored":
+            return _rollback_and_publish(
+                adapters,
+                status="evaluator_not_run",
+                reason="evaluator did not return a scored identity",
+                output=output,
+                artifact=http_artifact,
+            )
+        try:
+            _verify_evaluator_result(evaluation, execution_contract, http_artifact)
+        except Exception as exc:
+            return _rollback_and_publish(
+                adapters,
+                status="evaluator_not_run",
+                reason=f"evaluator identity rejected: {type(exc).__name__}",
+                output=output,
+                artifact=http_artifact,
+            )
         payload = evaluation.get("bundle_payload")
         if not isinstance(payload, Mapping):
-            return publish(
-                "evaluator_not_run",
-                "evaluator returned no bound bundle payload",
+            return _rollback_and_publish(
+                adapters,
+                status="evaluator_not_run",
+                reason="evaluator returned no bound bundle payload",
+                output=output,
                 artifact=http_artifact,
             )
         score_document = payload.get("score")
@@ -394,7 +695,13 @@ def execute_cycle(
             else None
         )
         if not isinstance(score_evaluator, Mapping):
-            raise ValueError("bundle score is missing evaluator identity")
+            return _rollback_and_publish(
+                adapters,
+                status="evaluator_not_run",
+                reason="bundle score is missing evaluator identity",
+                output=output,
+                artifact=http_artifact,
+            )
         for key in (
             "model",
             "prompt_sha256",
@@ -402,34 +709,35 @@ def execute_cycle(
             "run_receipt_sha256",
         ):
             if score_evaluator.get(key) != execution_contract["evaluator"].get(key):
-                raise ValueError(f"bundle evaluator identity mismatch: {key}")
+                return _rollback_and_publish(
+                    adapters,
+                    status="evaluator_not_run",
+                    reason=f"bundle evaluator identity mismatch: {key}",
+                    output=output,
+                    artifact=http_artifact,
+                )
         write_bundle(output, payload)
         return verify_bundle(output)
     except (ObservationError, ContractError, ValueError) as exc:
         if side_effects_started:
-            try:
-                rollback = adapters.rollback(
-                    f"cycle contract rejected: {type(exc).__name__}"
-                )
-            except Exception:
-                return publish("rollback_incomplete", "rollback adapter failed")
-            if (
-                not isinstance(rollback, Mapping)
-                or rollback.get("status") != "complete"
-            ):
-                return publish("rollback_incomplete", "rollback did not complete")
-            return publish("FAIL", f"cycle contract rejected: {type(exc).__name__}")
+            return _rollback_and_publish(
+                adapters,
+                status="FAIL",
+                reason=f"cycle contract rejected: {type(exc).__name__}",
+                output=output,
+            )
         return publish(
             "preflight_failed", f"cycle contract rejected: {type(exc).__name__}"
         )
     except Exception as exc:
-        try:
-            rollback = adapters.rollback(f"cycle failed: {type(exc).__name__}")
-        except Exception:
-            return publish("rollback_incomplete", "rollback adapter failed")
-        if not isinstance(rollback, Mapping) or rollback.get("status") != "complete":
-            return publish("rollback_incomplete", "rollback did not complete")
-        return publish("FAIL", f"cycle failed: {type(exc).__name__}")
+        if side_effects_started:
+            return _rollback_and_publish(
+                adapters,
+                status="FAIL",
+                reason=f"cycle failed: {type(exc).__name__}",
+                output=output,
+            )
+        return publish("preflight_failed", f"cycle failed: {type(exc).__name__}")
 
 
 run_acceptance_v3 = execute_cycle

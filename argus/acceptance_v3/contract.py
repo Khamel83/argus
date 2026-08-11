@@ -27,6 +27,31 @@ TRUSTED_EVIDENCE_PARENT = Path("/Users/macmini/.local/state")
 EVIDENCE_ROOT_MODE = 0o700
 EVIDENCE_FILE_MODE = 0o600
 
+# These are the only workflow surfaces that the one-shot acceptance may bind.
+# Keeping the paths here (rather than accepting an arbitrary endpoint map)
+# prevents a caller from silently moving the run to a legacy/path-bearing
+# route.  MCP uses the same canonical HTTP semantics; its tool names and
+# envelope rules are bound by the per-entry hashes below.
+FROZEN_ENDPOINT_PATHS = frozenset(
+    {
+        "/api/workflows/build-research-pack/start",
+        "/api/workflows/{run_id}/status",
+        "/api/workflows/{run_id}/artifacts/report",
+        "/api/workflows/{run_id}/artifacts/manifest",
+    }
+)
+FROZEN_REQUEST_KEYS = frozenset(
+    {
+        "topic",
+        "official_url",
+        "max_research_pages",
+        "research_targets",
+        "free_only",
+        "caller",
+    }
+)
+FROZEN_START_BODY_KEYS = FROZEN_REQUEST_KEYS
+
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -236,6 +261,11 @@ def _validate_endpoint_entry(value: object, label: str) -> dict[str, Any]:
         raise ContractError(f"{label}.path must be a bounded relative API path")
     if any(ord(char) < 0x20 for char in path):
         raise ContractError(f"{label}.path contains a control character")
+    if path not in FROZEN_ENDPOINT_PATHS:
+        raise ContractError(f"{label}.path is outside the frozen v3 endpoint set")
+    path_parts = path.split("/")[1:]
+    if any(part in {"", ".", ".."} for part in path_parts):
+        raise ContractError(f"{label}.path is not canonical")
     for key in (
         "request_sha256",
         "pagination_sha256",
@@ -382,16 +412,15 @@ def _validate_evidence_root(value: object) -> str:
     try:
         trusted_resolved = trusted_parent.resolve(strict=True)
         lexical_resolved = path.resolve(strict=True)
-        path.relative_to(trusted_parent)
+        # Compare against the canonical trusted parent, not the lexical path.
+        # This rejects ``state/child/../escape`` and symlinked ancestors before
+        # any caller can use the path for a guard or an artifact.
+        lexical_resolved.relative_to(trusted_resolved)
     except (OSError, ValueError) as exc:
         raise ContractError(
             "evidence_root must be beneath the trusted state root"
         ) from exc
-    if (
-        path == trusted_parent
-        or lexical_resolved != path
-        or lexical_resolved == trusted_resolved
-    ):
+    if lexical_resolved == trusted_resolved or path != lexical_resolved:
         raise ContractError("evidence_root must be a fresh trusted child directory")
     # The root itself must be real.  A platform temporary directory may have
     # a harmless symlinked ancestor (for example /tmp -> /private/tmp), so
@@ -485,6 +514,10 @@ def validate_execution_contract(value: object) -> dict[str, Any]:
         raise ContractError("contract cycle/profile/schema does not match v3")
     request = _mapping(contract["request"], "request")
     start_body = _mapping(contract["start_body"], "start_body")
+    if set(request) != FROZEN_REQUEST_KEYS:
+        raise ContractError("request keys are outside the frozen v3 request")
+    if set(start_body) != FROZEN_START_BODY_KEYS:
+        raise ContractError("start_body keys are outside the frozen v3 request")
     if canonical_hash(request) != contract["request_sha256"]:
         raise ContractError("request hash mismatch")
     if canonical_hash(start_body) != contract["start_body_sha256"]:
@@ -497,12 +530,16 @@ def validate_execution_contract(value: object) -> dict[str, Any]:
         raise ContractError("endpoints must contain at least one bound endpoint")
     if set(endpoints) != set(endpoint_hashes):
         raise ContractError("endpoint hash set mismatch")
+    endpoint_paths: set[str] = set()
     for name, endpoint in endpoints.items():
         if not isinstance(name, str) or not name:
             raise ContractError("endpoint names must be non-empty strings")
-        _validate_endpoint_entry(endpoint, f"endpoints.{name}")
+        checked_endpoint = _validate_endpoint_entry(endpoint, f"endpoints.{name}")
+        endpoint_paths.add(checked_endpoint["path"])
         if endpoint_hashes[name] != canonical_hash(endpoint):
             raise ContractError(f"endpoint hash mismatch for {name}")
+    if endpoint_paths != set(FROZEN_ENDPOINT_PATHS):
+        raise ContractError("endpoints do not match the frozen v3 endpoint set")
     _validate_candidate(contract["candidate"])
     _validate_rollback(contract["rollback"])
     _validate_evaluator(contract["evaluator"])
@@ -635,11 +672,16 @@ def create_evidence_root(base: Path | str, *, name: str | None = None) -> Path:
 
     parent = Path(base)
     try:
-        parent.relative_to(TRUSTED_EVIDENCE_PARENT)
-    except ValueError as exc:
+        trusted_resolved = TRUSTED_EVIDENCE_PARENT.resolve(strict=True)
+        parent_resolved = parent.resolve(strict=False)
+        parent_resolved.relative_to(trusted_resolved)
+    except (OSError, ValueError) as exc:
         raise ContractError(
             "evidence parent must be beneath the trusted state root"
         ) from exc
+    if parent != parent_resolved:
+        raise ContractError("evidence parent must use its canonical trusted path")
+    _assert_not_symlink(parent)
     if parent.is_symlink():
         raise ContractError("evidence parent must not be a symlink")
     if parent.exists() and (parent.is_symlink() or not parent.is_dir()):
