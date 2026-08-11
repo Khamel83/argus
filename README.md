@@ -426,10 +426,11 @@ export ARGUS_AUTHORITY_URL=http://argus-api:8000
 export ARGUS_AUTHORITY_TOKEN=replace-with-a-scoped-caller-token
 ```
 
-The deployed production endpoint currently exposes the verified MCP
-`2025-11-25` compatibility contract. The MCP `2026-07-28` stateless transport
-revision is a separately gated migration target; do not infer support from the
-word “stateless” here. See
+The deployed production endpoint supports both the verified MCP `2025-11-25`
+compatibility contract and the MCP `2026-07-28` stateless transport revision.
+The newer path is one-shot and does not require an initialize handshake or
+`Mcp-Session-Id`; durable policy, budgets, sessions, and evidence remain owned
+by the HTTP authority. See
 [`docs/research/2026-08-11-mcp-stateless-production-authority.md`](docs/research/2026-08-11-mcp-stateless-production-authority.md)
 for the source-backed boundary and required no-spend probes.
 

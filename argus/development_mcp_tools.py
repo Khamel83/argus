@@ -2,7 +2,7 @@
 
 from typing import Any, Callable, Optional
 
-from mcp.server.fastmcp import Context as McpContext
+from mcp.server.mcpserver.context import Context as McpContext
 
 from argus.broker.router import SearchBroker
 from argus.corpus import describe_corpus_paths

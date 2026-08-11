@@ -7,8 +7,8 @@ import json
 from collections.abc import Callable, Mapping
 from typing import Annotated, Any, Literal
 
-from mcp.server.fastmcp.exceptions import ToolError
-from mcp.server.fastmcp.tools.base import Tool
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver.tools.base import Tool
 from mcp.types import CallToolResult, TextContent
 from pydantic import Field, ValidationError
 
@@ -280,7 +280,7 @@ def actual_v2_tool_registration(mcp) -> dict[str, object]:
     }
     names = tuple(by_name)
     return {
-        "transport_version": "2025-11-25",
+        "transport_version": "2026-07-28",
         "tool_contract_version": "2.0",
         "tools": names,
         "schemas": {

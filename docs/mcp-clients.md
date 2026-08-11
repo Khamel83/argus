@@ -7,9 +7,10 @@ state, or the Maya outbox.
 
 The canonical production clients use the remote HTTPS listener. Local stdio is
 an explicit standalone/development choice for a client running beside Argus;
-it is not the production default. The deployed listener currently supports the
-verified MCP `2025-11-25` compatibility contract. The MCP `2026-07-28`
-stateless revision is not advertised until the version matrix and direct
+it is not the production default. The deployed listener supports both the
+legacy `2025-11-25` compatibility contract and the MCP `2026-07-28`
+stateless revision. The latter is a one-shot request path: it does not require
+an initialize handshake or `Mcp-Session-Id`. Keep the version matrix and direct
 no-spend/restart probes in
 [`docs/research/2026-08-11-mcp-stateless-production-authority.md`](research/2026-08-11-mcp-stateless-production-authority.md)
 pass.

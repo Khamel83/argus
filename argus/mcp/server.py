@@ -34,6 +34,7 @@ _MCP_PROTOCOL_VERSIONS = (
     "2025-03-26",
     "2025-06-18",
     "2025-11-25",
+    "2026-07-28",
 )
 _LEGACY_DEFAULT_PROTOCOL_VERSION = "2025-03-26"
 _MCP_METHODS = ("POST", "GET", "DELETE", "OPTIONS")
@@ -43,8 +44,8 @@ _MCP_NOTIFICATION_STATUS = 202
 _MCP_SESSION_ID_MAX_CHARACTERS = 128
 _MCP_SWEEP_INTERVAL_SECONDS = 60
 _MCP_CORS_ALLOW_HEADERS = (
-    "Authorization, Content-Type, MCP-Protocol-Version, Mcp-Session-Id, "
-    "Last-Event-ID, X-Request-ID"
+    "Authorization, Content-Type, MCP-Protocol-Version, Mcp-Method, Mcp-Name, "
+    "Mcp-Session-Id, Last-Event-ID, X-Request-ID"
 )
 _MCP_CORS_EXPOSE_HEADERS = (
     "Mcp-Session-Id, X-Request-ID, X-Argus-Deployment-ID, "
@@ -62,11 +63,9 @@ def _mcp_remote_exposed(environ=None) -> bool:
 
 
 def _mcp_transport_registration(mcp) -> dict[str, object]:
-    from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS
-
     return {
-        "endpoint": mcp.settings.streamable_http_path,
-        "protocol_versions": tuple(SUPPORTED_PROTOCOL_VERSIONS),
+        "endpoint": "/mcp",
+        "protocol_versions": _MCP_PROTOCOL_VERSIONS,
         "methods": _MCP_METHODS,
         "post_content_type": "application/json",
         "post_accept": ("application/json", "text/event-stream"),
@@ -77,8 +76,8 @@ def _mcp_transport_registration(mcp) -> dict[str, object]:
         "max_active_sessions": MCP_MAX_ACTIVE_SESSIONS,
         "session_id_max_characters": _MCP_SESSION_ID_MAX_CHARACTERS,
         "legacy_sse_paths": (
-            mcp.settings.sse_path,
-            mcp.settings.message_path,
+            "/sse",
+            "/messages/",
         ),
     }
 
@@ -133,6 +132,7 @@ class McpTransportSecurityApp:
         legacy_transport=None,
         registry_options: dict[str, Any] | None = None,
         sweep_interval_seconds: float = _MCP_SWEEP_INTERVAL_SECONDS,
+        stateless_http: bool = False,
     ):
         self._app = app
         self._transport = transport
@@ -142,6 +142,7 @@ class McpTransportSecurityApp:
         self._session_manager = session_manager
         self._legacy_transport = legacy_transport
         self._sweep_interval_seconds = sweep_interval_seconds
+        self._stateless_http = stateless_http
         self._cleanup_tasks: set[asyncio.Task] = set()
         self._legacy_actual_to_reservation: dict[str, str] = {}
         self._legacy_reservation_to_actual: dict[str, str] = {}
@@ -197,6 +198,16 @@ class McpTransportSecurityApp:
 
         if self._transport == "sse":
             await self._handle_legacy_sse(
+                request,
+                principal,
+                token,
+                scope,
+                receive,
+                send,
+            )
+            return
+        if self._stateless_http:
+            await self._handle_stateless_streamable(
                 request,
                 principal,
                 token,
@@ -594,6 +605,46 @@ class McpTransportSecurityApp:
         if request.method == "DELETE":
             self.registry.terminate(session_id, principal)
 
+    async def _handle_stateless_streamable(
+        self,
+        request: Request,
+        principal: str,
+        token: str | None,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        """Forward one 2026-07-28 exchange without creating a session."""
+        if request.url.path != "/mcp":
+            await self._send_response(
+                _jsonrpc_transport_error(HTTPStatus.NOT_FOUND, "Not found"),
+                request,
+                scope,
+                receive,
+                send,
+            )
+            return
+        if request.method != "POST":
+            await self._send_response(
+                _jsonrpc_transport_error(
+                    HTTPStatus.METHOD_NOT_ALLOWED,
+                    "Method not allowed",
+                    headers={"Allow": "POST, OPTIONS"},
+                ),
+                request,
+                scope,
+                receive,
+                send,
+            )
+            return
+        await self._call_with_principal(
+            principal,
+            token,
+            scope,
+            receive,
+            self._cors_send(request, send),
+        )
+
     async def _initialize_sdk_session(
         self,
         session: McpSession,
@@ -875,6 +926,7 @@ def secure_mcp_transport_app(
     legacy_transport=None,
     registry_options: dict[str, Any] | None = None,
     sweep_interval_seconds: float = _MCP_SWEEP_INTERVAL_SECONDS,
+    stateless_http: bool = False,
 ) -> McpTransportSecurityApp:
     """Apply the shared Argus guard without changing pinned-SDK wire bodies."""
     from argus.api.security import TransportSecurityGuard
@@ -889,6 +941,7 @@ def secure_mcp_transport_app(
         legacy_transport=legacy_transport,
         registry_options=registry_options,
         sweep_interval_seconds=sweep_interval_seconds,
+        stateless_http=stateless_http,
     )
 
 
@@ -986,7 +1039,7 @@ def serve_mcp(
         additional_registration,
     )
     try:
-        from mcp.server.fastmcp import FastMCP
+        from mcp.server import MCPServer
     except ImportError:
         logger.error(
             "MCP package not installed. Install with: pip install 'argus-search[mcp]'"
@@ -1002,7 +1055,7 @@ def serve_mcp(
     from argus.config import load_config
     from argus.workflows.research_targets import ResearchTarget
 
-    # FastMCP evaluates postponed annotations against the defining module's
+    # MCPServer evaluates postponed annotations against the defining module's
     # globals while registering the nested tool.  Keep the strict model out of
     # the import-time adapter surface, then expose it only for that registration.
     globals()["ResearchTarget"] = ResearchTarget
@@ -1027,18 +1080,18 @@ def serve_mcp(
             has_bearer_auth=auth_config.has_caller_key(),
         )
 
-    mcp_kwargs: dict[str, Any] = {"host": host, "port": port}
+    transport_security = None
     if is_network_transport and (
         security_guard.host_policy_explicit or security_guard.origin_policy_explicit
     ):
         from mcp.server.transport_security import TransportSecuritySettings
 
-        mcp_kwargs["transport_security"] = TransportSecuritySettings(
+        transport_security = TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
             allowed_hosts=list(security_guard.allowed_hosts),
             allowed_origins=list(security_guard.allowed_origins),
         )
-    mcp = FastMCP("argus", **mcp_kwargs)
+    mcp = MCPServer("argus")
 
     @mcp.tool()
     async def search_web(
@@ -1254,8 +1307,12 @@ def serve_mcp(
         " with auth" if use_remote_auth else "",
     )
     if transport == "streamable-http":
-        sdk_app = mcp.streamable_http_app()
-        session_manager = mcp.session_manager
+        sdk_app = mcp.streamable_http_app(
+            stateless_http=True,
+            host=host,
+            transport_security=transport_security,
+        )
+        session_manager = None
         legacy_transport = None
     else:
         from mcp.server.sse import SseServerTransport
@@ -1285,6 +1342,7 @@ def serve_mcp(
         requires_auth=use_remote_auth,
         session_manager=session_manager,
         legacy_transport=legacy_transport,
+        stateless_http=transport == "streamable-http",
     )
 
     import uvicorn
