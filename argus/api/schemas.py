@@ -123,7 +123,7 @@ class ExtractRequest(BaseModel):
     url: str = Field(..., min_length=1, max_length=2048, description="URL to extract content from")
     domain: Optional[str] = Field(None, description="Domain hint for authenticated extraction (e.g. nytimes.com)")
     mode: str = Field("default", description="Extraction mode: default, archive_ingest")
-    caller: str = Field("", description="Caller identifier for attribution (e.g. 'clio-intake-extract')")
+    caller: str = Field("", description="Caller identifier for attribution (e.g. 'maya')")
 
     @field_validator("url")
     @classmethod
@@ -279,14 +279,14 @@ class RecoverArticleWorkflowRequest(BaseModel):
     url: str = Field(..., min_length=1, max_length=2048)
     title: Optional[str] = None
     domain: Optional[str] = None
-    caller: str = Field("", description="Caller identifier for attribution (e.g. 'clio-workflows')")
+    caller: str = Field("", description="Caller identifier for attribution (e.g. 'hermes')")
 
 
 class CaptureSiteWorkflowRequest(BaseModel):
     url: str = Field(..., min_length=1, max_length=2048)
     soft_page_limit: int = Field(75, ge=1, le=500)
     hard_page_limit: int = Field(200, ge=1, le=500)
-    caller: str = Field("", description="Caller identifier for attribution (e.g. 'clio-workflows')")
+    caller: str = Field("", description="Caller identifier for attribution (e.g. 'hermes')")
 
 
 class BuildResearchPackWorkflowRequest(BaseModel):
@@ -307,4 +307,4 @@ class BuildResearchPackWorkflowRequest(BaseModel):
 class SearchAndSummarizeWorkflowRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=1000, description="Search query to research and summarize")
     max_search_results: int = Field(5, ge=1, le=20, description="Number of search results to extract")
-    caller: str = Field("", description="Caller identifier for attribution (e.g. 'clio-workflows')")
+    caller: str = Field("", description="Caller identifier for attribution (e.g. 'hermes')")

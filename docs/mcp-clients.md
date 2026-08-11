@@ -1,14 +1,20 @@
 # MCP Client Setup
 
 Argus supports local stdio MCP and remote streamable HTTP MCP. Both are
-stateless adapters over the authenticated Argus HTTP API. They do not own a
+stateless execution adapters over the authenticated Argus HTTP API. They do not own a
 broker, provider credentials, browser, database, budgets, sessions, health
 state, or the Maya outbox.
 
-Use local stdio when Argus is installed on the same machine as the AI client.
-This is the default for Claude Code, Codex CLI, OpenCode, Cursor, and similar
-desktop/terminal clients. It requires no MCP listener key, but the process must
-inherit a scoped HTTP authority credential:
+The canonical production clients use the remote HTTPS listener. Local stdio is
+an explicit standalone/development choice for a client running beside Argus;
+it is not the production default. The deployed listener currently supports the
+verified MCP `2025-11-25` compatibility contract. The MCP `2026-07-28`
+stateless revision is not advertised until the version matrix and direct
+no-spend/restart probes in
+[`docs/research/2026-08-11-mcp-stateless-production-authority.md`](research/2026-08-11-mcp-stateless-production-authority.md)
+pass.
+
+For local stdio, the process must inherit a scoped HTTP authority credential:
 
 ```bash
 export ARGUS_AUTHORITY_URL=http://argus-api:8000
@@ -18,7 +24,10 @@ export ARGUS_AUTHORITY_TOKEN=replace-with-a-scoped-caller-token
 An in-process broker is available only for explicit standalone development
 with `ARGUS_MCP_STANDALONE=true`; production rejects that mode.
 
-Use remote streamable HTTP when one Argus server should serve other machines over Tailscale, a private LAN, or another trusted network. Remote mode should use `ARGUS_API_KEY`.
+Use remote streamable HTTP when one Argus server should serve other machines over
+Tailscale, a private LAN, or another trusted network. Remote mode should use
+`ARGUS_API_KEY` and the canonical production listener should be configured as
+`https://homelab.deer-panga.ts.net:8443/mcp`.
 
 ## Local stdio
 
@@ -64,6 +73,9 @@ Expected results:
 - Argus startup logs appear on stderr, never stdout, so stdio JSON-RPC handshakes remain clean.
 
 ## Remote HTTP
+
+The examples below show a generic private listener. For the production
+Homelab deployment, substitute the canonical HTTPS URL above.
 
 Run Argus on the server:
 

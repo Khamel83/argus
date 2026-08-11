@@ -121,8 +121,8 @@ class TestRrfAttributionIntegration:
 def test_extract_request_accepts_caller():
     from argus.api.schemas import ExtractRequest
 
-    req = ExtractRequest(url="https://example.com/a", caller="clio-intake-extract")
-    assert req.caller == "clio-intake-extract"
+    req = ExtractRequest(url="https://example.com/a", caller="maya")
+    assert req.caller == "maya"
 
 
 def test_workflow_requests_accept_caller():
@@ -131,9 +131,9 @@ def test_workflow_requests_accept_caller():
         SearchAndSummarizeWorkflowRequest,
     )
 
-    a = SearchAndSummarizeWorkflowRequest(query="q", caller="clio-workflows")
+    a = SearchAndSummarizeWorkflowRequest(query="q", caller="hermes")
     b = BuildResearchPackWorkflowRequest(topic="t", caller="hermes")
-    assert a.caller == "clio-workflows"
+    assert a.caller == "hermes"
     assert b.caller == "hermes"
 
 

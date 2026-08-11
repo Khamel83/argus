@@ -18,7 +18,7 @@ Required `.env` in the service checkout (never committed):
 `ARGUS_ENV=production`, `ARGUS_NODE_ROLE=primary`,
 `ARGUS_EGRESS_TYPE=residential`, `ARGUS_MACHINE_NAME=omars-mac-mini`,
 `ARGUS_PORT=8300`, `ARGUS_API_KEY=<generated>`,
-`ARGUS_CALLER_TIER_CAPS=clio*:1,hermes*:1`, plus provider keys.
+`ARGUS_CALLER_TIER_CAPS=hermes*:1,mac-agents:1,maya:1`, plus provider keys.
 
 Redeploy after a merge: `git pull && uv sync --extra mcp && launchctl kickstart -k gui/$(id -u)/com.argus.server && launchctl kickstart -k gui/$(id -u)/com.argus.mcp`
 ```

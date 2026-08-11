@@ -84,22 +84,24 @@ from.
 
 ### Caller attribution
 
-Every HTTP/MCP/CLI entry point accepts a `caller` string (e.g. `clio-lane-b`,
-`hermes`, `mcp`) persisted with each search for the per-caller dashboard.
+Every HTTP/MCP/CLI entry point accepts a `caller` string (e.g. `hermes`,
+`maya`, `mac-agents`, `mcp`) persisted with each search for the per-caller
+dashboard.
 Fleet callers must always set it; unattributed traffic shows as `unknown`.
 
 ### Caller tier caps
 
 Server-side spending guardrail: `ARGUS_CALLER_TIER_CAPS` maps fnmatch
 caller patterns to a maximum provider tier. Motivated by the 2026-05
-unexplained Valyu credit burn (see hermes `docs/ARGUS-VALVU-AUDIT.md`):
-automated callers (Clio jobs, Hermes) are capped at tier 1 so one-time
+unexplained Valyu credit burn (see Hermes `docs/ARGUS-VALVU-AUDIT.md`):
+automated callers (Hermes, Maya, mac-agents) are capped at tier 1 so one-time
 credits (tier 3) can only be spent by interactive/uncapped callers.
 
 ### Canonical deployment
 
-One Argus for the fleet: the mac mini (`omars-mac-mini` on Tailscale,
-residential egress), run by launchd from `/Users/macmini/github/argus` —
-HTTP API on `:8300`, streamable-http MCP on `:8301`. Chosen 2026-07-05
-over the drifted alternatives (Clio pointing at `:8005`, a Docker argus
-on homelab). See `docs/adr/0001-canonical-deployment.md`.
+One Argus for the fleet: the Homelab authority on Tailscale, with residential
+egress and the canonical HTTPS MCP listener. The deployed endpoint is the
+verified 2025-compatible contract; the 2026-07-28 stateless revision remains a
+separately gated migration target. See
+`docs/research/2026-08-11-mcp-stateless-production-authority.md` and
+`docs/adr/0001-canonical-deployment.md`.

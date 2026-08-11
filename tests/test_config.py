@@ -197,11 +197,11 @@ class TestCallerTierCaps:
         from argus.config import EnvironmentConfigLoader
 
         loader = EnvironmentConfigLoader(
-            environ={"ARGUS_CALLER_TIER_CAPS": "clio*:1,hermes*:1, atlas:0"},
+            environ={"ARGUS_CALLER_TIER_CAPS": "batch*:1,hermes*:1, atlas:0"},
             secrets_resolver=_NullSecrets(),
         )
         config = loader.load()
-        assert config.caller_tier_caps == {"clio*": 1, "hermes*": 1, "atlas": 0}
+        assert config.caller_tier_caps == {"batch*": 1, "hermes*": 1, "atlas": 0}
 
     def test_caller_tier_caps_default_empty(self):
         from argus.config import EnvironmentConfigLoader
@@ -213,7 +213,7 @@ class TestCallerTierCaps:
         from argus.config import EnvironmentConfigLoader
 
         loader = EnvironmentConfigLoader(
-            environ={"ARGUS_CALLER_TIER_CAPS": "clio*:notanumber,,hermes:1"},
+            environ={"ARGUS_CALLER_TIER_CAPS": "batch*:notanumber,,hermes:1"},
             secrets_resolver=_NullSecrets(),
         )
         assert loader.load().caller_tier_caps == {"hermes": 1}
