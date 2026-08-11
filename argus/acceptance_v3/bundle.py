@@ -71,6 +71,15 @@ _SENSITIVE_TEXT = re.compile(
     r"(?:\bbearer\s+|\bbasic\s+|-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:password|secret|api[_-]?key|cookie|authorization)\s*[:=])",
     re.IGNORECASE,
 )
+_OPAQUE_KEY_NAMES = {
+    "runid",
+    "captureid",
+    "idempotencykey",
+    "requestid",
+    "sessionid",
+    "operationid",
+    "receiptid",
+}
 _ABSOLUTE_PATH = re.compile(
     r"(?:^|[\s'(\[])(?:/(?:Users|Volumes|private|tmp|var|opt|srv|etc|root|usr|Applications|Library|System|bin|sbin|proc|data|workspace|mnt|run|media)/|[A-Za-z]:[\\/]|\\\\)",
     re.IGNORECASE,
@@ -95,6 +104,10 @@ def _safe_json(value: Any, *, location: str = "document") -> None:
                 "nativepayload",
             }:
                 raise BundleError(f"sensitive field at {location}.{key}")
+            if normalized in _OPAQUE_KEY_NAMES:
+                raise BundleError(
+                    f"opaque identifier must be hashed at {location}.{key}"
+                )
             _safe_json(nested, location=f"{location}.{key}")
     elif isinstance(value, (list, tuple)):
         for index, nested in enumerate(value):
@@ -583,6 +596,9 @@ def write_bundle(output: Path | str, payload: Mapping[str, Any]) -> None:
                     ) from exc
                 _safe_json(parsed, location=relative)
             files[relative] = value
+        manifest["files"] = [*sorted(files), "checksums.sha256"]
+        _safe_json(manifest)
+        files["manifest.json"] = canonical_bytes(manifest)
         for relative, data in files.items():
             _write_bytes(_safe_path(staging, relative), data)
         _fsync_dir(staging)
@@ -653,6 +669,11 @@ def verify_bundle(output: Path | str) -> dict[str, Any]:
         "scoring",
     }:
         raise BundleError("manifest sections are incomplete")
+    declared_files = manifest.get("files")
+    if not isinstance(declared_files, list) or declared_files != sorted(checksums) + [
+        "checksums.sha256"
+    ]:
+        raise BundleError("manifest file declaration is not checksum-closed")
     gates_doc = _load_json(root / "gates.json")
     gates = evaluate_gates(gates_doc.get("gates", gates_doc))
     score = _load_json(root / "score.json")

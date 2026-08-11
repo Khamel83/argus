@@ -176,6 +176,32 @@ def test_bundle_checksums_all_other_files_and_verdict_is_derived(tmp_path):
         verify_bundle(output)
 
 
+def test_manifest_declares_exact_checksum_closed_file_set_and_raw_opaque_ids_are_rejected(
+    tmp_path,
+):
+    output = tmp_path / "bundle"
+    payload = {
+        "manifest": _manifest(),
+        "gates": _gates(),
+        "score": _score(),
+        "claim_support": _claim_support(),
+        "recovery": {"status": "not_applicable", "reason": "no changes"},
+        "artifacts": {"report.json": b'{"ok":true}'},
+    }
+    write_bundle(output, payload)
+    manifest = json.loads((output / "manifest.json").read_text())
+    checksums = {
+        line.split("  ", 1)[1]
+        for line in (output / "checksums.sha256").read_text().splitlines()
+    }
+    assert manifest["files"] == sorted(checksums) + ["checksums.sha256"]
+    with pytest.raises(BundleError, match="opaque"):
+        write_bundle(
+            tmp_path / "opaque",
+            {**payload, "artifacts": {"bad.json": b'{"run_id":"raw"}'}},
+        )
+
+
 @pytest.mark.parametrize(
     "status,expected",
     [
