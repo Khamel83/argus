@@ -53,30 +53,30 @@ def _executor(caps: dict[str, int]) -> ProviderExecutor:
 
 class TestCallerTierCapHelper:
     def test_no_caller_means_no_cap(self):
-        assert caller_tier_cap("", {"clio*": 1}) is None
+        assert caller_tier_cap("", {"batch*": 1}) is None
 
     def test_no_caps_means_no_cap(self):
-        assert caller_tier_cap("clio-lane-b", {}) is None
+        assert caller_tier_cap("batch-lane-b", {}) is None
 
     def test_fnmatch_pattern_matches(self):
-        assert caller_tier_cap("clio-lane-b", {"clio*": 1}) == 1
+        assert caller_tier_cap("batch-lane-b", {"batch*": 1}) == 1
 
     def test_exact_match(self):
         assert caller_tier_cap("hermes", {"hermes": 1}) == 1
 
     def test_non_matching_caller_uncapped(self):
-        assert caller_tier_cap("interactive-cli", {"clio*": 1}) is None
+        assert caller_tier_cap("interactive-cli", {"batch*": 1}) is None
 
     def test_most_restrictive_wins(self):
-        assert caller_tier_cap("clio-x", {"clio*": 1, "clio-x": 0}) == 0
+        assert caller_tier_cap("batch-x", {"batch*": 1, "batch-x": 0}) == 0
 
 
 class TestExecutorEnforcement:
     @pytest.mark.asyncio
     async def test_capped_caller_skips_tier3_provider(self):
-        executor = _executor({"clio*": 1})
+        executor = _executor({"batch*": 1})
         query = SearchQuery(
-            query="q", mode=SearchMode.DISCOVERY, max_results=10, caller="clio-lane-b"
+            query="q", mode=SearchMode.DISCOVERY, max_results=10, caller="batch-lane-b"
         )
         outcome = await execute_with_plan(
             executor, query, [ProviderName.DUCKDUCKGO, ProviderName.SERPER]
@@ -89,7 +89,7 @@ class TestExecutorEnforcement:
 
     @pytest.mark.asyncio
     async def test_uncapped_caller_reaches_tier3(self):
-        executor = _executor({"clio*": 1})
+        executor = _executor({"batch*": 1})
         query = SearchQuery(
             query="q", mode=SearchMode.DISCOVERY, max_results=50, caller="someone-else"
         )
