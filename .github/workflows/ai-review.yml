@@ -62,7 +62,7 @@ jobs:
               ],
               max_tokens: 1024
             }')
-          curl -fsS --max-time 240 \
+          curl -fsS --max-time 240 --retry 2 --retry-delay 2 \
             -D /tmp/background-headers.txt \
             -o /tmp/background-response.json \
             -X POST "${BACKGROUND_BASE_URL}/v1/chat/completions" \
@@ -130,7 +130,7 @@ jobs:
               ],
               max_tokens: 2048
             }')
-          curl -fsS --max-time 240 \
+          curl -fsS --max-time 240 --retry 2 --retry-delay 2 \
             -D /tmp/background-headers.txt \
             -o /tmp/background-response.json \
             -X POST "${BACKGROUND_BASE_URL}/v1/chat/completions" \
@@ -184,7 +184,7 @@ jobs:
               ],
               max_tokens: 1024
             }')
-          curl -fsS --max-time 240 \
+          curl -fsS --max-time 240 --retry 2 --retry-delay 2 \
             -D /tmp/background-headers.txt \
             -o /tmp/background-response.json \
             -X POST "${BACKGROUND_BASE_URL}/v1/chat/completions" \
@@ -227,7 +227,7 @@ jobs:
             ],
             max_tokens: 512
           }')
-          curl -fsS --max-time 240 \
+          curl -fsS --max-time 240 --retry 2 --retry-delay 2 \
             -D /tmp/background-headers.txt \
             -o /tmp/background-response.json \
             -X POST "${BACKGROUND_BASE_URL}/v1/chat/completions" \
