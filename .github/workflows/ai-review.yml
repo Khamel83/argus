@@ -60,7 +60,7 @@ jobs:
                   content: ("Repository: " + $repo + "\nCommit: " + $sha + "\nReply with exactly 3 short bullets. If there are no obvious problems, say so in one bullet.\n\nDiff:\n" + $diff)
                 }
               ],
-              max_tokens: 700
+              max_tokens: 1024
             }')
           curl -fsS --max-time 240 \
             -D /tmp/background-headers.txt \
@@ -128,7 +128,7 @@ jobs:
                   content: ("Repository: " + $repo + "\nCommit: " + $sha + "\nReturn a short paragraph or a few actionable bullets, not an essay.\n\nDiff:\n" + $diff)
                 }
               ],
-              max_tokens: 1200
+              max_tokens: 2048
             }')
           curl -fsS --max-time 240 \
             -D /tmp/background-headers.txt \
@@ -182,7 +182,7 @@ jobs:
                   content: ("Repository: " + $repo + "\nIf reproduction steps or key details are missing, ask for exactly what is missing in 1-2 sentences. Otherwise give a one-line initial assessment.\n\nTitle: " + $title + "\n\nBody:\n" + $body)
                 }
               ],
-              max_tokens: 500
+              max_tokens: 1024
             }')
           curl -fsS --max-time 240 \
             -D /tmp/background-headers.txt \
@@ -225,7 +225,7 @@ jobs:
                 content: "Return a short confirmation that this harmless background-route canary was processed."
               }
             ],
-            max_tokens: 80
+            max_tokens: 512
           }')
           curl -fsS --max-time 240 \
             -D /tmp/background-headers.txt \
