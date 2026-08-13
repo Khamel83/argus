@@ -5,125 +5,244 @@ on:
     types: [opened, synchronize, labeled]
   issues:
     types: [opened]
+  workflow_dispatch:
 
 permissions:
   contents: read
   pull-requests: write
   issues: write
 
+env:
+  # This name resolves only inside each generic OCI runner Compose project.
+  # The sibling proxy publishes no host port and exposes only background chat.
+  BACKGROUND_BASE_URL: http://background-proxy:4010
+
 jobs:
   fast-review:
     name: Fast PR Review
-    if: github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize')
-    runs-on: self-hosted
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.event.action == 'opened' || github.event.action == 'synchronize')
+    runs-on: [self-hosted, oci-ts]
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Get diff against base
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
-          git fetch origin "${{ github.event.pull_request.base.ref }}" --depth=50
-          git diff "origin/${{ github.event.pull_request.base.ref }}...HEAD" > /tmp/diff.txt
+          set -euo pipefail
+          git fetch origin "$BASE_REF" --depth=50
+          git diff "origin/$BASE_REF...HEAD" > /tmp/diff.txt
 
-      - name: Ask OpenRouter for a quick pass
+      - name: Ask Gateway2000 background for a quick pass
+        env:
+          REPO_NAME: ${{ github.event.repository.name }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          DIFF=$(head -c 12000 /tmp/diff.txt)
-          PAYLOAD=$(jq -n --arg diff "$DIFF" '{
-            model: "openai/gpt-oss-20b:free",
-            messages: [{
-              role: "user",
-              content: ("Review this git diff. Reply with exactly 3 short bullet points flagging only obvious syntax or formatting issues — nothing else. If there are none, say so in one bullet.\n\nDiff:\n" + $diff)
-            }]
-          }')
-          RESP=$(curl -sS https://openrouter.ai/api/v1/chat/completions \
-            -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+          set -euo pipefail
+          diff=$(head -c 12000 /tmp/diff.txt)
+          payload=$(jq -n \
+            --arg repo "$REPO_NAME" \
+            --arg sha "$COMMIT_SHA" \
+            --arg diff "$diff" \
+            '{
+              model: "gateway2000/background",
+              messages: [
+                {
+                  role: "system",
+                  content: "Review only obvious syntax, formatting, or correctness problems. Be concise and do not invent facts."
+                },
+                {
+                  role: "user",
+                  content: ("Repository: " + $repo + "\nCommit: " + $sha + "\nReply with exactly 3 short bullets. If there are no obvious problems, say so in one bullet.\n\nDiff:\n" + $diff)
+                }
+              ],
+              max_tokens: 700
+            }')
+          curl -fsS --max-time 240 \
+            -D /tmp/background-headers.txt \
+            -o /tmp/background-response.json \
+            -X POST "${BACKGROUND_BASE_URL}/v1/chat/completions" \
             -H "Content-Type: application/json" \
-            -d "$PAYLOAD")
-          echo "$RESP" | jq -r '.choices[0].message.content // "(no response from model)"' > /tmp/review.md
+            -d "$payload"
+          route=$(awk 'tolower($1) == "x-gateway2000-route:" { gsub("\r", "", $2); value=$2 } END { print value }' /tmp/background-headers.txt)
+          selected=$(awk 'tolower($1) == "x-model-router-selected-model:" { gsub("\r", "", $2); value=$2 } END { print value }' /tmp/background-headers.txt)
+          test "$route" = "gateway2000/background"
+          test "$selected" = "opencode-go/mimo-v2.5"
+          jq -er '.choices[0].message.content | select(type == "string" and length > 0)' \
+            /tmp/background-response.json > /tmp/review.md
           {
-            echo "**Fast review** (openai/gpt-oss-20b:free, automated)"
-            echo ""
+            echo "**Fast review** (Gateway2000 background: $selected)"
+            echo
             cat /tmp/review.md
           } > /tmp/comment.md
 
       - name: Post comment
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/comment.md
 
   deep-review:
     name: Deep PR Review
-    if: >
+    if: >-
       github.event_name == 'pull_request' &&
       (github.event.action == 'opened' ||
        (github.event.action == 'labeled' && github.event.label.name == 'deep-review'))
-    runs-on: self-hosted
+    runs-on: [self-hosted, oci-ts]
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Get full diff against base
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
-          git fetch origin "${{ github.event.pull_request.base.ref }}" --depth=50
-          git diff "origin/${{ github.event.pull_request.base.ref }}...HEAD" > /tmp/diff.txt
+          set -euo pipefail
+          git fetch origin "$BASE_REF" --depth=50
+          git diff "origin/$BASE_REF...HEAD" > /tmp/diff.txt
 
-      - name: Ask OpenRouter for architecture/edge-case review
+      - name: Ask Gateway2000 background for a deeper pass
+        env:
+          REPO_NAME: ${{ github.event.repository.name }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          DIFF=$(head -c 40000 /tmp/diff.txt)
-          PAYLOAD=$(jq -n --arg diff "$DIFF" '{
-            model: "inclusionai/ling-3.0-flash:free",
-            messages: [{
-              role: "user",
-              content: ("Review this git diff for architecture concerns, runtime edge cases, and performance issues. Be concise — a short paragraph or a few bullets, not an essay.\n\nDiff:\n" + $diff)
-            }]
-          }')
-          RESP=$(curl -sS https://openrouter.ai/api/v1/chat/completions \
-            -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+          set -euo pipefail
+          diff=$(head -c 40000 /tmp/diff.txt)
+          payload=$(jq -n \
+            --arg repo "$REPO_NAME" \
+            --arg sha "$COMMIT_SHA" \
+            --arg diff "$diff" \
+            '{
+              model: "gateway2000/background",
+              messages: [
+                {
+                  role: "system",
+                  content: "Review architecture, runtime edge cases, correctness, and performance. Be concise, evidence-bound, and do not invent facts."
+                },
+                {
+                  role: "user",
+                  content: ("Repository: " + $repo + "\nCommit: " + $sha + "\nReturn a short paragraph or a few actionable bullets, not an essay.\n\nDiff:\n" + $diff)
+                }
+              ],
+              max_tokens: 1200
+            }')
+          curl -fsS --max-time 240 \
+            -D /tmp/background-headers.txt \
+            -o /tmp/background-response.json \
+            -X POST "${BACKGROUND_BASE_URL}/v1/chat/completions" \
             -H "Content-Type: application/json" \
-            -d "$PAYLOAD")
-          echo "$RESP" | jq -r '.choices[0].message.content // "(no response from model)"' > /tmp/review.md
+            -d "$payload"
+          route=$(awk 'tolower($1) == "x-gateway2000-route:" { gsub("\r", "", $2); value=$2 } END { print value }' /tmp/background-headers.txt)
+          selected=$(awk 'tolower($1) == "x-model-router-selected-model:" { gsub("\r", "", $2); value=$2 } END { print value }' /tmp/background-headers.txt)
+          test "$route" = "gateway2000/background"
+          test "$selected" = "opencode-go/mimo-v2.5"
+          jq -er '.choices[0].message.content | select(type == "string" and length > 0)' \
+            /tmp/background-response.json > /tmp/review.md
           {
-            echo "**Deep review** (inclusionai/ling-3.0-flash:free, automated)"
-            echo ""
+            echo "**Deep review** (Gateway2000 background: $selected)"
+            echo
             cat /tmp/review.md
           } > /tmp/comment.md
 
       - name: Post comment
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/comment.md
 
   issue-triage:
     name: Issue Triage
     if: github.event_name == 'issues' && github.event.action == 'opened'
-    runs-on: self-hosted
+    runs-on: [self-hosted, oci-ts]
     steps:
-      - name: Ask OpenRouter for initial triage
+      - name: Ask Gateway2000 background for initial triage
         env:
           ISSUE_TITLE: ${{ github.event.issue.title }}
           ISSUE_BODY: ${{ github.event.issue.body }}
+          REPO_NAME: ${{ github.event.repository.name }}
         run: |
-          PAYLOAD=$(jq -n --arg title "$ISSUE_TITLE" --arg body "$ISSUE_BODY" '{
-            model: "openai/gpt-oss-20b:free",
-            messages: [{
-              role: "user",
-              content: ("Triage this new issue. If it is missing clear reproduction steps or key details, ask for exactly what is missing in 1-2 sentences. Otherwise give a one-line initial assessment.\n\nTitle: " + $title + "\n\nBody:\n" + $body)
-            }]
-          }')
-          RESP=$(curl -sS https://openrouter.ai/api/v1/chat/completions \
-            -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+          set -euo pipefail
+          issue_body=${ISSUE_BODY:0:20000}
+          payload=$(jq -n \
+            --arg repo "$REPO_NAME" \
+            --arg title "$ISSUE_TITLE" \
+            --arg body "$issue_body" \
+            '{
+              model: "gateway2000/background",
+              messages: [
+                {
+                  role: "system",
+                  content: "Triage this issue without inventing facts. Be concise."
+                },
+                {
+                  role: "user",
+                  content: ("Repository: " + $repo + "\nIf reproduction steps or key details are missing, ask for exactly what is missing in 1-2 sentences. Otherwise give a one-line initial assessment.\n\nTitle: " + $title + "\n\nBody:\n" + $body)
+                }
+              ],
+              max_tokens: 500
+            }')
+          curl -fsS --max-time 240 \
+            -D /tmp/background-headers.txt \
+            -o /tmp/background-response.json \
+            -X POST "${BACKGROUND_BASE_URL}/v1/chat/completions" \
             -H "Content-Type: application/json" \
-            -d "$PAYLOAD")
-          echo "$RESP" | jq -r '.choices[0].message.content // "(no response from model)"' > /tmp/triage.md
+            -d "$payload"
+          route=$(awk 'tolower($1) == "x-gateway2000-route:" { gsub("\r", "", $2); value=$2 } END { print value }' /tmp/background-headers.txt)
+          selected=$(awk 'tolower($1) == "x-model-router-selected-model:" { gsub("\r", "", $2); value=$2 } END { print value }' /tmp/background-headers.txt)
+          test "$route" = "gateway2000/background"
+          test "$selected" = "opencode-go/mimo-v2.5"
+          jq -er '.choices[0].message.content | select(type == "string" and length > 0)' \
+            /tmp/background-response.json > /tmp/triage.md
           {
-            echo "**Auto-triage** (openai/gpt-oss-20b:free, automated)"
-            echo ""
+            echo "**Auto-triage** (Gateway2000 background: $selected)"
+            echo
             cat /tmp/triage.md
           } > /tmp/comment.md
 
       - name: Post comment
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: gh issue comment "${{ github.event.issue.number }}" --body-file /tmp/comment.md
+
+  background-canary:
+    name: Background route canary
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, oci-ts]
+    permissions:
+      contents: read
+    steps:
+      - name: Require a usable MiMo response without posting it
+        run: |
+          set -euo pipefail
+          payload=$(jq -n '{
+            model: "gateway2000/background",
+            messages: [
+              {
+                role: "user",
+                content: "Return a short confirmation that this harmless background-route canary was processed."
+              }
+            ],
+            max_tokens: 80
+          }')
+          curl -fsS --max-time 240 \
+            -D /tmp/background-headers.txt \
+            -o /tmp/background-response.json \
+            -X POST "${BACKGROUND_BASE_URL}/v1/chat/completions" \
+            -H "Content-Type: application/json" \
+            -d "$payload"
+          route=$(awk 'tolower($1) == "x-gateway2000-route:" { gsub("\r", "", $2); value=$2 } END { print value }' /tmp/background-headers.txt)
+          selected=$(awk 'tolower($1) == "x-model-router-selected-model:" { gsub("\r", "", $2); value=$2 } END { print value }' /tmp/background-headers.txt)
+          test "$route" = "gateway2000/background"
+          test "$selected" = "opencode-go/mimo-v2.5"
+          jq -er '.choices[0].message.content | select(type == "string" and length > 0)' \
+            /tmp/background-response.json > /dev/null
+          {
+            echo "## Gateway2000 background canary"
+            echo
+            echo "- Route: \`$route\`"
+            echo "- Selected model: \`$selected\`"
+            echo "- Response: usable text received"
+          } >> "$GITHUB_STEP_SUMMARY"
