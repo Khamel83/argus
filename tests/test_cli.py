@@ -92,6 +92,33 @@ def test_mcp_init_writes_codex_local_stdio_config(tmp_path, monkeypatch):
     assert "bearer_token_env_var" not in config
 
 
+def test_mcp_init_preserves_an_already_suffixed_remote_mcp_url(tmp_path, monkeypatch):
+    from argus.cli import main as cli_main
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".codex").mkdir()
+
+    result = CliRunner().invoke(
+        cli_main.cli,
+        [
+            "mcp",
+            "init",
+            "--global",
+            "--client",
+            "codex",
+            "--url",
+            "https://homelab.deer-panga.ts.net:8443/mcp",
+            "--key",
+            "test-token",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    config = (tmp_path / ".codex" / "config.toml").read_text()
+    assert 'url = "https://homelab.deer-panga.ts.net:8443/mcp"' in config
+    assert "/mcp/mcp" not in config
+
+
 def test_mcp_init_replaces_existing_codex_section_with_args_array(
     tmp_path, monkeypatch
 ):

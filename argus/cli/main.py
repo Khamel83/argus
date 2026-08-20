@@ -929,8 +929,9 @@ def mcp_serve(transport, host, port):
     "remote_url",
     default=None,
     envvar="ARGUS_REMOTE_URL",
-    help="Remote Argus server URL (e.g. http://100.x.x.x:8271). "
-    "Also reads ARGUS_REMOTE_URL env var. If set, generates remote config instead of local stdio.",
+    help="Remote Argus MCP listener base URL (e.g. https://argus.example.ts.net:8443). "
+    "May include its transport path. Also reads ARGUS_REMOTE_URL env var. "
+    "If set, generates remote config instead of local stdio.",
 )
 @click.option(
     "--key",
@@ -958,8 +959,8 @@ def mcp_init(global_, client, remote_url, api_key, transport):
     \b
     Examples:
       argus mcp init                                    # local stdio HTTP adapter
-      argus mcp init --url http://argus.local:8271      # remote streamable-http
-      argus mcp init --url http://argus.local:8271 -t sse # remote sse
+      argus mcp init --url https://argus.example.ts.net:8443      # remote streamable-http
+      argus mcp init --url https://argus.example.ts.net:8443 -t sse # remote sse
       argus mcp init --client gemini                    # print gemini mcp add command only
     """
     import sys
@@ -990,7 +991,12 @@ def mcp_init(global_, client, remote_url, api_key, transport):
 
     if remote_url:
         path = "/mcp" if transport == "streamable-http" else "/sse"
-        mcp_url = remote_url.rstrip("/") + path
+        normalized_remote_url = remote_url.rstrip("/")
+        mcp_url = (
+            normalized_remote_url
+            if normalized_remote_url.endswith(path)
+            else normalized_remote_url + path
+        )
         entry = {
             "type": "http" if transport == "streamable-http" else "sse",
             "url": mcp_url,
@@ -1147,8 +1153,6 @@ def mcp_init(global_, client, remote_url, api_key, transport):
     if client in ("all", "gemini"):
         click.echo("\nGemini CLI — run once to register:")
         if remote_url:
-            path = "/mcp" if transport == "streamable-http" else "/sse"
-            mcp_url = remote_url.rstrip("/") + path
             t_flag = "http" if transport == "streamable-http" else "sse"
             if api_key:
                 click.echo(
@@ -1173,11 +1177,9 @@ def mcp_init(global_, client, remote_url, api_key, transport):
             toml_text = toml_path.read_text() if toml_path.exists() else ""
 
             if remote_url:
-                path = "/mcp" if transport == "streamable-http" else "/sse"
-                codex_url = remote_url.rstrip("/") + path
                 new_section = (
                     f"\n[mcp_servers.argus]\n"
-                    f'url = "{codex_url}"\n'
+                    f'url = "{mcp_url}"\n'
                     f'bearer_token_env_var = "ARGUS_API_KEY"\n'
                 )
             else:

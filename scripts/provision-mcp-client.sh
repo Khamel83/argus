@@ -9,10 +9,9 @@
 set -euo pipefail
 
 TARGET="${1:-}"
-ARGUS_REMOTE_URL="${ARGUS_REMOTE_URL:-http://localhost:8271}"
+ARGUS_REMOTE_URL="${ARGUS_REMOTE_URL:-}"
 ARGUS_API_KEY="${ARGUS_API_KEY:-}"
 ARGUS_LOCAL_COMMAND="${ARGUS_LOCAL_COMMAND:-$HOME/github/argus/.venv/bin/argus}"
-MCP_URL="${ARGUS_REMOTE_URL%/}/mcp"
 
 if [[ -z "$TARGET" ]]; then
     echo "Usage: $0 <user@host | local>" >&2
@@ -20,12 +19,28 @@ if [[ -z "$TARGET" ]]; then
 fi
 
 MODE="remote"
-if [[ "$TARGET" == "local" && -x "$ARGUS_LOCAL_COMMAND" ]]; then
+if [[ -z "$ARGUS_REMOTE_URL" && "$TARGET" == "local" && -x "$ARGUS_LOCAL_COMMAND" ]]; then
     MODE="local"
-elif [[ -z "$ARGUS_API_KEY" ]]; then
-    echo "Error: ARGUS_API_KEY is not set and local Argus was not found at $ARGUS_LOCAL_COMMAND." >&2
-    echo "Set ARGUS_LOCAL_COMMAND for local stdio, or load ARGUS_API_KEY for remote HTTP." >&2
-    exit 1
+else
+    if [[ -z "$ARGUS_REMOTE_URL" ]]; then
+        echo "Error: ARGUS_REMOTE_URL is required for remote HTTP provisioning." >&2
+        echo "Set it to the remote listener base URL or its existing /mcp endpoint." >&2
+        exit 2
+    fi
+    if [[ -z "$ARGUS_API_KEY" ]]; then
+        echo "Error: ARGUS_API_KEY is required for remote HTTP provisioning." >&2
+        exit 2
+    fi
+fi
+
+MCP_URL=""
+if [[ "$MODE" == "remote" ]]; then
+    ARGUS_REMOTE_URL="${ARGUS_REMOTE_URL%/}"
+    if [[ "$ARGUS_REMOTE_URL" == */mcp ]]; then
+        MCP_URL="$ARGUS_REMOTE_URL"
+    else
+        MCP_URL="${ARGUS_REMOTE_URL}/mcp"
+    fi
 fi
 
 SCRIPT=$(cat <<PYTHON

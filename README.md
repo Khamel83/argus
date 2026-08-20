@@ -462,7 +462,7 @@ Detailed client setup and verification commands live in [docs/mcp-clients.md](do
 
 Run Argus on one machine, connect every client over the network. No local install on clients.
 
-On the adapter host:
+On the adapter host for a direct-listener topology:
 ```bash
 export ARGUS_API_KEY=replace-with-a-long-random-secret
 export ARGUS_AUTHORITY_URL=http://argus-api:8000
@@ -502,20 +502,28 @@ On each client:
 | **Gemini CLI** | `gemini mcp add argus http://<server>:<port>/mcp -t http -H "Authorization: Bearer <ARGUS_API_KEY>"` |
 | **Antigravity** | `{"mcpServers":{"argus":{"serverUrl":"http://<server>:<port>/mcp","headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` |
 
-With [Tailscale](https://tailscale.com), `<server>` is your machine's Tailscale IP (e.g. `100.x.x.x`). One server, every machine on your mesh gets search.
+The direct-listener examples above are plain HTTP and require a separately
+trusted encrypted network or TLS termination. With
+[Tailscale](https://tailscale.com), the Homelab deployment instead uses the
+TLS-issued MagicDNS endpoint `https://homelab.deer-panga.ts.net:8443/mcp`, not
+a raw `100.x` IP; its Docker listeners remain on Homelab loopback, behind
+Tailscale Serve. One server, every machine on your mesh gets search.
 
 **One-command provisioning:**
 
 ```bash
-# Load secrets, then push config to any machine:
+# Load the existing client token and canonical listener, then push config to any machine:
 eval $(secrets decrypt argus | grep -E 'ARGUS_REMOTE_URL|ARGUS_API_KEY' | sed 's/^/export /')
 
-curl -s https://raw.githubusercontent.com/Khamel83/argus/main/scripts/provision-mcp-client.sh | bash -s local              # this machine; uses local stdio if argus is installed
-curl -s https://raw.githubusercontent.com/Khamel83/argus/main/scripts/provision-mcp-client.sh | bash -s user@100.x.x.x    # remote machine
+export ARGUS_REMOTE_URL=https://homelab.deer-panga.ts.net:8443
+curl -s https://raw.githubusercontent.com/Khamel83/argus/main/scripts/provision-mcp-client.sh | bash -s local              # remote HTTPS because ARGUS_REMOTE_URL is explicit
+curl -s https://raw.githubusercontent.com/Khamel83/argus/main/scripts/provision-mcp-client.sh | bash -s user@host           # trusted remote machine
 ```
 
 The script writes Claude/Cursor, Codex, and OpenCode configs on the target.
-Local stdio does not require an MCP listener key, but the adapter still
+An explicit `ARGUS_REMOTE_URL` always selects remote mode and may be the
+listener base URL or the already-suffixed `/mcp` endpoint; the script writes
+exactly one `/mcp`. Local stdio does not require an MCP listener key, but the adapter still
 requires its scoped `ARGUS_AUTHORITY_TOKEN`. Remote MCP mode requires
 `ARGUS_REMOTE_URL` and `ARGUS_API_KEY`. Requires Python 3.
 
@@ -524,7 +532,7 @@ requires its scoped `ARGUS_AUTHORITY_TOKEN`. Remote MCP mode requires
 argus mcp init --global              # local stdio adapter for Claude Code + OpenCode + Cursor
 argus mcp init --client codex        # local stdio for Codex (writes ~/.codex/config.toml)
 argus mcp init --client opencode     # local stdio for OpenCode
-ARGUS_REMOTE_URL=http://argus.local:8271 ARGUS_API_KEY=... argus mcp init --global --client all
+ARGUS_REMOTE_URL=https://homelab.deer-panga.ts.net:8443 ARGUS_API_KEY=... argus mcp init --global --client all
 argus mcp init --client gemini       # prints gemini mcp add command
 argus mcp init --global --client all # everything above
 ```
