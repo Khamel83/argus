@@ -144,7 +144,7 @@ git diff --cached --check
 git commit -m "docs: add Argus visual overview"
 ```
 
-- [ ] **Step 4: Push the completed branch**
+- [x] **Step 4: Push the completed branch**
 
 Run:
 
