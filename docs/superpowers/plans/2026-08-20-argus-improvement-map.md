@@ -46,7 +46,7 @@ library HTML parsing, Git.
   `status-semantics`, `symptom-guide`, `improvement-board`, `boundaries`, and
   `sources`.
 
-- [ ] **Step 1: Replace the hero and thesis with an operator purpose**
+- [x] **Step 1: Replace the hero and thesis with an operator purpose**
 
   Change the title, meta description, eyebrow, hero heading, and thesis so the
   page says that it is an improvement map rather than a live dashboard. Use
@@ -59,7 +59,7 @@ library HTML parsing, Git.
   <p class="lede">Start with the symptom. Find the authority. Run the smallest safe check. Improve the system with evidence.</p>
   ```
 
-- [ ] **Step 2: Render the access-and-evidence chain**
+- [x] **Step 2: Render the access-and-evidence chain**
 
   Add `id="access-evidence"` and a three-stage diagram: caller surfaces;
   private authenticated authority; and authority-owned execution/evidence. In
@@ -93,7 +93,7 @@ library HTML parsing, Git.
   </section>
   ```
 
-- [ ] **Step 3: Add status semantics and the symptom-to-action guide**
+- [x] **Step 3: Add status semantics and the symptom-to-action guide**
 
   Add `id="status-semantics"` with five cards: `healthy`, `degraded`,
   `unready`, `unknown`, and `disabled`. Explain liveness, readiness, and full
@@ -114,7 +114,7 @@ library HTML parsing, Git.
   </article>
   ```
 
-- [ ] **Step 4: Add the improvement board and hard boundaries**
+- [x] **Step 4: Add the improvement board and hard boundaries**
 
   Add `id="improvement-board"` with six cards: client onboarding and
   acceptance, status and observability, provider reliability and spend,
@@ -137,14 +137,14 @@ library HTML parsing, Git.
   </article>
   ```
 
-- [ ] **Step 5: Replace the source index and footer**
+- [x] **Step 5: Replace the source index and footer**
 
   Make `docs/operations.md` the primary operations link. Add Operations Status
   as its own link. If the historical ADR remains, label it `historical only`.
   Make the footer say the document is static, portable, and not a live status
   board.
 
-- [ ] **Step 6: Run source-level structural checks**
+- [x] **Step 6: Run source-level structural checks**
 
   Run:
 
@@ -175,7 +175,7 @@ library HTML parsing, Git.
   Expected: a nonzero `ids=` count and at least five links, with exit status
   zero.
 
-- [ ] **Step 7: Commit the content architecture**
+- [x] **Step 7: Commit the content architecture**
 
   ```bash
   git add docs/argus-visual-overview.html
@@ -193,7 +193,7 @@ library HTML parsing, Git.
   layout where every diagram, status card, symptom card, and improvement card
   remains readable.
 
-- [ ] **Step 1: Add CSS for evidence labels, semantic cards, and definition lists**
+- [x] **Step 1: Add CSS for evidence labels, semantic cards, and definition lists**
 
   Add classes for `.evidence-label`, `.status-grid`, `.status-card`,
   `.symptom-grid`, `.symptom-card`, `.improvement-grid`, `.improvement-card`,
@@ -210,7 +210,7 @@ library HTML parsing, Git.
   .symptom-card dt, .improvement-card dt { font: 500 10px/1.2 "JetBrains Mono", monospace; letter-spacing: .1em; text-transform: uppercase; }
   ```
 
-- [ ] **Step 2: Add responsive breakpoints for information density**
+- [x] **Step 2: Add responsive breakpoints for information density**
 
   At the existing medium breakpoint, collapse the evidence chain to one
   column, rotate its arrows, and change the status and improvement grids to
@@ -228,7 +228,7 @@ library HTML parsing, Git.
   }
   ```
 
-- [ ] **Step 3: Check CSS selectors and visual fallbacks**
+- [x] **Step 3: Check CSS selectors and visual fallbacks**
 
   Run:
 
@@ -242,7 +242,7 @@ library HTML parsing, Git.
   Expected: exit status zero and output that shows the medium and narrow
   viewport rules.
 
-- [ ] **Step 4: Commit the responsive styling**
+- [x] **Step 4: Commit the responsive styling**
 
   ```bash
   git add docs/argus-visual-overview.html
@@ -260,7 +260,7 @@ library HTML parsing, Git.
 - Produces: recorded verification evidence and a clean worktree after the
   verification commit.
 
-- [ ] **Step 1: Run static safety and markup verification**
+- [x] **Step 1: Run static safety and markup verification**
 
   Run:
 
@@ -290,7 +290,7 @@ library HTML parsing, Git.
   Expected: all commands exit zero and the final command prints at least six
   clickable links.
 
-- [ ] **Step 2: Open the rendered page and record renderer outcome**
+- [x] **Step 2: Open the rendered page and record renderer outcome**
 
   Run:
 
@@ -303,7 +303,7 @@ library HTML parsing, Git.
   passed but screenshot verification was unavailable; do not describe it as a
   visual pass.
 
-- [ ] **Step 3: Check the final branch state and commit plan completion**
+- [x] **Step 3: Check the final branch state and commit plan completion**
 
   Mark each completed checkbox in this plan, then run:
 
@@ -316,3 +316,15 @@ library HTML parsing, Git.
 
   Expected: a clean worktree, with commits for the operational map, its style,
   and verified plan completion.
+
+## Execution Record
+
+- 2026-08-20: HTML parser verification passed with all six required section
+  IDs, 17 clickable links, and every relative repository link resolving to a
+  file.
+- 2026-08-20: portability scan found no configuration assignment, bearer-token
+  shape, private tailnet URL, or raw IPv4 address in the page.
+- 2026-08-20: the page was opened with the default system browser. No local
+  Chromium or Playwright browser binary was available for an automated desktop
+  or narrow-viewport screenshot, so no screenshot-based visual pass is
+  claimed.
