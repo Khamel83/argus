@@ -328,3 +328,7 @@ library HTML parsing, Git.
   Chromium or Playwright browser binary was available for an automated desktop
   or narrow-viewport screenshot, so no screenshot-based visual pass is
   claimed.
+- 2026-08-20: the repository-wide `.venv/bin/pytest -q` run reported failures
+  during its first five percent, then made no CPU progress and was stopped
+  after two minutes and 25 seconds. This is not a passing full-suite result;
+  it does not invalidate the page-specific static checks above.
