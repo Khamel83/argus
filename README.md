@@ -32,6 +32,8 @@ _Built for AI agent builders, RAG pipelines, and ops teams who need reliable sea
 
 > Status: beta. The retrieval workflows and corpus model are production-oriented, but still maturing.
 
+> Prefer a visual tour? Open the portable [Argus visual overview](docs/argus-visual-overview.html).
+
 ## Contents
 
 - [Quickstart](#quickstart)

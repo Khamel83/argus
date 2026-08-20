@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Argus · Retrieval Infrastructure for AI Agents</title>
+  <meta name="description" content="A portable visual overview of Argus search, extraction, provenance, and AI-agent access." />
+  <meta name="generator" content="/html-everything" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" />
+  <style>
+    :root {
+      --ground: #ffffff;
+      --ink: #101114;
+      --accent: #0029ff;
+      --electric: #dbe2ff;
+      --mute: #5d6270;
+      --hair: #d8dce5;
+      --panel: #f4f6fb;
+      --dark: #111526;
+      --success: #087d55;
+      --warning: #a64a00;
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--ground); color: var(--ink); scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: "Inter Tight", system-ui, sans-serif;
+      font-size: 16px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    a:hover { text-decoration-thickness: 2px; }
+    a:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+    .wrap { width: min(1160px, calc(100% - 48px)); margin: 0 auto; }
+    .eyebrow, .kicker, .chip, .mono, .table-label {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .eyebrow { display: flex; align-items: center; gap: 10px; color: var(--mute); }
+    .eyebrow::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+    .hero { padding: 64px 0 76px; display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(260px, .55fr); gap: 56px; align-items: end; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1, h2, h3 { font-family: "Archivo Black", system-ui, sans-serif; letter-spacing: -.035em; }
+    h1 { max-width: 9ch; margin: 22px 0 24px; font-size: clamp(58px, 8.4vw, 108px); line-height: .9; }
+    h2 { margin-bottom: 14px; font-size: clamp(34px, 4vw, 54px); line-height: .96; }
+    h3 { margin-bottom: 8px; font-size: 22px; line-height: 1.02; }
+    .lede { max-width: 60ch; font-size: 20px; line-height: 1.35; }
+    .hero-meta { border-top: 2px solid var(--ink); padding-top: 14px; }
+    .hero-meta p { color: var(--mute); margin-bottom: 13px; }
+    .hero-meta strong { color: var(--ink); }
+    .thesis { display: grid; grid-template-columns: 8px 1fr; margin-bottom: 84px; background: var(--panel); }
+    .thesis > div:first-child { background: var(--accent); }
+    .thesis p { max-width: 55ch; margin: 0; padding: 25px 30px; font-size: 22px; line-height: 1.25; }
+    .section { border-top: 1px solid var(--hair); padding: 46px 0 64px; }
+    .section-intro { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 32px; margin-bottom: 32px; }
+    .kicker { margin: 4px 0 0; color: var(--accent); }
+    .section-intro p:not(.kicker) { max-width: 64ch; margin-bottom: 0; color: var(--mute); font-size: 18px; }
+    .architectural-flow { display: grid; grid-template-columns: 1fr 38px 1.28fr 38px 1fr; gap: 0; align-items: stretch; }
+    .flow-arrow { display: grid; place-items: center; color: var(--accent); font-family: "Archivo Black", system-ui, sans-serif; font-size: 34px; }
+    .stage { border: 1px solid var(--ink); min-height: 292px; display: flex; flex-direction: column; }
+    .stage-title { display: flex; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--ink); background: var(--ink); color: white; }
+    .stage-title span:last-child { color: #aeb8ff; }
+    .stage-body { padding: 14px; display: flex; flex: 1; flex-direction: column; gap: 10px; }
+    .node { border: 1px solid var(--hair); padding: 13px; background: var(--ground); }
+    .node strong, .node span { display: block; }
+    .node strong { font-size: 16px; }
+    .node span { color: var(--mute); font-size: 14px; line-height: 1.25; }
+    .authority .stage-title { background: var(--accent); }
+    .authority .stage-title span:last-child { color: white; }
+    .authority-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .authority-grid .node:first-child { grid-column: 1 / -1; background: var(--electric); border-color: var(--accent); }
+    .outcome { background: var(--panel); }
+    .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 14px; color: var(--mute); font-size: 13px; }
+    .legend b { display: inline-block; width: 9px; height: 9px; margin-right: 5px; background: var(--accent); }
+    .legend .black { background: var(--ink); }
+    .legend .pale { background: var(--electric); border: 1px solid var(--accent); }
+    .policy-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+    .policy-panel { border: 1px solid var(--ink); }
+    .policy-panel > header { padding: 15px 18px; background: var(--ink); color: white; }
+    .policy-panel > header p { margin: 0; color: #c8cdf0; }
+    .policy-panel > header h3 { margin: 4px 0 0; }
+    .policy-body { padding: 18px; }
+    .gate-row { display: grid; grid-template-columns: 30px 1fr; gap: 12px; padding: 11px 0; border-top: 1px solid var(--hair); }
+    .gate-row:first-child { border-top: 0; padding-top: 0; }
+    .gate-number { display: grid; place-items: center; width: 28px; height: 28px; background: var(--electric); color: var(--accent); font-family: "JetBrains Mono", monospace; font-size: 12px; font-weight: 700; }
+    .gate-row p { margin: 1px 0 0; color: var(--mute); font-size: 14px; line-height: 1.3; }
+    .tier-stack { display: grid; gap: 9px; }
+    .tier { padding: 14px; border-left: 7px solid var(--accent); background: var(--panel); }
+    .tier:nth-child(2) { border-left-color: #5871ff; }
+    .tier:nth-child(3) { border-left-color: #94a5ff; }
+    .tier .chip { color: var(--accent); }
+    .tier h3 { margin: 4px 0; font-size: 20px; }
+    .tier p { margin: 0; color: var(--mute); font-size: 14px; }
+    .extract { background: var(--dark); color: white; }
+    .extract .section-intro { border: 0; }
+    .extract .section-intro p:not(.kicker) { color: #bac0d7; }
+    .extract .kicker { color: #aeb8ff; }
+    .ladder { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 4px; align-items: end; }
+    .rung { min-height: 198px; display: flex; flex-direction: column; justify-content: space-between; padding: 12px 9px; background: #272d46; border-top: 4px solid #6e80ff; }
+    .rung:nth-child(4n+2) { min-height: 177px; background: #21263c; }
+    .rung:nth-child(4n+3) { min-height: 157px; background: #1b2033; }
+    .rung:nth-child(4n) { min-height: 137px; background: #181c2c; }
+    .rung .mono { color: #aeb8ff; font-size: 10px; }
+    .rung strong { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 15px; line-height: 1; }
+    .ladder-caption { display: flex; justify-content: space-between; gap: 24px; margin: 15px 0 0; color: #bac0d7; font-size: 14px; }
+    .provenance { display: grid; grid-template-columns: 1.1fr .9fr; gap: 24px; }
+    .map-card { position: relative; min-height: 294px; overflow: hidden; padding: 24px; background: var(--electric); border: 1px solid var(--accent); }
+    .map-card::before, .map-card::after { content: ""; position: absolute; border-radius: 50%; border: 1px solid rgba(0, 41, 255, .25); }
+    .map-card::before { width: 420px; height: 420px; right: -120px; top: -180px; }
+    .map-card::after { width: 260px; height: 260px; left: -130px; bottom: -130px; }
+    .map-card > * { position: relative; z-index: 1; }
+    .egress-map { display: grid; grid-template-columns: 1fr 42px 1fr; gap: 12px; align-items: center; margin-top: 28px; }
+    .place { padding: 15px; border: 1px solid var(--accent); background: rgba(255,255,255,.72); }
+    .place span { display: block; color: var(--mute); font-size: 13px; line-height: 1.2; }
+    .egress-arrow { color: var(--accent); font-family: "Archivo Black", sans-serif; font-size: 30px; text-align: center; }
+    .detail-card { display: grid; gap: 10px; }
+    .detail { padding: 18px; border: 1px solid var(--hair); }
+    .detail .mono { color: var(--accent); }
+    .detail h3 { margin: 5px 0; font-size: 25px; }
+    .detail p { margin: 0; color: var(--mute); font-size: 14px; }
+    .surface-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; border: 1px solid var(--ink); }
+    .surface { min-height: 208px; padding: 22px; border-left: 1px solid var(--ink); }
+    .surface:first-child { border-left: 0; }
+    .surface:nth-child(2) { background: var(--electric); }
+    .surface .mono { color: var(--accent); }
+    .surface h3 { margin: 8px 0; font-size: 32px; }
+    .surface p { margin: 0; color: var(--mute); }
+    .surface-footnote { margin: 16px 0 0; color: var(--mute); font-size: 14px; }
+    .read-next { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: var(--ink); border: 1px solid var(--ink); }
+    .read-next a { display: block; min-height: 128px; padding: 20px; background: var(--ground); color: var(--ink); text-decoration: none; }
+    .read-next a:hover { background: var(--electric); }
+    .read-next .mono { display: block; margin-bottom: 24px; color: var(--accent); }
+    .read-next strong { display: block; font-family: "Archivo Black", system-ui, sans-serif; font-size: 24px; letter-spacing: -.02em; line-height: 1; }
+    footer { display: flex; justify-content: space-between; gap: 18px; padding: 28px 0 36px; border-top: 2px solid var(--ink); color: var(--mute); font-size: 13px; }
+    footer p { margin: 0; }
+    footer .mono { text-align: right; }
+    @media (max-width: 860px) {
+      .hero, .section-intro, .policy-grid, .provenance { grid-template-columns: 1fr; gap: 22px; }
+      .architectural-flow { grid-template-columns: 1fr; gap: 10px; }
+      .flow-arrow { transform: rotate(90deg); min-height: 28px; }
+      .stage { min-height: auto; }
+      .surface-grid { grid-template-columns: 1fr; }
+      .surface { min-height: 0; border-left: 0; border-top: 1px solid var(--ink); }
+      .surface:first-child { border-top: 0; }
+      .ladder { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+      .rung, .rung:nth-child(4n+2), .rung:nth-child(4n+3), .rung:nth-child(4n) { min-height: 126px; }
+    }
+    @media (max-width: 560px) {
+      .wrap { width: min(100% - 36px, 1160px); }
+      .hero { padding: 40px 0 52px; }
+      h1 { font-size: 58px; }
+      .lede, .thesis p { font-size: 18px; }
+      .thesis p { padding: 22px; }
+      .section { padding: 35px 0 44px; }
+      .authority-grid, .read-next { grid-template-columns: 1fr; }
+      .ladder { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .ladder-caption, footer { flex-direction: column; }
+      footer .mono { text-align: left; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Argus · retrieval infrastructure</p>
+        <h1>Search is a system, not a single API.</h1>
+        <p class="lede">Argus gives AI agents one evidence-aware retrieval layer for web search, difficult-page extraction, dead-link recovery, and durable provenance.</p>
+      </div>
+      <aside class="hero-meta" aria-label="Argus operating principles">
+        <p class="mono">Portable visual overview</p>
+        <p><strong>One authority</strong><br />Production callers share policy, budgets, sessions, and evidence through authenticated HTTP.</p>
+        <p><strong>Many surfaces</strong><br />CLI for operators, HTTP for services, MCP for agent harnesses.</p>
+      </aside>
+    </header>
+
+    <section class="thesis" aria-label="Argus thesis">
+      <div></div>
+      <p>Argus is retrieval infrastructure—not personal memory and not a chat layer. Its job is to find, extract, rank, explain, and preserve external evidence for the system that called it.</p>
+    </section>
+
+    <section class="section" id="system-map">
+      <div class="section-intro">
+        <p class="kicker">01 · System map</p>
+        <div>
+          <h2>One authority. Many ways in.</h2>
+          <p>The transport can change; the retrieval rules do not. Production CLI and MCP both delegate to the HTTP authority instead of carrying their own browser, provider, database, or budget state.</p>
+        </div>
+      </div>
+
+      <div class="architectural-flow" aria-label="Argus system flow from callers through the authenticated authority to retrieval systems and evidence outputs.">
+        <section class="stage" aria-label="Caller surfaces">
+          <div class="stage-title"><span class="mono">Callers</span><span class="mono">intent</span></div>
+          <div class="stage-body">
+            <div class="node"><strong>CLI</strong><span>operators, scripts, development</span></div>
+            <div class="node"><strong>HTTP</strong><span>services, jobs, direct integrations</span></div>
+            <div class="node"><strong>MCP</strong><span>interactive AI-agent harnesses</span></div>
+          </div>
+        </section>
+        <div class="flow-arrow" aria-hidden="true">→</div>
+        <section class="stage authority" aria-label="Authenticated Argus authority">
+          <div class="stage-title"><span class="mono">Argus authority</span><span class="mono">policy</span></div>
+          <div class="stage-body authority-grid">
+            <div class="node"><strong>Authenticated HTTP execution</strong><span>shared caller policy, durable state, and authoritative results</span></div>
+            <div class="node"><strong>Search broker</strong><span>routing, budgets, health, cache, RRF ranking</span></div>
+            <div class="node"><strong>Extractor</strong><span>quality-gated recovery chain for page content</span></div>
+            <div class="node"><strong>Session &amp; persistence</strong><span>context, evidence, provenance, durable records</span></div>
+          </div>
+        </section>
+        <div class="flow-arrow" aria-hidden="true">→</div>
+        <section class="stage" aria-label="Evidence outcomes">
+          <div class="stage-title"><span class="mono">Evidence out</span><span class="mono">audit</span></div>
+          <div class="stage-body">
+            <div class="node outcome"><strong>Ranked search results</strong><span>deduplicated, scored, provider-attributed</span></div>
+            <div class="node outcome"><strong>Readable content</strong><span>extracted text with completeness assessment</span></div>
+            <div class="node outcome"><strong>Provenance fields</strong><span>egress, machine, source type, caller context</span></div>
+          </div>
+        </section>
+      </div>
+      <p class="legend"><span><b></b>shared production authority</span><span><b class="black"></b>transport boundary</span><span><b class="pale"></b>evidence-bearing result</span></p>
+    </section>
+
+    <section class="section" id="search-policy">
+      <div class="section-intro">
+        <p class="kicker">02 · Search policy</p>
+        <div>
+          <h2>Spend the least. Learn the most.</h2>
+          <p>Argus chooses a provider queue by mode and then checks whether each option is configured, healthy, inside its budget, and appropriate for the caller before it sends a request.</p>
+        </div>
+      </div>
+
+      <div class="policy-grid">
+        <section class="policy-panel" aria-label="Search request gates">
+          <header><p class="mono">Per provider, in order</p><h3>The request gate</h3></header>
+          <div class="policy-body">
+            <div class="gate-row"><span class="gate-number">1</span><div><strong>Configured</strong><p>Only enabled, available adapters enter the queue.</p></div></div>
+            <div class="gate-row"><span class="gate-number">2</span><div><strong>Healthy</strong><p>Repeated failures cool a provider down instead of consuming another attempt.</p></div></div>
+            <div class="gate-row"><span class="gate-number">3</span><div><strong>Budgeted</strong><p>Tier and caller policy prevent exhausted or disallowed spend.</p></div></div>
+            <div class="gate-row"><span class="gate-number">4</span><div><strong>Executed</strong><p>Results are fused, deduplicated, truncated, and persisted with provenance.</p></div></div>
+          </div>
+        </section>
+
+        <section class="policy-panel" aria-label="Provider tiers">
+          <header><p class="mono">Routing order</p><h3>Provider pool</h3></header>
+          <div class="policy-body tier-stack">
+            <div class="tier"><span class="chip">Tier 0 · free first</span><h3>Start with recurring free capacity.</h3><p>Self-hosted, scraped, public, and free-key sources carry baseline retrieval before paid capacity is considered.</p></div>
+            <div class="tier"><span class="chip">Tier 1 · recurring</span><h3>Use monthly capacity deliberately.</h3><p>Metered providers remain available when they improve coverage and caller policy allows the tier.</p></div>
+            <div class="tier"><span class="chip">Tier 3 · finite</span><h3>Protect one-time credits.</h3><p>Finite balances are a late fallback, not the default path for background automation.</p></div>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section class="section extract" id="extraction">
+      <div class="section-intro">
+        <p class="kicker">03 · Content extraction</p>
+        <div>
+          <h2>Links are not enough.</h2>
+          <p>When a useful page is blocked, JavaScript-heavy, truncated, or gone, Argus climbs a quality-gated fallback ladder. It keeps trying when the text is incomplete instead of presenting a fragment as a final answer.</p>
+        </div>
+      </div>
+
+      <div class="ladder" aria-label="Twelve-stage content extraction fallback ladder">
+        <div class="rung"><span class="mono">01</span><strong>Auth extraction</strong></div>
+        <div class="rung"><span class="mono">02</span><strong>Trafilatura</strong></div>
+        <div class="rung"><span class="mono">03</span><strong>Crawl4AI</strong></div>
+        <div class="rung"><span class="mono">04</span><strong>Obscura</strong></div>
+        <div class="rung"><span class="mono">05</span><strong>Playwright</strong></div>
+        <div class="rung"><span class="mono">06</span><strong>Residential route</strong></div>
+        <div class="rung"><span class="mono">07</span><strong>Jina reader</strong></div>
+        <div class="rung"><span class="mono">08</span><strong>Valyu contents</strong></div>
+        <div class="rung"><span class="mono">09</span><strong>Firecrawl</strong></div>
+        <div class="rung"><span class="mono">10</span><strong>You contents</strong></div>
+        <div class="rung"><span class="mono">11</span><strong>Wayback</strong></div>
+        <div class="rung"><span class="mono">12</span><strong>Archive recovery</strong></div>
+      </div>
+      <p class="ladder-caption"><span>Every successful step is checked for readability and completeness.</span><span class="mono">fast path → resilient fallback</span></p>
+    </section>
+
+    <section class="section" id="provenance">
+      <div class="section-intro">
+        <p class="kicker">04 · Topology &amp; provenance</p>
+        <div>
+          <h2>Where evidence came from matters.</h2>
+          <p>Different domains behave differently from residential and datacenter egress. Argus uses observed domain behavior to avoid repeating known-bad routes, then carries provenance with the result so downstream systems can inspect the path.</p>
+        </div>
+      </div>
+
+      <div class="provenance">
+        <section class="map-card" aria-label="Topology-aware routing diagram">
+          <p class="mono">Adaptive domain memory</p>
+          <h3>Route around a known bad edge.</h3>
+          <p>A prior datacenter failure for a domain can change the next extraction route before another failure burns time or budget.</p>
+          <div class="egress-map">
+            <div class="place"><strong>Datacenter egress</strong><span>efficient for compatible targets</span></div>
+            <div class="egress-arrow" aria-hidden="true">↔</div>
+            <div class="place"><strong>Residential egress</strong><span>preferred when domain memory says it matters</span></div>
+          </div>
+        </section>
+        <section class="detail-card" aria-label="Provenance fields">
+          <article class="detail"><span class="mono">egress</span><h3>Network class</h3><p>Whether a result came through residential or datacenter routing.</p></article>
+          <article class="detail"><span class="mono">machine</span><h3>Execution origin</h3><p>The system that performed the acquisition step.</p></article>
+          <article class="detail"><span class="mono">source type</span><h3>Evidence path</h3><p>Whether the material came from search, extraction, recovery, or a related retrieval action.</p></article>
+        </section>
+      </div>
+    </section>
+
+    <section class="section" id="access">
+      <div class="section-intro">
+        <p class="kicker">05 · Choose the surface</p>
+        <div>
+          <h2>Put retrieval where work happens.</h2>
+          <p>Argus offers the same retrieval authority through different interfaces. Pick the transport that matches the caller; do not make an interactive client become a second execution authority.</p>
+        </div>
+      </div>
+
+      <div class="surface-grid">
+        <article class="surface"><span class="mono">Service / job</span><h3>HTTP</h3><p>Use direct authenticated requests for applications, automation, scheduled work, and durable service integrations.</p></article>
+        <article class="surface"><span class="mono">Agent harness</span><h3>MCP</h3><p>Use the stateless MCP adapter for interactive tools such as coding agents and conversation-driven retrieval.</p></article>
+        <article class="surface"><span class="mono">Operator / dev</span><h3>CLI</h3><p>Use local commands for exploration and development; production CLI still delegates to the shared HTTP authority.</p></article>
+      </div>
+      <p class="surface-footnote">The access boundary is intentional: production callers carry scoped credentials, while provider configuration and persistence remain behind the authority.</p>
+    </section>
+
+    <section class="section" id="sources">
+      <div class="section-intro">
+        <p class="kicker">06 · Read next</p>
+        <div>
+          <h2>The map is an index, not the contract.</h2>
+          <p>These source documents remain authoritative for installation, configuration, architecture terms, and the historical deployment record.</p>
+        </div>
+      </div>
+      <nav class="read-next" aria-label="Argus source documentation">
+        <a href="../README.md"><span class="mono">01 · User guide</span><strong>README</strong></a>
+        <a href="../CONTEXT.md"><span class="mono">02 · Architecture vocabulary</span><strong>Context</strong></a>
+        <a href="mcp-clients.md"><span class="mono">03 · Agent connections</span><strong>MCP client setup</strong></a>
+        <a href="adr/0001-canonical-deployment.md"><span class="mono">04 · Historical record</span><strong>Deployment history</strong></a>
+      </nav>
+    </section>
+
+    <footer>
+      <p>Generated from Argus documentation with <a href="https://github.com/iharnoor/html-everything">/html-everything</a> · 2026-08-19</p>
+      <p class="mono">mood · editorial<br />portable overview · no live configuration</p>
+    </footer>
+  </main>
+</body>
+</html>

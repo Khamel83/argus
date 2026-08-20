@@ -10,6 +10,7 @@ them or become a second configuration source of truth.
 ## Artifact
 
 - Path: `docs/argus-visual-overview.html`
+- Discovery: `README.md` links to the overview beside the project status.
 - Format: one HTML file with inline CSS and inline SVG/CSS diagrams.
 - External dependency: Google Fonts only, as permitted by the
   `/html-everything` recipe.
