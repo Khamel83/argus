@@ -56,7 +56,7 @@ def _schema_digest(schema):
 
 
 def _capture_real_mcp_server(monkeypatch, backend, *, standalone=False):
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer
     from mcp.server.transport_security import TransportSecuritySettings
 
     import argus.mcp.server as server
@@ -64,16 +64,28 @@ def _capture_real_mcp_server(monkeypatch, backend, *, standalone=False):
     created = []
 
     def factory(*args, **kwargs):
-        kwargs["transport_security"] = TransportSecuritySettings(
-            enable_dns_rebinding_protection=True,
-            allowed_hosts=["testserver"],
-        )
-        instance = FastMCP(*args, **kwargs)
+        instance = MCPServer(*args, **kwargs)
         instance.run = lambda **_kwargs: None
+
+        # v2 moved transport_security off the constructor and onto
+        # streamable_http_app(), so inject it there instead.
+        build_app = instance.streamable_http_app
+
+        def app_with_test_host(**app_kwargs):
+            app_kwargs.setdefault(
+                "transport_security",
+                TransportSecuritySettings(
+                    enable_dns_rebinding_protection=True,
+                    allowed_hosts=["testserver"],
+                ),
+            )
+            return build_app(**app_kwargs)
+
+        instance.streamable_http_app = app_with_test_host
         created.append(instance)
         return instance
 
-    monkeypatch.setattr("mcp.server.fastmcp.FastMCP", factory)
+    monkeypatch.setattr("mcp.server.MCPServer", factory)
     if standalone:
         from argus.development_mcp_server import serve_development_mcp
 
@@ -369,7 +381,7 @@ async def test_shared_authority_reader_aborts_one_byte_over_11_mib_before_parse(
 
 @pytest.mark.asyncio
 async def test_v2_tools_register_exact_schemas_and_return_exact_envelope():
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer
 
     from argus.capabilities import MCP_V2_TOOL_DESCRIPTOR
     from argus.mcp.v2_tools import register_v2_tools
@@ -389,7 +401,7 @@ async def test_v2_tools_register_exact_schemas_and_return_exact_envelope():
                 }
             )
 
-    mcp = FastMCP("v2-contract")
+    mcp = MCPServer("v2-contract")
     register_v2_tools(
         mcp,
         Backend(),
@@ -406,7 +418,7 @@ async def test_v2_tools_register_exact_schemas_and_return_exact_envelope():
         assert (
             hashlib.sha256(
                 json.dumps(
-                    tool.inputSchema,
+                    tool.input_schema,
                     sort_keys=True,
                     separators=(",", ":"),
                 ).encode()
@@ -416,7 +428,7 @@ async def test_v2_tools_register_exact_schemas_and_return_exact_envelope():
         assert (
             hashlib.sha256(
                 json.dumps(
-                    tool.outputSchema,
+                    tool.output_schema,
                     sort_keys=True,
                     separators=(",", ":"),
                 ).encode()
@@ -440,16 +452,16 @@ async def test_v2_tools_register_exact_schemas_and_return_exact_envelope():
             "session_id": None,
         }
     )
-    assert result.structuredContent == envelope
-    assert result.isError is False
+    assert result.structured_content == envelope
+    assert result.is_error is False
     assert result.content[0].type == "text"
     assert "canonical" in result.content[0].text
 
 
 @pytest.mark.asyncio
 async def test_schema_invalid_v2_call_is_bounded_and_never_reaches_http():
-    from mcp.server.fastmcp import FastMCP
-    from mcp.server.fastmcp.exceptions import ToolError
+    from mcp.server import MCPServer
+    from mcp.server.mcpserver.exceptions import ToolError
 
     from argus.mcp.v2_tools import register_v2_tools
 
@@ -459,7 +471,7 @@ async def test_schema_invalid_v2_call_is_bounded_and_never_reaches_http():
         async def search_web_v2(self, **_kwargs):
             pytest.fail("HTTP execution must not run")
 
-    mcp = FastMCP("v2-errors")
+    mcp = MCPServer("v2-errors")
     register_v2_tools(
         mcp,
         Backend(),
@@ -486,7 +498,7 @@ def test_complete_mcp_release_descriptor_is_immutable_and_fail_closed():
         validate_complete_mcp_registration,
     )
 
-    assert MCP_V2_TOOL_DESCRIPTOR["transport_version"] == "2025-11-25"
+    assert MCP_V2_TOOL_DESCRIPTOR["transport_version"] == "2026-07-28"
     assert MCP_V2_TOOL_DESCRIPTOR["tool_contract_version"] == "2.0"
     assert tuple(MCP_V2_TOOL_DESCRIPTOR["tools"]) == V2_NAMES
     with pytest.raises(TypeError):
@@ -545,7 +557,7 @@ def test_http_manifest_independently_suppresses_v2_suffix_on_mcp_drift():
 
 
 def test_actual_bound_tool_schema_drift_refuses_complete_registration():
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer
 
     from argus.capabilities import (
         MCP_TRANSPORT_DESCRIPTOR,
@@ -557,7 +569,7 @@ def test_actual_bound_tool_schema_drift_refuses_complete_registration():
         register_v2_tools,
     )
 
-    mcp = FastMCP("v2-registration")
+    mcp = MCPServer("v2-registration")
     register_v2_tools(
         mcp,
         object(),
@@ -591,7 +603,7 @@ def test_v2_text_rendering_is_bounded_in_utf8_bytes_without_changing_envelope():
     rendered = _result("extract_content_v2", envelope)
 
     assert len(rendered.content[0].text.encode("utf-8")) <= 64 * 1024
-    assert rendered.structuredContent == envelope
+    assert rendered.structured_content == envelope
 
 
 @pytest.mark.parametrize(
@@ -616,8 +628,8 @@ def test_v2_is_error_is_false_only_for_success_degraded_and_empty(outcome):
     envelope = _outcome_envelope(outcome)
     rendered = _result("search_web_v2", envelope)
 
-    assert rendered.structuredContent == envelope
-    assert rendered.isError is (outcome not in {"success", "degraded", "empty"})
+    assert rendered.structured_content == envelope
+    assert rendered.is_error is (outcome not in {"success", "degraded", "empty"})
     if outcome in {"degraded", "empty"}:
         assert f"Argus outcome: {outcome}" in rendered.content[0].text
 
@@ -629,8 +641,8 @@ def test_v2_failure_preserves_partial_evidence_and_labels_bounded_text():
 
     rendered = _result("search_web_v2", envelope)
 
-    assert rendered.structuredContent == envelope
-    assert rendered.isError is True
+    assert rendered.structured_content == envelope
+    assert rendered.is_error is True
     assert "failure outcome: providers_failed" in rendered.content[0].text
     assert "Accepted partial evidence" in rendered.content[0].text
     assert len(rendered.content[0].text.encode("utf-8")) <= 64 * 1024
@@ -702,7 +714,7 @@ async def test_production_build_tool_forwards_targeted_request_and_principal(
         ],
     }
 
-    content, structured = await registered.call_tool(
+    _called = await registered.call_tool(
         "build_research_pack",
         {
             "topic": "Targeted research",
@@ -712,6 +724,7 @@ async def test_production_build_tool_forwards_targeted_request_and_principal(
             "response_format": "json",
         },
     )
+    content, structured = _called.content, _called.structured_content
 
     assert content[0].text == "safe-start"
     assert structured == {"result": "safe-start"}
@@ -868,7 +881,7 @@ def test_direct_serve_mcp_rejects_injected_development_before_listener_work(
     else:
         monkeypatch.setenv("ARGUS_MCP_STANDALONE", standalone_value)
     monkeypatch.setattr(
-        "mcp.server.fastmcp.FastMCP",
+        "mcp.server.MCPServer",
         lambda *_args, **_kwargs: pytest.fail(
             "rejected injection must not construct a listener"
         ),
@@ -896,7 +909,7 @@ def test_direct_serve_mcp_accepts_injected_development_with_explicit_opt_in(
     observed = {}
     backend = object()
 
-    class FakeFastMCP:
+    class FakeMCPServer:
         def __init__(self, *_args, **_kwargs):
             pass
 
@@ -914,7 +927,7 @@ def test_direct_serve_mcp_accepts_injected_development_with_explicit_opt_in(
     monkeypatch.setenv("ARGUS_AUTOLOAD_DOTENV", "false")
     monkeypatch.setenv("ARGUS_ENV", "development")
     monkeypatch.setenv("ARGUS_MCP_STANDALONE", "true")
-    monkeypatch.setattr("mcp.server.fastmcp.FastMCP", FakeFastMCP)
+    monkeypatch.setattr("mcp.server.MCPServer", FakeMCPServer)
 
     server.serve_mcp(
         transport="stdio",
@@ -998,10 +1011,12 @@ async def test_real_v1_registrations_replay_exact_schema_and_result_goldens(
         input_digest, output_digest = V1_SCHEMA_DIGESTS[name]
         assert _schema_digest(tools[name].parameters) == input_digest
         assert _schema_digest(tools[name].output_schema) == output_digest
-        content, structured_content = await registered.call_tool(
+        _called = await registered.call_tool(
             name,
             arguments[name],
         )
+        content = _called.content
+        structured_content = _called.structured_content
         assert content[0].model_dump(exclude_none=True) == {
             "type": "text",
             "text": text,
@@ -1344,7 +1359,7 @@ for candidate in sorted(Path(sys.argv[1]).glob("mutated-*.json")):
             """
 import sys
 from pathlib import Path
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 from argus.capabilities import (
     CapabilityManifestError,
     MCP_TRANSPORT_DESCRIPTOR,
@@ -1355,7 +1370,7 @@ from argus.mcp.v2_tools import (
     register_v2_tools,
 )
 
-mcp = FastMCP("release-validation")
+mcp = MCPServer("release-validation")
 register_v2_tools(
     mcp,
     object(),
