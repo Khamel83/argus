@@ -9,6 +9,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       ARGUS_AUTOLOAD_DOTENV: "false"
       ARGUS_DISABLE_SECRET_RESOLUTION: "true"
@@ -31,11 +32,17 @@ jobs:
       - name: Sync dependencies
         run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra mcp
 
+      - name: Verify canonical provider fixture attestations
+        run: >-
+          uv run --python ${{ matrix.python-version }}
+          python scripts/generate_provider_fixture_attestations.py --check
+
       - name: Run tests
         run: uv run --python ${{ matrix.python-version }} pytest tests/ -v --tb=short
 
   scorecard:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       ARGUS_AUTOLOAD_DOTENV: "false"
       ARGUS_DISABLE_SECRET_RESOLUTION: "true"
@@ -66,6 +73,7 @@ jobs:
 
   postgres-ledger:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
@@ -166,6 +174,7 @@ jobs:
 
   production-config:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       ARGUS_AUTOLOAD_DOTENV: "false"
       ARGUS_DISABLE_SECRET_RESOLUTION: "true"
@@ -190,6 +199,7 @@ jobs:
 
   image-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -234,6 +244,7 @@ jobs:
 
   freshness:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
