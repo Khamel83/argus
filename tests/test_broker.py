@@ -1064,6 +1064,26 @@ async def test_legacy_claim_mutation_cannot_override_readiness_authority(
     spend.settle.assert_not_called()
 
 
+# A provider that a readiness regression skips never enters `search`, so an
+# unbounded `await entered.wait()` hangs the whole suite rather than failing.
+# That is exactly how one stale attestation burned the 6h CI ceiling on three
+# Python versions for ten days. Bound every gate wait.
+_GATE_TIMEOUT_SECONDS = 10
+
+
+async def _await_gate(event, what):
+    import asyncio
+
+    try:
+        await asyncio.wait_for(event.wait(), timeout=_GATE_TIMEOUT_SECONDS)
+    except (asyncio.TimeoutError, TimeoutError):
+        raise AssertionError(
+            f"timed out after {_GATE_TIMEOUT_SECONDS}s waiting for {what}; "
+            "the provider was almost certainly skipped before execution "
+            "(check ProviderReadinessSnapshot.execution_decision)"
+        ) from None
+
+
 @pytest.mark.asyncio
 async def test_cancelled_paid_invocation_remains_uncertain_until_reconciled(monkeypatch):
     import asyncio
@@ -1075,7 +1095,7 @@ async def test_cancelled_paid_invocation_remains_uncertain_until_reconciled(monk
         async def search(self, query):
             self.calls += 1
             entered.set()
-            await release.wait()
+            await _await_gate(release, "the test to release the gate")
             return [], ProviderTrace(provider=self.name, status="success")
 
     provider = GateProvider(name=ProviderName.BRAVE)
@@ -1087,7 +1107,7 @@ async def test_cancelled_paid_invocation_remains_uncertain_until_reconciled(monk
             [ProviderName.BRAVE],
         )
     )
-    await entered.wait()
+    await _await_gate(entered, "the provider to enter search")
     first.cancel()
     with pytest.raises(asyncio.CancelledError):
         await first
@@ -1115,7 +1135,7 @@ async def test_exactly_one_concurrent_paid_caller_gets_authority_lease(monkeypat
         async def search(self, query):
             self.calls += 1
             entered.set()
-            await release.wait()
+            await _await_gate(release, "the test to release the gate")
             return [], ProviderTrace(provider=self.name, status="success")
 
     provider = GateProvider(name=ProviderName.BRAVE)
@@ -1127,7 +1147,7 @@ async def test_exactly_one_concurrent_paid_caller_gets_authority_lease(monkeypat
             [ProviderName.BRAVE],
         )
     )
-    await entered.wait()
+    await _await_gate(entered, "the provider to enter search")
     second = await execute_with_plan(
         executor,
         SearchQuery(query="second", caller="test"),
