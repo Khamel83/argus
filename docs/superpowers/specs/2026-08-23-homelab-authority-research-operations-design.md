@@ -29,11 +29,57 @@ Claude Code are direct Streamable HTTP callers.  ChatGPT uses an OpenAI Secure
 MCP Tunnel whose `tunnel-client` runs on Homelab and is permitted to reach the
 same private adapter; Argus has no public endpoint.
 
-Research is admitted only when the result contains at least three usable,
-deduplicated citations from at least two registrable domains.  A valid request
-that does not meet that floor returns a structured
-`insufficient_evidence` outcome, with the partial evidence and exact count,
+Research admission is **request-class aware and claim-anchored**, not a single
+flat source count.  Every executable class already exists in source as
+`EXECUTABLE_REQUEST_CLASSES` (`discovery`, `research`, `recovery`, `grounding`).
+
+| Class | Source requirement |
+|---|---|
+| `discovery`, `grounding` | one usable citation that actually supports the answer |
+| `research` | at least five usable citations across three registrable domains, including two primary sources |
+| `recovery` | the citation set required by the recovery target, minimum one usable citation |
+| **every class** | **every material claim resolves to a citation in the emitted set** |
+
+A valid request that does not meet its class requirement returns a structured
+`insufficient_evidence` outcome, with the partial evidence and exact counts,
 instead of a plausible-looking answer.
+
+**Superseded decision (2026-08-24).**  An earlier revision of this design set a
+flat floor of three usable citations across two registrable domains for all
+research.  That number is withdrawn for two measured reasons.
+
+First, it is below observed output and would therefore never fire.  The
+2026-08-09 production benchmark recorded in
+`docs/research/2026-08-09-argus-tonight-acceptance.md` produced **11 usable
+sources across 7 domains with 4 primary sources**, independently audited at
+**9 usable / 7 domains / 3 primary**.  A 3/2 floor sits at roughly half of
+already-achieved output.
+
+Second, and more importantly, **counting sources does not catch the failure
+mode that actually occurred**.  That same run *passed* the numeric floor and
+still **failed** its evidence gate on citation integrity: the report asserted a
+discovered `/web-research` URL that was absent from the manifest citation set.
+An unsupported claim standing beside eleven genuine citations satisfies any
+counting rule.  The per-claim resolution requirement above is the check with
+teeth; the counts are a secondary guard.
+
+Adopting five/three/two for the `research` class also removes a duplicate
+standard: `argus/acceptance_v3/bundle.py` already declares
+`_COMPLETED_MIN_URLS = 5`, `_COMPLETED_MIN_DOMAINS = 3`, and
+`_COMPLETED_MIN_PRIMARY = 2` for the release acceptance gate.  Those two gates
+answer different questions — release acceptance asks whether a build ships,
+runtime admission asks whether one answer may be published — but they should
+not disagree on what counts as sufficient evidence.
+
+A flat floor is also wrong for a legitimate single-source lookup.  A canonical
+factual question answered from one authoritative primary source must not be
+refused; that is why `discovery` and `grounding` require one supporting
+citation rather than three.
+
+The `research` numbers remain provisional until measured against ordinary
+traffic rather than one curated benchmark.  Task 12's bounded real-query proof
+is the point at which they are confirmed or adjusted, and adjusting them is a
+recorded decision, not a silent constant change.
 
 Provider planning remains cost ordered but is no longer blind to stale
 readiness.  It uses no-spend diagnostic observations plus bounded confidence
@@ -141,6 +187,11 @@ flowchart LR
    Homelab authority boundary.
 5. A research synthesis can consume only an `admitted` result.  Partial
    retrieval is retained for diagnosis, but it is not promoted to an answer.
+   Admission is enforced at the **workflow boundary**, not at a route, so every
+   surface that reaches targeted research — `build_research_pack`,
+   `POST /api/research`, and the `research_web` MCP tool — passes the same
+   gate.  No caller-selectable tool may bypass admission; a surface that
+   cannot express the admission outcome is not admitted as a research surface.
 6. Routine diagnostics are no-spend by construction.  An actual search,
    extraction, paid probe, secret mutation, and deployment require their own
    explicit path and authority.
@@ -251,11 +302,15 @@ structured admission object.
   "request_id": "opaque-id",
   "outcome": "insufficient_evidence",
   "research_admission": {
-    "minimum_usable_citations": 3,
-    "minimum_distinct_domains": 2,
-    "usable_citation_count": 2,
-    "distinct_domain_count": 2,
-    "missing": ["usable_citations"]
+    "request_class": "research",
+    "minimum_usable_citations": 5,
+    "minimum_distinct_domains": 3,
+    "minimum_primary_sources": 2,
+    "usable_citation_count": 4,
+    "distinct_domain_count": 3,
+    "primary_source_count": 1,
+    "unresolved_claims": ["c7"],
+    "missing": ["usable_citations", "primary_sources", "claim_citations"]
   },
   "citations": [
     {
@@ -269,7 +324,7 @@ structured admission object.
   ],
   "error": {
     "code": "insufficient_evidence",
-    "message": "Research admission requires 3 usable citations across 2 domains."
+    "message": "Research admission for class research requires 5 usable citations across 3 domains including 2 primary sources; 1 claim is uncited."
   }
 }
 ```
@@ -292,9 +347,25 @@ Blocked/error pages, malformed URLs, provider metadata, and duplicates never
 count.  The admission receipt preserves no page body or query content beyond
 the normal request retention policy.
 
-The workflow may return more than three citations.  It cannot claim an
-admitted research answer with fewer than three usable citations across two
-domains, even if one provider returned a confident snippet.
+The workflow may return more citations than its class requires.  It cannot
+claim an admitted answer while any material claim is unresolved, and it cannot
+claim an admitted `research` answer below five usable citations across three
+registrable domains including two primary sources — even if one provider
+returned a confident snippet.  `unresolved_claims` lists claim identifiers that
+no emitted citation supports; a nonempty list is disqualifying on its own,
+whatever the counts are.
+
+A *primary source* is the entity the claim is about, or the originating record
+for it — a vendor's own documentation for a claim about that vendor, a
+regulator's own filing for a claim about that filing.  Aggregators, mirrors,
+and commentary are usable citations but never primary.
+
+Reuse, do not reimplement.  `argus/acceptance_v3/bundle.py` already provides
+`minimum_evidence(...)`, parameterized on `min_urls`/`min_domains`/`min_primary`,
+and a `tld`-backed `_registrable_domain`.  `argus/workflows/targeted_research.py`
+carries a second `_registrable_domain`.  The implementation extracts that pair
+into one shared module used by both the release gate and runtime admission; it
+does not add a third copy.
 
 ### S2.2 Provider confidence model
 
@@ -331,8 +402,9 @@ For each research request, the planner operates in ordered stages:
 3. eligible prepaid/one-time capacity only after stage 1 and 2 supply no
    admissible evidence or the request declares a provider capability that is
    genuinely required;
-4. structured `insufficient_evidence` when no authorized stage produces the
-   3-citation/2-domain floor.
+4. structured `insufficient_evidence` when no authorized stage satisfies the
+   requesting class's citation requirement, or when a material claim remains
+   unresolved.
 
 Within a stage, sort by relevant, nonstale confidence, then normal routing
 score and topology.  A stale or unknown confidence does not exclude a provider;
@@ -350,9 +422,20 @@ refresh a metric.
 
 ### S2.4 Scope-2 acceptance gates
 
-- Unit tests cover 3 URLs/2 domains admitted, 2 URLs/2 domains rejected, 3
-  URLs/1 domain rejected, canonical duplicate collapse, and malformed/blocked
-  result exclusion.
+- Unit tests cover, per request class: `research` admitted at 5 URLs/3
+  domains/2 primary; rejected at 4/3/2, at 5/2/2, and at 5/3/1; `discovery`
+  and `grounding` admitted on one supporting citation and rejected on zero;
+  canonical duplicate collapse; and malformed/blocked result exclusion.
+- A claim-resolution test proves that a result meeting every numeric threshold
+  is still rejected when one material claim resolves to no emitted citation,
+  and that `unresolved_claims` names it.
+- A bypass test proves `build_research_pack`, `POST /api/research`, and
+  `research_web` all traverse the same admission gate and return the same
+  outcome for one fixture; adding a research surface that skips the gate fails
+  the suite.
+- A shared-primitive test proves runtime admission and the acceptance-v3
+  release gate consume the same `minimum_evidence`/registrable-domain
+  implementation, so the two gates cannot silently disagree.
 - HTTP and modern/legacy MCP surfaces expose the same count, outcome, and
   safe partial citations for every fixture.
 - A planner test proves unknown balance remains eligible, confirmed exhausted

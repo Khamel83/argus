@@ -6,8 +6,9 @@
 
 **Goal:** Make Homelab the sole Argus execution authority, expose one
 authenticated MagicDNS Streamable HTTP MCP endpoint with modern/legacy
-compatibility, admit research only at the three-citation/two-domain floor, and
-operate providers through no-spend observations and Maya-owned repair flow.
+compatibility, admit research only through a request-class-aware,
+claim-anchored gate applied at the workflow boundary, and operate providers
+through no-spend observations and Maya-owned repair flow.
 
 **Architecture:** Keep the HTTP authority as the only broker/provider/database
 owner.  The MCP adapter remains a stateless caller.  Direct tailnet clients
@@ -164,23 +165,39 @@ loopback address; no real-client template does.
 
 Define `ResearchAdmissionOutcome` with `admitted`, `insufficient_evidence`,
 and `failed`; `ResearchCitation`; `ResearchAdmission`; and
-`ResearchAdmissionEnvelope`.  Tests prove that 3 distinct canonical URLs over
-2 registrable domains admit; 2/2 and 3/1 do not; duplicate canonical URLs,
-malformed links, no-title entries, blocked/error candidates, and unknown
-registrable domains do not count.
+`ResearchAdmissionEnvelope`.  Requirements are per request class, keyed on the
+existing `EXECUTABLE_REQUEST_CLASSES`.
+
+Tests prove that `research` admits at 5 usable URLs over 3 registrable domains
+with 2 primary sources, and rejects at 4/3/2, 5/2/2 and 5/3/1; that
+`discovery` and `grounding` admit on one supporting citation and reject on
+zero; that duplicate canonical URLs, malformed links, no-title entries,
+blocked/error candidates, and unknown registrable domains do not count; and
+that a result meeting every numeric threshold is still rejected when a material
+claim resolves to no emitted citation.
 
 **Step 2: implement pure deterministic admission.**
 
-Place URL canonicalization/domain counting in the contract/module layer, using
-the repository's existing registrable-domain utility where available.  Return
-`missing` requirements and partial safe citations deterministically.  Do not
-call a provider, database, or extractor from this module.
+Do not write a third evidence-floor implementation.  `argus/acceptance_v3/bundle.py`
+already has `minimum_evidence(...)` parameterized on `min_urls`/`min_domains`/
+`min_primary`, plus a `tld`-backed `_registrable_domain`;
+`argus/workflows/targeted_research.py` has a second `_registrable_domain`.
+Extract that pair into one shared module and have both the release gate and
+runtime admission consume it, so the two cannot disagree.
+
+Add claim resolution on top: map each material claim to the citation
+supporting it and return unresolved claim identifiers.  Return `missing`
+requirements and partial safe citations deterministically.  Do not call a
+provider, database, or extractor from this module.
 
 **Step 3: publish the route-specific contract.**
 
-Document `contract_version: research-admission-1`, the 3/2 constants, 422
-body for `insufficient_evidence`, and the distinction between semantic
-insufficiency and a transport/workflow `failed` state.  Do not mutate legacy
+Document `contract_version: research-admission-1`, the per-class requirement
+table, the claim-resolution rule, the 422 body for `insufficient_evidence`,
+and the distinction between semantic insufficiency and a transport/workflow
+`failed` state.  Record that the `research` numbers match
+`argus/acceptance_v3/bundle.py` deliberately, and that they stay provisional
+until Task 12 measures ordinary traffic.  Do not mutate legacy
 discovery/search response semantics.
 
 **Step 4: verify.**
@@ -193,7 +210,7 @@ uv run --no-sync ruff check argus/contracts tests/test_research_admission.py
 **Acceptance:** the 3/2 decision is pure, deterministic, domain-aware, and
 testable with no provider credentials.
 
-### Task 4: Route Targeted Research through admission on HTTP and MCP
+### Task 4: Gate every research surface at the workflow boundary
 
 **Files:**
 
@@ -211,18 +228,32 @@ testable with no provider credentials.
 **Step 1: write end-to-end authority-double tests.**
 
 For an admitted fixture and an insufficient fixture, assert HTTP
-`POST /api/research` and MCP `research_web` produce byte-equivalent
-structured admission counts/citations.  Assert HTTP insufficiency is 422;
-MCP insufficiency has an error result with usable structured content.  Assert
-the old discovery search route/tool is unchanged.
+`POST /api/research`, MCP `research_web`, **and the existing
+`build_research_pack` MCP tool** produce byte-equivalent structured admission
+counts/citations.  Assert HTTP insufficiency is 422; MCP insufficiency has an
+error result with usable structured content.
+
+`build_research_pack` is the existing targeted-research surface and is the
+bypass this task closes: gating only the new route would leave the old tool as
+an unchecked path to the same workflow, making admission decorative.  Add a
+guard test that enumerates the registered research surfaces and fails if any
+reaches targeted research without traversing admission, so a future surface
+cannot silently reopen the gap.
+
+Assert the legacy discovery *search* route/tool (`search_web`) is unchanged —
+that is a different operation and keeps its existing semantics.
 
 **Step 2: implement one workflow boundary.**
 
 Construct citations only from normalized, accepted `SearchResult`/
 `ExtractedContent` data after existing dedupe/ranking.  Call the pure admission
-function once at the workflow boundary.  The HTTP presenter maps it to the
-new route; the MCP adapter serializes the same envelope.  Do not make MCP
-perform local broker work.
+function **once, inside `argus/workflows/targeted_research.py`/`service.py`**,
+so every caller inherits it structurally rather than by each route remembering
+to ask.  Pass the caller's request class through to admission.  The HTTP
+presenter maps the result to the new route; the MCP adapter serializes the same
+envelope for both `research_web` and `build_research_pack`.  Do not add the
+check at a route, an adapter, or a presenter — a gate above the workflow can be
+skipped by the next surface.  Do not make MCP perform local broker work.
 
 **Step 3: prevent unsafe synthesis.**
 
@@ -567,7 +598,11 @@ and repair loop each have their own evidence; none is inferred from another.
 
 ## Review checklist before implementation authorization
 
-- [ ] Parent task accepts the target architecture and 3/2 semantic contract.
+- [x] Parent task accepts the target architecture and the request-class-aware,
+      claim-anchored admission contract (decided 2026-08-24; supersedes the
+      withdrawn flat 3/2 floor).
+- [x] Admission is enforced at the workflow boundary so `build_research_pack`
+      cannot bypass it (decided 2026-08-24).
 - [ ] Homelab operator names the canonical MagicDNS endpoint and rollback owner.
 - [ ] Maya owner accepts the bounded repair packet and secret-update boundary.
 - [ ] Baywatch owner accepts observation schema, freshness, and dedupe key.
