@@ -715,3 +715,45 @@ secret is required for this verification.
 
 These costs are smaller than breaking old clients or allowing each surface to
 reconstruct outcomes independently.
+
+## Amendment — 2026-08-24: verified 2026-07-28 conformance
+
+This ADR predates protocol revision `2026-07-28`. That revision removes the GET
+stream endpoint and protocol-level sessions, and mirrors selected body fields
+into required request headers. Argus serves both eras from the single `/mcp`
+endpoint via one `streamable_http_app(stateless_http=True)`; the SDK routes on
+the `MCP-Protocol-Version` header, so there is no Argus-side era branch and no
+second route.
+
+The behavior below was measured against the pinned SDK, not inferred. It is
+pinned by `tests/test_mcp_2026_07_28_contract.py` so an SDK regression fails
+the suite rather than silently changing what real clients receive.
+
+| Requirement | Observed | Owner |
+|---|---|---|
+| Single POST endpoint; GET/DELETE rejected | `405` | SDK |
+| No session minted or echoed; a client-supplied `Mcp-Session-Id` is ignored | verified | SDK |
+| `server/discover` implemented | `200` | SDK |
+| Header/body protocol mismatch | `400` + `-32020` | SDK |
+| Missing or mismatched `Mcp-Method` / `Mcp-Name` | `400` + `-32020` | SDK |
+| Unsupported version lists supported revisions | `400` + `-32022` with `data.supported` | SDK |
+| Unknown method | `404` + `-32601` | SDK |
+| Modern body with no `MCP-Protocol-Version` header | `400` + `-32020` | **Argus** |
+
+Only the last row is implemented by Argus. The specification permits treating a
+header-less request as `2025-03-26` for pre-2025-06-18 clients, and the SDK does
+exactly that. A body carrying `_meta.io.modelcontextprotocol/protocolVersion`
+is unambiguously a modern request, so applying that fallback would silently
+downgrade it — the one thing the compatibility contract must never do. Argus
+rejects that combination and leaves genuine header-less legacy `initialize`
+traffic untouched.
+
+### Known constraint: `stateless_http=True` and the legacy back channel
+
+`stateless_http=True` affects only the legacy leg. It removes sticky-routing
+requirements for legacy clients but disables server-initiated requests on that
+leg, raising `NoBackChannelError` if a tool needs one. No Argus tool currently
+accepts a `Context` parameter, so nothing depends on the back channel today.
+A future tool that emits progress notifications or uses sampling/elicitation
+will fail for legacy clients under this setting, and that is a deliberate
+trade-off to re-open rather than a bug to work around.
