@@ -793,7 +793,7 @@ async def test_mcp_server_registers_core_tools_against_selected_backend(
 ):
     import argus.mcp.server as server
 
-    class FakeFastMCP:
+    class FakeMCPServer:
         instance = None
 
         def __init__(self, name, **kwargs):
@@ -801,7 +801,7 @@ async def test_mcp_server_registers_core_tools_against_selected_backend(
             self.tools = {}
             self.resources = {}
             self.ran = None
-            FakeFastMCP.instance = self
+            FakeMCPServer.instance = self
 
         def tool(self):
             return lambda function: self.tools.setdefault(
@@ -837,8 +837,8 @@ async def test_mcp_server_registers_core_tools_against_selected_backend(
 
     backend = Backend()
     monkeypatch.setattr(
-        "mcp.server.fastmcp.FastMCP",
-        FakeFastMCP,
+        "mcp.server.MCPServer",
+        FakeMCPServer,
     )
     monkeypatch.setattr(server, "build_mcp_backend", lambda: backend)
     monkeypatch.setattr(
@@ -851,7 +851,7 @@ async def test_mcp_server_registers_core_tools_against_selected_backend(
     )
 
     server.serve_mcp(transport="stdio")
-    registered = FakeFastMCP.instance
+    registered = FakeMCPServer.instance
     result = await registered.tools["search_web"](
         "canonical",
         caller="maya",

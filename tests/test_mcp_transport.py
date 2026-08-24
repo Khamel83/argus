@@ -15,7 +15,12 @@ SUPPORTED_PROTOCOLS = (
     "2025-03-26",
     "2025-06-18",
     "2025-11-25",
+    "2026-07-28",
 )
+
+# 2026-07-28 removed both `initialize` and protocol sessions, so the
+# handshake-based tests below only apply to the legacy revisions.
+LEGACY_HANDSHAKE_PROTOCOLS = SUPPORTED_PROTOCOLS[:-1]
 
 
 def test_fresh_production_mcp_import_does_not_load_authority_modules():
@@ -412,22 +417,21 @@ class ActiveLegacySseConnection:
 
 
 def _real_legacy_sdk_app(*, registry_options=None):
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer
     from mcp.server.sse import SseServerTransport
     from mcp.server.transport_security import TransportSecuritySettings
 
     from argus.api.security import TransportSecurityGuard
     from argus.mcp.server import secure_mcp_transport_app
 
-    mcp = FastMCP(
-        "legacy-contract-fixture",
+    mcp = MCPServer("legacy-contract-fixture")
+    sdk_app = mcp.sse_app(
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
             allowed_hosts=["testserver"],
             allowed_origins=[],
         ),
     )
-    sdk_app = mcp.sse_app()
     transport = next(
         route.app.__self__
         for route in sdk_app.routes
@@ -506,7 +510,7 @@ def _initialize(client, protocol="2025-11-25", token=None):
     )
 
 
-@pytest.mark.parametrize("protocol", SUPPORTED_PROTOCOLS)
+@pytest.mark.parametrize("protocol", LEGACY_HANDSHAKE_PROTOCOLS)
 def test_streamable_http_initializes_every_promised_protocol(protocol):
     client, app, downstream, manager = _streamable_client()
 
@@ -817,14 +821,19 @@ def test_periodic_sweep_reclaims_expiry_without_another_http_request():
 
 
 def test_pinned_sdk_wire_and_legacy_tool_result_shape_remain_unchanged():
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer
     from mcp.server.transport_security import TransportSecuritySettings
 
     from argus.api.security import TransportSecurityGuard
     from argus.mcp.server import secure_mcp_transport_app
 
-    mcp = FastMCP(
-        "contract-fixture",
+    mcp = MCPServer("contract-fixture")
+
+    @mcp.tool()
+    def frozen_tool(value: str) -> str:
+        return value
+
+    sdk_app = mcp.streamable_http_app(
         json_response=True,
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
@@ -832,12 +841,6 @@ def test_pinned_sdk_wire_and_legacy_tool_result_shape_remain_unchanged():
             allowed_origins=[],
         ),
     )
-
-    @mcp.tool()
-    def frozen_tool(value: str) -> str:
-        return value
-
-    sdk_app = mcp.streamable_http_app()
     app = secure_mcp_transport_app(
         sdk_app,
         session_manager=mcp.session_manager,
@@ -896,25 +899,24 @@ def test_pinned_sdk_wire_and_legacy_tool_result_shape_remain_unchanged():
     }
 
 
-@pytest.mark.parametrize("protocol", SUPPORTED_PROTOCOLS)
+@pytest.mark.parametrize("protocol", LEGACY_HANDSHAKE_PROTOCOLS)
 def test_production_default_sdk_sse_response_is_not_cancelled_by_body_replay(
     protocol,
 ):
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer
     from mcp.server.transport_security import TransportSecuritySettings
 
     from argus.api.security import TransportSecurityGuard
     from argus.mcp.server import secure_mcp_transport_app
 
-    mcp = FastMCP(
-        "default-sse-fixture",
+    mcp = MCPServer("default-sse-fixture")
+    sdk_app = mcp.streamable_http_app(
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
             allowed_hosts=["testserver"],
             allowed_origins=[],
         ),
     )
-    sdk_app = mcp.streamable_http_app()
     app = secure_mcp_transport_app(
         sdk_app,
         session_manager=mcp.session_manager,
@@ -1182,9 +1184,9 @@ def test_package_metadata_exactly_pins_the_audited_mcp_sdk():
     metadata = tomllib.loads((root / "pyproject.toml").read_text())
     lock = (root / "uv.lock").read_text()
 
-    assert metadata["project"]["optional-dependencies"]["mcp"] == ["mcp==1.27.0"]
-    assert 'name = "mcp", marker = "extra == \'mcp\'", specifier = "==1.27.0"' in lock
-    assert importlib.metadata.version("mcp") == "1.27.0"
+    assert metadata["project"]["optional-dependencies"]["mcp"] == ["mcp==2.0.0"]
+    assert 'name = "mcp", marker = "extra == \'mcp\'", specifier = "==2.0.0"' in lock
+    assert importlib.metadata.version("mcp") == "2.0.0"
 
 
 def test_network_serve_binds_sdk_app_to_validated_argus_registration(monkeypatch):
@@ -1192,7 +1194,7 @@ def test_network_serve_binds_sdk_app_to_validated_argus_registration(monkeypatch
 
     observed = {}
 
-    class FakeFastMCP:
+    class FakeMCPServer:
         def __init__(self, name, **kwargs):
             from types import SimpleNamespace
 
@@ -1208,8 +1210,9 @@ def test_network_serve_binds_sdk_app_to_validated_argus_registration(monkeypatch
         def tool(self):
             return lambda function: function
 
-        def streamable_http_app(self):
+        def streamable_http_app(self, **kwargs):
             observed["sdk_app_built"] = True
+            observed["sdk_app_kwargs"] = kwargs
 
             async def app(scope, receive, send):
                 del scope, receive, send
@@ -1220,7 +1223,7 @@ def test_network_serve_binds_sdk_app_to_validated_argus_registration(monkeypatch
         def session_manager(self):
             return self._session_manager
 
-    monkeypatch.setattr("mcp.server.fastmcp.FastMCP", FakeFastMCP)
+    monkeypatch.setattr("mcp.server.MCPServer", FakeMCPServer)
     monkeypatch.setattr(server, "build_mcp_backend", lambda: object())
     monkeypatch.setattr(
         "uvicorn.run",
@@ -1246,8 +1249,10 @@ def test_network_serve_binds_sdk_app_to_validated_argus_registration(monkeypatch
     assert observed["run_kwargs"] == {"host": "127.0.0.1", "port": 8001}
     assert "auth" not in observed["kwargs"]
     assert "token_verifier" not in observed["kwargs"]
-    assert observed["kwargs"]["transport_security"].allowed_hosts == ["mcp.internal"]
-    assert observed["kwargs"]["transport_security"].allowed_origins == []
+    assert observed["sdk_app_kwargs"]["transport_security"].allowed_hosts == [
+        "mcp.internal"
+    ]
+    assert observed["sdk_app_kwargs"]["transport_security"].allowed_origins == []
 
 
 def test_proxy_exposed_loopback_mcp_fails_without_complete_listener_policy(
