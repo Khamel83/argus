@@ -717,3 +717,114 @@ def test_mcp_serve_standalone_launcher_is_gated_in_production(monkeypatch):
         "standalone development must use the external development MCP launcher"
     )
     assert calls == []
+
+
+# --- secret handling: `argus mcp init` must never persist a raw token -------
+
+SECRET = "sk-argus-DO-NOT-PERSIST-0123456789"
+
+
+def _no_secret_anywhere(root, output):
+    """The literal token must appear in no generated file and no printed text."""
+    hits = []
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            if SECRET in path.read_text():
+                hits.append(str(path.relative_to(root)))
+        except (UnicodeDecodeError, OSError):
+            continue
+    assert hits == [], f"raw token written to {hits}"
+    assert SECRET not in output, "raw token printed to the terminal"
+
+
+def test_mcp_init_never_writes_raw_token_to_shell_profile(tmp_path, monkeypatch):
+    from argus.cli import main as cli_main
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".zshrc").write_text("# existing profile\n")
+
+    result = CliRunner().invoke(
+        cli_main.cli,
+        [
+            "mcp", "init", "--global", "--client", "codex",
+            "--url", "https://homelab.example.ts.net",
+        ],
+        env={"ARGUS_API_KEY": SECRET},
+    )
+
+    assert result.exit_code == 0, result.output
+    rc = (tmp_path / ".zshrc").read_text()
+    assert rc == "# existing profile\n", "mcp init must not append to the shell profile"
+    _no_secret_anywhere(tmp_path, result.output)
+
+
+def test_mcp_init_writes_env_reference_not_token_for_claude_and_opencode(
+    tmp_path, monkeypatch
+):
+    from argus.cli import main as cli_main
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".config" / "opencode").mkdir(parents=True)
+
+    result = CliRunner().invoke(
+        cli_main.cli,
+        [
+            "mcp", "init", "--global", "--client", "opencode",
+            "--url", "https://homelab.example.ts.net",
+        ],
+        env={"ARGUS_API_KEY": SECRET},
+    )
+
+    assert result.exit_code == 0, result.output
+    config = json.loads((tmp_path / ".config" / "opencode" / "config.json").read_text())
+    header = config["mcp"]["argus"]["headers"]["Authorization"]
+    assert header == "Bearer ${ARGUS_API_KEY}", header
+    _no_secret_anywhere(tmp_path, result.output)
+
+
+def test_mcp_init_codex_records_only_the_env_var_name(tmp_path, monkeypatch):
+    from argus.cli import main as cli_main
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".codex").mkdir()
+
+    result = CliRunner().invoke(
+        cli_main.cli,
+        [
+            "mcp", "init", "--global", "--client", "codex",
+            "--url", "https://homelab.example.ts.net",
+            "--token-env-var", "ARGUS_MCP_CALLER_TOKEN",
+        ],
+        env={"ARGUS_MCP_CALLER_TOKEN": SECRET},
+    )
+
+    assert result.exit_code == 0, result.output
+    config = (tmp_path / ".codex" / "config.toml").read_text()
+    assert 'bearer_token_env_var = "ARGUS_MCP_CALLER_TOKEN"' in config
+    _no_secret_anywhere(tmp_path, result.output)
+
+
+def test_mcp_init_rejects_a_token_value_passed_as_the_env_var_name(
+    tmp_path, monkeypatch
+):
+    """--token-env-var takes a NAME; a value-looking argument must be refused."""
+    from argus.cli import main as cli_main
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".codex").mkdir()
+
+    result = CliRunner().invoke(
+        cli_main.cli,
+        [
+            "mcp", "init", "--global", "--client", "codex",
+            "--url", "https://homelab.example.ts.net",
+            "--token-env-var", SECRET,
+        ],
+    )
+
+    assert result.exit_code != 0
+    _no_secret_anywhere(tmp_path, result.output)

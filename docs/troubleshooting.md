@@ -58,8 +58,11 @@ that means `claude` (or the Claude Code app) needs a full restart, not just
 **Remote MCP returns 401.**
 `Authorization: Bearer <ARGUS_API_KEY>` (or `X-API-Key: ...`) is required for
 non-loopback HTTP MCP. The key must match what the server sees in its env.
-Codex CLI requires the key to be exported in your shell rc (`~/.zshrc`,
-`~/.bashrc`) so `bearer_token_env_var` resolves at process start.
+Codex CLI resolves `bearer_token_env_var` at process start, so the variable
+must be exported in the environment that launches Codex. Prefer a secret
+manager or a login-shell export you control; `argus mcp init` deliberately
+never writes the token into a shell profile, because that leaves a long-lived
+credential in plaintext on disk and in every subsequent shell.
 
 **`stdio` MCP startup spams log lines to the client.**
 Fixed in 1.6.1 — upgrade. Argus no longer writes to stdout before JSON-RPC

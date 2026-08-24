@@ -933,11 +933,21 @@ def mcp_serve(transport, host, port):
     "Also reads ARGUS_REMOTE_URL env var. If set, generates remote config instead of local stdio.",
 )
 @click.option(
+    "--token-env-var",
+    "token_env_var",
+    default="ARGUS_API_KEY",
+    help=(
+        "NAME of the environment variable holding the bearer token "
+        "(default: ARGUS_API_KEY). Client config records the name; the token "
+        "value is never read, written, or printed by this command."
+    ),
+)
+@click.option(
     "--key",
-    "api_key",
+    "legacy_key",
     default=None,
-    envvar="ARGUS_API_KEY",
-    help="API key for remote server. Also reads ARGUS_API_KEY env var.",
+    hidden=True,
+    help="Removed: pass --token-env-var NAME instead.",
 )
 @click.option(
     "--transport",
@@ -946,7 +956,7 @@ def mcp_serve(transport, host, port):
     type=click.Choice(["sse", "streamable-http"]),
     help="Transport for remote config (default: streamable-http)",
 )
-def mcp_init(global_, client, remote_url, api_key, transport):
+def mcp_init(global_, client, remote_url, token_env_var, legacy_key, transport):
     """Add Argus MCP server config to this project or globally.
 
     By default writes a local stdio adapter config to .mcp.json (Claude Code,
@@ -962,8 +972,21 @@ def mcp_init(global_, client, remote_url, api_key, transport):
       argus mcp init --url http://argus.local:8271 -t sse # remote sse
       argus mcp init --client gemini                    # print gemini mcp add command only
     """
+    import re as _re
     import sys
     from pathlib import Path
+
+    if legacy_key is not None:
+        raise click.UsageError(
+            "--key was removed because it wrote a raw bearer token into client "
+            "config and the shell profile. Export the token in your own shell "
+            "and pass --token-env-var NAME instead."
+        )
+    if not _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", token_env_var or ""):
+        raise click.UsageError(
+            "--token-env-var takes the NAME of an environment variable "
+            "(letters, digits, underscore), not a token value."
+        )
 
     local_execution_mode = None
     if not remote_url:
@@ -995,8 +1018,7 @@ def mcp_init(global_, client, remote_url, api_key, transport):
             "type": "http" if transport == "streamable-http" else "sse",
             "url": mcp_url,
         }
-        if api_key:
-            entry["headers"] = {"Authorization": f"Bearer {api_key}"}
+        entry["headers"] = {"Authorization": f"Bearer ${{{token_env_var}}}"}
         mode = f"remote {transport} ({mcp_url})"
     else:
         entry = {
@@ -1014,8 +1036,9 @@ def mcp_init(global_, client, remote_url, api_key, transport):
             "url": entry["url"],
             "enabled": True,
         }
-        if api_key:
-            opencode_entry["headers"] = {"Authorization": f"Bearer {api_key}"}
+        opencode_entry["headers"] = {
+            "Authorization": f"Bearer ${{{token_env_var}}}"
+        }
     else:
         opencode_entry = {
             "type": "local",
@@ -1150,12 +1173,10 @@ def mcp_init(global_, client, remote_url, api_key, transport):
             path = "/mcp" if transport == "streamable-http" else "/sse"
             mcp_url = remote_url.rstrip("/") + path
             t_flag = "http" if transport == "streamable-http" else "sse"
-            if api_key:
-                click.echo(
-                    f'  gemini mcp add argus {mcp_url} -t {t_flag} -H "Authorization: Bearer {api_key}"'
-                )
-            else:
-                click.echo(f"  gemini mcp add argus {mcp_url} -t {t_flag}")
+            click.echo(
+                f"  gemini mcp add argus {mcp_url} -t {t_flag} "
+                f'-H "Authorization: Bearer ${token_env_var}"'
+            )
         else:
             prefix = (
                 "env ARGUS_MCP_STANDALONE=true "
@@ -1178,7 +1199,7 @@ def mcp_init(global_, client, remote_url, api_key, transport):
                 new_section = (
                     f"\n[mcp_servers.argus]\n"
                     f'url = "{codex_url}"\n'
-                    f'bearer_token_env_var = "ARGUS_API_KEY"\n'
+                    f'bearer_token_env_var = "{token_env_var}"\n'
                 )
             else:
                 new_section = (
@@ -1206,22 +1227,15 @@ def mcp_init(global_, client, remote_url, api_key, transport):
                 f"\nCodex — updated ~/.codex/config.toml with argus MCP ({remote_url or 'local stdio'})"
             )
 
-            # Ensure ARGUS_API_KEY is exported in shell profile (Codex reads it as env var)
-            if api_key and remote_url:
-                zshrc = Path.home() / ".zshrc"
-                bashrc = Path.home() / ".bashrc"
-                rc_path = zshrc if zshrc.exists() else bashrc
-                rc_text = rc_path.read_text() if rc_path.exists() else ""
-                if "ARGUS_API_KEY" not in rc_text:
-                    with rc_path.open("a") as f:
-                        f.write(
-                            f"\n# Argus MCP bearer token\nexport ARGUS_API_KEY={api_key}\n"
-                        )
-                    click.echo(
-                        f"  Added ARGUS_API_KEY to {rc_path.name} (run: source ~/{rc_path.name})"
-                    )
-                else:
-                    click.echo(f"  ARGUS_API_KEY already in {rc_path.name}")
+            # Codex resolves the token by name at launch. This command never
+            # reads, stores, or prints the value: writing a bearer token into a
+            # shell profile puts a long-lived secret in plaintext on disk and
+            # into every future shell. The operator exports it themselves.
+            if remote_url:
+                click.echo(
+                    f"  Export {token_env_var} in the shell that launches Codex; "
+                    "argus never stores the token itself."
+                )
 
     if client == "all":
         click.echo("\nRestart your AI client to connect.")
