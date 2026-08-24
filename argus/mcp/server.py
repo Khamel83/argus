@@ -82,21 +82,51 @@ def _mcp_transport_registration(mcp) -> dict[str, object]:
     }
 
 
+# Protocol-defined error codes from the 2026-07-28 specification.
+_JSONRPC_HEADER_MISMATCH = -32020
+
+
 def _jsonrpc_transport_error(
     status: int,
     message: str,
     *,
     headers: dict[str, str] | None = None,
+    code: int = -32600,
 ) -> JSONResponse:
     return JSONResponse(
         {
             "jsonrpc": "2.0",
             "id": "server-error",
-            "error": {"code": -32600, "message": message},
+            "error": {"code": code, "message": message},
         },
         status_code=status,
         headers=headers,
     )
+
+
+def _body_declares_modern_protocol(body: bytes) -> bool:
+    """True when the payload carries modern per-request protocol metadata.
+
+    A body containing ``_meta`` with ``io.modelcontextprotocol/protocolVersion``
+    is unambiguously a 2026-07-28-era request. The specification lets a server
+    treat a request with no ``MCP-Protocol-Version`` header as ``2025-03-26``
+    for pre-2025-06-18 clients, and the SDK does so, but applying that fallback
+    to a body that declares a modern version would silently downgrade a valid
+    modern request.
+    """
+    try:
+        payload = json.loads(body)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    params = payload.get("params")
+    if not isinstance(params, dict):
+        return False
+    meta = params.get("_meta")
+    if not isinstance(meta, dict):
+        return False
+    return bool(meta.get("io.modelcontextprotocol/protocolVersion"))
 
 
 def _accept_types(request: Request) -> set[str]:
@@ -637,6 +667,39 @@ class McpTransportSecurityApp:
                 send,
             )
             return
+        if "mcp-protocol-version" not in request.headers:
+            # The SDK would serve this under the legacy era. That is correct for
+            # a genuine pre-2025-06-18 client, but a body declaring a modern
+            # protocol version is a modern request, and answering it with legacy
+            # semantics is a silent downgrade.
+            body = await self._bounded_body(request, receive)
+            if body is None:
+                await self._send_response(
+                    _jsonrpc_transport_error(
+                        HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                        "Request body is too large",
+                    ),
+                    request,
+                    scope,
+                    receive,
+                    send,
+                )
+                return
+            if _body_declares_modern_protocol(body):
+                await self._send_response(
+                    _jsonrpc_transport_error(
+                        HTTPStatus.BAD_REQUEST,
+                        "MCP-Protocol-Version header is required for a request "
+                        "declaring a protocol version in _meta",
+                        code=_JSONRPC_HEADER_MISMATCH,
+                    ),
+                    request,
+                    scope,
+                    receive,
+                    send,
+                )
+                return
+            receive = self._replay_body(body, receive)
         await self._call_with_principal(
             principal,
             token,
