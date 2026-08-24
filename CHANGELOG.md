@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **`argus mcp init` no longer persists a raw bearer token.** The command
+  previously wrote `export ARGUS_API_KEY=<token>` into `~/.zshrc` or
+  `~/.bashrc`, embedded the literal token in `.mcp.json` and the OpenCode
+  config, and printed it inside a copy-paste `gemini mcp add` command (placing
+  it in shell history). It now records only a *reference*: `.mcp.json` and
+  OpenCode receive `Authorization: Bearer ${ARGUS_API_KEY}`, Codex receives
+  `bearer_token_env_var`, and the Gemini command prints `$ARGUS_API_KEY` for
+  the shell to expand. Nothing reads, stores, or prints the token value.
+- **`--key` is removed** and now exits with an explanatory error. Use
+  `--token-env-var NAME` (default `ARGUS_API_KEY`), which takes the *name* of
+  an environment variable and rejects an argument that looks like a token
+  value. Export the token yourself in the shell that launches the client.
+
 ### Added
 - **Accepted-operation HTTP authority and additive v2 contract** — legacy HTTP
   routes now render one immutable accepted operation, while `/api/v2/*`

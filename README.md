@@ -498,7 +498,7 @@ On each client:
 | **Claude Code** | `{"mcpServers":{"argus":{"type":"http","url":"http://<server>:<port>/mcp","headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` in `~/.claude.json` (global) or `.mcp.json` (project) |
 | **OpenCode** | `{"mcp":{"argus":{"type":"remote","url":"http://<server>:<port>/mcp","enabled":true,"headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` in `~/.config/opencode/config.json` (global) or `.opencode/opencode.json` (project) |
 | **Cursor** | Same as Claude Code — reads `.mcp.json` |
-| **Codex CLI** | `[mcp_servers.argus]` section in `~/.codex/config.toml` with `url` and `bearer_token_env_var = "ARGUS_API_KEY"` — key must also be exported in `~/.zshrc` |
+| **Codex CLI** | `[mcp_servers.argus]` section in `~/.codex/config.toml` with `url` and `bearer_token_env_var = "ARGUS_API_KEY"` — export that variable in the shell that launches Codex; `argus mcp init` never writes the token to disk |
 | **Gemini CLI** | `gemini mcp add argus http://<server>:<port>/mcp -t http -H "Authorization: Bearer <ARGUS_API_KEY>"` |
 | **Antigravity** | `{"mcpServers":{"argus":{"serverUrl":"http://<server>:<port>/mcp","headers":{"Authorization":"Bearer <ARGUS_API_KEY>"}}}}` |
 
