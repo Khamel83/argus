@@ -184,3 +184,66 @@ Modes:
 ### Canonical transport policy
 
 See [Maya's architecture documentation](https://github.com/Khamel83/maya/blob/main/docs/ARCHITECTURE.md) for the cross-service transport and role contract.
+
+## Foundational agent tooling (validated 2026-08-26)
+
+Before any model or gateway request, run `git status --short --branch`, read
+the current Argus contract, and keep retrieval evidence separate from model
+interpretation. Argus is internet retrieval, not personal memory.
+
+### Claude Code
+
+```bash
+claude
+claude -p "<bounded research or review task>"
+claude --permission-mode plan -p "<read-only audit task>"
+```
+
+Use `claude --help` before version-sensitive options. Do not use
+`--dangerously-skip-permissions` for routine work.
+
+### Codex
+
+```bash
+codex
+codex exec --sandbox read-only "<research or review task>"
+codex exec --sandbox workspace-write "<bounded implementation task>"
+```
+
+Use full host access or approval bypass only after explicit authorization for
+that exact boundary. Keep provider credentials out of prompts and output.
+
+### Antigravity (`agy`)
+
+```bash
+agy --mode plan --print-timeout=600s -p "<review or research task>"
+```
+
+The installed CLI currently exposes `plan` and `accept-edits` modes. Do not
+copy `fast` or `code` mode names without rechecking `agy --help`. Pass
+`--effort` only when current model/agent compatibility is verified. Use
+`-p` or `--print="..."`; never use bare `--print`.
+
+### Gateway2000
+
+```bash
+g2k-check
+g2k -p "<minimized research question>"
+g2k-bg -p "<bounded background research>"
+```
+
+Use Gateway2000 only for minimized, user-approved context. Never send Argus
+provider credentials, unbounded retrieved pages, private identities, or raw
+personal content. Gateway output is a lead or analysis, not source authority.
+
+### Completion evidence
+
+Report query, source URLs, extraction status, provider/egress metadata, and
+model interpretation separately. Search success or an HTTP response does not
+prove source completeness or downstream correctness.
+
+## Tooling references
+
+- [Claude Code CLI](https://code.claude.com/docs/en/cli-usage)
+- [Codex CLI](https://learn.chatgpt.com/docs/codex/cli)
+- [Gateway2000 README](https://github.com/Khamel83/gateway2000/blob/main/README.md) and its `docs/RUNBOOK.md` are the route and client detail; `agy --help` is the Antigravity syntax source.
