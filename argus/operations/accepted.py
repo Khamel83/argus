@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import datetime, timezone
 from dataclasses import asdict, dataclass, fields, is_dataclass
 from enum import Enum
@@ -1655,6 +1656,16 @@ class AcceptedOperationService:
             result = await extractor(request.url, **kwargs)
         except Exception:
             outcome = CanonicalOutcome.PERSISTENCE_FAILED
+            # Log the real cause. This handler previously discarded it, so a
+            # 503 "Extraction could not be durably recorded" reached callers
+            # with no diagnosable information and no trace on this side either.
+            logging.getLogger(__name__).exception(
+                "Extraction persistence failed request_id=%s url=%s domain=%s mode=%s",
+                request_id,
+                getattr(request, "url", None),
+                getattr(request, "domain", None),
+                getattr(request, "mode", None),
+            )
             return AcceptedOperation(
                 outcome=outcome,
                 request_id=request_id,
