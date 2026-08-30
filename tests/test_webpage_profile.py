@@ -8,6 +8,8 @@ import pytest
 from argus.api.schemas import ExtractRequest
 from argus.extraction.extractor import (
     _accepted_cache_identity,
+    _cache,
+    _legacy_cache_key,
     _run_quality_gate,
 )
 from argus.extraction.models import ExtractedContent, ExtractorName
@@ -64,6 +66,34 @@ def test_accepted_cache_identity_separates_quality_profiles():
     assert article.quality_policy_version == "quality-v1"
     assert webpage.quality_policy_version == "quality-v1-webpage"
     assert article != webpage
+
+
+def test_legacy_cache_keys_separate_quality_profiles():
+    url = "https://example.com/page"
+    article_key = _legacy_cache_key(url, "article")
+    webpage_key = _legacy_cache_key(url, "webpage")
+    article = ExtractedContent(
+        url=url,
+        text="article content",
+        word_count=2,
+        quality_passed=True,
+        extractor=ExtractorName.TRAFILATURA,
+    )
+    webpage = ExtractedContent(
+        url=url,
+        text="webpage content",
+        word_count=2,
+        quality_passed=True,
+        extractor=ExtractorName.PLAYWRIGHT,
+    )
+
+    _cache.clear()
+    _cache.put(article_key, article)
+    assert _cache.get(webpage_key) is None
+    _cache.put(webpage_key, webpage)
+    assert _cache.get(article_key) is article
+    assert _cache.get(webpage_key) is webpage
+    _cache.clear()
 
 
 @pytest.mark.asyncio
