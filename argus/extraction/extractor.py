@@ -73,7 +73,14 @@ _JINA_SYNC_INTERVAL = 10
 _TOKENS_PER_WORD = 1.3
 
 
-def _accepted_cache_identity(url: str, mode: str, free_only: bool):
+def _quality_policy_version(content_type: str) -> str:
+    """Return a cache policy identity for the selected quality profile."""
+    return "quality-v1" if content_type == "article" else f"quality-v1-{content_type}"
+
+
+def _accepted_cache_identity(
+    url: str, mode: str, free_only: bool, content_type: str = "article"
+):
     """Build the stable policy identity used before accepted extraction."""
     from argus.extraction.cache import ExtractionCacheIdentity
 
@@ -86,7 +93,7 @@ def _accepted_cache_identity(url: str, mode: str, free_only: bool):
         authentication_scope_fingerprint="anonymous",
         cache_policy_version="accepted-extraction-cache-v1",
         extraction_plan_version="1",
-        quality_policy_version="quality-v1",
+        quality_policy_version=_quality_policy_version(content_type),
         completeness_policy_version="completeness-v1",
         outcome_policy_version="extraction-outcome-v1",
         privacy_scope="public",
@@ -101,11 +108,21 @@ def _accepted_cache_identity(url: str, mode: str, free_only: bool):
     )
 
 
-def _run_quality_gate(content: str, url: str, extractor_name: str) -> tuple[bool, str]:
+def _run_quality_gate(
+    content: str,
+    url: str,
+    extractor_name: str,
+    content_type: str = "article",
+) -> tuple[bool, str]:
     """Run quality gate + soft 404 check. Returns (passed, reason)."""
     if is_soft_404(content):
         return False, "soft_404"
-    evaluation = _quality_gate.evaluate(content, url, extractor=extractor_name)
+    evaluation = _quality_gate.evaluate(
+        content,
+        url,
+        content_type=content_type,
+        extractor=extractor_name,
+    )
     if not evaluation.passed:
         return False, evaluation.reason
     return True, ""
@@ -255,6 +272,7 @@ async def _extract_url_unpersisted(
     domain: str = None,
     mode: str = "default",
     *,
+    content_type: str = "article",
     free_only: bool = False,
     allow_legacy_cache: bool = True,
     allow_legacy_cache_writes: bool = True,
@@ -452,7 +470,12 @@ async def _extract_url_unpersisted(
                     "residential", extract_residential, url, domain=domain or ""
                 )
                 if res_result.text and not res_result.error:
-                    passed, r_reason = _run_quality_gate(res_result.text, url, "residential")
+                    passed, r_reason = _run_quality_gate(
+                        res_result.text,
+                        url,
+                        "residential",
+                        content_type=content_type,
+                    )
                     res_result.quality_passed = passed
                     res_result.quality_reason = r_reason if not passed else None
                     record_quality_outcome(res_result, passed, r_reason)
@@ -480,7 +503,12 @@ async def _extract_url_unpersisted(
                 "auth", extract_authenticated, url, domain
             )
             if result and result.text and not result.error:
-                passed, reason = _run_quality_gate(result.text, url, "auth")
+                passed, reason = _run_quality_gate(
+                    result.text,
+                    url,
+                    "auth",
+                    content_type=content_type,
+                )
                 result.quality_passed = passed
                 result.quality_reason = reason if not passed else None
                 record_quality_outcome(result, passed, reason)
@@ -524,7 +552,12 @@ async def _extract_url_unpersisted(
 
             result = await run_attempt(step_name, current_extractor, url)
             if result.text and not result.error:
-                passed, reason = _run_quality_gate(result.text, url, step_name)
+                passed, reason = _run_quality_gate(
+                    result.text,
+                    url,
+                    step_name,
+                    content_type=content_type,
+                )
                 result.quality_passed = passed
                 result.quality_reason = reason if not passed else None
                 record_quality_outcome(result, passed, reason)
@@ -581,7 +614,12 @@ async def _extract_url_unpersisted(
 
             result = await run_attempt(step_name, current_extractor, url)
             if result.text and not result.error:
-                passed, reason = _run_quality_gate(result.text, url, step_name)
+                passed, reason = _run_quality_gate(
+                    result.text,
+                    url,
+                    step_name,
+                    content_type=content_type,
+                )
                 result.quality_passed = passed
                 result.quality_reason = reason if not passed else None
                 record_quality_outcome(result, passed, reason)
@@ -613,7 +651,12 @@ async def _extract_url_unpersisted(
 
             result = await run_attempt(step_name, extractor_func, url)
             if result.text and not result.error:
-                passed, reason = _run_quality_gate(result.text, url, step_name)
+                passed, reason = _run_quality_gate(
+                    result.text,
+                    url,
+                    step_name,
+                    content_type=content_type,
+                )
                 result.quality_passed = passed
                 result.quality_reason = reason if not passed else None
                 record_quality_outcome(result, passed, reason)
@@ -650,7 +693,12 @@ async def _extract_url_unpersisted(
 
                 result = await run_attempt(step_name, current_extractor, url)
                 if result.text and not result.error:
-                    passed, reason = _run_quality_gate(result.text, url, step_name)
+                    passed, reason = _run_quality_gate(
+                        result.text,
+                        url,
+                        step_name,
+                        content_type=content_type,
+                    )
                     result.quality_passed = passed
                     result.quality_reason = reason if not passed else None
                     record_quality_outcome(result, passed, reason)
@@ -721,6 +769,7 @@ async def extract_url(
     domain: str = None,
     mode: str = "default",
     *,
+    content_type: str = "article",
     caller: str = "",
     free_only: bool = False,
     repository=None,
@@ -744,7 +793,12 @@ async def extract_url(
     if use_evidence_authority:
         from argus.extraction.outcomes import CacheOutcome
 
-        cache_identity = _accepted_cache_identity(url, mode, free_only)
+        cache_identity = _accepted_cache_identity(
+            url,
+            mode,
+            free_only,
+            content_type=content_type,
+        )
         accepted_cache_now = datetime.now(timezone.utc)
         cache_decision = _accepted_cache.decide(
             cache_identity,
@@ -776,14 +830,18 @@ async def extract_url(
                     )
                 ]
                 return projected
-    result = await _extract_url_unpersisted(
-        url,
-        domain=domain,
-        mode=mode,
-        free_only=free_only,
-        allow_legacy_cache=not use_evidence_authority,
-        allow_legacy_cache_writes=not use_evidence_authority,
-    )
+    unpersisted_kwargs = {
+        "domain": domain,
+        "mode": mode,
+        "free_only": free_only,
+        "allow_legacy_cache": not use_evidence_authority,
+        "allow_legacy_cache_writes": not use_evidence_authority,
+    }
+    # Keep the default call contract for injected legacy test extractors and
+    # direct callers while forwarding the additive webpage profile.
+    if content_type != "article":
+        unpersisted_kwargs["content_type"] = content_type
+    result = await _extract_url_unpersisted(url, **unpersisted_kwargs)
     if use_evidence_authority:
         projected = _finalize_accepted_extraction(
             result,
@@ -794,6 +852,7 @@ async def extract_url(
             request_id=request_id or uuid.uuid4().hex,
             latency_ms=round((time.perf_counter() - started) * 1000),
             repository=repository,
+            content_type=content_type,
             cache_decision=accepted_cache_decision,
             cache_now=accepted_cache_now,
         )
@@ -802,7 +861,12 @@ async def extract_url(
             accepted = loader(projected.acceptance_receipt.receipt_ref)
             if accepted is not None:
                 _accepted_cache.put(
-                    _accepted_cache_identity(url, mode, free_only),
+                    _accepted_cache_identity(
+                        url,
+                        mode,
+                        free_only,
+                        content_type=content_type,
+                    ),
                     accepted,
                     acceptance_repository=repository,
                 )
@@ -835,6 +899,7 @@ def _finalize_accepted_extraction(
     latency_ms: int,
     repository,
     free_only: bool = False,
+    content_type: str = "article",
     cache_decision=None,
     cache_now: datetime | None = None,
 ) -> ExtractedContent:
@@ -1062,7 +1127,7 @@ def _finalize_accepted_extraction(
         ),
         cache_policy_ref="accepted-extraction-cache-v1",
         extraction_plan_version="1",
-        quality_policy_version="quality-v1",
+        quality_policy_version=_quality_policy_version(content_type),
         completeness_policy_version="completeness-v1",
         partial_allowed=True,
         deadline_ms=120_000,

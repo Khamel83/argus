@@ -1644,6 +1644,8 @@ class AcceptedOperationService:
             # injected extractors keep their existing call contract.
             if hasattr(request, "free_only"):
                 kwargs["free_only"] = request.free_only
+            if extractor is extract_url and hasattr(request, "content_type"):
+                kwargs["content_type"] = request.content_type
             if (
                 self._registration == AcceptedOperationRegistration.complete()
                 and extractor is extract_url
