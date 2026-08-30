@@ -45,6 +45,7 @@ class QualityGateEvaluation:
 # Content type thresholds (minimum words)
 THRESHOLDS = {
     "article": 100,
+    "webpage": 50,
     "newsletter": 100,
     "transcript": 500,
     "video": 200,

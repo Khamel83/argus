@@ -164,6 +164,9 @@ class ExtractRequest(BaseModel):
         None, description="Domain hint for authenticated extraction (e.g. nytimes.com)"
     )
     mode: str = Field("default", description="Extraction mode: default, archive_ingest")
+    content_type: Literal["article", "webpage"] = Field(
+        "article", description="Quality profile: article or webpage"
+    )
     caller: str = Field(
         "", description="Caller identifier for attribution (e.g. 'maya-intake-extract')"
     )
