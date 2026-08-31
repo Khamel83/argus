@@ -185,65 +185,55 @@ Modes:
 
 See [Maya's architecture documentation](https://github.com/Khamel83/maya/blob/main/docs/ARCHITECTURE.md) for the cross-service transport and role contract.
 
-## Foundational agent tooling (validated 2026-08-26)
+## Antigravity CLI (`agy`) invocation contract
 
-Before any model or gateway request, run `git status --short --branch`, read
-the current Argus contract, and keep retrieval evidence separate from model
-interpretation. Argus is internet retrieval, not personal memory.
+When using `agy`, treat target selection, execution mode, and flag syntax as separate compatibility axes.
 
-### Claude Code
+- Always deliver prompts with `-p "..."` or `--print="..."`; never use bare `--print`.
+- Always give `--print-timeout` an explicit unit, e.g. `600s` or `15m`; bare integers are invalid.
+- Pass `--effort low|medium|high` only when the selected `gemini-*` model supports it. Omit it for Claude, GPT, and custom agents unless current help explicitly says otherwise.
+- Use `--mode plan` for read-only audits, reviews, and design validation. Use `--mode code` only when interactive implementation writes are intended.
+- Before invoking, verify the selected model/agent and supported flags when compatibility is uncertain; do not copy a recipe across targets blindly.
+- For persistent review or audit trails, capture stdout to an explicit artifact path.
 
-```bash
-claude
-claude -p "<bounded research or review task>"
-claude --permission-mode plan -p "<read-only audit task>"
-```
+If the command is part of a script or wrapper, preserve these checks at the invocation boundary and fail closed on invalid combinations.
 
-Use `claude --help` before version-sensitive options. Do not use
-`--dangerously-skip-permissions` for routine work.
+## Gateway2000 usage
 
-### Codex
+When the user says “send this to g2k,” use the installed Gateway2000 OMP route
+instead of choosing a provider-specific CLI:
 
-```bash
-codex
-codex exec --sandbox read-only "<research or review task>"
-codex exec --sandbox workspace-write "<bounded implementation task>"
-```
+Carry the current task context into the prompt; ask only for missing authority
+or a materially ambiguous choice.
 
-Use full host access or approval bypass only after explicit authorization for
-that exact boundary. Keep provider credentials out of prompts and output.
+- `g2k -p "..."` — normal research or implementation work; the gateway
+  classifies the task and selects or falls back across providers.
+- `g2k-bg -p "..."` — background and lower-cost work.
+- `g2k-sensitive -p "..."` — only when the user authorizes sensitive content.
+- `g2k-check` — verify the isolated client.
 
-### Antigravity (`agy`)
+OMP is started by the wrapper and connects through
+`https://gateway.khamel.com`; do not ask the user for provider API keys or
+provider-selection context unless a direct-provider operation is explicitly
+requested. Never put secrets in a prompt.
 
-```bash
-agy --mode plan --print-timeout=600s -p "<review or research task>"
-```
+## Audit & Verification Protocol
 
-The installed CLI currently exposes `plan` and `accept-edits` modes. Do not
-copy `fast` or `code` mode names without rechecking `agy --help`. Pass
-`--effort` only when current model/agent compatibility is verified. Use
-`-p` or `--print="..."`; never use bare `--print`.
+Before changing runtime, transport, provider or extraction policy, persistence,
+workflows, configuration, packaging, or deployment:
 
-### Gateway2000
+1. Read [`.audit/AUDIT_REPORT.md`](.audit/AUDIT_REPORT.md) for the point-in-time
+   readiness baseline, current blockers, evidence boundaries, and ordered punch
+   list.
+2. Use [`.audit/SYSTEM_TOPOLOGY.md`](.audit/SYSTEM_TOPOLOGY.md) to identify the
+   affected authority, interface, data owner, persistence boundary, and
+   downstream dependency.
+3. Run the applicable commands in
+   [`.audit/HEALTH_CHECK_RUNBOOK.md`](.audit/HEALTH_CHECK_RUNBOOK.md), including
+   its hermetic environment and disposable-PostgreSQL rules.
+4. Refresh the audit timestamp, commit, matrix counts, raw failure summary,
+   topology, and punch list when a material result or contract changes.
 
-```bash
-g2k-check
-g2k -p "<minimized research question>"
-g2k-bg -p "<bounded background research>"
-```
-
-Use Gateway2000 only for minimized, user-approved context. Never send Argus
-provider credentials, unbounded retrieved pages, private identities, or raw
-personal content. Gateway output is a lead or analysis, not source authority.
-
-### Completion evidence
-
-Report query, source URLs, extraction status, provider/egress metadata, and
-model interpretation separately. Search success or an HTTP response does not
-prove source completeness or downstream correctness.
-
-## Tooling references
-
-- [Claude Code CLI](https://code.claude.com/docs/en/cli-usage)
-- [Codex CLI](https://learn.chatgpt.com/docs/codex/cli)
-- [Gateway2000 README](https://github.com/Khamel83/gateway2000/blob/main/README.md) and its `docs/RUNBOOK.md` are the route and client detail; `agy --help` is the Antigravity syntax source.
+Keep source, remote, image, deployed runtime, authenticated capability, provider
+effect, and Maya receipt evidence separate. Passing tests, green CI, liveness,
+or HTTP 200 alone is not proof of end-to-end retrieval.

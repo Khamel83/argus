@@ -32,6 +32,10 @@ _Built for AI agent builders, RAG pipelines, and ops teams who need reliable sea
 
 > Status: beta. The retrieval workflows and corpus model are production-oriented, but still maturing.
 
+> Maintainers: review the current [Repository Audit & Stabilization Report](.audit/AUDIT_REPORT.md),
+> [system topology](.audit/SYSTEM_TOPOLOGY.md), and
+> [repeatable health-check runbook](.audit/HEALTH_CHECK_RUNBOOK.md).
+
 ## Contents
 
 - [Quickstart](#quickstart)
