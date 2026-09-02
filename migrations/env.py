@@ -4,7 +4,7 @@ import os
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from argus.persistence.search_ledger import LedgerBase
+from argus.persistence.registry import production_metadata
 
 config = context.config
 if config.config_file_name is not None:
@@ -21,7 +21,7 @@ if (
         os.environ["ARGUS_DB_URL"].replace("%", "%%"),
     )
 
-target_metadata = LedgerBase.metadata
+target_metadata = production_metadata
 
 
 def run_migrations_offline() -> None:
