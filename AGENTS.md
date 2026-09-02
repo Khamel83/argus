@@ -219,21 +219,19 @@ requested. Never put secrets in a prompt.
 
 ## Audit & Verification Protocol
 
-Before changing runtime, transport, provider or extraction policy, persistence,
-workflows, configuration, packaging, or deployment:
+Read [docs/STATUS.md](docs/STATUS.md) before public source work. Use
+[CONTRIBUTING.md](CONTRIBUTING.md) and local tests for that work. Public
+source contributions, including runtime code changes and local tests, do not
+need private access.
 
-1. Read [`.audit/AUDIT_REPORT.md`](.audit/AUDIT_REPORT.md) for the point-in-time
-   readiness baseline, current blockers, evidence boundaries, and ordered punch
-   list.
-2. Use [`.audit/SYSTEM_TOPOLOGY.md`](.audit/SYSTEM_TOPOLOGY.md) to identify the
-   affected authority, interface, data owner, persistence boundary, and
-   downstream dependency.
-3. Run the applicable commands in
-   [`.audit/HEALTH_CHECK_RUNBOOK.md`](.audit/HEALTH_CHECK_RUNBOOK.md), including
-   its hermetic environment and disposable-PostgreSQL rules.
-4. Refresh the audit timestamp, commit, matrix counts, raw failure summary,
-   topology, and punch list when a material result or contract changes.
+Before a change to an operated private deployment, authorized operators must
+use the private [argus-ops README](https://github.com/Khamel83/argus-ops/blob/main/README.md).
+That README links to the latest dated reports and operator checks.
+
+Use a hermetic environment for local checks. Use only a disposable PostgreSQL
+database for local migration tests. Use the private operator procedure for
+production migration checks. Do not use a production database as a test target.
 
 Keep source, remote, image, deployed runtime, authenticated capability, provider
-effect, and Maya receipt evidence separate. Passing tests, green CI, liveness,
-or HTTP 200 alone is not proof of end-to-end retrieval.
+effect, and downstream receipt as separate evidence layers. A test pass, green
+CI, liveness, or HTTP 200 does not prove end-to-end retrieval.

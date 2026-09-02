@@ -55,3 +55,7 @@ docs/LLM-OVERVIEW.md
 docs/042826_plan.md
 .mcpregistry_*
 .sweep-notes.md
+
+# Private audit records
+.audit/
+/AUDIT_REPORT.md
