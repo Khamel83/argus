@@ -327,6 +327,9 @@ class ExecutionContext:
     request_class: str = "discovery"
     release_revision: str = "unknown-release"
     contract_version: str = "unknown-contract"
+    operation_id: str = "legacy-operation"
+    request_hash: str = ""
+    release_identity: str = "unknown-release"
 
     def __post_init__(self):
         object.__setattr__(
@@ -352,6 +355,9 @@ class ExecutionContext:
             "request_class": self.request_class,
             "release_revision": self.release_revision,
             "contract_version": self.contract_version,
+            "operation_id": self.operation_id,
+            "request_hash": self.request_hash,
+            "release_identity": self.release_identity,
         }
 
 
@@ -1175,8 +1181,14 @@ class ProviderReadinessService:
     def budget_projection(self, provider: ProviderName) -> dict[str, object]:
         snapshot = self.snapshot(provider)
         limit = self.budget_limit(provider)
+        registration = self.repository.get_registration(provider) or {}
+        account_fingerprint = (registration.get("scope") or {}).get(
+            "account_fingerprint"
+        )
         spend = self.repository.provider_spend_projection(
-            provider, budget_limit=limit
+            provider,
+            budget_limit=limit,
+            account_fingerprint=account_fingerprint,
         )
         return {
             "provider": provider.value,

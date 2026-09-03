@@ -46,6 +46,18 @@ class ProviderSpendAttemptRow(SpendBase):
         String(255), unique=True, nullable=False
     )
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    operation_id: Mapped[str] = mapped_column(
+        String(128), nullable=False, default="legacy-operation"
+    )
+    account_fingerprint: Mapped[str] = mapped_column(
+        String(128), nullable=False, default="legacy-account"
+    )
+    release_identity: Mapped[str] = mapped_column(
+        String(128), nullable=False, default="unknown-release"
+    )
+    execution_deadline: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
     provider: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     tier: Mapped[int] = mapped_column(Integer, nullable=False)
     is_paid: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -132,6 +144,10 @@ class SpendAttempt:
     caller_label: str
     resolution_source: str | None
     created_at: datetime
+    operation_id: str = "legacy-operation"
+    account_fingerprint: str = "legacy-account"
+    release_identity: str = "unknown-release"
+    execution_deadline: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -184,6 +200,10 @@ def _attempt(row: ProviderSpendAttemptRow) -> SpendAttempt:
         caller_label=row.caller_label,
         resolution_source=row.resolution_source,
         created_at=row.created_at,
+        operation_id=row.operation_id,
+        account_fingerprint=row.account_fingerprint,
+        release_identity=row.release_identity,
+        execution_deadline=row.execution_deadline,
     )
 
 
@@ -198,6 +218,10 @@ def _attempt_state(row: ProviderSpendAttemptRow) -> dict:
         "usage": row.usage,
         "resolution_source": row.resolution_source,
         "resolution_reference": row.resolution_reference,
+        "operation_id": row.operation_id,
+        "account_fingerprint": row.account_fingerprint,
+        "release_identity": row.release_identity,
+        "execution_deadline": row.execution_deadline,
     }
 
 
@@ -258,6 +282,11 @@ class ProviderSpendRepository:
         caller_label: str,
         idempotency_key: str,
         created_at: datetime | None = None,
+        account_fingerprint: str = "legacy-account",
+        operation_id: str | None = None,
+        release_identity: str = "unknown-release",
+        execution_deadline: datetime | None = None,
+        reservation_status: str = "uncertain",
         fault_hook: Callable[[str], None] | None = None,
     ) -> SpendAttempt:
         if PROVIDER_TIERS.get(provider, 0) <= 0:
@@ -266,6 +295,10 @@ class ProviderSpendRepository:
             raise ValueError("conservative charge must be finite and positive")
         if not math.isfinite(budget_limit) or budget_limit <= 0:
             raise ValueError("budget limit must be finite and positive")
+        if reservation_status not in {"uncertain", "reserved"}:
+            raise ValueError("reservation status must be reserved or uncertain")
+        if not isinstance(account_fingerprint, str) or not account_fingerprint:
+            raise ValueError("account fingerprint is required")
         payload = {
             "provider": provider.value,
             "conservative_charge": conservative_charge,
@@ -273,6 +306,9 @@ class ProviderSpendRepository:
             "caller_identity": caller_identity,
             "caller_label": caller_label,
             "idempotency_key": idempotency_key,
+            "account_fingerprint": account_fingerprint,
+            "operation_id": operation_id or idempotency_key,
+            "release_identity": release_identity,
         }
         request_hash = _fingerprint(payload)
         del created_at
@@ -317,10 +353,15 @@ class ProviderSpendRepository:
                     id=uuid.uuid4().hex,
                     idempotency_key=idempotency_key,
                     request_hash=request_hash,
+                    operation_id=operation_id or idempotency_key,
+                    account_fingerprint=account_fingerprint,
+                    release_identity=release_identity,
+                    execution_deadline=(_naive_utc(execution_deadline)
+                        if execution_deadline is not None else None),
                     provider=provider.value,
                     tier=PROVIDER_TIERS[provider],
                     is_paid=True,
-                    status="uncertain",
+                    status=reservation_status,
                     outcome=None,
                     reserved_charge=conservative_charge,
                     estimator_violation=False,
@@ -377,7 +418,7 @@ class ProviderSpendRepository:
             if row.status == "settled":
                 self._verify_settlement(row, actual_charge, outcome, "argus")
                 return _attempt(row)
-            if row.status != "uncertain":
+            if row.status not in {"reserved", "uncertain"}:
                 raise SpendConflictError(f"attempt {attempt_id!r} is already resolved")
             before = _attempt_state(row)
             _record_estimator_overrun(row, actual_charge)

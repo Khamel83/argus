@@ -219,6 +219,12 @@ class FailureRecord:
         for reference in self.evidence_references:
             _bounded_text("evidence_reference", reference, 256)
 
+    @property
+    def category(self) -> FailureCode:
+        """Compatibility name used by readiness and provider evidence code."""
+
+        return self.code
+
 
 def _bounded_text(name: str, value: object, maximum: int) -> str:
     if not isinstance(value, str) or not value or len(value) > maximum:

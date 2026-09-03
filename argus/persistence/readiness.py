@@ -986,12 +986,16 @@ class ProviderReadinessRepository:
                         + ProviderSpendAttemptRow.reservation_overrun
                     ), 0.0)).where(
                         ProviderSpendAttemptRow.provider == context.provider.value,
+                        ProviderSpendAttemptRow.account_fingerprint
+                        == context.scope.account_fingerprint,
                         ProviderSpendAttemptRow.status.in_(("reserved", "uncertain")),
                     )
                 ) or 0.0
                 registration = self.get_registration_in_session(session, context.provider)
                 settled_filters = [
                     ProviderSpendAttemptRow.provider == context.provider.value,
+                    ProviderSpendAttemptRow.account_fingerprint
+                    == context.scope.account_fingerprint,
                     ProviderSpendAttemptRow.status.in_(("settled", "resolved")),
                 ]
                 period_started_at = registration.get("budget_period_started_at")
@@ -1015,7 +1019,12 @@ class ProviderReadinessRepository:
                 session.add(ProviderSpendAttemptRow(
                     id=attempt_id,
                     idempotency_key=context.idempotency_key,
-                    request_hash=context.plan_id,
+                    request_hash=context.request_hash or context.plan_id,
+                    operation_id=context.operation_id,
+                    account_fingerprint=context.scope.account_fingerprint,
+                    release_identity=context.release_identity
+                    or context.release_revision,
+                    execution_deadline=_naive(deadline),
                     provider=context.provider.value,
                     tier=context.tier,
                     is_paid=True,
@@ -1037,7 +1046,12 @@ class ProviderReadinessRepository:
                 session.add(ProviderSpendAttemptRow(
                     id=attempt_id,
                     idempotency_key=context.idempotency_key,
-                    request_hash=context.plan_id,
+                    request_hash=context.request_hash or context.plan_id,
+                    operation_id=context.operation_id,
+                    account_fingerprint=context.scope.account_fingerprint,
+                    release_identity=context.release_identity
+                    or context.release_revision,
+                    execution_deadline=_naive(deadline),
                     provider=context.provider.value,
                     tier=context.tier,
                     is_paid=False,
@@ -1681,6 +1695,7 @@ class ProviderReadinessRepository:
 
     def provider_spend_projection(
         self, provider: ProviderName, *, budget_limit: float,
+        account_fingerprint: str | None = None,
     ) -> dict[str, float | None]:
         """Project authoritative settled and unresolved obligations using DB time."""
         from argus.persistence.provider_spend import ProviderSpendAttemptRow
@@ -1691,6 +1706,11 @@ class ProviderReadinessRepository:
                 ProviderSpendAttemptRow.provider == provider.value,
                 ProviderSpendAttemptRow.status.in_(("settled", "resolved")),
             ]
+            if account_fingerprint is not None:
+                settled_filters.append(
+                    ProviderSpendAttemptRow.account_fingerprint
+                    == account_fingerprint
+                )
             period_started_at = registration.get("budget_period_started_at")
             if period_started_at:
                 settled_filters.append(
@@ -1702,14 +1722,20 @@ class ProviderReadinessRepository:
                     ProviderSpendAttemptRow.actual_charge
                 ), 0.0)).where(*settled_filters)
             ) or 0.0
+            uncertain_filters = [
+                ProviderSpendAttemptRow.provider == provider.value,
+                ProviderSpendAttemptRow.status.in_(("reserved", "uncertain")),
+            ]
+            if account_fingerprint is not None:
+                uncertain_filters.append(
+                    ProviderSpendAttemptRow.account_fingerprint
+                    == account_fingerprint
+                )
             uncertain = session.scalar(
                 select(func.coalesce(func.sum(
                     ProviderSpendAttemptRow.reserved_charge
                     + ProviderSpendAttemptRow.reservation_overrun
-                ), 0.0)).where(
-                    ProviderSpendAttemptRow.provider == provider.value,
-                    ProviderSpendAttemptRow.status.in_(("reserved", "uncertain")),
-                )
+                ), 0.0)).where(*uncertain_filters)
             ) or 0.0
         settled_decimal = Decimal(str(settled))
         uncertain_decimal = Decimal(str(uncertain))
