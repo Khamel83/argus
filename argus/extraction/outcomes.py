@@ -105,6 +105,7 @@ class ExtractionRequest:
     authentication_scope: AuthenticationScope = (
         ANONYMOUS_AUTHENTICATION_SCOPE
     )
+    release_identity: str = "unknown-release"
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +127,7 @@ class ExtractionPlan:
     authentication_scope: AuthenticationScope = (
         ANONYMOUS_AUTHENTICATION_SCOPE
     )
+    release_identity: str = "unknown-release"
     cache_max_age_seconds: int = 604_800
     # Additive policy facts used by the accepted extraction cache.  Defaults
     # preserve the v1 autonomous/legacy plan contract.
@@ -253,7 +255,9 @@ class ExtractionProvenance:
 class SpendEvidence:
     actual_usd: Decimal
     reserved_usd: Decimal
-    spend_attempt_ref: str
+    # Free extractors have no provider spend attempt. Paid extractors must
+    # carry the durable reservation/settlement attempt reference.
+    spend_attempt_ref: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -530,6 +534,7 @@ class AcceptedExtractionOutcome:
                         if step.decision is ExtractorExecutionDecision.POLICY_SKIPPED
                         else None
                     ),
+                    spend=step.spend,
                 )
                 for step in self.steps
             ],
@@ -570,13 +575,26 @@ class AcceptedExtractionOutcome:
             reserved_usd=reserved_usd,
             spend_delta_usd=actual_usd - reserved_usd,
             spend_attempt_refs=tuple(
-                spend.spend_attempt_ref for spend in spend_steps
+                spend.spend_attempt_ref
+                for spend in spend_steps
+                if spend.spend_attempt_ref is not None
             ),
-            spend_complete=len(spend_steps) == len(invoked_steps),
+            spend_complete=all(
+                step.spend is not None
+                and (
+                    step.spend.spend_attempt_ref is not None
+                    or (
+                        step.spend.actual_usd == Decimal("0")
+                        and step.spend.reserved_usd == Decimal("0")
+                    )
+                )
+                for step in invoked_steps
+            ),
             cache_decision=self.cache_decision.outcome.value,
             cache_age_seconds=self.cache_decision.age_seconds,
             operation_latency_ms=self.operation_latency_ms,
             extractor_call_count=len(invoked_steps),
+            release_identity=self.plan.release_identity,
         )
         return legacy
 
@@ -597,7 +615,8 @@ class ExtractionPersistenceFailed(RuntimeError):
 
     outcome = CanonicalOutcome.PERSISTENCE_FAILED
 
-    def __init__(self):
+    def __init__(self, failure=None):
+        self.failure = failure
         super().__init__("extraction acceptance could not be durably persisted")
 
 

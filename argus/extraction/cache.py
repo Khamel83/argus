@@ -500,6 +500,19 @@ def _accepted_cache_eligibility(
         for step in content.steps
         if step.decision is ExtractorExecutionDecision.INVOKED
     )
-    if not invoked or any(step.spend is None for step in invoked):
+    if not invoked:
+        return False, "origin_spend_unavailable"
+    candidate_spend_classes = {
+        candidate.extractor: candidate.spend_class
+        for candidate in content.plan.candidates
+    }
+    if any(
+        candidate_spend_classes.get(step.extractor) == "metered"
+        and (
+            step.spend is None
+            or step.spend.spend_attempt_ref is None
+        )
+        for step in invoked
+    ):
         return False, "origin_spend_unavailable"
     return True, "eligible"

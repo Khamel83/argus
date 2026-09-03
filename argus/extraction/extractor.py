@@ -23,12 +23,15 @@ Obscura (https://github.com/h4ckf0r0day/obscura): optional Rust headless browser
 import asyncio
 import copy
 import hashlib
+import ipaddress
+import math
 import os
 import re
 import time
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -173,6 +176,43 @@ def _safe_final_url(original_url: str, final_url: str) -> tuple[bool, str]:
     return guarded_url_policy(final_url)
 
 
+def _cache_url_candidate(url: str) -> tuple[bool, str]:
+    """Check URL shape before consulting the legacy cache.
+
+    This check deliberately performs no DNS work.  A cache hit is already a
+    bounded local fact and must remain usable when the current DNS authority
+    is unavailable.  Network validation still runs for cache misses.
+    """
+
+    if not isinstance(url, str):
+        return False, "URL must be text"
+    try:
+        parsed = urlsplit(url)
+        if parsed.scheme.lower() not in {"http", "https"}:
+            return False, "invalid scheme"
+        if not parsed.hostname:
+            return False, "no hostname"
+        if parsed.username is not None or parsed.password is not None:
+            return False, "credentials in URL blocked"
+        # Accessing ``port`` performs the standard-library's bounded syntax
+        # validation and catches malformed bracketed/overflow ports.
+        _ = parsed.port
+        hostname = parsed.hostname.rstrip(".").lower()
+        if hostname in {"localhost", "internal", "intranet", "local"} or hostname.endswith(
+            (".local", ".internal", ".corp", ".lan")
+        ):
+            return False, "internal hostname blocked"
+        try:
+            literal = ipaddress.ip_address(hostname)
+        except ValueError:
+            literal = None
+        if literal is not None and not literal.is_global:
+            return False, "non-public IP blocked"
+        return True, ""
+    except (TypeError, ValueError) as exc:
+        return False, f"invalid URL: {exc}"
+
+
 def _populate_provenance(result: ExtractedContent):
     """Fill in provenance metadata based on extractor and current config."""
     config = get_config()
@@ -313,6 +353,12 @@ async def _extract_url_unpersisted(
     free_only: bool = False,
     allow_legacy_cache: bool = True,
     allow_legacy_cache_writes: bool = True,
+    caller: str = "",
+    request_id: str = "",
+    operation_id: str | None = None,
+    release_identity: str = "unknown-release",
+    spend_gateway=None,
+    evidence_authority: bool = False,
 ) -> ExtractedContent:
     """Extract clean content from a URL using the integrated fallback chain.
 
@@ -321,7 +367,7 @@ async def _extract_url_unpersisted(
       - archive_ingest: optimized for durability and provenance (Atlas-style)
 
     Chain:
-      SSRF → cache → rate limit → auth → QG → trafilatura → QG →
+      URL shape → cache → rate limit → SSRF → auth → QG → trafilatura → QG →
       crawl4ai → QG → obscura → QG → playwright → QG → residential → QG →
       jina → QG → valyu_contents → QG → firecrawl → QG → you_contents → QG →
       wayback → QG → archive.is lookup → QG → return best result
@@ -330,10 +376,11 @@ async def _extract_url_unpersisted(
     from argus.extraction.domain_memory import get_domain_memory
     dm = get_domain_memory()
 
-    # SSRF check
-    safe, reason = is_safe_url(url)
-    if not safe:
-        return ExtractedContent(url=url, error=f"ssrf_blocked: {reason}")
+    # The shape/internal/literal check is intentionally DNS-free.  It lets a
+    # previously cached result remain usable during a fail-closed DNS outage.
+    cache_candidate, cache_reason = _cache_url_candidate(url)
+    if not cache_candidate:
+        return ExtractedContent(url=url, error=f"ssrf_blocked: {cache_reason}")
 
     # Cache check
     cache_key = _legacy_cache_key(url, content_type)
@@ -354,6 +401,20 @@ async def _extract_url_unpersisted(
             )
         ]
         return result
+
+    # Rate limiting is a local decision and must run before network DNS or
+    # any extractor that may issue a network request.
+    allowed, retry_after = _domain_limiter.is_allowed(url)
+    if not allowed:
+        return ExtractedContent(
+            url=url,
+            error=f"domain rate limit exceeded, retry after {retry_after}s",
+        )
+
+    # SSRF check
+    safe, reason = is_safe_url(url)
+    if not safe:
+        return ExtractedContent(url=url, error=f"ssrf_blocked: {reason}")
 
     # YouTube watch pages are application shells rather than article pages.
     # Route them through the free metadata/caption adapter and do not spend
@@ -381,17 +442,10 @@ async def _extract_url_unpersisted(
                 _cache.put(cache_key, result)
         return result
 
-    # Domain rate limit
-    allowed, retry_after = _domain_limiter.is_allowed(url)
-    if not allowed:
-        return ExtractedContent(
-            url=url,
-            error=f"domain rate limit exceeded, retry after {retry_after}s",
-        )
-
     extractors_tried = []
     attempts: list[ExtractionAttempt] = []
     policy_skipped: set[str] = set()
+    causal_failures = []
     best_result = None  # Keep the best (longest) result even if quality fails
     best_quality_result = None
 
@@ -440,6 +494,7 @@ async def _extract_url_unpersisted(
                 status="failed" if failure else "success",
                 latency_ms=round((time.perf_counter() - started) * 1000),
                 failure_summary=failure,
+                spend=getattr(result, "spend", None) if result is not None else None,
             )
         )
         if result is not None:
@@ -457,6 +512,7 @@ async def _extract_url_unpersisted(
             status="quality_failed",
             latency_ms=previous.latency_ms,
             failure_summary=reason or "quality_gate_failed",
+            spend=previous.spend,
         )
         result.attempts = list(attempts)
 
@@ -478,12 +534,136 @@ async def _extract_url_unpersisted(
     def external_policy_reason(name: str) -> str | None:
         if free_only:
             return "free_only"
+        # Every billable external step in the accepted path must be fenced by
+        # the durable spend authority.  Legacy extraction keeps its historic
+        # compatibility behavior; evidence-bound extraction fails closed
+        # before dispatch when no gateway is supplied.
+        if evidence_authority and name in {
+            "jina",
+            "valyu_contents",
+            "firecrawl",
+        }:
+            return "provider_unavailable"
+        if evidence_authority and name == "you_contents" and spend_gateway is None:
+            return "spend_authority_unavailable"
         jina_disabled = not config.jina.enabled or os.getenv(
             "ARGUS_JINA_ENABLED", ""
         ).lower() in {"0", "false", "no"}
         if name == "jina" and jina_disabled:
             return "jina_disabled"
         return None
+
+    paid_context = None
+    if spend_gateway is not None:
+        from argus.extraction.spend_gateway import ExtractionOperationContext
+        from argus.models import ProviderName
+
+        paid_operation_id = operation_id or uuid.uuid4().hex
+        paid_context = ExtractionOperationContext(
+            operation_id=paid_operation_id,
+            request_id=request_id or paid_operation_id,
+            plan_id=f"extract-plan-{paid_operation_id}",
+            request_hash=hashlib.sha256(url.encode("utf-8")).hexdigest(),
+            caller_identity=caller or "anonymous",
+            caller_label=caller or "anonymous",
+            release_identity=release_identity or "unknown-release",
+            free_only=free_only,
+            egress=config.node.egress_type or "unknown",
+            request_class="extraction",
+            plan_providers=(ProviderName.YOU,),
+        )
+
+    def reserve_paid_step(name: str):
+        """Reserve a billable extraction step before dispatching its adapter."""
+
+        if name != "you_contents" or spend_gateway is None or paid_context is None:
+            return None
+        from argus.models import ProviderName
+
+        account = config.you.account_fingerprint
+        return spend_gateway.reserve(
+            paid_context,
+            ProviderName.YOU,
+            account,
+            0.001,
+            time.monotonic() + 60,
+        )
+
+    async def invoke_paid_step(reservation, extractor, target_url: str):
+        """Dispatch a reserved paid adapter and settle only observed charges."""
+
+        from argus.extraction.models import ExtractedContent
+
+        try:
+            paid_result = await extractor(target_url)
+        except Exception:
+            paid_result = ExtractedContent(
+                url=target_url,
+                error="you_contents: provider call failed",
+            )
+        provider_reference = getattr(paid_result, "provider_reference", None)
+        charge = getattr(paid_result, "cost", None)
+        charge_known = (
+            isinstance(charge, (int, float))
+            and not isinstance(charge, bool)
+            and charge >= 0
+            and math.isfinite(float(charge))
+            and float(charge) > 0
+            and isinstance(provider_reference, str)
+            and bool(provider_reference)
+        )
+        outcome = "success" if not paid_result.error and paid_result.text else "failed"
+        try:
+            if charge_known:
+                settlement = spend_gateway.settle(
+                    reservation,
+                    outcome,
+                    float(charge),
+                    provider_reference,
+                    paid_context.request_hash,
+                )
+            else:
+                settlement = spend_gateway.mark_uncertain(
+                    reservation,
+                    "provider charge or reference is unresolved",
+                )
+        except Exception:
+            try:
+                settlement = spend_gateway.mark_uncertain(
+                    reservation,
+                    "provider settlement is unresolved",
+                )
+            except Exception:
+                settlement = None
+
+        if (
+            settlement is not None
+            and settlement.status == "settled"
+            and settlement.failure is None
+            and settlement.charge is not None
+            and reservation.attempt_id
+        ):
+            from argus.extraction.outcomes import SpendEvidence
+
+            paid_result.cost = float(settlement.charge)
+            paid_result.provider_reference = settlement.provider_reference
+            paid_result.spend = SpendEvidence(
+                actual_usd=Decimal(str(settlement.charge)),
+                reserved_usd=Decimal(str(reservation.reserved_charge)),
+                spend_attempt_ref=reservation.attempt_id,
+            )
+            return paid_result
+
+        failure = getattr(settlement, "failure", None) if settlement else None
+        paid_result.failure = failure
+        paid_result.error = (
+            failure.code.value
+            if failure is not None
+            else "charge_uncertain"
+        )
+        paid_result.text = ""
+        paid_result.word_count = 0
+        return paid_result
 
     # Phase 4: Residential Egress Policy
     res_policy = config.residential.policy
@@ -650,7 +830,31 @@ async def _extract_url_unpersisted(
                     continue
                 from argus.extraction.you_extractor import extract_you_contents as current_extractor
 
-            result = await run_attempt(step_name, current_extractor, url)
+            reservation = reserve_paid_step(step_name)
+            if reservation is not None and not reservation.allowed:
+                record_policy_skip(
+                    step_name,
+                    (
+                        reservation.failure.code.value
+                        if reservation.failure is not None
+                        else "spend_denied"
+                    ),
+                )
+                if reservation.failure is not None:
+                    causal_failures.append(reservation.failure)
+                continue
+            if reservation is not None:
+                result = await run_attempt(
+                    step_name,
+                    invoke_paid_step,
+                    reservation,
+                    current_extractor,
+                    url,
+                )
+            else:
+                result = await run_attempt(step_name, current_extractor, url)
+            if result is not None and result.failure is not None:
+                causal_failures.append(result.failure)
             if result.text and not result.error:
                 passed, reason = _run_quality_gate(
                     result.text,
@@ -729,7 +933,31 @@ async def _extract_url_unpersisted(
                         continue
                     from argus.extraction.you_extractor import extract_you_contents as current_extractor
 
-                result = await run_attempt(step_name, current_extractor, url)
+                reservation = reserve_paid_step(step_name)
+                if reservation is not None and not reservation.allowed:
+                    record_policy_skip(
+                        step_name,
+                        (
+                            reservation.failure.code.value
+                            if reservation.failure is not None
+                            else "spend_denied"
+                        ),
+                    )
+                    if reservation.failure is not None:
+                        causal_failures.append(reservation.failure)
+                    continue
+                if reservation is not None:
+                    result = await run_attempt(
+                        step_name,
+                        invoke_paid_step,
+                        reservation,
+                        current_extractor,
+                        url,
+                    )
+                else:
+                    result = await run_attempt(step_name, current_extractor, url)
+                if result is not None and result.failure is not None:
+                    causal_failures.append(result.failure)
                 if result.text and not result.error:
                     passed, reason = _run_quality_gate(
                         result.text,
@@ -798,6 +1026,9 @@ async def _extract_url_unpersisted(
         extractors_tried=extractors_tried,
         attempts=list(attempts),
     )
+    if causal_failures:
+        result.failure = causal_failures[-1]
+        result.error = causal_failures[-1].code.value
     _populate_provenance(result)
     return result
 
@@ -814,12 +1045,17 @@ async def extract_url(
     authority_capability: object | None = None,
     use_evidence_authority: bool = False,
     request_id: str | None = None,
+    spend_gateway=None,
+    release_identity: str = "unknown-release",
+    operation_id: str | None = None,
 ) -> ExtractedContent:
     """Extract and durably record one logical operation before returning."""
     from argus.authority import extraction_execution_allowed
 
     extraction_execution_allowed(authority_capability=authority_capability)
     started = time.perf_counter()
+    operation_id = operation_id or uuid.uuid4().hex
+    request_id = request_id or operation_id
     if repository is None and use_evidence_authority:
         from argus.persistence.search_ledger import (
             create_search_ledger_repository,
@@ -873,7 +1109,16 @@ async def extract_url(
         "mode": mode,
         "free_only": free_only,
         "allow_legacy_cache": not use_evidence_authority,
-        "allow_legacy_cache_writes": not use_evidence_authority,
+        # Defer legacy cache publication until the extraction ledger accepts
+        # the result.  A failed persistence write must not leave an artifact
+        # that appears durable on the next request.
+        "allow_legacy_cache_writes": False,
+        "caller": caller,
+        "request_id": request_id,
+        "operation_id": operation_id,
+        "release_identity": release_identity,
+        "spend_gateway": spend_gateway,
+        "evidence_authority": use_evidence_authority,
     }
     # Keep the default call contract for injected legacy test extractors and
     # direct callers while forwarding the additive webpage profile.
@@ -887,7 +1132,10 @@ async def extract_url(
             mode=mode,
             caller=caller,
             free_only=free_only,
-            request_id=request_id or uuid.uuid4().hex,
+            request_id=request_id,
+            operation_id=operation_id,
+            release_identity=release_identity,
+            spend_gateway=spend_gateway,
             latency_ms=round((time.perf_counter() - started) * 1000),
             repository=repository,
             content_type=content_type,
@@ -924,6 +1172,7 @@ async def extract_url(
         latency_ms=round((time.perf_counter() - started) * 1000),
     )
     result.extraction_run_id = receipt.extraction_run_id
+    _cache.put(_legacy_cache_key(url, content_type), result)
     return result
 
 
@@ -940,6 +1189,9 @@ def _finalize_accepted_extraction(
     content_type: str = "article",
     cache_decision=None,
     cache_now: datetime | None = None,
+    operation_id: str | None = None,
+    release_identity: str = "unknown-release",
+    spend_gateway=None,
 ) -> ExtractedContent:
     """Adapt bounded chain evidence into the canonical extraction finalizer."""
     from argus.extraction.finalizer import finalize_extraction
@@ -956,13 +1208,15 @@ def _finalize_accepted_extraction(
         ExtractorExecutionDecision,
         OutcomePolicy,
         RawExtractionResult,
-        SpendEvidence,
         TerminalCause,
         TerminalCauseKind,
     )
 
-    run_id = uuid.uuid4().hex
+    run_id = operation_id or uuid.uuid4().hex
     selected = result.extractor.value if result.extractor else None
+    metered_extractors = frozenset(
+        {"jina", "valyu_contents", "firecrawl", "you_contents"}
+    )
     candidate_names = list(
         dict.fromkeys(
             [
@@ -995,10 +1249,44 @@ def _finalize_accepted_extraction(
                 "jina_disabled",
                 "caller_tier_cap",
                 "provider_unavailable",
+                "spend_authority_unavailable",
+                "spend_denied",
+                "provider_unready",
+                "charge_uncertain",
                 "policy_skipped",
             }
             else "policy_skipped"
         )
+    def attempt_outcome(attempt) -> AttemptOutcome:
+        failure = getattr(result, "failure", None)
+        failure_code = getattr(getattr(failure, "code", None), "value", None)
+        if failure_code in {
+            "spend_denied",
+            "provider_unready",
+            "charge_uncertain",
+        }:
+            # The closed extraction taxonomy predates the shared failure
+            # taxonomy.  BALANCE_EXHAUSTED preserves the UNREADY terminal
+            # mapping while the typed failure remains on the legacy result.
+            return AttemptOutcome.BALANCE_EXHAUSTED
+        if failure_code == "policy_rejected":
+            return AttemptOutcome.PROVIDER_POLICY_REJECTED
+        if failure_code == "timeout":
+            return AttemptOutcome.TIMEOUT
+        if selected == attempt.extractor and bool(result.text):
+            return AttemptOutcome.CONTENT
+        if attempt.status == "success":
+            return AttemptOutcome.EMPTY
+        if attempt.status == "quality_failed":
+            return AttemptOutcome.PARSE_ERROR
+        return AttemptOutcome.UNKNOWN_FAILURE
+
+    def attempt_spend(attempt):
+        # Free/local attempts have no spend record.  Paid attempts must carry
+        # evidence attached by the gateway; the finalizer rejects a paid
+        # artifact if this value is absent.
+        return attempt.spend
+
     decisions = []
     for ordinal, attempt in enumerate(result.attempts):
         if attempt.status == "policy_skipped":
@@ -1017,34 +1305,10 @@ def _finalize_accepted_extraction(
                 ordinal=ordinal,
                 extractor=attempt.extractor,
                 decision=ExtractorExecutionDecision.INVOKED,
-                attempt_outcome=(
-                    AttemptOutcome.CONTENT
-                    if selected == attempt.extractor and bool(result.text)
-                    else AttemptOutcome.EMPTY
-                    if attempt.status == "success"
-                    else AttemptOutcome.PARSE_ERROR
-                    if attempt.status == "quality_failed"
-                    else AttemptOutcome.UNKNOWN_FAILURE
-                ),
+                attempt_outcome=attempt_outcome(attempt),
                 latency_ms=max(0, attempt.latency_ms),
                 provenance=provenance,
-                spend=SpendEvidence(
-                    actual_usd=Decimal(
-                        str(
-                            max(0.0, result.cost)
-                            if selected == attempt.extractor
-                            else 0.0
-                        )
-                    ),
-                    reserved_usd=Decimal(
-                        str(
-                            max(0.0, result.cost)
-                            if selected == attempt.extractor
-                            else 0.0
-                        )
-                    ),
-                    spend_attempt_ref=f"extract-spend-{run_id}-{ordinal}",
-                ),
+                spend=attempt_spend(attempt),
             )
         )
     if selected and not any(
@@ -1059,11 +1323,7 @@ def _finalize_accepted_extraction(
                 attempt_outcome=AttemptOutcome.CONTENT,
                 latency_ms=0,
                 provenance=provenance,
-                spend=SpendEvidence(
-                    actual_usd=Decimal(str(max(0.0, result.cost))),
-                    reserved_usd=Decimal(str(max(0.0, result.cost))),
-                    spend_attempt_ref=f"extract-spend-{run_id}-{len(decisions)}",
-                ),
+                spend=None,
             )
         )
     preflight_outcome = None
@@ -1152,7 +1412,7 @@ def _finalize_accepted_extraction(
                         for attempt in result.attempts
                     )
                     else "metered"
-                    if result.cost
+                    if name in metered_extractors or result.cost > 0
                     else "free"
                 ),
                 policy_rule_ref=(
@@ -1172,6 +1432,7 @@ def _finalize_accepted_extraction(
         caller=caller,
         profile="free" if free_only else "autonomous",
         privacy_scope="public",
+        release_identity=release_identity or "unknown-release",
         effective_max_provider_tier=0 if free_only else 3,
         provider_restrictions=(),
         eligible_extractors=(),
@@ -1187,6 +1448,7 @@ def _finalize_accepted_extraction(
             caller=caller,
             profile="free" if free_only else "autonomous",
             privacy_scope="public",
+            release_identity=release_identity or "unknown-release",
         ),
         plan,
         RawExtractionResult(
@@ -1202,7 +1464,10 @@ def _finalize_accepted_extraction(
         repository=repository,
         clock=lambda: (cache_now or datetime.now(timezone.utc)).isoformat(),
     )
-    return accepted.to_legacy_extracted_content()
+    projected = accepted.to_legacy_extracted_content()
+    projected.failure = getattr(result, "failure", None)
+    projected.provider_reference = getattr(result, "provider_reference", None)
+    return projected
 
 
 def _track_jina_usage(word_count: int) -> None:
