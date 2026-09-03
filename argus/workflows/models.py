@@ -85,3 +85,6 @@ class WorkflowResult:
     summary_sections: list[SummarySection] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
+    # Authenticated owner.  This is separate from caller-supplied display
+    # metadata because a label is never an access grant.
+    owner_principal: str | None = None

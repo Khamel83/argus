@@ -26,9 +26,18 @@ from argus.workflows.models import WorkflowStatus
 from argus.workflows.service import (
     WorkflowArtifactNotFound,
     WorkflowArtifactNotReady,
+    WorkflowArtifactNotPublished,
     WorkflowArtifactRangeError,
     WorkflowArtifactUnavailable,
+    WorkflowAuthorityUnavailable,
+    WorkflowOwnerMismatch,
+    WorkflowOwnerUnavailable,
     WorkflowStartPersistenceError,
+    _public_body,
+    _public_error_code,
+    _public_label,
+    _public_title,
+    _public_url,
 )
 
 router = APIRouter()
@@ -39,31 +48,99 @@ def get_workflows(request: Request) -> WorkflowService:
 
 
 def _to_response(run) -> WorkflowRunResponse:
+    """Return the legacy shape with authority-local values redacted."""
+
     return WorkflowRunResponse(
-        run_id=run.run_id,
+        run_id=_public_label(run.run_id),
         kind=run.kind.value,
         status=run.status.value,
-        target=run.target,
+        target=_public_body(run.target),
         created_at=run.created_at.isoformat() if run.created_at else None,
         started_at=run.started_at.isoformat() if run.started_at else None,
         finished_at=run.finished_at.isoformat() if run.finished_at else None,
-        status_url=run.status_url,
-        snapshot_dir=run.snapshot_dir,
-        report_path=run.report_path,
-        manifest_path=run.manifest_path,
+        status_url=f"/api/workflows/{_public_label(run.run_id)}",
+        snapshot_dir="",
+        report_path=None,
+        manifest_path=None,
         artifacts=[
-            WorkflowArtifactSchema(**artifact.__dict__) for artifact in run.artifacts
+            WorkflowArtifactSchema(
+                kind=_public_label(artifact.kind),
+                path="",
+                description=_public_body(artifact.description) if artifact.description else "",
+            )
+            for artifact in run.artifacts
         ],
         documents=[
-            StoredDocumentSchema(**document.__dict__) for document in run.documents
+            StoredDocumentSchema(
+                id=_public_label(document.id),
+                url=_public_url(document.url),
+                title=_public_title(document.title),
+                artifact_path="",
+                word_count=max(0, document.word_count),
+                domain=_public_label(document.domain, fallback=""),
+                role=_public_label(document.role, fallback="source"),
+                source_type=_public_label(document.source_type, fallback="web"),
+                extractor=_public_label(document.extractor, fallback="")
+                if document.extractor
+                else None,
+                egress=_public_label(document.egress, fallback="")
+                if document.egress
+                else None,
+                machine=_public_label(document.machine, fallback="")
+                if document.machine
+                else None,
+                metadata={},
+            )
+            for document in run.documents
         ],
-        citations=[CitationSchema(**citation.__dict__) for citation in run.citations],
+        citations=[
+            CitationSchema(
+                id=_public_label(citation.id),
+                title=_public_title(citation.title),
+                url=_public_url(citation.url),
+                artifact_path="",
+                note=_public_body(citation.note) if citation.note else "",
+            )
+            for citation in run.citations
+        ],
         summary_sections=[
-            SummarySectionSchema(**section.__dict__) for section in run.summary_sections
+            SummarySectionSchema(
+                heading=_public_title(section.heading),
+                body=_public_body(section.body) if section.body else "",
+                citation_ids=[_public_label(cid) for cid in section.citation_ids],
+            )
+            for section in run.summary_sections
         ],
-        metadata=run.metadata,
-        error=run.error,
+        metadata={},
+        error=_public_error_code(run.error) if run.error else None,
     )
+
+
+def _principal(request: Request) -> str | None:
+    """Return middleware-authenticated identity, without inventing one."""
+
+    value = getattr(request.state, "caller_identity", None)
+    return value if isinstance(value, str) and value else None
+
+
+def _raise_owner_http_error(exc: Exception) -> None:
+    if isinstance(exc, WorkflowOwnerMismatch):
+        raise HTTPException(status_code=404, detail="Workflow run not found") from exc
+    if isinstance(exc, WorkflowArtifactNotPublished):
+        raise HTTPException(
+            status_code=409,
+            detail="Workflow artifact is not ready",
+        ) from exc
+    if isinstance(exc, WorkflowArtifactUnavailable):
+        raise HTTPException(
+            status_code=503,
+            detail="Workflow authority unavailable",
+        ) from exc
+    if isinstance(exc, (WorkflowOwnerUnavailable, WorkflowAuthorityUnavailable)):
+        raise HTTPException(
+            status_code=503,
+            detail="Workflow authority unavailable",
+        ) from exc
 
 
 @router.post("/workflows/recover-article", response_model=WorkflowRunResponse)
@@ -195,16 +272,26 @@ async def workflow_status_projection(
     request: Request,
     workflows: WorkflowService = Depends(get_workflows),
 ):
-    run = workflows.get_run(run_id)
+    principal = _principal(request)
+    try:
+        run = workflows.get_run(run_id, principal=principal)
+    except (WorkflowOwnerMismatch, WorkflowOwnerUnavailable) as exc:
+        _raise_owner_http_error(exc)
     if run is None:
         raise HTTPException(status_code=404, detail="Workflow run not found")
     try:
-        return workflows.get_public_status(run, runtime=_runtime_projection(request))
-    except WorkflowArtifactUnavailable as exc:
-        raise HTTPException(
-            status_code=500,
-            detail="Workflow artifact unavailable",
-        ) from exc
+        return workflows.get_public_status(
+            run,
+            runtime=_runtime_projection(request),
+            principal=principal,
+        )
+    except (
+        WorkflowArtifactNotPublished,
+        WorkflowArtifactUnavailable,
+        WorkflowOwnerMismatch,
+        WorkflowOwnerUnavailable,
+    ) as exc:
+        _raise_owner_http_error(exc)
 
 
 @router.get(
@@ -214,11 +301,16 @@ async def workflow_status_projection(
 async def workflow_artifact(
     run_id: str,
     artifact: str,
+    request: Request,
     offset: int = Query(0, ge=0),
     max_bytes: int = Query(64 * 1024, ge=1, le=256 * 1024),
     workflows: WorkflowService = Depends(get_workflows),
 ):
-    run = workflows.get_run(run_id)
+    principal = _principal(request)
+    try:
+        run = workflows.get_run(run_id, principal=principal)
+    except (WorkflowOwnerMismatch, WorkflowOwnerUnavailable) as exc:
+        _raise_owner_http_error(exc)
     if run is None:
         raise HTTPException(status_code=404, detail="Workflow run not found")
     try:
@@ -227,6 +319,7 @@ async def workflow_artifact(
             artifact,
             offset=offset,
             max_bytes=max_bytes,
+            principal=principal,
         )
     except WorkflowArtifactNotFound as exc:
         raise HTTPException(
@@ -240,19 +333,30 @@ async def workflow_artifact(
         raise HTTPException(
             status_code=422, detail="Workflow artifact byte range is invalid"
         ) from exc
+    except WorkflowArtifactNotPublished as exc:
+        raise HTTPException(
+            status_code=409, detail="Workflow artifact is not ready"
+        ) from exc
     except WorkflowArtifactUnavailable as exc:
         raise HTTPException(
-            status_code=500,
-            detail="Workflow artifact unavailable",
+            status_code=503,
+            detail="Workflow authority unavailable",
         ) from exc
+    except (WorkflowOwnerMismatch, WorkflowOwnerUnavailable) as exc:
+        _raise_owner_http_error(exc)
 
 
 @router.get("/workflows/{run_id}", response_model=WorkflowRunResponse)
 async def workflow_status(
     run_id: str,
+    request: Request,
     workflows: WorkflowService = Depends(get_workflows),
 ):
-    run = workflows.get_run(run_id)
+    principal = _principal(request)
+    try:
+        run = workflows.get_run(run_id, principal=principal)
+    except (WorkflowOwnerMismatch, WorkflowOwnerUnavailable) as exc:
+        _raise_owner_http_error(exc)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Unknown workflow run: {run_id}")
     return _to_response(run)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import hmac
 import ipaddress
 import json
 import math
@@ -243,6 +244,10 @@ class WorkflowArtifactNotReady(WorkflowArtifactError):
     """The workflow has not reached a terminal state."""
 
 
+class WorkflowArtifactNotPublished(WorkflowArtifactError):
+    """The workflow knows an artifact but has not published its file."""
+
+
 class WorkflowArtifactUnavailable(WorkflowArtifactError):
     """A registered artifact failed containment, hashing, or decoding."""
 
@@ -253,6 +258,18 @@ class WorkflowArtifactRangeError(WorkflowArtifactError):
 
 class WorkflowStartPersistenceError(RuntimeError):
     """A safe workflow start could not be durably recorded."""
+
+
+class WorkflowOwnerMismatch(WorkflowArtifactError):
+    """The authenticated principal does not own the workflow run."""
+
+
+class WorkflowOwnerUnavailable(WorkflowArtifactError):
+    """The run owner or its authority cannot be verified safely."""
+
+
+class WorkflowAuthorityUnavailable(WorkflowOwnerUnavailable):
+    """The process is not the configured singleton workflow authority."""
 
 
 class _RealWorkflowClock:
@@ -686,8 +703,12 @@ class WorkflowService:
     # importing the workflow implementation module.
     ArtifactNotFound = WorkflowArtifactNotFound
     ArtifactNotReady = WorkflowArtifactNotReady
+    ArtifactNotPublished = WorkflowArtifactNotPublished
     ArtifactUnavailable = WorkflowArtifactUnavailable
     ArtifactRange = WorkflowArtifactRangeError
+    OwnerMismatch = WorkflowOwnerMismatch
+    OwnerUnavailable = WorkflowOwnerUnavailable
+    AuthorityUnavailable = WorkflowAuthorityUnavailable
     StartPersistenceError = WorkflowStartPersistenceError
 
     def __init__(
@@ -699,6 +720,8 @@ class WorkflowService:
         caller: str = "workflows",
         clock: Any | None = None,
         clock_provider: Any | None = None,
+        authority_available: bool = True,
+        authority_role: str = "primary",
     ):
         self._accepted_operations = accepted_operations
         self._paths = corpus_paths or get_corpus_paths()
@@ -707,6 +730,8 @@ class WorkflowService:
         self._progress = progress_callback
         self._caller = caller or "workflows"
         self._clock = clock_provider or clock or _RealWorkflowClock()
+        self._authority_available = bool(authority_available)
+        self._authority_role = str(authority_role or "unknown")
         # The global semaphore is shared by all runs owned by this service.  A
         # target lock is scoped to a run, so independent targets may overlap
         # while a single target can never have two accepted calls in flight.
@@ -993,11 +1018,73 @@ class WorkflowService:
     def get_paths(self) -> dict[str, Any]:
         return describe_corpus_paths()
 
-    def get_run(self, run_id: str) -> WorkflowResult | None:
+    @staticmethod
+    def _normalize_owner_principal(value: Any) -> str | None:
+        """Return a bounded authenticated principal, or no usable owner."""
+
+        if not isinstance(value, str):
+            return None
+        candidate = value.strip()
+        # ``unknown`` is an admission fallback, not an authenticated owner.
+        if candidate.casefold() == "unknown" or not _SAFE_ID_RE.fullmatch(candidate):
+            return None
+        return candidate
+
+    def _require_authority(self) -> None:
+        if not self._authority_available:
+            raise WorkflowAuthorityUnavailable(
+                "workflow authority is unavailable for this node role"
+            )
+
+    def _owner_for_run(self, run: WorkflowResult) -> str | None:
+        if run.owner_principal is not None:
+            return self._normalize_owner_principal(run.owner_principal)
+        metadata = run.metadata if isinstance(run.metadata, Mapping) else {}
+        # These aliases preserve access to states written by the preceding
+        # implementation while new writes use the top-level owner field.
+        for key in ("owner_principal", "authenticated_principal", "caller_identity"):
+            owner = self._normalize_owner_principal(metadata.get(key))
+            if owner is not None:
+                return owner
+        return None
+
+    def _assert_read_access(
+        self,
+        run: WorkflowResult,
+        principal: str | None,
+    ) -> None:
+        """Check singleton authority and, when supplied, run ownership."""
+
+        self._require_authority()
+        if principal is None:
+            # Internal execution code already holds the run object.  HTTP and
+            # MCP routes always pass the authenticated request principal.
+            return
+        requested = self._normalize_owner_principal(principal)
+        owner = self._owner_for_run(run)
+        if requested is None or owner is None:
+            raise WorkflowOwnerUnavailable("workflow owner cannot be verified")
+        if not hmac.compare_digest(owner, requested):
+            raise WorkflowOwnerMismatch("workflow run is not accessible")
+
+    def get_run(
+        self,
+        run_id: str,
+        *,
+        principal: str | None = None,
+    ) -> WorkflowResult | None:
+        self._require_authority()
         if not _SAFE_ID_RE.fullmatch(str(run_id)):
             return None
         run = self._runs.get(run_id)
         if run is not None:
+            if principal is not None:
+                try:
+                    self._assert_read_access(run, principal)
+                except WorkflowOwnerMismatch:
+                    # Do not disclose whether an identifier belongs to another
+                    # caller.  The route presents this as bounded not-found.
+                    return None
             return run
 
         state_path = self._paths.workflow_runs_dir / f"{run_id}.json"
@@ -1007,6 +1094,11 @@ class WorkflowService:
         try:
             payload = json.loads(state_path.read_text(encoding="utf-8"))
             run = self._deserialize_run(payload)
+            if principal is not None:
+                try:
+                    self._assert_read_access(run, principal)
+                except WorkflowOwnerMismatch:
+                    return None
             failure_marker = self._read_failure_marker(run_id)
             if failure_marker is not None:
                 # A targeted terminal marker may be the only durable record of
@@ -1022,17 +1114,25 @@ class WorkflowService:
             self._interrupt_orphaned_run(run)
             self._runs[run.run_id] = run
             return run
-        except Exception as exc:
-            logger.warning("Failed to load persisted workflow run %s: %s", run_id, exc)
+        except (WorkflowOwnerUnavailable, WorkflowAuthorityUnavailable):
+            raise
+        except FileNotFoundError:
             return None
+        except (OSError, TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            logger.warning("Failed to load persisted workflow run %s: %s", run_id, exc)
+            raise WorkflowOwnerUnavailable(
+                "workflow authority state is unavailable"
+            ) from exc
 
     def get_public_status(
         self,
         run: WorkflowResult,
         *,
         runtime: dict[str, Any] | None = None,
+        principal: str | None = None,
     ) -> dict[str, Any]:
         """Return the path-free status projection used by remote callers."""
+        self._assert_read_access(run, principal)
         artifacts = []
         for kind in ("report", "manifest"):
             registered = next(
@@ -1058,7 +1158,7 @@ class WorkflowService:
                 continue
             try:
                 metadata = self._artifact_metadata(run, kind)
-            except WorkflowArtifactNotFound:
+            except (WorkflowArtifactNotFound, WorkflowArtifactNotPublished):
                 metadata = {
                     "kind": kind,
                     "available": False,
@@ -1154,8 +1254,10 @@ class WorkflowService:
         *,
         offset: int = 0,
         max_bytes: int | None = None,
+        principal: str | None = None,
     ) -> dict[str, Any]:
         """Read an allowlisted workflow artifact without exposing its path."""
+        self._assert_read_access(run, principal)
         if artifact not in _ARTIFACT_MEDIA_TYPES:
             raise WorkflowArtifactNotFound("workflow artifact is not available")
         if run.status not in {WorkflowStatus.COMPLETED, WorkflowStatus.FAILED}:
@@ -1305,8 +1407,12 @@ class WorkflowService:
                     "workflow artifact failed containment verification"
                 )
             if not path.is_file():
-                raise WorkflowArtifactNotFound("workflow artifact is not available")
+                raise WorkflowArtifactNotPublished(
+                    "workflow artifact has not been published"
+                )
         except WorkflowArtifactUnavailable:
+            raise
+        except WorkflowArtifactNotPublished:
             raise
         except WorkflowArtifactNotFound:
             raise
@@ -3243,6 +3349,7 @@ class WorkflowService:
         free_only: bool | None = None,
         extra_metadata: Mapping[str, Any] | None = None,
     ) -> WorkflowResult:
+        self._require_authority()
         run_id = uuid.uuid4().hex[:12]
         slug = (
             _slug_from_url(target)
@@ -3251,9 +3358,13 @@ class WorkflowService:
         )
         snapshot_dir = self._paths.snapshots_dir / kind.value / slug / run_id
         snapshot_dir.mkdir(parents=True, exist_ok=True)
+        owner_principal = self._normalize_owner_principal(
+            caller_identity or self._caller
+        )
         metadata = {
             "caller_identity": caller_identity or self._caller,
             "caller_label": caller_label,
+            "owner_principal": owner_principal,
         }
         if free_only is not None:
             # Persist only the bounded policy bit required to replay accepted
@@ -3266,6 +3377,9 @@ class WorkflowService:
             metadata["runtime"] = self._runtime_projection(runtime, None)
         if extra_metadata:
             metadata.update(_plain_json_value(extra_metadata))
+        # Extra metadata is a replay/display input.  It cannot replace the
+        # authenticated principal selected at run creation.
+        metadata["owner_principal"] = owner_principal
         run = WorkflowResult(
             run_id=run_id,
             kind=kind,
@@ -3275,6 +3389,7 @@ class WorkflowService:
             status_url=f"/api/workflows/{run_id}",
             snapshot_dir=str(snapshot_dir),
             metadata=metadata,
+            owner_principal=owner_principal,
         )
         if self._is_targeted_run(run):
             self._ensure_target_deadline(run)
@@ -4931,6 +5046,7 @@ class WorkflowService:
             "summary_sections": [asdict(section) for section in run.summary_sections],
             "metadata": run.metadata,
             "error": run.error,
+            "owner_principal": run.owner_principal,
         }
 
     def _deserialize_run(self, payload: dict[str, Any]) -> WorkflowResult:
@@ -4944,6 +5060,14 @@ class WorkflowService:
             metadata.pop("_deadline_monotonic", None)
         else:
             metadata = {}
+        owner_marker = object()
+        raw_owner = payload.get("owner_principal", owner_marker)
+        owner_principal = self._normalize_owner_principal(raw_owner)
+        if raw_owner is owner_marker and isinstance(metadata, Mapping):
+            for key in ("owner_principal", "authenticated_principal", "caller_identity"):
+                owner_principal = self._normalize_owner_principal(metadata.get(key))
+                if owner_principal is not None:
+                    break
         return WorkflowResult(
             run_id=payload["run_id"],
             kind=WorkflowKind(payload["kind"]),
@@ -4973,6 +5097,7 @@ class WorkflowService:
             ],
             metadata=metadata,
             error=payload.get("error"),
+            owner_principal=owner_principal,
         )
 
     def _failure_marker_path(self, run_id: str) -> Path:
