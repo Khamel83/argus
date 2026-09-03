@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import socket
 from unittest.mock import AsyncMock
 
 import pytest
 
 from argus.acquisition import AcquisitionFailure, AcquisitionResult
-from argus.acquisition.transport import TransportResponse
+from argus.acquisition.transport import PinnedTransport, TransportResponse
 from argus.acquisition.guarded import (
     GuardedAcquisition,
     GuardedAcquisitionError,
@@ -165,6 +166,56 @@ async def test_browser_opener_is_not_called_before_attestation(monkeypatch):
 
     assert getattr(result, "code", None) == "browser_policy_unavailable"
     opener.assert_not_awaited()
+
+
+def test_guarded_acquisition_propagates_trusted_service_policy_to_transport(
+    monkeypatch,
+):
+    class Resolver:
+        def getaddrinfo(self, hostname, port, *args, **kwargs):
+            del hostname, args, kwargs
+            return [
+                (
+                    socket.AF_INET,
+                    socket.SOCK_STREAM,
+                    socket.IPPROTO_TCP,
+                    "",
+                    ("172.20.0.3", port),
+                )
+            ]
+
+    class Dispatcher:
+        supports_address_pinning = True
+
+        def __init__(self):
+            self.requests = []
+
+        def send(self, request):
+            self.requests.append(request)
+            return {"status_code": 200, "body": b"searxng"}
+
+    monkeypatch.setattr(
+        "argus.acquisition.guarded._validate_public_target",
+        lambda _url: (False, "private service address"),
+    )
+    dispatcher = Dispatcher()
+    acquisition = GuardedAcquisition(
+        transport=PinnedTransport(resolver=Resolver(), dispatcher=dispatcher)
+    )
+
+    result = acquisition.acquire(
+        make_request(
+            "http://searxng:8080/search",
+            profile=OriginProfile.AUTHENTICATED_CONTENT,
+            credential_policy="origin_scoped",
+            caller_principal="provider:searxng",
+            trusted_service_origin="http://searxng:8080",
+        )
+    )
+
+    assert result.content == b"searxng"
+    assert dispatcher.requests[0].logical_origin.hostname == "searxng"
+    assert dispatcher.requests[0].dial_address.address == "172.20.0.3"
 
 
 @dataclass

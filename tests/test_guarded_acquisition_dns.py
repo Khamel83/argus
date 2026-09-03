@@ -10,7 +10,9 @@ from argus.acquisition.dns import (
     AddressDecision,
     ResolvedAddress,
     resolve_public_addresses,
+    resolve_trusted_service_addresses,
     validate_address_set,
+    validate_trusted_service_address_set,
 )
 
 
@@ -111,6 +113,28 @@ def test_reresolution_accepts_a_different_fully_safe_public_address():
     refreshed = _decision(second)
     assert refreshed.allowed is True
     assert refreshed.approved_addresses == second
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        (["172.20.0.3"], ("172.20.0.3",)),
+        (["172.20.0.3", "93.184.216.34"], ()),
+        (["127.0.0.1"], ()),
+    ],
+)
+def test_trusted_service_resolver_accepts_only_complete_private_answers(
+    answer, expected
+):
+    resolver = MappingResolver({"searxng": [_record(address, 8080) for address in answer]})
+
+    resolved = resolve_trusted_service_addresses(
+        "searxng", 8080, resolver, lambda: 100.0
+    )
+
+    assert tuple(item.address for item in resolved) == expected
+    if expected:
+        assert validate_trusted_service_address_set(resolved).allowed is True
 
 
 @pytest.mark.parametrize(

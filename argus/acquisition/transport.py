@@ -22,9 +22,16 @@ from .dns import (
     DEFAULT_RESOLUTION_TIMEOUT_SECONDS,
     ResolvedAddress,
     resolve_public_addresses,
+    resolve_trusted_service_addresses,
     validate_address_set,
+    validate_trusted_service_address_set,
 )
-from .models import LogicalOrigin, MAX_CONTENT_BYTES
+from .models import (
+    CredentialPolicy,
+    LogicalOrigin,
+    MAX_CONTENT_BYTES,
+    OriginProfile,
+)
 
 
 MAX_TRANSPORT_HEADER_LENGTH = 1 * 1024 * 1024
@@ -100,6 +107,10 @@ class TransportRequest:
     host_header: str | None
     authority: str | None
     server_hostname: str | None
+    caller_principal: str
+    profile: str | OriginProfile | None
+    credential_policy: str | CredentialPolicy | None
+    trusted_service_origin: str | None
 
     def __init__(
         self,
@@ -116,6 +127,10 @@ class TransportRequest:
         host_header: str | None = None,
         authority: str | None = None,
         server_hostname: str | None = None,
+        caller_principal: str = "",
+        profile: str | OriginProfile | None = None,
+        credential_policy: str | CredentialPolicy | None = None,
+        trusted_service_origin: str | None = None,
     ) -> None:
         if not isinstance(url, str) or not url:
             raise ValueError("url must be non-empty text")
@@ -156,6 +171,10 @@ class TransportRequest:
         object.__setattr__(self, "host_header", host_header)
         object.__setattr__(self, "authority", authority)
         object.__setattr__(self, "server_hostname", server_hostname)
+        object.__setattr__(self, "caller_principal", caller_principal)
+        object.__setattr__(self, "profile", profile)
+        object.__setattr__(self, "credential_policy", credential_policy)
+        object.__setattr__(self, "trusted_service_origin", trusted_service_origin)
 
     @property
     def content(self) -> bytes:
@@ -391,6 +410,10 @@ def _normalize_request(request: Any) -> TransportRequest:
             host_header=request.get("host_header"),
             authority=request.get("authority"),
             server_hostname=request.get("server_hostname"),
+            caller_principal=request.get("caller_principal", ""),
+            profile=request.get("profile"),
+            credential_policy=request.get("credential_policy"),
+            trusted_service_origin=request.get("trusted_service_origin"),
         )
     url = getattr(request, "url", None)
     if url is None:
@@ -425,6 +448,10 @@ def _normalize_request(request: Any) -> TransportRequest:
         host_header=getattr(request, "host_header", None),
         authority=getattr(request, "authority", None),
         server_hostname=getattr(request, "server_hostname", None),
+        caller_principal=getattr(request, "caller_principal", ""),
+        profile=getattr(request, "profile", None),
+        credential_policy=getattr(request, "credential_policy", None),
+        trusted_service_origin=getattr(request, "trusted_service_origin", None),
     )
 
 
@@ -450,6 +477,58 @@ def _validate_caller_boundary(request: TransportRequest, origin: LogicalOrigin) 
             "forwarded",
         }:
             raise ValueError("caller cannot override logical origin headers")
+
+
+_TRUSTED_SERVICE_CALLERS = frozenset(
+    {
+        "provider:searxng",
+        "remote-provider",
+        "residential-client",
+    }
+)
+
+
+def _policy_value(value: object) -> object:
+    if isinstance(value, (CredentialPolicy, OriginProfile)):
+        return value.value
+    return value
+
+
+def _same_origin(left: LogicalOrigin, right: LogicalOrigin) -> bool:
+    return (
+        left.scheme.lower() == right.scheme.lower()
+        and left.hostname.lower().rstrip(".") == right.hostname.lower().rstrip(".")
+        and left.port == right.port
+    )
+
+
+def _trusted_service_request(
+    request: TransportRequest,
+    origin: LogicalOrigin,
+) -> bool:
+    """Validate the complete privilege tuple for a configured service.
+
+    The normal transport path has no private-network exception.  A request
+    may use the service policy only when its caller, profile, credential
+    policy, and exact configured origin all match the closed vocabulary.
+    """
+
+    trusted_origin = request.trusted_service_origin
+    if trusted_origin is None:
+        return False
+    if request.caller_principal not in _TRUSTED_SERVICE_CALLERS:
+        raise TransportPolicyError("trusted service caller is not allowed")
+    if _policy_value(request.profile) != OriginProfile.AUTHENTICATED_CONTENT.value:
+        raise TransportPolicyError("trusted service requires authenticated content")
+    if _policy_value(request.credential_policy) != CredentialPolicy.ORIGIN_SCOPED.value:
+        raise TransportPolicyError("trusted service requires origin-scoped credentials")
+    try:
+        configured_origin, _parsed = _origin_from_url(trusted_origin)
+    except (TypeError, ValueError) as exc:
+        raise TransportPolicyError("trusted service origin is invalid") from exc
+    if not _same_origin(configured_origin, origin):
+        raise TransportPolicyError("request is outside the trusted service origin")
+    return True
 
 
 def _dispatch_target(dispatcher: Any) -> Callable[..., Any]:
@@ -834,14 +913,28 @@ class PinnedTransport:
         normalized = _normalize_request(request)
         origin, _ = _origin_from_url(normalized.url)
         _validate_caller_boundary(normalized, origin)
-        addresses = resolve_public_addresses(
-            origin.hostname,
-            origin.port,
-            self._resolver,
-            self._clock,
-            timeout=self._dns_timeout,
-        )
-        decision = validate_address_set(addresses)
+        trusted_service = _trusted_service_request(normalized, origin)
+        if trusted_service:
+            # The dedicated resolver validates the complete answer as
+            # RFC1918/ULA before it returns.  It never falls back to a public
+            # or partially filtered answer.
+            addresses = resolve_trusted_service_addresses(
+                origin.hostname,
+                origin.port,
+                self._resolver,
+                self._clock,
+                timeout=self._dns_timeout,
+            )
+            decision = validate_trusted_service_address_set(addresses)
+        else:
+            addresses = resolve_public_addresses(
+                origin.hostname,
+                origin.port,
+                self._resolver,
+                self._clock,
+                timeout=self._dns_timeout,
+            )
+            decision = validate_address_set(addresses)
         if not decision.allowed:
             raise AddressPolicyError(decision.reason or "address set rejected")
         try:
@@ -859,7 +952,12 @@ class PinnedTransport:
             raise AddressPolicyError("pooled connection failed address recheck")
         pooled_address = _pool_connection_address(pooled)
         if pooled_address is not None:
-            pool_reason = validate_address_set((pooled_address,)).reason
+            pool_decision = (
+                validate_trusted_service_address_set((pooled_address,))
+                if trusted_service
+                else validate_address_set((pooled_address,))
+            )
+            pool_reason = pool_decision.reason
             if pool_reason:
                 raise AddressPolicyError("pooled connection address is no longer safe")
         selected = self._select_address(approved, pooled_address)
