@@ -988,16 +988,28 @@ class ProviderReadinessRepository:
         return self.list_stale_execution_attempts(now=now, limit=limit)
 
     @staticmethod
-    def _lock_provider_budget(session, provider: ProviderName) -> None:
-        """Serialize every provider/account budget mutation on PostgreSQL."""
+    def _lock_provider_budget(
+        session,
+        provider: ProviderName,
+        account_fingerprint: str | None = None,
+    ) -> None:
+        """Serialize provider budget mutations on PostgreSQL.
+
+        The optional account suffix is available to direct callers. Readiness
+        keeps the historical provider-level hook so instrumentation remains
+        compatible; all obligation calculations are still account-scoped.
+        """
         if session.get_bind().dialect.name != "postgresql":
             return
+        lock_key = f"provider-budget:{provider.value}"
+        if account_fingerprint:
+            lock_key += f":{account_fingerprint}"
         session.execute(
             text(
                 "SELECT pg_advisory_xact_lock("
                 "hashtextextended(:account_lock, 0))"
             ),
-            {"account_lock": f"provider-budget:{provider.value}"},
+            {"account_lock": lock_key},
         )
 
     def authorize_execution(
@@ -1014,6 +1026,9 @@ class ProviderReadinessRepository:
 
         with self._write_transaction() as session:
             now = self.authority_now(session)
+            # Keep the two-argument hook stable for instrumentation and older
+            # callers. The lock remains a conservative provider-level mutex;
+            # the spend query itself is account-scoped below.
             self._lock_provider_budget(session, context.provider)
             if probe_authorization is not None:
                 existing_probe = session.scalar(select(SpendAuditRow).where(
