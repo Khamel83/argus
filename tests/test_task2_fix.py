@@ -65,9 +65,7 @@ async def test_workflow_operation_and_composition_requests_retain_free_only(
     run = service._create_run(WorkflowKind.BUILD_RESEARCH_PACK, "topic")
     run.metadata["free_only"] = True
 
-    await service._operation_search(
-        run, query="topic", mode="research", max_results=8
-    )
+    await service._operation_search(run, query="topic", mode="research", max_results=8)
     await service._operation_acquire_site(
         run,
         url="https://docs.example.com",
@@ -185,7 +183,9 @@ async def test_accepted_cache_reload_uses_utc_receipt_age_and_no_second_extracto
             "default",
             True,
         ),
-        freshness_window_seconds=5,
+        # Keep the window short enough to catch a local-time/PDT conversion,
+        # while allowing the bounded fallback chain to finish on CI runners.
+        freshness_window_seconds=60,
     )
     short_window_decision = extraction_module._accepted_cache.decide(
         short_window_identity,
@@ -193,7 +193,7 @@ async def test_accepted_cache_reload_uses_utc_receipt_age_and_no_second_extracto
         now=datetime.now(timezone.utc),
     )
     assert short_window_decision.outcome is CacheOutcome.HIT_ELIGIBLE
-    assert short_window_decision.age_seconds <= 5
+    assert short_window_decision.age_seconds <= 60
     second = await extraction_module.extract_url(
         content.url,
         caller="task2-fix",
@@ -208,7 +208,7 @@ async def test_accepted_cache_reload_uses_utc_receipt_age_and_no_second_extracto
     # The first extraction may spend a few seconds exhausting completeness
     # fallbacks; UTC normalization must keep the durable age in that small
     # elapsed-time range rather than shifting by the PDT offset.
-    assert second.accepted_execution_evidence.cache_age_seconds <= 5
+    assert second.accepted_execution_evidence.cache_age_seconds <= 60
     assert trafilatura.await_count == 1
 
 
@@ -265,12 +265,8 @@ def test_accepted_cache_lookup_filters_url_identity_before_bounded_newest_rows(
             state["request_id"] = f"unrelated-cache-request-{index:03d}"
             state["plan_ref"] = plan_ref
             state["plan"]["plan_ref"] = plan_ref
-            state["plan"]["normalized_url"] = (
-                f"https://unrelated.example/{index}"
-            )
-            state["normalized_url_identity"] = (
-                "sha256:" + f"{index + 1:064x}"
-            )
+            state["plan"]["normalized_url"] = f"https://unrelated.example/{index}"
+            state["normalized_url_identity"] = "sha256:" + f"{index + 1:064x}"
             session.add(
                 ExtractionOutcomePlanRow(
                     id=plan_id,
@@ -291,9 +287,7 @@ def test_accepted_cache_lookup_filters_url_identity_before_bounded_newest_rows(
                     plan_id=plan_id,
                     outcome=state["outcome"],
                     artifact_disposition=state["artifact_disposition"],
-                    outcome_policy_version=(
-                        state["extraction_outcome_policy_version"]
-                    ),
+                    outcome_policy_version=(state["extraction_outcome_policy_version"]),
                     projection_json=_canonical_json(state),
                     acceptance_fingerprint=acceptance_fingerprint(state),
                     accepted_at=newer_than_target + timedelta(seconds=index),
@@ -367,9 +361,7 @@ def test_accepted_cache_lookup_normalizes_legacy_url_hash_identity(
         plan.normalized_url = source_url
         plan.plan_json = _canonical_json(state["plan"])
         if legacy_identity == "bare":
-            state["normalized_url_identity"] = target_identity.removeprefix(
-                "sha256:"
-            )
+            state["normalized_url_identity"] = target_identity.removeprefix("sha256:")
         else:
             state.pop("normalized_url_identity")
         acceptance.projection_json = _canonical_json(state)
@@ -440,11 +432,17 @@ def test_accepted_cache_lookup_keeps_mode_boundary_and_rejects_sql_metacharacter
         plan.plan_json = _canonical_json(state["plan"])
         acceptance.projection_json = _canonical_json(state)
 
-    assert repository.find_extraction_outcomes_by_url_identity(
-        target_identity,
-        mode="default",
-    ) == []
-    assert repository.find_extraction_outcomes_by_url_identity(
-        'sha256:%" OR 1=1 --',
-        mode="archive_ingest",
-    ) == []
+    assert (
+        repository.find_extraction_outcomes_by_url_identity(
+            target_identity,
+            mode="default",
+        )
+        == []
+    )
+    assert (
+        repository.find_extraction_outcomes_by_url_identity(
+            'sha256:%" OR 1=1 --',
+            mode="archive_ingest",
+        )
+        == []
+    )

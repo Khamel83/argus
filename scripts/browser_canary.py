@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import json
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -100,10 +101,54 @@ async def _wait_for_runtime_exit() -> list[dict[str, object]]:
 async def run(expect_missing: bool, attempts: int, memory_limit_mib: int) -> None:
     import playwright.async_api
 
+    from argus.acquisition.browser_policy import (
+        BrowserAdmission,
+        BrowserNetworkAttestation,
+        current_release_identity,
+        make_browser_request,
+        get_browser_attestation_provider,
+        set_browser_attestation_provider,
+    )
     import argus.extraction.playwright_extractor as extractor
+
+    # The canary runs with ``--network none``.  Use an in-process attestation
+    # and a data document so it tests the image browser lifecycle without any
+    # network authority or page request.  The production admission and SSRF
+    # paths remain covered by the contract and policy suites.
+    release_identity = current_release_identity()
+
+    class CanaryAttestationProvider:
+        def current(self):
+            return BrowserNetworkAttestation(
+                policy_identity="browser-canary-policy",
+                resolver_address_control_identity="browser-canary-resolver",
+                connection_binding_identity="browser-canary-binding",
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+                release_identity=release_identity,
+                verification_ref="browser-canary",
+                verified=True,
+            )
+
+    async def canary_guarded_session(*_args, **_kwargs):
+        return None
+
+    async def canary_admit(url, **kwargs):
+        del kwargs
+        request = make_browser_request(url, caller_principal="browser-canary")
+        attestation = CanaryAttestationProvider().current()
+        return BrowserAdmission(
+            request=request,
+            attestation=attestation,
+            admitted_at=datetime.now(timezone.utc),
+            expires_at=attestation.expires_at,
+            max_resources=request.limits.max_resource_count,
+        )
 
     runtime_starts = 0
     real_factory = playwright.async_api.async_playwright
+    real_guarded_session = extractor.guarded_browser_session
+    real_admit_browser_url = extractor.admit_browser_url
+    previous_attestation_provider = get_browser_attestation_provider()
 
     def counted_factory():
         nonlocal runtime_starts
@@ -111,6 +156,9 @@ async def run(expect_missing: bool, attempts: int, memory_limit_mib: int) -> Non
         return real_factory()
 
     playwright.async_api.async_playwright = counted_factory
+    set_browser_attestation_provider(CanaryAttestationProvider())
+    extractor.guarded_browser_session = canary_guarded_session
+    extractor.admit_browser_url = canary_admit
     oom_before = _oom_events()
     results = []
     try:
@@ -119,7 +167,9 @@ async def run(expect_missing: bool, attempts: int, memory_limit_mib: int) -> Non
 
         if expect_missing:
             assert runtime_starts == 1, runtime_starts
-            assert all(result.error == "playwright: not available" for result in results)
+            assert all(
+                result.error == "playwright: not available" for result in results
+            )
             status = extractor.browser_capability_status()
             assert status["declared"] is True
             assert status["available"] is False
@@ -146,6 +196,9 @@ async def run(expect_missing: bool, attempts: int, memory_limit_mib: int) -> Non
             assert not any(process["no_sandbox"] for process in browser_processes)
     finally:
         playwright.async_api.async_playwright = real_factory
+        extractor.guarded_browser_session = real_guarded_session
+        extractor.admit_browser_url = real_admit_browser_url
+        set_browser_attestation_provider(previous_attestation_provider)
         await extractor.close_browser()
 
     remaining = await _wait_for_runtime_exit()
