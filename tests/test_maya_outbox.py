@@ -219,6 +219,116 @@ def test_search_acceptance_atomically_enqueues_a_bounded_sanitized_maya_parent(
     assert "[redacted]" in row.payload_json
 
 
+def test_evidence_identity_is_local_and_wire_payload_stays_maya_compatible(tmp_path):
+    from argus.acceptance_v3.readiness import evaluate_readiness_gates
+    from argus.persistence.maya_outbox import MayaOutboxDispatcher
+
+    repository = _repository(tmp_path)
+    identity = {
+        "operation_id": "run-1",
+        "request_id": "request-1",
+        "release_identity": "release-1",
+        "schema_identity": "schema-1",
+        "receipt_identity": "accepted-receipt-1",
+        "result_hash": "sha256:" + "a" * 64,
+    }
+    repository.accept(
+        SearchQuery(query="identity-bound capture"),
+        _response(),
+        evidence_identity=identity,
+        request_id="request-1",
+    )
+    row = _outbox_row(repository)
+    stored_payload = json.loads(row.payload_json)
+    assert stored_payload["evidence_identity"] == identity
+
+    observed = {}
+
+    def maya(request):
+        observed["payload"] = json.loads(request.content)
+        return httpx.Response(201, json=_maya_receipt())
+
+    dispatcher = MayaOutboxDispatcher(
+        repository,
+        endpoint="http://maya/captures",
+        token="test-token",
+        transport=httpx.MockTransport(maya),
+        clock=lambda: datetime(2026, 7, 23, 12, 0),
+    )
+
+    assert dispatcher.run_once() == {"acknowledged": 1}
+    assert set(observed["payload"]) == {
+        "idempotency_key",
+        "query",
+        "mode",
+        "result_summary",
+        "provenance",
+        "started_at",
+        "completed_at",
+        "pages",
+    }
+    with repository.session_factory() as session:
+        delivered = session.get(DeliveryIntentRow, row.id)
+        assert delivered is not None
+        receipt = json.loads(delivered.response_json)
+    assert receipt["evidence_identity"]["maya_capture_id"] == "a" * 32
+
+    verdict = evaluate_readiness_gates(
+        {
+            "status": "accepted",
+            "identity": identity,
+        },
+        level="full_fleet",
+        delivery_requested=True,
+        outbox={
+            "status": "acknowledged",
+            "identity": identity,
+        },
+        maya_receipt={
+            "status": "acknowledged",
+            "identity": receipt["evidence_identity"],
+        },
+    )
+    assert verdict["status"] == "PASS"
+
+
+def test_extraction_evidence_identity_is_persisted_without_extra_maya_fields(tmp_path):
+    repository = _repository(tmp_path)
+    result = ExtractedContent(
+        url="https://example.com/identity-article",
+        text="identity-bound extraction content",
+        word_count=3,
+        extractor=ExtractorName.TRAFILATURA,
+        attempts=[ExtractionAttempt("trafilatura", "success", 1)],
+    )
+
+    repository.record_extraction(
+        url=result.url,
+        domain="example.com",
+        mode="default",
+        caller="maya",
+        result=result,
+        latency_ms=1,
+        extraction_run_id="extraction-1",
+        request_id="request-extraction-1",
+        evidence_identity={
+            "operation_id": "extraction-1",
+            "request_id": "request-extraction-1",
+            "release_identity": "release-1",
+            "schema_identity": "schema-1",
+            "receipt_identity": "accepted-extraction-1",
+        },
+    )
+
+    row = _outbox_row(repository)
+    payload = json.loads(row.payload_json)
+    identity = payload["evidence_identity"]
+    assert identity["operation_id"] == "extraction-1"
+    assert identity["request_id"] == "request-extraction-1"
+    assert identity["receipt_identity"] == "accepted-extraction-1"
+    assert identity["result_hash"].startswith("sha256:")
+
+
 @pytest.mark.parametrize(
     "credential",
     [

@@ -21,6 +21,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .contract import canonical_bytes, canonical_hash
+from .readiness import evaluate_readiness_gates, project_readiness_evidence
 
 
 class BundleError(ValueError):
@@ -239,6 +240,45 @@ def evaluate_gates(
         "verdict": verdict,
         "passed": statuses.count("PASS"),
     }
+
+
+def evaluate_readiness(
+    accepted: object,
+    *,
+    level: str | object | None = None,
+    delivery_requested: bool = False,
+    claims_maya_integration: bool = False,
+    full_fleet: bool = False,
+    outbox: object | None = None,
+    maya_receipt: object | None = None,
+    hard_gates: Mapping[str, object] | None = None,
+    score: int | float | None = None,
+    health: object | None = None,
+) -> dict[str, Any]:
+    """Evaluate conditional readiness and return its safe evidence projection.
+
+    The eight-gate acceptance bundle remains unchanged.  This separate
+    evaluator records whether the durable core result is ready, whether a
+    requested outbox delivery is pending, or whether a correlated Maya receipt
+    completes the full-fleet claim.
+    """
+
+    verdict = evaluate_readiness_gates(
+        accepted,
+        level=level,
+        delivery_requested=delivery_requested,
+        claims_maya_integration=claims_maya_integration,
+        full_fleet=full_fleet,
+        outbox=outbox,
+        maya_receipt=maya_receipt,
+        hard_gates=hard_gates,
+        score=score,
+        health=health,
+    )
+    # Exercise the bounded projection here so callers that write a v3 bundle
+    # cannot accidentally persist raw identity values from the full verdict.
+    project_readiness_evidence(verdict)
+    return verdict
 
 
 def calculate_score(score: Mapping[str, Any]) -> int:

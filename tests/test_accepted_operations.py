@@ -16,9 +16,7 @@ from argus.models import (
     SearchResult,
 )
 
-EVIDENCE_FIXTURES = (
-    Path(__file__).parent / "fixtures/contracts/retrieval_evidence_v2"
-)
+EVIDENCE_FIXTURES = Path(__file__).parent / "fixtures/contracts/retrieval_evidence_v2"
 
 
 @pytest.mark.asyncio
@@ -308,9 +306,7 @@ async def test_evidence_authority_never_calls_legacy_search_or_accept():
         "accounting_source": "tier_zero_accepted_attempts",
         "reconciliation": "settled",
     }
-    assert execution_evidence["freshness"]["availability"] == (
-        "observation_available"
-    )
+    assert execution_evidence["freshness"]["availability"] == ("observation_available")
     assert execution_evidence["freshness"]["age_ms"]["availability"] == "unavailable"
     assert execution_evidence["persistence"] == {
         "availability": "available",
@@ -1040,6 +1036,7 @@ def test_app_rejects_partial_evidence_authority_registration(monkeypatch):
 def _replay_valid_fixture_through_production(evidence, database_path):
     from dataclasses import replace
     from datetime import datetime, timezone
+    from decimal import Decimal
 
     from argus.api.contracts_v2 import EvidenceHttpPresenter
     from argus.broker.accepted import (
@@ -1069,6 +1066,7 @@ def _replay_valid_fixture_through_production(evidence, database_path):
         ExtractionAttempt,
         ExtractorName,
     )
+    from argus.extraction.outcomes import SpendEvidence
     from argus.models import (
         FusionPolicy,
         ProviderName,
@@ -1119,10 +1117,7 @@ def _replay_valid_fixture_through_production(evidence, database_path):
         ),
         lambda: datetime(2026, 7, 27, 5, tzinfo=timezone.utc),
     )
-    attempts = {
-        item["provider"]: item
-        for item in all_attempts
-    }
+    attempts = {item["provider"]: item for item in all_attempts}
     batches = []
     for provider_name, attempt in attempts.items():
         provider = ProviderName(provider_name)
@@ -1176,11 +1171,7 @@ def _replay_valid_fixture_through_production(evidence, database_path):
     outcome = fusion.outcome if fusion is not None else CanonicalOutcome.UNREADY
     reason = fusion.reason if fusion is not None else "no_reachable_provider"
     cache_outcome = canonical_cache_outcome(outcome, reason=reason)
-    results = (
-        project_search_results(fusion)
-        if fusion is not None
-        else []
-    )
+    results = project_search_results(fusion) if fusion is not None else []
     projected_results = tuple(
         {
             "url": item.url,
@@ -1250,6 +1241,27 @@ def _replay_valid_fixture_through_production(evidence, database_path):
     for extraction in evidence["extractions"]:
         artifact = extraction["artifact"]
         selected = extraction["selected_extractor"]
+        selected_step = next(
+            (
+                step
+                for step in extraction["steps"]
+                if step["decision"] == "invoked" and step["extractor"] == selected
+            ),
+            None,
+        )
+        spend = (
+            SpendEvidence(
+                actual_usd=Decimal(selected_step["spend"]["actual_usd"]),
+                reserved_usd=Decimal(selected_step["spend"]["reserved_usd"]),
+                # v2 fixtures predate the explicit attempt-reference field.
+                # Their bounded source value is the only available durable
+                # evidence locator for this historical replay.
+                spend_attempt_ref=selected_step["spend"].get("spend_attempt_ref")
+                or selected_step["spend"].get("source"),
+            )
+            if selected_step is not None and selected_step.get("spend")
+            else None
+        )
         extracted = ExtractedContent(
             url=f"https://fixture.invalid/{extraction['cluster_ref']}",
             text="fixture artifact" if artifact else "",
@@ -1257,14 +1269,13 @@ def _replay_valid_fixture_through_production(evidence, database_path):
             word_count=2 if artifact else 0,
             extractor=ExtractorName(selected) if selected else None,
             error=None if artifact else "fixture extraction failed",
-            quality_passed=(
-                artifact["quality_passed"] if artifact else False
-            ),
+            quality_passed=(artifact["quality_passed"] if artifact else False),
             attempts=[
                 ExtractionAttempt(
                     extractor=selected or "trafilatura",
                     status="success" if artifact else "failed",
                     latency_ms=1,
+                    spend=spend,
                 )
             ],
             completeness_result=(
@@ -1288,9 +1299,7 @@ def _replay_valid_fixture_through_production(evidence, database_path):
             latency_ms=1,
             repository=ledger,
         )
-        assert projected.accepted_outcome is CanonicalOutcome(
-            extraction["outcome"]
-        )
+        assert projected.accepted_outcome is CanonicalOutcome(extraction["outcome"])
 
     response = EvidenceHttpPresenter().response(
         AcceptedOperation(
@@ -1403,11 +1412,7 @@ async def _replay_fixture_through_accepted_authority(
             provider=provider,
             status="success" if attempt["outcome"] == "success" else "error",
             results_count=len(results),
-            error=(
-                None
-                if attempt["outcome"] == "success"
-                else attempt["outcome"]
-            ),
+            error=(None if attempt["outcome"] == "success" else attempt["outcome"]),
         )
         providers[provider] = FixtureProvider(provider, results, trace)
 
@@ -1456,8 +1461,7 @@ async def _replay_fixture_through_accepted_authority(
             for cluster in evidence["fusion"]["clusters"]
         )
         origin_refs = tuple(
-            attempt["attempt_id"]
-            for attempt in evidence["origin_provider_attempts"]
+            attempt["attempt_id"] for attempt in evidence["origin_provider_attempts"]
         ) or ("fixture-cache-origin",)
         operation_id = f"origin-{evidence['request']['run_id']}"
         fingerprint = acceptance_fingerprint(
@@ -1500,6 +1504,7 @@ async def _replay_fixture_through_accepted_authority(
 
     evidence_repository = repository
     if envelope["outcome"] == CanonicalOutcome.PERSISTENCE_FAILED.value:
+
         class FailingEvidenceRepository:
             def accept(self, _evidence):
                 raise RuntimeError("fixture persistence failure")
@@ -1549,15 +1554,12 @@ async def _replay_fixture_through_accepted_authority(
         ]
         assert [item["score"] for item in actual_results] == pytest.approx(
             [
-                item["exact_score"]["numerator"]
-                / item["exact_score"]["denominator"]
+                item["exact_score"]["numerator"] / item["exact_score"]["denominator"]
                 for item in clusters
             ]
         )
         expected_trace_status = {
-            item["provider"]: (
-                "success" if item["outcome"] == "success" else "error"
-            )
+            item["provider"]: ("success" if item["outcome"] == "success" else "error")
             for item in evidence["provider_attempts"]
         }
         actual_trace_status = {
@@ -1570,23 +1572,19 @@ async def _replay_fixture_through_accepted_authority(
     if expected is not CanonicalOutcome.PERSISTENCE_FAILED:
         with ledger.session_factory() as session:
             accepted_row = session.scalar(select(AcceptedOperationRow))
-            batch_rows = list(
-                session.scalars(select(RetrievalEvidenceBatchRow))
-            )
-            attempt_rows = list(
-                session.scalars(select(RetrievalEvidenceAttemptRow))
-            )
+            batch_rows = list(session.scalars(select(RetrievalEvidenceBatchRow)))
+            attempt_rows = list(session.scalars(select(RetrievalEvidenceAttemptRow)))
             readiness_rows = list(
                 session.scalars(select(RetrievalEvidenceReadinessRow))
             )
         assert accepted_row is not None
-        assert accepted_row.receipt_ref == (
-            rendered["result"]["acceptance_receipt"]["receipt_ref"]
+        assert (
+            accepted_row.receipt_ref
+            == (rendered["result"]["acceptance_receipt"]["receipt_ref"])
         )
-        assert accepted_row.acceptance_fingerprint == (
-            rendered["result"]["acceptance_receipt"][
-                "acceptance_fingerprint"
-            ]
+        assert (
+            accepted_row.acceptance_fingerprint
+            == (rendered["result"]["acceptance_receipt"]["acceptance_fingerprint"])
         )
         attempted_providers = {
             item["provider"] for item in evidence["provider_attempts"]
@@ -1595,15 +1593,11 @@ async def _replay_fixture_through_accepted_authority(
         assert len(attempt_rows) == len(attempted_providers)
         assert all(row.attempt_ref for row in attempt_rows)
         readiness = {
-            row.provider: json.loads(row.decision_json)
-            for row in readiness_rows
+            row.provider: json.loads(row.decision_json) for row in readiness_rows
         }
         for provider in attempted_providers:
             assert readiness[provider]["config_status"] == "enabled"
-            assert (
-                readiness[provider]["health"]["registration"]
-                == "registered"
-            )
+            assert readiness[provider]["health"]["registration"] == "registered"
 
 
 @pytest.mark.asyncio
@@ -1643,9 +1637,7 @@ def test_production_evidence_validator_replays_all_frozen_scenarios_and_mutation
             )
         else:
             with pytest.raises(RetrievalEvidenceContractViolation) as rejected:
-                AcceptedEvidenceEnvelope.from_mapping(
-                    envelope["result"]["evidence"]
-                )
+                AcceptedEvidenceEnvelope.from_mapping(envelope["result"]["evidence"])
             assert any(
                 entry["expected_invariant"] in violation
                 for violation in rejected.value.violations

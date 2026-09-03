@@ -94,7 +94,9 @@ class _ProviderCompatClient:
             return await leave(*args)
         return None
 
-    async def _send(self, method: str, url: str, *args: object, **kwargs: object) -> object:
+    async def _send(
+        self, method: str, url: str, *args: object, **kwargs: object
+    ) -> object:
         if not self._include_follow_redirects:
             kwargs.pop("follow_redirects", None)
         if not self._include_call_timeout:
@@ -143,7 +145,10 @@ class _ProviderCompatClient:
                 if payload is None and isinstance(text, str):
                     response.content = text.encode("utf-8")
                     return response
-                if isinstance(payload, (Mapping, list, tuple, str, int, float, bool)) or payload is None:
+                if (
+                    isinstance(payload, (Mapping, list, tuple, str, int, float, bool))
+                    or payload is None
+                ):
                     response.content = json.dumps(
                         payload, separators=(",", ":"), ensure_ascii=False
                     ).encode("utf-8")
@@ -203,7 +208,9 @@ def _append_query_params(url: str, params: Mapping[str, object]) -> str:
     parsed = urlsplit(url)
     encoded = urlencode(tuple(params.items()), doseq=True)
     query = f"{parsed.query}&{encoded}" if parsed.query else encoded
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, parsed.fragment))
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, query, parsed.fragment)
+    )
 
 
 class BaseProvider(ABC):
@@ -269,8 +276,7 @@ class BaseProvider(ABC):
         else:
             compat_factory = client_factory
         request_id = str(
-            query.metadata.get("_provider_attempt_id")
-            or f"{self.name.value}-attempt"
+            query.metadata.get("_provider_attempt_id") or f"{self.name.value}-attempt"
         )
         return await guarded_http_request(
             dispatch_url,
@@ -285,6 +291,8 @@ class BaseProvider(ABC):
             request_id=request_id,
             timeout=effective_timeout,
             compat_client_factory=compat_factory,
+            follow_redirects=self.name is not ProviderName.YAHOO,
+            trusted_service_origin=(url if self.name is ProviderName.SEARXNG else None),
         )
 
     def _request_evidence(

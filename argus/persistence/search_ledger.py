@@ -10,6 +10,7 @@ import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -44,6 +45,7 @@ from argus.persistence.maya_outbox import (
     excludes_capture,
     extraction_capture_payload,
     maya_payload_json,
+    _normalize_evidence_identity,
     safe_failure_summary,
     search_capture_payload,
 )
@@ -663,7 +665,12 @@ class AcceptanceConflictError(RuntimeError):
     """A public run ID was already committed with a different payload."""
 
 
-def _build_acceptance_state(query: SearchQuery, response: SearchResponse) -> dict:
+def _build_acceptance_state(
+    query: SearchQuery,
+    response: SearchResponse,
+    *,
+    evidence_identity: Mapping[str, object] | object | None = None,
+) -> dict:
     run_id = response.search_run_id
     if not run_id:
         raise ValueError("accepted retrieval requires a search_run_id")
@@ -756,6 +763,7 @@ def _build_acceptance_state(query: SearchQuery, response: SearchResponse) -> dic
                     query,
                     response,
                     completed_at=response.created_at,
+                    evidence_identity=evidence_identity,
                 )
             ),
         },
@@ -765,8 +773,14 @@ def _build_acceptance_state(query: SearchQuery, response: SearchResponse) -> dic
 def serialize_acceptance(
     query: SearchQuery,
     response: SearchResponse,
+    *,
+    evidence_identity: Mapping[str, object] | object | None = None,
 ) -> SerializedAcceptance:
-    state = _build_acceptance_state(query, response)
+    state = _build_acceptance_state(
+        query,
+        response,
+        evidence_identity=evidence_identity,
+    )
     return SerializedAcceptance(
         state=state,
         fingerprint=acceptance_fingerprint(state),
@@ -1271,7 +1285,12 @@ class SearchLedgerRepository(Protocol):
     lifecycle_capability: object
 
     def accept(
-        self, query: SearchQuery, response: SearchResponse
+        self,
+        query: SearchQuery,
+        response: SearchResponse,
+        *,
+        evidence_identity: Mapping[str, object] | object | None = None,
+        request_id: str | None = None,
     ) -> AcceptanceReceipt: ...
 
     def find_extraction_outcomes_by_url_identity(
@@ -1463,12 +1482,30 @@ class SqlAlchemySearchLedgerRepository:
                 issued_at=_utc_isoformat(row.issued_at),
             )
 
-    def accept(self, query: SearchQuery, response: SearchResponse) -> AcceptanceReceipt:
-        serialized = serialize_acceptance(query, response)
+    def accept(
+        self,
+        query: SearchQuery,
+        response: SearchResponse,
+        *,
+        evidence_identity: Mapping[str, object] | object | None = None,
+        request_id: str | None = None,
+    ) -> AcceptanceReceipt:
+        serialized = serialize_acceptance(
+            query,
+            response,
+            evidence_identity=evidence_identity,
+        )
+        normalized_identity = _normalize_evidence_identity(evidence_identity)
+        requested_request_id = request_id
+        if normalized_identity and requested_request_id is None:
+            candidate = normalized_identity.get("request_id")
+            if isinstance(candidate, str):
+                requested_request_id = candidate
         try:
             return self._accept_once(
                 serialized,
                 started_at=response.created_at,
+                request_id=requested_request_id,
             )
         except IntegrityError:
             # A concurrent request with the same public run ID may win the
@@ -1489,6 +1526,7 @@ class SqlAlchemySearchLedgerRepository:
         serialized: SerializedAcceptance,
         *,
         started_at: datetime,
+        request_id: str | None = None,
     ) -> AcceptanceReceipt:
         state = serialized.state
         request_state = state["request"]
@@ -1507,7 +1545,9 @@ class SqlAlchemySearchLedgerRepository:
                 )
 
             now = self.clock()
-            request_id = uuid.uuid4().hex
+            request_id = request_id or uuid.uuid4().hex
+            if not isinstance(request_id, str) or not 1 <= len(request_id) <= 32:
+                raise ValueError("accepted retrieval request_id is invalid")
             ledger_run_id = uuid.uuid4().hex
             session.add(
                 RetrievalRequestRow(
@@ -1591,10 +1631,34 @@ class SqlAlchemySearchLedgerRepository:
             delivery_id = None
             if delivery_state is not None:
                 delivery_id = uuid.uuid4().hex
+                payload = delivery_state["payload"]
+                if isinstance(payload, dict) and payload.get("evidence_identity"):
+                    identity = dict(payload["evidence_identity"])
+                    if (
+                        "operation_id" in identity
+                        and identity["operation_id"] != run_id
+                    ):
+                        raise ValueError(
+                            "accepted retrieval operation identity mismatch"
+                        )
+                    if (
+                        "request_id" in identity
+                        and identity["request_id"] != request_id
+                    ):
+                        raise ValueError("accepted retrieval request identity mismatch")
+                    identity.setdefault("operation_id", run_id)
+                    identity.setdefault("request_id", request_id)
+                    identity.setdefault("receipt_identity", delivery_id)
+                    identity.setdefault(
+                        "result_hash",
+                        f"sha256:{serialized.fingerprint}",
+                    )
+                    payload = dict(payload)
+                    payload["evidence_identity"] = _normalize_evidence_identity(
+                        identity
+                    )
                 payload_json = (
-                    maya_payload_json(delivery_state["payload"])
-                    if delivery_state["payload"] is not None
-                    else None
+                    maya_payload_json(payload) if payload is not None else None
                 )
                 session.add(
                     DeliveryIntentRow(
@@ -2125,13 +2189,11 @@ class SqlAlchemySearchLedgerRepository:
         if normalized_url_identity is None:
             return []
         with self.session_factory() as session:
-            statement = (
-                select(ExtractionOutcomePlanRow, ExtractionOutcomeAcceptanceRow)
-                .join(
-                    ExtractionOutcomeAcceptanceRow,
-                    ExtractionOutcomeAcceptanceRow.plan_id
-                    == ExtractionOutcomePlanRow.id,
-                )
+            statement = select(
+                ExtractionOutcomePlanRow, ExtractionOutcomeAcceptanceRow
+            ).join(
+                ExtractionOutcomeAcceptanceRow,
+                ExtractionOutcomeAcceptanceRow.plan_id == ExtractionOutcomePlanRow.id,
             )
             if mode is not None:
                 statement = statement.where(ExtractionOutcomePlanRow.mode == mode)
@@ -2439,9 +2501,7 @@ class SqlAlchemySearchLedgerRepository:
                         durable_projection,
                         ExtractionAcceptanceReceipt(
                             receipt_ref=accepted_pair[0].receipt_ref,
-                            accepted_at=(
-                                _utc_isoformat(accepted_pair[0].accepted_at)
-                            ),
+                            accepted_at=(_utc_isoformat(accepted_pair[0].accepted_at)),
                             scope=accepted_pair[0].scope,
                         ),
                     )
@@ -2569,9 +2629,16 @@ class SqlAlchemySearchLedgerRepository:
         result,
         latency_ms: int,
         extraction_run_id: str | None = None,
+        evidence_identity: Mapping[str, object] | object | None = None,
+        request_id: str | None = None,
     ) -> ExtractionReceipt:
         """Atomically store a normalized extraction and its attempt history."""
         from argus.extraction.rejection import classify_extraction_rejection
+
+        if request_id is not None and (
+            not isinstance(request_id, str) or not 1 <= len(request_id) <= 128
+        ):
+            raise ValueError("extraction request_id is invalid")
 
         public_id = extraction_run_id or uuid.uuid4().hex
         selected = result.extractor.value if result.extractor else None
@@ -2736,15 +2803,41 @@ class SqlAlchemySearchLedgerRepository:
                 maya_content_hash = None
                 delivery_status = "suppressed"
             else:
+                delivery_id = uuid.uuid4().hex
                 payload, maya_content_hash = extraction_capture_payload(
                     public_id=public_id,
                     mode=mode,
                     result=result,
                     completed_at=now,
+                    evidence_identity=evidence_identity,
                 )
+                if payload.get("evidence_identity"):
+                    identity = dict(payload["evidence_identity"])
+                    if (
+                        "operation_id" in identity
+                        and identity["operation_id"] != public_id
+                    ):
+                        raise ValueError("extraction operation identity mismatch")
+                    if request_id is not None:
+                        if (
+                            "request_id" in identity
+                            and identity["request_id"] != request_id
+                        ):
+                            raise ValueError("extraction request identity mismatch")
+                        identity.setdefault("request_id", request_id)
+                    identity.setdefault("operation_id", public_id)
+                    identity.setdefault("receipt_identity", delivery_id)
+                    if maya_content_hash:
+                        identity.setdefault(
+                            "result_hash", f"sha256:{maya_content_hash}"
+                        )
+                    payload["evidence_identity"] = _normalize_evidence_identity(
+                        identity
+                    )
                 payload_json = maya_payload_json(payload)
                 delivery_status = "pending"
-            delivery_id = uuid.uuid4().hex
+            if delivery_id is None:
+                delivery_id = uuid.uuid4().hex
             session.add(
                 DeliveryIntentRow(
                     id=delivery_id,

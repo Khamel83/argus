@@ -106,10 +106,7 @@ _TABLE_REVISIONS = {
 
 _TABLE_OWNERS = {
     **{table: "argus.persistence.search_ledger" for table in _LEDGER_TABLES},
-    **{
-        table: "argus.persistence.search_ledger"
-        for table in _OPERATION_LEDGER_TABLES
-    },
+    **{table: "argus.persistence.search_ledger" for table in _OPERATION_LEDGER_TABLES},
     **{table: "argus.persistence.search_ledger" for table in _OUTCOME_TABLES},
     **{table: "argus.persistence.provider_spend" for table in _SPEND_TABLES},
     **{table: "argus.persistence.readiness" for table in _READINESS_TABLES},
@@ -130,8 +127,8 @@ protected_runtime_tables = frozenset(
 )
 
 
-def _canonical_domain_policy_table() -> tuple[Any, str] | None:
-    """Return a separately declared canonical domain-policy table if present.
+def _canonical_domain_policy_tables() -> tuple[tuple[Any, str], ...]:
+    """Return separately declared canonical domain-policy tables if present.
 
     Phase 1 is intentionally usable before the reviewed domain-policy module
     lands.  Importing it lazily keeps this foundation compatible with that
@@ -142,18 +139,23 @@ def _canonical_domain_policy_table() -> tuple[Any, str] | None:
         module = import_module("argus.persistence.domain_policy")
     except ModuleNotFoundError as exc:
         if exc.name == "argus.persistence.domain_policy":
-            return None
+            return ()
         raise
 
-    for name in ("DomainPolicyRow", "CanonicalDomainPolicyRow"):
+    tables: list[tuple[Any, str]] = []
+    seen: set[str] = set()
+    for name in ("DomainPolicyRow", "CanonicalDomainPolicyRow", "DomainPolicyEvent"):
         model = getattr(module, name, None)
         table = getattr(model, "__table__", None)
-        if table is not None:
-            return table, "argus.persistence.domain_policy"
-    raise RuntimeError(
-        "argus.persistence.domain_policy must expose DomainPolicyRow "
-        "or CanonicalDomainPolicyRow"
-    )
+        if table is None or table.name in seen:
+            continue
+        tables.append((table, "argus.persistence.domain_policy"))
+        seen.add(table.name)
+    if not tables:
+        raise RuntimeError(
+            "argus.persistence.domain_policy must expose canonical policy tables"
+        )
+    return tuple(tables)
 
 
 def _source_metadata() -> tuple[MetaData, ...]:
@@ -195,9 +197,7 @@ class ProductionMetadataRegistry:
             for table in source.tables.values():
                 table.to_metadata(metadata)
 
-        domain_policy = _canonical_domain_policy_table()
-        if domain_policy is not None:
-            table, owner = domain_policy
+        for table, owner in _canonical_domain_policy_tables():
             table.to_metadata(metadata)
             table_revisions.setdefault(table.name, _DOMAIN_POLICY_REVISION)
             table_owners.setdefault(table.name, owner)

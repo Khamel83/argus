@@ -16,8 +16,9 @@ import inspect
 import ipaddress
 import json
 import logging
+import re
 from typing import Any, Protocol
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import unquote_plus, urljoin, urlsplit, urlunsplit
 from uuid import uuid4
 
 import httpx
@@ -54,7 +55,9 @@ _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _HTTP_SCHEMES = frozenset({"http", "https"})
 _DEFAULT_MAX_REDIRECTS = 10
 _MAX_URL_LENGTH = 2_048
-_INTERNAL_HOSTNAMES = frozenset({"localhost", "internal", "intranet", "metadata", "metadata.google.internal"})
+_INTERNAL_HOSTNAMES = frozenset(
+    {"localhost", "internal", "intranet", "metadata", "metadata.google.internal"}
+)
 _INTERNAL_SUFFIXES = (".local", ".internal", ".corp", ".lan")
 _THIRD_PARTY_CREDENTIAL_HEADERS = frozenset(
     {
@@ -67,6 +70,18 @@ _THIRD_PARTY_CREDENTIAL_HEADERS = frozenset(
         "x-api-token",
         "x-auth-token",
         "x-access-token",
+    }
+)
+_SENSITIVE_QUERY_KEY = re.compile(
+    r"(?:api[_-]?key|appid|authorization|cookie|credential|password|"
+    r"secret|signature|signed|token|x-amz-|x-goog-)",
+    re.IGNORECASE,
+)
+_TRUSTED_SERVICE_CALLERS = frozenset(
+    {
+        "provider:searxng",
+        "remote-provider",
+        "residential-client",
     }
 )
 _ORIGINAL_HTTPX_ASYNC_CLIENT = httpx.AsyncClient
@@ -156,9 +171,13 @@ class GuardedResponse(AcquisitionResult):
 
 
 class _GuardedImplementation(Protocol):
-    def acquire(self, request: AcquisitionRequest) -> AcquisitionResult | AcquisitionFailure: ...
+    def acquire(
+        self, request: AcquisitionRequest
+    ) -> AcquisitionResult | AcquisitionFailure: ...
 
-    def open_browser_session(self, request: AcquisitionRequest) -> GuardedBrowserSession | AcquisitionFailure: ...
+    def open_browser_session(
+        self, request: AcquisitionRequest
+    ) -> GuardedBrowserSession | AcquisitionFailure: ...
 
 
 def _bounded_request_text(value: object, *, name: str, maximum: int) -> str:
@@ -178,13 +197,26 @@ def _request_failure(
     code: AcquisitionFailureCode = AcquisitionFailureCode.ACQUISITION_BLOCKED,
     retryable: bool = False,
 ) -> AcquisitionFailure:
-    request_id = request.request_id if request is not None and request.request_id else "guarded-request"
+    request_id = (
+        request.request_id
+        if request is not None and request.request_id
+        else "guarded-request"
+    )
     try:
         if code is AcquisitionFailureCode.BROWSER_POLICY_UNAVAILABLE:
-            return AcquisitionFailure.browser_policy_unavailable(request_id=request_id, reason=reason)
-        return AcquisitionFailure(code=code, safe_reason=reason[:256] or "acquisition failed", retryable=retryable, request_id=request_id)
+            return AcquisitionFailure.browser_policy_unavailable(
+                request_id=request_id, reason=reason
+            )
+        return AcquisitionFailure(
+            code=code,
+            safe_reason=reason[:256] or "acquisition failed",
+            retryable=retryable,
+            request_id=request_id,
+        )
     except (TypeError, ValueError):
-        return AcquisitionFailure.acquisition_blocked(request_id="guarded-request", reason="acquisition request was rejected")
+        return AcquisitionFailure.acquisition_blocked(
+            request_id="guarded-request", reason="acquisition request was rejected"
+        )
 
 
 def _origin(url: str) -> tuple[str, str, int]:
@@ -215,7 +247,9 @@ def _same_origin(left: str, right: str) -> bool:
         return False
 
 
-def _strip_cross_origin_headers(headers: Mapping[str, str] | Sequence[tuple[str, str]] | None) -> dict[str, str]:
+def _strip_cross_origin_headers(
+    headers: Mapping[str, str] | Sequence[tuple[str, str]] | None,
+) -> dict[str, str]:
     if headers is None:
         return {}
     items = headers.items() if isinstance(headers, Mapping) else headers
@@ -230,6 +264,31 @@ def _strip_cross_origin_headers(headers: Mapping[str, str] | Sequence[tuple[str,
             continue
         result[str(name)] = str(value)
     return result
+
+
+def _strip_sensitive_query(url: str) -> str:
+    """Remove credential-like query fields before following a redirect.
+
+    Redirect locations are untrusted provider input.  Query fields such as
+    ``signature`` and ``token`` are credentials even when they are not HTTP
+    headers, so they must not cross the guarded boundary or enter a second
+    request.  Keep the original encoding for fields that are safe.
+    """
+
+    parsed = urlsplit(url)
+    kept: list[str] = []
+    for segment in parsed.query.split("&"):
+        if not segment:
+            continue
+        raw_key = segment.partition("=")[0]
+        try:
+            key = unquote_plus(raw_key)
+        except (TypeError, ValueError, UnicodeError):
+            key = raw_key
+        if _SENSITIVE_QUERY_KEY.search(key):
+            continue
+        kept.append(segment)
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "&".join(kept), ""))
 
 
 def _third_party_header_failure(
@@ -253,7 +312,10 @@ def _third_party_header_failure(
 
 
 def _header_bytes(headers: Sequence[tuple[str, str]]) -> int:
-    return sum(len(name.encode("utf-8")) + len(value.encode("utf-8")) for name, value in headers)
+    return sum(
+        len(name.encode("utf-8")) + len(value.encode("utf-8"))
+        for name, value in headers
+    )
 
 
 def _response_origin(response: TransportResponse, current_url: str) -> LogicalOrigin:
@@ -267,7 +329,9 @@ def _response_origin(response: TransportResponse, current_url: str) -> LogicalOr
     return LogicalOrigin(scheme=scheme, hostname=hostname, port=port)
 
 
-def _header_items(headers: Mapping[str, str] | Sequence[tuple[str, str]] | None) -> tuple[tuple[str, str], ...]:
+def _header_items(
+    headers: Mapping[str, str] | Sequence[tuple[str, str]] | None,
+) -> tuple[tuple[str, str], ...]:
     if headers is None:
         return ()
     items = headers.items() if isinstance(headers, Mapping) else headers
@@ -278,7 +342,13 @@ def _header_items(headers: Mapping[str, str] | Sequence[tuple[str, str]] | None)
         name, value = item
         if not isinstance(name, str) or not isinstance(value, str):
             raise TypeError("header names and values must be text")
-        if not name or not name.isprintable() or not value.isprintable() or "\r" in value or "\n" in value:
+        if (
+            not name
+            or not name.isprintable()
+            or not value.isprintable()
+            or "\r" in value
+            or "\n" in value
+        ):
             raise ValueError("headers contain invalid text")
         result.append((name, value))
     return tuple(result)
@@ -297,13 +367,17 @@ def _content_bytes(value: object, *, json_body: object = None) -> bytes:
     if isinstance(value, str):
         return value.encode("utf-8")
     if isinstance(value, Mapping):
-        return json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        return json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode(
+            "utf-8"
+        )
     if isinstance(value, bytearray):
         return bytes(value)
     raise TypeError("request body must be bytes, text, or a mapping")
 
 
-def _coerce_result(result: object, request: AcquisitionRequest) -> GuardedResponse | AcquisitionFailure:
+def _coerce_result(
+    result: object, request: AcquisitionRequest
+) -> GuardedResponse | AcquisitionFailure:
     if isinstance(result, AcquisitionFailure):
         return result
     if isinstance(result, GuardedResponse):
@@ -319,7 +393,11 @@ def _coerce_result(result: object, request: AcquisitionRequest) -> GuardedRespon
         else:
             body = b""
         origin = result.approved_logical_origin
-        response_url = origin.origin if isinstance(origin, LogicalOrigin) else str(origin or request.normalized_url)
+        response_url = (
+            origin.origin
+            if isinstance(origin, LogicalOrigin)
+            else str(origin or request.normalized_url)
+        )
         return GuardedResponse(
             approved_logical_origin=origin,
             dial_address_evidence=result.dial_address_evidence,
@@ -347,11 +425,20 @@ def _coerce_result(result: object, request: AcquisitionRequest) -> GuardedRespon
             json_method = getattr(result, "json", None)
             if callable(json_method):
                 json_value = json_method()
-                if isinstance(json_value, (Mapping, list, tuple, str, int, float, bool)) or json_value is None:
-                    body_value = json.dumps(json_value, separators=(",", ":"), ensure_ascii=False)
+                if (
+                    isinstance(
+                        json_value, (Mapping, list, tuple, str, int, float, bool)
+                    )
+                    or json_value is None
+                ):
+                    body_value = json.dumps(
+                        json_value, separators=(",", ":"), ensure_ascii=False
+                    )
         body = _content_bytes(body_value)
         headers_value = getattr(result, "headers", {})
-        headers = _header_items(headers_value if isinstance(headers_value, Mapping) else ())
+        headers = _header_items(
+            headers_value if isinstance(headers_value, Mapping) else ()
+        )
     except (TypeError, ValueError):
         return _request_failure(request, "transport returned an invalid response")
     response_url_value = getattr(result, "url", request.normalized_url)
@@ -361,32 +448,70 @@ def _coerce_result(result: object, request: AcquisitionRequest) -> GuardedRespon
         response_url = str(response_url_value)
     else:
         response_url = request.normalized_url
-    return GuardedResponse(approved_logical_origin=response_url, content=body, status_code=status, headers=headers, response_url=response_url)
+    return GuardedResponse(
+        approved_logical_origin=response_url,
+        content=body,
+        status_code=status,
+        headers=headers,
+        response_url=response_url,
+    )
 
 
-def _failure_from_exception(request: AcquisitionRequest, error: BaseException) -> AcquisitionFailure:
+def _failure_from_exception(
+    request: AcquisitionRequest, error: BaseException
+) -> AcquisitionFailure:
     if isinstance(error, (TimeoutError, asyncio.TimeoutError)):
-        return _request_failure(request, "guarded acquisition timed out", code=AcquisitionFailureCode.TIMEOUT, retryable=True)
+        return _request_failure(
+            request,
+            "guarded acquisition timed out",
+            code=AcquisitionFailureCode.TIMEOUT,
+            retryable=True,
+        )
     if isinstance(error, (TransportPolicyError, TransportDispatchError, ValueError)):
         return _request_failure(request, "guarded acquisition was blocked by policy")
-    logger.debug("guarded acquisition failed request_id=%s reason=%s", request.request_id, type(error).__name__)
-    return _request_failure(request, "guarded acquisition is unavailable", code=AcquisitionFailureCode.PROVIDER_UNAVAILABLE, retryable=True)
+    logger.debug(
+        "guarded acquisition failed request_id=%s reason=%s",
+        request.request_id,
+        type(error).__name__,
+    )
+    return _request_failure(
+        request,
+        "guarded acquisition is unavailable",
+        code=AcquisitionFailureCode.PROVIDER_UNAVAILABLE,
+        retryable=True,
+    )
 
 
 def _validate_request(request: AcquisitionRequest) -> AcquisitionFailure | None:
     if not isinstance(request, AcquisitionRequest):
         return _request_failure(None, "request must be an AcquisitionRequest")
     try:
-        _bounded_request_text(request.normalized_url, name="normalized_url", maximum=_MAX_URL_LENGTH)
+        _bounded_request_text(
+            request.normalized_url, name="normalized_url", maximum=_MAX_URL_LENGTH
+        )
         _origin(request.normalized_url)
     except (TypeError, ValueError) as exc:
         return _request_failure(request, f"invalid acquisition URL: {exc}")
     if request.limits.max_redirect_hops > _DEFAULT_MAX_REDIRECTS:
         return _request_failure(request, "redirect limit exceeds guarded maximum")
-    if request.profile is OriginProfile.AUTHENTICATED_CONTENT and request.credential_policy not in {CredentialPolicy.ORIGIN_SCOPED.value, CredentialPolicy.PUBLIC_ALLOWLIST.value}:
-        return _request_failure(request, "authenticated acquisition requires origin-scoped credentials")
-    if request.profile is OriginProfile.THIRD_PARTY_FETCH and request.credential_policy != CredentialPolicy.NONE.value:
-        return _request_failure(request, "third-party acquisition cannot carry caller credentials")
+    if (
+        request.profile is OriginProfile.AUTHENTICATED_CONTENT
+        and request.credential_policy
+        not in {
+            CredentialPolicy.ORIGIN_SCOPED.value,
+            CredentialPolicy.PUBLIC_ALLOWLIST.value,
+        }
+    ):
+        return _request_failure(
+            request, "authenticated acquisition requires origin-scoped credentials"
+        )
+    if (
+        request.profile is OriginProfile.THIRD_PARTY_FETCH
+        and request.credential_policy != CredentialPolicy.NONE.value
+    ):
+        return _request_failure(
+            request, "third-party acquisition cannot carry caller credentials"
+        )
     return None
 
 
@@ -408,35 +533,72 @@ def _validate_public_target(url: str) -> tuple[bool, str]:
         literal = ipaddress.ip_address(hostname)
     except ValueError:
         literal = None
-    if literal is not None and (literal.is_private or literal.is_loopback or literal.is_reserved or literal.is_link_local):
+    if literal is not None and (
+        literal.is_private
+        or literal.is_loopback
+        or literal.is_reserved
+        or literal.is_link_local
+    ):
         return False, "literal address is not public"
     return True, ""
+
+
+def _trusted_service_target(request: AcquisitionRequest, url: str) -> bool:
+    """Return whether a configured private service origin may be contacted.
+
+    This is a narrow exception for the two internal service callers that own
+    their endpoint configuration.  It does not apply to user URLs,
+    third-party fetches, or arbitrary caller-provided principals.
+    """
+
+    if (
+        request.trusted_service_origin is None
+        or request.caller_principal not in _TRUSTED_SERVICE_CALLERS
+        or request.profile is not OriginProfile.AUTHENTICATED_CONTENT
+        or request.credential_policy != CredentialPolicy.ORIGIN_SCOPED.value
+    ):
+        return False
+    return _same_origin(url, request.trusted_service_origin)
 
 
 class GuardedAcquisition:
     """Concrete, injectable application acquisition boundary."""
 
-    def __init__(self, *, transport: Any = None, browser_session_opener: Any = None, redirect_allowlist: Sequence[str] = ()) -> None:
+    def __init__(
+        self,
+        *,
+        transport: Any = None,
+        browser_session_opener: Any = None,
+        redirect_allowlist: Sequence[str] = (),
+    ) -> None:
         self.transport = transport if transport is not None else PinnedTransport()
         self.browser_session_opener = browser_session_opener
         self.redirect_allowlist = tuple(str(item) for item in redirect_allowlist)
 
-    def _redirect_allowed(self, request: AcquisitionRequest, source: str, target: str) -> bool:
+    def _redirect_allowed(
+        self, request: AcquisitionRequest, source: str, target: str
+    ) -> bool:
         if _same_origin(source, target):
             return True
         if request.profile is OriginProfile.AUTHENTICATED_CONTENT:
-            return any(_same_origin(target, allowed) for allowed in self.redirect_allowlist)
+            return any(
+                _same_origin(target, allowed) for allowed in self.redirect_allowlist
+            )
         return request.profile is OriginProfile.PUBLIC_CONTENT
 
-    def acquire(self, request: AcquisitionRequest) -> GuardedResponse | AcquisitionFailure:
+    def acquire(
+        self, request: AcquisitionRequest
+    ) -> GuardedResponse | AcquisitionFailure:
         invalid = _validate_request(request)
         if invalid is not None:
             return invalid
         if request.operation_class == OperationClass.BROWSER.value:
-            return _request_failure(request, "browser acquisition requires a browser session")
+            return _request_failure(
+                request, "browser acquisition requires a browser session"
+            )
         current_url = request.normalized_url
         safe, reason = _validate_public_target(current_url)
-        if not safe:
+        if not safe and not _trusted_service_target(request, current_url):
             return _request_failure(request, f"request target rejected: {reason}")
         method, headers, body = _context_for(request)
         if _header_bytes(headers) > request.limits.max_header_bytes:
@@ -454,7 +616,15 @@ class GuardedAcquisition:
             if resource_counts.requests >= request.limits.max_resource_count:
                 return _request_failure(request, "resource limit exceeded")
             try:
-                response: TransportResponse = self.transport.request(TransportRequest(url=current_url, method=method, headers=headers, body=body, timeout=request.limits.timeout_seconds))
+                response: TransportResponse = self.transport.request(
+                    TransportRequest(
+                        url=current_url,
+                        method=method,
+                        headers=headers,
+                        body=body,
+                        timeout=request.limits.timeout_seconds,
+                    )
+                )
             except Exception as exc:
                 return _failure_from_exception(request, exc)
             try:
@@ -464,11 +634,17 @@ class GuardedAcquisition:
                 response_headers = response.headers
                 dial_ip = response.dial_ip
             except (AttributeError, TypeError, ValueError):
-                return _request_failure(request, "transport returned an invalid response")
+                return _request_failure(
+                    request, "transport returned an invalid response"
+                )
             if not isinstance(dial_ip, str) or not dial_ip:
-                return _request_failure(request, "transport did not provide dial-address evidence")
+                return _request_failure(
+                    request, "transport did not provide dial-address evidence"
+                )
             if not isinstance(response_body, bytes) or type(response_status) is not int:
-                return _request_failure(request, "transport returned an invalid response")
+                return _request_failure(
+                    request, "transport returned an invalid response"
+                )
             if len(response_body) > request.limits.max_body_bytes:
                 return _request_failure(request, "response exceeded guarded body limit")
             resource_counts = ResourceCounts(
@@ -477,7 +653,13 @@ class GuardedAcquisition:
                 bytes_received=resource_counts.bytes_received + len(response_body),
                 redirects=resource_counts.redirects,
             )
-            evidence.append(DialAddressEvidence(address=dial_ip, logical_hostname=response_origin.hostname, port=response_origin.port))
+            evidence.append(
+                DialAddressEvidence(
+                    address=dial_ip,
+                    logical_hostname=response_origin.hostname,
+                    port=response_origin.port,
+                )
+            )
             if response_status not in _REDIRECT_STATUSES:
                 return GuardedResponse(
                     approved_logical_origin=response_origin,
@@ -485,7 +667,9 @@ class GuardedAcquisition:
                     redirect_trace=RedirectTrace(tuple(redirects)),
                     content=response_body,
                     resource_counts=resource_counts,
-                    cleanup_receipt=CleanupReceipt(receipt_ref=f"guarded-{uuid4().hex[:24]}"),
+                    cleanup_receipt=CleanupReceipt(
+                        receipt_ref=f"guarded-{uuid4().hex[:24]}"
+                    ),
                     status_code=response_status,
                     headers=response_headers,
                     response_url=current_url,
@@ -493,18 +677,26 @@ class GuardedAcquisition:
             location = response.get_header("location")
             if not location:
                 return _request_failure(request, "redirect response has no location")
-            target = urljoin(current_url, location)
+            target = _strip_sensitive_query(urljoin(current_url, location))
             try:
-                _bounded_request_text(target, name="redirect target", maximum=_MAX_URL_LENGTH)
+                _bounded_request_text(
+                    target, name="redirect target", maximum=_MAX_URL_LENGTH
+                )
                 _origin(target)
             except (TypeError, ValueError):
                 return _request_failure(request, "redirect target is invalid")
             if not self._redirect_allowed(request, current_url, target):
-                return _request_failure(request, "redirect target is outside the declared origin policy")
+                return _request_failure(
+                    request, "redirect target is outside the declared origin policy"
+                )
             safe, reason = _validate_public_target(target)
             if not safe:
                 return _request_failure(request, f"redirect target rejected: {reason}")
-            redirects.append(RedirectHop(source=current_url, target=target, status_code=response_status))
+            redirects.append(
+                RedirectHop(
+                    source=current_url, target=target, status_code=response_status
+                )
+            )
             if not _same_origin(current_url, target):
                 headers = _strip_cross_origin_headers(headers)
             if response_status == 303:
@@ -513,21 +705,34 @@ class GuardedAcquisition:
                 method = "GET"
                 body = b""
             current_url = target
-            resource_counts = ResourceCounts(requests=resource_counts.requests, responses=resource_counts.responses, bytes_received=resource_counts.bytes_received, redirects=resource_counts.redirects + 1)
+            resource_counts = ResourceCounts(
+                requests=resource_counts.requests,
+                responses=resource_counts.responses,
+                bytes_received=resource_counts.bytes_received,
+                redirects=resource_counts.redirects + 1,
+            )
         return _request_failure(request, "redirect limit exceeded")
 
-    async def open_browser_session(self, request: AcquisitionRequest) -> GuardedBrowserSession | AcquisitionFailure:
+    async def open_browser_session(
+        self, request: AcquisitionRequest
+    ) -> GuardedBrowserSession | AcquisitionFailure:
         invalid = _validate_request(request)
         if invalid is not None:
             return invalid
         if request.operation_class != OperationClass.BROWSER.value:
-            return _request_failure(request, "browser session requires browser operation class")
+            return _request_failure(
+                request, "browser session requires browser operation class"
+            )
         try:
             from .browser_policy import admit_browser_request
 
             admission = await admit_browser_request(request)
         except Exception:
-            admission = _request_failure(request, "browser policy is unavailable", code=AcquisitionFailureCode.BROWSER_POLICY_UNAVAILABLE)
+            admission = _request_failure(
+                request,
+                "browser policy is unavailable",
+                code=AcquisitionFailureCode.BROWSER_POLICY_UNAVAILABLE,
+            )
         if isinstance(admission, AcquisitionFailure):
             return admission
         opener = self.browser_session_opener
@@ -538,9 +743,15 @@ class GuardedAcquisition:
                     result = await result
                 if isinstance(result, (GuardedBrowserSession, AcquisitionFailure)):
                     return result
-                return _request_failure(request, "browser opener returned an invalid session")
+                return _request_failure(
+                    request, "browser opener returned an invalid session"
+                )
             except Exception:
-                return _request_failure(request, "browser policy is unavailable", code=AcquisitionFailureCode.BROWSER_POLICY_UNAVAILABLE)
+                return _request_failure(
+                    request,
+                    "browser policy is unavailable",
+                    code=AcquisitionFailureCode.BROWSER_POLICY_UNAVAILABLE,
+                )
         try:
             scheme, hostname, port = _origin(request.normalized_url)
             logical_origin = LogicalOrigin(scheme=scheme, hostname=hostname, port=port)
@@ -556,7 +767,9 @@ class GuardedAcquisition:
 _request_context: dict[int, tuple[str, tuple[tuple[str, str], ...], bytes]] = {}
 
 
-def _context_for(request: AcquisitionRequest) -> tuple[str, tuple[tuple[str, str], ...], bytes]:
+def _context_for(
+    request: AcquisitionRequest,
+) -> tuple[str, tuple[tuple[str, str], ...], bytes]:
     return _request_context.get(id(request), ("GET", (), b""))
 
 
@@ -577,8 +790,12 @@ def set_guarded_acquisition(implementation: _GuardedImplementation | None) -> No
     if implementation is None:
         _default_guarded_acquisition = GuardedAcquisition()
         return
-    if not callable(getattr(implementation, "acquire", None)) or not callable(getattr(implementation, "open_browser_session", None)):
-        raise TypeError("guarded acquisition must expose acquire and open_browser_session")
+    if not callable(getattr(implementation, "acquire", None)) or not callable(
+        getattr(implementation, "open_browser_session", None)
+    ):
+        raise TypeError(
+            "guarded acquisition must expose acquire and open_browser_session"
+        )
     _default_guarded_acquisition = implementation
 
 
@@ -591,8 +808,18 @@ def make_request(
     caller_principal: str = "extractor",
     request_id: str = "guarded-request",
     limits: AcquisitionLimits | None = None,
+    trusted_service_origin: str | None = None,
 ) -> AcquisitionRequest:
-    return AcquisitionRequest(normalized_url=url, operation_class=operation_class, profile=profile, credential_policy=credential_policy, caller_principal=caller_principal, request_id=request_id, limits=limits or AcquisitionLimits())
+    return AcquisitionRequest(
+        normalized_url=url,
+        operation_class=operation_class,
+        profile=profile,
+        credential_policy=credential_policy,
+        caller_principal=caller_principal,
+        request_id=request_id,
+        limits=limits or AcquisitionLimits(),
+        trusted_service_origin=trusted_service_origin,
+    )
 
 
 async def guarded_http_request(
@@ -611,6 +838,8 @@ async def guarded_http_request(
     target_url: str | None = None,
     compat_client_factory: Any = None,
     allow_provider_auth: bool = False,
+    follow_redirects: bool = True,
+    trusted_service_origin: str | None = None,
 ) -> GuardedResponse:
     """Dispatch one bounded request through the process acquisition seam.
 
@@ -630,28 +859,52 @@ async def guarded_http_request(
     try:
         method_upper = method.upper() if isinstance(method, str) else ""
         if method_upper not in {"GET", "POST", "PUT", "HEAD", "OPTIONS"}:
-            raise GuardedAcquisitionError(_request_failure(None, "HTTP method is not allowed by acquisition policy"))
+            raise GuardedAcquisitionError(
+                _request_failure(
+                    None, "HTTP method is not allowed by acquisition policy"
+                )
+            )
         effective_timeout = float(timeout) if timeout is not None else 30.0
         if effective_timeout <= 0:
             raise ValueError("timeout must be positive")
-        request = make_request(url, operation_class=operation_class, profile=profile, credential_policy=credential_policy, caller_principal=caller_principal, request_id=request_id, limits=AcquisitionLimits(timeout_seconds=effective_timeout))
+        request = make_request(
+            url,
+            operation_class=operation_class,
+            profile=profile,
+            credential_policy=credential_policy,
+            caller_principal=caller_principal,
+            request_id=request_id,
+            limits=AcquisitionLimits(
+                timeout_seconds=effective_timeout,
+                max_redirect_hops=(_DEFAULT_MAX_REDIRECTS if follow_redirects else 0),
+            ),
+            trusted_service_origin=trusted_service_origin,
+        )
         # Explicit compatibility clients are used only by injected tests and
         # legacy embedders.  They do not represent production dispatch, so
         # their fixture hosts may be unresolved or private.  The real path
         # always performs the complete pre-dispatch URL/DNS policy check.
         if effective_compat_client is None:
             safe, reason = _validate_public_target(url)
-            if not safe:
-                raise GuardedAcquisitionError(_request_failure(request, f"request target rejected: {reason}"))
+            if not safe and not _trusted_service_target(request, url):
+                raise GuardedAcquisitionError(
+                    _request_failure(request, f"request target rejected: {reason}")
+                )
             if target_url is not None:
                 safe, reason = _validate_public_target(target_url)
                 if not safe:
-                    raise GuardedAcquisitionError(_request_failure(request, f"third-party target rejected: {reason}"))
+                    raise GuardedAcquisitionError(
+                        _request_failure(
+                            request, f"third-party target rejected: {reason}"
+                        )
+                    )
         normalized_headers = _header_items(headers)
         if _header_bytes(normalized_headers) > request.limits.max_header_bytes:
             raise ValueError("request headers exceed guarded limit")
         if OriginProfile(profile) is OriginProfile.THIRD_PARTY_FETCH:
-            credential_failure = _third_party_header_failure(request, normalized_headers)
+            credential_failure = _third_party_header_failure(
+                request, normalized_headers
+            )
             if credential_failure is not None:
                 raise GuardedAcquisitionError(credential_failure)
         body_bytes = _content_bytes(body, json_body=json_body)
@@ -669,6 +922,7 @@ async def guarded_http_request(
                 body=body,
                 json_body=json_body,
                 timeout=effective_timeout,
+                follow_redirects=follow_redirects,
             )
         else:
             result = get_guarded_acquisition().acquire(request)
@@ -678,7 +932,16 @@ async def guarded_http_request(
     except GuardedAcquisitionError:
         raise
     except Exception as exc:
-        coerced = _failure_from_exception(request, exc) if request is not None else _request_failure(None, "guarded acquisition is unavailable", code=AcquisitionFailureCode.PROVIDER_UNAVAILABLE, retryable=True)
+        coerced = (
+            _failure_from_exception(request, exc)
+            if request is not None
+            else _request_failure(
+                None,
+                "guarded acquisition is unavailable",
+                code=AcquisitionFailureCode.PROVIDER_UNAVAILABLE,
+                retryable=True,
+            )
+        )
     finally:
         if request is not None:
             _clear_context(request)
@@ -696,6 +959,7 @@ async def _compat_httpx_request(
     body: object,
     json_body: object,
     timeout: float,
+    follow_redirects: bool = True,
 ) -> object:
     """Copy an injected legacy client response into the guarded projection.
 
@@ -719,7 +983,7 @@ async def _compat_httpx_request(
         current_body_kwargs = {
             key: value for key, value in kwargs.items() if key not in {"headers"}
         }
-        for _hop in range(_DEFAULT_MAX_REDIRECTS + 1):
+        for _hop in range((_DEFAULT_MAX_REDIRECTS + 1) if follow_redirects else 1):
             sender = getattr(client, current_method.lower(), None)
             if not callable(sender):
                 sender = getattr(client, "request", None)
@@ -728,8 +992,36 @@ async def _compat_httpx_request(
             request_kwargs = dict(current_body_kwargs)
             request_kwargs["headers"] = current_headers
             request_kwargs["follow_redirects"] = False
-            response = await sender(current_url, **request_kwargs)
-            status = getattr(response, "status_code", 0)
+            while True:
+                try:
+                    response = await sender(current_url, **request_kwargs)
+                    break
+                except TypeError as exc:
+                    # Older injected clients can expose a narrow ``get``
+                    # signature.  Remove only the keyword named by Python's
+                    # signature error, then retry.  Other TypeErrors remain
+                    # real transport failures and are not hidden.
+                    match = re.search(
+                        r"unexpected keyword argument ['\"]([^'\"]+)['\"]",
+                        str(exc),
+                    )
+                    unsupported = match.group(1) if match else None
+                    if unsupported not in request_kwargs:
+                        raise
+                    request_kwargs.pop(unsupported, None)
+            raw_status = getattr(response, "status_code", None)
+            status = raw_status
+            if (
+                type(raw_status) is not int
+                and isinstance(getattr(response, "is_redirect", False), bool)
+                and response.is_redirect
+            ):
+                # A legacy httpx test double may expose only ``is_redirect``
+                # and not a concrete status code.  Preserve that redirect
+                # signal without treating the mock object as a real status.
+                status = 302
+            elif type(status) is not int:
+                status = 200
             if status not in _REDIRECT_STATUSES:
                 return response
             response_headers = getattr(response, "headers", {})
@@ -738,9 +1030,9 @@ async def _compat_httpx_request(
                 if hasattr(response_headers, "get")
                 else None
             )
-            if not location:
+            if not isinstance(location, str) or not location:
                 return response
-            target = urljoin(current_url, str(location))
+            target = _strip_sensitive_query(urljoin(current_url, str(location)))
             if not _same_origin(current_url, target):
                 current_headers = _strip_cross_origin_headers(current_headers)
             # Match browser/HTTP redirect semantics for a 303 hop.  The body
@@ -769,14 +1061,23 @@ async def guarded_browser_session(
     request_id: str = "browser-request",
 ) -> GuardedBrowserSession:
     """Open an opaque, policy-admitted browser lease through the seam."""
-    request = make_request(url, operation_class=OperationClass.BROWSER, profile=profile, credential_policy=credential_policy, caller_principal=caller_principal, request_id=request_id)
+    request = make_request(
+        url,
+        operation_class=OperationClass.BROWSER,
+        profile=profile,
+        credential_policy=credential_policy,
+        caller_principal=caller_principal,
+        request_id=request_id,
+    )
     result = get_guarded_acquisition().open_browser_session(request)
     if inspect.isawaitable(result):
         result = await result
     if isinstance(result, AcquisitionFailure):
         raise GuardedAcquisitionError(result)
     if not isinstance(result, GuardedBrowserSession):
-        raise GuardedAcquisitionError(_request_failure(request, "browser seam returned an invalid session"))
+        raise GuardedAcquisitionError(
+            _request_failure(request, "browser seam returned an invalid session")
+        )
     return result
 
 

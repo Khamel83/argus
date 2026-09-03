@@ -23,6 +23,7 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
     func,
+    Index,
     select,
     text,
 )
@@ -40,6 +41,9 @@ class SpendBase(DeclarativeBase):
 
 class ProviderSpendAttemptRow(SpendBase):
     __tablename__ = "provider_spend_attempts"
+    __table_args__ = (
+        Index("ix_provider_spend_attempts_account", "provider", "account_fingerprint"),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     idempotency_key: Mapped[str] = mapped_column(
@@ -55,9 +59,7 @@ class ProviderSpendAttemptRow(SpendBase):
     release_identity: Mapped[str] = mapped_column(
         String(128), nullable=False, default="unknown-release"
     )
-    execution_deadline: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True
-    )
+    execution_deadline: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     provider: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     tier: Mapped[int] = mapped_column(Integer, nullable=False)
     is_paid: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -307,9 +309,7 @@ class ProviderSpendRepository:
             if not isinstance(value, str) or not value or len(value) > maximum:
                 raise ValueError(f"{name} must be non-empty and bounded")
         normalized_deadline = (
-            _naive_utc(execution_deadline)
-            if execution_deadline is not None
-            else None
+            _naive_utc(execution_deadline) if execution_deadline is not None else None
         )
         payload = {
             "provider": provider.value,
@@ -590,9 +590,7 @@ class ProviderSpendRepository:
         if not math.isfinite(balance) or balance < 0:
             raise ValueError("provider balance must be finite and non-negative")
         if not math.isfinite(authoritative_charge) or authoritative_charge < 0:
-            raise ValueError(
-                "authoritative charge must be finite and non-negative"
-            )
+            raise ValueError("authoritative charge must be finite and non-negative")
         payload = {
             "provider": provider.value,
             "balance": balance,
@@ -848,7 +846,10 @@ class ProviderSpendRepository:
         }
 
     def non_authoritative_operational_projection(
-        self, provider: ProviderName, *, budget_limit: float,
+        self,
+        provider: ProviderName,
+        *,
+        budget_limit: float,
     ) -> dict:
         """Accounting diagnostics, explicitly outside readiness semantics."""
         return self.provider_summary(provider, budget_limit=budget_limit)
@@ -872,8 +873,7 @@ class ProviderSpendRepository:
                 lock_key += f":{account_fingerprint}"
             session.execute(
                 text(
-                    "SELECT pg_advisory_xact_lock("
-                    "hashtextextended(:provider_lock, 0))"
+                    "SELECT pg_advisory_xact_lock(hashtextextended(:provider_lock, 0))"
                 ),
                 {"provider_lock": lock_key},
             )

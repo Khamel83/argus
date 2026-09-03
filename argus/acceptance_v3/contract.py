@@ -20,6 +20,7 @@ from typing import Any, Mapping
 CYCLE_ID = "argus-acceptance-v3-free-targets-2026-08-10"
 PROFILE = "free"
 SCHEMA = "build-research-pack/v3"
+READINESS_LEVELS = ("core", "core_integration", "full_fleet")
 GLOBAL_GUARD_PATH = (
     "/Users/macmini/.local/state/argus-tonight-final-score-v3-started.json"
 )
@@ -60,6 +61,14 @@ _SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 
 class ContractError(ValueError):
     """The immutable execution contract or guard is invalid."""
+
+
+def validate_readiness_level(value: object) -> str:
+    """Validate the conditional readiness level without contacting a service."""
+
+    if not isinstance(value, str) or value not in READINESS_LEVELS:
+        raise ContractError("readiness level is not supported")
+    return value
 
 
 def canonical_bytes(value: Any) -> bytes:

@@ -188,6 +188,11 @@ class AcquisitionRequest:
     limits: AcquisitionLimits = field(default_factory=AcquisitionLimits)
     caller_principal: str = ""
     request_id: str = ""
+    # A service origin is an explicit, caller-owned exception for private
+    # network services such as the configured SearXNG authority.  It is never
+    # inferred from the URL and is accepted only for the static trusted
+    # service callers enforced by the guarded implementation.
+    trusted_service_origin: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -242,6 +247,16 @@ class AcquisitionRequest:
                 maximum=MAX_REQUEST_ID_LENGTH,
             ),
         )
+        if self.trusted_service_origin is not None:
+            object.__setattr__(
+                self,
+                "trusted_service_origin",
+                _text(
+                    "trusted_service_origin",
+                    self.trusted_service_origin,
+                    maximum=MAX_NORMALIZED_URL_LENGTH,
+                ),
+            )
 
     @property
     def caller(self) -> str:
@@ -378,7 +393,9 @@ class ResourceCounts:
 
     def __post_init__(self) -> None:
         for name in ("requests", "responses", "bytes_received", "redirects"):
-            maximum = MAX_CONTENT_BYTES if name == "bytes_received" else MAX_RESOURCE_COUNT
+            maximum = (
+                MAX_CONTENT_BYTES if name == "bytes_received" else MAX_RESOURCE_COUNT
+            )
             object.__setattr__(
                 self,
                 name,
@@ -452,9 +469,7 @@ class BoundedStream:
             type(self.max_bytes) is not int
             or not 1 <= self.max_bytes <= MAX_CONTENT_BYTES
         ):
-            raise ValueError(
-                f"max_bytes must be from 1 through {MAX_CONTENT_BYTES}"
-            )
+            raise ValueError(f"max_bytes must be from 1 through {MAX_CONTENT_BYTES}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -525,7 +540,9 @@ class AcquisitionResult:
             elif isinstance(self.content, str):
                 content_length = len(self.content.encode("utf-8"))
             else:
-                raise TypeError("content must be bounded bytes, text, or BoundedContent")
+                raise TypeError(
+                    "content must be bounded bytes, text, or BoundedContent"
+                )
             if content_length > MAX_CONTENT_BYTES:
                 raise ValueError("content exceeds the bounded content limit")
         if self.stream is not None and not isinstance(self.stream, BoundedStream):

@@ -11,6 +11,7 @@ import threading
 import time
 import unicodedata
 from collections import Counter
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Callable
 from urllib.parse import (
@@ -107,6 +108,18 @@ _MAYA_RECEIPT_KEYS = {
     "children_added",
     "received_at",
 }
+_EVIDENCE_IDENTITY_KEYS = frozenset(
+    {
+        "operation_id",
+        "request_id",
+        "release_identity",
+        "schema_identity",
+        "receipt_identity",
+        "result_hash",
+        "maya_capture_id",
+    }
+)
+_EVIDENCE_IDENTITY_MAX_BYTES = 4096
 
 
 def _decode_identifier_state(value: object) -> tuple[str, bool]:
@@ -316,6 +329,67 @@ def _maya_payload_json(payload: object) -> str:
     )
 
 
+def _normalize_evidence_identity(value: object) -> dict[str, object] | None:
+    """Return bounded local identity evidence, or ``None`` when absent.
+
+    Identity evidence is an Argus-internal envelope.  Maya's retrieval route
+    intentionally rejects unknown fields, so the dispatcher strips this
+    envelope before sending the request.  We still validate it at the
+    persistence boundary so a malformed or unexpectedly large identity cannot
+    become an outbox payload or a receipt projection.
+    """
+
+    if value is None:
+        return None
+    as_dict = getattr(value, "as_dict", None)
+    if callable(as_dict):
+        value = as_dict()
+    if not isinstance(value, Mapping):
+        raise ValueError("evidence identity must be an object")
+    unknown = set(value) - _EVIDENCE_IDENTITY_KEYS
+    if unknown:
+        raise ValueError("evidence identity contains unsupported fields")
+
+    def bounded(item: object) -> object:
+        if isinstance(item, Mapping):
+            normalized = {str(key): bounded(child) for key, child in item.items()}
+            return normalized
+        if isinstance(item, (list, tuple)):
+            return [bounded(child) for child in item[:32]]
+        if item is None or isinstance(item, (bool, int, float)):
+            return item
+        text = str(item)
+        if len(text.encode("utf-8")) > 1024:
+            raise ValueError("evidence identity value is too large")
+        if any(ord(char) < 32 for char in text):
+            raise ValueError("evidence identity contains a control character")
+        return text
+
+    normalized = {str(key): bounded(item) for key, item in value.items()}
+    if (
+        len(_maya_payload_json(normalized).encode("utf-8"))
+        > _EVIDENCE_IDENTITY_MAX_BYTES
+    ):
+        raise ValueError("evidence identity is too large")
+    return normalized
+
+
+def _maya_external_payload_json(payload_json: str) -> str:
+    """Remove Argus-only evidence fields from the Maya wire payload."""
+
+    try:
+        payload = json.loads(payload_json)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        # Existing rows are canonical JSON.  Preserve the historical behavior
+        # for a corrupt legacy row; the normal HTTP/Maya response path will
+        # still fail closed and leave the row retryable.
+        return payload_json
+    if not isinstance(payload, dict):
+        return payload_json
+    payload.pop("evidence_identity", None)
+    return _maya_payload_json(payload)
+
+
 def _fit_maya_payload_to_budget(payload: dict) -> dict:
     fitted = copy.deepcopy(payload)
     if len(_maya_payload_json(fitted).encode("utf-8")) <= (
@@ -455,6 +529,7 @@ def search_capture_payload(
     response: SearchResponse,
     *,
     completed_at: datetime,
+    evidence_identity: Mapping[str, object] | object | None = None,
 ) -> dict:
     providers = sorted(
         {
@@ -480,23 +555,25 @@ def search_capture_payload(
         for result in response.results
         if result.metadata and result.metadata.get("machine")
     }
-    return _fit_maya_payload_to_budget(
-        {
-            "idempotency_key": response.search_run_id,
-            "query": _safe_text(query.query, 4096) or "[redacted]",
-            "mode": query.mode.value,
-            "result_summary": summary,
-            "provenance": _provenance(
-                providers=providers,
-                egress=next(iter(egresses)) if len(egresses) == 1 else "unknown",
-                machine=next(iter(machines)) if len(machines) == 1 else "unknown",
-                source_type="search",
-            ),
-            "started_at": _timestamp(response.created_at),
-            "completed_at": _timestamp(completed_at),
-            "pages": [],
-        }
-    )
+    payload = {
+        "idempotency_key": response.search_run_id,
+        "query": _safe_text(query.query, 4096) or "[redacted]",
+        "mode": query.mode.value,
+        "result_summary": summary,
+        "provenance": _provenance(
+            providers=providers,
+            egress=next(iter(egresses)) if len(egresses) == 1 else "unknown",
+            machine=next(iter(machines)) if len(machines) == 1 else "unknown",
+            source_type="search",
+        ),
+        "started_at": _timestamp(response.created_at),
+        "completed_at": _timestamp(completed_at),
+        "pages": [],
+    }
+    normalized_identity = _normalize_evidence_identity(evidence_identity)
+    if normalized_identity:
+        payload["evidence_identity"] = normalized_identity
+    return _fit_maya_payload_to_budget(payload)
 
 
 def extraction_capture_payload(
@@ -505,6 +582,7 @@ def extraction_capture_payload(
     mode: str,
     result,
     completed_at: datetime,
+    evidence_identity: Mapping[str, object] | object | None = None,
 ) -> tuple[dict, str | None]:
     content = _safe_content(result.text, 1_048_576)
     content_sha256 = (
@@ -542,18 +620,20 @@ def extraction_capture_payload(
         ),
         16_384,
     )
-    payload = _fit_maya_payload_to_budget(
-        {
-            "idempotency_key": public_id,
-            "query": _safe_url(result.url) or "[redacted]",
-            "mode": _mode(mode),
-            "result_summary": summary,
-            "provenance": provenance,
-            "started_at": _timestamp(result.extracted_at),
-            "completed_at": _timestamp(completed_at),
-            "pages": pages,
-        }
-    )
+    payload = {
+        "idempotency_key": public_id,
+        "query": _safe_url(result.url) or "[redacted]",
+        "mode": _mode(mode),
+        "result_summary": summary,
+        "provenance": provenance,
+        "started_at": _timestamp(result.extracted_at),
+        "completed_at": _timestamp(completed_at),
+        "pages": pages,
+    }
+    normalized_identity = _normalize_evidence_identity(evidence_identity)
+    if normalized_identity:
+        payload["evidence_identity"] = normalized_identity
+    payload = _fit_maya_payload_to_budget(payload)
     fitted_content_hash = (
         payload["pages"][0]["content_sha256"] if payload["pages"] else None
     )
@@ -570,6 +650,39 @@ def excludes_capture(caller: str, *, user_visible: bool = True) -> bool:
         "argus-reachability",
         "legacy-import",
     }
+
+
+def evaluate_delivery_readiness(
+    accepted: object,
+    *,
+    outbox: object | None = None,
+    maya_receipt: object | None = None,
+    full_fleet: bool = False,
+    delivery_requested: bool = True,
+    hard_gates: Mapping[str, object] | None = None,
+    score: int | float | None = None,
+    health: object | None = None,
+) -> dict:
+    """Evaluate a stored delivery without contacting Maya.
+
+    The outbox worker owns transport.  This helper only adapts the local
+    delivery evidence to the pure acceptance-v3 gate evaluator.  A queued
+    intent therefore remains ``delivery_pending`` and a missing or unrelated
+    receipt cannot be treated as success.
+    """
+
+    from argus.acceptance_v3.readiness import evaluate_readiness_gates
+
+    return evaluate_readiness_gates(
+        accepted,
+        level="full_fleet" if full_fleet else "core_integration",
+        delivery_requested=delivery_requested,
+        outbox=outbox,
+        maya_receipt=maya_receipt,
+        hard_gates=hard_gates,
+        score=score,
+        health=health,
+    )
 
 
 class MayaOutboxDispatcher:
@@ -758,7 +871,7 @@ class MayaOutboxDispatcher:
             "POST",
             self.endpoint,
             headers=headers,
-            content=payload_json,
+            content=_maya_external_payload_json(payload_json),
         ) as response:
             content = bytearray()
             for chunk in response.iter_bytes():
@@ -850,7 +963,7 @@ class MayaOutboxDispatcher:
             )
         ):
             return None
-        return {
+        audit = {
             "capture_id": capture_id,
             "caller": "argus",
             "page_ids": page_ids,
@@ -858,6 +971,12 @@ class MayaOutboxDispatcher:
             "children_added": children_added,
             "received_at": received_at.astimezone(timezone.utc).isoformat(),
         }
+        identity = payload.get("evidence_identity")
+        if isinstance(identity, dict):
+            identity = dict(identity)
+            identity["maya_capture_id"] = capture_id
+            audit["evidence_identity"] = identity
+        return audit
 
     @staticmethod
     def _error_detail(response: httpx.Response) -> tuple[str, str]:
