@@ -14,6 +14,14 @@ from typing import Mapping
 from pathlib import Path
 
 from argus.broker.budgets import PROVIDER_TIERS
+from argus.provider_policy import (
+    PROVIDER_BILLING_CLASSES,
+    PROVIDER_EXTRACTION_CAPABILITIES,
+    SUPPORTED_BILLING_CLASSES,
+    SUPPORTED_EXTRACTION_CAPABILITIES,
+    provider_billing_class,
+    provider_extraction_capability,
+)
 from argus.models import ProviderName, is_adapter_provider
 
 UTC = timezone.utc
@@ -88,6 +96,43 @@ def _reason(value: str | None) -> str | None:
 
 def provider_catalog() -> tuple[ProviderName, ...]:
     return tuple(provider for provider in ProviderName if is_adapter_provider(provider))
+
+
+# Public aliases keep registration metadata discoverable from the readiness
+# authority without requiring callers to know the policy module layout.
+REGISTRATION_BILLING_CLASSES = SUPPORTED_BILLING_CLASSES
+REGISTRATION_EXTRACTION_CAPABILITIES = SUPPORTED_EXTRACTION_CAPABILITIES
+
+
+_BILLING_CLASS_ALIASES = {
+    "tier_0": "free",
+    "free_tier": "free",
+    "monthly_recurring": "monthly",
+    "recurring": "monthly",
+    "one_time_credit": "one_time",
+    "one-time": "one_time",
+}
+_EXTRACTION_CAPABILITY_ALIASES = {
+    "search": "search_only",
+    "content": "search_and_extract",
+    "search_and_content": "search_and_extract",
+}
+
+
+def _registration_value(
+    value: str | None,
+    *,
+    name: str,
+    default: str,
+    allowed: frozenset[str],
+    aliases: Mapping[str, str],
+) -> str:
+    """Normalize one bounded, non-secret registration value."""
+    candidate = default if value is None or not str(value).strip() else str(value)
+    candidate = aliases.get(candidate.strip().lower(), candidate.strip().lower())
+    if candidate not in allowed:
+        raise ValueError(f"{name} is outside the registration taxonomy")
+    return candidate
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,6 +467,61 @@ class ProviderRegistrationSpec:
     machine: str = "test-machine"
     egress: str = "local"
     request_class: str = "discovery"
+    billing_class: str | None = None
+    extraction_capability: str | None = None
+    fixture_contract: str | None = None
+
+    def __post_init__(self) -> None:
+        """Fill and validate the immutable provider registration profile.
+
+        Older callers construct this object with only the original readiness
+        fields.  Their missing metadata is filled from the checked static
+        catalog, while any supplied value is normalized and must remain a
+        member of that provider's declared contract.
+        """
+        provider = ProviderName(self.provider)
+        object.__setattr__(self, "provider", provider)
+        expected_billing = PROVIDER_BILLING_CLASSES.get(provider)
+        expected_capability = PROVIDER_EXTRACTION_CAPABILITIES.get(provider)
+        if expected_billing is None or expected_capability is None:
+            raise ValueError("provider is not an executable registration subject")
+
+        billing = _registration_value(
+            self.billing_class,
+            name="billing_class",
+            default=expected_billing,
+            allowed=SUPPORTED_BILLING_CLASSES,
+            aliases=_BILLING_CLASS_ALIASES,
+        )
+        if billing != expected_billing:
+            raise ValueError("billing_class does not match provider tier policy")
+        capability = _registration_value(
+            self.extraction_capability,
+            name="extraction_capability",
+            default=expected_capability,
+            allowed=SUPPORTED_EXTRACTION_CAPABILITIES,
+            aliases=_EXTRACTION_CAPABILITY_ALIASES,
+        )
+        if capability != expected_capability:
+            raise ValueError(
+                "extraction_capability does not match provider capability policy"
+            )
+        fixture_contract = self.fixture_contract or self.contract_version
+        if fixture_contract is not None:
+            if not isinstance(fixture_contract, str) or not _SAFE.fullmatch(
+                fixture_contract
+            ):
+                raise ValueError("fixture_contract must be a bounded identifier")
+            if self.contract_version and fixture_contract != self.contract_version:
+                raise ValueError("fixture_contract must match contract_version")
+        object.__setattr__(self, "billing_class", billing)
+        object.__setattr__(self, "extraction_capability", capability)
+        object.__setattr__(self, "fixture_contract", fixture_contract)
+
+    @property
+    def fixture_contract_version(self) -> str | None:
+        """Compatibility alias for consumers that use the longer name."""
+        return self.fixture_contract
 
 
 @dataclass(frozen=True, slots=True)
@@ -454,9 +554,63 @@ class ExecutableProviderRegistry:
             provider_config = getattr(config, provider.value)
             tier = PROVIDER_TIERS[provider]
             prefix = provider.value.upper()
+            billing_class = _registration_value(
+                getattr(provider_config, "billing_class", None),
+                name="billing_class",
+                default=provider_billing_class(provider),
+                allowed=SUPPORTED_BILLING_CLASSES,
+                aliases=_BILLING_CLASS_ALIASES,
+            )
+            if billing_class != provider_billing_class(provider):
+                raise ValueError(
+                    f"{provider.value} billing class does not match tier policy"
+                )
+            extraction_capability = _registration_value(
+                getattr(provider_config, "extraction_capability", None),
+                name="extraction_capability",
+                default=provider_extraction_capability(provider),
+                allowed=SUPPORTED_EXTRACTION_CAPABILITIES,
+                aliases=_EXTRACTION_CAPABILITY_ALIASES,
+            )
+            if extraction_capability != provider_extraction_capability(provider):
+                raise ValueError(
+                    f"{provider.value} extraction capability is not canonical"
+                )
+            contract = fixture["providers"].get(provider.value, {}).get(
+                "contract_version"
+            )
+            manifest_entry = fixture["providers"].get(provider.value, {})
+            manifest_registration = manifest_entry.get("registration")
+            if not isinstance(manifest_registration, Mapping):
+                raise ValueError(
+                    f"{provider.value} registration metadata is missing"
+                )
+            if (
+                manifest_registration.get("billing_class")
+                != billing_class
+                or manifest_registration.get("extraction_capability")
+                != extraction_capability
+                or manifest_registration.get("fixture_contract")
+                != contract
+            ):
+                raise ValueError(
+                    f"{provider.value} registration metadata disagrees with policy"
+                )
+            configured_contract = getattr(provider_config, "fixture_contract", "")
+            fixture_contract = configured_contract or contract
+            if fixture_contract != contract:
+                raise ValueError(
+                    f"{provider.value} fixture contract does not match manifest"
+                )
             config_payload = {
                 "enabled": bool(provider_config.enabled),
                 "timeout_seconds": int(provider_config.timeout_seconds),
+                "monthly_budget_usd": float(
+                    getattr(provider_config, "monthly_budget_usd", 0.0)
+                ),
+                "billing_class": billing_class,
+                "extraction_capability": extraction_capability,
+                "fixture_contract": fixture_contract,
             }
             if hasattr(provider_config, "base_url"):
                 config_payload["base_url"] = str(provider_config.base_url)
@@ -467,8 +621,9 @@ class ExecutableProviderRegistry:
                 "not-applicable-credential"
                 if provider in keyless
                 else (
-                    os.environ.get(
-                        f"ARGUS_{prefix}_CREDENTIAL_VERSION_FINGERPRINT"
+                    getattr(provider_config, "credential_version_fingerprint", "")
+                    or os.environ.get(
+                        f"ARGUS_{prefix}_CREDENTIAL_VERSION_FINGERPRINT", ""
                     )
                     if provider_config.api_key.strip()
                     else None
@@ -477,10 +632,8 @@ class ExecutableProviderRegistry:
             account_ref = (
                 "not-applicable-account"
                 if tier == 0
-                else os.environ.get(f"ARGUS_{prefix}_ACCOUNT_FINGERPRINT")
-            )
-            contract = fixture["providers"].get(provider.value, {}).get(
-                "contract_version"
+                else getattr(provider_config, "account_fingerprint", "")
+                or os.environ.get(f"ARGUS_{prefix}_ACCOUNT_FINGERPRINT")
             )
             adapter = providers[provider]
             release = os.environ.get(
@@ -532,6 +685,9 @@ class ExecutableProviderRegistry:
                 durable_spend_repository=durable_spend_repository,
                 release_revision=release,
                 contract_version=contract,
+                billing_class=billing_class,
+                extraction_capability=extraction_capability,
+                fixture_contract=fixture_contract,
                 fixture_evidence_ref=attestation_ref,
                 fixture_attestation=attestation_payload,
                 budget_next_reset_at=next_reset_at,
@@ -778,9 +934,23 @@ class ProviderReadinessService:
         self.repository.put_registration(spec.provider, {
             "registered": decision.registered,
             "issues": list(decision.issues),
+            # Keep the complete registration profile at the registry scope.
+            # The execution scopes below repeat only identity values needed by
+            # the readiness fold; callers must not reconstruct these fields
+            # from provider adapters or process-local configuration.
+            "billing_class": spec.billing_class,
+            "extraction_capability": spec.extraction_capability,
+            "configuration_fingerprint": spec.configuration_fingerprint,
+            "credential_version_fingerprint": (
+                spec.credential_version_fingerprint
+            ),
+            "account_fingerprint": spec.account_fingerprint,
             "budget_limit": spec.budget_limit,
             "scope": scope.as_dict(),
             "scopes": [item.as_dict() for item in scopes],
+            "fixture_contract": spec.fixture_contract,
+            "fixture_contract_version": spec.fixture_contract_version,
+            "contract_version": spec.contract_version,
             "fixture_evidence_ref": spec.fixture_evidence_ref,
             "fixture_attestation": dict(spec.fixture_attestation or {}),
             "budget_period_started_at": (
