@@ -5,19 +5,43 @@ from __future__ import annotations
 import asyncio
 from urllib.parse import quote_plus
 
-import httpx
-
+from argus.acquisition.guarded import (
+    GuardedAcquisitionError,
+    guarded_http_request,
+    patched_httpx_client,
+)
+from argus.acquisition.models import CredentialPolicy, OperationClass, OriginProfile
+from argus.logging import get_logger
 from argus.extraction.trafilatura_result import normalize_trafilatura_result
+
+logger = get_logger("recovery.archive_ph")
 
 
 async def try_archive_ph(url: str) -> dict | None:
     """Return one normalized archive result, or no result."""
     archive_url = f"https://archive.ph/newest/{quote_plus(url)}"
-    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-        response = await client.get(
+    try:
+        response = await guarded_http_request(
             archive_url,
             headers={"User-Agent": "ArgusRecovery/1.0"},
+            profile=OriginProfile.THIRD_PARTY_FETCH,
+            credential_policy=CredentialPolicy.NONE,
+            operation_class=OperationClass.THIRD_PARTY,
+            caller_principal="recovery:archive-ph",
+            request_id="archive-ph-recovery",
+            timeout=15,
+            target_url=url,
+            compat_client_factory=patched_httpx_client(),
         )
+    except GuardedAcquisitionError as exc:
+        # Recovery is an optional fallback.  Keep the typed policy/transport
+        # failure at the guarded boundary and do not expose its details in a
+        # result that callers treat as an absent archive.
+        logger.debug(
+            "Archive.ph recovery unavailable code=%s",
+            exc.failure.code.value,
+        )
+        return None
     if response.status_code != 200:
         return None
     if (
