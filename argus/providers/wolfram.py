@@ -11,7 +11,7 @@ Get a key at https://developer.wolframalpha.com/
 import time
 from urllib.parse import urlparse
 
-import httpx
+import httpx  # noqa: F401 - explicit compatibility seam for adapter tests
 
 from argus.config import ProviderConfig
 from argus.logging import get_logger
@@ -21,7 +21,7 @@ from argus.models import (
     SearchQuery,
 )
 from argus.providers.base import BaseProvider
-from argus.broker.provider_evidence import ProviderSearchBatch
+from argus.broker.provider_evidence import FailureCategory, ProviderSearchBatch
 
 logger = get_logger("providers.wolfram")
 
@@ -66,10 +66,12 @@ class WolframProvider(BaseProvider):
 
         resp = None
         try:
-            async with httpx.AsyncClient(
-                timeout=self._attempt_timeout(query)
-            ) as client:
-                resp = await client.get(WOLFRAM_LLM_API, params=params)
+            resp = await self._provider_request(
+                query,
+                WOLFRAM_LLM_API,
+                method="GET",
+                params=params,
+            )
 
             # 501 = Wolfram can't compute this query. Not a provider failure.
             if resp.status_code == 501:
@@ -88,6 +90,25 @@ class WolframProvider(BaseProvider):
 
             if native_failure is not None:
                 return native_failure
+            # The LLM endpoint documents 200 and 501.  Keep other successful
+            # HTTP statuses typed instead of treating a non-answer as a
+            # computed result.
+            if resp.status_code not in {200, 204}:
+                return self._typed_failure_batch(
+                    FailureCategory.PARSE_ERROR,
+                    "Wolfram returned an unrecognized success status",
+                    started_at=start,
+                    request_evidence=request_evidence,
+                    observed_status=self._response_status(resp),
+                )
+            if resp.text == "<malformed-provider-response>":
+                return self._typed_failure_batch(
+                    FailureCategory.PARSE_ERROR,
+                    "Wolfram response could not be decoded",
+                    started_at=start,
+                    request_evidence=request_evidence,
+                    observed_status=self._response_status(resp),
+                )
             text = resp.text.strip()
 
             if not text:

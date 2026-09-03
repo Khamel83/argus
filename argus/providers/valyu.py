@@ -72,16 +72,19 @@ class ValyuProvider(BaseProvider):
 
         resp = None
         try:
-            async with httpx.AsyncClient(
-                timeout=self._attempt_timeout(query)
-            ) as client:
-                resp = await client.post(VALYU_API_BASE, json=payload, headers=headers)
-                native_failure = self._response_failure_batch(
-                    resp, started_at=start, request_evidence=request_evidence
-                )
-                if native_failure is not None:
-                    return native_failure
-                data = resp.json()
+            resp = await self._provider_request(
+                query,
+                VALYU_API_BASE,
+                method="POST",
+                json_body=payload,
+                headers=headers,
+            )
+            native_failure = self._response_failure_batch(
+                resp, started_at=start, request_evidence=request_evidence
+            )
+            if native_failure is not None:
+                return native_failure
+            data = resp.json()
 
             if data.get("success") is False:
                 error_msg = data.get("error", "unknown error")

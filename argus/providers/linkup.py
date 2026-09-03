@@ -8,7 +8,7 @@ AI-native search with high factual accuracy.
 import time
 from typing import List
 
-import httpx
+import httpx  # noqa: F401 - explicit compatibility seam for adapter tests
 
 from argus.config import ProviderConfig
 from argus.logging import get_logger
@@ -66,16 +66,19 @@ class LinkupProvider(BaseProvider):
 
         resp = None
         try:
-            async with httpx.AsyncClient(
-                timeout=self._attempt_timeout(query)
-            ) as client:
-                resp = await client.post(LINKUP_API_BASE, json=body, headers=headers)
-                native_failure = self._response_failure_batch(
-                    resp, started_at=start, request_evidence=request_evidence
-                )
-                if native_failure is not None:
-                    return native_failure
-                data = resp.json()
+            resp = await self._provider_request(
+                query,
+                LINKUP_API_BASE,
+                method="POST",
+                json_body=body,
+                headers=headers,
+            )
+            native_failure = self._response_failure_batch(
+                resp, started_at=start, request_evidence=request_evidence
+            )
+            if native_failure is not None:
+                return native_failure
+            data = resp.json()
 
             return self._normalized_batch(
                 data,

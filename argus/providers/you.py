@@ -8,7 +8,7 @@ Independent index with vertical search (News, Healthcare, Legal).
 import time
 from typing import List
 
-import httpx
+import httpx  # noqa: F401 - explicit compatibility seam for adapter tests
 
 from argus.config import ProviderConfig
 from argus.logging import get_logger
@@ -67,16 +67,19 @@ class YouProvider(BaseProvider):
 
         resp = None
         try:
-            async with httpx.AsyncClient(
-                timeout=self._attempt_timeout(query)
-            ) as client:
-                resp = await client.get(YOU_API_BASE, params=params, headers=headers)
-                native_failure = self._response_failure_batch(
-                    resp, started_at=start, request_evidence=request_evidence
-                )
-                if native_failure is not None:
-                    return native_failure
-                data = resp.json()
+            resp = await self._provider_request(
+                query,
+                YOU_API_BASE,
+                method="GET",
+                params=params,
+                headers=headers,
+            )
+            native_failure = self._response_failure_batch(
+                resp, started_at=start, request_evidence=request_evidence
+            )
+            if native_failure is not None:
+                return native_failure
+            data = resp.json()
 
             return self._normalized_batch(
                 data,
