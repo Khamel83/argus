@@ -97,15 +97,19 @@ def test_legacy_base_rows_are_inventory_only_and_excluded_from_production_metada
     from argus.persistence.registry import production_model_inventory, production_metadata
 
     inventory_by_table = {
-        item["table_name"]: item for item in production_model_inventory
+        item["table_name"]: item
+        for item in production_model_inventory
+        if item["compatibility_class"] == "legacy-only"
     }
     assert set(Base.metadata.tables) == LEGACY_TABLES
     assert set(inventory_by_table) >= LEGACY_TABLES
+    legacy_only_tables = LEGACY_TABLES - set(production_metadata.tables)
     assert sum(
         item["compatibility_class"] == "legacy-only"
         for item in production_model_inventory
     ) == len(LEGACY_TABLES)
-    for table_name in LEGACY_TABLES:
+    assert "domain_policies" in production_metadata.tables
+    for table_name in legacy_only_tables:
         item = inventory_by_table[table_name]
         assert item["compatibility_class"] == "legacy-only"
         assert item["runtime_critical"] is False

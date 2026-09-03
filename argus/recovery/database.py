@@ -14,11 +14,12 @@ from argus.recovery.operator import (
 )
 
 
-EXPECTED_SCHEMA_HEAD = "0009_retrieval_evidence"
+EXPECTED_SCHEMA_HEAD = "0010_domain_policies"
 COMPATIBLE_SCHEMA_HEADS = frozenset(
     {
         "0007_extraction_outcomes",
         "0008_provider_readiness",
+        "0009_retrieval_evidence",
         EXPECTED_SCHEMA_HEAD,
     }
 )
@@ -72,11 +73,21 @@ RETRIEVAL_EVIDENCE_TABLES = {
     "accepted_retrieval_operations",
     "retrieval_cache_publications",
 }
+DOMAIN_POLICY_TABLES = {
+    "domain_policies",
+    "domain_policy_events",
+}
 REQUIRED_TABLES_BY_HEAD = {
     "0007_extraction_outcomes": REQUIRED_TABLES,
     "0008_provider_readiness": REQUIRED_TABLES | READINESS_TABLES,
-    EXPECTED_SCHEMA_HEAD: (
+    "0009_retrieval_evidence": (
         REQUIRED_TABLES | READINESS_TABLES | RETRIEVAL_EVIDENCE_TABLES
+    ),
+    EXPECTED_SCHEMA_HEAD: (
+        REQUIRED_TABLES
+        | READINESS_TABLES
+        | RETRIEVAL_EVIDENCE_TABLES
+        | DOMAIN_POLICY_TABLES
     ),
 }
 COUNTED_TABLES = sorted(REQUIRED_TABLES - {"alembic_version"})
@@ -178,7 +189,8 @@ REQUIRED_S3_COLUMNS = {
 SCHEMA_CONTRACT_PATHS = {
     "0007_extraction_outcomes": Path(__file__).with_name("argus_schema_0007.json"),
     "0008_provider_readiness": Path(__file__).with_name("argus_schema_0008.json"),
-    EXPECTED_SCHEMA_HEAD: Path(__file__).with_name("argus_schema_0009.json"),
+    "0009_retrieval_evidence": Path(__file__).with_name("argus_schema_0009.json"),
+    EXPECTED_SCHEMA_HEAD: Path(__file__).with_name("argus_schema_0010.json"),
 }
 # Compatibility alias for recovery tooling that still targets the 0007 source
 # inventory. Verification itself selects the contract from the restored head.
