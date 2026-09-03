@@ -15,11 +15,22 @@ from argus.recovery.operator import (
 
 
 EXPECTED_SCHEMA_HEAD = "0009_retrieval_evidence"
+# The bridge image keeps the 0009 migration head of the known-good release.
+# It must also serve while the additive 0010/0011 schema is live.  The bridge
+# does not read the new tables or columns; it only needs to keep its authority
+# and readiness probes healthy during the expand-and-verify window.
+FORWARD_COMPATIBLE_SCHEMA_HEADS = frozenset(
+    {
+        "0010_domain_policies",
+        "0011_extraction_spend_scope",
+    }
+)
 COMPATIBLE_SCHEMA_HEADS = frozenset(
     {
         "0007_extraction_outcomes",
         "0008_provider_readiness",
         EXPECTED_SCHEMA_HEAD,
+        *FORWARD_COMPATIBLE_SCHEMA_HEADS,
     }
 )
 REQUIRED_TABLES = {

@@ -1053,6 +1053,19 @@ def test_postgresql_restore_verifier_uses_disposable_database(
         admin.close()
 
 
+def test_bridge_accepts_additive_forward_schema_heads():
+    from argus.recovery.database import (
+        COMPATIBLE_SCHEMA_HEADS,
+        FORWARD_COMPATIBLE_SCHEMA_HEADS,
+    )
+
+    assert FORWARD_COMPATIBLE_SCHEMA_HEADS == {
+        "0010_domain_policies",
+        "0011_extraction_spend_scope",
+    }
+    assert FORWARD_COMPATIBLE_SCHEMA_HEADS <= COMPATIBLE_SCHEMA_HEADS
+
+
 def test_postgresql_atlas_restore_inventory_detects_count_drift(
     postgres_ledger_url,
 ):
