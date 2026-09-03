@@ -648,12 +648,13 @@ async def test_mcp_search_is_a_stateless_authenticated_http_translation():
                 "url": "https://dead.example/article",
                 "title": "Article",
                 "domain": "dead.example",
+                "caller": "mcp",
             },
         ),
         (
             "expand_links",
             "/api/expand",
-            {"query": "topic", "context": "context"},
+            {"query": "topic", "context": "context", "caller": "mcp"},
         ),
         (
             "extract_content",
@@ -661,6 +662,9 @@ async def test_mcp_search_is_a_stateless_authenticated_http_translation():
             {
                 "url": "https://example.com/article",
                 "domain": "example.com",
+                "mode": "default",
+                "content_type": "article",
+                "free_only": False,
                 "caller": "mcp",
             },
         ),
@@ -1420,6 +1424,9 @@ def test_http_extraction_derives_caller_from_authentication(monkeypatch, environ
         headers={"Authorization": "Bearer mcp-token"},
         json={
             "url": "https://example.com/article",
+            "mode": "archive_ingest",
+            "content_type": "webpage",
+            "free_only": True,
             "caller": "spoofed-authority",
         },
     )
@@ -1428,3 +1435,6 @@ def test_http_extraction_derives_caller_from_authentication(monkeypatch, environ
     assert response.json()["extraction_run_id"] == "extract-authenticated"
     assert repository.record_extraction.call_args.kwargs["caller"] == "mcp"
     assert extract_unpersisted.await_count == 1
+    assert extract_unpersisted.await_args.kwargs["mode"] == "archive_ingest"
+    assert extract_unpersisted.await_args.kwargs["content_type"] == "webpage"
+    assert extract_unpersisted.await_args.kwargs["free_only"] is True

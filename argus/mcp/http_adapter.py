@@ -269,7 +269,18 @@ class HttpMcpAdapter:
                 payload=payload,
                 token=token,
             )
-        except AuthorityRequestError:
+        except AuthorityRequestError as error:
+            # A v2 authority failure is already a complete typed envelope.  A
+            # transport wrapper may raise it while retaining that envelope;
+            # never replace it with a generic unready response.
+            envelope = getattr(error, "envelope", None)
+            if envelope is not None:
+                try:
+                    from argus.contracts import validate_v2_envelope
+
+                    return validate_v2_envelope(envelope).model_dump(mode="json")
+                except (TypeError, ValueError):
+                    pass
             return _adapter_unready("Argus HTTP execution authority is unavailable")
 
     async def search_web_v2(
@@ -312,10 +323,15 @@ class HttpMcpAdapter:
         caller_identity: str = "mcp",
         token: str | None = None,
     ) -> dict[str, Any]:
-        del caller_label, caller_identity
+        del caller_identity
         return await self._v2_request(
             "/api/v2/recover-url",
-            payload={"url": url, "title": title, "domain": domain},
+            payload={
+                "url": url,
+                "title": title,
+                "domain": domain,
+                "caller": caller_label,
+            },
             token=token,
         )
 
@@ -328,10 +344,14 @@ class HttpMcpAdapter:
         caller_identity: str = "mcp",
         token: str | None = None,
     ) -> dict[str, Any]:
-        del caller_label, caller_identity
+        del caller_identity
         return await self._v2_request(
             "/api/v2/expand",
-            payload={"query": query, "context": context},
+            payload={
+                "query": query,
+                "context": context,
+                "caller": caller_label,
+            },
             token=token,
         )
 
@@ -340,6 +360,9 @@ class HttpMcpAdapter:
         url: str,
         domain: str | None = None,
         *,
+        mode: str = "default",
+        content_type: str = "article",
+        free_only: bool = False,
         caller_label: str = "mcp",
         caller_identity: str = "mcp",
         token: str | None = None,
@@ -347,7 +370,14 @@ class HttpMcpAdapter:
         del caller_identity
         return await self._v2_request(
             "/api/v2/extract",
-            payload={"url": url, "domain": domain, "caller": caller_label},
+            payload={
+                "url": url,
+                "domain": domain,
+                "mode": mode,
+                "content_type": content_type,
+                "free_only": free_only,
+                "caller": caller_label,
+            },
             token=token,
         )
 
@@ -388,7 +418,7 @@ class HttpMcpAdapter:
         caller_identity: str = "mcp",
         token: str | None = None,
     ) -> str:
-        del caller_label, caller_identity
+        del caller_identity
         response = await self._client.request(
             "POST",
             "/api/recover-url",
@@ -396,6 +426,7 @@ class HttpMcpAdapter:
                 "url": url,
                 "title": title,
                 "domain": domain,
+                "caller": caller_label,
             },
             token=token,
         )
@@ -410,13 +441,14 @@ class HttpMcpAdapter:
         caller_identity: str = "mcp",
         token: str | None = None,
     ) -> str:
-        del caller_label, caller_identity
+        del caller_identity
         response = await self._client.request(
             "POST",
             "/api/expand",
             payload={
                 "query": query,
                 "context": context,
+                "caller": caller_label,
             },
             token=token,
         )
@@ -427,6 +459,9 @@ class HttpMcpAdapter:
         url: str,
         domain: str | None = None,
         *,
+        mode: str = "default",
+        content_type: str = "article",
+        free_only: bool = False,
         caller_label: str = "mcp",
         caller_identity: str = "mcp",
         token: str | None = None,
@@ -438,6 +473,9 @@ class HttpMcpAdapter:
             payload={
                 "url": url,
                 "domain": domain,
+                "mode": mode,
+                "content_type": content_type,
+                "free_only": free_only,
                 "caller": caller_label,
             },
             token=token,

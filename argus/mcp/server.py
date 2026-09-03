@@ -1212,12 +1212,22 @@ def serve_mcp(
         )
 
     @mcp.tool()
-    async def extract_content(url: str, domain: str = None) -> str:
+    async def extract_content(
+        url: str,
+        domain: str = None,
+        mode: str = "default",
+        content_type: str = "article",
+        free_only: bool = False,
+        caller: str = "mcp",
+    ) -> str:
         """Extract content through the authenticated HTTP authority."""
         return await backend.extract_content(
             url,
             domain,
-            caller_label="mcp",
+            mode=mode,
+            content_type=content_type,
+            free_only=free_only,
+            caller_label=caller,
             caller_identity=_mcp_caller_identity(),
             token=_mcp_caller_token(),
         )

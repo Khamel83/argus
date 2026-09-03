@@ -116,6 +116,19 @@ def _cli_unready(detail: str):
     }
 
 
+def _preserved_v2_envelope(error) -> dict | None:
+    """Return a typed envelope retained by an authority transport error."""
+    envelope = getattr(error, "envelope", None)
+    if envelope is None:
+        return None
+    try:
+        from argus.contracts import validate_v2_envelope
+
+        return validate_v2_envelope(envelope).model_dump(mode="json")
+    except (TypeError, ValueError):
+        return None
+
+
 def _negotiated_http_request(authority, route: str, payload: dict):
     """Execute exactly one request against the discovered contract family."""
     from argus.contracts import validate_v2_envelope
@@ -142,7 +155,10 @@ def _negotiated_http_request(authority, route: str, payload: dict):
             )
             validate_v2_envelope(response)
             return "v2", response
-        except Exception:
+        except Exception as error:
+            preserved = _preserved_v2_envelope(error)
+            if preserved is not None:
+                return "v2", preserved
             return "v2", _cli_unready("Argus HTTP execution authority is unavailable")
     if selection.contract_version == "1" and selection.base_path == "/api":
         try:
@@ -225,7 +241,7 @@ def _print_v2_extract(envelope: dict, as_json: bool) -> None:
 
 
 def _http_authority_client():
-    """Return the configured HTTP authority client for remote/production CLI."""
+    """Return the HTTP client or explicit development standalone mode."""
     from argus.authority import (
         AuthorityConfigurationError,
         HttpAuthorityClient,
@@ -240,11 +256,12 @@ def _http_authority_client():
         except AuthorityConfigurationError as exc:
             raise click.ClickException(str(exc)) from exc
         return HttpAuthorityClient(config)
-    if os.environ.get("ARGUS_ENV", "development").strip().lower() == "production":
-        raise click.ClickException(
-            "Production CLI requires ARGUS_AUTHORITY_URL and authority authentication"
-        )
-    return None
+    if mode == "standalone":
+        return None
+    raise click.ClickException(
+        "CLI retrieval requires ARGUS_AUTHORITY_URL and authority authentication; "
+        "explicit development standalone requires ARGUS_MCP_STANDALONE=true"
+    )
 
 
 def _require_http_authority():
@@ -511,8 +528,27 @@ def search(
     type=click.Choice(["default", "archive_ingest"]),
     help="Extraction mode: default or archive_ingest",
 )
+@click.option(
+    "--content-type",
+    type=click.Choice(["article", "webpage"]),
+    default="article",
+    show_default=True,
+    help="Extraction quality profile: article or webpage",
+)
+@click.option(
+    "--free-only",
+    "--free",
+    "free_only",
+    is_flag=True,
+    help="Only use free extraction stages and free-origin evidence",
+)
+@click.option(
+    "--caller",
+    default="cli",
+    help="Caller label for attribution (the authority authenticates identity)",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def extract(url, domain, mode, as_json):
+def extract(url, domain, mode, content_type, free_only, caller, as_json):
     """Extract clean text content from a URL."""
     authority = _http_authority_client()
     if authority is None:
@@ -522,6 +558,9 @@ def extract(url, domain, mode, as_json):
             url=url,
             domain=domain,
             mode=mode,
+            content_type=content_type,
+            free_only=free_only,
+            caller=caller,
             as_json=as_json,
         )
     version, result = _negotiated_http_request(
@@ -531,7 +570,9 @@ def extract(url, domain, mode, as_json):
             "url": url,
             "domain": domain,
             "mode": mode,
-            "caller": "cli",
+            "content_type": content_type,
+            "free_only": free_only,
+            "caller": caller,
         },
     )
     if version == "v2":
@@ -583,8 +624,13 @@ def recover_article(url, title, domain, as_json):
 @click.option("--url", "-u", required=True, help="URL to recover")
 @click.option("--title", "-t", help="Optional title hint")
 @click.option("--domain", "-d", help="Optional domain hint")
+@click.option(
+    "--caller",
+    default="cli",
+    help="Caller label for attribution (the authority authenticates identity)",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def recover_url(url, title, domain, as_json):
+def recover_url(url, title, domain, caller, as_json):
     """Recover a dead or moved URL."""
     authority = _http_authority_client()
     if authority is None:
@@ -594,6 +640,7 @@ def recover_url(url, title, domain, as_json):
             url=url,
             title=title,
             domain=domain,
+            caller=caller,
             as_json=as_json,
         )
     version, response = _negotiated_http_request(
@@ -603,6 +650,7 @@ def recover_url(url, title, domain, as_json):
             "url": url,
             "title": title,
             "domain": domain,
+            "caller": caller,
         },
     )
     if version == "v2":

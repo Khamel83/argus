@@ -242,12 +242,19 @@ def register_v2_tools(
     async def extract_content_v2(
         url: Annotated[str, Field(min_length=1, max_length=2048)],
         domain: Annotated[str | None, Field(max_length=253)] = None,
+        mode: Literal["default", "archive_ingest"] = "default",
+        content_type: Literal["article", "webpage"] = "article",
+        free_only: bool = False,
+        caller: Annotated[str, Field(max_length=128)] = "mcp",
     ) -> V2ToolResult:
         """Extract content through the HTTP-v2 evidence authority."""
         envelope = await backend.extract_content_v2(
             url,
             domain,
-            caller_label="mcp",
+            mode=mode,
+            content_type=content_type,
+            free_only=free_only,
+            caller_label=caller,
             caller_identity=caller_identity(),
             token=caller_token(),
         )
