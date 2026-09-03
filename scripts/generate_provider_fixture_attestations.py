@@ -36,7 +36,22 @@ def generate_attestation_document(
         if not is_adapter_provider(provider):
             continue
         module_name, class_name, module, provider_class = canonical_adapter(provider)
-        contract = manifest["providers"][provider.value]
+        manifest_entry = manifest["providers"][provider.value]
+        # Registration metadata is part of the provider manifest, but it is
+        # not part of the adapter request/response contract hashed into an
+        # attestation.  Keep the legacy contract comparison exact for the
+        # five fixture fields while allowing the startup registry to consume
+        # the adjacent no-spend profile.
+        contract = {
+            key: manifest_entry[key]
+            for key in (
+                "contract_version",
+                "request_contract",
+                "response_contract",
+                "error_category",
+                "error_http_status",
+            )
+        }
         golden = GOLDEN_PROVIDER_CONTRACTS[provider]
         declared_contract = {
             "contract_version": golden["provider_contract_version"],
