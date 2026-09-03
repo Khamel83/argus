@@ -6,9 +6,16 @@ to render the full page behind authentication, then extracts text via trafilatur
 """
 
 import asyncio
+import inspect
 import os
 from typing import Optional
 
+from argus.acquisition.browser_policy import (
+    BrowserAdmission,
+    admit_browser_url,
+    failure_text,
+    install_browser_policy,
+)
 from argus.extraction.cookies import (
     can_authenticate,
     get_cookie_path,
@@ -28,28 +35,78 @@ AUTH_TIMEOUT_MS = 15_000  # 15 seconds
 # Lazy-initialized Playwright browser — shared across requests
 _browser = None
 _contexts: dict[str, object] = {}  # domain → browser context
+_playwright_instance = None
 
 
 OBScura_CDP_URL = os.getenv("ARGUS_OBSCURA_CDP_URL", "")
 
 
-async def _get_browser():
+async def _close_browser_resources() -> None:
+    """Close auth contexts, browser, and Playwright driver after a hard failure."""
+
+    global _browser, _playwright_instance
+    contexts = tuple(_contexts.values())
+    _contexts.clear()
+    browser, playwright_instance = _browser, _playwright_instance
+    _browser = None
+    _playwright_instance = None
+
+    seen: set[int] = set()
+    for context in contexts:
+        if id(context) in seen:
+            continue
+        seen.add(id(context))
+        try:
+            result = context.close()
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            logger.debug("Failed to close auth context reason=close_failed")
+    if browser is not None:
+        try:
+            result = browser.close()
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            logger.debug("Failed to close auth browser reason=close_failed")
+    if playwright_instance is not None:
+        try:
+            result = playwright_instance.stop()
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            logger.debug("Failed to stop auth Playwright runtime reason=stop_failed")
+
+
+async def _get_browser(admission: BrowserAdmission | None = None):
     """Get or create a shared Playwright browser instance.
 
     Tries Obscura CDP first (if ARGUS_OBSCURA_CDP_URL is set), then falls
     back to launching headless Chrome.
     """
-    global _browser
+    global _browser, _playwright_instance
+    if admission is None:
+        admission = await admit_browser_url(
+            "https://browser-policy.invalid/",
+            profile="authenticated_content",
+            credential_policy="origin_scoped",
+            caller_principal="authenticated-browser-runtime",
+            request_id="auth-runtime",
+        )
+        if not isinstance(admission, BrowserAdmission):
+            return None
     if _browser is not None:
         try:
             if hasattr(_browser, 'is_connected') and _browser.is_connected():
                 return _browser
         except Exception:
-            _browser = None
+            pass
+        await _close_browser_resources()
 
     try:
         from playwright.async_api import async_playwright
         pw = await async_playwright().start()
+        _playwright_instance = pw
 
         if OBScura_CDP_URL:
             try:
@@ -62,16 +119,35 @@ async def _get_browser():
         _browser = await pw.chromium.launch(headless=True)
     except Exception as e:
         logger.error("Failed to launch Playwright: %s", e)
+        try:
+            if _playwright_instance is not None:
+                await _playwright_instance.stop()
+        except Exception:
+            logger.debug("Failed to stop auth Playwright runtime reason=stop_failed")
+        _playwright_instance = None
+        _browser = None
         return None
     return _browser
 
 
-async def _get_context(domain: str):
+async def _get_context(domain: str, url: str | None = None, admission: BrowserAdmission | None = None):
     """Get or create a browser context with cookies for a domain."""
+    target_url = url or f"https://{domain}/"
+    if admission is None:
+        admission = await admit_browser_url(
+            target_url,
+            profile="authenticated_content",
+            credential_policy="origin_scoped",
+            caller_principal="authenticated-browser",
+            request_id="auth-context",
+        )
+    if not isinstance(admission, BrowserAdmission):
+        return None
+
     if domain in _contexts:
         return _contexts[domain]
 
-    browser = await _get_browser()
+    browser = await _get_browser(admission)
     if browser is None:
         return None
 
@@ -83,11 +159,21 @@ async def _get_context(domain: str):
     if not cookies:
         return None
 
-    context = await browser.new_context(
-        user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        viewport={"width": 1280, "height": 800},
-    )
-    await context.add_cookies(cookies)
+    context = None
+    try:
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            viewport={"width": 1280, "height": 800},
+            service_workers="block",
+        )
+        policy_failure = await install_browser_policy(context, admission)
+        if policy_failure is not None:
+            await _close_browser_resources()
+            return None
+        await context.add_cookies(cookies)
+    except Exception:
+        await _close_browser_resources()
+        return None
     _contexts[domain] = context
     logger.info("Created authenticated browser context for %s", domain)
     return context
@@ -106,12 +192,23 @@ async def extract_authenticated(url: str, domain: str) -> Optional[ExtractedCont
         logger.warning("Cannot authenticate for %s: cookies unavailable, stale, or rate-limited", domain)
         return ExtractedContent(url=url, error=f"auth: cannot authenticate for {domain}")
 
-    context = await _get_context(domain)
+    admission = await admit_browser_url(
+        url,
+        profile="authenticated_content",
+        credential_policy="origin_scoped",
+        caller_principal="authenticated-browser",
+        request_id="auth-extract",
+    )
+    if not isinstance(admission, BrowserAdmission):
+        return ExtractedContent(url=url, error=failure_text(admission))
+
+    context = await _get_context(domain, url=url, admission=admission)
     if context is None:
         logger.warning("Auth context unavailable for %s: cookies may have expired", domain)
         return ExtractedContent(url=url, error=f"auth: no browser context for {domain}")
 
     status_code = 0
+    page = None
     try:
         page = await context.new_page()
         try:
@@ -172,9 +269,25 @@ async def extract_authenticated(url: str, domain: str) -> Optional[ExtractedCont
         finally:
             await page.close()
 
+    except asyncio.CancelledError:
+        await _close_browser_resources()
+        raise
     except Exception as e:
         logger.warning("Auth extraction failed for %s: %s", url[:60], e)
         record_auth_request(domain, success=False, status_code=status_code)
+        error_text = str(e).lower()
+        if any(
+            marker in type(e).__name__.lower() or marker in error_text
+            for marker in (
+                "memory",
+                "oom",
+                "crash",
+                "targetclosed",
+                "browser has been closed",
+                "browser closed",
+            )
+        ):
+            await _close_browser_resources()
         return None
 
 

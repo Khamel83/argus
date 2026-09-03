@@ -16,6 +16,11 @@ from urllib.parse import urlparse
 from tld import get_fld
 
 from argus.api.schemas import FetchRawRequest, FetchRawResponse
+from argus.acquisition.browser_policy import (
+    BrowserAdmission,
+    admit_browser_url,
+    failure_text,
+)
 from argus.extraction.playwright_extractor import _get_browser
 from argus.extraction.ssrf import is_safe_url
 
@@ -181,6 +186,14 @@ async def _fetch_raw_inner(
             (f"egress_unavailable:requested={request.egress}:actual={actual_egress}"),
             http_status=503,
         )
+
+    admission = await admit_browser_url(
+        request.url,
+        caller_principal="raw-fetch",
+        request_id="raw-fetch",
+    )
+    if not isinstance(admission, BrowserAdmission):
+        return _error(failure_text(admission), http_status=503)
 
     browser = await _get_browser()
     if browser is None:

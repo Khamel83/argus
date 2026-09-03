@@ -12,8 +12,28 @@ import pytest
 @pytest.fixture(autouse=True)
 async def reset_playwright_state(monkeypatch):
     """Keep singleton state isolated while exercising its public lifecycle."""
+    from datetime import datetime, timedelta, timezone
+
+    from argus.acquisition.browser_policy import (
+        BrowserNetworkAttestation,
+        current_release_identity,
+        set_browser_attestation_provider,
+    )
     import argus.extraction.playwright_extractor as extractor
 
+    attestation = BrowserNetworkAttestation(
+        policy_identity="test-policy",
+        resolver_identity="test-resolver",
+        connection_binding="test-binding",
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        release_identity=current_release_identity(),
+    )
+
+    class Provider:
+        def current(self):
+            return attestation
+
+    set_browser_attestation_provider(Provider())
     await extractor.close_browser()
     monkeypatch.setattr(extractor, "_browser", None)
     monkeypatch.setattr(extractor, "_playwright_instance", None)
@@ -31,6 +51,7 @@ async def reset_playwright_state(monkeypatch):
     )
     yield
     await extractor.close_browser()
+    set_browser_attestation_provider(None)
 
 
 @pytest.mark.asyncio

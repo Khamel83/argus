@@ -2,6 +2,7 @@ import asyncio
 import hmac
 import importlib.util
 import ipaddress
+import logging
 import os
 import random
 import shutil
@@ -13,8 +14,16 @@ from typing import Dict
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
+from argus.acquisition.browser_policy import (
+    BrowserAdmission,
+    admit_browser_url,
+    failure_text,
+    install_browser_policy,
+)
 from argus.config import get_config
 from argus.extraction.rate_limit import DomainRateLimiter
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Argus Residential Extractor", version="1.1.0")
 
@@ -303,6 +312,14 @@ async def _extract_trafilatura(url: str, cookies: list[dict] | None = None) -> d
 
 
 async def _extract_obscura(url: str, timeout: int) -> dict:
+    admission = await admit_browser_url(
+        url,
+        caller_principal="residential-obscura",
+        request_id="residential-obscura",
+    )
+    if not isinstance(admission, BrowserAdmission):
+        return {"error": failure_text(admission)}
+
     try:
         proc = await asyncio.create_subprocess_exec(
             "obscura", "fetch", url, "--dump", "text", "--stealth", "--quiet",
@@ -326,6 +343,18 @@ async def _extract_obscura(url: str, timeout: int) -> dict:
 
 
 async def _extract_playwright(url: str, timeout: int, cookies: list[dict] | None = None) -> dict:
+    admission = await admit_browser_url(
+        url,
+        profile=(
+            "authenticated_content" if cookies else "public_content"
+        ),
+        credential_policy="origin_scoped" if cookies else "none",
+        caller_principal="residential-playwright",
+        request_id="residential-playwright",
+    )
+    if not isinstance(admission, BrowserAdmission):
+        return {"error": failure_text(admission)}
+
     try:
         from playwright.async_api import async_playwright
         from urllib.parse import urlparse
@@ -337,16 +366,18 @@ async def _extract_playwright(url: str, timeout: int, cookies: list[dict] | None
             browser = await pw.chromium.launch(
                 headless=True, args=["--no-sandbox", "--disable-setuid-sandbox"]
             )
+            context = await browser.new_context(service_workers="block")
+            policy_failure = await install_browser_policy(context, admission)
+            if policy_failure is not None:
+                return {"error": failure_text(policy_failure)}
             if cookies:
                 # Playwright's add_cookies automatically scopes them.
                 # However, if we redirect to a new domain, we should ensure
                 # we don't manually leak them in headers (handled by browser).
-                context = await browser.new_context()
                 await context.add_cookies(cookies)
                 page = await context.new_page()
             else:
-                context = None
-                page = await browser.new_page()
+                page = await context.new_page()
 
             # Listen for redirects to monitor domain changes
             page.on("framenavigated", lambda frame: _check_playwright_leak(frame, initial_domain))
@@ -363,9 +394,6 @@ async def _extract_playwright(url: str, timeout: int, cookies: list[dict] | None
                 return source.innerText || source.textContent || '';
             }""")
             text = (text or "").strip()
-            if context:
-                await context.close()
-            await browser.close()
             if not text or len(text.split()) < 100:
                 return {"error": "playwright: too little content"}
             return {
@@ -375,6 +403,21 @@ async def _extract_playwright(url: str, timeout: int, cookies: list[dict] | None
                 "word_count": len(text.split()),
             }
         finally:
+            if "page" in locals() and page is not None:
+                try:
+                    await page.close()
+                except Exception:
+                    logger.debug("Failed to close residential page reason=close_failed")
+            if "context" in locals() and context is not None:
+                try:
+                    await context.close()
+                except Exception:
+                    logger.debug("Failed to close residential context reason=close_failed")
+            if "browser" in locals() and browser is not None:
+                try:
+                    await browser.close()
+                except Exception:
+                    logger.debug("Failed to close residential browser reason=close_failed")
             await pw.stop()
     except Exception as e:
         return {"error": f"playwright: {e}"}
@@ -391,6 +434,14 @@ def _check_playwright_leak(frame, initial_domain):
 
 
 async def _extract_crawl4ai(url: str) -> dict:
+    admission = await admit_browser_url(
+        url,
+        caller_principal="residential-crawl4ai",
+        request_id="residential-crawl4ai",
+    )
+    if not isinstance(admission, BrowserAdmission):
+        return {"error": failure_text(admission)}
+
     try:
         from crawl4ai import AsyncWebCrawler
 
