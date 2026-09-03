@@ -5,9 +5,46 @@ Structured enough to be useful, quiet enough to not dump full payloads.
 """
 
 import logging
+import re
 import sys
 from typing import IO
 from typing import Optional
+
+
+_URL = re.compile(r"https?://[^\s]+", re.IGNORECASE)
+_SECRET = re.compile(
+    r"(?i)(authorization|cookie|set-cookie|(?:api[_-]?key|credential|password|secret|signature|token))\s*[:=]\s*[^\s,;]+"
+)
+_CONTROL = re.compile(r"[\r\n\t]+")
+
+
+def sanitize_causal_detail(value: object, *, maximum: int = 256) -> str:
+    """Return bounded causal text with URLs and credential values removed."""
+
+    text = value if isinstance(value, str) else type(value).__name__
+    text = _URL.sub("<url>", text)
+    text = _SECRET.sub(lambda match: f"{match.group(1)}=<redacted>", text)
+    text = _CONTROL.sub(" ", text).strip()
+    return text[:maximum] if text else "unspecified failure"
+
+
+def log_failure(
+    logger: logging.Logger,
+    *,
+    code: str,
+    request_id: str,
+    detail: object,
+    operation_id: str | None = None,
+) -> None:
+    """Write one correlated, sanitized causal failure record."""
+
+    logger.warning(
+        "operation_failure code=%s request_id=%s operation_id=%s cause=%s",
+        code,
+        request_id,
+        operation_id or "none",
+        sanitize_causal_detail(detail),
+    )
 
 
 def setup_logging(level: Optional[str] = None, stream: IO[str] | None = None) -> logging.Logger:
