@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from argus.models import ProviderName
@@ -52,3 +54,35 @@ def test_budget_obligations_are_isolated_per_provider_account(tmp_path):
             idempotency_key="account-a:two",
         )
 
+
+def test_reservation_identity_includes_execution_deadline(tmp_path):
+    from argus.persistence.provider_spend import SpendConflictError
+
+    repository = _repository(tmp_path)
+    base = datetime.now(timezone.utc)
+    repository.reserve(
+        provider=ProviderName.BRAVE,
+        conservative_charge=0.25,
+        budget_limit=10.0,
+        caller_identity="caller",
+        caller_label="deadline",
+        account_fingerprint="account",
+        operation_id="operation",
+        release_identity="release",
+        execution_deadline=base,
+        idempotency_key="same-deadline-key",
+    )
+
+    with pytest.raises(SpendConflictError):
+        repository.reserve(
+            provider=ProviderName.BRAVE,
+            conservative_charge=0.25,
+            budget_limit=10.0,
+            caller_identity="caller",
+            caller_label="deadline",
+            account_fingerprint="account",
+            operation_id="operation",
+            release_identity="release",
+            execution_deadline=base + timedelta(seconds=1),
+            idempotency_key="same-deadline-key",
+        )

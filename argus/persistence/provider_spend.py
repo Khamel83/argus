@@ -299,6 +299,18 @@ class ProviderSpendRepository:
             raise ValueError("reservation status must be reserved or uncertain")
         if not isinstance(account_fingerprint, str) or not account_fingerprint:
             raise ValueError("account fingerprint is required")
+        for name, value, maximum in (
+            ("account_fingerprint", account_fingerprint, 128),
+            ("operation_id", operation_id or idempotency_key, 128),
+            ("release_identity", release_identity, 128),
+        ):
+            if not isinstance(value, str) or not value or len(value) > maximum:
+                raise ValueError(f"{name} must be non-empty and bounded")
+        normalized_deadline = (
+            _naive_utc(execution_deadline)
+            if execution_deadline is not None
+            else None
+        )
         payload = {
             "provider": provider.value,
             "conservative_charge": conservative_charge,
@@ -309,6 +321,8 @@ class ProviderSpendRepository:
             "account_fingerprint": account_fingerprint,
             "operation_id": operation_id or idempotency_key,
             "release_identity": release_identity,
+            "execution_deadline": normalized_deadline,
+            "reservation_status": reservation_status,
         }
         request_hash = _fingerprint(payload)
         del created_at
@@ -358,8 +372,7 @@ class ProviderSpendRepository:
                     operation_id=operation_id or idempotency_key,
                     account_fingerprint=account_fingerprint,
                     release_identity=release_identity,
-                    execution_deadline=(_naive_utc(execution_deadline)
-                        if execution_deadline is not None else None),
+                    execution_deadline=normalized_deadline,
                     provider=provider.value,
                     tier=PROVIDER_TIERS[provider],
                     is_paid=True,
