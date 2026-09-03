@@ -10,7 +10,9 @@ import os
 from pathlib import Path
 
 
-CONTENT = " ".join(f"browser-canary-word-{index}" for index in range(160))
+# Keep the synthetic data URL inside the guarded 2,048-character request
+# contract. The canary checks lifecycle and resource cleanup, not URL length.
+CONTENT = " ".join(f"browser-canary-word-{index}" for index in range(48))
 URL = (
     "data:text/html,"
     "<html><head><title>Argus Browser Canary</title></head>"
