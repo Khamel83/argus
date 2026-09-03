@@ -7,7 +7,7 @@ Self-hosted metasearch — the free local provider floor.
 import time
 from typing import List
 
-import httpx
+import httpx  # noqa: F401 - explicit compatibility seam for adapter tests
 
 from argus.config import SearXNGConfig
 from argus.logging import get_logger
@@ -66,16 +66,19 @@ class SearXNGProvider(BaseProvider):
 
         resp = None
         try:
-            async with httpx.AsyncClient(
-                timeout=self._attempt_timeout(query)
-            ) as client:
-                resp = await client.get(url, params=params, headers=headers)
-                native_failure = self._response_failure_batch(
-                    resp, started_at=start, request_evidence=request_evidence
-                )
-                if native_failure is not None:
-                    return native_failure
-                data = resp.json()
+            resp = await self._provider_request(
+                query,
+                url,
+                method="GET",
+                params=params,
+                headers=headers,
+            )
+            native_failure = self._response_failure_batch(
+                resp, started_at=start, request_evidence=request_evidence
+            )
+            if native_failure is not None:
+                return native_failure
+            data = resp.json()
 
             return self._normalized_batch(
                 data,

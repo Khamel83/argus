@@ -371,6 +371,10 @@ async def _execute_case(provider: ProviderName, scenario: str):
         with (
             patch("httpx.AsyncClient", fake_client),
             patch(
+                "argus.acquisition.guarded._validate_public_target",
+                lambda _url: (True, ""),
+            ),
+            patch(
                 "argus.providers.duckduckgo.asyncio.create_subprocess_exec",
                 fake_subprocess,
             ),

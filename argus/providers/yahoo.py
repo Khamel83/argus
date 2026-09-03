@@ -13,7 +13,7 @@ import time
 from typing import List
 from urllib.parse import unquote, urljoin, urlparse
 
-import httpx
+import httpx  # noqa: F401 - explicit compatibility seam for adapter tests
 
 from argus.config import ProviderConfig
 from argus.logging import get_logger
@@ -78,23 +78,24 @@ class YahooProvider(BaseProvider):
 
     async def _get_bounded(
         self,
-        client,
         params,
         query: SearchQuery,
     ) -> tuple[
         object | None, tuple[RedirectChildEvidence, ...], ProviderFailure | None
     ]:
-        response = await client.get(
+        response = await self._provider_request(
+            query,
             YAHOO_SEARCH_URL,
+            method="GET",
             params=params,
-            timeout=self._attempt_timeout(query),
+            headers=_HEADERS,
         )
         source_url = YAHOO_SEARCH_URL
         children: list[RedirectChildEvidence] = []
         for redirect_count in range(1, 5):
             if response.status_code not in {301, 302, 303, 307, 308}:
                 return response, tuple(children), None
-            location = response.headers.get("location")
+            location = self._response_headers(response).get("location")
             if not isinstance(location, str):
                 return response, tuple(children), None
             timeout = self._attempt_timeout(query)
@@ -115,8 +116,10 @@ class YahooProvider(BaseProvider):
                 return response, tuple(children), failure
             children.append(request.child_evidence)
             source_url = request.url
-            response = await client.get(
+            response = await self._provider_request(
+                query,
                 request.url,
+                method="GET",
                 headers=request.headers,
                 timeout=timeout,
             )
@@ -144,35 +147,30 @@ class YahooProvider(BaseProvider):
                 "n": min(query.max_results, 10),
                 "ei": "UTF-8",
             }
-            async with httpx.AsyncClient(
-                timeout=self._attempt_timeout(query),
-                headers=_HEADERS,
-                follow_redirects=False,
-            ) as client:
-                resp, children, redirect_failure = await self._get_bounded(
-                    client, params, query
+            resp, children, redirect_failure = await self._get_bounded(
+                params, query
+            )
+            request_evidence = self._request_evidence(
+                query,
+                timeout_seconds=self._attempt_timeout(query),
+                provider_request_material=provider_query,
+                query_relation=relation,
+                redirect_children=children,
+            )
+            if redirect_failure is not None:
+                return self._typed_failure_batch(
+                    redirect_failure.category,
+                    redirect_failure.summary,
+                    started_at=started_at,
+                    request_evidence=request_evidence,
+                    observed_status=self._response_status(resp),
                 )
-                request_evidence = self._request_evidence(
-                    query,
-                    timeout_seconds=self._attempt_timeout(query),
-                    provider_request_material=provider_query,
-                    query_relation=relation,
-                    redirect_children=children,
-                )
-                if redirect_failure is not None:
-                    return self._typed_failure_batch(
-                        redirect_failure.category,
-                        redirect_failure.summary,
-                        started_at=started_at,
-                        request_evidence=request_evidence,
-                        observed_status=self._response_status(resp),
-                    )
-                assert resp is not None
-                native_failure = self._response_failure_batch(
-                    resp, started_at=started_at, request_evidence=request_evidence
-                )
-                if native_failure is not None:
-                    return native_failure
+            assert resp is not None
+            native_failure = self._response_failure_batch(
+                resp, started_at=started_at, request_evidence=request_evidence
+            )
+            if native_failure is not None:
+                return native_failure
 
             results = self._parse(resp.text, query.max_results)
 

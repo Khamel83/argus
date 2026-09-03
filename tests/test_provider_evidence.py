@@ -127,6 +127,12 @@ def _prohibit_provider_contract_dns(monkeypatch):
 
     monkeypatch.setattr("socket.getaddrinfo", fail)
     monkeypatch.setattr("socket.create_connection", fail)
+    # The HTTP doubles are explicit and never dispatch.  Allow the guarded
+    # seam to reach them without making provider contract tests depend on DNS.
+    monkeypatch.setattr(
+        "argus.acquisition.guarded._validate_public_target",
+        lambda _url: (True, ""),
+    )
 
 
 def _load(path: Path) -> object:
