@@ -50,7 +50,19 @@ def init_db(db_url: Optional[str] = None):
     _engine = create_engine(db_url, pool_pre_ping=True)
     _session_factory = sessionmaker(bind=_engine)
     if db_url.startswith("sqlite:"):
-        Base.metadata.create_all(_engine)
+        # The legacy Base still declares DomainPolicyRow for compatibility,
+        # but the canonical domain-policy metadata owns that table and its
+        # durable event relation. Create the canonical tables first and keep
+        # the legacy declaration out of SQLite schema creation.
+        from argus.persistence.domain_policy import DomainPolicyBase
+
+        legacy_tables = [
+            table
+            for table in Base.metadata.tables.values()
+            if table.name != "domain_policies"
+        ]
+        Base.metadata.create_all(_engine, tables=legacy_tables)
+        DomainPolicyBase.metadata.create_all(_engine)
         _ensure_schema_compat(_engine)
         logger.info("SQLite database initialized and tables created")
     else:
