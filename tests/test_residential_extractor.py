@@ -226,6 +226,25 @@ class TestResidentialService:
     """Tests for the standalone residential extraction service."""
 
     @pytest.mark.asyncio
+    async def test_browser_subprocesses_fail_closed_in_production(self):
+        from argus.extraction.residential_service import (
+            _extract_crawl4ai,
+            _extract_obscura,
+        )
+
+        obscura = await _extract_obscura("https://example.com", 5, production=True)
+        crawl4ai = await _extract_crawl4ai("https://example.com", production=True)
+
+        assert obscura == {
+            "error": "obscura: browser policy unavailable",
+            "failure_code": "browser_policy_unavailable",
+        }
+        assert crawl4ai == {
+            "error": "crawl4ai: browser policy unavailable",
+            "failure_code": "browser_policy_unavailable",
+        }
+
+    @pytest.mark.asyncio
     async def test_health_endpoint(self):
         from argus.extraction.residential_service import app
 

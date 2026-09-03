@@ -136,6 +136,77 @@ class TestSearXNGProvider:
 
 
 class TestDuckDuckGoProvider:
+    @pytest.mark.asyncio
+    async def test_worker_production_path_uses_guarded_html_transport(self):
+        from types import SimpleNamespace
+
+        from argus.acquisition.models import CredentialPolicy, OperationClass, OriginProfile
+        from argus.providers import ddg_worker
+
+        calls = []
+
+        async def guarded_request(url, **kwargs):
+            calls.append((url, kwargs))
+            return SimpleNamespace(
+                status_code=200,
+                text="""
+                <html><body>
+                  <div class="result">
+                    <h2><a class="result__a" href="https://example.test/article">Example title</a></h2>
+                    <a class="result__snippet">Example snippet</a>
+                  </div>
+                </body></html>
+                """,
+            )
+
+        payload, returncode = await ddg_worker.execute_guarded_request(
+            {"query": "bounded query", "max_results": 1, "timelimit": None},
+            request_fn=guarded_request,
+        )
+
+        assert returncode == 0
+        assert payload["results"] == [
+            {
+                "href": "https://example.test/article",
+                "title": "Example title",
+                "body": "Example snippet",
+            }
+        ]
+        assert len(calls) == 1
+        url, kwargs = calls[0]
+        assert url == ddg_worker.DDG_SEARCH_URL
+        assert kwargs["method"] == "POST"
+        assert kwargs["profile"] is OriginProfile.AUTHENTICATED_CONTENT
+        assert kwargs["credential_policy"] is CredentialPolicy.ORIGIN_SCOPED
+        assert kwargs["operation_class"] is OperationClass.DIRECT_HTTP
+        assert kwargs["caller_principal"] == "provider:duckduckgo"
+        assert "q=bounded+query" in kwargs["body"]
+
+    @pytest.mark.asyncio
+    async def test_worker_maps_guarded_policy_failure_to_typed_ipc_result(self):
+        from argus.acquisition.errors import AcquisitionFailure
+        from argus.acquisition.errors import AcquisitionFailureCode
+        from argus.acquisition.guarded import GuardedAcquisitionError
+        from argus.providers import ddg_worker
+
+        async def guarded_request(_url, **_kwargs):
+            raise GuardedAcquisitionError(
+                AcquisitionFailure(
+                    code=AcquisitionFailureCode.POLICY_REJECTED,
+                    safe_reason="request was blocked by policy",
+                    retryable=False,
+                    request_id="ddg-test",
+                )
+            )
+
+        payload, returncode = await ddg_worker.execute_guarded_request(
+            {"query": "bounded query", "max_results": 1, "timelimit": None},
+            request_fn=guarded_request,
+        )
+
+        assert returncode == 1
+        assert payload == {"error": {"kind": "policy_rejected"}}
+
     @pytest.mark.parametrize(
         "exception_name", ["RatelimitException", "TimeoutException"]
     )
@@ -241,6 +312,35 @@ class TestDuckDuckGoProvider:
         process.wait.assert_awaited_once()
         assert batch.failure is not None
         assert batch.failure.category.value == "provider_unavailable"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("kind", "expected"),
+        [("policy_rejected", "policy_rejected"), ("parse_error", "parse_error")],
+    )
+    async def test_worker_typed_failures_are_preserved_by_parent_adapter(
+        self, kind, expected
+    ):
+        from argus.providers.duckduckgo import DuckDuckGoProvider
+
+        process = MagicMock()
+        process.returncode = 1
+        process.communicate = AsyncMock(
+            return_value=(
+                json.dumps({"error": {"kind": kind}}).encode("utf-8"),
+                b"",
+            )
+        )
+        provider = DuckDuckGoProvider(ProviderConfig(enabled=True))
+        provider._available = True
+        with patch(
+            "argus.providers.duckduckgo.asyncio.create_subprocess_exec",
+            new=AsyncMock(return_value=process),
+        ):
+            batch = await provider.search(SearchQuery(query="typed failure"))
+
+        assert batch.failure is not None
+        assert batch.failure.category.value == expected
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

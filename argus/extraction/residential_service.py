@@ -110,6 +110,7 @@ class ExtractResponse(BaseModel):
     word_count: int = 0
     extractor: str = "unknown"
     error: str | None = None
+    failure_code: str | None = None
 
 
 @app.get("/health")
@@ -135,6 +136,24 @@ async def health():
 
 
 _worker_domain_limiter = DomainRateLimiter(max_requests=5, window_seconds=60)
+
+
+def _production_runtime(config: object | None = None) -> bool:
+    """Return whether browser subprocesses must be policy-enforced."""
+
+    configured_env = getattr(config, "env", None)
+    if isinstance(configured_env, str) and configured_env.strip().lower() == "production":
+        return True
+    return os.getenv("ARGUS_ENV", "development").strip().lower() == "production"
+
+
+def _browser_transport_unavailable(tool: str) -> dict[str, str]:
+    """Return a stable policy result for an un-interceptable browser tool."""
+
+    return {
+        "error": f"{tool}: browser policy unavailable",
+        "failure_code": "browser_policy_unavailable",
+    }
 
 
 @app.post("/extract")
@@ -186,7 +205,11 @@ async def extract(req: ExtractRequest, request: Request):
         # Try obscura (stealth CLI)
         obscura_path = shutil.which("obscura")
         if obscura_path:
-            result = await _extract_obscura(url, config.residential.timeout_seconds)
+            result = await _extract_obscura(
+                url,
+                config.residential.timeout_seconds,
+                production=_production_runtime(config),
+            )
             if result.get("text") and len(result["text"].split()) >= 50:
                 return ExtractResponse(url=url, extractor="obscura", **result)
 
@@ -204,7 +227,10 @@ async def extract(req: ExtractRequest, request: Request):
         # Try crawl4ai if enabled
         crawl4ai_enabled = os.getenv("ARGUS_CRAWL4AI_ENABLED", "").lower() in ("1", "true")
         if crawl4ai_enabled:
-            result = await _extract_crawl4ai(url)
+            result = await _extract_crawl4ai(
+                url,
+                production=_production_runtime(config),
+            )
             if result.get("text") and len(result["text"].split()) >= 50:
                 return ExtractResponse(url=url, extractor="crawl4ai", **result)
 
@@ -280,7 +306,14 @@ async def _extract_trafilatura(url: str, cookies: list[dict] | None = None) -> d
         return {"error": f"trafilatura: {e}"}
 
 
-async def _extract_obscura(url: str, timeout: int) -> dict:
+async def _extract_obscura(
+    url: str,
+    timeout: int,
+    *,
+    production: bool | None = None,
+) -> dict:
+    if (_production_runtime() if production is None else production):
+        return _browser_transport_unavailable("obscura")
     try:
         await guarded_browser_session(
             url,
@@ -420,7 +453,13 @@ def _check_playwright_leak(frame, initial_domain):
         pass
 
 
-async def _extract_crawl4ai(url: str) -> dict:
+async def _extract_crawl4ai(
+    url: str,
+    *,
+    production: bool | None = None,
+) -> dict:
+    if (_production_runtime() if production is None else production):
+        return _browser_transport_unavailable("crawl4ai")
     try:
         await guarded_browser_session(
             url,

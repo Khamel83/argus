@@ -24,6 +24,33 @@ _OBSCURA_TIMEOUT = int(os.getenv("ARGUS_OBSCURA_TIMEOUT_SECONDS", "20"))
 _obscura_available: Optional[bool] = None
 
 
+def _production_runtime() -> bool:
+    """Return whether this process is a production execution authority."""
+
+    return os.getenv("ARGUS_ENV", "development").strip().lower() == "production"
+
+
+def _browser_transport_unavailable(url: str) -> ExtractedContent:
+    """Return a typed failure when the CLI cannot prove network policy.
+
+    Obscura's standalone CLI owns its sockets.  Argus cannot install the
+    browser request interception policy on that process, so production must
+    not treat a preflight admission as proof of guarded traffic.
+    """
+
+    from argus.acquisition.errors import AcquisitionFailure
+
+    failure = AcquisitionFailure.browser_policy_unavailable(
+        request_id="obscura-extract",
+        reason="obscura browser transport cannot prove guarded network policy",
+    )
+    return ExtractedContent(
+        url=url,
+        error="obscura: browser policy unavailable",
+        failure=failure,
+    )
+
+
 def _is_available() -> bool:
     global _obscura_available
     if _obscura_available is None:
@@ -35,6 +62,8 @@ def _is_available() -> bool:
 
 async def extract_obscura(url: str) -> ExtractedContent:
     """Extract content using Obscura headless browser (stealth mode, subprocess)."""
+    if _production_runtime():
+        return _browser_transport_unavailable(url)
     try:
         await guarded_browser_session(
             url,

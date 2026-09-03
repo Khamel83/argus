@@ -145,6 +145,26 @@ class DuckDuckGoProvider(BaseProvider):
                     started_at=start,
                     request_evidence=request_evidence,
                 )
+            if worker_error_kind == "policy_rejected":
+                return self._typed_failure_batch(
+                    FailureCategory.POLICY_REJECTED,
+                    "duckduckgo request was blocked by acquisition policy",
+                    started_at=start,
+                    request_evidence=request_evidence,
+                )
+            if worker_error_kind == "parse_error":
+                return self._typed_failure_batch(
+                    FailureCategory.PARSE_ERROR,
+                    "duckduckgo response did not match the parser contract",
+                    started_at=start,
+                    request_evidence=request_evidence,
+                )
+            if worker_error_kind == "provider_unavailable":
+                return self._failure_batch(
+                    RuntimeError("duckduckgo guarded request unavailable"),
+                    started_at=start,
+                    request_evidence=request_evidence,
+                )
             if process.returncode != 0 or not isinstance(payload, dict):
                 raise RuntimeError("worker failed")
             if payload.get("error") is not None:

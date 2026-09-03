@@ -241,6 +241,37 @@ _CHAIN_EXTRACTORS = [
 ]
 
 
+@pytest.mark.asyncio
+async def test_obscura_cli_fails_closed_in_production_before_process_start(monkeypatch):
+    from argus.acquisition.errors import AcquisitionFailureCode
+    from argus.extraction.obscura_extractor import extract_obscura
+
+    monkeypatch.setenv("ARGUS_ENV", "production")
+    with patch(
+        "argus.extraction.obscura_extractor.asyncio.create_subprocess_exec",
+        new=AsyncMock(),
+    ) as create_process:
+        result = await extract_obscura("https://example.com/article")
+
+    assert result.error == "obscura: browser policy unavailable"
+    assert result.failure is not None
+    assert result.failure.code is AcquisitionFailureCode.BROWSER_POLICY_UNAVAILABLE
+    create_process.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_crawl4ai_fails_closed_in_production_before_browser_start(monkeypatch):
+    from argus.acquisition.errors import AcquisitionFailureCode
+    from argus.extraction.crawl4ai_extractor import extract_crawl4ai
+
+    monkeypatch.setenv("ARGUS_ENV", "production")
+    result = await extract_crawl4ai("https://example.com/article")
+
+    assert result.error == "crawl4ai: browser policy unavailable"
+    assert result.failure is not None
+    assert result.failure.code is AcquisitionFailureCode.BROWSER_POLICY_UNAVAILABLE
+
+
 @pytest.fixture
 def mock_chain(monkeypatch):
     """Fixture that patches all chain extractors. Use parametrize or override."""
