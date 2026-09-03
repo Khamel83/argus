@@ -8,8 +8,7 @@ Gated by ARGUS_VALYU_API_KEY env var (reuses Valyu search config).
 
 import os
 
-import httpx
-
+from argus.acquisition.guarded import guarded_http_request
 from argus.config import get_config
 from argus.extraction.models import ExtractedContent, ExtractorName
 from argus.logging import get_logger
@@ -42,10 +41,20 @@ async def extract_valyu_contents(url: str) -> ExtractedContent:
     }
 
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            resp = await client.post(VALYU_CONTENTS_URL, json=body, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await guarded_http_request(
+            VALYU_CONTENTS_URL,
+            method="POST",
+            json_body=body,
+            headers=headers,
+            profile="third_party_fetch",
+            operation_class="third_party",
+            caller_principal="valyu-contents",
+            request_id="extract-valyu-contents",
+            timeout=TIMEOUT,
+            target_url=url,
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
         if not data.get("success"):
             return ExtractedContent(url=url, error=f"valyu_contents: {data.get('error', 'unknown error')}")

@@ -23,6 +23,7 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
     func,
+    Index,
     select,
     text,
 )
@@ -40,12 +41,25 @@ class SpendBase(DeclarativeBase):
 
 class ProviderSpendAttemptRow(SpendBase):
     __tablename__ = "provider_spend_attempts"
+    __table_args__ = (
+        Index("ix_provider_spend_attempts_account", "provider", "account_fingerprint"),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     idempotency_key: Mapped[str] = mapped_column(
         String(255), unique=True, nullable=False
     )
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    operation_id: Mapped[str] = mapped_column(
+        String(128), nullable=False, default="legacy-operation"
+    )
+    account_fingerprint: Mapped[str] = mapped_column(
+        String(128), nullable=False, default="legacy-account"
+    )
+    release_identity: Mapped[str] = mapped_column(
+        String(128), nullable=False, default="unknown-release"
+    )
+    execution_deadline: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     provider: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     tier: Mapped[int] = mapped_column(Integer, nullable=False)
     is_paid: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -132,6 +146,10 @@ class SpendAttempt:
     caller_label: str
     resolution_source: str | None
     created_at: datetime
+    operation_id: str = "legacy-operation"
+    account_fingerprint: str = "legacy-account"
+    release_identity: str = "unknown-release"
+    execution_deadline: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -184,6 +202,10 @@ def _attempt(row: ProviderSpendAttemptRow) -> SpendAttempt:
         caller_label=row.caller_label,
         resolution_source=row.resolution_source,
         created_at=row.created_at,
+        operation_id=row.operation_id,
+        account_fingerprint=row.account_fingerprint,
+        release_identity=row.release_identity,
+        execution_deadline=row.execution_deadline,
     )
 
 
@@ -198,6 +220,10 @@ def _attempt_state(row: ProviderSpendAttemptRow) -> dict:
         "usage": row.usage,
         "resolution_source": row.resolution_source,
         "resolution_reference": row.resolution_reference,
+        "operation_id": row.operation_id,
+        "account_fingerprint": row.account_fingerprint,
+        "release_identity": row.release_identity,
+        "execution_deadline": row.execution_deadline,
     }
 
 
@@ -258,6 +284,11 @@ class ProviderSpendRepository:
         caller_label: str,
         idempotency_key: str,
         created_at: datetime | None = None,
+        account_fingerprint: str = "legacy-account",
+        operation_id: str | None = None,
+        release_identity: str = "unknown-release",
+        execution_deadline: datetime | None = None,
+        reservation_status: str = "uncertain",
         fault_hook: Callable[[str], None] | None = None,
     ) -> SpendAttempt:
         if PROVIDER_TIERS.get(provider, 0) <= 0:
@@ -266,6 +297,20 @@ class ProviderSpendRepository:
             raise ValueError("conservative charge must be finite and positive")
         if not math.isfinite(budget_limit) or budget_limit <= 0:
             raise ValueError("budget limit must be finite and positive")
+        if reservation_status not in {"uncertain", "reserved"}:
+            raise ValueError("reservation status must be reserved or uncertain")
+        if not isinstance(account_fingerprint, str) or not account_fingerprint:
+            raise ValueError("account fingerprint is required")
+        for name, value, maximum in (
+            ("account_fingerprint", account_fingerprint, 128),
+            ("operation_id", operation_id or idempotency_key, 128),
+            ("release_identity", release_identity, 128),
+        ):
+            if not isinstance(value, str) or not value or len(value) > maximum:
+                raise ValueError(f"{name} must be non-empty and bounded")
+        normalized_deadline = (
+            _naive_utc(execution_deadline) if execution_deadline is not None else None
+        )
         payload = {
             "provider": provider.value,
             "conservative_charge": conservative_charge,
@@ -273,6 +318,11 @@ class ProviderSpendRepository:
             "caller_identity": caller_identity,
             "caller_label": caller_label,
             "idempotency_key": idempotency_key,
+            "account_fingerprint": account_fingerprint,
+            "operation_id": operation_id or idempotency_key,
+            "release_identity": release_identity,
+            "execution_deadline": normalized_deadline,
+            "reservation_status": reservation_status,
         }
         request_hash = _fingerprint(payload)
         del created_at
@@ -291,6 +341,7 @@ class ProviderSpendRepository:
                 obligation = self._obligation(
                     session,
                     provider,
+                    account_fingerprint=account_fingerprint,
                     lock=True,
                 )
                 from argus.persistence.readiness import (
@@ -306,6 +357,7 @@ class ProviderSpendRepository:
                 if readiness.protected_exhaustion_in_session(
                     session,
                     provider,
+                    account_fingerprint=account_fingerprint,
                 ):
                     raise BudgetExhaustedError(
                         f"{provider.value} terminal account exhaustion"
@@ -317,10 +369,14 @@ class ProviderSpendRepository:
                     id=uuid.uuid4().hex,
                     idempotency_key=idempotency_key,
                     request_hash=request_hash,
+                    operation_id=operation_id or idempotency_key,
+                    account_fingerprint=account_fingerprint,
+                    release_identity=release_identity,
+                    execution_deadline=normalized_deadline,
                     provider=provider.value,
                     tier=PROVIDER_TIERS[provider],
                     is_paid=True,
-                    status="uncertain",
+                    status=reservation_status,
                     outcome=None,
                     reserved_charge=conservative_charge,
                     estimator_violation=False,
@@ -377,7 +433,7 @@ class ProviderSpendRepository:
             if row.status == "settled":
                 self._verify_settlement(row, actual_charge, outcome, "argus")
                 return _attempt(row)
-            if row.status != "uncertain":
+            if row.status not in {"reserved", "uncertain"}:
                 raise SpendConflictError(f"attempt {attempt_id!r} is already resolved")
             before = _attempt_state(row)
             _record_estimator_overrun(row, actual_charge)
@@ -534,9 +590,7 @@ class ProviderSpendRepository:
         if not math.isfinite(balance) or balance < 0:
             raise ValueError("provider balance must be finite and non-negative")
         if not math.isfinite(authoritative_charge) or authoritative_charge < 0:
-            raise ValueError(
-                "authoritative charge must be finite and non-negative"
-            )
+            raise ValueError("authoritative charge must be finite and non-negative")
         payload = {
             "provider": provider.value,
             "balance": balance,
@@ -792,34 +846,53 @@ class ProviderSpendRepository:
         }
 
     def non_authoritative_operational_projection(
-        self, provider: ProviderName, *, budget_limit: float,
+        self,
+        provider: ProviderName,
+        *,
+        budget_limit: float,
     ) -> dict:
         """Accounting diagnostics, explicitly outside readiness semantics."""
         return self.provider_summary(provider, budget_limit=budget_limit)
 
-    def _obligation(self, session, provider: ProviderName, *, lock: bool) -> float:
-        # PostgreSQL needs a lock even when a provider has no attempt rows yet;
-        # the transaction-scoped advisory lock supplies that stable mutex.
+    def _obligation(
+        self,
+        session,
+        provider: ProviderName,
+        *,
+        account_fingerprint: str | None = None,
+        lock: bool,
+    ) -> float:
+        # PostgreSQL needs a lock even when a provider/account has no attempt
+        # rows yet. The transaction-scoped advisory lock supplies that stable
+        # mutex without coupling independent provider accounts.
         if lock and session.get_bind().dialect.name == "postgresql":
             from sqlalchemy import text
 
+            lock_key = f"provider-budget:{provider.value}"
+            if account_fingerprint:
+                lock_key += f":{account_fingerprint}"
             session.execute(
                 text(
-                    "SELECT pg_advisory_xact_lock("
-                    "hashtextextended(:provider_lock, 0))"
+                    "SELECT pg_advisory_xact_lock(hashtextextended(:provider_lock, 0))"
                 ),
-                {"provider_lock": f"provider-budget:{provider.value}"},
+                {"provider_lock": lock_key},
             )
         # Lock existing rows as an additional guard on databases that support
         # it. SQLite's BEGIN IMMEDIATE serializes the whole read/write section.
         statement = select(ProviderSpendAttemptRow.id).where(
             ProviderSpendAttemptRow.provider == provider.value
         )
+        if account_fingerprint is not None:
+            statement = statement.where(
+                ProviderSpendAttemptRow.account_fingerprint == account_fingerprint
+            )
         if lock:
             statement = statement.with_for_update()
         list(session.scalars(statement))
-        return self._settled_charge(session, provider) + self._uncertain_charge(
-            session, provider
+        return self._settled_charge(
+            session, provider, account_fingerprint=account_fingerprint
+        ) + self._uncertain_charge(
+            session, provider, account_fingerprint=account_fingerprint
         )
 
     @staticmethod
@@ -827,20 +900,47 @@ class ProviderSpendRepository:
         del provider
         return True
 
-    def _settled_charge(self, session, provider: ProviderName) -> float:
+    def _settled_charge(
+        self,
+        session,
+        provider: ProviderName,
+        *,
+        account_fingerprint: str | None = None,
+    ) -> float:
+        filters = [
+            ProviderSpendAttemptRow.provider == provider.value,
+            ProviderSpendAttemptRow.is_paid.is_(True),
+            ProviderSpendAttemptRow.status.in_(("settled", "resolved")),
+            self._active_filter(provider),
+        ]
+        if account_fingerprint is not None:
+            filters.append(
+                ProviderSpendAttemptRow.account_fingerprint == account_fingerprint
+            )
         value = session.scalar(
             select(
                 func.coalesce(func.sum(ProviderSpendAttemptRow.actual_charge), 0.0)
-            ).where(
-                ProviderSpendAttemptRow.provider == provider.value,
-                ProviderSpendAttemptRow.is_paid.is_(True),
-                ProviderSpendAttemptRow.status.in_(("settled", "resolved")),
-                self._active_filter(provider),
-            )
+            ).where(*filters)
         )
         return float(value or 0.0)
 
-    def _uncertain_charge(self, session, provider: ProviderName) -> float:
+    def _uncertain_charge(
+        self,
+        session,
+        provider: ProviderName,
+        *,
+        account_fingerprint: str | None = None,
+    ) -> float:
+        filters = [
+            ProviderSpendAttemptRow.provider == provider.value,
+            ProviderSpendAttemptRow.is_paid.is_(True),
+            ProviderSpendAttemptRow.status.in_(("reserved", "uncertain")),
+            # Uncertain charges intentionally never age out.
+        ]
+        if account_fingerprint is not None:
+            filters.append(
+                ProviderSpendAttemptRow.account_fingerprint == account_fingerprint
+            )
         value = session.scalar(
             select(
                 func.coalesce(
@@ -850,12 +950,7 @@ class ProviderSpendRepository:
                     ),
                     0.0,
                 )
-            ).where(
-                ProviderSpendAttemptRow.provider == provider.value,
-                ProviderSpendAttemptRow.is_paid.is_(True),
-                ProviderSpendAttemptRow.status.in_(("reserved", "uncertain")),
-                # Uncertain charges intentionally never age out.
-            )
+            ).where(*filters)
         )
         return float(value or 0.0)
 

@@ -53,12 +53,30 @@ _NARROW_HTTP_STATUS = {
     "misdirected_request": (CanonicalOutcome.POLICY_REJECTED, 421),
     "method_not_allowed": (CanonicalOutcome.INVALID_REQUEST, 405),
 }
+# These codes are emitted by request admission before an accepted operation
+# exists.  The stabilization failure taxonomy below also has narrow statuses,
+# but those codes may be returned after an accepted operation has started.
 _ADMISSION_ONLY_CODES = frozenset(_NARROW_HTTP_STATUS)
+_STABILIZATION_HTTP_STATUS = {
+    "provider_unready": (CanonicalOutcome.UNREADY, 503),
+    "provider_unavailable": (CanonicalOutcome.UNREADY, 503),
+    "spend_denied": (CanonicalOutcome.UNREADY, 503),
+    "charge_uncertain": (CanonicalOutcome.UNREADY, 503),
+    "acquisition_blocked": (CanonicalOutcome.POLICY_REJECTED, 403),
+    "browser_policy_unavailable": (CanonicalOutcome.UNREADY, 503),
+    "ownership_denied": (CanonicalOutcome.POLICY_REJECTED, 403),
+    "workflow_owner_unavailable": (CanonicalOutcome.UNREADY, 503),
+    "workflow_artifact_not_published": (CanonicalOutcome.UNREADY, 409),
+    "recovery_not_verified": (CanonicalOutcome.UNREADY, 503),
+    "delivery_pending": (CanonicalOutcome.UNREADY, 202),
+    "delivery_failed": (CanonicalOutcome.UNREADY, 502),
+}
 _CANONICAL_ERROR_TITLES = {
     code: code.replace("_", " ").title()
     for code in (
         *(outcome.value for outcome in CanonicalOutcome),
         *_ADMISSION_ONLY_CODES,
+        *_STABILIZATION_HTTP_STATUS,
     )
 }
 
@@ -109,7 +127,7 @@ def http_status_for(
             f"error code {code!r} is not valid for outcome {canonical.value!r}"
         )
 
-    narrow = _NARROW_HTTP_STATUS.get(code)
+    narrow = _NARROW_HTTP_STATUS.get(code) or _STABILIZATION_HTTP_STATUS.get(code)
     if narrow is None:
         raise ValueError(f"unknown error code: {code!r}")
     required_outcome, status = narrow

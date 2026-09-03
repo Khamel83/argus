@@ -1073,6 +1073,7 @@ def test_retention_plan_rejects_fifo_without_mutation(tmp_path):
 
     assert _filesystem_state(root) == before
 def test_restore_passes_trusted_complete_current_schema_manifest(tmp_path):
+    from argus.recovery.database import EXPECTED_SCHEMA_HEAD
     from argus.recovery.records import (
         record_verified_backup,
         record_verified_restore,
@@ -1098,7 +1099,7 @@ def test_restore_passes_trusted_complete_current_schema_manifest(tmp_path):
     def verify_argus(database, expected):
         seen.append(expected)
         return {
-            "schema_head": "0009_retrieval_evidence",
+            "schema_head": EXPECTED_SCHEMA_HEAD,
             "checks": checks,
         }
 
@@ -1117,6 +1118,87 @@ def test_restore_passes_trusted_complete_current_schema_manifest(tmp_path):
         },
     )
 
-    assert seen[0]["schema_head"] == "0009_retrieval_evidence"
+    assert seen[0]["schema_head"] == EXPECTED_SCHEMA_HEAD
     assert "fk_result_extraction_links_acceptance_plan" in seen[0]["constraints"]
     assert "ix_extraction_outcome_artifacts_artifact_ref" in seen[0]["indexes"]
+
+
+def test_restore_record_binds_current_schema_identity_and_promotion_evidence(
+    tmp_path,
+):
+    from argus.recovery.database import (
+        EXPECTED_SCHEMA_HEAD,
+        expected_argus_schema_manifest,
+        schema_identity_from_manifest,
+    )
+    from argus.recovery.evidence import evaluate_recovery_evidence
+    from argus.recovery.records import (
+        record_verified_backup,
+        record_verified_restore,
+    )
+
+    root, live, snapshot, _ = _backup_set(tmp_path)
+    evidence = tmp_path / "identity-recovery.json"
+    record_verified_backup(
+        evidence,
+        backup_set=snapshot,
+        root=root,
+        live_data=live,
+    )
+    identity = schema_identity_from_manifest(
+        expected_argus_schema_manifest(EXPECTED_SCHEMA_HEAD)
+    )
+    tuple_identity = {
+        key: identity[key]
+        for key in (
+            "schema_head",
+            "migration_chain_sha256",
+            "canonical_postgresql_schema_sha256",
+            "schema_contract_format",
+        )
+    }
+    checks = {
+        "schema": True,
+        "row_counts": True,
+        "integrity": True,
+        "argus_read_path": True,
+        "migration_compatible": True,
+    }
+
+    record_verified_restore(
+        evidence,
+        backup_set=snapshot,
+        root=root,
+        live_data=live,
+        argus_database="argus_restore_identity_record",
+        atlas_database="atlas_restore_identity_record",
+        verified_at=NOW,
+        verify_source=lambda *args: None,
+        migrate_argus=lambda database: None,
+        verify_argus=lambda database, expected: {
+            "schema_head": EXPECTED_SCHEMA_HEAD,
+            "schema_identity": tuple_identity,
+            "checks": checks,
+        },
+        verify_atlas=lambda database, expected: {
+            "checks": {"schema": True, "row_counts": True, "integrity": True},
+        },
+        source_revision="a" * 40,
+        image_digest="sha256:" + "b" * 64,
+        schema_identity=tuple_identity,
+        migration_receipt="c" * 64,
+        operator_identity="operator@example",
+        metadata_registry_complete=True,
+        schema_contract_clean=True,
+        forward_compatible=True,
+        rollback_path_human_approved=True,
+    )
+
+    payload = json.loads(evidence.read_text(encoding="utf-8"))
+    restore = payload["restore"]
+    assert restore["schema_identity"] == identity
+    assert restore["checks"]["metadata_registry_complete"] is True
+    assert restore["checks"]["schema_contract_clean"] is True
+    assert len(restore["restore_identity"]) == 64
+    status = evaluate_recovery_evidence(evidence, now=NOW)
+    assert status["schema_promotion_allowed"] is True

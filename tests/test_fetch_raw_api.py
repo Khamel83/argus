@@ -8,6 +8,33 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def allow_browser_policy(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from argus.acquisition.browser_policy import (
+        BrowserNetworkAttestation,
+        current_release_identity,
+        set_browser_attestation_provider,
+    )
+
+    attestation = BrowserNetworkAttestation(
+        policy_identity="test-policy",
+        resolver_identity="test-resolver",
+        connection_binding="test-binding",
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        release_identity=current_release_identity(),
+    )
+
+    class Provider:
+        def current(self):
+            return attestation
+
+    set_browser_attestation_provider(Provider())
+    yield
+    set_browser_attestation_provider(None)
+
+
 def _remote_client(monkeypatch):
     from fastapi.testclient import TestClient
 

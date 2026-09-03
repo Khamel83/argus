@@ -112,10 +112,31 @@ def search(
         click.echo()
 
 
-def extract(*, url, domain, mode, as_json):
+def extract(
+    *,
+    url,
+    domain,
+    mode,
+    content_type="article",
+    free_only=False,
+    caller="cli",
+    as_json,
+):
     from argus.extraction import extract_url
 
-    result = _run(extract_url(url, domain=domain, mode=mode, caller="cli"))
+    # Keep the explicit standalone path compatible with pre-profile extractor
+    # implementations while honoring every normalized transport field when it
+    # changes the local execution request.
+    kwargs = {
+        "domain": domain,
+        "mode": mode,
+        "caller": caller,
+    }
+    if content_type != "article":
+        kwargs["content_type"] = content_type
+    if free_only:
+        kwargs["free_only"] = True
+    result = _run(extract_url(url, **kwargs))
     if result.error:
         click.echo(f"Error: {result.error}", err=True)
         raise click.exceptions.Exit(1)
@@ -153,7 +174,7 @@ def extract(*, url, domain, mode, as_json):
     click.echo(result.text)
 
 
-def recover_url(*, url, title, domain, as_json):
+def recover_url(*, url, title, domain, caller="cli", as_json):
     from argus.broker.router import create_broker
     from argus.models import SearchMode, SearchQuery
 
@@ -164,6 +185,7 @@ def recover_url(*, url, title, domain, as_json):
                 query=" ".join(parts),
                 mode=SearchMode.RECOVERY,
                 max_results=10,
+                caller=caller,
             )
         )
     )

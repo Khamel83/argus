@@ -109,11 +109,26 @@ def _build_workflow_provider(
     accepted_operations_provider: Callable[[], AcceptedOperationService],
 ) -> Callable[[], WorkflowService]:
     current: WorkflowService | None = None
+    initialization_lock = threading.Lock()
 
     def get_workflows() -> WorkflowService:
         nonlocal current
         if current is None:
-            current = WorkflowService(accepted_operations_provider())
+            with initialization_lock:
+                if current is None:
+                    role = os.environ.get("ARGUS_NODE_ROLE", "primary").strip().lower()
+                    production = (
+                        os.environ.get("ARGUS_ENV", "development").strip().lower()
+                        == "production"
+                    )
+                    # Workflow artifacts remain node-local.  A non-primary
+                    # production process is an adapter, not an artifact owner;
+                    # it receives a typed unavailable result from the service.
+                    current = WorkflowService(
+                        accepted_operations_provider(),
+                        authority_available=not production or role == "primary",
+                        authority_role=role,
+                    )
         return current
 
     return get_workflows

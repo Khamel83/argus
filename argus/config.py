@@ -68,6 +68,13 @@ class SearXNGConfig:
     base_url: str = "http://127.0.0.1:8080"
     residential_base_url: str = ""
     timeout_seconds: int = 12
+    # Registration metadata is non-secret operator configuration.  Empty
+    # values use the checked provider contract defaults.
+    billing_class: str = ""
+    extraction_capability: str = ""
+    fixture_contract: str = ""
+    credential_version_fingerprint: str = ""
+    account_fingerprint: str = ""
 
 
 @dataclass(frozen=True)
@@ -76,6 +83,14 @@ class ProviderConfig:
     api_key: str = ""
     monthly_budget_usd: float = 0.0
     timeout_seconds: int = 15
+    # These fields are stable non-secret bindings.  Credentials themselves
+    # remain in the existing secret resolver and are never part of a config
+    # fingerprint or registration payload.
+    billing_class: str = ""
+    extraction_capability: str = ""
+    fixture_contract: str = ""
+    credential_version_fingerprint: str = ""
+    account_fingerprint: str = ""
 
 
 @dataclass(frozen=True)
@@ -305,6 +320,17 @@ class EnvironmentConfigLoader:
                 f"ARGUS_{prefix}_TIMEOUT_SECONDS",
                 timeout_default,
             ),
+            billing_class=self.get_str(f"ARGUS_{prefix}_BILLING_CLASS"),
+            extraction_capability=self.get_str(
+                f"ARGUS_{prefix}_EXTRACTION_CAPABILITY"
+            ),
+            fixture_contract=self.get_str(f"ARGUS_{prefix}_FIXTURE_CONTRACT"),
+            credential_version_fingerprint=self.get_str(
+                f"ARGUS_{prefix}_CREDENTIAL_VERSION_FINGERPRINT"
+            ),
+            account_fingerprint=self.get_str(
+                f"ARGUS_{prefix}_ACCOUNT_FINGERPRINT"
+            ),
         )
 
     def load(self) -> ArgusConfig:
@@ -383,6 +409,17 @@ class EnvironmentConfigLoader:
                 ),
                 residential_base_url=self.get_str("ARGUS_SEARXNG_RESIDENTIAL_BASE_URL"),
                 timeout_seconds=self.get_int("ARGUS_SEARXNG_TIMEOUT_SECONDS", 12),
+                billing_class=self.get_str("ARGUS_SEARXNG_BILLING_CLASS"),
+                extraction_capability=self.get_str(
+                    "ARGUS_SEARXNG_EXTRACTION_CAPABILITY"
+                ),
+                fixture_contract=self.get_str("ARGUS_SEARXNG_FIXTURE_CONTRACT"),
+                credential_version_fingerprint=self.get_str(
+                    "ARGUS_SEARXNG_CREDENTIAL_VERSION_FINGERPRINT"
+                ),
+                account_fingerprint=self.get_str(
+                    "ARGUS_SEARXNG_ACCOUNT_FINGERPRINT"
+                ),
             ),
             duckduckgo=self.provider_config(
                 "DUCKDUCKGO",
@@ -412,6 +449,17 @@ class EnvironmentConfigLoader:
             yahoo=ProviderConfig(
                 enabled=self.get_bool("ARGUS_YAHOO_ENABLED", True),
                 timeout_seconds=self.get_int("ARGUS_YAHOO_TIMEOUT_SECONDS", 15),
+                billing_class=self.get_str("ARGUS_YAHOO_BILLING_CLASS"),
+                extraction_capability=self.get_str(
+                    "ARGUS_YAHOO_EXTRACTION_CAPABILITY"
+                ),
+                fixture_contract=self.get_str("ARGUS_YAHOO_FIXTURE_CONTRACT"),
+                credential_version_fingerprint=self.get_str(
+                    "ARGUS_YAHOO_CREDENTIAL_VERSION_FINGERPRINT"
+                ),
+                account_fingerprint=self.get_str(
+                    "ARGUS_YAHOO_ACCOUNT_FINGERPRINT"
+                ),
             ),
             wolfram=ProviderConfig(
                 enabled=self.get_bool("ARGUS_WOLFRAM_ENABLED", False),
@@ -423,6 +471,17 @@ class EnvironmentConfigLoader:
                     "ARGUS_WOLFRAM_MONTHLY_BUDGET_USD", 2000.0
                 ),
                 timeout_seconds=self.get_int("ARGUS_WOLFRAM_TIMEOUT_SECONDS", 15),
+                billing_class=self.get_str("ARGUS_WOLFRAM_BILLING_CLASS"),
+                extraction_capability=self.get_str(
+                    "ARGUS_WOLFRAM_EXTRACTION_CAPABILITY"
+                ),
+                fixture_contract=self.get_str("ARGUS_WOLFRAM_FIXTURE_CONTRACT"),
+                credential_version_fingerprint=self.get_str(
+                    "ARGUS_WOLFRAM_CREDENTIAL_VERSION_FINGERPRINT"
+                ),
+                account_fingerprint=self.get_str(
+                    "ARGUS_WOLFRAM_ACCOUNT_FINGERPRINT"
+                ),
             ),
             jina=ProviderConfig(
                 enabled=self.get_bool("ARGUS_JINA_ENABLED", True),

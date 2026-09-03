@@ -59,7 +59,7 @@ def _request(
         "call_args": [],
         "call_kwargs": channels(
             params=params,
-            headers=headers,
+            headers={} if headers is None else headers,
             json=json_body,
             timeout=call_timeout,
         ),

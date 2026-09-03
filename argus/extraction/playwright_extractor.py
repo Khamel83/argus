@@ -18,12 +18,21 @@ import importlib.util
 import os
 import subprocess
 
+from argus.acquisition.browser_policy import (
+    BrowserAdmission,
+    admit_browser_url,
+    failure_text,
+    install_browser_policy,
+)
+from argus.acquisition.guarded import GuardedAcquisitionError, guarded_browser_session
 from argus.extraction.models import ExtractedContent, ExtractorName
-from argus.extraction.ssrf import is_safe_url
+from argus.acquisition.guarded import guarded_url_policy
 from argus.logging import get_logger
 from argus.runtime_manifest import inspect_playwright_browser_capability
 
 logger = get_logger("extraction.playwright")
+# Compatibility alias; URL decisions are centralized in Guarded Acquisition.
+is_safe_url = guarded_url_policy
 
 OBSCURA_CDP_URL = os.getenv("ARGUS_OBSCURA_CDP_URL", "")
 
@@ -37,6 +46,15 @@ _browser_start_count = 0
 _remote_connection_count = 0
 _browser_runtime_state = "unknown"
 _browser_runtime_reason = "not_observed_since_restart"
+
+
+def _browser_is_connected(browser) -> bool:
+    """Return browser liveness without allowing a health probe to raise."""
+
+    try:
+        return bool(browser and browser.is_connected())
+    except Exception:
+        return False
 
 
 def _check_playwright():
@@ -81,15 +99,33 @@ async def _close_browser_resources() -> None:
             logger.debug("Failed to stop Playwright runtime reason=stop_failed")
 
 
-async def _get_browser():
+async def _get_browser(admission: BrowserAdmission | None = None):
     """Get or create a shared browser instance.
 
     Tries Obscura CDP first (if ARGUS_OBSCURA_CDP_URL is set), then falls
-    back to launching headless Chrome.
+    back to launching headless Chrome.  Direct callers must still present an
+    admission; the default path refreshes the external policy itself.
     """
     global _browser, _playwright_instance, _using_obscura_cdp
     global _browser_unavailable, _browser_start_count, _remote_connection_count
     global _browser_runtime_state, _browser_runtime_reason
+
+    if admission is None:
+        try:
+            await guarded_browser_session(
+                "https://browser-policy.invalid/",
+                caller_principal="playwright-runtime",
+                request_id="browser-runtime",
+            )
+        except GuardedAcquisitionError:
+            return None
+        admission = await admit_browser_url(
+            "https://browser-policy.invalid/",
+            caller_principal="playwright-runtime",
+            request_id="browser-runtime",
+        )
+        if not isinstance(admission, BrowserAdmission):
+            return None
 
     async with _get_browser_lock():
         if _browser and _browser.is_connected():
@@ -147,14 +183,35 @@ async def _get_browser():
 
 async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedContent:
     """Extract content using headless browser (Obscura CDP or Chrome)."""
-    browser = await _get_browser()
+    try:
+        await guarded_browser_session(
+            url,
+            caller_principal="playwright",
+            request_id="extract-playwright",
+        )
+    except GuardedAcquisitionError as exc:
+        return ExtractedContent(url=url, error=failure_text(exc.failure))
+    admission = await admit_browser_url(url, caller_principal="playwright")
+    if not isinstance(admission, BrowserAdmission):
+        return ExtractedContent(url=url, error=failure_text(admission))
+
+    browser = await _get_browser(admission)
     if not browser:
         return ExtractedContent(url=url, error="playwright: not available")
 
     context = None
     page = None
+    browser_cleanup_required = False
     try:
         context = await browser.new_context()
+        policy_failure = await install_browser_policy(
+            context,
+            admission,
+            url_checker=is_safe_url,
+        )
+        if policy_failure is not None:
+            browser_cleanup_required = True
+            return ExtractedContent(url=url, error=failure_text(policy_failure))
         page = await context.new_page()
         await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
         final_url = page.url
@@ -205,7 +262,27 @@ async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedCon
             word_count=len(text.split()),
             extractor=ExtractorName.PLAYWRIGHT,
         )
+    except asyncio.CancelledError:
+        browser_cleanup_required = True
+        raise
     except Exception as exc:
+        error_name = type(exc).__name__.lower()
+        error_text = str(exc).lower()
+        browser_cleanup_required = (
+            context is None
+            or any(
+                marker in error_name or marker in error_text
+                for marker in (
+                    "memory",
+                    "oom",
+                    "crash",
+                    "targetclosed",
+                    "browser has been closed",
+                    "browser closed",
+                )
+            )
+            or not _browser_is_connected(browser)
+        )
         logger.debug(
             "Playwright extraction failed reason=request_failed class=%s",
             type(exc).__name__,
@@ -222,6 +299,8 @@ async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedCon
                 await context.close()
             except Exception:
                 logger.debug("Failed to close Playwright context reason=close_failed")
+        if browser_cleanup_required:
+            await close_browser()
 
 
 async def extract_playwright(url: str) -> ExtractedContent:

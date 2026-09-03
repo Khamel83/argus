@@ -2,19 +2,35 @@ import asyncio
 import hmac
 import importlib.util
 import ipaddress
+import logging
 import os
 import random
 import shutil
-import socket
 import time
 from contextlib import asynccontextmanager
 from typing import Dict
 
 from fastapi import FastAPI, HTTPException, Request
+import httpx
 from pydantic import BaseModel
 
+from argus.acquisition.guarded import (
+    GuardedAcquisitionError,
+    guarded_browser_session,
+    guarded_http_request,
+    guarded_url_policy,
+    patched_httpx_client,
+)
+from argus.acquisition.browser_policy import (
+    BrowserAdmission,
+    admit_browser_url,
+    failure_text,
+    install_browser_policy,
+)
 from argus.config import get_config
 from argus.extraction.rate_limit import DomainRateLimiter
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Argus Residential Extractor", version="1.1.0")
 
@@ -94,6 +110,7 @@ class ExtractResponse(BaseModel):
     word_count: int = 0
     extractor: str = "unknown"
     error: str | None = None
+    failure_code: str | None = None
 
 
 @app.get("/health")
@@ -119,6 +136,24 @@ async def health():
 
 
 _worker_domain_limiter = DomainRateLimiter(max_requests=5, window_seconds=60)
+
+
+def _production_runtime(config: object | None = None) -> bool:
+    """Return whether browser subprocesses must be policy-enforced."""
+
+    configured_env = getattr(config, "env", None)
+    if isinstance(configured_env, str) and configured_env.strip().lower() == "production":
+        return True
+    return os.getenv("ARGUS_ENV", "development").strip().lower() == "production"
+
+
+def _browser_transport_unavailable(tool: str) -> dict[str, str]:
+    """Return a stable policy result for an un-interceptable browser tool."""
+
+    return {
+        "error": f"{tool}: browser policy unavailable",
+        "failure_code": "browser_policy_unavailable",
+    }
 
 
 @app.post("/extract")
@@ -170,7 +205,11 @@ async def extract(req: ExtractRequest, request: Request):
         # Try obscura (stealth CLI)
         obscura_path = shutil.which("obscura")
         if obscura_path:
-            result = await _extract_obscura(url, config.residential.timeout_seconds)
+            result = await _extract_obscura(
+                url,
+                config.residential.timeout_seconds,
+                production=_production_runtime(config),
+            )
             if result.get("text") and len(result["text"].split()) >= 50:
                 return ExtractResponse(url=url, extractor="obscura", **result)
 
@@ -188,7 +227,10 @@ async def extract(req: ExtractRequest, request: Request):
         # Try crawl4ai if enabled
         crawl4ai_enabled = os.getenv("ARGUS_CRAWL4AI_ENABLED", "").lower() in ("1", "true")
         if crawl4ai_enabled:
-            result = await _extract_crawl4ai(url)
+            result = await _extract_crawl4ai(
+                url,
+                production=_production_runtime(config),
+            )
             if result.get("text") and len(result["text"].split()) >= 50:
                 return ExtractResponse(url=url, extractor="crawl4ai", **result)
 
@@ -204,88 +246,50 @@ def _check_playwright() -> bool:
 
 
 def _is_safe_url(url: str) -> tuple[bool, str]:
-    """Basic SSRF protection — block private/internal IPs. Standalone (no argus dependency)."""
-    from urllib.parse import urlparse
-
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        return False, f"blocked scheme: {parsed.scheme}"
-
-    hostname = parsed.hostname
-    if not hostname:
-        return False, "no hostname"
-
-    blocked_names = {"localhost", "metadata.google.internal", "metadata", "169.254.169.254"}
-    if hostname.lower() in blocked_names:
-        return False, f"blocked hostname: {hostname}"
-
-    try:
-        addr = ipaddress.ip_address(hostname)
-        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-            return False, f"private IP: {hostname}"
-    except ValueError:
-        pass  # hostname, not IP — resolve and check
-        try:
-            resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-            for family, _, _, _, sockaddr in resolved[:2]:
-                ip = ipaddress.ip_address(sockaddr[0])
-                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-                    return False, f"resolves to private IP: {sockaddr[0]}"
-        except socket.gaierror:
-            pass  # DNS failure — let the extractor handle it
-
-    return True, ""
+    """Compatibility URL check owned by Guarded Acquisition."""
+    safe, reason = guarded_url_policy(url)
+    if safe:
+        return True, ""
+    return False, reason
 
 
 async def _extract_trafilatura(url: str, cookies: list[dict] | None = None) -> dict:
     try:
         import trafilatura
-        import httpx
-        from urllib.parse import urlparse
         from argus.extraction.trafilatura_result import normalize_trafilatura_result
 
-        loop = asyncio.get_event_loop()
         ua = random.choice(_USER_AGENTS)
         headers = {"User-Agent": ua}
-
-        initial_domain = urlparse(url).netloc.lower()
-
-        def _is_same_domain(target_url: str) -> bool:
-            return urlparse(target_url).netloc.lower() == initial_domain
-
-        # Manual redirect handling to prevent cookie leakage
-        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
-            current_url = url
-            current_headers = headers.copy()
-            if cookies:
-                cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies if "name" in c and "value" in c)
-                if cookie_str:
-                    current_headers["Cookie"] = cookie_str
-
-            hops = 0
-            while hops < 5:
-                resp = await client.get(current_url, headers=current_headers)
-                if resp.is_redirect:
-                    next_url = str(resp.headers.get("location"))
-                    if not next_url.startswith("http"):
-                        from urllib.parse import urljoin
-                        next_url = urljoin(current_url, next_url)
-
-                    # Scrub cookies if redirecting to a different domain
-                    if not _is_same_domain(next_url):
-                        current_headers.pop("Cookie", None)
-
-                    current_url = next_url
-                    hops += 1
-                    continue
-                break
-
-            final_url = str(resp.url)
-            downloaded = resp.text
+        if cookies:
+            cookie_str = "; ".join(
+                f"{c['name']}={c['value']}"
+                for c in cookies
+                if "name" in c and "value" in c
+            )
+            if cookie_str:
+                headers["Cookie"] = cookie_str
+        profile = "authenticated_content" if cookies else "public_content"
+        credential_policy = "origin_scoped" if cookies else "none"
+        resp = await guarded_http_request(
+            url,
+            headers=headers,
+            profile=profile,
+            credential_policy=credential_policy,
+            caller_principal="residential-worker-trafilatura",
+            request_id="residential-worker-trafilatura",
+            timeout=10,
+            target_url=url,
+            compat_client_factory=patched_httpx_client(httpx.AsyncClient),
+        )
+        resp.raise_for_status()
+        final_url = str(resp.url)
+        downloaded = resp.text
 
         if not downloaded:
             return {"error": "trafilatura: failed to fetch"}
-        extracted = await loop.run_in_executor(None, trafilatura.bare_extraction, downloaded)
+        extracted = await asyncio.get_event_loop().run_in_executor(
+            None, trafilatura.bare_extraction, downloaded
+        )
         normalized = normalize_trafilatura_result(extracted)
         if normalized is None:
             return {"error": "trafilatura: no content"}
@@ -302,7 +306,30 @@ async def _extract_trafilatura(url: str, cookies: list[dict] | None = None) -> d
         return {"error": f"trafilatura: {e}"}
 
 
-async def _extract_obscura(url: str, timeout: int) -> dict:
+async def _extract_obscura(
+    url: str,
+    timeout: int,
+    *,
+    production: bool | None = None,
+) -> dict:
+    if (_production_runtime() if production is None else production):
+        return _browser_transport_unavailable("obscura")
+    try:
+        await guarded_browser_session(
+            url,
+            caller_principal="residential-obscura",
+            request_id="residential-obscura",
+        )
+    except GuardedAcquisitionError as exc:
+        return {"error": f"{exc.failure.code.value}: {exc.failure.safe_reason}"}
+    admission = await admit_browser_url(
+        url,
+        caller_principal="residential-obscura",
+        request_id="residential-obscura",
+    )
+    if not isinstance(admission, BrowserAdmission):
+        return {"error": failure_text(admission)}
+
     try:
         proc = await asyncio.create_subprocess_exec(
             "obscura", "fetch", url, "--dump", "text", "--stealth", "--quiet",
@@ -326,6 +353,28 @@ async def _extract_obscura(url: str, timeout: int) -> dict:
 
 
 async def _extract_playwright(url: str, timeout: int, cookies: list[dict] | None = None) -> dict:
+    profile = "authenticated_content" if cookies else "public_content"
+    credential_policy = "origin_scoped" if cookies else "none"
+    try:
+        await guarded_browser_session(
+            url,
+            profile=profile,
+            credential_policy=credential_policy,
+            caller_principal="residential-playwright",
+            request_id="residential-playwright",
+        )
+    except GuardedAcquisitionError as exc:
+        return {"error": f"{exc.failure.code.value}: {exc.failure.safe_reason}"}
+    admission = await admit_browser_url(
+        url,
+        profile=profile,
+        credential_policy=credential_policy,
+        caller_principal="residential-playwright",
+        request_id="residential-playwright",
+    )
+    if not isinstance(admission, BrowserAdmission):
+        return {"error": failure_text(admission)}
+
     try:
         from playwright.async_api import async_playwright
         from urllib.parse import urlparse
@@ -337,16 +386,18 @@ async def _extract_playwright(url: str, timeout: int, cookies: list[dict] | None
             browser = await pw.chromium.launch(
                 headless=True, args=["--no-sandbox", "--disable-setuid-sandbox"]
             )
+            context = await browser.new_context(service_workers="block")
+            policy_failure = await install_browser_policy(context, admission)
+            if policy_failure is not None:
+                return {"error": failure_text(policy_failure)}
             if cookies:
                 # Playwright's add_cookies automatically scopes them.
                 # However, if we redirect to a new domain, we should ensure
                 # we don't manually leak them in headers (handled by browser).
-                context = await browser.new_context()
                 await context.add_cookies(cookies)
                 page = await context.new_page()
             else:
-                context = None
-                page = await browser.new_page()
+                page = await context.new_page()
 
             # Listen for redirects to monitor domain changes
             page.on("framenavigated", lambda frame: _check_playwright_leak(frame, initial_domain))
@@ -363,9 +414,6 @@ async def _extract_playwright(url: str, timeout: int, cookies: list[dict] | None
                 return source.innerText || source.textContent || '';
             }""")
             text = (text or "").strip()
-            if context:
-                await context.close()
-            await browser.close()
             if not text or len(text.split()) < 100:
                 return {"error": "playwright: too little content"}
             return {
@@ -375,6 +423,21 @@ async def _extract_playwright(url: str, timeout: int, cookies: list[dict] | None
                 "word_count": len(text.split()),
             }
         finally:
+            if "page" in locals() and page is not None:
+                try:
+                    await page.close()
+                except Exception:
+                    logger.debug("Failed to close residential page reason=close_failed")
+            if "context" in locals() and context is not None:
+                try:
+                    await context.close()
+                except Exception:
+                    logger.debug("Failed to close residential context reason=close_failed")
+            if "browser" in locals() and browser is not None:
+                try:
+                    await browser.close()
+                except Exception:
+                    logger.debug("Failed to close residential browser reason=close_failed")
             await pw.stop()
     except Exception as e:
         return {"error": f"playwright: {e}"}
@@ -390,7 +453,29 @@ def _check_playwright_leak(frame, initial_domain):
         pass
 
 
-async def _extract_crawl4ai(url: str) -> dict:
+async def _extract_crawl4ai(
+    url: str,
+    *,
+    production: bool | None = None,
+) -> dict:
+    if (_production_runtime() if production is None else production):
+        return _browser_transport_unavailable("crawl4ai")
+    try:
+        await guarded_browser_session(
+            url,
+            caller_principal="residential-crawl4ai",
+            request_id="residential-crawl4ai",
+        )
+    except GuardedAcquisitionError as exc:
+        return {"error": f"{exc.failure.code.value}: {exc.failure.safe_reason}"}
+    admission = await admit_browser_url(
+        url,
+        caller_principal="residential-crawl4ai",
+        request_id="residential-crawl4ai",
+    )
+    if not isinstance(admission, BrowserAdmission):
+        return {"error": failure_text(admission)}
+
     try:
         from crawl4ai import AsyncWebCrawler
 

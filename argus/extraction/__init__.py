@@ -13,6 +13,12 @@ Usage:
 from argus.extraction.extractor import extract_url
 from argus.extraction.models import ExtractedContent, ExtractorName
 from argus.extraction.quality_gate import QualityGate, GateResult
+from argus.extraction.spend_gateway import (
+    ExtractionOperationContext,
+    ExtractionSpendGateway,
+    SpendReservation,
+    SpendSettlement,
+)
 
 __all__ = [
     "extract_url",
@@ -20,4 +26,8 @@ __all__ = [
     "ExtractorName",
     "QualityGate",
     "GateResult",
+    "ExtractionOperationContext",
+    "ExtractionSpendGateway",
+    "SpendReservation",
+    "SpendSettlement",
 ]

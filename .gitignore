@@ -49,6 +49,7 @@ argus.db-wal
 CLAUDE.local.md
 
 # Local operator/session artifacts
+.artifacts/
 1shot/
 docs/sessions/
 docs/LLM-OVERVIEW.md

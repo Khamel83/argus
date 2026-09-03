@@ -8,7 +8,7 @@ import ipaddress
 import inspect
 import json
 import os
-import socket
+import socket  # Compatibility attribute for legacy DNS-injection tests.
 import time
 from typing import Any
 from urllib.parse import urlparse
@@ -16,8 +16,20 @@ from urllib.parse import urlparse
 from tld import get_fld
 
 from argus.api.schemas import FetchRawRequest, FetchRawResponse
+from argus.acquisition.browser_policy import (
+    BrowserAdmission,
+    admit_browser_url,
+    failure_text,
+)
+from argus.acquisition.guarded import (
+    GuardedAcquisitionError,
+    guarded_browser_session,
+    guarded_url_policy,
+)
 from argus.extraction.playwright_extractor import _get_browser
-from argus.extraction.ssrf import is_safe_url
+# Compatibility name retained for callers that inject the historical URL
+# checker. The implementation delegates to Guarded Acquisition.
+is_safe_url = guarded_url_policy
 
 _MAX_RESPONSE_BYTES = 5_000_000
 _SETTLE_WINDOW_MS = 1500
@@ -29,6 +41,10 @@ _CHROME_USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/126.0.0.0 Safari/537.36"
 )
+
+# DNS policy is owned by Guarded Acquisition.  Keep the module reference for
+# callers that still patch the historical attribute while migrating tests.
+_SOCKET_COMPAT_MODULE = socket
 
 
 def _actual_egress() -> str:
@@ -77,29 +93,31 @@ async def _safe_network_url(url: str, source_site: str) -> tuple[bool, str]:
         )
         if not safe:
             return safe, reason
-        if source_site == "example.test":
-            # IANA-reserved fixture site; it cannot resolve in normal operation.
-            return True, ""
-        parsed = urlparse(url)
-        resolved = await asyncio.wait_for(
-            asyncio.to_thread(
-                socket.getaddrinfo,
-                parsed.hostname,
-                parsed.port or (443 if parsed.scheme == "https" else 80),
-            ),
-            timeout=_DNS_TIMEOUT_SECONDS,
-        )
-        for _family, _socktype, _proto, _canonname, sockaddr in resolved:
-            try:
-                address = ipaddress.ip_address(sockaddr[0])
-            except ValueError:
-                return False, "DNS returned an invalid address"
-            if not address.is_global:
-                return False, f"non-public IP blocked:{address}"
+        # Keep one narrow compatibility check for embedders that replace the
+        # historical ``is_safe_url`` hook. The canonical production hook
+        # already performs complete-set DNS validation, so it does not perform
+        # this second lookup in the normal path.
+        if is_safe_url is not guarded_url_policy and source_site != "example.test":
+            parsed = urlparse(url)
+            resolved = await asyncio.wait_for(
+                asyncio.to_thread(
+                    _SOCKET_COMPAT_MODULE.getaddrinfo,
+                    parsed.hostname,
+                    parsed.port or (443 if parsed.scheme == "https" else 80),
+                ),
+                timeout=_DNS_TIMEOUT_SECONDS,
+            )
+            for _family, _socktype, _proto, _canonname, sockaddr in resolved:
+                try:
+                    address = ipaddress.ip_address(sockaddr[0])
+                except (IndexError, TypeError, ValueError):
+                    return False, "DNS returned an invalid address"
+                if not address.is_global:
+                    return False, f"non-public IP blocked:{address}"
         if _site(url) != source_site:
             return False, "cross-site host blocked"
         return True, ""
-    except socket.gaierror:
+    except OSError:
         return False, "DNS resolution failed"
     except TimeoutError:
         return False, "DNS validation timed out"
@@ -181,6 +199,23 @@ async def _fetch_raw_inner(
             (f"egress_unavailable:requested={request.egress}:actual={actual_egress}"),
             http_status=503,
         )
+
+    admission = await admit_browser_url(
+        request.url,
+        caller_principal="raw-fetch",
+        request_id="raw-fetch",
+    )
+    if not isinstance(admission, BrowserAdmission):
+        return _error(failure_text(admission), http_status=503)
+
+    try:
+        await guarded_browser_session(
+            request.url,
+            caller_principal="raw-fetch",
+            request_id="raw-fetch",
+        )
+    except GuardedAcquisitionError as exc:
+        return _error(f"{exc.failure.code.value}:{exc.failure.safe_reason}", http_status=503)
 
     browser = await _get_browser()
     if browser is None:

@@ -14,6 +14,11 @@ from typing import Optional
 
 import httpx
 
+from argus.acquisition.guarded import (
+    GuardedAcquisitionError,
+    guarded_http_request,
+    patched_httpx_client,
+)
 from argus.config import get_config
 from argus.extraction.cookies import load_editthiscookie_json, get_cookie_path
 from argus.extraction.models import ExtractedContent, ExtractorName
@@ -69,7 +74,9 @@ def _load_cookies_for_domain(domain: str) -> Optional[list[dict]]:
         return None
 
 
-async def _try_endpoint(url: str, endpoint: str, cookies: Optional[list[dict]], domain: Optional[str]) -> Optional[ExtractedContent]:
+async def _try_endpoint(
+    url: str, endpoint: str, cookies: Optional[list[dict]], domain: Optional[str]
+) -> Optional[ExtractedContent]:
     """Try a single endpoint. Returns ExtractedContent on success, None on failure."""
     config = get_config()
     body: dict = {"url": url}
@@ -80,15 +87,28 @@ async def _try_endpoint(url: str, endpoint: str, cookies: Optional[list[dict]], 
         body["domain"] = domain
 
     try:
-        async with httpx.AsyncClient(timeout=config.residential.timeout_seconds) as client:
-            resp = await client.post(
-                f"{endpoint}/extract",
-                json=body,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {secret}",
-                },
-            )
+        resp = await guarded_http_request(
+            f"{endpoint}/extract",
+            method="POST",
+            json_body=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {secret}",
+            },
+            # The endpoint is a configured Argus service, not a public
+            # third-party content target.  Keep its bearer credential scoped
+            # to that service origin and use the narrow trusted-service
+            # exception for internal Homelab/Tailscale hosts.
+            profile="authenticated_content",
+            credential_policy="origin_scoped",
+            operation_class="third_party",
+            caller_principal="residential-client",
+            request_id="residential-client",
+            timeout=config.residential.timeout_seconds,
+            target_url=url,
+            compat_client_factory=patched_httpx_client(httpx.AsyncClient),
+            trusted_service_origin=f"{endpoint}/extract",
+        )
 
         if resp.status_code == 200:
             _endpoint_health.mark_healthy(endpoint)
@@ -105,14 +125,21 @@ async def _try_endpoint(url: str, endpoint: str, cookies: Optional[list[dict]], 
 
         if resp.status_code == 503:
             _endpoint_health.mark_unhealthy(endpoint)
-            logger.warning("Residential service %s returned 503 — cooling down", endpoint)
+            logger.warning(
+                "Residential service %s returned 503 — cooling down", endpoint
+            )
             return None
 
         _endpoint_health.mark_unhealthy(endpoint)
         logger.warning("Residential service %s returned %d", endpoint, resp.status_code)
         return None
 
-    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
+    except (
+        GuardedAcquisitionError,
+        httpx.ConnectError,
+        httpx.ConnectTimeout,
+        httpx.ReadTimeout,
+    ):
         _endpoint_health.mark_unhealthy(endpoint)
         logger.debug("Residential endpoint %s unreachable", endpoint)
         return None
@@ -127,11 +154,12 @@ async def extract_residential(url: str, domain: str = "") -> ExtractedContent:
     if not _is_configured():
         return ExtractedContent(url=url, error="residential: not configured")
     if not config.residential.shared_secret:
-        return ExtractedContent(url=url, error="residential: shared secret not configured")
+        return ExtractedContent(
+            url=url, error="residential: shared secret not configured"
+        )
 
     cookies = _load_cookies_for_domain(domain) if domain else None
 
-    last_error = "residential: all endpoints unavailable"
     for node in config.egress_nodes:
         endpoint = node.url
         if not _endpoint_health.is_healthy(endpoint):
@@ -141,9 +169,11 @@ async def extract_residential(url: str, domain: str = "") -> ExtractedContent:
         result = await _try_endpoint(url, endpoint, cookies, domain or None)
         if result is not None:
             return result
-        last_error = f"residential: endpoint {endpoint} failed"
 
-    return ExtractedContent(url=url, error=last_error)
+    # Do not expose endpoint URLs in the user-facing failure.  The endpoint
+    # list is operator configuration, while the stable failure contract only
+    # needs to state that no configured service was available.
+    return ExtractedContent(url=url, error="residential: all endpoints unavailable")
 
 
 def reset_reachability():

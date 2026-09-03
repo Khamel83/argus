@@ -9,6 +9,15 @@ from .outcomes import (
     mcp_is_error_for,
 )
 from .v2 import V2Envelope, V2Problem, validate_v2_envelope
+from .failures import (
+    FailureCode,
+    FailureRecord,
+    FailureSpec,
+    failure_codes,
+    failure_spec,
+    operation_error_for,
+)
+from .identity import EvidenceIdentity, ReleaseIdentity, SchemaIdentity
 
 __all__ = [
     "AcceptedOperation",
@@ -20,4 +29,13 @@ __all__ = [
     "V2Envelope",
     "V2Problem",
     "validate_v2_envelope",
+    "EvidenceIdentity",
+    "FailureCode",
+    "FailureRecord",
+    "FailureSpec",
+    "ReleaseIdentity",
+    "SchemaIdentity",
+    "failure_codes",
+    "failure_spec",
+    "operation_error_for",
 ]

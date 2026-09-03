@@ -826,3 +826,11 @@ def validate_unauth_probe(
         "side_effect_delta": 0,
         "response_sha256": response_sha256,
     }
+
+
+def project_readiness_evidence(verdict: Mapping[str, Any]) -> dict[str, Any]:
+    """Project a readiness verdict into the value-only observation format."""
+
+    from .readiness import project_readiness_evidence as _project
+
+    return _project(verdict)

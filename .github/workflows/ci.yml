@@ -128,18 +128,23 @@ jobs:
             uv run --python 3.12 alembic upgrade head
 
       - name: Verify PostgreSQL schema contract
+        id: schema
         run: |
+          SCHEMA_HEAD="$(uv run --python 3.12 python -c 'from argus.recovery.database import EXPECTED_SCHEMA_HEAD; print(EXPECTED_SCHEMA_HEAD)')"
           uv run --python 3.12 \
             python scripts/generate_argus_schema_contract.py \
             --database-url "$ARGUS_TEST_POSTGRES_URL" \
-            --schema-head 0009_retrieval_evidence \
+            --schema-head "$SCHEMA_HEAD" \
             --check
+          echo "schema_head=$SCHEMA_HEAD" >> "$GITHUB_OUTPUT"
+          SCHEMA_CONTRACT_NAME="$(uv run --python 3.12 python -c 'from argus.recovery.database import EXPECTED_SCHEMA_HEAD, SCHEMA_CONTRACT_PATHS; print(SCHEMA_CONTRACT_PATHS[EXPECTED_SCHEMA_HEAD].name)')"
+          echo "schema_contract=argus/recovery/$SCHEMA_CONTRACT_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Upload PostgreSQL schema contract
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: argus-schema-0009
-          path: argus/recovery/argus_schema_0009.json
+          name: argus-schema-${{ steps.schema.outputs.schema_head }}
+          path: ${{ steps.schema.outputs.schema_contract }}
           if-no-files-found: error
 
       - name: Run PostgreSQL ledger contract
@@ -251,6 +256,9 @@ jobs:
       - name: Install uv
         run: python3 -m pip install uv==0.11.26
 
+      - name: Sync release dependencies
+        run: uv sync --frozen
+
       - name: Check llms.txt freshness
         run: |
           README_TS=$(git log -1 --format=%ct -- README.md)
@@ -262,4 +270,4 @@ jobs:
           fi
 
       - name: Check version sync
-        run: python3 scripts/verify_release_contract.py
+        run: uv run --frozen --no-sync python scripts/verify_release_contract.py

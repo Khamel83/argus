@@ -19,6 +19,8 @@ def test_extract_cli_passes_archive_ingest_mode(monkeypatch):
     from argus.cli import main as cli_main
     from argus.extraction.models import ExtractedContent, ExtractorName
 
+    monkeypatch.setenv("ARGUS_ENV", "development")
+    monkeypatch.setenv("ARGUS_MCP_STANDALONE", "true")
     seen = {}
 
     async def fake_extract_url(url, domain=None, mode="default", *, caller=""):
@@ -144,6 +146,8 @@ def test_mcp_init_rejects_unconfigured_local_adapter(tmp_path, monkeypatch):
 def test_search_free_flag_sets_free_only_on_query(monkeypatch):
     from argus.cli import main as cli_main
 
+    monkeypatch.setenv("ARGUS_ENV", "development")
+    monkeypatch.setenv("ARGUS_MCP_STANDALONE", "true")
     seen = {}
 
     def fake_create_broker():
@@ -170,6 +174,8 @@ def test_search_free_flag_sets_free_only_on_query(monkeypatch):
 def test_search_without_free_flag_leaves_free_only_false(monkeypatch):
     from argus.cli import main as cli_main
 
+    monkeypatch.setenv("ARGUS_ENV", "development")
+    monkeypatch.setenv("ARGUS_MCP_STANDALONE", "true")
     seen = {}
 
     def fake_create_broker():
@@ -196,6 +202,8 @@ def test_search_without_free_flag_leaves_free_only_false(monkeypatch):
 def test_search_caller_flag_sets_caller_on_query(monkeypatch):
     from argus.cli import main as cli_main
 
+    monkeypatch.setenv("ARGUS_ENV", "development")
+    monkeypatch.setenv("ARGUS_MCP_STANDALONE", "true")
     seen = {}
 
     def fake_create_broker():
@@ -222,6 +230,8 @@ def test_search_caller_flag_sets_caller_on_query(monkeypatch):
 def test_search_caller_defaults_to_cli(monkeypatch):
     from argus.cli import main as cli_main
 
+    monkeypatch.setenv("ARGUS_ENV", "development")
+    monkeypatch.setenv("ARGUS_MCP_STANDALONE", "true")
     seen = {}
 
     def fake_create_broker():
@@ -310,6 +320,7 @@ def test_standalone_recover_url_dispatches_exactly(monkeypatch):
             "url": "https://example.com/gone",
             "title": "Lost",
             "domain": "example.com",
+            "caller": "cli",
             "as_json": True,
         }
     ]

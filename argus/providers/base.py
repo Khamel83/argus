@@ -6,11 +6,23 @@ Provider-specific response shapes must never leak outside adapters.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from enum import Enum
 import json
 import time
 from typing import Mapping
+from urllib.parse import urlencode, urlsplit, urlunsplit
+
+import httpx
+
+from argus.acquisition.errors import AcquisitionFailureCode
+from argus.acquisition.guarded import (
+    GuardedAcquisitionError,
+    guarded_http_request,
+    patched_httpx_client,
+)
+from argus.acquisition.models import CredentialPolicy, OperationClass, OriginProfile
 
 from argus.broker.planning import RetrievalPlan
 from argus.broker.provider_evidence import ProviderSearchBatch
@@ -44,6 +56,163 @@ class ProbeCapability(str, Enum):
     BLOCKING_UNSUPPORTED = "blocking_unsupported"
 
 
+class _ProviderCompatClient:
+    """Preserve legacy fake-client request shapes behind the guarded seam."""
+
+    def __init__(
+        self,
+        factory: Callable[..., object],
+        params: Mapping[str, object],
+        *args: object,
+        client_headers: Mapping[str, str] | Sequence[tuple[str, str]] | None = None,
+        include_follow_redirects: bool = False,
+        include_client_follow_redirects: bool = False,
+        include_call_timeout: bool = False,
+        strip_initial_headers: bool = False,
+        **kwargs: object,
+    ) -> None:
+        if client_headers is not None:
+            kwargs["headers"] = dict(client_headers)
+        if not include_client_follow_redirects:
+            kwargs.pop("follow_redirects", None)
+        self._client = factory(*args, **kwargs)
+        self._params = dict(params)
+        self._include_follow_redirects = include_follow_redirects
+        self._include_client_follow_redirects = include_client_follow_redirects
+        self._include_call_timeout = include_call_timeout
+        self._strip_initial_headers = strip_initial_headers
+
+    async def __aenter__(self) -> "_ProviderCompatClient":
+        enter = getattr(self._client, "__aenter__", None)
+        if callable(enter):
+            await enter()
+        return self
+
+    async def __aexit__(self, *args: object) -> object:
+        leave = getattr(self._client, "__aexit__", None)
+        if callable(leave):
+            return await leave(*args)
+        return None
+
+    async def _send(
+        self, method: str, url: str, *args: object, **kwargs: object
+    ) -> object:
+        if not self._include_follow_redirects:
+            kwargs.pop("follow_redirects", None)
+        if not self._include_call_timeout:
+            kwargs.pop("timeout", None)
+        if self._strip_initial_headers and self._params:
+            kwargs["headers"] = {}
+        sender = getattr(self._client, method, None)
+        if not callable(sender):
+            sender = getattr(self._client, "request", None)
+            if not callable(sender):
+                raise TypeError("compatibility client has no request method")
+            try:
+                result = await sender(method.upper(), url, *args, **kwargs)
+            except httpx.TimeoutException as exc:
+                raise TimeoutError("provider compatibility request timed out") from exc
+        else:
+            if self._params:
+                kwargs.setdefault("params", dict(self._params))
+            try:
+                result = await sender(url, *args, **kwargs)
+            except httpx.TimeoutException as exc:
+                raise TimeoutError("provider compatibility request timed out") from exc
+        return self._materialize_response(result)
+
+    @staticmethod
+    def _materialize_response(response: object) -> object:
+        """Give the guarded projection bytes even to loose test doubles."""
+
+        content = getattr(response, "content", None)
+        if isinstance(content, (bytes, bytearray, str)):
+            return response
+        try:
+            text = getattr(response, "text", None)
+        except Exception:
+            # Keep malformed fixture responses bounded but non-decodable so
+            # adapters retain their parse-error evidence classification.
+            response.content = b"<malformed-provider-response>"
+            return response
+        if isinstance(text, str) and text:
+            response.content = text.encode("utf-8")
+            return response
+        json_method = getattr(response, "json", None)
+        if callable(json_method):
+            try:
+                payload = json_method()
+                if payload is None and isinstance(text, str):
+                    response.content = text.encode("utf-8")
+                    return response
+                if (
+                    isinstance(payload, (Mapping, list, tuple, str, int, float, bool))
+                    or payload is None
+                ):
+                    response.content = json.dumps(
+                        payload, separators=(",", ":"), ensure_ascii=False
+                    ).encode("utf-8")
+                    return response
+            except Exception:
+                pass
+        if isinstance(text, str):
+            response.content = text.encode("utf-8")
+        return response
+
+    async def get(self, url: str, *args: object, **kwargs: object) -> object:
+        return await self._send("get", url, *args, **kwargs)
+
+    async def post(self, url: str, *args: object, **kwargs: object) -> object:
+        return await self._send("post", url, *args, **kwargs)
+
+    async def request(
+        self, method: str, url: str, *args: object, **kwargs: object
+    ) -> object:
+        return await self._send(method.lower(), url, *args, **kwargs)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._client, name)
+
+
+def _provider_compat_factory(
+    factory: Callable[..., object],
+    params: Mapping[str, object],
+    *,
+    client_headers: Mapping[str, str] | Sequence[tuple[str, str]] | None = None,
+    include_follow_redirects: bool = False,
+    include_client_follow_redirects: bool = False,
+    include_call_timeout: bool = False,
+    strip_initial_headers: bool = False,
+) -> Callable[..., _ProviderCompatClient]:
+    def create(*args: object, **kwargs: object) -> _ProviderCompatClient:
+        return _ProviderCompatClient(
+            factory,
+            params,
+            *args,
+            client_headers=client_headers,
+            include_follow_redirects=include_follow_redirects,
+            include_client_follow_redirects=include_client_follow_redirects,
+            include_call_timeout=include_call_timeout,
+            strip_initial_headers=strip_initial_headers,
+            **kwargs,
+        )
+
+    return create
+
+
+def _append_query_params(url: str, params: Mapping[str, object]) -> str:
+    """Encode provider controls into the provider endpoint URL for the guard."""
+
+    if not params:
+        return url
+    parsed = urlsplit(url)
+    encoded = urlencode(tuple(params.items()), doseq=True)
+    query = f"{parsed.query}&{encoded}" if parsed.query else encoded
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, query, parsed.fragment)
+    )
+
+
 class BaseProvider(ABC):
     """Abstract base for all search provider adapters."""
 
@@ -69,6 +238,62 @@ class BaseProvider(ABC):
     async def search(self, query: SearchQuery) -> ProviderSearchBatch:
         """Execute a search and return one normalized bounded evidence batch."""
         ...
+
+    async def _provider_request(
+        self,
+        query: SearchQuery,
+        url: str,
+        *,
+        method: str = "GET",
+        headers: Mapping[str, str] | Sequence[tuple[str, str]] | None = None,
+        params: Mapping[str, object] | None = None,
+        body: object = None,
+        json_body: object = None,
+        timeout: float | None = None,
+    ) -> object:
+        """Send one provider-endpoint request through guarded acquisition.
+
+        Provider credentials are accepted only for the provider endpoint.  A
+        patched client factory is deliberately discovered only through the
+        explicit compatibility seam used by tests and embedders.
+        """
+
+        effective_timeout = (
+            float(timeout) if timeout is not None else self._attempt_timeout(query)
+        )
+        client_factory = patched_httpx_client(httpx.AsyncClient)
+        dispatch_url = _append_query_params(url, params or {})
+        if client_factory is not None:
+            compat_factory = _provider_compat_factory(
+                client_factory,
+                params or {},
+                client_headers=headers if self.name is ProviderName.YAHOO else None,
+                include_client_follow_redirects=self.name is ProviderName.YAHOO,
+                include_call_timeout=self.name is ProviderName.YAHOO,
+                strip_initial_headers=self.name is ProviderName.YAHOO,
+            )
+            dispatch_url = url
+        else:
+            compat_factory = client_factory
+        request_id = str(
+            query.metadata.get("_provider_attempt_id") or f"{self.name.value}-attempt"
+        )
+        return await guarded_http_request(
+            dispatch_url,
+            method=method,
+            headers=headers,
+            body=body,
+            json_body=json_body,
+            profile=OriginProfile.AUTHENTICATED_CONTENT,
+            credential_policy=CredentialPolicy.ORIGIN_SCOPED,
+            operation_class=OperationClass.DIRECT_HTTP,
+            caller_principal=f"provider:{self.name.value}",
+            request_id=request_id,
+            timeout=effective_timeout,
+            compat_client_factory=compat_factory,
+            follow_redirects=self.name is not ProviderName.YAHOO,
+            trusted_service_origin=(url if self.name is ProviderName.SEARXNG else None),
+        )
 
     def _request_evidence(
         self,
@@ -185,6 +410,30 @@ class BaseProvider(ABC):
         request_evidence: ProviderRequestEvidence | None = None,
         observed_status: int | None = None,
     ) -> ProviderSearchBatch:
+        if isinstance(error, GuardedAcquisitionError):
+            code = error.failure.code
+            if code is AcquisitionFailureCode.TIMEOUT:
+                return self._typed_failure_batch(
+                    FailureCategory.TIMEOUT,
+                    "provider request timed out",
+                    started_at=started_at,
+                    request_evidence=request_evidence,
+                    observed_status=observed_status,
+                )
+            if code in {
+                AcquisitionFailureCode.ACQUISITION_BLOCKED,
+                AcquisitionFailureCode.POLICY_REJECTED,
+                AcquisitionFailureCode.INVALID_REQUEST,
+                AcquisitionFailureCode.AUTHENTICATION_REJECTED,
+            }:
+                return self._typed_failure_batch(
+                    FailureCategory.POLICY_REJECTED,
+                    "provider request was blocked by acquisition policy",
+                    started_at=started_at,
+                    request_evidence=request_evidence,
+                    observed_status=observed_status,
+                )
+            error = RuntimeError("guarded provider request failed")
         return failure_batch(
             self.name,
             error,
@@ -282,7 +531,14 @@ class BaseProvider(ABC):
     @staticmethod
     def _response_headers(response: object) -> dict[str, object]:
         headers = getattr(response, "headers", None)
-        return dict(headers) if isinstance(headers, Mapping) else {}
+        if isinstance(headers, Mapping):
+            return dict(headers)
+        if isinstance(headers, Sequence) and not isinstance(headers, (str, bytes)):
+            try:
+                return dict(headers)
+            except (TypeError, ValueError):
+                return {}
+        return {}
 
     @staticmethod
     def _response_status(response: object | None) -> int | None:

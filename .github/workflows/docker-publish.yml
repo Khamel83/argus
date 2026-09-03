@@ -20,6 +20,10 @@ jobs:
       digest: ${{ steps.build.outputs.digest }}
       receipt_sha256: ${{ steps.receipt.outputs.sha256 }}
       source_revision: ${{ steps.identity.outputs.source_revision }}
+      runtime_manifest_sha256: ${{ steps.receipt.outputs.runtime_manifest_sha256 }}
+      release_descriptor_sha256: ${{ steps.receipt.outputs.release_descriptor_sha256 }}
+      schema_contract_sha256: ${{ steps.receipt.outputs.schema_contract_sha256 }}
+      schema_id: ${{ steps.receipt.outputs.schema_id }}
 
     steps:
       - name: Checkout
@@ -52,6 +56,26 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Extract immutable release inputs
+        env:
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker pull "$IMAGE_REF"
+          container_id="$(docker create "$IMAGE_REF")"
+          cleanup() {
+            docker rm "$container_id" >/dev/null
+          }
+          trap cleanup EXIT
+          docker cp "$container_id:/app/runtime-manifest.json" runtime-manifest.json
+          docker cp "$container_id:/app/argus/mcp/release_descriptor.json" release_descriptor.json
+          schema_contract_file="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["schema_contract_file"])' runtime-manifest.json)"
+          case "$schema_contract_file" in
+            argus/recovery/argus_schema_*.json) ;;
+            *) echo "runtime manifest schema contract path is invalid" >&2; exit 1 ;;
+          esac
+          docker cp "$container_id:/app/${schema_contract_file}" schema-contract.json
+
       - name: Write release receipt
         id: receipt
         run: |
@@ -63,14 +87,25 @@ jobs:
             --workflow "${GITHUB_WORKFLOW}" \
             --run-id "${GITHUB_RUN_ID}" \
             --run-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --runtime-manifest runtime-manifest.json \
+            --release-descriptor release_descriptor.json \
+            --schema-contract schema-contract.json \
             --output release-receipt.json
           echo "sha256=$(sha256sum release-receipt.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "runtime_manifest_sha256=$(sha256sum runtime-manifest.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "release_descriptor_sha256=$(sha256sum release_descriptor.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "schema_contract_sha256=$(sha256sum schema-contract.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "schema_id=$(python3 -c 'import json; print(json.load(open("release-receipt.json", encoding="utf-8"))["schema_id"])')" >> "$GITHUB_OUTPUT"
 
       - name: Retain release receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-receipt
-          path: release-receipt.json
+          path: |
+            release-receipt.json
+            runtime-manifest.json
+            release_descriptor.json
+            schema-contract.json
           if-no-files-found: error
           retention-days: 90
 

@@ -253,6 +253,115 @@ def test_production_extraction_adapter_accepts_visible_terminal_failure():
     assert projected.extraction_run_id
 
 
+def test_production_extraction_adapter_uses_real_paid_spend_evidence():
+    """Accepted steps must retain the gateway's attempt id and amounts."""
+    from argus.extraction.extractor import _finalize_accepted_extraction
+    from argus.extraction.models import ExtractedContent, ExtractionAttempt
+
+    projected = _finalize_accepted_extraction(
+        ExtractedContent(
+            url="https://example.com/article",
+            text="paid content " * 80,
+            title="Paid",
+            word_count=160,
+            extractor=ExtractorName.YOU_CONTENTS,
+            cost=0.12,
+            attempts=[
+                ExtractionAttempt(
+                    extractor="you_contents",
+                    status="success",
+                    latency_ms=12,
+                    spend=SpendEvidence(
+                        actual_usd=Decimal("0.12"),
+                        reserved_usd=Decimal("0.25"),
+                        spend_attempt_ref="attempt-real-123",
+                    ),
+                )
+            ],
+        ),
+        url="https://example.com/article",
+        mode="default",
+        caller="maya",
+        request_id="request-real-spend",
+        latency_ms=12,
+        repository=MemoryOutcomeRepository(),
+    )
+
+    step = projected.accepted_execution_evidence
+    assert step.actual_usd == Decimal("0.12")
+    assert step.reserved_usd == Decimal("0.25")
+    assert step.spend_attempt_refs == ("attempt-real-123",)
+    assert "extract-spend-" not in step.spend_attempt_refs[0]
+
+
+def test_production_extraction_adapter_rejects_unledgered_paid_artifact():
+    """A paid artifact without gateway evidence cannot cross acceptance."""
+    from argus.extraction.extractor import _finalize_accepted_extraction
+    from argus.extraction.models import ExtractedContent, ExtractionAttempt
+    from argus.extraction.outcomes import ExtractionContractRejected
+
+    with pytest.raises(ExtractionContractRejected):
+        _finalize_accepted_extraction(
+            ExtractedContent(
+                url="https://example.com/article",
+                text="paid content " * 80,
+                title="Paid",
+                word_count=160,
+                extractor=ExtractorName.YOU_CONTENTS,
+                cost=0.12,
+                attempts=[
+                    ExtractionAttempt(
+                        extractor="you_contents",
+                        status="success",
+                        latency_ms=12,
+                    )
+                ],
+            ),
+            url="https://example.com/article",
+            mode="default",
+            caller="maya",
+            request_id="request-unledgered-spend",
+            latency_ms=12,
+            repository=MemoryOutcomeRepository(),
+        )
+
+
+def test_production_extraction_adapter_rejects_fabricated_paid_zero_spend():
+    """A zero amount without a real paid attempt ref is not evidence."""
+    from argus.extraction.extractor import _finalize_accepted_extraction
+    from argus.extraction.models import ExtractedContent, ExtractionAttempt
+    from argus.extraction.outcomes import ExtractionContractRejected
+
+    with pytest.raises(ExtractionContractRejected):
+        _finalize_accepted_extraction(
+            ExtractedContent(
+                url="https://example.com/article",
+                text="paid content " * 80,
+                title="Paid",
+                word_count=160,
+                extractor=ExtractorName.YOU_CONTENTS,
+                attempts=[
+                    ExtractionAttempt(
+                        extractor="you_contents",
+                        status="success",
+                        latency_ms=12,
+                        spend=SpendEvidence(
+                            actual_usd=Decimal("0"),
+                            reserved_usd=Decimal("0"),
+                            spend_attempt_ref=None,
+                        ),
+                    )
+                ],
+            ),
+            url="https://example.com/article",
+            mode="default",
+            caller="maya",
+            request_id="request-fabricated-zero-spend",
+            latency_ms=12,
+            repository=MemoryOutcomeRepository(),
+        )
+
+
 @pytest.mark.parametrize(
     ("error", "expected"),
     [

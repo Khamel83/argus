@@ -51,7 +51,7 @@
     },
     {
       "name": "extract_content_v2",
-      "input_sha256": "50bb241cb4156390d2d522ebafecbc8b42905214f4c4a8f1db776e7bfc29e442",
+      "input_sha256": "350ac75406cd45fa649defa4cf57f92f254945ccc4c5da855b8807a9e75efb4a",
       "output_sha256": "7d6282dadca6c6ac229b37f235ff92b02f96d96529e1bd52e2ebe06072ed3d9d"
     }
   ]

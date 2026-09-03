@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
+import os
 from datetime import datetime, timezone
 from dataclasses import asdict, dataclass, fields, is_dataclass
 from enum import Enum
@@ -13,8 +15,12 @@ from typing import Awaitable, Callable, Mapping
 from argus.contracts import (
     AcceptedOperation,
     CanonicalOutcome,
+    FailureCode,
+    FailureRecord,
     OperationError,
+    failure_spec,
     http_status_for,
+    operation_error_for,
 )
 from argus.extraction import extract_url
 from argus.extraction.composition import (
@@ -121,6 +127,62 @@ def _operation_error(
         retryable=retryable,
         retry_after_seconds=retry_after_seconds,
         operation_began=operation_began,
+    )
+
+
+def _typed_failure(value: object, *, request_id: str) -> FailureRecord | None:
+    """Normalize extraction-native causal failures without exposing details."""
+
+    if isinstance(value, FailureRecord):
+        if value.request_id == request_id:
+            return value
+        return FailureRecord(
+            code=value.code,
+            safe_reason=value.safe_reason,
+            request_id=request_id,
+            operation_id=value.operation_id,
+            release_identity=value.release_identity,
+            evidence_references=value.evidence_references,
+        )
+    failure = getattr(value, "failure", None)
+    if isinstance(failure, FailureRecord):
+        return _typed_failure(failure, request_id=request_id)
+    try:
+        from argus.acquisition.errors import AcquisitionFailure
+    except ImportError:
+        AcquisitionFailure = ()
+    if isinstance(value, AcquisitionFailure):
+        try:
+            code = FailureCode(value.code.value)
+        except (AttributeError, TypeError, ValueError):
+            code = FailureCode.PROVIDER_UNAVAILABLE
+        return FailureRecord(
+            code=code,
+            safe_reason=value.safe_reason,
+            request_id=request_id,
+            evidence_references=tuple(value.evidence_references),
+        )
+    return None
+
+
+def _typed_failure_error(
+    failure: FailureRecord,
+    *,
+    request_id: str,
+) -> OperationError:
+    """Present a typed failure while keeping the outer request identity."""
+
+    if failure.request_id == request_id:
+        return operation_error_for(failure)
+    spec = failure_spec(failure.code)
+    return _operation_error(
+        spec.outcome,
+        request_id=request_id,
+        detail=failure.safe_reason,
+        code=failure.code.value,
+        status=spec.status,
+        operation_began=spec.operation_began,
+        retryable=spec.default_retryable,
     )
 
 
@@ -281,9 +343,7 @@ def _freshness_from_observation(
         "source": observation["source"],
         "observed_at": observation["observed_at"],
         "semantics": "accepted_execution_age",
-        "age_ms": _unavailable(
-            "caller must derive age against its capture timestamp"
-        ),
+        "age_ms": _unavailable("caller must derive age against its capture timestamp"),
     }
 
 
@@ -327,9 +387,7 @@ def _search_execution_evidence(
         and accepted_evidence.acceptance_fingerprint
         == acceptance_receipt.acceptance_fingerprint
         and response.cached
-        == (
-            accepted_evidence.cache_decision.value == "hit_eligible"
-        )
+        == (accepted_evidence.cache_decision.value == "hit_eligible")
     )
     if evidence_bound:
         observation = _accepted_at_observation(
@@ -341,9 +399,7 @@ def _search_execution_evidence(
             "source": "acceptance_receipt",
             "receipt_ref": acceptance_receipt.receipt_ref,
             "accepted_at": acceptance_receipt.accepted_at.isoformat(),
-            "acceptance_fingerprint": (
-                acceptance_receipt.acceptance_fingerprint
-            ),
+            "acceptance_fingerprint": (acceptance_receipt.acceptance_fingerprint),
         }
     else:
         observation = _observation_evidence(
@@ -379,9 +435,7 @@ def _search_execution_evidence(
         cache_decision = accepted_evidence.cache_decision.value
     elif evidence_bound:
         spend = {
-            **_unavailable(
-                "accepted provider spend accounting is incomplete"
-            ),
+            **_unavailable("accepted provider spend accounting is incomplete"),
             "provider_calls": _available(
                 accepted_evidence.current_provider_calls,
                 source="accepted_search_evidence.current_provider_calls",
@@ -391,9 +445,7 @@ def _search_execution_evidence(
         }
         cache_decision = accepted_evidence.cache_decision.value
     else:
-        spend = _unavailable(
-            "SearchResponse does not expose accepted spend accounting"
-        )
+        spend = _unavailable("SearchResponse does not expose accepted spend accounting")
         cache_decision = None
     diagnostics = tuple(
         {
@@ -402,17 +454,13 @@ def _search_execution_evidence(
             "status": attempt["status"],
             "result_count": attempt["results_count"],
             "timeout_source": (
-                attempt["reason_code"]
-                if attempt["status"] == "timeout"
-                else None
+                attempt["reason_code"] if attempt["status"] == "timeout" else None
             ),
             "operation_latency_ms": attempt["latency_ms"],
             "cache_latency_ms": None,
             "cache_state": "hit" if response.cached else "miss",
             "cache_age_ms": (
-                accepted_evidence.cache_age_ms
-                if evidence_bound
-                else None
+                accepted_evidence.cache_age_ms if evidence_bound else None
             ),
             "cache_origin": accepted_evidence.cache_origin if evidence_bound else None,
             "spend_provenance": (
@@ -455,14 +503,11 @@ def _search_execution_evidence(
                     source="accepted_search_evidence.cache_age_ms",
                 )
                 if evidence_bound
-                else _unavailable(
-                    "SearchResponse does not expose accepted cache age"
-                )
+                else _unavailable("SearchResponse does not expose accepted cache age")
             ),
             "age_semantics": (
                 "no_cache_entry"
-                if evidence_bound
-                and accepted_evidence.cache_decision.value == "miss"
+                if evidence_bound and accepted_evidence.cache_decision.value == "miss"
                 else "accepted_origin_age"
                 if evidence_bound
                 and accepted_evidence.cache_decision.value == "hit_eligible"
@@ -470,24 +515,18 @@ def _search_execution_evidence(
                 if evidence_bound
                 else "unavailable"
             ),
-            "origin": (
-                accepted_evidence.cache_origin if evidence_bound else None
-            ),
+            "origin": (accepted_evidence.cache_origin if evidence_bound else None),
             "origin_spend_usd": (
                 _decimal_text(accepted_evidence.origin_spend_usd)
-                if evidence_bound
-                and accepted_evidence.origin_spend_complete
+                if evidence_bound and accepted_evidence.origin_spend_complete
                 else None
             ),
             "origin_spend_availability": (
                 "available"
-                if evidence_bound
-                and accepted_evidence.origin_spend_complete
+                if evidence_bound and accepted_evidence.origin_spend_complete
                 else "unavailable"
             ),
-            "eligible": (
-                accepted_evidence.cache_eligible if evidence_bound else None
-            ),
+            "eligible": (accepted_evidence.cache_eligible if evidence_bound else None),
         },
         "spend": spend,
         "freshness": _freshness_from_observation(observation),
@@ -573,6 +612,10 @@ def _extraction_execution_evidence(result) -> dict[str, object]:
                 "jina_disabled",
                 "caller_tier_cap",
                 "provider_unavailable",
+                "spend_authority_unavailable",
+                "spend_denied",
+                "provider_unready",
+                "charge_uncertain",
                 "policy_skipped",
             }:
                 reason_code = bounded_reason
@@ -602,8 +645,7 @@ def _extraction_execution_evidence(result) -> dict[str, object]:
         and accepted_evidence.receipt_ref == acceptance_receipt.receipt_ref
         and accepted_evidence.accepted_at == acceptance_receipt.accepted_at
         and accepted_evidence.receipt_scope == acceptance_receipt.scope
-        and result.cache_hit
-        == (accepted_evidence.cache_decision == "hit_eligible")
+        and result.cache_hit == (accepted_evidence.cache_decision == "hit_eligible")
     )
     if evidence_bound:
         observation = _accepted_at_observation(
@@ -620,9 +662,7 @@ def _extraction_execution_evidence(result) -> dict[str, object]:
                 source="accepted_extraction_evidence.cache_age_seconds",
             )
             if accepted_evidence.cache_age_seconds is not None
-            else _unavailable(
-                "cache miss or bypass has no cache-entry age"
-            )
+            else _unavailable("cache miss or bypass has no cache-entry age")
         )
         if accepted_evidence.spend_complete:
             spend = {
@@ -639,9 +679,7 @@ def _extraction_execution_evidence(result) -> dict[str, object]:
                     _decimal_text(accepted_evidence.spend_delta_usd),
                     source="accepted_extraction_evidence.spend_delta_usd",
                 ),
-                "spend_attempt_refs": tuple(
-                    accepted_evidence.spend_attempt_refs
-                ),
+                "spend_attempt_refs": tuple(accepted_evidence.spend_attempt_refs),
                 "extractor_calls": _available(
                     accepted_evidence.extractor_call_count,
                     source="accepted_extraction_evidence.extractor_call_count",
@@ -668,9 +706,7 @@ def _extraction_execution_evidence(result) -> dict[str, object]:
         wall_timing = _unavailable(
             "ExtractedContent does not expose accepted operation wall time"
         )
-        cache_age = _unavailable(
-            "ExtractedContent does not expose accepted cache age"
-        )
+        cache_age = _unavailable("ExtractedContent does not expose accepted cache age")
         spend = {
             "availability": "partial",
             "actual_usd": _available(result.cost, source="cost"),
@@ -703,7 +739,9 @@ def _extraction_execution_evidence(result) -> dict[str, object]:
             "extractor": attempt["extractor"],
             "provider": provider,
             "status": attempt["status"],
-            "result_count": 1 if attempt["status"] in {"success", "content", "cache"} else 0,
+            "result_count": 1
+            if attempt["status"] in {"success", "content", "cache"}
+            else 0,
             "timeout_source": timeout_source,
             "operation_latency_ms": attempt["latency_ms"],
             "cache_latency_ms": (
@@ -729,6 +767,12 @@ def _extraction_execution_evidence(result) -> dict[str, object]:
         "operation_id": _operation_id_evidence(
             result.extraction_run_id,
             source="extraction_run_id",
+        ),
+        "release_identity": _operation_id_evidence(
+            getattr(accepted_evidence, "release_identity", None)
+            if evidence_bound
+            else None,
+            source="accepted_extraction_evidence.release_identity",
         ),
         "observation": observation,
         "attempts": attempts,
@@ -779,9 +823,7 @@ def _extraction_execution_evidence(result) -> dict[str, object]:
         "result_count": 1 if result.text else 0,
         "timeout_source": timeout_source,
         "operation_latency_ms": (
-            accepted_evidence.operation_latency_ms
-            if evidence_bound
-            else None
+            accepted_evidence.operation_latency_ms if evidence_bound else None
         ),
         "cache_latency_ms": None,
         "cache_eligibility": {
@@ -842,7 +884,9 @@ def _search_projection(
                     result.metadata.get("source_date").isoformat()
                     if result.metadata
                     and isinstance(result.metadata.get("source_date"), datetime)
-                    else result.metadata.get("source_date") if result.metadata else None
+                    else result.metadata.get("source_date")
+                    if result.metadata
+                    else None
                 ),
                 "score_attribution": (
                     dict(result.score_attribution) if include_attribution else {}
@@ -874,6 +918,80 @@ def _search_projection(
     }
 
 
+def _core_readiness_projection(
+    *,
+    operation_id: object,
+    request_id: object,
+    receipt_identity: object | None,
+    accepted: bool,
+) -> dict[str, object]:
+    """Project the ordinary core gate without reading downstream state."""
+
+    from argus.acceptance_v3.readiness import (
+        evaluate_readiness_gates,
+        project_readiness_evidence,
+    )
+
+    evidence = {
+        "status": "accepted" if accepted else "failed",
+        "durable": accepted,
+        "operation_id": operation_id,
+        "request_id": request_id,
+    }
+    if receipt_identity not in (None, ""):
+        evidence["receipt_identity"] = receipt_identity
+    return project_readiness_evidence(evaluate_readiness_gates(evidence, level="core"))
+
+
+def _legacy_accept_with_identity(
+    repository: object,
+    query: SearchQuery,
+    response: object,
+    *,
+    request_id: str,
+    broker: object,
+):
+    """Call a legacy ledger while preserving additive identity support.
+
+    Older injected repositories still expose ``accept(query, response)``.
+    Inspect the callable before adding the optional identity arguments so test
+    and development doubles keep their established contract.
+    """
+
+    accept = getattr(repository, "accept")
+    try:
+        signature = inspect.signature(accept)
+    except (TypeError, ValueError):
+        signature = None
+    if signature is None:
+        return accept(query, response)
+    parameters = signature.parameters.values()
+    accepts_kwargs = any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters
+    )
+    identity: dict[str, object] = {
+        "operation_id": response.search_run_id,
+        "request_id": request_id,
+    }
+    release_identity = getattr(broker, "release_identity", None)
+    if not isinstance(release_identity, str) or not release_identity:
+        release_identity = os.environ.get("ARGUS_RELEASE")
+    if isinstance(release_identity, str) and release_identity not in {
+        "",
+        "unknown-release",
+    }:
+        identity["release_identity"] = release_identity
+    schema_identity = getattr(repository, "schema_identity", None)
+    if schema_identity is not None:
+        identity["schema_identity"] = schema_identity
+    kwargs = {}
+    if accepts_kwargs or "evidence_identity" in signature.parameters:
+        kwargs["evidence_identity"] = identity
+    if accepts_kwargs or "request_id" in signature.parameters:
+        kwargs["request_id"] = request_id
+    return accept(query, response, **kwargs)
+
+
 def _search_outcome(response) -> CanonicalOutcome:
     failed = [
         trace
@@ -887,7 +1005,11 @@ def _search_outcome(response) -> CanonicalOutcome:
     return CanonicalOutcome.EMPTY
 
 
-def _extract_projection(result) -> dict[str, object]:
+def _extract_projection(
+    result,
+    *,
+    request_id: str | None = None,
+) -> dict[str, object]:
     completeness = result.completeness_result
     rejection = getattr(result, "rejection", None)
     if rejection is None:
@@ -899,6 +1021,29 @@ def _extract_projection(result) -> dict[str, object]:
         rejection_projection = rejection.to_dict()
         rejection_projection["code"] = rejection.code.value
         rejection_projection["recommended_action"] = rejection.recommended_action.value
+    result_failure = getattr(result, "failure", None)
+    failure = _typed_failure(
+        result_failure,
+        request_id=(
+            request_id
+            or (
+                result_failure.request_id
+                if isinstance(result_failure, FailureRecord)
+                else getattr(result, "extraction_run_id", None)
+            )
+            or "unknown-request"
+        ),
+    )
+    failure_projection = None
+    if failure is not None:
+        failure_projection = {
+            "code": failure.code.value,
+            "safe_reason": failure.safe_reason,
+            "request_id": failure.request_id,
+            "operation_id": failure.operation_id,
+            "release_identity": failure.release_identity,
+            "evidence_references": failure.evidence_references,
+        }
     return {
         "extraction_run_id": result.extraction_run_id,
         "url": result.url,
@@ -909,6 +1054,7 @@ def _extract_projection(result) -> dict[str, object]:
         "word_count": result.word_count,
         "extractor": result.extractor.value if result.extractor else None,
         "error": result.error,
+        "failure": failure_projection,
         "quality_passed": getattr(result, "quality_passed", None),
         "quality_reason": getattr(result, "quality_reason", None),
         "extractors_tried": list(getattr(result, "extractors_tried", []) or []),
@@ -942,7 +1088,9 @@ def _extract_projection(result) -> dict[str, object]:
     }
 
 
-def _workflow_artifact_projection(typed, item, result_cluster_ref: str) -> dict[str, object]:
+def _workflow_artifact_projection(
+    typed, item, result_cluster_ref: str
+) -> dict[str, object]:
     """Project accepted extraction facts needed by workflow evidence consumers."""
     artifact = typed.artifact
     if artifact is None:
@@ -988,8 +1136,10 @@ def _workflow_artifact_projection(typed, item, result_cluster_ref: str) -> dict[
         "machine": provenance.machine,
         "source_type": provenance.source_type,
         "source_date": artifact.published_date or item.get("source_date"),
-        "retrieved_at": item.get("retrieved_at") or typed.acceptance_receipt.accepted_at,
-        "retrieval_timestamp": item.get("retrieved_at") or typed.acceptance_receipt.accepted_at,
+        "retrieved_at": item.get("retrieved_at")
+        or typed.acceptance_receipt.accepted_at,
+        "retrieval_timestamp": item.get("retrieved_at")
+        or typed.acceptance_receipt.accepted_at,
         "text_sha256": text_sha256,
         "source_text_sha256": text_sha256,
         "result_count": 1,
@@ -1126,6 +1276,12 @@ class AcceptedOperationService:
             "accepted_at": execution.receipt.accepted_at.isoformat(),
             "acceptance_fingerprint": (execution.receipt.acceptance_fingerprint),
         }
+        result["readiness"] = _core_readiness_projection(
+            operation_id=execution.response.search_run_id,
+            request_id=request_id,
+            receipt_identity=execution.receipt.receipt_ref,
+            accepted=True,
+        )
         if getattr(execution, "session_update_failed", False):
             result["session_update"] = {
                 "status": "failed",
@@ -1462,7 +1618,14 @@ class AcceptedOperationService:
         if isinstance(execution_evidence, dict):
             execution_evidence["free_profile_eligible"] = free_profile_eligible
         try:
-            receipt = self._repository_provider().accept(query, response)
+            repository = self._repository_provider()
+            receipt = _legacy_accept_with_identity(
+                repository,
+                query,
+                response,
+                request_id=request_id,
+                broker=self._broker_provider(),
+            )
         except Exception:
             failed = CanonicalOutcome.PERSISTENCE_FAILED
             return AcceptedOperation(
@@ -1487,6 +1650,16 @@ class AcceptedOperationService:
                 delivery_intent_id if isinstance(delivery_intent_id, str) else None
             ),
         }
+        result["readiness"] = _core_readiness_projection(
+            operation_id=response.search_run_id,
+            request_id=request_id,
+            receipt_identity=(
+                receipt_run_id
+                if isinstance(receipt_run_id, str)
+                else response.search_run_id
+            ),
+            accepted=True,
+        )
         return AcceptedOperation(
             outcome=outcome,
             request_id=request_id,
@@ -1524,6 +1697,7 @@ class AcceptedOperationService:
             mode=SearchMode.RECOVERY,
             max_results=10,
             caller=principal,
+            metadata={"caller_label": getattr(request, "caller", "")},
         )
         if self._registration == AcceptedOperationRegistration.complete():
 
@@ -1599,6 +1773,7 @@ class AcceptedOperationService:
             mode=SearchMode.DISCOVERY,
             max_results=15,
             caller=principal,
+            metadata={"caller_label": getattr(request, "caller", "")},
         )
         if self._registration == AcceptedOperationRegistration.complete():
             execution = await self._broker_provider().search_accepted(
@@ -1644,19 +1819,91 @@ class AcceptedOperationService:
             # injected extractors keep their existing call contract.
             if hasattr(request, "free_only"):
                 kwargs["free_only"] = request.free_only
-            if extractor is extract_url and hasattr(request, "content_type"):
-                kwargs["content_type"] = request.content_type
+            if hasattr(request, "content_type"):
+                # ``content_type`` is an additive transport field.  Preserve
+                # compatibility with injected test/development extractors
+                # that still expose the pre-profile signature, while passing
+                # it to the canonical extractor and kwargs-capable seams.
+                try:
+                    extractor_signature = inspect.signature(extractor)
+                except (TypeError, ValueError):
+                    extractor_signature = None
+                if (
+                    extractor is extract_url
+                    or extractor_signature is None
+                    or any(
+                        parameter.kind is inspect.Parameter.VAR_KEYWORD
+                        for parameter in extractor_signature.parameters.values()
+                    )
+                    or "content_type" in extractor_signature.parameters
+                ):
+                    kwargs["content_type"] = request.content_type
             if (
                 self._registration == AcceptedOperationRegistration.complete()
                 and extractor is extract_url
             ):
+                broker = self._broker_provider()
+                readiness = getattr(broker, "readiness_service", None)
+                if readiness is not None:
+                    from argus.extraction.spend_gateway import (
+                        ExtractionSpendGateway,
+                    )
+
+                    kwargs["spend_gateway"] = ExtractionSpendGateway(readiness)
+                release_identity = getattr(broker, "release_identity", None)
+                if not isinstance(release_identity, str) or not release_identity:
+                    release_identity = os.environ.get(
+                        "ARGUS_RELEASE", "unknown-release"
+                    )
+                kwargs["release_identity"] = release_identity
                 kwargs.update(
                     use_evidence_authority=True,
                     request_id=request_id,
                 )
             result = await extractor(request.url, **kwargs)
-        except Exception:
-            outcome = CanonicalOutcome.PERSISTENCE_FAILED
+        except Exception as error:
+            failure = _typed_failure(error, request_id=request_id)
+            if failure is not None:
+                operation_error = _typed_failure_error(
+                    failure,
+                    request_id=request_id,
+                )
+                return AcceptedOperation(
+                    outcome=failure_spec(failure.code).outcome,
+                    request_id=request_id,
+                    result=None,
+                    error=operation_error,
+                )
+            # Preserve typed extraction outcomes across the accepted-operation
+            # boundary.  A provider/extraction rejection is not evidence that
+            # persistence failed; callers must be able to distinguish the two.
+            from argus.extraction.outcomes import (
+                ExtractionAcceptanceConflict,
+                ExtractionContractRejected,
+                ExtractionPersistenceFailed,
+                ExtractionPreflightRejected,
+            )
+
+            if isinstance(error, ExtractionPreflightRejected):
+                outcome = error.outcome
+                detail = "Extraction request was rejected before execution"
+                operation_began = False
+            elif isinstance(error, ExtractionAcceptanceConflict):
+                outcome = CanonicalOutcome.INVALID_REQUEST
+                detail = "Extraction run identity conflicts with accepted evidence"
+                operation_began = False
+            elif isinstance(error, ExtractionContractRejected):
+                outcome = CanonicalOutcome.EXTRACTION_FAILED
+                detail = "Extraction evidence failed closed validation"
+                operation_began = True
+            elif isinstance(error, ExtractionPersistenceFailed):
+                outcome = CanonicalOutcome.PERSISTENCE_FAILED
+                detail = "Extraction could not be durably recorded"
+                operation_began = True
+            else:
+                outcome = CanonicalOutcome.PERSISTENCE_FAILED
+                detail = "Extraction could not be durably recorded"
+                operation_began = True
             return AcceptedOperation(
                 outcome=outcome,
                 request_id=request_id,
@@ -1664,10 +1911,12 @@ class AcceptedOperationService:
                 error=_operation_error(
                     outcome,
                     request_id=request_id,
-                    detail="Extraction could not be durably recorded",
+                    detail=detail,
+                    operation_began=operation_began,
                 ),
+                operation_began=operation_began,
             )
-        projection = _extract_projection(result)
+        projection = _extract_projection(result, request_id=request_id)
         free_profile_eligible = bool(getattr(request, "free_only", False))
         execution_evidence = projection.get("execution_evidence")
         if isinstance(execution_evidence, dict):
@@ -1685,6 +1934,21 @@ class AcceptedOperationService:
                 execution_evidence["diagnostics"] = enriched
                 execution_evidence["execution_diagnostics"] = enriched
         projection["free_profile_eligible"] = free_profile_eligible
+        typed_failure = _typed_failure(
+            getattr(result, "failure", None),
+            request_id=request_id,
+        )
+        if typed_failure is not None:
+            operation_error = _typed_failure_error(
+                typed_failure,
+                request_id=request_id,
+            )
+            return AcceptedOperation(
+                outcome=failure_spec(typed_failure.code).outcome,
+                request_id=request_id,
+                result=projection,
+                error=operation_error,
+            )
         disposition = getattr(result, "artifact_disposition", None)
         disposition_value = getattr(disposition, "value", disposition)
         accepted_outcome = getattr(result, "accepted_outcome", None)
@@ -1696,6 +1960,17 @@ class AcceptedOperationService:
             outcome = CanonicalOutcome.DEGRADED
         else:
             outcome = CanonicalOutcome.SUCCESS
+        acceptance_receipt = getattr(result, "acceptance_receipt", None)
+        projection["readiness"] = _core_readiness_projection(
+            operation_id=getattr(result, "extraction_run_id", None) or request_id,
+            request_id=request_id,
+            receipt_identity=getattr(acceptance_receipt, "receipt_ref", None),
+            accepted=(
+                acceptance_receipt is not None
+                and outcome in {CanonicalOutcome.SUCCESS, CanonicalOutcome.DEGRADED}
+                and not result.error
+            ),
+        )
         return AcceptedOperation(
             outcome=outcome,
             request_id=request_id,

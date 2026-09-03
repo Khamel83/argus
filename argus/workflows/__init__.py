@@ -10,6 +10,12 @@ from argus.workflows.models import (
     WorkflowStatus,
 )
 from argus.workflows.service import WorkflowService
+from argus.workflows.service import (
+    WorkflowArtifactNotPublished,
+    WorkflowAuthorityUnavailable,
+    WorkflowOwnerMismatch,
+    WorkflowOwnerUnavailable,
+)
 
 __all__ = [
     "CitationRef",
@@ -20,4 +26,8 @@ __all__ = [
     "WorkflowResult",
     "WorkflowService",
     "WorkflowStatus",
+    "WorkflowArtifactNotPublished",
+    "WorkflowAuthorityUnavailable",
+    "WorkflowOwnerMismatch",
+    "WorkflowOwnerUnavailable",
 ]

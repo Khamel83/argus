@@ -8,8 +8,7 @@ Gated by ARGUS_YOU_CONTENTS_ENABLED env var.
 
 import os
 
-import httpx
-
+from argus.acquisition.guarded import guarded_http_request
 from argus.config import get_config
 from argus.extraction.models import ExtractedContent, ExtractorName
 from argus.logging import get_logger
@@ -37,10 +36,20 @@ async def extract_you_contents(url: str) -> ExtractedContent:
     }
 
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            resp = await client.post(YOU_CONTENTS_URL, json=body, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await guarded_http_request(
+            YOU_CONTENTS_URL,
+            method="POST",
+            json_body=body,
+            headers=headers,
+            profile="third_party_fetch",
+            operation_class="third_party",
+            caller_principal="you-contents",
+            request_id="extract-you-contents",
+            timeout=TIMEOUT,
+            target_url=url,
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
         if not data or not isinstance(data, list) or not data[0]:
             return ExtractedContent(url=url, error="you_contents: empty response")

@@ -7,15 +7,13 @@ same ``ExtractedContent`` contract used by Argus' generic extraction chain.
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import re
 from datetime import datetime
 from typing import Any, Awaitable, Callable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
-import httpx
-
+from argus.acquisition.guarded import GuardedAcquisitionError, guarded_http_request
 from argus.extraction.models import ExtractedContent, ExtractorName
 
 _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
@@ -44,27 +42,50 @@ def normalize_youtube_input(value: str) -> tuple[str, str] | None:
 
 
 async def _load_info(url: str) -> dict[str, Any]:
-    def run() -> dict[str, Any]:
-        from yt_dlp import YoutubeDL
-
-        options = {
-            "quiet": True,
-            "no_warnings": True,
-            "skip_download": True,
-            "noplaylist": True,
-            "socket_timeout": 20,
+    """Load public YouTube metadata through the guarded oEmbed endpoint."""
+    oembed_url = f"https://www.youtube.com/oembed?url={quote(url, safe='')}&format=json"
+    try:
+        response = await guarded_http_request(
+            oembed_url,
+            profile="third_party_fetch",
+            operation_class="third_party",
+            caller_principal="youtube-metadata",
+            request_id="youtube-metadata",
+            timeout=20,
+            target_url=url,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError("YouTube returned malformed metadata")
+        normalized = normalize_youtube_input(url)
+        video_id = normalized[1] if normalized else ""
+        return {
+            "id": video_id,
+            "webpage_url": url,
+            "title": payload.get("title", ""),
+            "uploader": payload.get("author_name", ""),
         }
-        with YoutubeDL(options) as ydl:
-            return ydl.extract_info(url, download=False)
-
-    return await asyncio.to_thread(run)
+    except GuardedAcquisitionError as exc:
+        raise RuntimeError(exc.failure.code.value) from exc
 
 
 async def _load_caption(url: str) -> dict[str, Any]:
-    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-        response = await client.get(url, headers={"User-Agent": "Argus/1.0"})
-        response.raise_for_status()
-        return response.json()
+    response = await guarded_http_request(
+        url,
+        headers={"User-Agent": "Argus/1.0"},
+        profile="third_party_fetch",
+        operation_class="third_party",
+        caller_principal="youtube-caption",
+        request_id="youtube-caption",
+        timeout=20,
+        target_url=url,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise ValueError("YouTube returned malformed captions")
+    return payload
 
 
 async def _resolve(value: Any) -> Any:
