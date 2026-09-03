@@ -20,6 +20,8 @@ def test_wheel_configuration_includes_alembic_runtime_artifacts():
 
 
 def test_built_wheel_installs_complete_migration_chain(tmp_path):
+    from argus.recovery.database import EXPECTED_SCHEMA_HEAD
+
     wheel_dir = tmp_path / "wheel"
     install_dir = tmp_path / "installed"
     subprocess.run(
@@ -40,6 +42,9 @@ def test_built_wheel_installs_complete_migration_chain(tmp_path):
     ) for name in names)
     assert any(name.endswith(
         ".data/data/migrations/versions/0009_retrieval_evidence.py"
+    ) for name in names)
+    assert any(name.endswith(
+        f".data/data/migrations/versions/{EXPECTED_SCHEMA_HEAD}.py"
     ) for name in names)
 
     subprocess.run(
@@ -62,7 +67,7 @@ def test_built_wheel_installs_complete_migration_chain(tmp_path):
     config = Config(str(install_dir / "alembic.ini"))
     config.set_main_option("script_location", str(install_dir / "migrations"))
     assert ScriptDirectory.from_config(config).get_current_head() == (
-        "0009_retrieval_evidence"
+        EXPECTED_SCHEMA_HEAD
     )
 
 
