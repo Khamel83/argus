@@ -1,12 +1,20 @@
 # Argus production operations
 
-Last production-safe walkthrough: **2026-07-29**
+Last detailed walkthrough: **2026-07-29** (historical)
 
 This is the canonical operator guide for Argus. Homelab Docker is the sole
 production execution authority. The Mac is source and development only. Maya
 owns user-visible retrieval history; Argus owns retrieval execution and its
 PostgreSQL evidence. The former Mac launchd authority, OCI authority, and host
 residential worker are retired and are not fallbacks.
+
+## Current release checkpoint — 2026-09-03
+
+The production release is Argus `1.6.4` from public main revision
+`01cbd7de9c8f41130918443ab2529fae1901585e`. The release uses PostgreSQL schema
+head `0011_extraction_spend_scope`. Use the read-only identity and status checks
+below for the current runtime result. A green liveness response does not mean
+that every provider, browser path, or downstream integration is available.
 
 ## Production topology
 
@@ -126,6 +134,23 @@ current schema, restore the candidate and use the fresh database backup plus
 forward repair. Do not downgrade schema or restore data over production without
 an explicit irreversible-data gate. The detailed release contract is in
 [releasing](releasing.md).
+
+### Additive schema changes and rollback compatibility
+
+Apply additive PostgreSQL migrations with the dedicated `argus_migration`
+identity. The running `argus_runtime` identity is not a migration identity and
+must not receive schema `CREATE` privilege.
+
+When a release adds tables or columns, first deploy a small compatibility bridge
+that can read the old schema and accept the new migration head without using
+the new objects. Run the bridge through the normal candidate and production
+gates, including the full soak. Apply the forward migration once, then promote
+the feature image with the bridge recorded as the rollback target. Do not use
+an automatic downgrade as rollback. If the feature fails after migration,
+restore the compatible bridge and repair forward from the verified backup.
+
+The bridge is temporary release infrastructure. Remove it only after the
+feature image is known-good and its rollback evidence is retained.
 
 ## PostgreSQL backup and restore
 
