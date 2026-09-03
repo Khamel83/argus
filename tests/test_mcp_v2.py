@@ -35,7 +35,7 @@ V1_SCHEMA_DIGESTS = {
         "a8964ce04df285f5191d38a8e2b3a99f0d58be9d04296f00e193bcdf0e14dd7e",
     ),
     "extract_content": (
-        "e732ac17d12cb41d979366b714d213622887aac448c1b90e310d3e72f8668f9b",
+        "90b325de72026694dfeb75dff500498ca4283c64879865085af24c37af8c7389",
         "3192284eacf752ff4cf63ad79f16b54c03251529ff8186a00d3a5ab082a6ffd7",
     ),
 }
@@ -223,6 +223,7 @@ class _FakeAuthorityClient:
                 "url": "https://example.com/gone",
                 "title": "Gone",
                 "domain": "example.com",
+                "caller": "maya",
             },
         ),
         (
@@ -235,7 +236,11 @@ class _FakeAuthorityClient:
                 "token": "scoped",
             },
             "/api/v2/expand",
-            {"query": "canonical", "context": "primary sources"},
+            {
+                "query": "canonical",
+                "context": "primary sources",
+                "caller": "maya",
+            },
         ),
         (
             "extract_content_v2",
@@ -250,6 +255,9 @@ class _FakeAuthorityClient:
             {
                 "url": "https://example.com/article",
                 "domain": "example.com",
+                "mode": "default",
+                "content_type": "article",
+                "free_only": False,
                 "caller": "maya",
             },
         ),

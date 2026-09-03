@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from datetime import datetime, timezone
 from dataclasses import asdict, dataclass, fields, is_dataclass
@@ -1524,6 +1525,7 @@ class AcceptedOperationService:
             mode=SearchMode.RECOVERY,
             max_results=10,
             caller=principal,
+            metadata={"caller_label": getattr(request, "caller", "")},
         )
         if self._registration == AcceptedOperationRegistration.complete():
 
@@ -1599,6 +1601,7 @@ class AcceptedOperationService:
             mode=SearchMode.DISCOVERY,
             max_results=15,
             caller=principal,
+            metadata={"caller_label": getattr(request, "caller", "")},
         )
         if self._registration == AcceptedOperationRegistration.complete():
             execution = await self._broker_provider().search_accepted(
@@ -1644,8 +1647,25 @@ class AcceptedOperationService:
             # injected extractors keep their existing call contract.
             if hasattr(request, "free_only"):
                 kwargs["free_only"] = request.free_only
-            if extractor is extract_url and hasattr(request, "content_type"):
-                kwargs["content_type"] = request.content_type
+            if hasattr(request, "content_type"):
+                # ``content_type`` is an additive transport field.  Preserve
+                # compatibility with injected test/development extractors
+                # that still expose the pre-profile signature, while passing
+                # it to the canonical extractor and kwargs-capable seams.
+                try:
+                    extractor_signature = inspect.signature(extractor)
+                except (TypeError, ValueError):
+                    extractor_signature = None
+                if (
+                    extractor is extract_url
+                    or extractor_signature is None
+                    or any(
+                        parameter.kind is inspect.Parameter.VAR_KEYWORD
+                        for parameter in extractor_signature.parameters.values()
+                    )
+                    or "content_type" in extractor_signature.parameters
+                ):
+                    kwargs["content_type"] = request.content_type
             if (
                 self._registration == AcceptedOperationRegistration.complete()
                 and extractor is extract_url
@@ -1655,8 +1675,37 @@ class AcceptedOperationService:
                     request_id=request_id,
                 )
             result = await extractor(request.url, **kwargs)
-        except Exception:
-            outcome = CanonicalOutcome.PERSISTENCE_FAILED
+        except Exception as error:
+            # Preserve typed extraction outcomes across the accepted-operation
+            # boundary.  A provider/extraction rejection is not evidence that
+            # persistence failed; callers must be able to distinguish the two.
+            from argus.extraction.outcomes import (
+                ExtractionAcceptanceConflict,
+                ExtractionContractRejected,
+                ExtractionPersistenceFailed,
+                ExtractionPreflightRejected,
+            )
+
+            if isinstance(error, ExtractionPreflightRejected):
+                outcome = error.outcome
+                detail = "Extraction request was rejected before execution"
+                operation_began = False
+            elif isinstance(error, ExtractionAcceptanceConflict):
+                outcome = CanonicalOutcome.INVALID_REQUEST
+                detail = "Extraction run identity conflicts with accepted evidence"
+                operation_began = False
+            elif isinstance(error, ExtractionContractRejected):
+                outcome = CanonicalOutcome.EXTRACTION_FAILED
+                detail = "Extraction evidence failed closed validation"
+                operation_began = True
+            elif isinstance(error, ExtractionPersistenceFailed):
+                outcome = CanonicalOutcome.PERSISTENCE_FAILED
+                detail = "Extraction could not be durably recorded"
+                operation_began = True
+            else:
+                outcome = CanonicalOutcome.PERSISTENCE_FAILED
+                detail = "Extraction could not be durably recorded"
+                operation_began = True
             return AcceptedOperation(
                 outcome=outcome,
                 request_id=request_id,
@@ -1664,8 +1713,10 @@ class AcceptedOperationService:
                 error=_operation_error(
                     outcome,
                     request_id=request_id,
-                    detail="Extraction could not be durably recorded",
+                    detail=detail,
+                    operation_began=operation_began,
                 ),
+                operation_began=operation_began,
             )
         projection = _extract_projection(result)
         free_profile_eligible = bool(getattr(request, "free_only", False))

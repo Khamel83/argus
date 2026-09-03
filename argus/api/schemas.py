@@ -25,6 +25,11 @@ _VALID_PROVIDERS: Set[str] = {
 }
 
 
+def _validate_caller_label(value: str) -> str:
+    """Keep caller labels bounded and safe across every retrieval request."""
+    return validate_public_text(value, label="caller label", allow_empty=True)
+
+
 class SearchRequest(BaseModel):
     query: str = Field(
         ..., min_length=1, max_length=500, description="Search query string"
@@ -48,6 +53,7 @@ class SearchRequest(BaseModel):
     )
     caller: str = Field(
         "",
+        max_length=128,
         description="Caller identifier for attribution (e.g. 'atlas', 'media_rename')",
     )
 
@@ -77,6 +83,11 @@ class SearchRequest(BaseModel):
         if invalid:
             raise ValueError(f"Unknown providers: {', '.join(invalid)}")
         return [p.lower() for p in v]
+
+    @field_validator("caller")
+    @classmethod
+    def validate_caller(cls, value: str) -> str:
+        return _validate_caller_label(value)
 
 
 class SearchResultSchema(BaseModel):
@@ -118,6 +129,14 @@ class RecoverUrlRequest(BaseModel):
         None, description="Optional title hint for better results"
     )
     domain: Optional[str] = Field(None, description="Optional domain hint")
+    caller: str = Field(
+        "", max_length=128, description="Caller identifier for attribution"
+    )
+
+    @field_validator("caller")
+    @classmethod
+    def validate_caller(cls, value: str) -> str:
+        return _validate_caller_label(value)
 
 
 class ExpandRequest(BaseModel):
@@ -128,6 +147,14 @@ class ExpandRequest(BaseModel):
         description="Query to expand with related links",
     )
     context: Optional[str] = Field(None, description="Optional context for expansion")
+    caller: str = Field(
+        "", max_length=128, description="Caller identifier for attribution"
+    )
+
+    @field_validator("caller")
+    @classmethod
+    def validate_caller(cls, value: str) -> str:
+        return _validate_caller_label(value)
 
 
 class ProviderTestRequest(BaseModel):
@@ -167,8 +194,14 @@ class ExtractRequest(BaseModel):
     content_type: Literal["article", "webpage"] = Field(
         "article", description="Quality profile: article or webpage"
     )
+    free_only: bool = Field(
+        False,
+        description="Only use free extraction stages and free-origin evidence",
+    )
     caller: str = Field(
-        "", description="Caller identifier for attribution (e.g. 'maya-intake-extract')"
+        "",
+        max_length=128,
+        description="Caller identifier for attribution (e.g. 'maya-intake-extract')",
     )
 
     @field_validator("url")
@@ -193,6 +226,11 @@ class ExtractRequest(BaseModel):
         if v not in ("default", "archive_ingest"):
             raise ValueError("Invalid extraction mode")
         return v
+
+    @field_validator("caller")
+    @classmethod
+    def validate_caller(cls, value: str) -> str:
+        return _validate_caller_label(value)
 
 
 _RAW_FETCH_ALLOWED_HEADERS = {"accept", "accept-language"}
