@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import urljoin, urlparse, urlsplit
 from xml.etree import ElementTree
 
-import httpx
+from argus.acquisition.guarded import GuardedAcquisitionError, guarded_http_request
 
 
 class _LinkParser(HTMLParser):
@@ -145,14 +145,23 @@ def site_url_score(url: str, root_url: str) -> int:
 
 
 async def fetch_site_text(url: str) -> str:
-    async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
-        response = await client.get(url, headers={"User-Agent": "ArgusSiteCapture/1.0"})
+    try:
+        response = await guarded_http_request(
+            url,
+            headers={"User-Agent": "ArgusSiteCapture/1.0"},
+            timeout=10,
+            caller_principal="site-acquisition",
+            request_id="site-acquisition",
+        )
         response.raise_for_status()
         return response.text
+    except GuardedAcquisitionError as exc:
+        raise RuntimeError(f"site acquisition blocked: {exc.failure.code.value}") from exc
 
 
-async def discover_site_urls(root_url: str, *, fetcher, hard_limit: int) -> list[str]:
+async def discover_site_urls(root_url: str, *, fetcher=None, hard_limit: int) -> list[str]:
     """Discover same-site URLs from sitemap and bounded internal-link traversal."""
+    fetcher = fetcher or fetch_site_text
     root_hostname = _normalized_hostname(root_url)
     discovered: dict[str, str] = {_normalized(root_url): root_url}
     sitemap_url = urljoin(root_url.rstrip("/") + "/", "/sitemap.xml")

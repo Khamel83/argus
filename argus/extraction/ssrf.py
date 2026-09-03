@@ -2,24 +2,7 @@
 
 from __future__ import annotations
 
-import socket
-from urllib.parse import urlparse
-
-from argus.acquisition.dns import resolve_public_addresses, validate_address_set
-
-
-_INTERNAL_HOSTNAMES = {
-    "localhost",
-    "internal",
-    "intranet",
-    "local",
-}
-_INTERNAL_SUFFIXES = (".local", ".internal", ".corp", ".lan")
-
-
-def _internal_hostname(hostname: str) -> bool:
-    normalized = hostname.lower().rstrip(".")
-    return normalized in _INTERNAL_HOSTNAMES or normalized.endswith(_INTERNAL_SUFFIXES)
+from argus.acquisition.guarded import guarded_url_policy
 
 
 def _legacy_reason(reason: str) -> str:
@@ -54,25 +37,11 @@ def is_safe_url(url: str) -> tuple[bool, str]:
 
     if not isinstance(url, str):
         return False, "URL validation error: URL must be text"
-    try:
-        parsed = urlparse(url)
-        scheme = parsed.scheme.lower()
-        if scheme not in ("http", "https"):
-            return False, f"Invalid scheme: {parsed.scheme}"
-        hostname = parsed.hostname
-        if not hostname:
-            return False, "No hostname in URL"
-        if parsed.username is not None or parsed.password is not None:
-            return False, "Credentials in URL blocked"
-        if _internal_hostname(hostname):
-            return False, f"Internal hostname blocked: {hostname}"
-        port = parsed.port or (443 if scheme == "https" else 80)
-        addresses = resolve_public_addresses(hostname, port, resolver=socket)
-        decision = validate_address_set(addresses)
-        if not decision.allowed:
-            if not addresses:
-                return False, "DNS resolution failed or returned no answers"
-            return False, _legacy_reason(decision.reason)
+    safe, reason = guarded_url_policy(url)
+    if safe:
         return True, ""
-    except (TypeError, ValueError) as exc:
-        return False, f"URL validation error: {exc}"
+    if reason.startswith("internal hostname blocked:"):
+        return False, f"Internal hostname blocked: {reason.partition(':')[2].strip()}"
+    if reason == "DNS resolution failed or returned no answers":
+        return False, reason
+    return False, _legacy_reason(reason)

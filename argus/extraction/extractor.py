@@ -32,6 +32,12 @@ from decimal import Decimal
 
 import httpx
 
+from argus.acquisition.guarded import (
+    GuardedAcquisitionError,
+    guarded_http_request,
+    guarded_url_policy,
+    patched_httpx_client,
+)
 from argus.config import get_config
 from argus.contracts import CanonicalOutcome
 from argus.extraction.cache import ExtractionCache
@@ -40,11 +46,14 @@ from argus.extraction.models import ExtractedContent, ExtractionAttempt, Extract
 from argus.extraction.quality_gate import QualityGate
 from argus.extraction.soft_404 import is_soft_404
 from argus.extraction.rate_limit import DomainRateLimiter
-from argus.extraction.ssrf import is_safe_url
 from argus.extraction.trafilatura_result import normalize_trafilatura_result
 from argus.logging import get_logger
 
 logger = get_logger("extraction")
+
+# Compatibility symbol for callers that injected the historical checker. The
+# policy implementation remains in Guarded Acquisition.
+is_safe_url = guarded_url_policy
 
 JINA_READER_URL = "https://r.jina.ai/"
 
@@ -161,7 +170,7 @@ def _safe_final_url(original_url: str, final_url: str) -> tuple[bool, str]:
     """Validate a post-redirect URL before using fetched content."""
     if not final_url or final_url == original_url:
         return True, ""
-    return is_safe_url(final_url)
+    return guarded_url_policy(final_url)
 
 
 def _populate_provenance(result: ExtractedContent):
@@ -195,10 +204,19 @@ async def _extract_trafilatura(url: str, timeout: int = 10) -> ExtractedContent:
 
     loop = asyncio.get_event_loop()
 
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        resp = await client.get(url, headers={"User-Agent": "Argus/1.0"})
+    try:
+        resp = await guarded_http_request(
+            url,
+            headers={"User-Agent": "Argus/1.0"},
+            timeout=timeout,
+            caller_principal="trafilatura",
+            request_id="extract-trafilatura",
+            compat_client_factory=patched_httpx_client(httpx.AsyncClient),
+        )
         resp.raise_for_status()
-        final_url = str(resp.url)
+    except GuardedAcquisitionError as exc:
+        return ExtractedContent(url=url, error=f"trafilatura: {exc.failure.code.value}")
+    final_url = str(resp.url)
 
     safe, reason = _safe_final_url(url, final_url)
     if not safe:
@@ -236,9 +254,21 @@ async def _extract_jina(url: str, timeout: int = 10) -> ExtractedContent:
 
     reader_url = f"{JINA_READER_URL}{url}"
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.get(reader_url, headers=headers, follow_redirects=True)
+    try:
+        resp = await guarded_http_request(
+            reader_url,
+            headers=headers,
+            timeout=timeout,
+            profile="third_party_fetch",
+            operation_class="third_party",
+            caller_principal="jina",
+            request_id="extract-jina",
+            target_url=url,
+            compat_client_factory=patched_httpx_client(httpx.AsyncClient),
+        )
         resp.raise_for_status()
+    except GuardedAcquisitionError as exc:
+        return ExtractedContent(url=url, error=f"jina: {exc.failure.code.value}")
 
     text = resp.text.strip()
     if not text or len(text) < 50:

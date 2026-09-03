@@ -6,13 +6,19 @@ Extracts clean markdown from URLs via POST https://api.firecrawl.dev/v1/scrape.
 Gated by ARGUS_FIRECRAWL_API_KEY env var.
 """
 
-import httpx
+import httpx  # Compatibility attribute for legacy contract tests.
 
+from argus.acquisition.guarded import guarded_http_request
 from argus.config import get_config
 from argus.extraction.models import ExtractedContent, ExtractorName
 from argus.logging import get_logger
 
 logger = get_logger("extraction.firecrawl")
+
+# Keep the imported module intentionally referenced.  The extractor is
+# disabled until spend authorization is available, but older embedders patch
+# this attribute to assert that no client is constructed on the disabled path.
+_HTTPX_COMPAT_MODULE = httpx
 
 FIRECRAWL_API_URL = "https://api.firecrawl.dev/v2/scrape"
 
@@ -73,12 +79,20 @@ async def extract_firecrawl(url: str) -> ExtractedContent:
     body = {"url": url, "formats": ["markdown"]}
 
     try:
-        async with httpx.AsyncClient(
-            timeout=config.firecrawl.timeout_seconds
-        ) as client:
-            resp = await client.post(FIRECRAWL_API_URL, json=body, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await guarded_http_request(
+            FIRECRAWL_API_URL,
+            method="POST",
+            json_body=body,
+            headers=headers,
+            profile="third_party_fetch",
+            operation_class="third_party",
+            caller_principal="firecrawl",
+            request_id="extract-firecrawl",
+            timeout=config.firecrawl.timeout_seconds,
+            target_url=url,
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
         return parse_firecrawl_v2_response(url, data)
     except Exception as e:

@@ -12,11 +12,7 @@ import os
 import shutil
 from typing import Optional
 
-from argus.acquisition.browser_policy import (
-    BrowserAdmission,
-    admit_browser_url,
-    failure_text,
-)
+from argus.acquisition.guarded import GuardedAcquisitionError, guarded_browser_session
 from argus.extraction.models import ExtractedContent, ExtractorName
 from argus.logging import get_logger
 
@@ -39,13 +35,14 @@ def _is_available() -> bool:
 
 async def extract_obscura(url: str) -> ExtractedContent:
     """Extract content using Obscura headless browser (stealth mode, subprocess)."""
-    admission = await admit_browser_url(
-        url,
-        caller_principal="obscura",
-        request_id="obscura-extract",
-    )
-    if not isinstance(admission, BrowserAdmission):
-        return ExtractedContent(url=url, error=failure_text(admission))
+    try:
+        await guarded_browser_session(
+            url,
+            caller_principal="obscura",
+            request_id="obscura-extract",
+        )
+    except GuardedAcquisitionError as exc:
+        return ExtractedContent(url=url, error=f"obscura: {exc.failure.code.value}")
 
     if not _is_available():
         return ExtractedContent(url=url, error="obscura: binary not found")

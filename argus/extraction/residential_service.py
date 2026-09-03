@@ -6,14 +6,21 @@ import logging
 import os
 import random
 import shutil
-import socket
 import time
 from contextlib import asynccontextmanager
 from typing import Dict
 
 from fastapi import FastAPI, HTTPException, Request
+import httpx
 from pydantic import BaseModel
 
+from argus.acquisition.guarded import (
+    GuardedAcquisitionError,
+    guarded_browser_session,
+    guarded_http_request,
+    guarded_url_policy,
+    patched_httpx_client,
+)
 from argus.acquisition.browser_policy import (
     BrowserAdmission,
     admit_browser_url,
@@ -213,88 +220,50 @@ def _check_playwright() -> bool:
 
 
 def _is_safe_url(url: str) -> tuple[bool, str]:
-    """Basic SSRF protection — block private/internal IPs. Standalone (no argus dependency)."""
-    from urllib.parse import urlparse
-
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        return False, f"blocked scheme: {parsed.scheme}"
-
-    hostname = parsed.hostname
-    if not hostname:
-        return False, "no hostname"
-
-    blocked_names = {"localhost", "metadata.google.internal", "metadata", "169.254.169.254"}
-    if hostname.lower() in blocked_names:
-        return False, f"blocked hostname: {hostname}"
-
-    try:
-        addr = ipaddress.ip_address(hostname)
-        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-            return False, f"private IP: {hostname}"
-    except ValueError:
-        pass  # hostname, not IP — resolve and check
-        try:
-            resolved = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-            for family, _, _, _, sockaddr in resolved[:2]:
-                ip = ipaddress.ip_address(sockaddr[0])
-                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-                    return False, f"resolves to private IP: {sockaddr[0]}"
-        except socket.gaierror:
-            pass  # DNS failure — let the extractor handle it
-
-    return True, ""
+    """Compatibility URL check owned by Guarded Acquisition."""
+    safe, reason = guarded_url_policy(url)
+    if safe:
+        return True, ""
+    return False, reason
 
 
 async def _extract_trafilatura(url: str, cookies: list[dict] | None = None) -> dict:
     try:
         import trafilatura
-        import httpx
-        from urllib.parse import urlparse
         from argus.extraction.trafilatura_result import normalize_trafilatura_result
 
-        loop = asyncio.get_event_loop()
         ua = random.choice(_USER_AGENTS)
         headers = {"User-Agent": ua}
-
-        initial_domain = urlparse(url).netloc.lower()
-
-        def _is_same_domain(target_url: str) -> bool:
-            return urlparse(target_url).netloc.lower() == initial_domain
-
-        # Manual redirect handling to prevent cookie leakage
-        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
-            current_url = url
-            current_headers = headers.copy()
-            if cookies:
-                cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies if "name" in c and "value" in c)
-                if cookie_str:
-                    current_headers["Cookie"] = cookie_str
-
-            hops = 0
-            while hops < 5:
-                resp = await client.get(current_url, headers=current_headers)
-                if resp.is_redirect:
-                    next_url = str(resp.headers.get("location"))
-                    if not next_url.startswith("http"):
-                        from urllib.parse import urljoin
-                        next_url = urljoin(current_url, next_url)
-
-                    # Scrub cookies if redirecting to a different domain
-                    if not _is_same_domain(next_url):
-                        current_headers.pop("Cookie", None)
-
-                    current_url = next_url
-                    hops += 1
-                    continue
-                break
-
-            final_url = str(resp.url)
-            downloaded = resp.text
+        if cookies:
+            cookie_str = "; ".join(
+                f"{c['name']}={c['value']}"
+                for c in cookies
+                if "name" in c and "value" in c
+            )
+            if cookie_str:
+                headers["Cookie"] = cookie_str
+        profile = "authenticated_content" if cookies else "public_content"
+        credential_policy = "origin_scoped" if cookies else "none"
+        resp = await guarded_http_request(
+            url,
+            headers=headers,
+            profile=profile,
+            credential_policy=credential_policy,
+            caller_principal="residential-worker-trafilatura",
+            request_id="residential-worker-trafilatura",
+            timeout=10,
+            target_url=url,
+            compat_client_factory=patched_httpx_client(httpx.AsyncClient),
+        )
+        resp.raise_for_status()
+        final_url = str(resp.url)
+        downloaded = resp.text
 
         if not downloaded:
             return {"error": "trafilatura: failed to fetch"}
-        extracted = await loop.run_in_executor(None, trafilatura.bare_extraction, downloaded)
+        extracted = await asyncio.get_event_loop().run_in_executor(
+            None, trafilatura.bare_extraction, downloaded
+        )
         normalized = normalize_trafilatura_result(extracted)
         if normalized is None:
             return {"error": "trafilatura: no content"}
@@ -312,6 +281,14 @@ async def _extract_trafilatura(url: str, cookies: list[dict] | None = None) -> d
 
 
 async def _extract_obscura(url: str, timeout: int) -> dict:
+    try:
+        await guarded_browser_session(
+            url,
+            caller_principal="residential-obscura",
+            request_id="residential-obscura",
+        )
+    except GuardedAcquisitionError as exc:
+        return {"error": f"{exc.failure.code.value}: {exc.failure.safe_reason}"}
     admission = await admit_browser_url(
         url,
         caller_principal="residential-obscura",
@@ -343,12 +320,22 @@ async def _extract_obscura(url: str, timeout: int) -> dict:
 
 
 async def _extract_playwright(url: str, timeout: int, cookies: list[dict] | None = None) -> dict:
+    profile = "authenticated_content" if cookies else "public_content"
+    credential_policy = "origin_scoped" if cookies else "none"
+    try:
+        await guarded_browser_session(
+            url,
+            profile=profile,
+            credential_policy=credential_policy,
+            caller_principal="residential-playwright",
+            request_id="residential-playwright",
+        )
+    except GuardedAcquisitionError as exc:
+        return {"error": f"{exc.failure.code.value}: {exc.failure.safe_reason}"}
     admission = await admit_browser_url(
         url,
-        profile=(
-            "authenticated_content" if cookies else "public_content"
-        ),
-        credential_policy="origin_scoped" if cookies else "none",
+        profile=profile,
+        credential_policy=credential_policy,
         caller_principal="residential-playwright",
         request_id="residential-playwright",
     )
@@ -434,6 +421,14 @@ def _check_playwright_leak(frame, initial_domain):
 
 
 async def _extract_crawl4ai(url: str) -> dict:
+    try:
+        await guarded_browser_session(
+            url,
+            caller_principal="residential-crawl4ai",
+            request_id="residential-crawl4ai",
+        )
+    except GuardedAcquisitionError as exc:
+        return {"error": f"{exc.failure.code.value}: {exc.failure.safe_reason}"}
     admission = await admit_browser_url(
         url,
         caller_principal="residential-crawl4ai",

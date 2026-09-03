@@ -18,6 +18,10 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from argus.acquisition.guarded import (
+    guarded_http_request,
+    patched_httpx_client,
+)
 from argus.contracts import CanonicalOutcome
 from argus.extraction.models import ExtractedContent, ExtractorName
 from argus.extraction.trafilatura_result import normalize_trafilatura_result
@@ -126,15 +130,20 @@ async def _search_existing(url: str) -> Optional[str]:
     await _rate_limit()
 
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-            resp = await client.get(f"{ARCHIVE_NEWEST_URL}{url}")
-            # archive.ph redirects to the archive page if one exists
-            # If the URL is the same as what we requested, no archive exists
-            if resp.status_code == 200 and resp.url:
-                final_url = str(resp.url)
-                # If we were redirected to an archive page (contains /<id>/)
-                if re.search(r'archive\.(ph|is|today)/\w+/', final_url):
-                    return final_url
+        resp = await guarded_http_request(
+            f"{ARCHIVE_NEWEST_URL}{url}",
+            profile="third_party_fetch",
+            operation_class="third_party",
+            caller_principal="archive-lookup",
+            request_id="archive-lookup",
+            timeout=15,
+            target_url=url,
+            compat_client_factory=patched_httpx_client(httpx.AsyncClient),
+        )
+        if resp.status_code == 200 and resp.url:
+            final_url = str(resp.url)
+            if re.search(r"archive\.(ph|is|today)/\w+/", final_url):
+                return final_url
         return None
     except Exception as e:
         logger.debug("Archive.is search failed for %s: %s", url[:60], e)
@@ -151,25 +160,28 @@ async def _submit_authorized(url: str) -> Optional[str]:
     await _rate_limit()
 
     try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
-            resp = await client.post(
-                f"{ARCHIVE_SUBMIT_URL}",
-                data={"url": url},
-                headers={"User-Agent": "Argus/1.0"},
-            )
-            if resp.status_code == 200:
-                # The response usually contains the archive URL
-                # Try to find it in the response body or Location header
-                final_url = str(resp.url)
-                if re.search(r'archive\.(ph|is|today)/\w+/', final_url):
-                    return final_url
-
-                # Check response text for archive ID
-                match = re.search(r'archive\.(ph|is|today)/(\w+)/', resp.text)
-                if match:
-                    domain = match.group(1)
-                    archive_id = match.group(2)
-                    return f"https://archive.{domain}/{archive_id}/{url}"
+        resp = await guarded_http_request(
+            ARCHIVE_SUBMIT_URL,
+            method="POST",
+            body=f"url={url}",
+            headers={"User-Agent": "Argus/1.0", "Content-Type": "application/x-www-form-urlencoded"},
+            profile="third_party_fetch",
+            operation_class="third_party",
+            caller_principal="archive-submit",
+            request_id="archive-submit",
+            timeout=30,
+            target_url=url,
+            compat_client_factory=patched_httpx_client(httpx.AsyncClient),
+        )
+        if resp.status_code == 200:
+            final_url = str(resp.url)
+            if re.search(r"archive\.(ph|is|today)/\w+/", final_url):
+                return final_url
+            match = re.search(r"archive\.(ph|is|today)/(\w+)/", resp.text)
+            if match:
+                domain = match.group(1)
+                archive_id = match.group(2)
+                return f"https://archive.{domain}/{archive_id}/{url}"
         return None
     except Exception as e:
         logger.debug("Archive.is submit failed for %s: %s", url[:60], e)
@@ -268,20 +280,25 @@ async def _extract_archive(url: str) -> ExtractedContent:
 
         # Step 3: Fetch archived content
         await _rate_limit()
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(archive_url, headers={"User-Agent": "Argus/1.0"})
-            resp.raise_for_status()
-            html = resp.text
+        resp = await guarded_http_request(
+            archive_url,
+            headers={"User-Agent": "Argus/1.0"},
+            profile="third_party_fetch",
+            operation_class="third_party",
+            caller_principal="archive-fetch",
+            request_id="archive-fetch",
+            timeout=15,
+            target_url=archive_url,
+            compat_client_factory=patched_httpx_client(httpx.AsyncClient),
+        )
+        resp.raise_for_status()
+        html = resp.text
 
         # Extract text using trafilatura
         import trafilatura
         loop = asyncio.get_event_loop()
 
-        downloaded = await loop.run_in_executor(
-            None, lambda: trafilatura.fetch_url(archive_url)
-        )
-        if not downloaded:
-            downloaded = html
+        downloaded = html
 
         extracted = await loop.run_in_executor(
             None, lambda: trafilatura.bare_extraction(downloaded)

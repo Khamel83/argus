@@ -8,11 +8,18 @@ Gate behind ARGUS_CRAWL4AI_ENABLED=true
 
 from collections.abc import Mapping
 
+from argus.acquisition.guarded import (
+    GuardedAcquisitionError,
+    guarded_browser_session,
+    guarded_url_policy,
+)
 from argus.extraction.models import ExtractedContent, ExtractorName
-from argus.extraction.ssrf import is_safe_url
 from argus.logging import get_logger
 
 logger = get_logger("extraction.crawl4ai")
+# Compatibility name for callers that patch the historical helper. The
+# implementation is still owned by Guarded Acquisition.
+is_safe_url = guarded_url_policy
 
 
 def _field(result: object, name: str, default=None):
@@ -65,6 +72,14 @@ def normalize_crawl4ai_result(url: str, result: object) -> ExtractedContent:
 
 async def extract_crawl4ai(url: str) -> ExtractedContent:
     """Extract content using Crawl4AI (self-hosted, no API key)."""
+    try:
+        await guarded_browser_session(
+            url,
+            caller_principal="crawl4ai",
+            request_id="extract-crawl4ai",
+        )
+    except GuardedAcquisitionError as exc:
+        return ExtractedContent(url=url, error=f"crawl4ai: {exc.failure.code.value}")
     try:
         from crawl4ai import AsyncWebCrawler
     except ImportError:

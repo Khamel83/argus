@@ -16,6 +16,7 @@ from argus.acquisition.browser_policy import (
     failure_text,
     install_browser_policy,
 )
+from argus.acquisition.guarded import GuardedAcquisitionError, guarded_browser_session
 from argus.extraction.cookies import (
     can_authenticate,
     get_cookie_path,
@@ -24,11 +25,14 @@ from argus.extraction.cookies import (
     record_auth_request,
 )
 from argus.extraction.models import ExtractedContent, ExtractorName
-from argus.extraction.ssrf import is_safe_url
+from argus.acquisition.guarded import guarded_url_policy
 from argus.extraction.trafilatura_result import normalize_trafilatura_result
 from argus.logging import get_logger
 
 logger = get_logger("extraction.auth")
+
+# Compatibility alias; URL decisions are centralized in Guarded Acquisition.
+is_safe_url = guarded_url_policy
 
 AUTH_TIMEOUT_MS = 15_000  # 15 seconds
 
@@ -86,6 +90,16 @@ async def _get_browser(admission: BrowserAdmission | None = None):
     """
     global _browser, _playwright_instance
     if admission is None:
+        try:
+            await guarded_browser_session(
+                "https://browser-policy.invalid/",
+                profile="authenticated_content",
+                credential_policy="origin_scoped",
+                caller_principal="authenticated-browser-runtime",
+                request_id="auth-runtime",
+            )
+        except GuardedAcquisitionError:
+            return None
         admission = await admit_browser_url(
             "https://browser-policy.invalid/",
             profile="authenticated_content",
@@ -191,6 +205,17 @@ async def extract_authenticated(url: str, domain: str) -> Optional[ExtractedCont
     if not can_authenticate(domain):
         logger.warning("Cannot authenticate for %s: cookies unavailable, stale, or rate-limited", domain)
         return ExtractedContent(url=url, error=f"auth: cannot authenticate for {domain}")
+
+    try:
+        await guarded_browser_session(
+            url,
+            profile="authenticated_content",
+            credential_policy="origin_scoped",
+            caller_principal="authenticated-browser",
+            request_id="auth-extract",
+        )
+    except GuardedAcquisitionError as exc:
+        return ExtractedContent(url=url, error=f"auth: {exc.failure.code.value}")
 
     admission = await admit_browser_url(
         url,

@@ -14,6 +14,11 @@ from typing import Optional
 
 import httpx
 
+from argus.acquisition.guarded import (
+    GuardedAcquisitionError,
+    guarded_http_request,
+    patched_httpx_client,
+)
 from argus.config import get_config
 from argus.extraction.cookies import load_editthiscookie_json, get_cookie_path
 from argus.extraction.models import ExtractedContent, ExtractorName
@@ -80,15 +85,22 @@ async def _try_endpoint(url: str, endpoint: str, cookies: Optional[list[dict]], 
         body["domain"] = domain
 
     try:
-        async with httpx.AsyncClient(timeout=config.residential.timeout_seconds) as client:
-            resp = await client.post(
-                f"{endpoint}/extract",
-                json=body,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {secret}",
-                },
-            )
+        resp = await guarded_http_request(
+            f"{endpoint}/extract",
+            method="POST",
+            json_body=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {secret}",
+            },
+            profile="third_party_fetch",
+            operation_class="third_party",
+            caller_principal="residential-client",
+            request_id="residential-client",
+            timeout=config.residential.timeout_seconds,
+            target_url=url,
+            compat_client_factory=patched_httpx_client(httpx.AsyncClient),
+        )
 
         if resp.status_code == 200:
             _endpoint_health.mark_healthy(endpoint)
@@ -112,7 +124,7 @@ async def _try_endpoint(url: str, endpoint: str, cookies: Optional[list[dict]], 
         logger.warning("Residential service %s returned %d", endpoint, resp.status_code)
         return None
 
-    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
+    except (GuardedAcquisitionError, httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout):
         _endpoint_health.mark_unhealthy(endpoint)
         logger.debug("Residential endpoint %s unreachable", endpoint)
         return None

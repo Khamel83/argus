@@ -24,12 +24,15 @@ from argus.acquisition.browser_policy import (
     failure_text,
     install_browser_policy,
 )
+from argus.acquisition.guarded import GuardedAcquisitionError, guarded_browser_session
 from argus.extraction.models import ExtractedContent, ExtractorName
-from argus.extraction.ssrf import is_safe_url
+from argus.acquisition.guarded import guarded_url_policy
 from argus.logging import get_logger
 from argus.runtime_manifest import inspect_playwright_browser_capability
 
 logger = get_logger("extraction.playwright")
+# Compatibility alias; URL decisions are centralized in Guarded Acquisition.
+is_safe_url = guarded_url_policy
 
 OBSCURA_CDP_URL = os.getenv("ARGUS_OBSCURA_CDP_URL", "")
 
@@ -108,6 +111,14 @@ async def _get_browser(admission: BrowserAdmission | None = None):
     global _browser_runtime_state, _browser_runtime_reason
 
     if admission is None:
+        try:
+            await guarded_browser_session(
+                "https://browser-policy.invalid/",
+                caller_principal="playwright-runtime",
+                request_id="browser-runtime",
+            )
+        except GuardedAcquisitionError:
+            return None
         admission = await admit_browser_url(
             "https://browser-policy.invalid/",
             caller_principal="playwright-runtime",
@@ -172,6 +183,14 @@ async def _get_browser(admission: BrowserAdmission | None = None):
 
 async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedContent:
     """Extract content using headless browser (Obscura CDP or Chrome)."""
+    try:
+        await guarded_browser_session(
+            url,
+            caller_principal="playwright",
+            request_id="extract-playwright",
+        )
+    except GuardedAcquisitionError as exc:
+        return ExtractedContent(url=url, error=failure_text(exc.failure))
     admission = await admit_browser_url(url, caller_principal="playwright")
     if not isinstance(admission, BrowserAdmission):
         return ExtractedContent(url=url, error=failure_text(admission))

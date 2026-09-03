@@ -11,9 +11,14 @@ Rate limited to 6 requests/minute per Wayback guidelines.
 import asyncio
 import time
 from typing import Optional
+from urllib.parse import quote
 
 import httpx
 
+from argus.acquisition.guarded import (
+    guarded_http_request,
+    patched_httpx_client,
+)
 from argus.extraction.models import ExtractedContent, ExtractorName
 from argus.extraction.trafilatura_result import normalize_trafilatura_result
 from argus.logging import get_logger
@@ -57,10 +62,18 @@ async def _check_availability(url: str) -> Optional[str]:
     await _rate_limit()
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(AVAILABILITY_URL, params={"url": url})
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await guarded_http_request(
+            f"{AVAILABILITY_URL}?url={quote(url, safe='')}",
+            profile="third_party_fetch",
+            operation_class="third_party",
+            caller_principal="wayback-availability",
+            request_id="wayback-availability",
+            timeout=15,
+            target_url=url,
+            compat_client_factory=patched_httpx_client(httpx.AsyncClient),
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
         if data.get("archived_snapshots"):
             snapshot = data["archived_snapshots"].get("closest")
@@ -77,10 +90,19 @@ async def _fetch_archived(wayback_url: str) -> str:
     """Fetch content from a Wayback Machine snapshot URL."""
     await _rate_limit()
 
-    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-        resp = await client.get(wayback_url, headers={"User-Agent": "Argus/1.0"})
-        resp.raise_for_status()
-        return resp.text
+    resp = await guarded_http_request(
+        wayback_url,
+        headers={"User-Agent": "Argus/1.0"},
+        profile="third_party_fetch",
+        operation_class="third_party",
+        caller_principal="wayback-fetch",
+        request_id="wayback-fetch",
+        timeout=15,
+        target_url=wayback_url,
+        compat_client_factory=patched_httpx_client(httpx.AsyncClient),
+    )
+    resp.raise_for_status()
+    return resp.text
 
 
 async def _extract_wayback(url: str) -> ExtractedContent:
@@ -107,12 +129,7 @@ async def _extract_wayback(url: str) -> ExtractedContent:
         # Extract text from HTML using trafilatura
         import trafilatura
         loop = asyncio.get_event_loop()
-        downloaded = await loop.run_in_executor(
-            None, lambda: trafilatura.fetch_url(wayback_url)
-        )
-        if not downloaded:
-            # Fallback: use the raw HTML we already fetched
-            downloaded = html
+        downloaded = html
 
         extracted = await loop.run_in_executor(
             None, lambda: trafilatura.bare_extraction(downloaded)
