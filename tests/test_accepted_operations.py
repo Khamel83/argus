@@ -7,7 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from argus.api.schemas import ExtractRequest, SearchRequest
-from argus.contracts import CanonicalOutcome
+from argus.contracts import CanonicalOutcome, FailureCode, FailureRecord
 from argus.models import (
     ProviderName,
     ProviderTrace,
@@ -57,6 +57,51 @@ async def test_accepted_extract_propagates_free_only_to_extractor():
 
     assert operation.outcome is CanonicalOutcome.SUCCESS
     assert seen["free_only"] is True
+
+
+@pytest.mark.asyncio
+async def test_accepted_extract_preserves_typed_spend_failure():
+    from argus.extraction.models import ExtractedContent
+    from argus.operations.accepted import AcceptedOperationService
+
+    failure = FailureRecord(
+        code=FailureCode.SPEND_DENIED,
+        safe_reason="paid extraction was not authorized",
+        request_id="request-spend-denied",
+        operation_id="extract-operation",
+        release_identity="release-1",
+    )
+
+    async def extractor(url, **_kwargs):
+        return ExtractedContent(
+            url=url,
+            error="spend_denied",
+            failure=failure,
+        )
+
+    service = AcceptedOperationService(
+        broker_provider=lambda: MagicMock(),
+        repository_provider=lambda: MagicMock(),
+        extractor=extractor,
+    )
+
+    operation = await service.extract(
+        SimpleNamespace(
+            url="https://example.test/paid",
+            domain=None,
+            mode="default",
+            caller="caller",
+            free_only=False,
+        ),
+        principal="principal",
+        request_id="request-spend-denied",
+    )
+
+    assert operation.outcome is CanonicalOutcome.UNREADY
+    assert operation.result is not None
+    assert operation.error is not None
+    assert operation.error.code == "spend_denied"
+    assert operation.error.detail == failure.safe_reason
 
 
 def _search_response(*, results: bool = True) -> SearchResponse:

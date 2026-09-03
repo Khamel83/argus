@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from dataclasses import asdict, dataclass, fields, is_dataclass
 from enum import Enum
@@ -13,8 +14,12 @@ from typing import Awaitable, Callable, Mapping
 from argus.contracts import (
     AcceptedOperation,
     CanonicalOutcome,
+    FailureCode,
+    FailureRecord,
     OperationError,
+    failure_spec,
     http_status_for,
+    operation_error_for,
 )
 from argus.extraction import extract_url
 from argus.extraction.composition import (
@@ -121,6 +126,62 @@ def _operation_error(
         retryable=retryable,
         retry_after_seconds=retry_after_seconds,
         operation_began=operation_began,
+    )
+
+
+def _typed_failure(value: object, *, request_id: str) -> FailureRecord | None:
+    """Normalize extraction-native causal failures without exposing details."""
+
+    if isinstance(value, FailureRecord):
+        if value.request_id == request_id:
+            return value
+        return FailureRecord(
+            code=value.code,
+            safe_reason=value.safe_reason,
+            request_id=request_id,
+            operation_id=value.operation_id,
+            release_identity=value.release_identity,
+            evidence_references=value.evidence_references,
+        )
+    failure = getattr(value, "failure", None)
+    if isinstance(failure, FailureRecord):
+        return _typed_failure(failure, request_id=request_id)
+    try:
+        from argus.acquisition.errors import AcquisitionFailure
+    except ImportError:
+        AcquisitionFailure = ()
+    if isinstance(value, AcquisitionFailure):
+        try:
+            code = FailureCode(value.code.value)
+        except (AttributeError, TypeError, ValueError):
+            code = FailureCode.PROVIDER_UNAVAILABLE
+        return FailureRecord(
+            code=code,
+            safe_reason=value.safe_reason,
+            request_id=request_id,
+            evidence_references=tuple(value.evidence_references),
+        )
+    return None
+
+
+def _typed_failure_error(
+    failure: FailureRecord,
+    *,
+    request_id: str,
+) -> OperationError:
+    """Present a typed failure while keeping the outer request identity."""
+
+    if failure.request_id == request_id:
+        return operation_error_for(failure)
+    spec = failure_spec(failure.code)
+    return _operation_error(
+        spec.outcome,
+        request_id=request_id,
+        detail=failure.safe_reason,
+        code=failure.code.value,
+        status=spec.status,
+        operation_began=spec.operation_began,
+        retryable=spec.default_retryable,
     )
 
 
@@ -573,6 +634,10 @@ def _extraction_execution_evidence(result) -> dict[str, object]:
                 "jina_disabled",
                 "caller_tier_cap",
                 "provider_unavailable",
+                "spend_authority_unavailable",
+                "spend_denied",
+                "provider_unready",
+                "charge_uncertain",
                 "policy_skipped",
             }:
                 reason_code = bounded_reason
@@ -729,6 +794,12 @@ def _extraction_execution_evidence(result) -> dict[str, object]:
         "operation_id": _operation_id_evidence(
             result.extraction_run_id,
             source="extraction_run_id",
+        ),
+        "release_identity": _operation_id_evidence(
+            getattr(accepted_evidence, "release_identity", None)
+            if evidence_bound
+            else None,
+            source="accepted_extraction_evidence.release_identity",
         ),
         "observation": observation,
         "attempts": attempts,
@@ -887,7 +958,11 @@ def _search_outcome(response) -> CanonicalOutcome:
     return CanonicalOutcome.EMPTY
 
 
-def _extract_projection(result) -> dict[str, object]:
+def _extract_projection(
+    result,
+    *,
+    request_id: str | None = None,
+) -> dict[str, object]:
     completeness = result.completeness_result
     rejection = getattr(result, "rejection", None)
     if rejection is None:
@@ -899,6 +974,29 @@ def _extract_projection(result) -> dict[str, object]:
         rejection_projection = rejection.to_dict()
         rejection_projection["code"] = rejection.code.value
         rejection_projection["recommended_action"] = rejection.recommended_action.value
+    result_failure = getattr(result, "failure", None)
+    failure = _typed_failure(
+        result_failure,
+        request_id=(
+            request_id
+            or (
+                result_failure.request_id
+                if isinstance(result_failure, FailureRecord)
+                else getattr(result, "extraction_run_id", None)
+            )
+            or "unknown-request"
+        ),
+    )
+    failure_projection = None
+    if failure is not None:
+        failure_projection = {
+            "code": failure.code.value,
+            "safe_reason": failure.safe_reason,
+            "request_id": failure.request_id,
+            "operation_id": failure.operation_id,
+            "release_identity": failure.release_identity,
+            "evidence_references": failure.evidence_references,
+        }
     return {
         "extraction_run_id": result.extraction_run_id,
         "url": result.url,
@@ -909,6 +1007,7 @@ def _extract_projection(result) -> dict[str, object]:
         "word_count": result.word_count,
         "extractor": result.extractor.value if result.extractor else None,
         "error": result.error,
+        "failure": failure_projection,
         "quality_passed": getattr(result, "quality_passed", None),
         "quality_reason": getattr(result, "quality_reason", None),
         "extractors_tried": list(getattr(result, "extractors_tried", []) or []),
@@ -1650,12 +1749,38 @@ class AcceptedOperationService:
                 self._registration == AcceptedOperationRegistration.complete()
                 and extractor is extract_url
             ):
+                broker = self._broker_provider()
+                readiness = getattr(broker, "readiness_service", None)
+                if readiness is not None:
+                    from argus.extraction.spend_gateway import (
+                        ExtractionSpendGateway,
+                    )
+
+                    kwargs["spend_gateway"] = ExtractionSpendGateway(readiness)
+                release_identity = getattr(broker, "release_identity", None)
+                if not isinstance(release_identity, str) or not release_identity:
+                    release_identity = os.environ.get(
+                        "ARGUS_RELEASE", "unknown-release"
+                    )
+                kwargs["release_identity"] = release_identity
                 kwargs.update(
                     use_evidence_authority=True,
                     request_id=request_id,
                 )
             result = await extractor(request.url, **kwargs)
-        except Exception:
+        except Exception as error:
+            failure = _typed_failure(error, request_id=request_id)
+            if failure is not None:
+                operation_error = _typed_failure_error(
+                    failure,
+                    request_id=request_id,
+                )
+                return AcceptedOperation(
+                    outcome=failure_spec(failure.code).outcome,
+                    request_id=request_id,
+                    result=None,
+                    error=operation_error,
+                )
             outcome = CanonicalOutcome.PERSISTENCE_FAILED
             return AcceptedOperation(
                 outcome=outcome,
@@ -1667,7 +1792,7 @@ class AcceptedOperationService:
                     detail="Extraction could not be durably recorded",
                 ),
             )
-        projection = _extract_projection(result)
+        projection = _extract_projection(result, request_id=request_id)
         free_profile_eligible = bool(getattr(request, "free_only", False))
         execution_evidence = projection.get("execution_evidence")
         if isinstance(execution_evidence, dict):
@@ -1685,6 +1810,21 @@ class AcceptedOperationService:
                 execution_evidence["diagnostics"] = enriched
                 execution_evidence["execution_diagnostics"] = enriched
         projection["free_profile_eligible"] = free_profile_eligible
+        typed_failure = _typed_failure(
+            getattr(result, "failure", None),
+            request_id=request_id,
+        )
+        if typed_failure is not None:
+            operation_error = _typed_failure_error(
+                typed_failure,
+                request_id=request_id,
+            )
+            return AcceptedOperation(
+                outcome=failure_spec(typed_failure.code).outcome,
+                request_id=request_id,
+                result=projection,
+                error=operation_error,
+            )
         disposition = getattr(result, "artifact_disposition", None)
         disposition_value = getattr(disposition, "value", disposition)
         accepted_outcome = getattr(result, "accepted_outcome", None)

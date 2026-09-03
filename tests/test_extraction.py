@@ -508,6 +508,59 @@ class TestExtractUrl:
         )
 
     @pytest.mark.asyncio
+    async def test_legacy_cache_hit_is_usable_when_dns_fails(self, monkeypatch):
+        """A durable-in-process result must not need a fresh DNS answer."""
+        from argus.extraction import extractor as extraction_module
+
+        url = "https://cached-dns-failure.example/article"
+        cached = ExtractedContent(
+            url=url,
+            title="Cached",
+            text=_good_text(150),
+            word_count=150,
+            extractor=ExtractorName.TRAFILATURA,
+        )
+        extraction_module._cache.clear()
+        extraction_module._domain_limiter.clear()
+        extraction_module._cache.put(url, cached)
+
+        def dns_failure(_url):
+            raise AssertionError("DNS validation must not run for a cache hit")
+
+        monkeypatch.setattr(extraction_module, "is_safe_url", dns_failure)
+
+        result = await extraction_module._extract_url_unpersisted(url)
+
+        assert result.cache_hit is True
+        assert result.text == cached.text
+
+    @pytest.mark.asyncio
+    async def test_rate_limiter_runs_before_dns_on_cache_miss(self, monkeypatch):
+        """A throttled request must not perform network DNS work."""
+        from argus.extraction import extractor as extraction_module
+
+        url = "https://rate-limited-dns.example/article"
+        extraction_module._cache.clear()
+        extraction_module._domain_limiter.clear()
+        calls = []
+
+        def rate_limited(_url):
+            calls.append("rate")
+            return False, 7
+
+        def dns_check(_url):
+            calls.append("dns")
+            return True, ""
+
+        monkeypatch.setattr(extraction_module._domain_limiter, "is_allowed", rate_limited)
+        monkeypatch.setattr(extraction_module, "is_safe_url", dns_check)
+
+        result = await extraction_module._extract_url_unpersisted(url)
+
+        assert calls == ["rate"]
+        assert "domain rate limit" in result.error
+
+    @pytest.mark.asyncio
     async def test_disabled_jina_is_not_invoked_in_normal_mode(
         self,
         mock_chain,

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from argus.contracts import CanonicalOutcome
+    from argus.contracts import FailureRecord
     from argus.extraction.completeness import CompletenessResult
     from argus.extraction.outcomes import (
         ArtifactDisposition,
@@ -45,6 +46,10 @@ class ExtractionAttempt:
     status: str
     latency_ms: int
     failure_summary: Optional[str] = None
+    # The extraction adapter attaches durable spend evidence after the
+    # provider attempt settles.  Keeping it on the attempt prevents the
+    # acceptance adapter from inventing references during projection.
+    spend: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +69,7 @@ class AcceptedExtractionExecutionEvidence:
     cache_age_seconds: int | None
     operation_latency_ms: int
     extractor_call_count: int
+    release_identity: str = "unknown-release"
 
     def __post_init__(self) -> None:
         if not self.operation_id or not self.receipt_ref:
@@ -104,6 +110,10 @@ class ExtractedContent:
     acceptance_receipt: ExtractionAcceptanceReceipt | None = None
     accepted_outcome: CanonicalOutcome | None = None
     accepted_execution_evidence: AcceptedExtractionExecutionEvidence | None = None
+    # Typed causal failure from acquisition, spend, or persistence.  The
+    # field is intentionally additive so legacy callers can continue to use
+    # ``error`` while accepted presenters retain the stable taxonomy.
+    failure: FailureRecord | object | None = None
 
     # Provenance metadata
     source_type: Optional[str] = None  # live|authenticated|residential|wayback|archive|paid_api|search_recovery
@@ -113,3 +123,4 @@ class ExtractedContent:
     cookies_used: bool = False
     archive_used: bool = False
     cost: float = 0.0
+    provider_reference: Optional[str] = None

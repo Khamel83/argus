@@ -10,6 +10,7 @@ from decimal import Decimal
 from typing import Callable
 
 from argus.contracts import CanonicalOutcome
+from argus.contracts import FailureCode, FailureRecord
 from argus.extraction.cache import ExtractionCacheIdentity
 from argus.extraction.outcomes import (
     AcceptedExtractionOutcome,
@@ -37,6 +38,7 @@ from argus.extraction.outcomes import (
     RawExtractionResult,
     RejectionFacts,
     RejectionMapper,
+    SpendEvidence,
     RejectionSourceKind,
     TerminalCause,
     TerminalCauseKind,
@@ -94,6 +96,24 @@ def _safe_ref(value: object, *, maximum: int = 128) -> bool:
 
 def _plain_int(value: object, minimum: int, maximum: int) -> bool:
     return type(value) is int and minimum <= value <= maximum
+
+
+def _persistence_failure(
+    request: ExtractionRequest | None,
+    plan: ExtractionPlan | None,
+) -> FailureRecord:
+    """Build bounded causal evidence for a durable-write failure."""
+
+    request_id = getattr(request, "request_id", None) or "unknown-request"
+    operation_id = getattr(request, "extraction_run_id", None) or "unknown-operation"
+    release_identity = getattr(plan, "release_identity", None) or "unknown-release"
+    return FailureRecord(
+        code=FailureCode.PERSISTENCE_FAILED,
+        safe_reason="extraction acceptance could not be durably persisted",
+        request_id=request_id,
+        operation_id=operation_id,
+        release_identity=release_identity,
+    )
 
 
 def _valid_money(value: object) -> bool:
@@ -174,16 +194,27 @@ def _validate_step(step: ExtractorDecision) -> None:
         not isinstance(step.attempt_outcome, AttemptOutcome)
         or not _plain_int(step.latency_ms, 0, _MAX_LATENCY_MS)
         or step.provenance is None
-        or step.spend is None
     ):
         raise ExtractionContractRejected()
     _validate_provenance(step.provenance)
-    if (
-        not _valid_money(step.spend.actual_usd)
-        or not _valid_money(step.spend.reserved_usd)
-        or not _safe_ref(step.spend.spend_attempt_ref)
-    ):
-        raise ExtractionContractRejected()
+    if step.spend is not None:
+        if (
+            not isinstance(step.spend, SpendEvidence)
+            or not _valid_money(step.spend.actual_usd)
+            or not _valid_money(step.spend.reserved_usd)
+            or (
+                step.spend.spend_attempt_ref is not None
+                and not _safe_ref(step.spend.spend_attempt_ref)
+            )
+            or (
+                step.spend.spend_attempt_ref is None
+                and (
+                    step.spend.actual_usd != Decimal("0")
+                    or step.spend.reserved_usd != Decimal("0")
+                )
+            )
+        ):
+            raise ExtractionContractRejected()
 
 
 def _validate_trace(raw: RawExtractionResult) -> tuple[ExtractorDecision, ...]:
@@ -320,6 +351,7 @@ def _validate_inputs(
         or request.profile != plan.profile
         or request.privacy_scope != plan.privacy_scope
         or request.authentication_scope != plan.authentication_scope
+        or request.release_identity != plan.release_identity
         or not _safe_ref(plan.access_scope)
         or not _safe_ref(plan.caller, maximum=64)
         or not _safe_ref(plan.profile, maximum=64)
@@ -329,6 +361,7 @@ def _validate_inputs(
             plan.authentication_scope.authority_receipt_ref
         )
         or not _safe_ref(plan.authentication_scope.fingerprint)
+        or not _safe_ref(plan.release_identity)
         or (
             (
                 plan.access_scope != "public"
@@ -395,6 +428,24 @@ def _validate_inputs(
             or (
                 step.decision is ExtractorExecutionDecision.POLICY_SKIPPED
                 and candidate.eligible
+            )
+        ):
+            raise ExtractionContractRejected()
+        # The paid path is ledger-bound.  A free attempt may carry the
+        # explicit zero/no-reference marker, but a metered artifact cannot be
+        # accepted without the gateway's durable attempt evidence.
+        if (
+            step.decision is ExtractorExecutionDecision.INVOKED
+            and candidate.spend_class == "metered"
+            and (
+                (
+                    step.attempt_outcome is AttemptOutcome.CONTENT
+                    and step.spend is None
+                )
+                or (
+                    step.spend is not None
+                    and step.spend.spend_attempt_ref is None
+                )
             )
         ):
             raise ExtractionContractRejected()
@@ -734,7 +785,12 @@ class ExtractionFinalizer:
             )
             if not callable(loader):
                 raise ExtractionContractRejected()
-            durable = loader(origin.acceptance_receipt.receipt_ref)
+            try:
+                durable = loader(origin.acceptance_receipt.receipt_ref)
+            except Exception as error:
+                raise ExtractionPersistenceFailed(
+                    _persistence_failure(extraction_request, extraction_plan)
+                ) from error
             if durable is None:
                 raise ExtractionContractRejected()
             expected_origin = CacheOriginEvidence.from_accepted(
@@ -813,10 +869,17 @@ class ExtractionFinalizer:
             except (ExtractionAcceptanceConflict, ExtractionContractRejected):
                 raise
             except Exception as error:
-                raise ExtractionPersistenceFailed() from error
+                raise ExtractionPersistenceFailed(
+                    _persistence_failure(extraction_request, extraction_plan)
+                ) from error
         load_existing = getattr(self.repository, "load_extraction_outcome", None)
         if callable(load_existing):
-            existing = load_existing(extraction_request.extraction_run_id)
+            try:
+                existing = load_existing(extraction_request.extraction_run_id)
+            except Exception as error:
+                raise ExtractionPersistenceFailed(
+                    _persistence_failure(extraction_request, extraction_plan)
+                ) from error
             if existing is not None:
                 current_source = (
                     outcome_policy.version,
@@ -857,8 +920,13 @@ class ExtractionFinalizer:
         except ExtractionAcceptanceConflict:
             raise
         except Exception as error:
-            raise ExtractionPersistenceFailed() from error
-        self._validate_receipt(receipt)
+            raise ExtractionPersistenceFailed(
+                _persistence_failure(extraction_request, extraction_plan)
+            ) from error
+        self._validate_receipt(
+            receipt,
+            failure=_persistence_failure(extraction_request, extraction_plan),
+        )
         return AcceptedExtractionOutcome.accepted(projection, receipt)
 
     def _validate_authentication_authority(
@@ -1001,7 +1069,11 @@ class ExtractionFinalizer:
             ).hexdigest(),
         )
     @staticmethod
-    def _validate_receipt(receipt: ExtractionAcceptanceReceipt) -> None:
+    def _validate_receipt(
+        receipt: ExtractionAcceptanceReceipt,
+        *,
+        failure: FailureRecord | None = None,
+    ) -> None:
         if (
             not isinstance(receipt, ExtractionAcceptanceReceipt)
             or not _safe_ref(receipt.receipt_ref)
@@ -1009,7 +1081,7 @@ class ExtractionFinalizer:
             or not receipt.accepted_at
             or not _safe_label(receipt.scope)
         ):
-            raise ExtractionPersistenceFailed()
+            raise ExtractionPersistenceFailed(failure)
 
 
 def finalize_extraction(
@@ -1025,7 +1097,9 @@ def finalize_extraction(
     """Functional facade for the required finalization interface."""
     actual_repository = repository or outcome_policy.repository
     if actual_repository is None:
-        raise ExtractionPersistenceFailed()
+        raise ExtractionPersistenceFailed(
+            _persistence_failure(extraction_request, extraction_plan)
+        )
     return ExtractionFinalizer(
         repository=actual_repository,
         rejection_mapper=(
