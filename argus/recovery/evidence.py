@@ -4,15 +4,21 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
-from argus.recovery.database import COMPATIBLE_SCHEMA_HEADS
+from argus.recovery.database import (
+    COMPATIBLE_SCHEMA_HEADS,
+    EXPECTED_SCHEMA_HEAD,
+    build_schema_identity,
+    restore_identity_sha256,
+)
 
 
 BACKUP_MAX_AGE = timedelta(hours=36)
@@ -26,6 +32,10 @@ REQUIRED_RESTORE_CHECKS = {
     "argus_read_path",
     "migration_compatible",
 }
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_COMMIT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_IMAGE_DIGEST = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
+_OPERATOR_IDENTITY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,255}$")
 
 
 def _utc_now() -> datetime:
@@ -55,12 +65,231 @@ def _unavailable(reason: str) -> dict[str, Any]:
     }
 
 
+_IDENTITY_FIELDS = (
+    "schema_head",
+    "migration_chain_sha256",
+    "canonical_postgresql_schema_sha256",
+    "schema_contract_format",
+)
+
+
+def _coerce_schema_identity(value: object) -> dict[str, str] | None:
+    if not isinstance(value, Mapping):
+        return None
+    identity = dict(value)
+    nested = identity.get("schema_identity")
+    if isinstance(nested, Mapping):
+        identity = dict(nested)
+    if not all(field in identity for field in _IDENTITY_FIELDS):
+        return None
+    if not all(isinstance(identity[field], str) for field in _IDENTITY_FIELDS):
+        return None
+    try:
+        result = build_schema_identity(
+            schema_head=identity["schema_head"],
+            migration_chain_sha256=identity["migration_chain_sha256"],
+            canonical_postgresql_schema_sha256=identity[
+                "canonical_postgresql_schema_sha256"
+            ],
+            schema_contract_format=identity["schema_contract_format"],
+        )
+    except (TypeError, ValueError):
+        return None
+    if "schema" in identity and identity["schema"] != result["schema"]:
+        return None
+    if "schema_id" in identity and identity["schema_id"] != result["schema_id"]:
+        return None
+    return result
+
+
+def _schema_target(value: object) -> tuple[dict[str, str] | None, bool]:
+    """Normalize a candidate identity and flag malformed identity input."""
+    if not isinstance(value, Mapping):
+        return None, value is not None
+    if "schema_identity" in value:
+        return _coerce_schema_identity(value["schema_identity"]), True
+    has_identity_fields = any(
+        field in value
+        for field in (*_IDENTITY_FIELDS, "schema", "schema_id")
+    )
+    return (
+        _coerce_schema_identity(value) if has_identity_fields else None,
+        has_identity_fields,
+    )
+
+
+def _same_schema_identity(
+    left: Mapping[str, str] | None,
+    right: Mapping[str, str] | None,
+) -> bool:
+    return left is not None and right is not None and all(
+        left.get(field) == right.get(field)
+        for field in (*_IDENTITY_FIELDS, "schema_id")
+    )
+
+
+def _all_present_true(*values: object) -> bool:
+    present = [value for value in values if value is not None]
+    return bool(present) and all(value is True for value in present)
+
+
+def _identity_evaluation(
+    backup: Mapping[str, Any],
+    restore: Mapping[str, Any],
+    *,
+    expected_identity: Mapping[str, Any] | None = None,
+    candidate: Mapping[str, Any] | None = None,
+    force: bool = False,
+) -> dict[str, Any] | None:
+    restore_identity = _coerce_schema_identity(restore.get("schema_identity"))
+    candidate_map = dict(candidate) if isinstance(candidate, Mapping) else {}
+    expected_map = (
+        dict(expected_identity)
+        if isinstance(expected_identity, Mapping)
+        else {}
+    )
+    candidate_schema, candidate_schema_present = _schema_target(candidate)
+    expected_schema, expected_schema_present = _schema_target(expected_identity)
+    invalid_target_schema = (
+        candidate_schema_present and candidate_schema is None
+    ) or (expected_schema_present and expected_schema is None)
+    target_schema = candidate_schema or expected_schema
+    engaged = (
+        force
+        or restore_identity is not None
+        or target_schema is not None
+        or invalid_target_schema
+    )
+    if not engaged:
+        return None
+
+    checks = restore.get("checks")
+    checks = checks if isinstance(checks, Mapping) else {}
+    expected_source = candidate_map.get("source_revision") or expected_map.get(
+        "source_revision"
+    )
+    expected_image = candidate_map.get("image_digest") or expected_map.get(
+        "image_digest"
+    )
+    observed_source = restore.get("source_revision")
+    observed_image = restore.get("image_digest")
+    source_matches = isinstance(observed_source, str) and bool(
+        _COMMIT.fullmatch(observed_source)
+    )
+    if backup.get("source_revision") is not None:
+        source_matches = source_matches and observed_source == backup.get(
+            "source_revision"
+        )
+    if expected_source is not None:
+        source_matches = source_matches and observed_source == expected_source
+    image_matches = isinstance(observed_image, str) and bool(
+        _IMAGE_DIGEST.fullmatch(observed_image)
+    )
+    if backup.get("image_digest") is not None:
+        image_matches = image_matches and observed_image == backup.get("image_digest")
+    if expected_image is not None:
+        image_matches = image_matches and observed_image == expected_image
+    schema_matches = (
+        restore_identity is not None
+        and not invalid_target_schema
+        and restore.get("schema_head") == restore_identity.get("schema_head")
+    )
+    if candidate_schema is not None:
+        schema_matches = schema_matches and _same_schema_identity(
+            restore_identity,
+            candidate_schema,
+        )
+    if expected_schema is not None:
+        schema_matches = schema_matches and _same_schema_identity(
+            restore_identity,
+            expected_schema,
+        )
+    if candidate_schema is not None and expected_schema is not None:
+        schema_matches = schema_matches and _same_schema_identity(
+            candidate_schema,
+            expected_schema,
+        )
+    metadata_complete = checks.get("metadata_registry_complete") is True
+    contract_clean = checks.get("schema_contract_clean") is True
+    backup_manifest = backup.get("manifest_sha256")
+    restore_identity_value = restore.get("restore_identity")
+    restore_identity_matches = (
+        isinstance(backup_manifest, str)
+        and bool(_SHA256.fullmatch(backup_manifest))
+        and isinstance(restore.get("verified_at"), str)
+        and isinstance(restore_identity_value, str)
+        and bool(_SHA256.fullmatch(restore_identity_value))
+        and restore_identity_value
+        == restore_identity_sha256(
+            backup_identity=backup_manifest,
+            schema_identity=restore_identity,
+            verified_at=restore["verified_at"],
+        )
+    )
+    restore_verified = (
+        restore.get("globals_validated") is True
+        and backup.get("backup_identity") == backup_manifest
+        and restore.get("backup_manifest_sha256") == backup_manifest
+        and restore.get("backup_identity") == backup_manifest
+        and isinstance(restore.get("migration_receipt"), str)
+        and bool(_SHA256.fullmatch(restore["migration_receipt"]))
+        and restore_identity_matches
+        and isinstance(restore.get("operator_identity"), str)
+        and bool(_OPERATOR_IDENTITY.fullmatch(restore["operator_identity"]))
+        and all(
+            checks.get(name) is True
+            for name in REQUIRED_RESTORE_CHECKS
+        )
+    )
+    forward_compatible = _all_present_true(
+        checks.get("forward_compatible"),
+        restore.get("forward_compatible"),
+        candidate_map.get("forward_compatible"),
+    )
+    rollback_approved = _all_present_true(
+        checks.get("rollback_path_human_approved"),
+        restore.get("rollback_path_human_approved"),
+        candidate_map.get("rollback_path_human_approved"),
+    )
+    gate_values = {
+        "source_identity_matches": source_matches,
+        "image_identity_matches": image_matches,
+        "schema_identity_matches": schema_matches,
+        "metadata_registry_complete": metadata_complete,
+        "schema_contract_clean": contract_clean,
+        "restore_evidence_verified": restore_verified,
+        "forward_compatible": forward_compatible,
+        "rollback_path_human_approved": rollback_approved,
+    }
+    reason_by_gate = {
+        "source_identity_matches": "source_identity_mismatch",
+        "image_identity_matches": "image_identity_mismatch",
+        "schema_identity_matches": "schema_identity_mismatch",
+        "metadata_registry_complete": "metadata_registry_incomplete",
+        "schema_contract_clean": "schema_contract_dirty",
+        "restore_evidence_verified": "restore_evidence_unverified",
+        "forward_compatible": "restore_not_forward_compatible",
+        "rollback_path_human_approved": "rollback_path_not_human_approved",
+    }
+    return {
+        "gates": gate_values,
+        "reasons": [
+            reason_by_gate[name]
+            for name, passed in gate_values.items()
+            if not passed
+        ],
+        "schema_identity": restore_identity,
+    }
+
+
 def evaluate_recovery_evidence(
     path: Path | str,
     *,
     now: datetime | None = None,
     backup_max_age: timedelta = BACKUP_MAX_AGE,
     restore_max_age: timedelta = RESTORE_MAX_AGE,
+    expected_identity: Mapping[str, Any] | None = None,
+    candidate: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Read evidence and return only bounded, non-sensitive administrative data."""
     evidence_path = Path(path)
@@ -131,8 +360,18 @@ def evaluate_recovery_evidence(
     if not restore_verified:
         reasons.append("restore_verification_failed")
 
+    identity = _identity_evaluation(
+        backup,
+        restore,
+        expected_identity=expected_identity,
+        candidate=candidate,
+        force=restore.get("schema_head") == EXPECTED_SCHEMA_HEAD,
+    )
+    if identity is not None:
+        reasons.extend(identity["reasons"])
+
     allowed = not reasons
-    return {
+    result: dict[str, Any] = {
         "state": "ready" if allowed else "degraded",
         "schema_promotion_allowed": allowed,
         "reasons": reasons,
@@ -158,6 +397,23 @@ def evaluate_recovery_evidence(
             ),
         },
     }
+    if identity is not None:
+        result["identity"] = {
+            **identity["gates"],
+            **(
+                identity["schema_identity"]
+                if identity["schema_identity"] is not None
+                else {
+                    "schema": "argus.schema-identity.v1",
+                    "schema_head": None,
+                    "migration_chain_sha256": None,
+                    "canonical_postgresql_schema_sha256": None,
+                    "schema_contract_format": None,
+                    "schema_id": None,
+                }
+            ),
+        }
+    return result
 
 
 def evaluate_promotion_gate(
@@ -165,9 +421,16 @@ def evaluate_promotion_gate(
     *,
     schema_change: bool,
     now: datetime | None = None,
+    expected_identity: Mapping[str, Any] | None = None,
+    candidate: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Apply the recovery gate; schema changes fail closed, code-only reports drift."""
-    evidence = evaluate_recovery_evidence(path, now=now)
+    evidence = evaluate_recovery_evidence(
+        path,
+        now=now,
+        expected_identity=expected_identity,
+        candidate=candidate,
+    )
     reasons = list(evidence["reasons"])
     allowed = not schema_change or evidence["schema_promotion_allowed"]
     return {

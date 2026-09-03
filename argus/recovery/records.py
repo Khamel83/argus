@@ -12,7 +12,7 @@ import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from argus.recovery.artifacts import load_verified_backup_set
 from argus.recovery.operator import (
@@ -22,6 +22,9 @@ from argus.recovery.operator import (
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_COMMIT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_IMAGE_DIGEST = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
+_SAFE_IDENTITY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,255}$")
 _SNAPSHOT = re.compile(r"^\d{8}T\d{6}Z$")
 _SNAPSHOT_MARKER = ".argus-backup-set.json"
 _MAX_RETENTION_ENTRIES = 4096
@@ -32,6 +35,53 @@ _RESTORE_CHECKS = (
     "argus_read_path",
     "migration_compatible",
 )
+_IDENTITY_CHECKS = (
+    "metadata_registry_complete",
+    "schema_contract_clean",
+    "forward_compatible",
+    "rollback_path_human_approved",
+)
+
+
+def _normalize_schema_identity(
+    value: Mapping[str, Any],
+    *,
+    schema_head: str | None = None,
+) -> dict[str, str]:
+    """Accept the four-field tuple and return its canonical identity object."""
+    identity_fields = (
+        "schema_head",
+        "migration_chain_sha256",
+        "canonical_postgresql_schema_sha256",
+        "schema_contract_format",
+    )
+    identity = dict(value)
+    allowed = set(identity_fields) | {"schema", "schema_id"}
+    if (
+        set(identity) - allowed
+        or not all(field in identity for field in identity_fields)
+    ):
+        raise ValueError("schema_identity is invalid")
+    from argus.recovery.database import build_schema_identity
+
+    try:
+        canonical = build_schema_identity(
+            schema_head=identity["schema_head"],
+            migration_chain_sha256=identity["migration_chain_sha256"],
+            canonical_postgresql_schema_sha256=identity[
+                "canonical_postgresql_schema_sha256"
+            ],
+            schema_contract_format=identity["schema_contract_format"],
+        )
+    except (TypeError, ValueError) as error:
+        raise ValueError("schema_identity is invalid") from error
+    if "schema" in identity and identity["schema"] != canonical["schema"]:
+        raise ValueError("schema_identity is invalid")
+    if "schema_id" in identity and identity["schema_id"] != canonical["schema_id"]:
+        raise ValueError("schema_identity schema_id is invalid")
+    if schema_head is not None and canonical["schema_head"] != schema_head.strip():
+        raise ValueError("schema_identity does not match schema_head")
+    return canonical
 
 
 def _backup_record(value: object) -> dict[str, Any] | None:
@@ -44,6 +94,10 @@ def _backup_record(value: object) -> dict[str, Any] | None:
         "manifest_sha256",
         "archive_format",
         "outside_live_data",
+        "backup_identity",
+        "source_revision",
+        "image_digest",
+        "operator_identity",
     }
     return {key: value[key] for key in allowed if key in value}
 
@@ -54,14 +108,31 @@ def _restore_record(value: object) -> dict[str, Any] | None:
     checks = value.get("checks")
     if not isinstance(checks, dict):
         return None
-    return {
+    result: dict[str, Any] = {
         "verified_at": value.get("verified_at"),
         "databases": ["atlas", "argus"],
         "globals_validated": value.get("globals_validated") is True,
         "schema_head": value.get("schema_head"),
         "backup_manifest_sha256": value.get("backup_manifest_sha256"),
-        "checks": {name: checks.get(name) is True for name in _RESTORE_CHECKS},
+        "checks": {
+            name: checks.get(name) is True
+            for name in (*_RESTORE_CHECKS, *_IDENTITY_CHECKS)
+            if name in checks
+        },
     }
+    optional = (
+        "source_revision",
+        "image_digest",
+        "schema_identity",
+        "migration_receipt",
+        "backup_identity",
+        "restore_identity",
+        "operator_identity",
+        "forward_compatible",
+        "rollback_path_human_approved",
+    )
+    result.update({key: value[key] for key in optional if key in value})
+    return result
 
 
 def _existing(path: Path) -> dict[str, Any]:
@@ -127,6 +198,9 @@ def _record_backup(
     *,
     completed_at: str,
     manifest_sha256: str,
+    source_revision: str | None = None,
+    image_digest: str | None = None,
+    operator_identity: str | None = None,
 ) -> None:
     """Atomically record a structurally verified shared backup set."""
     if _SNAPSHOT.fullmatch(completed_at) is None:
@@ -138,14 +212,36 @@ def _record_backup(
     )
     evidence_path = Path(path)
     payload = _existing(evidence_path)
-    payload["backup"] = {
+    if source_revision is not None and _COMMIT.fullmatch(source_revision) is None:
+        raise ValueError("source_revision must be a bounded source identity")
+    if image_digest is not None and _IMAGE_DIGEST.fullmatch(image_digest) is None:
+        raise ValueError("image_digest must be an immutable SHA-256 reference")
+    if operator_identity is not None and (
+        not isinstance(operator_identity, str)
+        or _SAFE_IDENTITY.fullmatch(operator_identity) is None
+    ):
+        raise ValueError("operator_identity is invalid")
+    backup: dict[str, Any] = {
         "completed_at": parsed.isoformat(),
         "databases": ["atlas", "argus"],
         "globals": True,
         "manifest_sha256": manifest_sha256,
         "archive_format": "custom",
         "outside_live_data": True,
+        "backup_identity": manifest_sha256,
     }
+    backup.update(
+        {
+            key: value
+            for key, value in {
+                "source_revision": source_revision,
+                "image_digest": image_digest,
+                "operator_identity": operator_identity,
+            }.items()
+            if value is not None
+        }
+    )
+    payload["backup"] = backup
     _atomic_write(evidence_path, payload)
 
 
@@ -155,10 +251,45 @@ def _record_restore(
     schema_head: str,
     expected_manifest_sha256: str,
     verified_at: datetime | None = None,
+    source_revision: str | None = None,
+    image_digest: str | None = None,
+    schema_identity: Mapping[str, Any] | None = None,
+    migration_receipt: str | None = None,
+    operator_identity: str | None = None,
+    metadata_registry_complete: bool | None = None,
+    schema_contract_clean: bool | None = None,
+    forward_compatible: bool | None = None,
+    rollback_path_human_approved: bool | None = None,
 ) -> None:
     """Record successful checks; callers invoke this only after every verifier exits zero."""
     if not schema_head or len(schema_head) > 128:
         raise ValueError("schema_head is invalid")
+    if source_revision is not None and _COMMIT.fullmatch(source_revision) is None:
+        raise ValueError("source_revision must be a bounded source identity")
+    if image_digest is not None and _IMAGE_DIGEST.fullmatch(image_digest) is None:
+        raise ValueError("image_digest must be an immutable SHA-256 reference")
+    if migration_receipt is not None and _SHA256.fullmatch(migration_receipt) is None:
+        raise ValueError("migration_receipt must be a lowercase SHA-256")
+    if operator_identity is not None and (
+        not isinstance(operator_identity, str)
+        or _SAFE_IDENTITY.fullmatch(operator_identity) is None
+    ):
+        raise ValueError("operator_identity is invalid")
+    for name, value in (
+        ("metadata_registry_complete", metadata_registry_complete),
+        ("schema_contract_clean", schema_contract_clean),
+        ("forward_compatible", forward_compatible),
+        ("rollback_path_human_approved", rollback_path_human_approved),
+    ):
+        if value is not None and not isinstance(value, bool):
+            raise ValueError(f"{name} must be a boolean")
+    if schema_identity is not None:
+        if not isinstance(schema_identity, Mapping):
+            raise ValueError("schema_identity must be an object")
+        schema_identity = _normalize_schema_identity(
+            schema_identity,
+            schema_head=schema_head,
+        )
     timestamp = (verified_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
     evidence_path = Path(path)
     payload = _existing(evidence_path)
@@ -168,7 +299,7 @@ def _record_restore(
         or backup.get("manifest_sha256") != expected_manifest_sha256
     ):
         raise ValueError("backup evidence changed during restore verification")
-    payload["restore"] = {
+    restore: dict[str, Any] = {
         "verified_at": timestamp.isoformat(),
         "databases": ["atlas", "argus"],
         "globals_validated": True,
@@ -176,6 +307,35 @@ def _record_restore(
         "backup_manifest_sha256": expected_manifest_sha256,
         "checks": {name: True for name in _RESTORE_CHECKS},
     }
+    optional = {
+        "source_revision": source_revision,
+        "image_digest": image_digest,
+        "schema_identity": schema_identity,
+        "migration_receipt": migration_receipt,
+        "backup_identity": expected_manifest_sha256,
+        "operator_identity": operator_identity,
+        "metadata_registry_complete": metadata_registry_complete,
+        "schema_contract_clean": schema_contract_clean,
+        "forward_compatible": forward_compatible,
+        "rollback_path_human_approved": rollback_path_human_approved,
+    }
+    restore.update({key: value for key, value in optional.items() if value is not None})
+    for name, value in (
+        ("metadata_registry_complete", metadata_registry_complete),
+        ("schema_contract_clean", schema_contract_clean),
+        ("forward_compatible", forward_compatible),
+        ("rollback_path_human_approved", rollback_path_human_approved),
+    ):
+        if value is not None:
+            restore["checks"][name] = value
+    from argus.recovery.database import restore_identity_sha256
+
+    restore["restore_identity"] = restore_identity_sha256(
+        backup_identity=expected_manifest_sha256,
+        schema_identity=schema_identity,
+        verified_at=restore["verified_at"],
+    )
+    payload["restore"] = restore
     _atomic_write(evidence_path, payload)
 
 
@@ -185,6 +345,9 @@ def record_verified_backup(
     backup_set: Path | str,
     root: Path | str,
     live_data: Path | str,
+    source_revision: str | None = None,
+    image_digest: str | None = None,
+    operator_identity: str | None = None,
 ) -> None:
     """Record evidence derived from a checksum-verified owned backup set."""
     verified = load_verified_backup_set(
@@ -209,6 +372,9 @@ def record_verified_backup(
             evidence_path,
             completed_at=verified["completed_at"].strftime("%Y%m%dT%H%M%SZ"),
             manifest_sha256=verified["manifest_sha256"],
+            source_revision=source_revision,
+            image_digest=image_digest,
+            operator_identity=operator_identity,
         )
 
 
@@ -225,6 +391,15 @@ def record_verified_restore(
     migrate_argus=None,
     verify_argus=None,
     verify_atlas=None,
+    source_revision: str | None = None,
+    image_digest: str | None = None,
+    schema_identity: Mapping[str, Any] | None = None,
+    migration_receipt: str | None = None,
+    operator_identity: str | None = None,
+    metadata_registry_complete: bool | None = None,
+    schema_contract_clean: bool | None = None,
+    forward_compatible: bool | None = None,
+    rollback_path_human_approved: bool | None = None,
 ) -> None:
     """Verify restored databases against their source manifest before evidence."""
     from argus.recovery.database import (
@@ -251,6 +426,8 @@ def record_verified_restore(
             or backup.get("manifest_sha256") != expected_manifest_sha256
         ):
             raise ValueError("restore proof is not bound to current backup evidence")
+        if schema_identity is not None and not isinstance(schema_identity, Mapping):
+            raise ValueError("schema_identity must be an object")
         argus_name = validate_scratch_database(argus_database)
         atlas_name = validate_scratch_database(atlas_database, tenant="atlas")
         source_verifier = verify_source or (
@@ -326,11 +503,77 @@ def record_verified_restore(
         )
         if current["manifest_sha256"] != expected_manifest_sha256:
             raise ValueError("backup manifest changed during restore verification")
+        report_schema_identity = argus_report.get("schema_identity")
+        if schema_identity is not None:
+            schema_identity = _normalize_schema_identity(
+                schema_identity,
+                schema_head=str(argus_report["schema_head"]),
+            )
+            if isinstance(report_schema_identity, Mapping) and _normalize_schema_identity(
+                report_schema_identity,
+                schema_head=str(argus_report["schema_head"]),
+            ) != schema_identity:
+                raise ValueError("schema_identity does not match verifier report")
+        elif isinstance(report_schema_identity, Mapping):
+            schema_identity = _normalize_schema_identity(
+                report_schema_identity,
+                schema_head=str(argus_report["schema_head"]),
+            )
+        restore_source_revision = (
+            source_revision
+            if source_revision is not None
+            else argus_report.get("source_revision")
+            or backup.get("source_revision")
+        )
+        restore_image_digest = (
+            image_digest
+            if image_digest is not None
+            else argus_report.get("image_digest")
+            or backup.get("image_digest")
+        )
+        restore_operator_identity = operator_identity or backup.get(
+            "operator_identity"
+        )
+        report_checks = argus_report.get("checks")
+        report_checks = report_checks if isinstance(report_checks, Mapping) else {}
         _record_restore(
             evidence_path,
             schema_head=str(argus_report["schema_head"]),
             expected_manifest_sha256=expected_manifest_sha256,
             verified_at=verified_at,
+            source_revision=restore_source_revision,
+            image_digest=restore_image_digest,
+            schema_identity=(
+                schema_identity
+                if schema_identity is not None
+                else None
+            ),
+            migration_receipt=(
+                migration_receipt
+                if migration_receipt is not None
+                else argus_report.get("migration_receipt")
+            ),
+            operator_identity=restore_operator_identity,
+            metadata_registry_complete=(
+                metadata_registry_complete
+                if metadata_registry_complete is not None
+                else report_checks.get("metadata_registry_complete")
+            ),
+            schema_contract_clean=(
+                schema_contract_clean
+                if schema_contract_clean is not None
+                else report_checks.get("schema_contract_clean")
+            ),
+            forward_compatible=(
+                forward_compatible
+                if forward_compatible is not None
+                else argus_report.get("forward_compatible")
+            ),
+            rollback_path_human_approved=(
+                rollback_path_human_approved
+                if rollback_path_human_approved is not None
+                else argus_report.get("rollback_path_human_approved")
+            ),
         )
 
 

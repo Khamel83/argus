@@ -1,5 +1,5 @@
 {
-  "canonical_postgresql_schema_sha256": "b18281e8591647145156f7d50fe40167f0000034d06ef5fe41dabe98ba3e3bc7",
+  "canonical_postgresql_schema_sha256": "71296b9f2448bf8353cba5a8b07ff4d182923895130504830d7df19f7672facb",
   "columns": {
     "accepted_retrieval_operations": {
       "acceptance_fingerprint": {
@@ -3741,6 +3741,23 @@
       }
     },
     "provider_spend_attempts": {
+      "account_fingerprint": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": "'legacy-account'::character varying",
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
       "actual_charge": {
         "character_maximum_length": null,
         "datetime_precision": null,
@@ -3826,6 +3843,23 @@
         "numeric_scale": null,
         "type": "boolean"
       },
+      "execution_deadline": {
+        "character_maximum_length": null,
+        "datetime_precision": 6,
+        "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": true,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "timestamp without time zone"
+      },
       "id": {
         "character_maximum_length": 32,
         "datetime_precision": null,
@@ -3877,6 +3911,23 @@
         "numeric_scale": null,
         "type": "boolean"
       },
+      "operation_id": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": "'legacy-operation'::character varying",
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
       "outcome": {
         "character_maximum_length": 100,
         "datetime_precision": null,
@@ -3898,6 +3949,23 @@
         "character_maximum_length": 50,
         "datetime_precision": null,
         "default": null,
+        "generated": {
+          "expression": null,
+          "is_generated": false
+        },
+        "identity": {
+          "generation": null,
+          "is_identity": false
+        },
+        "nullable": false,
+        "numeric_precision": null,
+        "numeric_scale": null,
+        "type": "character varying"
+      },
+      "release_identity": {
+        "character_maximum_length": 128,
+        "datetime_precision": null,
+        "default": "'unknown-release'::character varying",
         "generated": {
           "expression": null,
           "is_generated": false
@@ -6607,7 +6675,7 @@
       "table": "provider_spend_audit"
     }
   },
-  "contract_sha256": "f964b815c3b3a05301fa323759bae8024d9ddce10a02a0eaadb9d6a232cb6b73",
+  "contract_sha256": "4741cb4f265175995befc5034926186de2ed5d67a4cb6bd7ff67f5ddd7be296d",
   "format_version": 1,
   "functions": {},
   "indexes": {
@@ -6770,6 +6838,10 @@
     "ix_provider_readiness_snapshots_provider": {
       "definition": "CREATE INDEX ix_provider_readiness_snapshots_provider ON public.provider_readiness_snapshots USING btree (provider)",
       "table": "provider_readiness_snapshots"
+    },
+    "ix_provider_spend_attempts_account": {
+      "definition": "CREATE INDEX ix_provider_spend_attempts_account ON public.provider_spend_attempts USING btree (provider, account_fingerprint)",
+      "table": "provider_spend_attempts"
     },
     "ix_provider_spend_attempts_provider": {
       "definition": "CREATE INDEX ix_provider_spend_attempts_provider ON public.provider_spend_attempts USING btree (provider)",
@@ -7028,10 +7100,10 @@
       "table": "provider_spend_audit"
     }
   },
-  "migration_chain_sha256": "9cfa5afa3b90c92807e626f6223d8fa38e686724995674d10f7fd784b9eddf09",
+  "migration_chain_sha256": "3e95da249c1d12fb0f0a34d6bd6b0a35add9a118bd83dac28be3f31a5fa86362",
   "schema_contract_format": "argus-schema-contract-v1",
-  "schema_head": "0010_domain_policies",
-  "schema_id": "97e9cff517020009a86830f921e78bb1b9eb5e02ab7b08f2530577f8ce76e27f",
+  "schema_head": "0011_extraction_spend_scope",
+  "schema_id": "60e3010f94d40f325573670583aca8435b2ab7b7377aec23a58859ad52343f29",
   "tables": [
     "accepted_retrieval_operations",
     "alembic_version",
