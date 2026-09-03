@@ -1765,11 +1765,18 @@ class ProviderReadinessRepository:
         self,
         session,
         provider: ProviderName,
+        *,
+        account_fingerprint: str | None = None,
     ) -> bool:
         """Return whether the registered account has current protected exhaustion."""
         registration = self.get_registration_in_session(session, provider)
         scope = registration.get("scope") or {}
-        account = scope.get("account_fingerprint")
+        account = account_fingerprint or scope.get("account_fingerprint")
+        # Legacy direct callers did not carry account identity. Preserve their
+        # historical binding to the registered account while keeping explicit
+        # account fingerprints isolated.
+        if account == "legacy-account" and scope.get("account_fingerprint"):
+            account = scope["account_fingerprint"]
         if not account:
             return False
         now = self.authority_now(session)

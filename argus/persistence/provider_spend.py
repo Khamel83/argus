@@ -327,6 +327,7 @@ class ProviderSpendRepository:
                 obligation = self._obligation(
                     session,
                     provider,
+                    account_fingerprint=account_fingerprint,
                     lock=True,
                 )
                 from argus.persistence.readiness import (
@@ -342,6 +343,7 @@ class ProviderSpendRepository:
                 if readiness.protected_exhaustion_in_session(
                     session,
                     provider,
+                    account_fingerprint=account_fingerprint,
                 ):
                     raise BudgetExhaustedError(
                         f"{provider.value} terminal account exhaustion"
@@ -838,29 +840,46 @@ class ProviderSpendRepository:
         """Accounting diagnostics, explicitly outside readiness semantics."""
         return self.provider_summary(provider, budget_limit=budget_limit)
 
-    def _obligation(self, session, provider: ProviderName, *, lock: bool) -> float:
-        # PostgreSQL needs a lock even when a provider has no attempt rows yet;
-        # the transaction-scoped advisory lock supplies that stable mutex.
+    def _obligation(
+        self,
+        session,
+        provider: ProviderName,
+        *,
+        account_fingerprint: str | None = None,
+        lock: bool,
+    ) -> float:
+        # PostgreSQL needs a lock even when a provider/account has no attempt
+        # rows yet. The transaction-scoped advisory lock supplies that stable
+        # mutex without coupling independent provider accounts.
         if lock and session.get_bind().dialect.name == "postgresql":
             from sqlalchemy import text
 
+            lock_key = f"provider-budget:{provider.value}"
+            if account_fingerprint:
+                lock_key += f":{account_fingerprint}"
             session.execute(
                 text(
                     "SELECT pg_advisory_xact_lock("
                     "hashtextextended(:provider_lock, 0))"
                 ),
-                {"provider_lock": f"provider-budget:{provider.value}"},
+                {"provider_lock": lock_key},
             )
         # Lock existing rows as an additional guard on databases that support
         # it. SQLite's BEGIN IMMEDIATE serializes the whole read/write section.
         statement = select(ProviderSpendAttemptRow.id).where(
             ProviderSpendAttemptRow.provider == provider.value
         )
+        if account_fingerprint is not None:
+            statement = statement.where(
+                ProviderSpendAttemptRow.account_fingerprint == account_fingerprint
+            )
         if lock:
             statement = statement.with_for_update()
         list(session.scalars(statement))
-        return self._settled_charge(session, provider) + self._uncertain_charge(
-            session, provider
+        return self._settled_charge(
+            session, provider, account_fingerprint=account_fingerprint
+        ) + self._uncertain_charge(
+            session, provider, account_fingerprint=account_fingerprint
         )
 
     @staticmethod
@@ -868,20 +887,47 @@ class ProviderSpendRepository:
         del provider
         return True
 
-    def _settled_charge(self, session, provider: ProviderName) -> float:
+    def _settled_charge(
+        self,
+        session,
+        provider: ProviderName,
+        *,
+        account_fingerprint: str | None = None,
+    ) -> float:
+        filters = [
+            ProviderSpendAttemptRow.provider == provider.value,
+            ProviderSpendAttemptRow.is_paid.is_(True),
+            ProviderSpendAttemptRow.status.in_(("settled", "resolved")),
+            self._active_filter(provider),
+        ]
+        if account_fingerprint is not None:
+            filters.append(
+                ProviderSpendAttemptRow.account_fingerprint == account_fingerprint
+            )
         value = session.scalar(
             select(
                 func.coalesce(func.sum(ProviderSpendAttemptRow.actual_charge), 0.0)
-            ).where(
-                ProviderSpendAttemptRow.provider == provider.value,
-                ProviderSpendAttemptRow.is_paid.is_(True),
-                ProviderSpendAttemptRow.status.in_(("settled", "resolved")),
-                self._active_filter(provider),
-            )
+            ).where(*filters)
         )
         return float(value or 0.0)
 
-    def _uncertain_charge(self, session, provider: ProviderName) -> float:
+    def _uncertain_charge(
+        self,
+        session,
+        provider: ProviderName,
+        *,
+        account_fingerprint: str | None = None,
+    ) -> float:
+        filters = [
+            ProviderSpendAttemptRow.provider == provider.value,
+            ProviderSpendAttemptRow.is_paid.is_(True),
+            ProviderSpendAttemptRow.status.in_(("reserved", "uncertain")),
+            # Uncertain charges intentionally never age out.
+        ]
+        if account_fingerprint is not None:
+            filters.append(
+                ProviderSpendAttemptRow.account_fingerprint == account_fingerprint
+            )
         value = session.scalar(
             select(
                 func.coalesce(
@@ -891,12 +937,7 @@ class ProviderSpendRepository:
                     ),
                     0.0,
                 )
-            ).where(
-                ProviderSpendAttemptRow.provider == provider.value,
-                ProviderSpendAttemptRow.is_paid.is_(True),
-                ProviderSpendAttemptRow.status.in_(("reserved", "uncertain")),
-                # Uncertain charges intentionally never age out.
-            )
+            ).where(*filters)
         )
         return float(value or 0.0)
 
