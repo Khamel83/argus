@@ -615,6 +615,7 @@ class GuardedAcquisition:
         for _hop in range(request.limits.max_redirect_hops + 1):
             if resource_counts.requests >= request.limits.max_resource_count:
                 return _request_failure(request, "resource limit exceeded")
+            trusted_service = _trusted_service_target(request, current_url)
             try:
                 response: TransportResponse = self.transport.request(
                     TransportRequest(
@@ -623,6 +624,14 @@ class GuardedAcquisition:
                         headers=headers,
                         body=body,
                         timeout=request.limits.timeout_seconds,
+                        caller_principal=request.caller_principal,
+                        profile=request.profile,
+                        credential_policy=request.credential_policy,
+                        trusted_service_origin=(
+                            request.trusted_service_origin
+                            if trusted_service
+                            else None
+                        ),
                     )
                 )
             except Exception as exc:

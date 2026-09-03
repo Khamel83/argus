@@ -24,6 +24,17 @@ DEFAULT_RESOLUTION_TIMEOUT_SECONDS = 2.0
 MAX_RESOLUTION_ADDRESSES = 32
 MAX_DNS_HOSTNAME_LENGTH = 2_048
 
+# Internal service traffic may use the private networks that Docker and
+# Tailscale deployments assign to configured services.  Keep this list
+# explicit.  In particular, loopback, link-local, multicast, reserved, and
+# carrier-grade NAT addresses are not service destinations.
+_PRIVATE_SERVICE_NETWORKS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("fc00::/7"),
+)
+
 
 class DNSResolutionError(RuntimeError):
     """Raised by optional resolver integrations, never exposed by default."""
@@ -419,7 +430,38 @@ def resolve_public_addresses(
     return value
 
 
-def _address_reason(address: ResolvedAddress) -> str | None:
+def resolve_trusted_service_addresses(
+    hostname: str,
+    port: int,
+    resolver: Any = None,
+    clock: Any = None,
+    *,
+    timeout: float = DEFAULT_RESOLUTION_TIMEOUT_SECONDS,
+) -> tuple[ResolvedAddress, ...]:
+    """Resolve one configured private service without broadening URL policy.
+
+    The complete DNS answer must be RFC1918 or ULA.  A mixed, unsafe, empty,
+    or malformed answer returns no addresses, so callers cannot recover by
+    dropping one suspicious answer.
+    """
+
+    addresses = resolve_public_addresses(
+        hostname,
+        port,
+        resolver,
+        clock,
+        timeout=timeout,
+    )
+    decision = validate_trusted_service_address_set(addresses)
+    return decision.approved_addresses if decision.allowed else ()
+
+
+def _address_reason(
+    address: ResolvedAddress,
+    *,
+    allow_private: bool = False,
+    require_private: bool = False,
+) -> str | None:
     try:
         parsed = ipaddress.ip_address(address.address)
     except ValueError:
@@ -444,13 +486,24 @@ def _address_reason(address: ResolvedAddress) -> str | None:
     if parsed.is_reserved:
         return f"reserved address blocked: {address.address}"
     if parsed.is_private:
+        if allow_private and any(
+            parsed in network for network in _PRIVATE_SERVICE_NETWORKS
+        ):
+            return None
         return f"private address blocked: {address.address}"
+    if require_private:
+        return f"trusted service address is not private: {address.address}"
     if not parsed.is_global:
         return f"non-public address blocked: {address.address}"
     return None
 
 
-def validate_address_set(addresses: Iterable[Any] | Any) -> AddressDecision:
+def _validate_address_set(
+    addresses: Iterable[Any] | Any,
+    *,
+    allow_private: bool = False,
+    require_private: bool = False,
+) -> AddressDecision:
     """Approve only a complete, finite, fully public address set.
 
     Any unsafe, malformed, unsupported, or conflicting answer rejects the
@@ -497,7 +550,11 @@ def validate_address_set(addresses: Iterable[Any] | Any) -> AddressDecision:
             return AddressDecision(False, reason=f"invalid address at index {index}")
         if address.port:
             ports.add(address.port)
-        reason = _address_reason(address)
+        reason = _address_reason(
+            address,
+            allow_private=allow_private,
+            require_private=require_private,
+        )
         if reason is not None:
             return AddressDecision(False, reason=reason)
         key = (address.address, address.port, address.family)
@@ -506,10 +563,41 @@ def validate_address_set(addresses: Iterable[Any] | Any) -> AddressDecision:
             normalized.append(address)
 
     if not normalized:
-        return AddressDecision(False, reason="no public addresses resolved")
+        return AddressDecision(
+            False,
+            reason=(
+                "no trusted service addresses resolved"
+                if require_private
+                else "no public addresses resolved"
+            ),
+        )
     if len(ports) > 1:
         return AddressDecision(False, reason="ambiguous address ports")
     return AddressDecision(True, tuple(normalized))
+
+
+def validate_address_set(addresses: Iterable[Any] | Any) -> AddressDecision:
+    """Approve only a complete, finite, fully public address set."""
+
+    return _validate_address_set(addresses)
+
+
+def validate_trusted_service_address_set(
+    addresses: Iterable[Any] | Any,
+) -> AddressDecision:
+    """Approve only a complete RFC1918 or ULA address set for a service.
+
+    This policy is separate from :func:`validate_address_set` so a private
+    address can never be approved by accident on a user-controlled URL.
+    Callers must still prove the exact configured service origin and trusted
+    caller before using this result.
+    """
+
+    return _validate_address_set(
+        addresses,
+        allow_private=True,
+        require_private=True,
+    )
 
 
 __all__ = [
@@ -519,5 +607,7 @@ __all__ = [
     "MAX_RESOLUTION_ADDRESSES",
     "ResolvedAddress",
     "resolve_public_addresses",
+    "resolve_trusted_service_addresses",
     "validate_address_set",
+    "validate_trusted_service_address_set",
 ]

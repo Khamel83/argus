@@ -6,9 +6,12 @@ import socket
 
 import pytest
 
+from argus.acquisition.models import CredentialPolicy, OriginProfile
 from argus.acquisition.transport import (
+    AddressPolicyError,
     PinnedTransport,
     TransportRequest,
+    TransportPolicyError,
     UnsupportedAddressPinning,
 )
 
@@ -83,6 +86,104 @@ def test_default_port_is_not_added_to_host_or_authority():
 
     assert response.host_header == "public.example"
     assert response.http2_authority == "public.example"
+
+
+def test_trusted_searxng_service_can_dial_private_docker_address():
+    recorder = Recorder()
+    transport = PinnedTransport(
+        resolver=SequenceResolver(["172.20.0.3"]),
+        dispatcher=recorder,
+    )
+
+    response = transport.request(
+        request_for(
+            "http://searxng:8080/search",
+            caller_principal="provider:searxng",
+            profile=OriginProfile.AUTHENTICATED_CONTENT,
+            credential_policy=CredentialPolicy.ORIGIN_SCOPED,
+            trusted_service_origin="http://searxng:8080",
+        )
+    )
+
+    assert response.dial_ip == "172.20.0.3"
+    assert recorder.requests[0].logical_origin.hostname == "searxng"
+    assert recorder.requests[0].dial_address.address == "172.20.0.3"
+
+
+def test_private_target_without_exact_trusted_origin_is_rejected():
+    recorder = Recorder()
+    transport = PinnedTransport(
+        resolver=SequenceResolver(["172.20.0.4"]),
+        dispatcher=recorder,
+    )
+
+    with pytest.raises(TransportPolicyError, match="trusted service origin"):
+        transport.request(
+            request_for(
+                "http://metadata.internal:8080/",
+                caller_principal="provider:searxng",
+                profile=OriginProfile.AUTHENTICATED_CONTENT,
+                credential_policy=CredentialPolicy.ORIGIN_SCOPED,
+                trusted_service_origin="http://searxng:8080",
+            )
+        )
+
+    assert recorder.requests == []
+
+
+def test_arbitrary_private_target_without_service_context_is_rejected():
+    recorder = Recorder()
+    transport = PinnedTransport(
+        resolver=SequenceResolver(["172.20.0.4"]),
+        dispatcher=recorder,
+    )
+
+    with pytest.raises(AddressPolicyError, match="private"):
+        transport.request(request_for("http://metadata.internal:8080/"))
+
+    assert recorder.requests == []
+
+
+def test_private_service_target_rejects_impersonating_caller():
+    recorder = Recorder()
+    transport = PinnedTransport(
+        resolver=SequenceResolver(["172.20.0.4"]),
+        dispatcher=recorder,
+    )
+
+    with pytest.raises(TransportPolicyError, match="caller"):
+        transport.request(
+            request_for(
+                "http://searxng:8080/search",
+                caller_principal="provider:brave",
+                profile=OriginProfile.AUTHENTICATED_CONTENT,
+                credential_policy=CredentialPolicy.ORIGIN_SCOPED,
+                trusted_service_origin="http://searxng:8080",
+            )
+        )
+
+    assert recorder.requests == []
+
+
+def test_trusted_service_cannot_use_loopback_dial_address():
+    recorder = Recorder()
+    transport = PinnedTransport(
+        resolver=SequenceResolver(["127.0.0.1"]),
+        dispatcher=recorder,
+    )
+
+    with pytest.raises(AddressPolicyError, match="trusted service addresses"):
+        transport.request(
+            request_for(
+                "http://searxng:8080/search",
+                caller_principal="provider:searxng",
+                profile=OriginProfile.AUTHENTICATED_CONTENT,
+                credential_policy=CredentialPolicy.ORIGIN_SCOPED,
+                trusted_service_origin="http://searxng:8080",
+            )
+        )
+
+    assert recorder.requests == []
 
 
 def test_caller_cannot_override_host_authority_sni_or_dial_target():
