@@ -256,6 +256,9 @@ jobs:
       - name: Install uv
         run: python3 -m pip install uv==0.11.26
 
+      - name: Sync release dependencies
+        run: uv sync --frozen
+
       - name: Check llms.txt freshness
         run: |
           README_TS=$(git log -1 --format=%ct -- README.md)
@@ -267,4 +270,4 @@ jobs:
           fi
 
       - name: Check version sync
-        run: PYTHONPATH=. python3 scripts/verify_release_contract.py
+        run: uv run --frozen --no-sync python scripts/verify_release_contract.py
