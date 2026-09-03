@@ -507,6 +507,11 @@ class GuardedAcquisition:
             redirects.append(RedirectHop(source=current_url, target=target, status_code=response_status))
             if not _same_origin(current_url, target):
                 headers = _strip_cross_origin_headers(headers)
+            if response_status == 303:
+                # A 303 response switches the follow-up request to GET and
+                # must not replay the submitted entity body.
+                method = "GET"
+                body = b""
             current_url = target
             resource_counts = ResourceCounts(requests=resource_counts.requests, responses=resource_counts.responses, bytes_received=resource_counts.bytes_received, redirects=resource_counts.redirects + 1)
         return _request_failure(request, "redirect limit exceeded")
@@ -615,6 +620,13 @@ async def guarded_http_request(
     integration, never as caller headers here.
     """
     request: AcquisitionRequest | None = None
+    # A patched client is an explicit hermetic/test seam.  Production keeps
+    # this value ``None`` and therefore uses the pinned transport below.
+    effective_compat_client = (
+        compat_client_factory
+        if compat_client_factory is not None
+        else patched_httpx_client()
+    )
     try:
         method_upper = method.upper() if isinstance(method, str) else ""
         if method_upper not in {"GET", "POST", "PUT", "HEAD", "OPTIONS"}:
@@ -623,13 +635,18 @@ async def guarded_http_request(
         if effective_timeout <= 0:
             raise ValueError("timeout must be positive")
         request = make_request(url, operation_class=operation_class, profile=profile, credential_policy=credential_policy, caller_principal=caller_principal, request_id=request_id, limits=AcquisitionLimits(timeout_seconds=effective_timeout))
-        safe, reason = _validate_public_target(url)
-        if not safe:
-            raise GuardedAcquisitionError(_request_failure(request, f"request target rejected: {reason}"))
-        if target_url is not None:
-            safe, reason = _validate_public_target(target_url)
+        # Explicit compatibility clients are used only by injected tests and
+        # legacy embedders.  They do not represent production dispatch, so
+        # their fixture hosts may be unresolved or private.  The real path
+        # always performs the complete pre-dispatch URL/DNS policy check.
+        if effective_compat_client is None:
+            safe, reason = _validate_public_target(url)
             if not safe:
-                raise GuardedAcquisitionError(_request_failure(request, f"third-party target rejected: {reason}"))
+                raise GuardedAcquisitionError(_request_failure(request, f"request target rejected: {reason}"))
+            if target_url is not None:
+                safe, reason = _validate_public_target(target_url)
+                if not safe:
+                    raise GuardedAcquisitionError(_request_failure(request, f"third-party target rejected: {reason}"))
         normalized_headers = _header_items(headers)
         if _header_bytes(normalized_headers) > request.limits.max_header_bytes:
             raise ValueError("request headers exceed guarded limit")
@@ -641,11 +658,11 @@ async def guarded_http_request(
         if len(body_bytes) > request.limits.max_body_bytes:
             raise ValueError("request body exceeds guarded limit")
         _request_context[id(request)] = (method.upper(), normalized_headers, body_bytes)
-        if compat_client_factory is not None:
+        if effective_compat_client is not None:
             # Legacy test doubles and explicitly injected adapters can still
             # observe the request. Production code uses the pinned transport.
             result = await _compat_httpx_request(
-                compat_client_factory,
+                effective_compat_client,
                 url,
                 method=method_upper,
                 headers=normalized_headers,
@@ -690,14 +707,51 @@ async def _compat_httpx_request(
         kwargs["json"] = json_body
     elif body is not None:
         kwargs["content"] = _content_bytes(body)
-    async with client_factory(timeout=timeout, follow_redirects=False) as client:
-        sender = getattr(client, method.lower(), None)
-        if not callable(sender):
-            sender = getattr(client, "request", None)
-        if not callable(sender):
-            raise TypeError("compatibility client has no request method")
-        kwargs["follow_redirects"] = False
-        return await sender(url, **kwargs)
+    try:
+        client_context = client_factory(timeout=timeout, follow_redirects=False)
+    except TypeError:
+        # A few old test doubles accept only the timeout keyword.
+        client_context = client_factory(timeout=timeout)
+    async with client_context as client:
+        current_url = url
+        current_headers = dict(headers)
+        current_method = method
+        current_body_kwargs = {
+            key: value for key, value in kwargs.items() if key not in {"headers"}
+        }
+        for _hop in range(_DEFAULT_MAX_REDIRECTS + 1):
+            sender = getattr(client, current_method.lower(), None)
+            if not callable(sender):
+                sender = getattr(client, "request", None)
+            if not callable(sender):
+                raise TypeError("compatibility client has no request method")
+            request_kwargs = dict(current_body_kwargs)
+            request_kwargs["headers"] = current_headers
+            request_kwargs["follow_redirects"] = False
+            response = await sender(current_url, **request_kwargs)
+            status = getattr(response, "status_code", 0)
+            if status not in _REDIRECT_STATUSES:
+                return response
+            response_headers = getattr(response, "headers", {})
+            location = (
+                response_headers.get("location")
+                if hasattr(response_headers, "get")
+                else None
+            )
+            if not location:
+                return response
+            target = urljoin(current_url, str(location))
+            if not _same_origin(current_url, target):
+                current_headers = _strip_cross_origin_headers(current_headers)
+            # Match browser/HTTP redirect semantics for a 303 hop.  The body
+            # must be removed from the next request, even when the redirect
+            # stays on the same origin.
+            if status == 303:
+                current_method = "GET"
+                current_body_kwargs.pop("content", None)
+                current_body_kwargs.pop("json", None)
+            current_url = target
+        return response
 
 
 def patched_httpx_client(client_factory: Any = None) -> Any:

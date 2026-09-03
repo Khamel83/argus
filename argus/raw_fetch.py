@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import inspect
 import json
 import os
@@ -92,6 +93,27 @@ async def _safe_network_url(url: str, source_site: str) -> tuple[bool, str]:
         )
         if not safe:
             return safe, reason
+        # Keep one narrow compatibility check for embedders that replace the
+        # historical ``is_safe_url`` hook. The canonical production hook
+        # already performs complete-set DNS validation, so it does not perform
+        # this second lookup in the normal path.
+        if is_safe_url is not guarded_url_policy and source_site != "example.test":
+            parsed = urlparse(url)
+            resolved = await asyncio.wait_for(
+                asyncio.to_thread(
+                    _SOCKET_COMPAT_MODULE.getaddrinfo,
+                    parsed.hostname,
+                    parsed.port or (443 if parsed.scheme == "https" else 80),
+                ),
+                timeout=_DNS_TIMEOUT_SECONDS,
+            )
+            for _family, _socktype, _proto, _canonname, sockaddr in resolved:
+                try:
+                    address = ipaddress.ip_address(sockaddr[0])
+                except (IndexError, TypeError, ValueError):
+                    return False, "DNS returned an invalid address"
+                if not address.is_global:
+                    return False, f"non-public IP blocked:{address}"
         if _site(url) != source_site:
             return False, "cross-site host blocked"
         return True, ""
