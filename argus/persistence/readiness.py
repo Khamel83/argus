@@ -844,6 +844,149 @@ class ProviderReadinessRepository:
                 uncertain_charge, completed_at,
             )
 
+    def list_stale_execution_attempts(
+        self,
+        *,
+        now: datetime | float | None = None,
+        limit: int = 128,
+    ) -> tuple[Any, ...]:
+        """Atomically fence expired executions and retain their obligations.
+
+        A reservation with an elapsed execution deadline has an unknown
+        provider effect.  The lease therefore becomes ``unresolved`` and the
+        spend attempt becomes ``uncertain`` in the same locked transaction.
+        No charge is settled, refunded, or retried.  The returned values are
+        detached ``SpendAttempt`` projections for bounded scheduler evidence.
+        """
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            return ()
+        limit = min(limit, 128)
+        from argus.persistence.provider_spend import (
+            ProviderSpendAttemptRow,
+            SpendAuditRow,
+            _attempt,
+            _attempt_state,
+        )
+
+        with self._write_transaction() as session:
+            authority_now = self.authority_now(session)
+            if now is None:
+                cutoff = authority_now
+            elif isinstance(now, datetime):
+                cutoff = _aware(now)
+            elif isinstance(now, (int, float)) and not isinstance(now, bool):
+                # A wall-clock epoch is accepted for scheduler integrations.
+                # Monotonic values are not comparable with database deadlines;
+                # use authoritative database time for those callers.
+                cutoff = (
+                    datetime.fromtimestamp(float(now), tz=UTC)
+                    if float(now) >= 1_000_000_000
+                    else authority_now
+                )
+            else:
+                raise ValueError("stale sweep time must be datetime or epoch")
+
+            leases = list(session.scalars(
+                select(ProviderReadinessLeaseRow)
+                .where(
+                    ProviderReadinessLeaseRow.state == "claimed",
+                    ProviderReadinessLeaseRow.execution_deadline <= _naive(cutoff),
+                )
+                .order_by(
+                    ProviderReadinessLeaseRow.execution_deadline,
+                    ProviderReadinessLeaseRow.attempt_id,
+                )
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            ))
+            swept: list[Any] = []
+            for lease in leases:
+                attempt = session.scalar(
+                    select(ProviderSpendAttemptRow)
+                    .where(ProviderSpendAttemptRow.id == lease.attempt_id)
+                    .with_for_update()
+                )
+                if attempt is None or attempt.status != "reserved":
+                    # Keep the lease and attempt state consistent if an older
+                    # compatibility writer left an incomplete pair behind.
+                    if attempt is None:
+                        lease.state = "unresolved"
+                        lease.outcome = "execution_deadline_expired"
+                        lease.uncertain_charge = True
+                        lease.completed_at = _naive(cutoff)
+                    continue
+
+                before = _attempt_state(attempt)
+                attempt.status = "uncertain"
+                attempt.outcome = "execution_deadline_expired"
+                attempt.updated_at = _naive(cutoff)
+                lease.state = "unresolved"
+                lease.outcome = "execution_deadline_expired"
+                lease.uncertain_charge = True
+                lease.completed_at = _naive(cutoff)
+                evidence_ref = f"stale-execution:{attempt.id}"
+                audit_key = f"stale-sweep:{attempt.id}"
+                existing_audit = session.scalar(
+                    select(SpendAuditRow).where(
+                        SpendAuditRow.action == "stale_sweep",
+                        SpendAuditRow.idempotency_key == audit_key,
+                    )
+                )
+                if existing_audit is None:
+                    session.add(SpendAuditRow(
+                        id=uuid.uuid4().hex,
+                        attempt_id=attempt.id,
+                        provider=attempt.provider,
+                        action="stale_sweep",
+                        actor_identity="readiness_authority",
+                        idempotency_key=audit_key,
+                        request_hash=hashlib.sha256(audit_key.encode()).hexdigest(),
+                        before_json=json.dumps(
+                            before, sort_keys=True, separators=(",", ":"),
+                            default=str,
+                        ),
+                        after_json=json.dumps(
+                            _attempt_state(attempt),
+                            sort_keys=True, separators=(",", ":"),
+                            default=str,
+                        ),
+                        created_at=_naive(cutoff),
+                    ))
+
+                scope_row = session.scalar(
+                    select(ProviderReadinessObservationRow)
+                    .where(
+                        ProviderReadinessObservationRow.provider == attempt.provider,
+                        ProviderReadinessObservationRow.scope_key == lease.scope_key,
+                    )
+                    .limit(1)
+                )
+                scope = None
+                if scope_row is not None:
+                    from argus.broker.readiness import ReadinessScope
+
+                    scope = ReadinessScope(**json.loads(scope_row.scope_json))
+                self.record_spend_in_session(
+                    session,
+                    provider=ProviderName(attempt.provider),
+                    state="uncertain",
+                    evidence_ref=evidence_ref,
+                    outcome="execution_deadline_expired",
+                    protected=True,
+                    scope=scope,
+                )
+                swept.append(_attempt(attempt))
+            session.flush()
+            return tuple(swept)
+
+    def sweep_stale_execution_attempts(
+        self, *, now: datetime | float | None = None, limit: int = 128,
+    ) -> tuple[Any, ...]:
+        """Compatibility alias for the bounded stale-execution sweep."""
+
+        return self.list_stale_execution_attempts(now=now, limit=limit)
+
     @staticmethod
     def _lock_provider_budget(session, provider: ProviderName) -> None:
         """Serialize every provider/account budget mutation on PostgreSQL."""

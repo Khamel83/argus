@@ -377,12 +377,14 @@ class ExtractionSpendGateway:
             failure,
         )
 
-    def sweep_stale(self, now: float, limit: int) -> tuple[SpendReservation, ...]:
-        """Return a bounded list of local reservations whose deadlines elapsed.
+    def sweep_stale(self, now: float | None, limit: int) -> tuple[Any, ...]:
+        """Fence a bounded list of reservations whose deadlines elapsed.
 
-        The authority marks these reservations through ``mark_uncertain``.  A
-        caller can invoke this method from a scheduler without creating a new
-        spend store or retrying any provider call.
+        The SQL authority performs the locked transition to ``uncertain`` and
+        records causal evidence.  A caller can invoke this method from a
+        scheduler without creating a new spend store or retrying any provider
+        call.  Database wall-clock time is authoritative; a monotonic value
+        is accepted for compatibility and ignored by the repository.
         """
 
         if limit <= 0:
