@@ -249,3 +249,90 @@ def test_image_admission_rejects_capability_claims_that_drift(tmp_path):
         assert "capabilit" in str(error).lower()
     else:
         raise AssertionError("admission must reject false runtime capability claims")
+
+
+def _versioned_release_manifest(tmp_path):
+    """Build a manifest that carries the release and schema evidence contract."""
+    from argus.contracts.identity import SchemaIdentity
+
+    lock_path = tmp_path / "uv.lock"
+    manifest = _manifest(lock_path)
+    descriptor_path = tmp_path / "release-descriptor.json"
+    descriptor_path.write_text('{"descriptor_version": 1}\n', encoding="utf-8")
+    schema_identity = SchemaIdentity(
+        schema_head="0011_extraction_spend_scope",
+        migration_chain_sha256="a" * 64,
+        canonical_postgresql_schema_sha256="b" * 64,
+        schema_contract_format="argus-schema-contract-v1",
+    )
+    schema_contract = {
+        "format_version": 1,
+        **schema_identity.as_dict(),
+        "schema_id": schema_identity.identity_id,
+    }
+    schema_path = tmp_path / "schema-contract.json"
+    schema_path.write_text(
+        json.dumps(schema_contract, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    manifest.update(
+        {
+            "manifest_version": 2,
+            "release_descriptor_file": descriptor_path.name,
+            "release_descriptor_digest": hashlib.sha256(
+                descriptor_path.read_bytes()
+            ).hexdigest(),
+            "schema_contract_file": schema_path.name,
+            "schema_contract_sha256": hashlib.sha256(
+                schema_path.read_bytes()
+            ).hexdigest(),
+            "schema_identity": schema_identity.as_dict(),
+            **schema_identity.as_dict(),
+            "schema_id": schema_identity.identity_id,
+        }
+    )
+    return manifest, descriptor_path, schema_path
+
+
+def test_image_admission_accepts_release_and_schema_identity(tmp_path):
+    from argus.runtime_manifest import admit_runtime_manifest
+
+    manifest, _, _ = _versioned_release_manifest(tmp_path)
+    manifest_path = tmp_path / "runtime-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    admitted = admit_runtime_manifest(manifest_path, package_version="1.6.2")
+
+    assert admitted["manifest_version"] == 2
+    assert admitted["schema_identity"]["schema_head"] == "0011_extraction_spend_scope"
+
+
+def test_image_admission_rejects_release_manifest_without_schema_identity(tmp_path):
+    from argus.runtime_manifest import RuntimeManifestError, admit_runtime_manifest
+
+    manifest, _, _ = _versioned_release_manifest(tmp_path)
+    del manifest["schema_identity"]
+    manifest_path = tmp_path / "runtime-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    try:
+        admit_runtime_manifest(manifest_path, package_version="1.6.2")
+    except RuntimeManifestError as error:
+        assert "schema identity" in str(error).lower()
+    else:
+        raise AssertionError("release admission must require schema identity")
+
+
+def test_image_admission_rejects_tampered_release_descriptor(tmp_path):
+    from argus.runtime_manifest import RuntimeManifestError, admit_runtime_manifest
+
+    manifest, descriptor_path, _ = _versioned_release_manifest(tmp_path)
+    descriptor_path.write_text('{"descriptor_version": 2}\n', encoding="utf-8")
+    manifest_path = tmp_path / "runtime-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    try:
+        admit_runtime_manifest(manifest_path, package_version="1.6.2")
+    except RuntimeManifestError as error:
+        assert "descriptor" in str(error).lower()
+    else:
+        raise AssertionError("release admission must reject descriptor drift")

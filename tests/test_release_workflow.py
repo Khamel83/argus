@@ -150,6 +150,27 @@ def test_release_workflow_uses_the_canonical_lowercase_repository():
     assert payload["env"]["IMAGE_NAME"] == "khamel83/argus"
 
 
+def test_release_workflow_extracts_and_binds_all_immutable_release_inputs():
+    text = (WORKFLOWS / "docker-publish.yml").read_text(encoding="utf-8")
+
+    assert "docker pull \"$IMAGE_REF\"" in text
+    assert "runtime-manifest.json" in text
+    assert "release_descriptor.json" in text
+    assert "schema-contract.json" in text
+    assert "--runtime-manifest runtime-manifest.json" in text
+    assert "--release-descriptor release_descriptor.json" in text
+    assert "--schema-contract schema-contract.json" in text
+    assert "docker cp" in text
+
+
+def test_package_publication_is_fail_closed():
+    text = (WORKFLOWS / "publish.yml").read_text(encoding="utf-8")
+
+    assert "twine upload dist/*" in text
+    assert "twine upload dist/* || true" not in text
+    assert "Verify release contract" in text
+
+
 def test_release_identity_is_1_6_4_in_user_visible_locations():
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     server = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
