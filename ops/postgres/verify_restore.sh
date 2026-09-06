@@ -21,6 +21,8 @@ identity_args=
 [ "${ARGUS_SCHEMA_CONTRACT_CLEAN:-}" = true ] && identity_args="$identity_args --schema-contract-clean"
 [ "${ARGUS_FORWARD_COMPATIBLE:-}" = true ] && identity_args="$identity_args --forward-compatible"
 [ "${ARGUS_ROLLBACK_PATH_HUMAN_APPROVED:-}" = true ] && identity_args="$identity_args --rollback-path-human-approved"
+[ -z "${ARGUS_MIGRATION_RECEIPT:-}" ] || identity_args="$identity_args --migration-receipt $ARGUS_MIGRATION_RECEIPT"
+[ -z "${ARGUS_OPERATOR_IDENTITY:-}" ] || identity_args="$identity_args --operator-identity $ARGUS_OPERATOR_IDENTITY"
 
 postgres_container=${ARGUS_PG_CONTAINER:-}
 postgres_exec_user=${ARGUS_PG_EXEC_USER:-postgres}

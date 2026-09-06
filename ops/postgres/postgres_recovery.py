@@ -81,6 +81,8 @@ def _parser() -> argparse.ArgumentParser:
     restore.add_argument("--schema-contract-clean", action="store_true")
     restore.add_argument("--forward-compatible", action="store_true")
     restore.add_argument("--rollback-path-human-approved", action="store_true")
+    restore.add_argument("--migration-receipt")
+    restore.add_argument("--operator-identity")
     restore.add_argument(
         "--skip-migration",
         action="store_true",
@@ -163,6 +165,8 @@ def run(arguments: list[str] | None = None) -> int:
             schema_contract_clean=args.schema_contract_clean,
             forward_compatible=args.forward_compatible,
             rollback_path_human_approved=args.rollback_path_human_approved,
+            migration_receipt=args.migration_receipt,
+            operator_identity=args.operator_identity,
         )
         result = {"recorded": True}
     elif args.command == "verify-argus-db":
