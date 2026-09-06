@@ -7,6 +7,16 @@
 
 ## Glossary
 
+### Production readiness continuation (2026-09-06)
+
+Release deployment and the initial production audit are separate from current
+capability admission. The production authority may be healthy and answer
+authenticated requests while provider, browser, extraction, or downstream
+receipt gates remain degraded. Record source revision, image digest, runtime
+observation, provider effect, and Maya receipt as separate evidence. The
+current continuation uses `/api/ready`, not the nonexistent `/api/readiness`,
+and keeps the historical 54/100 score unchanged until the remaining gates pass.
+
 ### Competitive enough
 
 An Argus profile is **competitive enough** when it improves the evidence package
