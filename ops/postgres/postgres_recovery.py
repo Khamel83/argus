@@ -146,10 +146,6 @@ def run(arguments: list[str] | None = None) -> int:
             live_data=args.live_data,
             source_revision=args.source_revision,
             image_digest=args.image_digest,
-            metadata_registry_complete=args.metadata_registry_complete,
-            schema_contract_clean=args.schema_contract_clean,
-            forward_compatible=args.forward_compatible,
-            rollback_path_human_approved=args.rollback_path_human_approved,
         )
         result = {"recorded": True}
     elif args.command == "record-restore":
@@ -163,6 +159,10 @@ def run(arguments: list[str] | None = None) -> int:
             migrate_argus=(lambda _database: None) if args.skip_migration else None,
             source_revision=args.source_revision,
             image_digest=args.image_digest,
+            metadata_registry_complete=args.metadata_registry_complete,
+            schema_contract_clean=args.schema_contract_clean,
+            forward_compatible=args.forward_compatible,
+            rollback_path_human_approved=args.rollback_path_human_approved,
         )
         result = {"recorded": True}
     elif args.command == "verify-argus-db":
