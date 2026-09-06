@@ -1,5 +1,6 @@
 """Tests for HTTP API endpoints."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -81,6 +82,39 @@ async def test_admin_provider_smoke_marks_query_operational_only():
 
     broker.search.assert_not_called()
     assert result["mode"] == "fixture"
+
+
+@pytest.mark.asyncio
+async def test_live_admin_provider_probe_skips_legacy_persistence():
+    from argus.api.provider_operations import ProviderApplicationService
+
+    broker = MagicMock()
+    broker.readiness_service.authorize_probe.return_value.allowed = True
+    broker.search = AsyncMock(
+        return_value=SimpleNamespace(
+            traces=[
+                SimpleNamespace(
+                    status="empty",
+                    results_count=0,
+                    latency_ms=1,
+                    error=None,
+                )
+            ],
+            results=[],
+        )
+    )
+    service = ProviderApplicationService(lambda: broker, MagicMock())
+
+    await service.live_provider(
+        provider="duckduckgo",
+        query_text="argus",
+        caller="admin",
+        idempotency_key="probe-idempotency",
+        durable_receipt="probe-receipt",
+    )
+
+    broker.search.assert_awaited_once()
+    assert broker.search.await_args.kwargs["persist_legacy"] is False
 
 
 @pytest.mark.asyncio

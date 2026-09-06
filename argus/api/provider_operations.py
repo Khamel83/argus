@@ -166,7 +166,7 @@ class ProviderApplicationService:
                 "probe_attempt_id": decision.attempt_id,
             },
         )
-        response = await broker.search(query)
+        response = await broker.search(query, persist_legacy=False)
         trace = response.traces[0] if response.traces else None
         return LiveProviderFacts(
             provider=provider,
