@@ -65,6 +65,8 @@ def _parser() -> argparse.ArgumentParser:
     backup.add_argument("--backup-set", type=Path, required=True)
     backup.add_argument("--root", type=Path, required=True)
     backup.add_argument("--live-data", type=Path, required=True)
+    backup.add_argument("--source-revision")
+    backup.add_argument("--image-digest")
 
     restore = commands.add_parser("record-restore")
     restore.add_argument("--evidence", type=Path, required=True)
@@ -73,6 +75,8 @@ def _parser() -> argparse.ArgumentParser:
     restore.add_argument("--live-data", type=Path, required=True)
     restore.add_argument("--argus-database", required=True)
     restore.add_argument("--atlas-database", required=True)
+    restore.add_argument("--source-revision")
+    restore.add_argument("--image-digest")
     restore.add_argument(
         "--skip-migration",
         action="store_true",
@@ -136,6 +140,8 @@ def run(arguments: list[str] | None = None) -> int:
             backup_set=args.backup_set,
             root=args.root,
             live_data=args.live_data,
+            source_revision=args.source_revision,
+            image_digest=args.image_digest,
         )
         result = {"recorded": True}
     elif args.command == "record-restore":
@@ -147,6 +153,8 @@ def run(arguments: list[str] | None = None) -> int:
             argus_database=args.argus_database,
             atlas_database=args.atlas_database,
             migrate_argus=(lambda _database: None) if args.skip_migration else None,
+            source_revision=args.source_revision,
+            image_digest=args.image_digest,
         )
         result = {"recorded": True}
     elif args.command == "verify-argus-db":
