@@ -5,6 +5,12 @@ set -eu
 : "${POSTGRES_LIVE_DATA_DIR:?set the absolute live PostgreSQL data directory}"
 : "${ARGUS_RECOVERY_EVIDENCE:?set the recovery evidence JSON path}"
 
+source_revision=${ARGUS_SOURCE_REVISION:-}
+image_digest=${ARGUS_IMAGE_DIGEST:-}
+identity_args=
+[ -z "$source_revision" ] || identity_args="$identity_args --source-revision $source_revision"
+[ -z "$image_digest" ] || identity_args="$identity_args --image-digest $image_digest"
+
 postgres_container=${ARGUS_PG_CONTAINER:-}
 postgres_exec_user=${ARGUS_PG_EXEC_USER:-postgres}
 if [ -n "$postgres_container" ]; then
@@ -96,7 +102,8 @@ python3 "$script_dir/postgres_recovery.py" record-backup \
     --evidence "$ARGUS_RECOVERY_EVIDENCE" \
     --backup-set "$final" \
     --root "$ARGUS_BACKUP_ROOT" \
-    --live-data "$POSTGRES_LIVE_DATA_DIR"
+    --live-data "$POSTGRES_LIVE_DATA_DIR" \
+    $identity_args
 flock -u 9
 exec 9<&-
 python3 "$script_dir/postgres_recovery.py" retention-plan \

@@ -8,6 +8,12 @@ set -eu
 : "${SCRATCH_DATABASE:?set an explicit disposable database name}"
 : "${ATLAS_SCRATCH_DATABASE:?set an explicit disposable Atlas database name}"
 
+source_revision=${ARGUS_SOURCE_REVISION:-}
+image_digest=${ARGUS_IMAGE_DIGEST:-}
+identity_args=
+[ -z "$source_revision" ] || identity_args="$identity_args --source-revision $source_revision"
+[ -z "$image_digest" ] || identity_args="$identity_args --image-digest $image_digest"
+
 postgres_container=${ARGUS_PG_CONTAINER:-}
 postgres_exec_user=${ARGUS_PG_EXEC_USER:-postgres}
 if [ -n "$postgres_container" ]; then
@@ -125,7 +131,8 @@ if [ -n "$postgres_container" ]; then
         --live-data "$POSTGRES_LIVE_DATA_DIR" \
         --argus-database "$SCRATCH_DATABASE" \
         --atlas-database "$ATLAS_SCRATCH_DATABASE" \
-        --skip-migration
+        --skip-migration \
+        $identity_args
 else
     python3 "$script_dir/postgres_recovery.py" record-restore \
         --evidence "$ARGUS_RECOVERY_EVIDENCE" \
@@ -133,5 +140,6 @@ else
         --root "$ARGUS_BACKUP_ROOT" \
         --live-data "$POSTGRES_LIVE_DATA_DIR" \
         --argus-database "$SCRATCH_DATABASE" \
-        --atlas-database "$ATLAS_SCRATCH_DATABASE"
+        --atlas-database "$ATLAS_SCRATCH_DATABASE" \
+        $identity_args
 fi

@@ -157,7 +157,6 @@ feature image is known-good and its rollback evidence is retained.
 Before promotion or recovery, run the Homelab backup and verifier:
 
 ```bash
-ssh homelab 'sudo /usr/local/libexec/argus-recovery-checkpoint'
 ssh homelab 'sudo /mnt/fast-storage/github/homelab/scripts/verify-argus-pg-restore.sh'
 ```
 
@@ -165,6 +164,12 @@ Require a successful exit code, checksum verification, both tenant scopes,
 schema compatibility, and a fresh isolated restore receipt. A restore drill
 must use an isolated database/container. A production restore is an
 irreversible data operation and remains a separate explicit gate.
+
+The operator backup and restore scripts accept `ARGUS_SOURCE_REVISION` and
+`ARGUS_IMAGE_DIGEST`. Set both to the deployed runtime manifest identity when
+recording evidence. Recovery evidence without those fields is intentionally
+rejected as an identity mismatch, even when the database restore itself is
+structurally valid.
 
 ## Outbox and uncertain spend
 
