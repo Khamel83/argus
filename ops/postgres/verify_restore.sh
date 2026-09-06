@@ -13,6 +13,14 @@ image_digest=${ARGUS_IMAGE_DIGEST:-}
 identity_args=
 [ -z "$source_revision" ] || identity_args="$identity_args --source-revision $source_revision"
 [ -z "$image_digest" ] || identity_args="$identity_args --image-digest $image_digest"
+[ "${ARGUS_METADATA_REGISTRY_COMPLETE:-}" = true ] || :
+[ "${ARGUS_SCHEMA_CONTRACT_CLEAN:-}" = true ] || :
+[ "${ARGUS_FORWARD_COMPATIBLE:-}" = true ] || :
+[ "${ARGUS_ROLLBACK_PATH_HUMAN_APPROVED:-}" = true ] || :
+[ "${ARGUS_METADATA_REGISTRY_COMPLETE:-}" = true ] && identity_args="$identity_args --metadata-registry-complete"
+[ "${ARGUS_SCHEMA_CONTRACT_CLEAN:-}" = true ] && identity_args="$identity_args --schema-contract-clean"
+[ "${ARGUS_FORWARD_COMPATIBLE:-}" = true ] && identity_args="$identity_args --forward-compatible"
+[ "${ARGUS_ROLLBACK_PATH_HUMAN_APPROVED:-}" = true ] && identity_args="$identity_args --rollback-path-human-approved"
 
 postgres_container=${ARGUS_PG_CONTAINER:-}
 postgres_exec_user=${ARGUS_PG_EXEC_USER:-postgres}

@@ -77,6 +77,10 @@ def _parser() -> argparse.ArgumentParser:
     restore.add_argument("--atlas-database", required=True)
     restore.add_argument("--source-revision")
     restore.add_argument("--image-digest")
+    restore.add_argument("--metadata-registry-complete", action="store_true")
+    restore.add_argument("--schema-contract-clean", action="store_true")
+    restore.add_argument("--forward-compatible", action="store_true")
+    restore.add_argument("--rollback-path-human-approved", action="store_true")
     restore.add_argument(
         "--skip-migration",
         action="store_true",
@@ -142,6 +146,10 @@ def run(arguments: list[str] | None = None) -> int:
             live_data=args.live_data,
             source_revision=args.source_revision,
             image_digest=args.image_digest,
+            metadata_registry_complete=args.metadata_registry_complete,
+            schema_contract_clean=args.schema_contract_clean,
+            forward_compatible=args.forward_compatible,
+            rollback_path_human_approved=args.rollback_path_human_approved,
         )
         result = {"recorded": True}
     elif args.command == "record-restore":
