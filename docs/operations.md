@@ -8,13 +8,24 @@ owns user-visible retrieval history; Argus owns retrieval execution and its
 PostgreSQL evidence. The former Mac launchd authority, OCI authority, and host
 residential worker are retired and are not fallbacks.
 
-## Current release checkpoint — 2026-09-03
+## Current release checkpoint — 2026-09-06
 
-The production release is Argus `1.6.4` from public main revision
-`01cbd7de9c8f41130918443ab2529fae1901585e`. The release uses PostgreSQL schema
-head `0011_extraction_spend_scope`. Use the read-only identity and status checks
-below for the current runtime result. A green liveness response does not mean
-that every provider, browser path, or downstream integration is available.
+The historical Argus `1.6.4` checkpoint at `01cbd7de9c8f41130918443ab2529fae1901585e`
+and `sha256:b095bcab...` is not current. Production accepts only the
+digest-addressed source/image pair reported by authenticated
+`/api/admin/status` and the private promotion receipt. The current runtime is
+Python 3.12.3 on PostgreSQL schema head `0011_extraction_spend_scope`.
+
+The supported interpreter contract is Python 3.11 minimum, Python 3.12 for
+repository development, CI auxiliary jobs, and the production image, and
+Python 3.13 for compatibility CI. All three test lanes pass.
+
+Current SearXNG search is operational through the observed-good Bing/Yandex
+engines, but other upstream engines remain degraded. Paid provider keys are
+not considered usable merely because a secret value exists: the readiness
+registry requires truthful credential-version/account-scope bindings and
+finite budgets before any billable call. Browser extraction remains blocked
+until a release-bound external browser-network attestation is available.
 
 ## Production topology
 

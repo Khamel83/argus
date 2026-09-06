@@ -1,6 +1,24 @@
 # Argus clean-session handoff
 
-Last reviewed: 2026-07-25
+Last reviewed: 2026-09-06
+
+## Current execution frontier
+
+Release `1.6.4` is deployed and the production authority is healthy but
+degraded. The historical readiness score is `54/100`; it is not a current
+score. Current free search is proven through repaired SearXNG Bing/Yandex
+engines, and one complete article extraction is proven through Trafilatura.
+
+The remaining gates are truthful paid-provider registration and no-spend
+evidence, Yahoo repair, release-bound browser-network attestation and a live
+browser observation, a Maya receipt bound to the continuation release, and a
+new audit score. Python is not ambiguous: 3.11 is the package floor, 3.12 is
+the canonical repository/production runtime, and 3.13 is the compatibility CI
+lane. The current homelab runtime is Python 3.12.3.
+
+Use authenticated `/api/admin/status` and `/api/ready` for live identity and
+readiness. Do not use the historical image/source pair or invent provider
+account fingerprints from secret values.
 
 ## Start here
 

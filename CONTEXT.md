@@ -17,6 +17,26 @@ observation, provider effect, and Maya receipt as separate evidence. The
 current continuation uses `/api/ready`, not the nonexistent `/api/readiness`,
 and keeps the historical 54/100 score unchanged until the remaining gates pass.
 
+The supported Python contract is explicit: Python 3.11 is the package floor,
+Python 3.12 is the repository and production-image baseline, and Python 3.13
+is a compatibility lane. CI runs the complete test suite on all three; the
+homelab runtime is Python 3.12.3. There is no unresolved 3.11/3.12/3.13
+implementation split.
+
+The current provider boundary is also explicit. SearXNG now returns live
+results through its observed-good Bing/Yandex engines, although other upstream
+engines remain degraded. Protected paid-provider values are not treated as
+working credentials until truthful credential-version and account-scope
+fingerprints, budgets, and approved no-spend evidence are present. A key hash
+alone is not an account binding, and no paid provider call is authorized by
+health or configuration alone.
+
+Browser extraction remains fail-closed until an external browser-network
+authority supplies a release-bound, short-lived attestation. A local browser
+process or a synthetic lifecycle canary cannot substitute for that authority;
+the runtime status must change only after the production authority itself
+creates and uses an admitted browser session.
+
 ### Competitive enough
 
 An Argus profile is **competitive enough** when it improves the evidence package
