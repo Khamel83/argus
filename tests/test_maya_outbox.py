@@ -144,6 +144,20 @@ def test_repository_clock_drives_acceptance_and_extraction_outbox_timestamps(
         assert delivery.next_attempt_at == _REPOSITORY_NOW
 
 
+def test_dispatcher_uses_repository_clock_by_default(tmp_path):
+    from argus.persistence.maya_outbox import MayaOutboxDispatcher
+
+    repository = _repository(tmp_path)
+    dispatcher = MayaOutboxDispatcher(
+        repository,
+        endpoint="http://maya/captures",
+        token="test-token",
+    )
+
+    assert dispatcher.clock() == repository.clock()
+    assert dispatcher.clock().tzinfo == timezone.utc
+
+
 @pytest.mark.parametrize(
     ("status_code", "response_body"),
     [

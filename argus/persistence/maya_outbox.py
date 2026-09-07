@@ -707,7 +707,13 @@ class MayaOutboxDispatcher:
         self.endpoint = endpoint
         self.token = token
         self.transport = transport
-        self.clock = clock or (lambda: datetime.now(tz=None))
+        if clock is None:
+            # The repository owns the canonical UTC clock. Using the process
+            # local clock here can make legacy UTC-naive PostgreSQL timestamps
+            # look like they are in the future when the container timezone is
+            # behind UTC, preventing every pending intent from being claimed.
+            clock = getattr(repository, "clock", None)
+        self.clock = clock if callable(clock) else (lambda: datetime.now(timezone.utc))
         self.timeout_seconds = timeout_seconds
         self.batch_size = max(1, min(int(batch_size), 100))
         self.lease_seconds = max(
