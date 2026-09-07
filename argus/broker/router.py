@@ -244,11 +244,16 @@ class SearchBroker:
         )
 
         cache_run_id = os.urandom(8).hex()
-        cached = self._pipeline.get_cached(
-            query,
-            cache_run_id,
-            plan=plan,
-            compute_attribution=compute_attribution,
+        is_bounded_probe = query.metadata.get("probe_no_fallback") is True
+        cached = (
+            None
+            if is_bounded_probe
+            else self._pipeline.get_cached(
+                query,
+                cache_run_id,
+                plan=plan,
+                compute_attribution=compute_attribution,
+            )
         )
         if cached is not None:
             logger.debug("Cache hit (mode=%s)", query.mode)
@@ -270,6 +275,7 @@ class SearchBroker:
             budget_warnings=outcome.budget_pace_warnings,
             compute_attribution=compute_attribution,
             persist_legacy=persist_legacy,
+            cache_response=not is_bounded_probe,
         )
 
         logger.info(

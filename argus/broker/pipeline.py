@@ -73,6 +73,7 @@ class SearchResultPipeline:
         budget_warnings: list | None = None,
         compute_attribution: bool = False,
         persist_legacy: bool = True,
+        cache_response: bool = True,
     ) -> SearchResponse:
         if not isinstance(plan, RetrievalPlan):
             raise TypeError("validated retrieval plan is required")
@@ -88,7 +89,7 @@ class SearchResultPipeline:
             search_run_id=uuid.uuid4().hex[:16],
             budget_warnings=budget_warnings or [],
         )
-        if final_results:
+        if final_results and cache_response:
             self._cache.put(
                 query.query,
                 query.mode,

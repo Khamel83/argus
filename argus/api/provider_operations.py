@@ -6,9 +6,9 @@ provider, extraction, or persistence semantics directly.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import math
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from collections.abc import Mapping
 from typing import Any
 
 from argus.broker.budgets import PROVIDER_TIERS
@@ -27,6 +27,67 @@ class ProbeRejected(RuntimeError):
 
 class UnknownProviderError(ValueError):
     """Only provider-name parsing failed."""
+
+
+_MAX_LIVE_PROBE_RESULTS = 1
+_MAX_PROBE_PROVENANCE_TEXT = 128
+_MAX_PROBE_UPSTREAM_ENGINES = 16
+_MAX_PROBE_BUDGET_REMAINING = 1_000_000_000_000
+
+
+def _bounded_probe_text(value: object) -> str | None:
+    """Keep only bounded, printable normalized provenance labels."""
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > _MAX_PROBE_PROVENANCE_TEXT
+        or not value.isprintable()
+    ):
+        return None
+    return value
+
+
+def _bounded_probe_http_status(value: object) -> int | None:
+    if type(value) is int and 100 <= value <= 599:
+        return value
+    return None
+
+
+def _bounded_probe_budget(value: object) -> float | None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or value < 0
+        or value > _MAX_PROBE_BUDGET_REMAINING
+    ):
+        return None
+    return float(value)
+
+
+def _sample_provenance(result: Any) -> dict[str, Any]:
+    """Project known normalized provenance without copying provider payloads."""
+    metadata = getattr(result, "metadata", None)
+    if not isinstance(metadata, Mapping):
+        return {}
+    provenance: dict[str, Any] = {}
+    for name in ("egress", "machine", "source_type"):
+        value = _bounded_probe_text(metadata.get(name))
+        if value is not None:
+            provenance[name] = value
+    engines = metadata.get("upstream_engines")
+    if isinstance(engines, (list, tuple)):
+        bounded_engines = [
+            value
+            for value in (
+                _bounded_probe_text(item)
+                for item in engines[:_MAX_PROBE_UPSTREAM_ENGINES]
+            )
+            if value is not None
+        ]
+        if bounded_engines:
+            provenance["upstream_engines"] = bounded_engines
+    return provenance
 
 
 @dataclass(frozen=True)
@@ -124,13 +185,16 @@ class ProviderApplicationService:
         caller: str,
         idempotency_key: str | None,
         durable_receipt: str | None,
+        max_results: int = _MAX_LIVE_PROBE_RESULTS,
     ) -> LiveProviderFacts:
+        if type(max_results) is not int or max_results != _MAX_LIVE_PROBE_RESULTS:
+            raise ProbeRejected("live provider probes require max_results=1")
         broker = self._broker_provider()
         pname = self._provider_name(provider)
         probe_query = SearchQuery(
             query=query_text,
             mode=SearchMode.DISCOVERY,
-            max_results=3,
+            max_results=max_results,
             providers=[pname],
             caller=caller,
             user_visible=False,
@@ -153,7 +217,7 @@ class ProviderApplicationService:
         query = SearchQuery(
             query=probe_query.query,
             mode=SearchMode.DISCOVERY,
-            max_results=3,
+            max_results=max_results,
             providers=[pname],
             caller=caller,
             user_visible=False,
@@ -177,10 +241,28 @@ class ProviderApplicationService:
                 "results_count": trace.results_count if trace else 0,
                 "latency_ms": trace.latency_ms if trace else 0,
                 "error": trace.error if trace else None,
+                "egress": _bounded_probe_text(getattr(trace, "egress", None))
+                if trace
+                else None,
+                "http_status": _bounded_probe_http_status(
+                    getattr(trace, "http_status", None)
+                )
+                if trace
+                else None,
+                "budget_remaining": _bounded_probe_budget(
+                    getattr(trace, "budget_remaining", None)
+                )
+                if trace
+                else None,
             },
             sample_results=tuple(
-                {"url": r.url, "title": r.title, "snippet": r.snippet[:100]}
-                for r in response.results[:3]
+                {
+                    "url": r.url,
+                    "title": r.title,
+                    "snippet": r.snippet[:100],
+                    **_sample_provenance(r),
+                }
+                for r in response.results[:max_results]
             ),
         )
 
