@@ -13,7 +13,7 @@ residential worker are retired and are not fallbacks.
 The historical Argus `1.6.4` checkpoint at `01cbd7de9c8f41130918443ab2529fae1901585e`
 and `sha256:b095bcab...` is not current. The deployed production source is
 `458db1a10e158aa9ec156e8eaa85d6fbed2fe3e3` and the image is
-`ghcr.io/Khamel83/argus@sha256:1a7bba7a32ecd70f70e05e0fbc471ac58519c01c06c80ee30b688dce7b8eace4`.
+`ghcr.io/khamel83/argus@sha256:1a7bba7a32ecd70f70e05e0fbc471ac58519c01c06c80ee30b688dce7b8eace4`.
 The release receipt SHA-256 is
 `337cb478905100c9bb881e6397116b8fa7a0a96ce4ab508e062323c2516a0cad`.
 `current.json` and `known-good.json` identify this exact pair, the previous
