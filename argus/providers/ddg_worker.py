@@ -121,7 +121,6 @@ async def execute_guarded_request(
     headers = {
         "Accept": "text/html,application/xhtml+xml",
         "Content-Type": "application/x-www-form-urlencoded",
-        "Content-Length": str(len(body.encode("utf-8"))),
         "User-Agent": "Argus/guarded-ddg",
     }
     try:
@@ -130,8 +129,8 @@ async def execute_guarded_request(
             method="POST",
             headers=headers,
             body=body,
-            profile=OriginProfile.AUTHENTICATED_CONTENT,
-            credential_policy=CredentialPolicy.ORIGIN_SCOPED,
+            profile=OriginProfile.PUBLIC_CONTENT,
+            credential_policy=CredentialPolicy.NONE,
             operation_class=OperationClass.DIRECT_HTTP,
             caller_principal="provider:duckduckgo",
             request_id="duckduckgo-worker",

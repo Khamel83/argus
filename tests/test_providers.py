@@ -176,8 +176,9 @@ class TestDuckDuckGoProvider:
         url, kwargs = calls[0]
         assert url == ddg_worker.DDG_SEARCH_URL
         assert kwargs["method"] == "POST"
-        assert kwargs["profile"] is OriginProfile.AUTHENTICATED_CONTENT
-        assert kwargs["credential_policy"] is CredentialPolicy.ORIGIN_SCOPED
+        assert kwargs["profile"] is OriginProfile.PUBLIC_CONTENT
+        assert kwargs["credential_policy"] is CredentialPolicy.NONE
+        assert "content-length" not in {name.lower() for name in kwargs["headers"]}
         assert kwargs["operation_class"] is OperationClass.DIRECT_HTTP
         assert kwargs["caller_principal"] == "provider:duckduckgo"
         assert "q=bounded+query" in kwargs["body"]
