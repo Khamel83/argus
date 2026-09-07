@@ -4,6 +4,12 @@ This page is a fuller reference for the search providers and content extractors
 behind Argus. For the short version with budgets and signup links see the
 **Providers** section of [../README.md](../README.md).
 
+The tables below describe package defaults and provider contracts. They do not
+claim that every provider is currently admitted in production. Production
+readiness additionally requires truthful non-secret credential-version and
+account-scope bindings, finite budgets where required, and approved evidence.
+See the [current production matrix](STATUS.md) for live provider state.
+
 ## Search providers
 
 Search providers live in `argus/providers/` and each implements `BaseProvider`.
@@ -27,9 +33,12 @@ tier 1 before tier 3.
 | 3 (one-time credit) | Valyu | `valyu.py` | Disabled | $10 lifetime credit. USD budget tracking. |
 | 3 (one-time credit) | SearchAPI | `searchapi.py` | Disabled | Paid only. |
 
-"Disabled" means the provider is dormant until you set both its API key and
-`ARGUS_<PROVIDER>_ENABLED=true`. Missing keys never raise — the provider is
-silently skipped.
+"Disabled" in this package table means the provider is dormant until you set
+both its API key and `ARGUS_<PROVIDER>_ENABLED=true`. In production, the
+authenticated authority also requires registration fingerprints, account
+scope, budget, and approved evidence. Missing or unadmitted providers are
+silently skipped; do not bypass the production authority with a direct adapter
+call.
 
 ### Adding a provider
 

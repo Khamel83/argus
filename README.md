@@ -35,6 +35,15 @@ _Built for AI agent builders, RAG pipelines, and ops teams who need reliable sea
 > Status: see the public [status page](docs/STATUS.md). Authorized maintainers
 > can use the private [argus-ops README](https://github.com/Khamel83/argus-ops/blob/main/README.md) for the latest dated reports.
 
+> **Current production checkpoint — September 7, 2026:** The authenticated
+> HTTP API and MCP adapter are operational, and sampled free search works
+> through SearXNG, Yahoo, and GitHub. DuckDuckGo is intermittent and fails
+> closed after acquisition-policy blocks. Production readiness is
+> `ready=true, degraded`; paid providers are not currently admitted until
+> their non-secret credential-version and account-scope bindings are recorded.
+> Browser capability and recovery metadata evidence remain open. See the
+> [current status matrix](docs/STATUS.md) before relying on a provider.
+
 ## Contents
 
 - [Quickstart](#quickstart)
@@ -183,7 +192,11 @@ Argus captures official docs into its local docs cache, adds non-official suppor
 
 ## Development
 
-Repo development is pinned to Python 3.12. The package runtime floor remains Python 3.11, but contributors should use the `uv` workflow below so local verification matches CI and avoids accidentally using an older system interpreter.
+Repo development is pinned to Python 3.12. The package runtime floor is Python
+3.11, the production image runs Python 3.12.3, and Python 3.13 is the
+compatibility CI lane. Required CI passes all three; contributors should use
+the `uv` workflow below so local verification matches the canonical lane and
+does not accidentally use an older system interpreter.
 
 ```bash
 uv sync --python 3.12 --extra dev --extra mcp
@@ -215,6 +228,13 @@ The repo includes `.python-version` with `3.12` so `uv`, `pyenv`, and similar to
 ² WolframAlpha returns **computed answers** (math, unit conversions, factual lookups), not web search results. It only activates in `grounding` and `research` modes. Queries it can't compute (general web searches) return empty — no error, no health penalty.
 
 **7,000+ free queries/month** from recurring free-tier providers with API keys (WolframAlpha 2k + Brave 2k + Tavily 1k + Exa 1k + Linkup 1k), or **up to 12,000+** when Parallel's monthly credit is available to an eligible account with a card on file. DuckDuckGo, Yahoo, and GitHub have no monthly cap. SearXNG is disabled by default (enable in `.env`). Routing priority: **Tier 0** (free: SearXNG*, DuckDuckGo, Yahoo, GitHub, WolframAlpha) → **Tier 1** (monthly recurring: Brave, Tavily, Exa, Linkup, Parallel) → **Tier 3** (one-time: Serper, You.com, Valyu, SearchAPI). Budget-exhausted providers are skipped automatically.
+
+These are package-level provider tiers and advertised quotas, not proof of
+current production availability. The production authority fails closed for a
+credentialed provider until its registration fingerprint, account scope,
+budget, and approved test evidence are present. A protected key value alone
+does not prove that the current key works; see [docs/STATUS.md](docs/STATUS.md)
+for the live classification.
 
 ## HTTP API
 

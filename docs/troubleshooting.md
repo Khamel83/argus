@@ -16,6 +16,10 @@ make sure the install location (e.g. `~/.local/bin`) is on your `$PATH`.
 You're on an old Python. Argus requires Python 3.11+; the MCP package needs
 3.10+. Check `python --version`.
 
+The supported version contract is Python 3.11 minimum, Python 3.12 for
+repository development and production, and Python 3.13 for compatibility CI.
+There are no separate provider implementations by Python version.
+
 **Playwright errors at runtime (`Executable doesn't exist`).**
 After install run `playwright install chromium`. Argus does not run this for
 you — the extraction chain falls through to other steps when Playwright is
@@ -27,10 +31,12 @@ missing, but you'll see warnings.
 DuckDuckGo is scraped and occasionally rate-limits aggressive callers. Argus
 will mark it unhealthy after repeated failures and move on. Wait a few minutes,
 or add a free API key for any tier 1 provider (Brave, Tavily, Exa, Linkup) so
-the broker has a real fallback.
+the broker has a real fallback. A production message such as
+`duckduckgo request was blocked by acquisition policy` identifies an egress or
+acquisition guard decision, not a missing DuckDuckGo API key.
 
 **A provider I configured isn't being called.**
-Three gates run before any HTTP call:
+In production, four gates run before any provider HTTP call:
 
 1. **Enabled?** Limited API-key providers need both the key *and*
    `ARGUS_<PROVIDER>_ENABLED=true`. Run `argus health` to see who's enabled.
@@ -38,10 +44,15 @@ Three gates run before any HTTP call:
    `argus health` shows the current state.
 3. **Budget?** Run `argus budgets`. Tier 1 (monthly) uses a 30-day rolling
    window; tier 3 (one-time) uses a lifetime counter that never resets.
+4. **Registered?** The production authority requires a truthful non-secret
+   credential-version fingerprint, account scope, finite budget where required,
+   and approved no-spend evidence. A protected key value alone does not prove
+   that the current key is valid.
 
-If all three look fine and the provider still isn't called, run
-`argus test-provider -p <name>` to bypass the broker and hit the adapter
-directly.
+If the production authority still skips a provider, inspect authenticated
+`/api/admin/status` and the current [provider matrix](STATUS.md). The
+standalone-development command `argus test-provider -p <name>` is not a way to
+bypass production registration or spend controls.
 
 **WolframAlpha returns empty for normal search queries.**
 By design. WolframAlpha returns *computed* answers (math, units, facts) only,
