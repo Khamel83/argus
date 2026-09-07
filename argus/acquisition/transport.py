@@ -14,6 +14,7 @@ import inspect
 import ipaddress
 import socket
 import ssl
+import zlib
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -778,7 +779,126 @@ class _SocketDispatcher:
                 pass
 
     @staticmethod
-    def _read_response(sock: socket.socket, prepared: PinnedRequest) -> TransportResponse:
+    def _decode_chunked_body(body: bytes) -> bytes:
+        """Decode one bounded HTTP/1.1 chunked transfer body."""
+        chunks: list[bytes] = []
+        offset = 0
+        total = 0
+        while True:
+            line_end = body.find(b"\r\n", offset)
+            if line_end < 0 or line_end - offset > MAX_TRANSPORT_HEADER_LENGTH:
+                raise TransportDispatchError("invalid chunked response")
+            size_text = body[offset:line_end].split(b";", 1)[0]
+            if not size_text or any(
+                character not in b"0123456789abcdefABCDEF" for character in size_text
+            ):
+                raise TransportDispatchError("invalid chunked response")
+            try:
+                size = int(size_text, 16)
+            except ValueError as exc:
+                raise TransportDispatchError("invalid chunked response") from exc
+            offset = line_end + 2
+            if size == 0:
+                while True:
+                    trailer_end = body.find(b"\r\n", offset)
+                    if (
+                        trailer_end < 0
+                        or trailer_end - offset > MAX_TRANSPORT_HEADER_LENGTH
+                    ):
+                        raise TransportDispatchError("invalid chunked response")
+                    trailer = body[offset:trailer_end]
+                    offset = trailer_end + 2
+                    if not trailer:
+                        if offset != len(body):
+                            raise TransportDispatchError("invalid chunked response")
+                        return b"".join(chunks)
+                    if b":" not in trailer:
+                        raise TransportDispatchError("invalid chunked response")
+
+            if size > MAX_CONTENT_BYTES - total:
+                raise TransportDispatchError(
+                    "chunked response exceeds the bounded limit"
+                )
+            end = offset + size
+            if end + 2 > len(body) or body[end : end + 2] != b"\r\n":
+                raise TransportDispatchError("invalid chunked response")
+            chunks.append(body[offset:end])
+            total += size
+            offset = end + 2
+
+    @staticmethod
+    def _decode_compressed_body(body: bytes, encoding: str) -> bytes:
+        """Decode one bounded gzip or deflate content-encoding layer."""
+        windows = (
+            (16 + zlib.MAX_WBITS,)
+            if encoding == "gzip"
+            else (
+                zlib.MAX_WBITS,
+                -zlib.MAX_WBITS,
+            )
+        )
+        last_error: zlib.error | None = None
+        for window in windows:
+            decompressor = zlib.decompressobj(window)
+            try:
+                decoded = decompressor.decompress(body, MAX_CONTENT_BYTES + 1)
+                if len(decoded) > MAX_CONTENT_BYTES:
+                    raise TransportDispatchError(
+                        "decompressed response exceeds the bounded limit"
+                    )
+                if decompressor.unconsumed_tail or decompressor.unused_data:
+                    raise TransportDispatchError("invalid compressed response")
+                remaining = MAX_CONTENT_BYTES + 1 - len(decoded)
+                decoded += decompressor.flush(max(1, remaining))
+                if len(decoded) > MAX_CONTENT_BYTES or not decompressor.eof:
+                    raise TransportDispatchError("invalid compressed response")
+                return decoded
+            except zlib.error as exc:
+                last_error = exc
+        raise TransportDispatchError("invalid compressed response") from last_error
+
+    @classmethod
+    def _decode_response_body(
+        cls,
+        body: bytes,
+        headers: tuple[tuple[str, str], ...],
+    ) -> bytes:
+        """Apply transfer and content encodings with post-decode bounds."""
+        header_values = {name.lower(): value for name, value in headers}
+        transfer_encoding = [
+            value.strip().lower()
+            for value in header_values.get("transfer-encoding", "").split(",")
+            if value.strip()
+        ]
+        if transfer_encoding:
+            if transfer_encoding != ["chunked"]:
+                raise TransportDispatchError("unsupported transfer encoding")
+            body = cls._decode_chunked_body(body)
+        else:
+            content_length = header_values.get("content-length")
+            if content_length is not None:
+                try:
+                    declared_length = int(content_length)
+                except ValueError as exc:
+                    raise TransportDispatchError("invalid content length") from exc
+                if declared_length < 0 or declared_length != len(body):
+                    raise TransportDispatchError("response content length mismatch")
+
+        content_encoding = [
+            value.strip().lower()
+            for value in header_values.get("content-encoding", "").split(",")
+            if value.strip() and value.strip().lower() != "identity"
+        ]
+        for encoding in reversed(content_encoding):
+            if encoding not in {"gzip", "deflate"}:
+                raise TransportDispatchError("unsupported content encoding")
+            body = cls._decode_compressed_body(body, encoding)
+        return body
+
+    @staticmethod
+    def _read_response(
+        sock: socket.socket, prepared: PinnedRequest
+    ) -> TransportResponse:
         chunks: list[bytes] = []
         total = 0
         while total <= MAX_CONTENT_BYTES:
@@ -797,6 +917,8 @@ class _SocketDispatcher:
         head, separator, body = wire.partition(b"\r\n\r\n")
         if not separator:
             raise TransportDispatchError("invalid HTTP response")
+        if len(head) > MAX_TRANSPORT_HEADER_LENGTH:
+            raise TransportDispatchError("response headers exceed the bounded limit")
         lines = head.split(b"\r\n")
         try:
             status = int(lines[0].split(maxsplit=2)[1])
@@ -809,6 +931,7 @@ class _SocketDispatcher:
             except ValueError as exc:
                 raise TransportDispatchError("invalid HTTP response header") from exc
             response_headers.append((name.strip(), value.strip()))
+        body = _SocketDispatcher._decode_response_body(body, tuple(response_headers))
         return TransportResponse(
             status_code=status,
             headers=tuple(response_headers),
@@ -875,9 +998,7 @@ class PinnedTransport:
         )
         if explicit is not None and type(explicit) is not bool:
             raise TypeError("supports_address_pinning must be a boolean")
-        self._supports_address_pinning = (
-            bool(explicit) if explicit is not None else self._detect_pinning_support(self._dispatcher)
-        )
+        self._supports_address_pinning = bool(explicit) if explicit is not None else self._detect_pinning_support(self._dispatcher)
 
     @staticmethod
     def _detect_pinning_support(dispatcher: Any) -> bool:
@@ -938,9 +1059,7 @@ class PinnedTransport:
         if not decision.allowed:
             raise AddressPolicyError(decision.reason or "address set rejected")
         try:
-            approved = tuple(
-                address.with_port(origin.port) for address in decision.approved_addresses
-            )
+            approved = tuple(address.with_port(origin.port) for address in decision.approved_addresses)
         except ValueError as exc:
             raise AddressPolicyError("resolved address port is ambiguous") from exc
         decision = AddressDecision(True, approved)

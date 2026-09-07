@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import gzip
 import socket
 
 import pytest
 
-from argus.acquisition.models import CredentialPolicy, OriginProfile
+from argus.acquisition.dns import ResolvedAddress
 from argus.acquisition.transport import (
     AddressPolicyError,
+    PinnedRequest,
     PinnedTransport,
+    TransportDispatchError,
     TransportRequest,
     TransportPolicyError,
     UnsupportedAddressPinning,
 )
+from argus.acquisition.models import CredentialPolicy, LogicalOrigin, OriginProfile
 
 
 class SequenceResolver:
@@ -263,3 +267,65 @@ def test_unsupported_address_pinning_fails_before_dispatch():
 
     with pytest.raises(UnsupportedAddressPinning):
         transport.request(request_for("https://public.example/a"))
+
+
+class WireSocket:
+    def __init__(self, wire: bytes):
+        self.wire = wire
+        self.offset = 0
+
+    def recv(self, size: int) -> bytes:
+        if self.offset >= len(self.wire):
+            return b""
+        chunk = self.wire[self.offset : self.offset + min(size, 7)]
+        self.offset += len(chunk)
+        return chunk
+
+
+def _pinned_request() -> PinnedRequest:
+    origin = LogicalOrigin("https", "public.example", 443)
+    return PinnedRequest(
+        url=origin.origin + "/search",
+        method="GET",
+        headers=(),
+        body=b"",
+        timeout=10.0,
+        logical_origin=origin,
+        dial_address=ResolvedAddress("93.184.216.34", 443),
+        tls_server_name=origin.hostname,
+        host_header=origin.hostname,
+        authority=origin.hostname,
+    )
+
+
+def test_socket_dispatcher_decodes_chunked_gzip_response():
+    from argus.acquisition.transport import _SocketDispatcher
+
+    payload = b"<html><body>Yahoo result</body></html>"
+    compressed = gzip.compress(payload)
+    wire_body = (
+        f"{len(compressed):x};provider=yahoo\r\n".encode()
+        + compressed
+        + b"\r\n0\r\nX-Provider: yahoo\r\n\r\n"
+    )
+    wire = (
+        b"HTTP/1.1 200 OK\r\n"
+        b"Transfer-Encoding: chunked\r\n"
+        b"Content-Encoding: gzip\r\n"
+        b"Connection: close\r\n\r\n" + wire_body
+    )
+
+    response = _SocketDispatcher._read_response(WireSocket(wire), _pinned_request())
+
+    assert response.status_code == 200
+    assert response.body == payload
+    assert response.get_header("content-encoding") == "gzip"
+
+
+def test_socket_dispatcher_rejects_malformed_chunked_response():
+    from argus.acquisition.transport import _SocketDispatcher
+
+    wire = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nnot-a-chunk\r\n"
+
+    with pytest.raises(TransportDispatchError, match="chunked"):
+        _SocketDispatcher._read_response(WireSocket(wire), _pinned_request())
