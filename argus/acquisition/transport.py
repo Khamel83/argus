@@ -36,6 +36,7 @@ from .models import (
 
 
 MAX_TRANSPORT_HEADER_LENGTH = 1 * 1024 * 1024
+_REQUEST_FRAMING_HEADERS = frozenset({"content-length", "transfer-encoding"})
 
 
 class PinnedTransportError(RuntimeError):
@@ -91,6 +92,14 @@ def _bounded_header_items(headers: Any) -> tuple[tuple[str, str], ...]:
             raise ValueError("headers exceed the bounded transport limit")
         normalized.append((name, value))
     return tuple(normalized)
+
+
+def _reject_caller_framing(headers: Any) -> None:
+    """Keep request framing under the transport's control."""
+
+    for name, _value in headers:
+        if name.lower() in _REQUEST_FRAMING_HEADERS:
+            raise ValueError("caller cannot override request framing headers")
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -468,6 +477,7 @@ def _validate_caller_boundary(request: TransportRequest, origin: LogicalOrigin) 
     ):
         if _override_present(value):
             raise ValueError("caller cannot override logical origin or dial target")
+    _reject_caller_framing(request.headers)
     for name, _value in request.headers:
         lowered = name.lower()
         if lowered in {
@@ -750,6 +760,13 @@ class _SocketDispatcher:
     supports_address_pinning = True
 
     def send(self, prepared: PinnedRequest) -> TransportResponse:
+        body = prepared.body
+        headers = list(_bounded_header_items(prepared.headers))
+        _reject_caller_framing(headers)
+        if not any(name.lower() == "connection" for name, _ in headers):
+            headers.append(("Connection", "close"))
+        headers.append(("Content-Length", str(len(body))))
+        headers = list(_bounded_header_items(headers))
         origin = prepared.logical_origin
         timeout = prepared.timeout or 30.0
         sock = socket.socket(prepared.dial_address.family, socket.SOCK_STREAM)
@@ -761,10 +778,6 @@ class _SocketDispatcher:
             if origin.scheme == "https":
                 context = ssl.create_default_context()
                 sock = context.wrap_socket(sock, server_hostname=prepared.tls_server_name)
-            body = prepared.body
-            headers = list(prepared.headers)
-            if not any(name.lower() == "connection" for name, _ in headers):
-                headers.append(("Connection", "close"))
             lines = [f"{prepared.method} {_path_from_url(urlsplit(prepared.url))} HTTP/1.1"]
             lines.extend(f"{name}: {value}" for name, value in headers)
             payload = ("\r\n".join(lines) + "\r\n\r\n").encode("latin-1") + body
