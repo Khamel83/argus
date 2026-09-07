@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import FrozenInstanceError, replace
 from decimal import Decimal
 
@@ -1075,6 +1076,66 @@ def test_sql_repository_atomically_accepts_projection_and_idempotently_reloads(
         ) == 1
 
 
+def test_accepted_extraction_creates_release_bound_maya_delivery(tmp_path):
+    from sqlalchemy import func, select
+
+    from argus.extraction.finalizer import ExtractionFinalizer
+    from argus.persistence.search_ledger import (
+        DeliveryIntentRow,
+        ExtractionRunRow,
+        create_search_ledger_repository,
+    )
+
+    repository = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'accepted-maya.db'}",
+        create_schema=True,
+    )
+    caller = "maya-readiness-reviewed"
+    request = replace(
+        _request(),
+        caller=caller,
+        release_identity="argus-test-release",
+    )
+    plan = replace(
+        _plan(),
+        caller=caller,
+        release_identity="argus-test-release",
+    )
+    finalizer = ExtractionFinalizer(
+        repository=repository,
+        clock=lambda: "2026-07-27T12:00:00Z",
+    )
+
+    first = finalizer.finalize_extraction(
+        request,
+        plan,
+        _raw(artifact=_artifact()),
+        OutcomePolicy(version="outcome-v1"),
+    )
+    second = finalizer.finalize_extraction(
+        request,
+        plan,
+        _raw(artifact=_artifact()),
+        OutcomePolicy(version="outcome-v1"),
+    )
+
+    assert second == first
+    with repository.session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(ExtractionRunRow)) == 1
+        assert session.scalar(select(func.count()).select_from(DeliveryIntentRow)) == 1
+        intent = session.scalar(select(DeliveryIntentRow))
+        assert intent is not None
+        assert intent.status == "pending"
+        assert intent.extraction_run_id is not None
+        assert json.loads(intent.payload_json)["evidence_identity"] == {
+            "operation_id": "extract-1",
+            "request_id": "request-1",
+            "release_identity": "argus-test-release",
+            "receipt_identity": first.acceptance_receipt.receipt_ref,
+            "result_hash": f"sha256:{intent.content_sha256}",
+        }
+
+
 def test_idempotent_rejected_retry_does_not_reinvoke_mapper_and_conflicts_on_source(
     tmp_path,
 ):
@@ -1176,6 +1237,49 @@ def test_sql_repository_rolls_back_projection_on_artifact_fault(tmp_path):
         assert session.scalar(
             select(func.count()).select_from(ExtractionOutcomeAcceptanceRow)
         ) == 0
+
+
+def test_sql_repository_rolls_back_accepted_outcome_when_maya_bridge_fails(tmp_path):
+    from sqlalchemy import event, func, select
+
+    from argus.extraction.finalizer import ExtractionFinalizer
+    from argus.extraction.outcomes import ExtractionPersistenceFailed
+    from argus.persistence.search_ledger import (
+        DeliveryIntentRow,
+        ExtractionOutcomeAcceptanceRow,
+        ExtractionOutcomePlanRow,
+        ExtractionRunRow,
+        create_search_ledger_repository,
+    )
+
+    repository = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'accepted-maya-rollback.db'}",
+        create_schema=True,
+    )
+
+    @event.listens_for(DeliveryIntentRow, "before_insert")
+    def fail_maya_bridge(mapper, connection, target):
+        raise RuntimeError("injected accepted Maya bridge failure")
+
+    with pytest.raises(ExtractionPersistenceFailed):
+        ExtractionFinalizer(
+            repository=repository,
+            clock=lambda: "2026-07-27T12:00:00Z",
+        ).finalize_extraction(
+            _request(),
+            _plan(),
+            _raw(artifact=_artifact()),
+            OutcomePolicy(version="outcome-v1"),
+        )
+
+    event.remove(DeliveryIntentRow, "before_insert", fail_maya_bridge)
+    with repository.session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(ExtractionOutcomePlanRow)) == 0
+        assert session.scalar(
+            select(func.count()).select_from(ExtractionOutcomeAcceptanceRow)
+        ) == 0
+        assert session.scalar(select(func.count()).select_from(ExtractionRunRow)) == 0
+        assert session.scalar(select(func.count()).select_from(DeliveryIntentRow)) == 0
 
 
 def test_0007_sqlite_upgrade_is_additive_and_guarded_after_activation(tmp_path):

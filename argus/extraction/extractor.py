@@ -1103,6 +1103,13 @@ async def extract_url(
                         latency_ms=0,
                     )
                 ]
+                ensure_delivery = getattr(
+                    repository,
+                    "ensure_accepted_extraction_delivery",
+                    None,
+                )
+                if callable(ensure_delivery):
+                    ensure_delivery(accepted)
                 return projected
     unpersisted_kwargs = {
         "domain": domain,

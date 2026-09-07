@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Protocol
+from urllib.parse import urlsplit
 
 from sqlalchemy import (
     Boolean,
@@ -1896,10 +1897,16 @@ class SqlAlchemySearchLedgerRepository:
                             accepted_at=_utc_isoformat(acceptance.accepted_at),
                             scope=acceptance.scope,
                         )
-                        return AcceptedExtractionOutcome.accepted(
+                        accepted_outcome = AcceptedExtractionOutcome.accepted(
                             projection,
                             receipt,
                         )
+                        self._persist_accepted_extraction_delivery(
+                            session,
+                            accepted_outcome,
+                            now=self.clock(),
+                        )
+                        return accepted_outcome
 
                     now = self.clock()
                     plan_id = uuid.uuid4().hex
@@ -1934,12 +1941,26 @@ class SqlAlchemySearchLedgerRepository:
                         plan_id=plan_id,
                         now=now,
                     )
+                    receipt = ExtractionAcceptanceReceipt(
+                        receipt_ref=receipt_ref,
+                        accepted_at=_utc_isoformat(now),
+                        scope=scope,
+                    )
+                    accepted_outcome = AcceptedExtractionOutcome.accepted(
+                        projection,
+                        receipt,
+                    )
+                    self._persist_accepted_extraction_delivery(
+                        session,
+                        accepted_outcome,
+                        now=now,
+                    )
                 receipt = ExtractionAcceptanceReceipt(
                     receipt_ref=receipt_ref,
                     accepted_at=_utc_isoformat(now),
                     scope=scope,
                 )
-                return AcceptedExtractionOutcome.accepted(projection, receipt)
+                return accepted_outcome
             except IntegrityError:
                 for _ in range(100):
                     existing = self.load_extraction_outcome(claim.extraction_run_id)
@@ -1971,13 +1992,17 @@ class SqlAlchemySearchLedgerRepository:
                             existing_state
                         ) != _extraction_source_fingerprint(claim_state):
                             raise ExtractionAcceptanceConflict()
+                        self.ensure_accepted_extraction_delivery(existing)
                         return existing
                     time.sleep(0.01)
                 raise
 
     def accept_extraction_outcome(self, projection):
         """Atomically accept one immutable S3 extraction projection."""
-        from argus.extraction.outcomes import ExtractionAcceptanceReceipt
+        from argus.extraction.outcomes import (
+            AcceptedExtractionOutcome,
+            ExtractionAcceptanceReceipt,
+        )
 
         state = _extraction_projection_state(projection)
         source_fingerprint = _extraction_source_fingerprint(state)
@@ -2005,11 +2030,17 @@ class SqlAlchemySearchLedgerRepository:
                         f"extraction {projection.extraction_run_id!r} "
                         "has incomplete durable outcome state"
                     )
-                return ExtractionAcceptanceReceipt(
+                receipt = ExtractionAcceptanceReceipt(
                     receipt_ref=acceptance.receipt_ref,
                     accepted_at=_utc_isoformat(acceptance.accepted_at),
                     scope=acceptance.scope,
                 )
+                self._persist_accepted_extraction_delivery(
+                    session,
+                    AcceptedExtractionOutcome.accepted(projection, receipt),
+                    now=self.clock(),
+                )
+                return receipt
 
             now = self.clock()
             plan_id = uuid.uuid4().hex
@@ -2034,6 +2065,16 @@ class SqlAlchemySearchLedgerRepository:
                 projection=projection,
                 state=state,
                 plan_id=plan_id,
+                now=now,
+            )
+            receipt = ExtractionAcceptanceReceipt(
+                receipt_ref=receipt_ref,
+                accepted_at=_utc_isoformat(now),
+                scope=scope,
+            )
+            self._persist_accepted_extraction_delivery(
+                session,
+                AcceptedExtractionOutcome.accepted(projection, receipt),
                 now=now,
             )
         return ExtractionAcceptanceReceipt(
@@ -2619,8 +2660,132 @@ class SqlAlchemySearchLedgerRepository:
             artifact_requirement,
         )
 
-    def record_extraction(
+    def _persist_extraction_delivery_in_session(
         self,
+        session,
+        *,
+        ledger_id: str,
+        public_id: str,
+        mode: str,
+        caller: str,
+        result,
+        completed_at: datetime,
+        evidence_identity: Mapping[str, object] | object | None = None,
+        request_id: str | None = None,
+    ) -> str:
+        """Add one Maya delivery intent beside an extraction ledger row."""
+        delivery_id = None
+        if excludes_capture(caller):
+            payload_json = None
+            maya_content_hash = None
+            delivery_status = "suppressed"
+        else:
+            delivery_id = uuid.uuid4().hex
+            payload, maya_content_hash = extraction_capture_payload(
+                public_id=public_id,
+                mode=mode,
+                result=result,
+                completed_at=completed_at,
+                evidence_identity=evidence_identity,
+            )
+            if payload.get("evidence_identity"):
+                identity = dict(payload["evidence_identity"])
+                if (
+                    "operation_id" in identity
+                    and identity["operation_id"] != public_id
+                ):
+                    raise ValueError("extraction operation identity mismatch")
+                if request_id is not None:
+                    if (
+                        "request_id" in identity
+                        and identity["request_id"] != request_id
+                    ):
+                        raise ValueError("extraction request identity mismatch")
+                    identity.setdefault("request_id", request_id)
+                identity.setdefault("operation_id", public_id)
+                identity.setdefault("receipt_identity", delivery_id)
+                if maya_content_hash:
+                    identity.setdefault(
+                        "result_hash", f"sha256:{maya_content_hash}"
+                    )
+                payload["evidence_identity"] = _normalize_evidence_identity(
+                    identity
+                )
+            payload_json = maya_payload_json(payload)
+            delivery_status = "pending"
+        if delivery_id is None:
+            delivery_id = uuid.uuid4().hex
+        session.add(
+            DeliveryIntentRow(
+                id=delivery_id,
+                run_id=None,
+                extraction_run_id=ledger_id,
+                destination="maya",
+                status=delivery_status,
+                payload_json=payload_json,
+                payload_sha256=hashlib.sha256(
+                    (payload_json or "").encode("utf-8")
+                ).hexdigest(),
+                content_sha256=maya_content_hash,
+                attempt_count=0,
+                max_attempts=8,
+                next_attempt_at=completed_at,
+                updated_at=completed_at,
+                created_at=completed_at,
+            )
+        )
+        return delivery_id
+
+    def _persist_accepted_extraction_delivery(
+        self,
+        session,
+        accepted,
+        *,
+        now: datetime,
+    ) -> ExtractionReceipt:
+        """Mirror an accepted outcome into the restart-safe Maya outbox."""
+        result = accepted.to_legacy_extracted_content()
+        result.extracted_at = now
+        try:
+            domain = urlsplit(accepted.plan.normalized_url).hostname
+        except ValueError:
+            domain = None
+        delivery_id = self._persist_extraction_ledger_in_session(
+            session,
+            url=accepted.plan.normalized_url,
+            domain=domain,
+            mode=accepted.plan.mode,
+            caller=accepted.plan.caller,
+            result=result,
+            latency_ms=accepted.operation_latency_ms,
+            public_id=accepted.extraction_run_id,
+            now=now,
+            evidence_identity={
+                "operation_id": accepted.extraction_run_id,
+                "request_id": accepted.request_id,
+                "release_identity": accepted.plan.release_identity,
+                "receipt_identity": accepted.acceptance_receipt.receipt_ref,
+            },
+            request_id=accepted.request_id,
+        ).delivery_intent_id
+        return ExtractionReceipt(
+            extraction_run_id=accepted.extraction_run_id,
+            delivery_intent_id=delivery_id,
+        )
+
+    def ensure_accepted_extraction_delivery(self, accepted) -> ExtractionReceipt:
+        """Repair the Maya mirror for an accepted cache-origin outcome."""
+        now = self.clock()
+        with self.session_factory.begin() as session:
+            return self._persist_accepted_extraction_delivery(
+                session,
+                accepted,
+                now=now,
+            )
+
+    def _persist_extraction_ledger_in_session(
+        self,
+        session,
         *,
         url: str,
         domain: str | None,
@@ -2628,11 +2793,12 @@ class SqlAlchemySearchLedgerRepository:
         caller: str,
         result,
         latency_ms: int,
-        extraction_run_id: str | None = None,
+        public_id: str,
+        now: datetime,
         evidence_identity: Mapping[str, object] | object | None = None,
         request_id: str | None = None,
     ) -> ExtractionReceipt:
-        """Atomically store a normalized extraction and its attempt history."""
+        """Persist a legacy extraction mirror and its outbox in one session."""
         from argus.extraction.rejection import classify_extraction_rejection
 
         if request_id is not None and (
@@ -2640,7 +2806,6 @@ class SqlAlchemySearchLedgerRepository:
         ):
             raise ValueError("extraction request_id is invalid")
 
-        public_id = extraction_run_id or uuid.uuid4().hex
         selected = result.extractor.value if result.extractor else None
         rejection = classify_extraction_rejection(result)
         content_hash = (
@@ -2659,9 +2824,12 @@ class SqlAlchemySearchLedgerRepository:
                         "success" if name == selected and not result.error else "failed"
                     ),
                     latency_ms=0,
-                    failure_summary=result.error
-                    if name == result.extractors_tried[-1]
-                    else None,
+                    failure_summary=(
+                        result.error
+                        if result.extractors_tried
+                        and name == result.extractors_tried[-1]
+                        else None
+                    ),
                 )
                 for name in result.extractors_tried
             ]
@@ -2704,163 +2872,150 @@ class SqlAlchemySearchLedgerRepository:
             "artifact": artifact_state,
         }
         fingerprint = acceptance_fingerprint(state)
-
-        with self.session_factory.begin() as session:
-            existing = session.scalar(
-                select(ExtractionRunRow).where(
-                    ExtractionRunRow.extraction_run_id == public_id
+        existing = session.scalar(
+            select(ExtractionRunRow).where(
+                ExtractionRunRow.extraction_run_id == public_id
+            )
+        )
+        if existing is not None:
+            if existing.acceptance_fingerprint != fingerprint:
+                raise AcceptanceConflictError(
+                    f"extraction {public_id!r} has a different durable payload"
+                )
+            delivery_id = session.scalar(
+                select(DeliveryIntentRow.id).where(
+                    DeliveryIntentRow.extraction_run_id == existing.id
                 )
             )
-            if existing is not None:
-                if existing.acceptance_fingerprint != fingerprint:
-                    raise AcceptanceConflictError(
-                        f"extraction {public_id!r} has a different durable payload"
-                    )
-                delivery_id = session.scalar(
-                    select(DeliveryIntentRow.id).where(
-                        DeliveryIntentRow.extraction_run_id == existing.id
-                    )
-                )
-                if delivery_id is None:
-                    raise AcceptanceConflictError(
-                        f"extraction {public_id!r} is incomplete"
-                    )
-                return ExtractionReceipt(
-                    extraction_run_id=public_id,
-                    delivery_intent_id=delivery_id,
-                )
-
-            now = self.clock()
-            ledger_id = uuid.uuid4().hex
-            if content_hash:
-                self._ensure_content_identity(
-                    session, content_hash, state["artifact"]["canonical_url"], now
-                )
-            session.add(
-                ExtractionRunRow(
-                    id=ledger_id,
-                    extraction_run_id=public_id,
-                    request_url=state["request_url"],
-                    domain=domain,
-                    mode=mode,
-                    caller=caller,
-                    status=state["status"],
-                    selected_extractor=selected,
-                    content_hash=content_hash,
-                    title=result.title,
-                    author=result.author,
-                    published_date=result.date,
-                    word_count=result.word_count,
-                    latency_ms=state["latency_ms"],
-                    quality_passed=state["quality_passed"],
-                    quality_reason=result.quality_reason,
-                    error_summary=state["error_summary"],
-                    acceptance_fingerprint=fingerprint,
-                    started_at=now,
-                    committed_at=now,
-                )
-            )
-            session.flush()
-            for ordinal, attempt in enumerate(state["attempts"]):
-                session.add(
-                    ExtractorAttemptRow(
-                        id=uuid.uuid4().hex,
-                        run_id=ledger_id,
-                        ordinal=ordinal,
-                        **attempt,
-                    )
-                )
-            artifact = state["artifact"]
-            session.add(
-                ExtractionArtifactRow(
-                    id=uuid.uuid4().hex,
-                    run_id=ledger_id,
-                    canonical_url=artifact["canonical_url"],
-                    content_hash=content_hash,
-                    source_type=artifact["source_type"],
-                    egress=artifact["egress"],
-                    machine=artifact["machine"],
-                    auth_used=artifact["auth_used"],
-                    cookies_used=artifact["cookies_used"],
-                    archive_used=artifact["archive_used"],
-                    cost=artifact["cost"],
-                    metadata_json=_canonical_json(
-                        {
-                            "quality_reason": result.quality_reason,
-                            "extractors_tried": list(result.extractors_tried),
-                            "cache_hit": bool(result.cache_hit),
-                            "source_extractor": result.cache_source_extractor,
-                            "rejection": (
-                                rejection.to_dict() if rejection is not None else None
-                            ),
-                        }
-                    ),
-                )
-            )
-            delivery_id = None
-            if excludes_capture(caller):
-                payload_json = None
-                maya_content_hash = None
-                delivery_status = "suppressed"
-            else:
-                delivery_id = uuid.uuid4().hex
-                payload, maya_content_hash = extraction_capture_payload(
+            if delivery_id is None:
+                delivery_id = self._persist_extraction_delivery_in_session(
+                    session,
+                    ledger_id=existing.id,
                     public_id=public_id,
                     mode=mode,
+                    caller=caller,
                     result=result,
                     completed_at=now,
                     evidence_identity=evidence_identity,
+                    request_id=request_id,
                 )
-                if payload.get("evidence_identity"):
-                    identity = dict(payload["evidence_identity"])
-                    if (
-                        "operation_id" in identity
-                        and identity["operation_id"] != public_id
-                    ):
-                        raise ValueError("extraction operation identity mismatch")
-                    if request_id is not None:
-                        if (
-                            "request_id" in identity
-                            and identity["request_id"] != request_id
-                        ):
-                            raise ValueError("extraction request identity mismatch")
-                        identity.setdefault("request_id", request_id)
-                    identity.setdefault("operation_id", public_id)
-                    identity.setdefault("receipt_identity", delivery_id)
-                    if maya_content_hash:
-                        identity.setdefault(
-                            "result_hash", f"sha256:{maya_content_hash}"
-                        )
-                    payload["evidence_identity"] = _normalize_evidence_identity(
-                        identity
-                    )
-                payload_json = maya_payload_json(payload)
-                delivery_status = "pending"
-            if delivery_id is None:
-                delivery_id = uuid.uuid4().hex
+            return ExtractionReceipt(
+                extraction_run_id=public_id,
+                delivery_intent_id=delivery_id,
+            )
+
+        ledger_id = uuid.uuid4().hex
+        if content_hash:
+            self._ensure_content_identity(
+                session, content_hash, state["artifact"]["canonical_url"], now
+            )
+        session.add(
+            ExtractionRunRow(
+                id=ledger_id,
+                extraction_run_id=public_id,
+                request_url=state["request_url"],
+                domain=domain,
+                mode=mode,
+                caller=caller,
+                status=state["status"],
+                selected_extractor=selected,
+                content_hash=content_hash,
+                title=result.title,
+                author=result.author,
+                published_date=result.date,
+                word_count=result.word_count,
+                latency_ms=state["latency_ms"],
+                quality_passed=state["quality_passed"],
+                quality_reason=result.quality_reason,
+                error_summary=state["error_summary"],
+                acceptance_fingerprint=fingerprint,
+                started_at=now,
+                committed_at=now,
+            )
+        )
+        session.flush()
+        for ordinal, attempt in enumerate(state["attempts"]):
             session.add(
-                DeliveryIntentRow(
-                    id=delivery_id,
-                    run_id=None,
-                    extraction_run_id=ledger_id,
-                    destination="maya",
-                    status=delivery_status,
-                    payload_json=payload_json,
-                    payload_sha256=hashlib.sha256(
-                        (payload_json or "").encode("utf-8")
-                    ).hexdigest(),
-                    content_sha256=maya_content_hash,
-                    attempt_count=0,
-                    max_attempts=8,
-                    next_attempt_at=now,
-                    updated_at=now,
-                    created_at=now,
+                ExtractorAttemptRow(
+                    id=uuid.uuid4().hex,
+                    run_id=ledger_id,
+                    ordinal=ordinal,
+                    **attempt,
                 )
             )
+        artifact = state["artifact"]
+        session.add(
+            ExtractionArtifactRow(
+                id=uuid.uuid4().hex,
+                run_id=ledger_id,
+                canonical_url=artifact["canonical_url"],
+                content_hash=content_hash,
+                source_type=artifact["source_type"],
+                egress=artifact["egress"],
+                machine=artifact["machine"],
+                auth_used=artifact["auth_used"],
+                cookies_used=artifact["cookies_used"],
+                archive_used=artifact["archive_used"],
+                cost=artifact["cost"],
+                metadata_json=_canonical_json(
+                    {
+                        "quality_reason": result.quality_reason,
+                        "extractors_tried": list(result.extractors_tried),
+                        "cache_hit": bool(result.cache_hit),
+                        "source_extractor": result.cache_source_extractor,
+                        "rejection": (
+                            rejection.to_dict() if rejection is not None else None
+                        ),
+                    }
+                ),
+            )
+        )
+        delivery_id = self._persist_extraction_delivery_in_session(
+            session,
+            ledger_id=ledger_id,
+            public_id=public_id,
+            mode=mode,
+            caller=caller,
+            result=result,
+            completed_at=now,
+            evidence_identity=evidence_identity,
+            request_id=request_id,
+        )
         return ExtractionReceipt(
             extraction_run_id=public_id,
             delivery_intent_id=delivery_id,
         )
+
+    def record_extraction(
+        self,
+        *,
+        url: str,
+        domain: str | None,
+        mode: str,
+        caller: str,
+        result,
+        latency_ms: int,
+        extraction_run_id: str | None = None,
+        evidence_identity: Mapping[str, object] | object | None = None,
+        request_id: str | None = None,
+    ) -> ExtractionReceipt:
+        """Atomically store a normalized extraction and its attempt history."""
+        public_id = extraction_run_id or uuid.uuid4().hex
+        now = self.clock()
+        with self.session_factory.begin() as session:
+            return self._persist_extraction_ledger_in_session(
+                session,
+                url=url,
+                domain=domain,
+                mode=mode,
+                caller=caller,
+                result=result,
+                latency_ms=latency_ms,
+                public_id=public_id,
+                now=now,
+                evidence_identity=evidence_identity,
+                request_id=request_id,
+            )
 
     def claim_maya_outbox(
         self,
