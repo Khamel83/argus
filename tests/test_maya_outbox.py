@@ -4,7 +4,7 @@ import time
 import tracemalloc
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Barrier, Thread
 from urllib.parse import quote
@@ -2055,6 +2055,19 @@ def test_outbox_observability_reports_bounded_counts_and_oldest_age(tmp_path):
         "dead_letter_oldest_age_seconds": None,
         "dead_letter_payload_bytes": 0,
     }
+
+
+def test_outbox_observability_normalizes_aware_observation_against_legacy_timestamps(
+    tmp_path,
+):
+    repository = _repository(tmp_path)
+    repository.accept(SearchQuery(query="aware observation"), _response())
+
+    status = repository.maya_outbox_status(
+        now=datetime(2026, 7, 23, 12, 0, tzinfo=timezone.utc)
+    )
+
+    assert status["oldest_pending_age_seconds"] == 3600
 
 
 def test_maya_capture_config_uses_dedicated_secret_and_bounded_worker_settings():

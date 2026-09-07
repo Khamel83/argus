@@ -3244,11 +3244,23 @@ class SqlAlchemySearchLedgerRepository:
             )
 
         def age(value):
-            return (
-                max(0, int((observed_at - value).total_seconds()))
-                if value is not None
-                else None
+            if value is None:
+                return None
+            # SQLAlchemy's legacy DateTime columns return naive UTC values on
+            # PostgreSQL, while the live clock is timezone-aware. Normalize
+            # both sides before calculating age so observability stays usable
+            # across SQLite and PostgreSQL.
+            observed = (
+                observed_at
+                if observed_at.tzinfo is not None
+                else observed_at.replace(tzinfo=timezone.utc)
             )
+            recorded = (
+                value
+                if value.tzinfo is not None
+                else value.replace(tzinfo=timezone.utc)
+            )
+            return max(0, int((observed - recorded).total_seconds()))
 
         return {
             "counts": counts,
