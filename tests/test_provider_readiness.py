@@ -1734,6 +1734,43 @@ def test_paid_probe_owns_exact_attempt_and_final_result_receipt(tmp_path):
     assert replay.reason == "probe_already_consumed"
 
 
+@pytest.mark.parametrize("source_revision", ["d" * 40, "invalid", None])
+def test_paid_probe_records_canonical_manifest_source_identity(
+    tmp_path, monkeypatch, source_revision,
+):
+    import json
+
+    from argus.broker.readiness import ProbeAuthorization
+    from argus.persistence.provider_spend import ProviderSpendRepository
+
+    manifest = tmp_path / "runtime-manifest.json"
+    manifest.write_text(json.dumps({
+        "manifest_version": 2,
+        "source_revision": source_revision,
+        "lock_sha256": "a" * 64,
+        "capabilities": {"http_api": True},
+    }))
+    monkeypatch.setenv("ARGUS_RUNTIME_MANIFEST", str(manifest))
+    monkeypatch.setenv("ARGUS_RELEASE", "display-label-not-source-proof")
+    service, repository = _service(tmp_path)
+    service.register_provider(_registration(budget=5.0))
+    decision = service.authorize_probe(
+        ProviderName.BRAVE, "billable_search", ProbeAuthorization(
+            workflow="explicit_validation", provider=ProviderName.BRAVE,
+            idempotency_key="probe:manifest:1", durable_receipt="receipt:manifest:1",
+            conservative_charge=0.5,
+        ),
+    )
+    assert decision.allowed
+    attempt = ProviderSpendRepository(repository.session_factory).get_attempt(
+        decision.attempt_id
+    )
+    assert attempt.release_identity == (
+        f"argus-{source_revision}"
+        if source_revision == "d" * 40 else "unknown-release"
+    )
+
+
 @pytest.mark.parametrize(
     "provider",
     tuple(provider for provider in ProviderName if is_adapter_provider(provider)),

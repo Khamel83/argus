@@ -1554,6 +1554,60 @@ async def test_live_probe_bypasses_legacy_cache(monkeypatch):
 # --- Health ---
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_revision", ["c" * 40, "invalid", None])
+async def test_quota_probe_spend_records_baked_source_identity(
+    tmp_path, monkeypatch, source_revision,
+):
+    import json
+
+    from argus.broker.budgets import BudgetTracker
+    from argus.broker.execution import ProviderExecutor
+    from argus.broker.health import HealthTracker
+    from argus.broker.readiness import ProbeAuthorization
+    from argus.persistence.provider_spend import create_provider_spend_repository
+
+    manifest = tmp_path / "runtime-manifest.json"
+    manifest.write_text(json.dumps({
+        "manifest_version": 2, "source_revision": source_revision,
+        "lock_sha256": "a" * 64, "capabilities": {"http_api": True},
+    }))
+    monkeypatch.setenv("ARGUS_RUNTIME_MANIFEST", str(manifest))
+    monkeypatch.setenv("ARGUS_RELEASE", "display-label-not-source-proof")
+    repository = create_provider_spend_repository(
+        f"sqlite:///{tmp_path / 'spend.db'}", create_schema=True,
+    )
+    provider = StubProvider(ProviderName.DUCKDUCKGO)
+    executor = ProviderExecutor(
+        providers={provider.name: provider}, health_tracker=HealthTracker(),
+        budget_tracker=BudgetTracker(), spend_repository=repository,
+    )
+    authorization = executor._readiness.authorize_probe(
+        provider.name, "no_money_quota", ProbeAuthorization(
+            workflow="explicit_validation", provider=provider.name,
+            named_quota="free_provider_request",
+            idempotency_key="quota-probe:1", durable_receipt="quota-receipt:1",
+        ),
+    )
+    assert authorization.allowed
+    await execute_with_plan(executor, SearchQuery(
+        query="quota fixture", providers=[provider.name], max_results=1,
+        metadata={
+            "probe_no_fallback": True, "probe_provider": provider.name.value,
+            "probe_idempotency_key": "quota-probe:1",
+            "probe_receipt": "quota-receipt:1",
+            "release_identity": "untrusted-query-label",
+        },
+    ), [provider.name])
+    assert provider.calls == 1
+    attempt = repository.list_attempts(provider=provider.name)[0]
+    assert attempt.release_identity == (
+        f"argus-{source_revision}"
+        if source_revision == "c" * 40 else "unknown-release"
+    )
+    assert attempt.reserved_charge == 0
+
+
 class TestHealth:
     def test_initial_state(self):
         from argus.broker.health import HealthTracker

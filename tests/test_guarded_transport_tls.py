@@ -282,6 +282,35 @@ class WireSocket:
         return chunk
 
 
+class SendingWireSocket:
+    def __init__(self, response: bytes):
+        self.response = response
+        self.offset = 0
+        self.sent = []
+        self.connected_to = None
+        self.timeout = None
+        self.closed = False
+
+    def settimeout(self, timeout: float) -> None:
+        self.timeout = timeout
+
+    def connect(self, address) -> None:
+        self.connected_to = address
+
+    def sendall(self, payload: bytes) -> None:
+        self.sent.append(payload)
+
+    def recv(self, size: int) -> bytes:
+        if self.offset >= len(self.response):
+            return b""
+        chunk = self.response[self.offset : self.offset + min(size, 7)]
+        self.offset += len(chunk)
+        return chunk
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def _pinned_request() -> PinnedRequest:
     origin = LogicalOrigin("https", "public.example", 443)
     return PinnedRequest(
@@ -296,6 +325,111 @@ def _pinned_request() -> PinnedRequest:
         host_header=origin.hostname,
         authority=origin.hostname,
     )
+
+
+@pytest.mark.parametrize(
+    ("body", "expected_length"),
+    [(b"", 0), ("π".encode("utf-8"), 2)],
+)
+def test_socket_dispatcher_frames_post_body_with_exact_byte_length(
+    monkeypatch, body, expected_length
+):
+    import argus.acquisition.transport as transport_module
+
+    socket_instance = SendingWireSocket(
+        b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"
+    )
+    monkeypatch.setattr(
+        transport_module.socket,
+        "socket",
+        lambda *args, **kwargs: socket_instance,
+    )
+    origin = LogicalOrigin("http", "public.example", 80)
+    prepared = PinnedRequest(
+        url=origin.origin + "/submit",
+        method="POST",
+        headers=(("Content-Type", "application/json"),),
+        body=body,
+        timeout=10.0,
+        logical_origin=origin,
+        dial_address=ResolvedAddress("93.184.216.34", 80),
+        tls_server_name=origin.hostname,
+        host_header=origin.hostname,
+        authority=origin.hostname,
+    )
+
+    response = transport_module._SocketDispatcher().send(prepared)
+
+    assert response.status_code == 204
+    assert socket_instance.connected_to == ("93.184.216.34", 80)
+    assert socket_instance.closed is True
+    wire_head, separator, wire_body = socket_instance.sent[0].partition(
+        b"\r\n\r\n"
+    )
+    assert separator
+    assert wire_head.startswith(b"POST /submit HTTP/1.1\r\n")
+    content_lengths = [
+        line
+        for line in wire_head.split(b"\r\n")
+        if line.lower().startswith(b"content-length:")
+    ]
+    assert content_lengths == [f"Content-Length: {expected_length}".encode()]
+    assert wire_body == body
+
+
+@pytest.mark.parametrize(
+    "framing_header", [("Content-Length", "1"), ("Transfer-Encoding", "chunked")]
+)
+def test_transport_rejects_caller_request_framing_before_resolution(
+    framing_header,
+):
+    resolver = SequenceResolver(["93.184.216.34"])
+    recorder = Recorder()
+    transport = PinnedTransport(resolver=resolver, dispatcher=recorder)
+
+    with pytest.raises(ValueError, match="framing"):
+        transport.request(
+            request_for(
+                "http://public.example/submit",
+                method="POST",
+                headers={framing_header[0]: framing_header[1]},
+                body=b"x",
+            )
+        )
+
+    assert resolver.calls == 0
+    assert recorder.requests == []
+
+
+def test_socket_dispatcher_rejects_direct_request_framing_override_before_connect(
+    monkeypatch,
+):
+    import argus.acquisition.transport as transport_module
+
+    socket_calls = []
+    monkeypatch.setattr(
+        transport_module.socket,
+        "socket",
+        lambda *args, **kwargs: socket_calls.append((args, kwargs)),
+    )
+    origin = LogicalOrigin("http", "public.example", 80)
+    prepared = PinnedRequest(
+        url=origin.origin + "/submit",
+        method="POST",
+        headers=(("Transfer-Encoding", "chunked"),),
+        body=b"x",
+        timeout=10.0,
+        logical_origin=origin,
+        dial_address=ResolvedAddress("93.184.216.34", 80),
+        tls_server_name=origin.hostname,
+        host_header=origin.hostname,
+        authority=origin.hostname,
+    )
+
+    with pytest.raises(ValueError, match="framing"):
+        transport_module._SocketDispatcher().send(prepared)
+
+    assert socket_calls == []
 
 
 def test_socket_dispatcher_decodes_chunked_gzip_response():
