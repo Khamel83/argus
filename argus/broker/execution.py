@@ -222,6 +222,7 @@ class ProviderExecutor:
         probe_execution_authorization = None
         probe_key = None
         probe_result_key = None
+        probe_release_identity = "unknown-release"
         if query.metadata.get("probe_no_fallback") is True:
             expected = query.metadata.get("probe_provider")
             if (
@@ -247,6 +248,14 @@ class ProviderExecutor:
             if probe_execution_authorization is not None:
                 probe_result_key = probe_key
             attempt_scope = probe_key
+            from argus.operations.status import create_operational_status
+
+            # Quota probes create their spend attempt below, unlike paid
+            # probes which reserve during authorization. Bind both to the
+            # canonical baked source, never caller-supplied query metadata.
+            source_revision = create_operational_status().build["source_revision"]
+            if source_revision != "unknown":
+                probe_release_identity = source_revision
 
         ordered = [p for p in provider_order if p != ProviderName.CACHE]
         total_results_so_far = 0
@@ -281,6 +290,7 @@ class ProviderExecutor:
                 idempotency_key=f"{attempt_scope}:{pname.value}:{index}",
                 egress=planned_egress or "local",
                 request_class=plan.intent.value,
+                release_identity=probe_release_identity,
             )
 
             # Reachability check — route to worker if local is blocked
