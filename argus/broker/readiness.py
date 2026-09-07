@@ -1411,6 +1411,15 @@ class ProviderReadinessService:
         if not allowed:
             return ProbeDecision(False, "probe_denied")
         if probe_kind == "billable_search":
+            from argus.operations.status import create_operational_status
+
+            # Use the same validated baked-source identity as admin status.
+            # Fixture release labels and operator display labels do not prove
+            # which source executed this durable provider obligation.
+            source_revision = create_operational_status().build["source_revision"]
+            release_identity = (
+                source_revision if source_revision != "unknown" else "unknown-release"
+            )
             scope = self.execution_scope(
                 provider, egress=self.best_egress(provider) or "local",
                 request_class="discovery",
@@ -1426,6 +1435,7 @@ class ProviderReadinessService:
                     plan_id=f"probe:{authorization.idempotency_key}",
                     caller_identity="explicit_validation",
                     idempotency_key=str(authorization.idempotency_key),
+                    release_identity=release_identity,
                 ),
                 owner=f"probe:{authorization.idempotency_key}",
                 conservative_charge=float(authorization.conservative_charge),
