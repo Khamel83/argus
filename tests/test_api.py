@@ -60,6 +60,11 @@ class TestSchemas:
     def test_test_provider_request(self):
         req = ProviderTestRequest(provider="searxng")
         assert req.provider == "searxng"
+        assert req.max_results == 1
+
+    def test_test_provider_request_result_limit_is_bounded_to_one(self):
+        with pytest.raises(Exception):
+            ProviderTestRequest(provider="searxng", max_results=2)
 
 
 @pytest.mark.asyncio
@@ -111,10 +116,106 @@ async def test_live_admin_provider_probe_skips_legacy_persistence():
         caller="admin",
         idempotency_key="probe-idempotency",
         durable_receipt="probe-receipt",
+        max_results=1,
     )
 
     broker.search.assert_awaited_once()
     assert broker.search.await_args.kwargs["persist_legacy"] is False
+    assert broker.search.await_args.args[0].max_results == 1
+
+
+@pytest.mark.asyncio
+async def test_live_admin_provider_route_passes_bounded_result_limit():
+    from argus.api.provider_operations import LiveProviderFacts
+    from argus.api.routes_admin import test_provider
+
+    presentation = MagicMock()
+    presentation.live_provider = AsyncMock(
+        return_value=LiveProviderFacts(
+            provider="brave",
+            available=True,
+            status="success",
+            trace={},
+            sample_results=(),
+        )
+    )
+    request = MagicMock()
+    request.state.caller_identity = "admin"
+
+    await test_provider(
+        ProviderTestRequest(provider="brave", live=True, max_results=1),
+        request,
+        presentation,
+    )
+
+    assert presentation.live_provider.await_args.kwargs["max_results"] == 1
+
+
+@pytest.mark.asyncio
+async def test_live_admin_provider_probe_preserves_bounded_trace_and_sample_provenance():
+    from argus.api.provider_operations import ProviderApplicationService
+
+    broker = MagicMock()
+    broker.readiness_service.authorize_probe.return_value = SimpleNamespace(
+        allowed=True,
+        attempt_id="probe-attempt",
+    )
+    broker.search = AsyncMock(
+        return_value=SimpleNamespace(
+            traces=[
+                SimpleNamespace(
+                    status="success",
+                    results_count=1,
+                    latency_ms=1,
+                    error=None,
+                    budget_remaining=8.0,
+                    http_status=200,
+                    egress="residential",
+                    credit_info={"cost_usd": 999, "secret": "must-not-leak"},
+                )
+            ],
+            results=[
+                SimpleNamespace(
+                    url="https://example.com/result",
+                    title="Result",
+                    snippet="A result",
+                    metadata={
+                        "egress": "residential",
+                        "machine": "homelab",
+                        "upstream_engines": ["owned-engine"],
+                        "source_type": "web_page",
+                        "raw_payload": {"secret": "must-not-leak"},
+                    },
+                )
+            ],
+        )
+    )
+    service = ProviderApplicationService(lambda: broker, MagicMock())
+
+    facts = await service.live_provider(
+        provider="brave",
+        query_text="argus",
+        caller="admin",
+        idempotency_key="probe-idempotency",
+        durable_receipt="probe-receipt",
+        max_results=1,
+    )
+
+    assert facts.trace["egress"] == "residential"
+    assert facts.trace["http_status"] == 200
+    assert facts.trace["budget_remaining"] == 8.0
+    assert "credit_info" not in facts.trace
+    assert facts.sample_results == (
+        {
+            "url": "https://example.com/result",
+            "title": "Result",
+            "snippet": "A result",
+            "egress": "residential",
+            "machine": "homelab",
+            "upstream_engines": ["owned-engine"],
+            "source_type": "web_page",
+        },
+    )
 
 
 @pytest.mark.asyncio

@@ -86,6 +86,7 @@ async def test_provider(
                 caller=getattr(request.state, "caller_identity", "admin"),
                 idempotency_key=req.idempotency_key,
                 durable_receipt=req.durable_receipt,
+                max_results=req.max_results,
             )
         )
     except UnknownProviderError as exc:

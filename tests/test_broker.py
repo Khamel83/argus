@@ -1482,6 +1482,75 @@ class TestCache:
         assert cache.size() == 0
 
 
+@pytest.mark.asyncio
+async def test_live_probe_bypasses_legacy_cache(monkeypatch):
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    import argus.broker.router as router_module
+    from argus.broker.router import SearchBroker
+    from argus.models import SearchResponse
+
+    cached = SearchResponse(
+        query="bounded probe",
+        mode=SearchMode.DISCOVERY,
+        results=[],
+        cached=True,
+    )
+    fresh = SearchResponse(
+        query="bounded probe",
+        mode=SearchMode.DISCOVERY,
+        results=[],
+        cached=False,
+    )
+    pipeline = MagicMock()
+    pipeline.get_cached.return_value = cached
+    pipeline.build_response.return_value = fresh
+    executor = MagicMock()
+    executor.execute = AsyncMock(
+        return_value=SimpleNamespace(
+            provider_results={},
+            traces=[],
+            live_providers_used=0,
+            budget_pace_warnings=[],
+        )
+    )
+    broker = SearchBroker.__new__(SearchBroker)
+    broker._config = SimpleNamespace(
+        residential=SimpleNamespace(policy="off"),
+        node=SimpleNamespace(egress_type="unknown"),
+        caller_tier_caps={},
+    )
+    broker._monotonic_clock = lambda: 100.0
+    broker._utc_clock = lambda: datetime.now(timezone.utc)
+    broker._pipeline = pipeline
+    broker._executor = executor
+    monkeypatch.setattr(
+        router_module,
+        "resolve_plan",
+        lambda *args, **kwargs: SimpleNamespace(deadline_ms=1_000),
+    )
+    monkeypatch.setattr(
+        router_module,
+        "resolve_routing",
+        lambda *args, **kwargs: [ProviderName.BRAVE],
+    )
+
+    query = SearchQuery(
+        query="bounded probe",
+        mode=SearchMode.DISCOVERY,
+        max_results=1,
+        providers=[ProviderName.BRAVE],
+        metadata={"probe_no_fallback": True},
+    )
+    response = await broker.search(query, persist_legacy=False)
+
+    assert response is fresh
+    pipeline.get_cached.assert_not_called()
+    assert pipeline.build_response.call_args.kwargs["cache_response"] is False
+
+
 # --- Health ---
 
 

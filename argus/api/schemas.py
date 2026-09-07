@@ -160,6 +160,12 @@ class ExpandRequest(BaseModel):
 class ProviderTestRequest(BaseModel):
     provider: str = Field(..., description="Provider name to test")
     query: str = Field("argus", description="Test query")
+    max_results: int = Field(
+        1,
+        ge=1,
+        le=1,
+        description="Maximum normalized results for one bounded live probe",
+    )
     live: bool = Field(False, description="Run an explicitly authorized live probe")
     idempotency_key: Optional[str] = Field(None, min_length=1, max_length=255)
     durable_receipt: Optional[str] = Field(None, min_length=1, max_length=128)
