@@ -1602,7 +1602,8 @@ async def test_quota_probe_spend_records_baked_source_identity(
     assert provider.calls == 1
     attempt = repository.list_attempts(provider=provider.name)[0]
     assert attempt.release_identity == (
-        source_revision if source_revision == "c" * 40 else "unknown-release"
+        f"argus-{source_revision}"
+        if source_revision == "c" * 40 else "unknown-release"
     )
     assert attempt.reserved_charge == 0
 

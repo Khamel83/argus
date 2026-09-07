@@ -255,7 +255,7 @@ class ProviderExecutor:
             # canonical baked source, never caller-supplied query metadata.
             source_revision = create_operational_status().build["source_revision"]
             if source_revision != "unknown":
-                probe_release_identity = source_revision
+                probe_release_identity = f"argus-{source_revision}"
 
         ordered = [p for p in provider_order if p != ProviderName.CACHE]
         total_results_so_far = 0

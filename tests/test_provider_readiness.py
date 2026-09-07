@@ -1766,7 +1766,8 @@ def test_paid_probe_records_canonical_manifest_source_identity(
         decision.attempt_id
     )
     assert attempt.release_identity == (
-        source_revision if source_revision == "d" * 40 else "unknown-release"
+        f"argus-{source_revision}"
+        if source_revision == "d" * 40 else "unknown-release"
     )
 
 

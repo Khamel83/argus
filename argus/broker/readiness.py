@@ -1418,7 +1418,8 @@ class ProviderReadinessService:
             # which source executed this durable provider obligation.
             source_revision = create_operational_status().build["source_revision"]
             release_identity = (
-                source_revision if source_revision != "unknown" else "unknown-release"
+                f"argus-{source_revision}"
+                if source_revision != "unknown" else "unknown-release"
             )
             scope = self.execution_scope(
                 provider, egress=self.best_egress(provider) or "local",
