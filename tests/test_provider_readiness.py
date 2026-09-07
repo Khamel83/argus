@@ -594,6 +594,25 @@ def test_live_probe_authorization_is_durable_bound_and_exactly_once(tmp_path):
         )
 
 
+def test_execution_owner_is_bounded_for_long_probe_identities():
+    import hashlib
+
+    from argus.broker.execution import bounded_execution_owner
+
+    attempt_scope = "readiness-20260907-free-retry-duckduckgo-" + ("a" * 128)
+    raw_owner = f"homelab:{attempt_scope}"
+    owner = bounded_execution_owner("homelab", attempt_scope)
+
+    assert len(owner) <= 64
+    assert owner.startswith("homelab:")
+    assert owner != raw_owner
+    assert owner == (
+        f"{raw_owner[:31]}:"
+        f"{hashlib.sha256(raw_owner.encode()).hexdigest()[:32]}"
+    )
+    assert owner == bounded_execution_owner("homelab", attempt_scope)
+
+
 def test_two_repositories_grant_one_half_open_claim_and_fence_stale_completion(
     tmp_path,
 ):

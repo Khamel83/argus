@@ -1,6 +1,7 @@
 """Provider execution services for the search broker."""
 
 import fnmatch
+import hashlib
 import math
 import time
 import uuid
@@ -40,6 +41,19 @@ def caller_tier_cap(caller: str, caps: Mapping[str, int]) -> int | None:
 
 
 logger = get_logger("broker.execution")
+
+_MAX_EXECUTION_OWNER_LENGTH = 64
+
+
+def bounded_execution_owner(machine_name: str | None, attempt_scope: str) -> str:
+    """Build a deterministic readiness-lease owner within the DB limit."""
+    raw_owner = f"{machine_name or 'local'}:{attempt_scope}"
+    if len(raw_owner) <= _MAX_EXECUTION_OWNER_LENGTH:
+        return raw_owner
+    return (
+        f"{raw_owner[:31]}:"
+        f"{hashlib.sha256(raw_owner.encode('utf-8')).hexdigest()[:32]}"
+    )
 
 _COST_ESTIMATES = {
     ProviderName.BRAVE: 1.0,
@@ -305,9 +319,9 @@ class ProviderExecutor:
                     probe_execution_authorization
                     or self._readiness.authorize_execution(
                         context,
-                        owner=(
-                            f"{self._node_config.machine_name or 'local'}:"
-                            f"{attempt_scope}"
+                        owner=bounded_execution_owner(
+                            self._node_config.machine_name,
+                            attempt_scope,
                         ),
                         conservative_charge=0.0,
                         execution_timeout_seconds=60,
@@ -420,9 +434,9 @@ class ProviderExecutor:
                     probe_execution_authorization
                     or self._readiness.authorize_execution(
                         context,
-                        owner=(
-                            f"{self._node_config.machine_name or 'local'}:"
-                            f"{attempt_scope}"
+                        owner=bounded_execution_owner(
+                            self._node_config.machine_name,
+                            attempt_scope,
                         ),
                         conservative_charge=charge,
                         execution_timeout_seconds=60,
