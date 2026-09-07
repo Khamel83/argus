@@ -1,24 +1,34 @@
 # Argus clean-session handoff
 
-Last reviewed: 2026-09-06
+Last reviewed: 2026-09-07
 
 ## Current execution frontier
 
 Release `1.6.4` is deployed and the production authority is healthy but
 degraded. The historical readiness score is `54/100`; it is not a current
-score. Current free search is proven through repaired SearXNG Bing/Yandex
-engines, and one complete article extraction is proven through Trafilatura.
+score. The current deployed source is `458db1a10e158aa9ec156e8eaa85d6fbed2fe3e3`
+and the image is
+`ghcr.io/khamel83/argus@sha256:1a7bba7a32ecd70f70e05e0fbc471ac58519c01c06c80ee30b688dce7b8eace4`.
+The 1,800-second soak passed and the exact pair is both current and known-good.
 
-The remaining gates are truthful paid-provider registration and no-spend
-evidence, Yahoo repair, release-bound browser-network attestation and a live
-browser observation, a Maya receipt bound to the continuation release, and a
-new audit score. Python is not ambiguous: 3.11 is the package floor, 3.12 is
-the canonical repository/production runtime, and 3.13 is the compatibility CI
-lane. The current homelab runtime is Python 3.12.3.
+The latest explicit free probes returned three results from SearXNG, Yahoo,
+and GitHub. DuckDuckGo returned three after its cooldown, but also produced a
+guarded acquisition-policy block and remains intermittent/fail-closed. Paid
+providers are disabled as `not_registered` until truthful credential-version
+and account-scope bindings exist; protected values are not proof of valid
+current keys. No paid call occurred in this run, while the production ledger
+retains 48 settled paid attempts from July.
+
+One complete PEP 257 article extraction succeeded through Trafilatura and
+created an acknowledged, release-bound Maya receipt. Browser capability is
+still not admitted, and recovery remains degraded because the metadata
+registry is incomplete. Python is not ambiguous: 3.11 is the package floor,
+3.12.3 is the canonical repository/production runtime, and 3.13 is the
+compatibility CI lane. Required CI run `34107922118` passed all three.
 
 Use authenticated `/api/admin/status` and `/api/ready` for live identity and
 readiness. Do not use the historical image/source pair or invent provider
-account fingerprints from secret values.
+account fingerprints from secret values. `/api/readiness` is not a route.
 
 ## Start here
 
@@ -41,7 +51,26 @@ Canonical agent guidance remains in `AGENTS.md`. The GitHub issues linked below 
 - Production runs on the homelab in containers. The Mac mini is development-only and must not run Docker or Compose for Argus.
 - OCI and Clio are retired from the intended architecture. Private Tailscale ingress remains the target.
 - A manual deployment trigger exists in `.github/workflows/docker-publish.yml`; `docs/releasing.md` documents why `[skip ci]` must be reserved for documentation-only commits.
+- The current readiness correction is deployed: accepted extraction outcomes
+  atomically bridge to the Maya outbox, and provider-readiness lease owners are
+  bounded to the database column limit.
 - No open pull requests existed when this handoff was written.
+
+## Outstanding capability gates
+
+These are the active TODOs for full production readiness. The implementation
+and deployment work is complete, but these gates require external provider,
+browser, recovery, or audit evidence:
+
+1. Register truthful provider credential versions and account scopes, then run approved no-spend provider tests.
+2. Stabilize DuckDuckGo guarded egress/cooldown behavior and reduce SearXNG upstream failures.
+3. Admit an external browser-network attestation and record one current browser observation.
+4. Complete recovery metadata-registry evidence.
+5. Re-run the audit and issue a replacement readiness score.
+
+The image workflow still fails closed when the exact scorecard admission file
+is absent. Automating that admission handoff is an operational follow-up; the
+current release was safely admitted and promoted manually.
 
 ## Outstanding GitHub issues
 

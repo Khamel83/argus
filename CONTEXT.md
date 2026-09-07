@@ -7,35 +7,43 @@
 
 ## Glossary
 
-### Production readiness continuation (2026-09-06)
+### Production readiness continuation (2026-09-07)
 
-Release deployment and the initial production audit are separate from current
-capability admission. The production authority may be healthy and answer
-authenticated requests while provider, browser, extraction, or downstream
-receipt gates remain degraded. Record source revision, image digest, runtime
-observation, provider effect, and Maya receipt as separate evidence. The
-current continuation uses `/api/ready`, not the nonexistent `/api/readiness`,
-and keeps the historical 54/100 score unchanged until the remaining gates pass.
+Release deployment and capability admission remain separate claims. The
+current production authority is source `458db1a10e158aa9ec156e8eaa85d6fbed2fe3e3`
+running image
+`ghcr.io/khamel83/argus@sha256:1a7bba7a32ecd70f70e05e0fbc471ac58519c01c06c80ee30b688dce7b8eace4`.
+The release receipt SHA-256 is
+`337cb478905100c9bb881e6397116b8fa7a0a96ce4ab508e062323c2516a0cad`.
+Both promotion state files identify that pair, the 1,800-second soak passed,
+and the previous image is retained as rollback state. PostgreSQL is at schema
+`0011_extraction_spend_scope`, and `argus_runtime` cannot create schema
+objects.
 
-The supported Python contract is explicit: Python 3.11 is the package floor,
-Python 3.12 is the repository and production-image baseline, and Python 3.13
-is a compatibility lane. CI runs the complete test suite on all three; the
-homelab runtime is Python 3.12.3. There is no unresolved 3.11/3.12/3.13
-implementation split.
+The Python contract is explicit and resolved: Python 3.11 is the package
+floor, Python 3.12.3 is the repository and production-image baseline, and
+Python 3.13 is a compatibility lane. Required CI run `34107922118` passed all
+three lanes. The deployed owner-bounding fix prevents long idempotency keys
+from overflowing the 64-character provider-readiness lease owner column. This
+was a real HTTP 500 defect, not a Python-version defect.
 
-The current provider boundary is also explicit. SearXNG now returns live
-results through its observed-good Bing/Yandex engines, although other upstream
-engines remain degraded. Protected paid-provider values are not treated as
-working credentials until truthful credential-version and account-scope
-fingerprints, budgets, and approved no-spend evidence are present. A key hash
-alone is not an account binding, and no paid provider call is authorized by
-health or configuration alone.
+Current readiness is `ready=true` with `status=degraded`, not fully ready. The
+latest no-spend probes returned three results from SearXNG, Yahoo, and GitHub.
+DuckDuckGo returned three results on an explicit post-cooldown retry but also
+hit a guarded acquisition-policy block and remains intermittent/fail-closed.
+The paid providers are intentionally disabled as `not_registered`: protected
+values exist for most of them, but truthful credential-version and account
+scope fingerprints are absent. SearchAPI has no key. WolframAlpha has an
+application-id value but no registration binding. No paid call occurred in
+the current run; the ledger separately retains 48 settled paid attempts from
+July.
 
-Browser extraction remains fail-closed until an external browser-network
-authority supplies a release-bound, short-lived attestation. A local browser
-process or a synthetic lifecycle canary cannot substitute for that authority;
-the runtime status must change only after the production authority itself
-creates and uses an admitted browser session.
+One complete PEP 257 article extraction succeeded through Trafilatura and
+created an acknowledged Maya delivery bound to this release identity. Browser
+capability remains fail-closed because no external browser-network attestation
+has been admitted. Recovery remains degraded because the metadata registry is
+incomplete. The historical audit score remains 54/100 until those gates are
+independently re-run and scored.
 
 ### Competitive enough
 

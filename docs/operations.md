@@ -8,24 +8,64 @@ owns user-visible retrieval history; Argus owns retrieval execution and its
 PostgreSQL evidence. The former Mac launchd authority, OCI authority, and host
 residential worker are retired and are not fallbacks.
 
-## Current release checkpoint — 2026-09-06
+## Current release checkpoint — 2026-09-07
 
 The historical Argus `1.6.4` checkpoint at `01cbd7de9c8f41130918443ab2529fae1901585e`
-and `sha256:b095bcab...` is not current. Production accepts only the
-digest-addressed source/image pair reported by authenticated
-`/api/admin/status` and the private promotion receipt. The current runtime is
-Python 3.12.3 on PostgreSQL schema head `0011_extraction_spend_scope`.
+and `sha256:b095bcab...` is not current. The deployed production source is
+`458db1a10e158aa9ec156e8eaa85d6fbed2fe3e3` and the image is
+`ghcr.io/Khamel83/argus@sha256:1a7bba7a32ecd70f70e05e0fbc471ac58519c01c06c80ee30b688dce7b8eace4`.
+The release receipt SHA-256 is
+`337cb478905100c9bb881e6397116b8fa7a0a96ce4ab508e062323c2516a0cad`.
+`current.json` and `known-good.json` identify this exact pair, the previous
+bridge image remains the rollback target, and no cutover marker remains.
 
-The supported interpreter contract is Python 3.11 minimum, Python 3.12 for
-repository development, CI auxiliary jobs, and the production image, and
-Python 3.13 for compatibility CI. All three test lanes pass.
+The deployed runtime is Python 3.12.3 on PostgreSQL schema head
+`0011_extraction_spend_scope`. The supported interpreter contract is Python
+3.11 minimum, Python 3.12 canonical, and Python 3.13 compatibility. Required
+CI run `34107922118` passed all three lanes. The lease-owner fix in this
+release bounds the readiness owner to 64 characters, so a long idempotency key
+cannot cause the old HTTP 500.
 
-Current SearXNG search is operational through the observed-good Bing/Yandex
-engines, but other upstream engines remain degraded. Paid provider keys are
-not considered usable merely because a secret value exists: the readiness
-registry requires truthful credential-version/account-scope bindings and
-finite budgets before any billable call. Browser extraction remains blocked
-until a release-bound external browser-network attestation is available.
+Current free-provider evidence is mixed but concrete: the latest explicit
+no-spend probes returned three results from SearXNG, Yahoo, and GitHub;
+DuckDuckGo returned three after cooldown but remains intermittent because a
+guarded acquisition-policy block caused a short fail-closed cooldown. Paid
+provider values are not considered usable merely because a secret exists. The
+readiness registry requires truthful credential-version and account-scope
+bindings, finite budgets where required, and approved no-spend evidence before
+any billable call. No paid call occurred in the current run. The ledger's 48
+settled paid attempts from July are historical evidence, not current key proof.
+Browser extraction remains blocked until a release-bound external
+browser-network attestation is available.
+
+The current target-page extraction proof used `trafilatura` on PEP 257,
+returned 1,509 words with `is_complete=true`, and created an acknowledged Maya
+delivery bound to the deployed release identity. Readiness remains
+`ready=true, degraded`; `/api/ready` is canonical and `/api/readiness` does
+not exist.
+
+### Current provider probe procedure
+
+Use the scoped caller credential for capability probes. Use a unique,
+release-bound `idempotency_key` on every request and set `durable_receipt=true`.
+The probe must record the HTTP status, provider trace, result count, egress,
+machine, spend classification, and durable receipt reference. A long
+idempotency key is valid; the deployed broker now derives a bounded
+readiness-lease owner of at most 64 characters.
+
+Do not call a provider marked `not_registered` just because its protected
+value is present. First register a non-secret credential-version fingerprint,
+account scope, budget, and approval for the no-spend test. Never derive an
+account scope from a secret hash and never put a key in an evidence record.
+
+The latest matrix is:
+
+| Provider group | Current result |
+|---|---|
+| SearXNG, Yahoo, GitHub | Three-result explicit no-spend probes; SearXNG remains degraded as an aggregate. |
+| DuckDuckGo | Three-result post-cooldown retry, but intermittent/fail-closed after a guarded acquisition-policy block. |
+| Brave, Tavily, Exa, Linkup, Parallel, Serper, You.com, Valyu, WolframAlpha | Disabled as `not_registered`; protected values exist for these providers, but current registration bindings are absent. No current call. |
+| SearchAPI | Unconfigured; no key. |
 
 ## Production topology
 

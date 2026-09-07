@@ -35,6 +35,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Caller attribution on extract + workflows** — `POST /api/extract` and workflow endpoints accept `caller`; workflow-driven broker searches are tagged (`workflows` via HTTP service, `mcp` via MCP tools).
 
 ### Fixed
+- **Bounded provider-readiness lease owners** — Long HTTP idempotency keys no
+  longer overflow the PostgreSQL lease-owner column and become HTTP 500
+  responses. The derived owner remains deterministic and is capped at 64
+  characters.
+- **Accepted extraction delivery bridge** — Accepted v2 extraction outcomes
+  now atomically repair the legacy extraction mirror and create the durable
+  Maya delivery intent in the same database transaction, including cache-hit
+  repair.
 - **Maya outbox receipt timeout** — HTTP reads now honor the configured delivery
   deadline, avoiding premature retries for slower Maya responses while retaining
   bounded wall-clock and receipt budgets.
