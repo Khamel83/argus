@@ -860,7 +860,7 @@ def _extraction_projection_state(projection) -> dict:
 
     state = asdict(projection)
     raw_url = state["plan"]["normalized_url"]
-    state["plan"]["normalized_url"] = _safe_extraction_source_url(raw_url)
+    state["plan"]["normalized_url"] = _safe_persisted_url(raw_url)
     state["normalized_url_identity"] = (
         getattr(projection, "normalized_url_identity", None)
         or "sha256:" + hashlib.sha256(raw_url.encode("utf-8")).hexdigest()
@@ -874,7 +874,7 @@ def _extraction_claim_state(claim) -> dict:
     state = asdict(claim)
     state["plan_ref"] = claim.plan.plan_ref
     raw_url = state["plan"]["normalized_url"]
-    state["plan"]["normalized_url"] = _safe_extraction_source_url(raw_url)
+    state["plan"]["normalized_url"] = _safe_persisted_url(raw_url)
     state["normalized_url_identity"] = (
         "sha256:" + hashlib.sha256(raw_url.encode("utf-8")).hexdigest()
     )

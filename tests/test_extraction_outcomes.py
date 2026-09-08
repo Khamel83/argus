@@ -2023,11 +2023,64 @@ def test_first_and_retry_return_same_safe_semantic_projection(tmp_path):
     )
 
     assert first == retry
-    assert first.plan.normalized_url == "https://example.com/"
+    assert first.plan.normalized_url == (
+        "https://example.com/private/path?session=%5Bredacted%5D&code=%5Bredacted%5D"
+        "&jwt=%5Bredacted%5D#[redacted]"
+    )
     assert all(
         secret not in repr(first)
         for secret in ("password", "opaque", "authorization", "signed", "hidden")
     )
+
+
+def test_accepted_extraction_persists_and_reloads_safe_request_url(tmp_path):
+    from sqlalchemy import select
+
+    from argus.extraction.extractor import _finalize_accepted_extraction
+    from argus.persistence.search_ledger import (
+        ExtractionOutcomeAcceptanceRow,
+        ExtractionOutcomePlanRow,
+        create_search_ledger_repository,
+    )
+
+    request_url = (
+        "https://example.com/articles/read?safe=value&token=super-secret"
+        "#section"
+    )
+    repository = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'request-url.db'}",
+        create_schema=True,
+    )
+    _finalize_accepted_extraction(
+        ExtractedContent(
+            url="https://canonical.example/article",
+            text="durable extraction content " * 50,
+            word_count=150,
+            extractor=ExtractorName.TRAFILATURA,
+        ),
+        url=request_url,
+        mode="default",
+        caller="task2",
+        request_id="request-url",
+        operation_id="extract-request-url",
+        latency_ms=12,
+        repository=repository,
+    )
+
+    with repository.session_factory() as session:
+        durable_plan = session.scalar(select(ExtractionOutcomePlanRow))
+        acceptance = session.scalar(select(ExtractionOutcomeAcceptanceRow))
+
+    expected_url = (
+        "https://example.com/articles/read?safe=value&token=%5Bredacted%5D#section"
+    )
+    assert durable_plan.normalized_url == expected_url
+    assert expected_url in acceptance.projection_json
+    assert "super-secret" not in acceptance.projection_json
+
+    reloaded = repository.load_extraction_outcome("extract-request-url")
+    assert reloaded is not None
+    assert reloaded.plan.normalized_url == expected_url
 
 
 def test_cache_identity_is_derived_and_verified_against_durable_acceptance(

@@ -6,6 +6,7 @@ import hashlib
 import inspect
 import json
 import os
+import re
 from datetime import datetime, timezone
 from dataclasses import asdict, dataclass, fields, is_dataclass
 from enum import Enum
@@ -48,6 +49,19 @@ class AcceptedAuthorityConfigurationError(RuntimeError):
 
 
 _SITE_ACQUISITION_SEARCH_RESULT_LIMIT = 50
+_FULL_SOURCE_REVISION = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _accepted_extraction_release_identity() -> str:
+    """Bind extraction evidence to the admitted runtime source revision."""
+    from argus.operations.status import create_operational_status
+
+    source_revision = create_operational_status().build.get("source_revision")
+    if isinstance(source_revision, str) and _FULL_SOURCE_REVISION.fullmatch(
+        source_revision
+    ):
+        return f"argus-{source_revision}"
+    return "unknown-release"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1850,12 +1864,7 @@ class AcceptedOperationService:
                     )
 
                     kwargs["spend_gateway"] = ExtractionSpendGateway(readiness)
-                release_identity = getattr(broker, "release_identity", None)
-                if not isinstance(release_identity, str) or not release_identity:
-                    release_identity = os.environ.get(
-                        "ARGUS_RELEASE", "unknown-release"
-                    )
-                kwargs["release_identity"] = release_identity
+                kwargs["release_identity"] = _accepted_extraction_release_identity()
                 kwargs.update(
                     use_evidence_authority=True,
                     request_id=request_id,
