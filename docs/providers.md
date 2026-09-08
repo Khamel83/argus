@@ -88,3 +88,37 @@ worker, saving the failure cost. See [../CONTEXT.md](../CONTEXT.md) for details.
 
 `ssrf.py` blocks private IP ranges (10.x, 172.16-31.x, 192.168.x, 127.x, ::1)
 before any HTTP call. `rate_limit.py` enforces 10 requests/minute per domain.
+
+## Bounded production validation
+
+Use the authenticated authority endpoint `POST /api/admin/test-provider` with
+the **admin credential** for an explicitly authorized live check. Set `live: true`,
+`max_results: 1`, the exact provider, one unique `idempotency_key`, and a
+`durable_receipt` reference. The authority reserves the applicable budget, uses
+that provider only, bypasses legacy cache reads and writes, and disables fallback.
+The durable probe key prevents repetition; do not retry an uncertain outcome.
+Read its ledger record instead.
+
+Retain authority HTTP status, upstream HTTP status when observed, normalized
+result count, bounded provider trace and provenance, spend/reservation changes,
+provider-derived balance evidence when available, and the durable probe-result
+record. Internal request credits are not provider USD balances. Key presence,
+`available`, HTTP 200, and process readiness alone do not establish usable retrieval.
+Admin probes are not user-visible captures and do not enqueue Maya delivery.
+Validate that downstream boundary with one separate authorized real operation.
+
+This one-result contract applies to the production HTTP diagnostic. The legacy
+standalone CLI diagnostic is development-only and retains its three-result path.
+
+The production socket transport owns HTTP request framing. It writes one
+`Content-Length` from the encoded body bytes, including an empty POST body,
+and rejects caller-supplied `Content-Length` or `Transfer-Encoding`. Adapter
+HTTPX mocks do not test this wire path; the socket framing regressions do.
+A missing framing header previously caused POST providers to reject bodies
+with HTTP 400/411. Preserve those failed receipts when fixing the transport;
+never rewrite them as successful provider validations.
+
+Authorized probe spend records use the validated baked source SHA when it is
+available. A package version or operator label is not a source identity. Older
+rows with `unknown-release` remain historical; an external image/manifest check
+is separate evidence and does not change their native binding.
