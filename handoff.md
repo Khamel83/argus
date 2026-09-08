@@ -1,8 +1,24 @@
+# Execution result — September 7, 2026
+
+The requested restoration deployment has completed its required soak. See
+[STATUS](docs/STATUS.md) for the exact deployed image, all provider outcomes,
+MCP/extraction/Maya evidence and limitations, and [TODO](TODO.md) for remaining
+work. Source fixes are merged in PRs 135 and 136; all required CI passed.
+Do not repeat the completed provider canaries. Serper returned 403 and Valyu 402;
+no provider retry or billing change is authorized by this checkpoint.
+
+The old handoff below is historical task context, not current runtime state.
+The final soak passed; the corrected image is current and known-good.
+API/MCP are healthy and Valyu is disabled. The remaining capability limits
+are documented rather than retried.
+
+---
+
 # Argus clean-session handoff
 
 Last reviewed: 2026-09-07
 
-## Current execution frontier
+## Historical pre-execution frontier
 
 Release `1.6.4` is deployed and the production authority is healthy but
 degraded. The historical readiness score is `54/100`; it is not a current

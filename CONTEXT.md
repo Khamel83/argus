@@ -7,43 +7,32 @@
 
 ## Glossary
 
-### Production readiness continuation (2026-09-07)
+### Production restoration (2026-09-07)
 
-Release deployment and capability admission remain separate claims. The
-current production authority is source `458db1a10e158aa9ec156e8eaa85d6fbed2fe3e3`
-running image
-`ghcr.io/khamel83/argus@sha256:1a7bba7a32ecd70f70e05e0fbc471ac58519c01c06c80ee30b688dce7b8eace4`.
-The release receipt SHA-256 is
-`337cb478905100c9bb881e6397116b8fa7a0a96ce4ab508e062323c2516a0cad`.
-Both promotion state files identify that pair, the 1,800-second soak passed,
-and the previous image is retained as rollback state. PostgreSQL is at schema
-`0011_extraction_spend_scope`, and `argus_runtime` cannot create schema
-objects.
+HTTP is the sole production authority. Root Homelab Compose owns both the API
+and stateless MCP adapter; PostgreSQL owns accepted operations, provider spend,
+readiness and outbox state. Maya owns captured user-visible retrieval history.
+The [dated public status](docs/STATUS.md) and private audit separate source,
+image, loaded runtime, authenticated capability, provider results and durable
+Maya capture evidence. The old 54/100 audit is historical.
 
-The Python contract is explicit and resolved: Python 3.11 is the package
-floor, Python 3.12.3 is the repository and production-image baseline, and
-Python 3.13 is a compatibility lane. Required CI run `34107922118` passed all
-three lanes. The deployed owner-bounding fix prevents long idempotency keys
-from overflowing the 64-character provider-readiness lease owner column. This
-was a real HTTP 500 defect, not a Python-version defect.
+The restoration repaired canonical vault projection, explicit provider account
+registration, scoped callers and capture configuration, bounded admin probes,
+native POST request framing, and baked-source binding for new probe spend rows.
+DuckDuckGo's keyless worker uses guarded public-content policy and delegates
+framing to the transport. Generated provider attestations must be refreshed
+when their covered source changes. Neither a supplied credential nor a fixture
+attestation proves a successful live provider request.
 
-Current readiness is `ready=true` with `status=degraded`, not fully ready. The
-latest no-spend probes returned three results from SearXNG, Yahoo, and GitHub.
-DuckDuckGo returned three results on an explicit post-cooldown retry but also
-hit a guarded acquisition-policy block and remains intermittent/fail-closed.
-The paid providers are intentionally disabled as `not_registered`: protected
-values exist for most of them, but truthful credential-version and account
-scope fingerprints are absent. SearchAPI has no key. WolframAlpha has an
-application-id value but no registration binding. No paid call occurred in
-the current run; the ledger separately retains 48 settled paid attempts from
-July.
+PostgreSQL remains on 0011_extraction_spend_scope. Canonical metadata and an
+actual disposable restore/migration check replace the old missing-registry
+blocker. Browser access still requires an external network-policy attestation;
+a synthetic browser startup is not external browsing proof. See [TODO.md](TODO.md)
+for bounded follow-ups and current capability limits.
 
-One complete PEP 257 article extraction succeeded through Trafilatura and
-created an acknowledged Maya delivery bound to this release identity. Browser
-capability remains fail-closed because no external browser-network attestation
-has been admitted. Recovery remains degraded because the metadata registry is
-incomplete. The historical audit score remains 54/100 until those gates are
-independently re-run and scored.
+Python 3.12 is the development/production baseline (local 3.12.13, image 3.12.3).
+Python 3.11 remains the package floor and 3.13 a CI compatibility lane. The old
+lease-owner HTTP 500 was a bounded-string defect, not a Python-version defect.
 
 ### Competitive enough
 

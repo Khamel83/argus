@@ -1,115 +1,78 @@
-# Argus Public Status
+# Argus status — September 7, 2026
 
-**Baseline:** September 1, 2026
-**Package version:** 1.6.4
+Core HTTP/MCP access, extraction and Maya capture are usable in the sampled
+paths. Full provider readiness is not established. The corrected image is
+loaded and healthy. The 1,800-second soak passed; current and known-good
+records name the corrected image. Valyu is disabled after its account rejection.
 
-This page states the public audit baseline. It does not prove current service
-state. Authorized maintainers can use the private
-[argus-ops README](https://github.com/Khamel83/argus-ops/blob/main/README.md)
-for the latest dated reports.
+- Source: `8c9dad1356517cd01c714da84401aaed9242cc54`; package 1.6.4.
+- Image: `ghcr.io/khamel83/argus@sha256:0536b56458b6b64592c6625a326d14a1d895e5561cdb10334788be875ac78812`.
+- Release receipt SHA256: `9184554e2206dde22763ca1e4014e6ca00f94f81a312ac3e9dd74e990302f589`.
+- PR136 required CI passed: Python 3.11/3.12/3.13, PostgreSQL-ledger,
+  production-config, scorecard, freshness and image-build. Final local suite:
+  **2,916 passed, 47 skipped, 4 warnings**. Independent review passed.
+- Production Python 3.12.3; local development 3.12.13; package floor 3.11.
+- PostgreSQL head 0011_extraction_spend_scope; runtime role cannot CREATE
+  schema objects. Real disposable migration/no-drift and canonical restore
+  checks passed; current recovery observation is healthy.
 
-## Current continuation snapshot — September 7, 2026
+## Provider evidence
 
-The old `01cbd7d` / `sha256:b095bcab...` checkpoint is historical. The
-currently deployed production pair is source
-`458db1a10e158aa9ec156e8eaa85d6fbed2fe3e3` and image
-`ghcr.io/khamel83/argus@sha256:1a7bba7a32ecd70f70e05e0fbc471ac58519c01c06c80ee30b688dce7b8eace4`.
-The release receipt SHA-256 is
-`337cb478905100c9bb881e6397116b8fa7a0a96ce4ab508e062323c2516a0cad`.
-Both `current.json` and `known-good.json` name this pair; the previous
-rollback target is the immediately preceding bridge image. No cutover marker
-remains. The deployed package is still version `1.6.4`.
+Every configured credential received one bounded authenticated authority
+canary, with max_results=1, one key, no pagination and no retry. All thirteen
+attempted providers have durable authorization/spend records. SearchAPI has
+no key and was not called. Amounts below are Argus request-accounting units,
+except Valyu's USD ceiling; provider-issued balances remain unknown.
 
-Required CI run `34107922118` passed on Python 3.11, 3.12, and 3.13, plus
-the production-config, PostgreSQL-ledger, scorecard, freshness, and image
-checks. The Python contract is not ambiguous: 3.11 is the supported package
-floor, 3.12.3 is the canonical production runtime, and 3.13 is the supported
-compatibility lane. The bounded readiness-lease-owner fix is in the deployed
-source; long idempotency keys no longer cause the old HTTP 500.
+| Provider | Last observed upstream outcome | Results | Accounting / limitation |
+|---|---|---:|---|
+| SearXNG |200 |1 |Settled zero monetary charge; bridge image sample |
+| DuckDuckGo |Guarded policy block |0 |Zero charge; public-policy repair tested, not re-probed |
+| Yahoo |200 |1 |Settled zero monetary charge; bridge image sample |
+| GitHub |200 |1 |Settled zero monetary charge; bridge image sample |
+| Brave |200 |1 |One request unit settled; bridge image sample |
+| Tavily |400 |0 |One unit uncertain; POST framing fixed afterward, not re-probed |
+| Exa |400 |0 |One unit uncertain; POST framing fixed afterward, not re-probed |
+| Linkup |400 |0 |One unit uncertain; POST framing fixed afterward, not re-probed |
+| Parallel |411 |0 |Approved primary account; one unit uncertain; framing fixed afterward |
+| Serper |403 |0 |Access rejected on corrected image; cause not established; one unit uncertain |
+| You.com |200 |1 |One request unit settled; bridge image sample |
+| WolframAlpha |200;2+2=4 |1 |Zero monetary charge; provider quota balance not returned |
+| Valyu |402 |0 |Blocked by account; USD0.0015 reservation uncertain; no billing mutation |
+| SearchAPI |Unconfigured |0 |No key, registration or request |
 
-The production containers `argus` and `argus-mcp` report healthy with zero
-restarts. `/api/live`, `/api/health`, and `/api/ready` return HTTP 200.
-Readiness is `ready=true` with `status=degraded`; `/api/readiness` does not
-exist. The degraded reason set includes provider observations, browser, Maya,
-and recovery. PostgreSQL is at schema `0011_extraction_spend_scope`, and the
-runtime database role cannot create schema objects. Unauthenticated API and
-MCP requests return HTTP 401; authenticated MCP discovery exposes the required
-retrieval tools.
+“Bridge image” means source d1e5594/image 45c56b8, immediately before the
+corrected 8c9dad1/0536b564 image. Those receipts are retained as samples, not
+silently relabeled as post-repair validations. All nine supplied credentials
+are registered and their runtime values match the private vault. Registration
+and enablement do not prove authentication or retrieval. The full private
+matrix records enablement, keys, attempts, receipts and consumer effects.
 
-### Provider matrix
+## User operation and remaining limits
 
-This table reports the latest explicit no-spend probes and the current policy
-state. A successful free probe is evidence for that provider and path at that
-time; it is not a guarantee that every query will work.
+Authenticated MCP initialization, tool discovery and an HTTP-authority health
+tool succeeded both inside MCP and from the Mac through Tailscale TLS.
+Unauthenticated MCP returned 401. The MCP container has no provider credentials
+or database URL. These read-only checks made no provider request.
 
-| Provider | Current state | Exact current evidence |
-|---|---|---|
-| SearXNG | Working, degraded | Authenticated no-spend probe returned 3 results; the aggregate remains degraded because upstream engines show CAPTCHA, access denial, suspension, or other failures. |
-| DuckDuckGo | Intermittent, fail-closed | The latest explicit retry returned 3 results. A transient acquisition-policy block also occurred, and the broker correctly applied a short cooldown; this is not an API-key failure. |
-| Yahoo | Working in the sampled path | Latest authenticated no-spend probe returned 3 results. The older 502 is not the current sampled result. |
-| GitHub | Working in the sampled path | Latest authenticated no-spend probe returned 3 results. |
-| Brave | Disabled: `not_registered` | Protected value is present, but credential-version and account-scope fingerprints are absent. No current call was authorized. |
-| Tavily | Disabled: `not_registered` | Protected value is present, but credential-version and account-scope fingerprints are absent. No current call was authorized. |
-| Exa | Disabled: `not_registered` | Protected value is present, but registration fingerprints are absent. No current call was authorized. |
-| Linkup | Disabled: `not_registered` | Protected value is present, but registration fingerprints and account scope are absent. No current call was authorized. |
-| Parallel | Disabled: `not_registered` | Protected value is present, but registration fingerprints and account scope are absent. No current call was authorized. |
-| Serper | Disabled: `not_registered` | Protected value is present, but credential-version and account-scope fingerprints are absent. No current call was authorized. |
-| You.com | Disabled: `not_registered` | Protected value is present, but registration fingerprints and account scope are absent. No current call was authorized. |
-| Valyu | Disabled: `not_registered` | Protected value is present, but registration fingerprints and account scope are absent. No current call was authorized. |
-| WolframAlpha | Disabled: `not_registered` | Application-id value is present, but its registration fingerprint and account scope are absent. No current call was authorized. |
-| SearchAPI | Unconfigured | No key is present. |
+One fresh free-only PEP 257 extraction returned 1,509 words, quality_passed=true,
+is_complete=true and a durable PostgreSQL receipt. Maya acknowledged its
+single-page capture in one attempt. This proves capture ingestion; it does
+not prove later embedding or memory use. The fifteen-second Maya observation
+has expired while its durable acknowledgment remains valid.
 
-“Protected value is present” is not the same claim as “the key is valid.” The
-readiness registry fails closed until the operator records truthful non-secret
-credential-version and account-scope bindings, finite budgets where required,
-and approved no-spend evidence. The current no-spend run made no paid
-provider calls.
+Two evidence defects remain explicit: this extraction's native release field
+is unknown-release (the actual image was separately checked), and its returned
+URL was shortened to the PEP site root. Neither field was rewritten. New
+provider-probe release binding is fixed and verified for Serper/Valyu; the
+extraction configuration/binding gap remains a follow-up.
 
-The production ledger does contain 48 historical settled paid attempts from
-July: Brave 6, Exa 13, Linkup 3, Tavily 25, and You.com 1. Their recorded
-total is 48 Argus accounting charge units, not a claim of 48 US dollars. Those
-historical rows prove only that those calls settled then; they do not prove
-that the current secret versions work now.
+External browser access remains unsupported without a real browser-network
+attestation. Production rejects it before dispatch. The isolated browser
+startup result is not external browsing proof. Readiness remains degraded,
+not fully healthy. See [TODO.md](../TODO.md) for bounded remaining work.
 
-### Extraction and downstream delivery
-
-One complete live article extraction is now proven for the target page type:
-the PEP 257 page was processed by `trafilatura`, returned 1,509 words,
-passed quality, and recorded `is_complete=true`. It produced a durable Argus
-receipt and an acknowledged Maya delivery bound to release identity
-`argus-458db1a10e158aa9ec156e8eaa85d6fbed2fe3e3`. The Maya capture was
-accepted with `duplicate=false`; the Argus outbox had 284 acknowledged rows
-and zero dead letters after the operation. This proves that page and path,
-not all pages or all extraction methods.
-
-Browser capability is still not admitted: no current external browser-network
-attestation exists, so the browser path remains fail-closed. Recovery remains
-degraded because the metadata registry is incomplete. A current operational
-Maya observation can expire under its short TTL even when the durable delivery
-receipt remains valid; these are separate evidence layers.
-
-## Historical baseline and remaining gates
-
-The original audit score of **54/100** remains historical. It is not replaced
-by the deployment or by an HTTP 200. Full production readiness still requires:
-
-- truthful provider credential-version and account-scope registration, followed by approved no-spend tests;
-- stabilizing DuckDuckGo's guarded egress/cooldown behavior and reducing SearXNG upstream failures;
-- external browser-network attestation and one admitted browser observation;
-- completion of recovery metadata-registry evidence; and
-- a fresh audit run and readiness score.
-
-The image workflow's automatic promotion also remains fail-closed when the
-exact scorecard admission artifact is missing. This release was admitted and
-promoted manually after the isolated free-only scorecard recorded accepted
-residual risk because the pinned evaluator was unavailable.
-
-Keep source, remote, image, deployed runtime, authenticated capability,
-provider effect, durable write, and downstream receipt as separate evidence
-layers. A test pass, a live check, or an HTTP 200 does not prove end-to-end
-retrieval.
-
-## Public Contribution
-
-Use [CONTRIBUTING.md](../CONTRIBUTING.md) and local tests for source work. You
-do not need private access for that work.
+The replacement audit judgment is **75/100**, up 21 from the historical 54/100:
+security 15, live core 12, data/recovery 16, tooling 17, operational wiring 15
+(each out of 20). This is an evidence-based editorial assessment, not an SLA
+or a numerical guarantee. Full private evidence remains in argus-ops.

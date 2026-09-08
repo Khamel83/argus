@@ -124,3 +124,18 @@ set an admin key.
 **Dashboard links break behind a reverse proxy.**
 Set `ARGUS_ROOT_PATH=/argus` (or whatever subpath the proxy serves Argus on)
 so HTMX fragment URLs and redirects use the public prefix.
+
+## Bounded provider diagnostic failures
+
+- `401 Admin authentication required`: the diagnostic is an admin endpoint; a
+  scoped caller token does not grant admin access.
+- `422` for `max_results`: the live HTTP probe accepts exactly one result. The
+  application service also rejects larger internal requests.
+- `409`: inspect the specific registration, budget, configuration, or probe-key
+  denial. Resolve the local gate before attempting a provider request.
+- HTTP 200 with no normalized result: retain the provider trace. It is not proof
+  of working retrieval. Trace fields include bounded `egress`, `http_status`,
+  and `budget_remaining`; sample provenance can include `machine`, `source_type`,
+  and `upstream_engines`. These live probes bypass cache and fallback.
+- Valyu account arrears: record `blocked_by_account`, retain the denial and spend
+  evidence, and leave billing unchanged. Do not retry or refill the account.

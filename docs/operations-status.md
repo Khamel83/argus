@@ -44,8 +44,10 @@ cooldown, browser, and browser-restart state identify their process-memory
 source; a new service instance does not invent the previous process's state.
 
 Provider detail has separate `capability`, `reachability`, `health`,
-`cooldown`, and `balance` observations. A `null` remaining balance means
-unlimited and is distinct from numeric zero.
+`cooldown`, and `balance` observations. A `null` Argus budget is distinct
+from numeric zero and does not establish a provider-issued account balance.
+Report the accounting unit and whether the balance was returned by the provider;
+configuration, an operator limit, and a measured account balance are separate facts.
 
 ## Readiness classification
 

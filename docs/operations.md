@@ -8,46 +8,24 @@ owns user-visible retrieval history; Argus owns retrieval execution and its
 PostgreSQL evidence. The former Mac launchd authority, OCI authority, and host
 residential worker are retired and are not fallbacks.
 
-## Current release checkpoint — 2026-09-07
+## Release and capability evidence
 
-The historical Argus `1.6.4` checkpoint at `01cbd7de9c8f41130918443ab2529fae1901585e`
-and `sha256:b095bcab...` is not current. The deployed production source is
-`458db1a10e158aa9ec156e8eaa85d6fbed2fe3e3` and the image is
-`ghcr.io/khamel83/argus@sha256:1a7bba7a32ecd70f70e05e0fbc471ac58519c01c06c80ee30b688dce7b8eace4`.
-The release receipt SHA-256 is
-`337cb478905100c9bb881e6397116b8fa7a0a96ce4ab508e062323c2516a0cad`.
-`current.json` and `known-good.json` identify this exact pair, the previous
-bridge image remains the rollback target, and no cutover marker remains.
+[The dated public status](STATUS.md) records the latest source, image, runtime,
+provider samples and open gates. The private audit retains exact receipts and
+accounting. Do not infer provider validity from key presence, ready=true or an
+HTTP 200 envelope, and do not reuse an older deployment pair as current proof.
 
-The deployed runtime is Python 3.12.3 on PostgreSQL schema head
-`0011_extraction_spend_scope`. The supported interpreter contract is Python
-3.11 minimum, Python 3.12 canonical, and Python 3.13 compatibility. Required
-CI run `34107922118` passed all three lanes. The lease-owner fix in this
-release bounds the readiness owner to 64 characters, so a long idempotency key
-cannot cause the old HTTP 500.
-
-Current free-provider evidence is mixed but concrete: the latest explicit
-no-spend probes returned three results from SearXNG, Yahoo, and GitHub;
-DuckDuckGo returned three after cooldown but remains intermittent because a
-guarded acquisition-policy block caused a short fail-closed cooldown. Paid
-provider values are not considered usable merely because a secret exists. The
-readiness registry requires truthful credential-version and account-scope
-bindings, finite budgets where required, and approved no-spend evidence before
-any billable call. No paid call occurred in the current run. The ledger's 48
-settled paid attempts from July are historical evidence, not current key proof.
-Browser extraction remains blocked until a release-bound external
-browser-network attestation is available.
-
-The current target-page extraction proof used `trafilatura` on PEP 257,
-returned 1,509 words with `is_complete=true`, and created an acknowledged Maya
-delivery bound to the deployed release identity. Readiness remains
-`ready=true, degraded`; `/api/ready` is canonical and `/api/readiness` does
-not exist.
+Production uses Python 3.12 and PostgreSQL. Python 3.11 remains the package floor,
+and Python 3.13 remains a compatibility CI lane. Promote an immutable digest
+through the root Homelab Compose project, with current recovery evidence,
+candidate gates, authenticated HTTP/MCP checks and the required 1,800-second
+soak. Keep the previous proven image available for rollback.
 
 ### Current provider probe procedure
 
-Use the scoped caller credential for capability probes. Use a unique,
-release-bound `idempotency_key` on every request and set `durable_receipt=true`.
+Use the admin credential for capability probes. Use a unique,
+release-bound `idempotency_key`, `max_results=1`, and a non-empty string
+`durable_receipt` reference on every authorized request.
 The probe must record the HTTP status, provider trace, result count, egress,
 machine, spend classification, and durable receipt reference. A long
 idempotency key is valid; the deployed broker now derives a bounded
@@ -55,17 +33,13 @@ readiness-lease owner of at most 64 characters.
 
 Do not call a provider marked `not_registered` just because its protected
 value is present. First register a non-secret credential-version fingerprint,
-account scope, budget, and approval for the no-spend test. Never derive an
+account scope and budget. Fixture checks spend nothing; a live provider
+request requires its own explicit bounded-validation authorization. Never derive an
 account scope from a secret hash and never put a key in an evidence record.
 
-The latest matrix is:
-
-| Provider group | Current result |
-|---|---|
-| SearXNG, Yahoo, GitHub | Three-result explicit no-spend probes; SearXNG remains degraded as an aggregate. |
-| DuckDuckGo | Three-result post-cooldown retry, but intermittent/fail-closed after a guarded acquisition-policy block. |
-| Brave, Tavily, Exa, Linkup, Parallel, Serper, You.com, Valyu, WolframAlpha | Disabled as `not_registered`; protected values exist for these providers, but current registration bindings are absent. No current call. |
-| SearchAPI | Unconfigured; no key. |
+The [provider matrix](STATUS.md) separates each sampled result from current
+enablement and from untested paths. Do not repeat a completed validation merely
+to obtain a greener table.
 
 ## Production topology
 
@@ -81,9 +55,11 @@ The latest matrix is:
 | SearXNG | `searxng:8080` | Docker network only |
 
 Tailscale Serve is the only remote ingress. Funnel is disabled for Argus and
-there is no Cloudflare route. The API and MCP require `ARGUS_API_KEY`.
+there is no Cloudflare route. The API and MCP require an accepted caller credential. Scoped callers are
+projected through `ARGUS_CALLER_CREDENTIALS_JSON`; the retained legacy
+`ARGUS_API_KEY` is a separate compatibility credential.
 Privileged `/api/admin/*` routes require the distinct
-`ARGUS_ADMIN_API_KEY`. Secrets are SOPS-encrypted in the Homelab repository
+`ARGUS_ADMIN_API_KEY`. Secrets remain in the private encrypted Homelab vault
 and rendered to the host `.env`; never copy values into logs or issues.
 
 The API has a 1 GiB memory limit, equal swap limit, 256-process limit,
@@ -145,9 +121,12 @@ ssh homelab 'sudo docker exec atlas-postgres psql -U postgres -d argus -Atc
   "select version_num from alembic_version"'
 ```
 
-The deterministic browser canary is
-`sudo /usr/local/libexec/argus-browser-canary`; it must report no OOM event,
-no orphan runtime process, and a bounded peak below the container limit.
+The deterministic browser canary source is `scripts/browser_canary.py`; use
+the restricted `docker run --network none` invocation in `.github/workflows/ci.yml`
+against the exact release image. Do not assume an installed Homelab wrapper exists.
+It must report no OOM event, no orphan runtime process, and a bounded peak below
+the container limit. Its synthetic data URL proves browser lifecycle only; it
+cannot supply the external network-policy attestation required for live browsing.
 
 ## Promotion and rollback
 
@@ -282,3 +261,13 @@ tailnet-only Tailscale Serve, distinct application/admin authorization,
 PostgreSQL schema 0009, extraction, browser resource limits, fresh backup and
 isolated restore evidence, disabled Mac and OCI authorities, and the retired
 host residential worker.
+
+### One-request provider canary
+
+`POST /api/admin/test-provider` requires admin authentication. The authorized
+payload contains `provider`, `query`, `live: true`, `max_results: 1`, a unique
+`idempotency_key`, and `durable_receipt`. Submit it once. This path bypasses the
+legacy cache and uses no fallback provider. Preserve the HTTP outcome, normalized
+result count, upstream trace, spend/balance effect, durable result record, and
+consumer effect separately. Inspect the ledger after an uncertain HTTP outcome;
+do not submit another chargeable request to find out what happened.
