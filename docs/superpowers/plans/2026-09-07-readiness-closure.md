@@ -26,13 +26,14 @@
 
 ### Task 2: Bind future accepted extraction provenance
 
-**Files:** `argus/operations/accepted.py`, `argus/extraction/extractor.py`, `tests/test_http_authority.py`, `tests/test_extraction_outcomes.py`.
+**Files:** `argus/operations/accepted.py`, `argus/persistence/search_ledger.py`, `tests/test_accepted_operations.py`, `tests/test_extraction_outcomes.py`.
 
 - [ ] Add failing tests using a 40-character manifest revision and an extractor artifact URL that differs from the exact request URL.
 - [ ] Run `pytest -q tests/test_http_authority.py tests/test_extraction_outcomes.py -k 'release_identity or accepted_extraction'` and observe the missing admitted identity or URL preservation.
 - [ ] Derive canonical extraction `release_identity` from `create_operational_status().build["source_revision"]`: use `argus-<full-sha>` for a valid admitted revision and `unknown-release` otherwise.
-- [ ] Ensure final legacy projection uses the original `extract_url` argument after accepted finalization, retaining extractor output only in artifact provenance.
-- [ ] Run `pytest -q tests/test_http_authority.py tests/test_extraction_outcomes.py tests/test_extraction.py`, then commit `fix: bind accepted extraction provenance`.
+- [ ] Change durable extraction claim/projection storage to use `_safe_persisted_url`, preserving safe path/query and continuing to redact credentials and sensitive parameters.
+- [ ] Assert persisted and reloaded URLs preserve a benign path/query, while credential-bearing URLs keep their redaction contract.
+- [ ] Run `pytest -q tests/test_accepted_operations.py tests/test_extraction_outcomes.py`, then commit `fix: bind accepted extraction provenance`.
 
 ### Task 3: Close no-request operational evidence
 
