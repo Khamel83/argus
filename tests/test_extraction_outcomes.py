@@ -2048,6 +2048,7 @@ def test_historical_root_normalized_claim_replays_path_query_retry_unchanged(
         ExtractionOutcomePlanRow,
         _canonical_json,
         _extraction_claim_state,
+        _deserialize_extraction_projection,
         _extraction_source_fingerprint,
         acceptance_fingerprint,
         create_search_ledger_repository,
@@ -2122,10 +2123,18 @@ def test_historical_root_normalized_claim_replays_path_query_retry_unchanged(
         assert durable_plan is not None
         assert acceptance is not None
         projection_state = json.loads(acceptance.projection_json)
+        incoming_projection = _deserialize_extraction_projection(
+            projection_state
+        )
         projection_state["plan"]["normalized_url"] = "https://example.com/"
+        legacy_projection_source_fingerprint = _extraction_source_fingerprint(
+            projection_state
+        )
         durable_plan.normalized_url = "https://example.com/"
         durable_plan.plan_json = _canonical_json(projection_state["plan"])
-        durable_plan.source_fingerprint = legacy_source_fingerprint
+        # Direct repository acceptance historically fingerprints the projection
+        # source facts, while finalizer claims fingerprint the claim state.
+        durable_plan.source_fingerprint = legacy_projection_source_fingerprint
         acceptance.projection_json = _canonical_json(projection_state)
         acceptance.acceptance_fingerprint = _extraction_source_fingerprint(
             projection_state
@@ -2139,6 +2148,16 @@ def test_historical_root_normalized_claim_replays_path_query_retry_unchanged(
             acceptance.projection_json,
             acceptance.acceptance_fingerprint,
         )
+
+    direct_receipt = repository.accept_extraction_outcome(incoming_projection)
+    assert direct_receipt == first.acceptance_receipt
+
+    # Restore the finalizer's historical claim fingerprint before exercising
+    # its retry path below.
+    with repository.session_factory.begin() as session:
+        durable_plan = session.scalar(select(ExtractionOutcomePlanRow))
+        assert durable_plan is not None
+        durable_plan.source_fingerprint = legacy_source_fingerprint
 
     replayed = finalizer.finalize_extraction(
         request,

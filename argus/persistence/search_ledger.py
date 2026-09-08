@@ -2089,9 +2089,15 @@ class SqlAlchemySearchLedgerRepository:
                     accepted_at=_utc_isoformat(acceptance.accepted_at),
                     scope=acceptance.scope,
                 )
+                stored_projection = _deserialize_extraction_projection(
+                    _parse_json_value(acceptance.projection_json)
+                )
                 self._persist_accepted_extraction_delivery(
                     session,
-                    AcceptedExtractionOutcome.accepted(projection, receipt),
+                    AcceptedExtractionOutcome.accepted(
+                        stored_projection,
+                        receipt,
+                    ),
                     now=self.clock(),
                 )
                 return receipt
