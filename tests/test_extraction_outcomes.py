@@ -2023,11 +2023,217 @@ def test_first_and_retry_return_same_safe_semantic_projection(tmp_path):
     )
 
     assert first == retry
-    assert first.plan.normalized_url == "https://example.com/"
+    assert first.plan.normalized_url == (
+        "https://example.com/private/path?session=%5Bredacted%5D&code=%5Bredacted%5D"
+        "&jwt=%5Bredacted%5D#[redacted]"
+    )
     assert all(
         secret not in repr(first)
         for secret in ("password", "opaque", "authorization", "signed", "hidden")
     )
+
+
+def test_historical_root_normalized_claim_replays_path_query_retry_unchanged(
+    tmp_path,
+):
+    from sqlalchemy import select
+
+    from argus.extraction.finalizer import (
+        ExtractionFinalizationClaim,
+        ExtractionFinalizer,
+    )
+    from argus.persistence.search_ledger import (
+        ExtractionRunRow,
+        ExtractionOutcomeAcceptanceRow,
+        ExtractionOutcomePlanRow,
+        _canonical_json,
+        _extraction_claim_state,
+        _deserialize_extraction_projection,
+        _extraction_source_fingerprint,
+        acceptance_fingerprint,
+        create_search_ledger_repository,
+    )
+
+    request_url = (
+        "https://example.com/articles/read?safe=value&token=super-secret"
+        "#section"
+    )
+    repository = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'historical-claim.db'}",
+        create_schema=True,
+    )
+    finalizer = ExtractionFinalizer(
+        repository=repository,
+        clock=lambda: "2026-07-27T12:00:00Z",
+    )
+    request = replace(_request("historical-claim"), normalized_url=request_url)
+    plan = replace(_plan(), normalized_url=request_url)
+    # The legacy mirror was also root-normalized. Seed it through the public
+    # ledger path so the regression covers a complete historical receipt.
+    persist_delivery = repository._persist_accepted_extraction_delivery
+    repository._persist_accepted_extraction_delivery = (
+        lambda *args, **kwargs: None
+    )
+    try:
+        first = finalizer.finalize_extraction(
+            request,
+            plan,
+            _raw(artifact=_artifact()),
+            OutcomePolicy(version="outcome-v1"),
+        )
+    finally:
+        repository._persist_accepted_extraction_delivery = persist_delivery
+
+    # Reconstruct the root-normalized durable shape written before path/query
+    # preservation was introduced, while retaining its raw URL identity hash.
+    claim = ExtractionFinalizationClaim(
+        extraction_outcome_policy_version=first.extraction_outcome_policy_version,
+        extraction_run_id=first.extraction_run_id,
+        request_id=first.request_id,
+        plan=plan,
+        artifact=first.artifact,
+        steps=first.steps,
+        terminal_cause=first.terminal_cause,
+        selected_extractor=first.selected_extractor,
+        cache_decision=first.cache_decision,
+        operation_latency_ms=first.operation_latency_ms,
+    )
+    legacy_claim_state = _extraction_claim_state(claim)
+    legacy_claim_state["plan"]["normalized_url"] = "https://example.com/"
+    legacy_source_fingerprint = acceptance_fingerprint(legacy_claim_state)
+
+    legacy_result = first.to_legacy_extracted_content()
+    legacy_result.url = "https://example.com/"
+    repository.record_extraction(
+        url=legacy_result.url,
+        domain="example.com",
+        mode=plan.mode,
+        caller=plan.caller,
+        result=legacy_result,
+        latency_ms=first.operation_latency_ms,
+        extraction_run_id=first.extraction_run_id,
+        request_id=first.request_id,
+    )
+
+    with repository.session_factory.begin() as session:
+        mirror = session.scalar(select(ExtractionRunRow))
+        durable_plan = session.scalar(select(ExtractionOutcomePlanRow))
+        acceptance = session.scalar(select(ExtractionOutcomeAcceptanceRow))
+        assert mirror is not None
+        assert durable_plan is not None
+        assert acceptance is not None
+        projection_state = json.loads(acceptance.projection_json)
+        incoming_projection = _deserialize_extraction_projection(
+            projection_state
+        )
+        projection_state["plan"]["normalized_url"] = "https://example.com/"
+        legacy_projection_source_fingerprint = _extraction_source_fingerprint(
+            projection_state
+        )
+        durable_plan.normalized_url = "https://example.com/"
+        durable_plan.plan_json = _canonical_json(projection_state["plan"])
+        # Direct repository acceptance historically fingerprints the projection
+        # source facts, while finalizer claims fingerprint the claim state.
+        durable_plan.source_fingerprint = legacy_projection_source_fingerprint
+        acceptance.projection_json = _canonical_json(projection_state)
+        acceptance.acceptance_fingerprint = _extraction_source_fingerprint(
+            projection_state
+        )
+        before = (
+            mirror.request_url,
+            mirror.acceptance_fingerprint,
+            durable_plan.normalized_url,
+            durable_plan.plan_json,
+            durable_plan.source_fingerprint,
+            acceptance.projection_json,
+            acceptance.acceptance_fingerprint,
+        )
+
+    direct_receipt = repository.accept_extraction_outcome(incoming_projection)
+    assert direct_receipt == first.acceptance_receipt
+
+    # Restore the finalizer's historical claim fingerprint before exercising
+    # its retry path below.
+    with repository.session_factory.begin() as session:
+        durable_plan = session.scalar(select(ExtractionOutcomePlanRow))
+        assert durable_plan is not None
+        durable_plan.source_fingerprint = legacy_source_fingerprint
+
+    replayed = finalizer.finalize_extraction(
+        request,
+        plan,
+        _raw(artifact=_artifact()),
+        OutcomePolicy(version="outcome-v1"),
+    )
+
+    assert replayed.acceptance_receipt == first.acceptance_receipt
+    assert replayed.plan.normalized_url == "https://example.com/"
+    with repository.session_factory() as session:
+        mirror = session.scalar(select(ExtractionRunRow))
+        durable_plan = session.scalar(select(ExtractionOutcomePlanRow))
+        acceptance = session.scalar(select(ExtractionOutcomeAcceptanceRow))
+        assert mirror is not None
+        assert durable_plan is not None
+        assert acceptance is not None
+        assert (
+            mirror.request_url,
+            mirror.acceptance_fingerprint,
+            durable_plan.normalized_url,
+            durable_plan.plan_json,
+            durable_plan.source_fingerprint,
+            acceptance.projection_json,
+            acceptance.acceptance_fingerprint,
+        ) == before
+
+
+def test_accepted_extraction_persists_and_reloads_safe_request_url(tmp_path):
+    from sqlalchemy import select
+
+    from argus.extraction.extractor import _finalize_accepted_extraction
+    from argus.persistence.search_ledger import (
+        ExtractionOutcomeAcceptanceRow,
+        ExtractionOutcomePlanRow,
+        create_search_ledger_repository,
+    )
+
+    request_url = (
+        "https://example.com/articles/read?safe=value&token=super-secret"
+        "#section"
+    )
+    repository = create_search_ledger_repository(
+        f"sqlite:///{tmp_path / 'request-url.db'}",
+        create_schema=True,
+    )
+    _finalize_accepted_extraction(
+        ExtractedContent(
+            url="https://canonical.example/article",
+            text="durable extraction content " * 50,
+            word_count=150,
+            extractor=ExtractorName.TRAFILATURA,
+        ),
+        url=request_url,
+        mode="default",
+        caller="task2",
+        request_id="request-url",
+        operation_id="extract-request-url",
+        latency_ms=12,
+        repository=repository,
+    )
+
+    with repository.session_factory() as session:
+        durable_plan = session.scalar(select(ExtractionOutcomePlanRow))
+        acceptance = session.scalar(select(ExtractionOutcomeAcceptanceRow))
+
+    expected_url = (
+        "https://example.com/articles/read?safe=value&token=%5Bredacted%5D#section"
+    )
+    assert durable_plan.normalized_url == expected_url
+    assert expected_url in acceptance.projection_json
+    assert "super-secret" not in acceptance.projection_json
+
+    reloaded = repository.load_extraction_outcome("extract-request-url")
+    assert reloaded is not None
+    assert reloaded.plan.normalized_url == expected_url
 
 
 def test_cache_identity_is_derived_and_verified_against_durable_acceptance(

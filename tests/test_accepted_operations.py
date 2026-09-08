@@ -953,6 +953,68 @@ async def test_extraction_executes_once_and_projects_without_reclassification():
     extract.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source_revision", "expected"),
+    [
+        ("a" * 40, "argus-" + ("a" * 40)),
+        ("invalid-revision", "unknown-release"),
+    ],
+)
+async def test_accepted_extraction_binds_admitted_runtime_revision(
+    monkeypatch, source_revision, expected
+):
+    # Import the authority module before replacing the accepted extractor
+    # seam; its module-level app setup is part of the production import path.
+    from argus.api.main import _HTTP_API_AUTHORITY_CAPABILITY  # noqa: F401
+    from argus.extraction.models import ExtractedContent, ExtractorName
+    from argus.operations import accepted as accepted_module
+    from argus.operations import status as status_module
+    from argus.operations.accepted import (
+        AcceptedOperationRegistration,
+        AcceptedOperationService,
+    )
+
+    monkeypatch.setattr(
+        status_module,
+        "create_operational_status",
+        lambda: SimpleNamespace(build={"source_revision": source_revision}),
+    )
+    seen = {}
+
+    async def extractor(url, **kwargs):
+        seen.update(kwargs)
+        return ExtractedContent(
+            url="https://canonical.example/article",
+            text="accepted extraction content",
+            word_count=3,
+            extractor=ExtractorName.TRAFILATURA,
+        )
+
+    monkeypatch.setattr(accepted_module, "extract_url", extractor)
+    service = AcceptedOperationService(
+        broker_provider=lambda: SimpleNamespace(readiness_service=None),
+        repository_provider=lambda: MagicMock(),
+        extractor=extractor,
+        registration=AcceptedOperationRegistration.complete(),
+    )
+
+    operation = await service.extract(
+        SimpleNamespace(
+            url="https://request.example/article",
+            domain=None,
+            mode="default",
+            caller="caller",
+            free_only=True,
+        ),
+        principal="principal",
+        request_id="request-runtime-revision",
+    )
+
+    assert operation.outcome is CanonicalOutcome.SUCCESS
+    assert seen["release_identity"] == expected
+
+
 def test_evidence_authority_requires_one_complete_registration():
     from argus.operations.accepted import (
         AcceptedAuthorityConfigurationError,

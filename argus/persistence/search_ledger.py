@@ -860,7 +860,7 @@ def _extraction_projection_state(projection) -> dict:
 
     state = asdict(projection)
     raw_url = state["plan"]["normalized_url"]
-    state["plan"]["normalized_url"] = _safe_extraction_source_url(raw_url)
+    state["plan"]["normalized_url"] = _safe_persisted_url(raw_url)
     state["normalized_url_identity"] = (
         getattr(projection, "normalized_url_identity", None)
         or "sha256:" + hashlib.sha256(raw_url.encode("utf-8")).hexdigest()
@@ -874,11 +874,42 @@ def _extraction_claim_state(claim) -> dict:
     state = asdict(claim)
     state["plan_ref"] = claim.plan.plan_ref
     raw_url = state["plan"]["normalized_url"]
-    state["plan"]["normalized_url"] = _safe_extraction_source_url(raw_url)
+    state["plan"]["normalized_url"] = _safe_persisted_url(raw_url)
     state["normalized_url_identity"] = (
         "sha256:" + hashlib.sha256(raw_url.encode("utf-8")).hexdigest()
     )
     return _normalize_json_value(state)
+
+
+def _legacy_extraction_claim_state(claim) -> dict:
+    """Recreate the root-only URL shape used by historical fingerprints."""
+    state = _extraction_claim_state(claim)
+    state["plan"]["normalized_url"] = _safe_extraction_source_url(
+        claim.plan.normalized_url
+    )
+    return state
+
+
+def _extraction_claim_fingerprints(claim) -> set[str]:
+    """Return current and legacy plan fingerprints for immutable-row replay."""
+    return {
+        acceptance_fingerprint(state)
+        for state in (
+            _extraction_claim_state(claim),
+            _legacy_extraction_claim_state(claim),
+        )
+    }
+
+
+def _extraction_claim_source_fingerprints(claim) -> set[str]:
+    """Return source fingerprints compatible with projection comparisons."""
+    return {
+        _extraction_source_fingerprint(state)
+        for state in (
+            _extraction_claim_state(claim),
+            _legacy_extraction_claim_state(claim),
+        )
+    }
 
 
 def _extraction_source_fingerprint(state: dict) -> str:
@@ -1135,6 +1166,26 @@ def _safe_persisted_url(value: str) -> str:
         else parts.fragment
     )
     return urlunsplit((parts.scheme, netloc, parts.path, urlencode(query), fragment))
+
+
+def _legacy_extraction_projection_state(projection) -> dict:
+    """Recreate the root-only URL shape used by historical fingerprints."""
+    state = _extraction_projection_state(projection)
+    state["plan"]["normalized_url"] = _safe_extraction_source_url(
+        projection.plan.normalized_url
+    )
+    return state
+
+
+def _extraction_projection_fingerprints(projection) -> set[str]:
+    """Return current and legacy fingerprints for immutable-row replay."""
+    return {
+        _extraction_source_fingerprint(state)
+        for state in (
+            _extraction_projection_state(projection),
+            _legacy_extraction_projection_state(projection),
+        )
+    }
 
 
 def _persist_extraction_projection_rows(
@@ -1866,6 +1917,8 @@ class SqlAlchemySearchLedgerRepository:
         )
 
         claim_state = _extraction_claim_state(claim)
+        source_fingerprints = _extraction_claim_fingerprints(claim)
+        claim_source_fingerprints = _extraction_claim_source_fingerprints(claim)
         source_fingerprint = acceptance_fingerprint(claim_state)
         run_lock = self._extraction_finalization_lock(claim.extraction_run_id)
         with run_lock:
@@ -1878,7 +1931,7 @@ class SqlAlchemySearchLedgerRepository:
                         )
                     )
                     if existing is not None:
-                        if existing.source_fingerprint != source_fingerprint:
+                        if existing.source_fingerprint not in source_fingerprints:
                             raise ExtractionAcceptanceConflict()
                         acceptance = session.scalar(
                             select(ExtractionOutcomeAcceptanceRow).where(
@@ -1990,7 +2043,7 @@ class SqlAlchemySearchLedgerRepository:
                         )
                         if _extraction_source_fingerprint(
                             existing_state
-                        ) != _extraction_source_fingerprint(claim_state):
+                        ) not in claim_source_fingerprints:
                             raise ExtractionAcceptanceConflict()
                         self.ensure_accepted_extraction_delivery(existing)
                         return existing
@@ -2005,6 +2058,7 @@ class SqlAlchemySearchLedgerRepository:
         )
 
         state = _extraction_projection_state(projection)
+        source_fingerprints = _extraction_projection_fingerprints(projection)
         source_fingerprint = _extraction_source_fingerprint(state)
         with self.session_factory.begin() as session:
             existing = session.scalar(
@@ -2014,7 +2068,7 @@ class SqlAlchemySearchLedgerRepository:
                 )
             )
             if existing is not None:
-                if existing.source_fingerprint != source_fingerprint:
+                if existing.source_fingerprint not in source_fingerprints:
                     from argus.extraction.outcomes import (
                         ExtractionAcceptanceConflict,
                     )
@@ -2035,9 +2089,15 @@ class SqlAlchemySearchLedgerRepository:
                     accepted_at=_utc_isoformat(acceptance.accepted_at),
                     scope=acceptance.scope,
                 )
+                stored_projection = _deserialize_extraction_projection(
+                    _parse_json_value(acceptance.projection_json)
+                )
                 self._persist_accepted_extraction_delivery(
                     session,
-                    AcceptedExtractionOutcome.accepted(projection, receipt),
+                    AcceptedExtractionOutcome.accepted(
+                        stored_projection,
+                        receipt,
+                    ),
                     now=self.clock(),
                 )
                 return receipt
