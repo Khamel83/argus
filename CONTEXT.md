@@ -131,3 +131,8 @@ HTTPS ingress. PostgreSQL and SearXNG remain Docker-internal. The Mac is
 development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
+<!-- janitor:begin:recent -->
+- Merged PR #138 (`codex/argus-readiness-20260906`): refreshed retrieval evidence manifest hash, replayed accepted extraction mirror state, replayed historical extraction claims, bound accepted extraction provenance, and documented readiness progress.
+- Merged PR #136 (`codex/argus-readiness-20260906`): refreshed provider fixture attestations following DuckDuckGo transport policy fixes, used canonical release formats and bound source identities for probe spend attempts, and framed pinned transport request bodies.
+- Merged PR #135 (`codex/argus-readiness-20260906`): bound admin provider probes to one uncached result.
+<!-- janitor:end:recent -->

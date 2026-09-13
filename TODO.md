@@ -25,3 +25,8 @@ A checked source task does not imply every provider has passed a live call.
 SearchAPI has no configured key. Valyu must remain account-blocked if it rejects
 the bounded request; this checklist does not authorize billing changes, quota
 resets, credential rotation or repeated provider tests.
+<!-- janitor:begin:todo -->
+- **Extraction & Provenance:** Replay and bind accepted extraction provenance, historical claims, and mirror state while refreshing retrieval evidence manifest hashes.
+- **Provider & Transport:** Refresh provider attestations after DuckDuckGo transport updates and maintain strict public transport routing.
+- **Readiness & Closure:** Plan and execute readiness closure boundary while preserving evidence audit trails.
+<!-- janitor:end:todo -->
