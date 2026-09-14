@@ -132,7 +132,14 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-- Merged PR #138 (`codex/argus-readiness-20260906`): refreshed retrieval evidence manifest hash, replayed accepted extraction mirror state, replayed historical extraction claims, bound accepted extraction provenance, and documented readiness progress.
-- Merged PR #136 (`codex/argus-readiness-20260906`): refreshed provider fixture attestations following DuckDuckGo transport policy fixes, used canonical release formats and bound source identities for probe spend attempts, and framed pinned transport request bodies.
-- Merged PR #135 (`codex/argus-readiness-20260906`): bound admin provider probes to one uncached result.
+### Recent activity (source commit 01ac7a67)
+
+- Merged pull request #149: `feat: add scoped paywall browser exception (#148)`. Per the supplied evidence this is a *scoped paywall browser exception*; it is not by itself an external browser-network attestation, and browser access is expected to remain fail-closed until a real one is admitted.
+- Readiness-repair commits continued inside the merged history: binding of accepted extraction provenance, replay of historical extraction claims, replay of accepted extraction mirror state, and a refreshed retrieval-evidence manifest hash.
+- DuckDuckGo was routed through the public transport policy (`fix: route DuckDuckGo through public transport policy`), and the provider fixture attestation was refreshed afterward.
+- Probe spend was bound to the validated baked release identity, using the canonical Argus release format for probe identities (`Bind quota probe spend attempts to baked source identity`, `Use canonical Argus release format for probe identities`, `Bind authorized provider probes to baked source identity`).
+- Pinned transport request bodies were framed (`fix: frame pinned transport request bodies`).
+- Documentation commits recorded restoration evidence, remaining limits, and readiness-closure boundary/plan updates.
+
+Uncertainty note: the entries above are derived from commit subjects and the published CONTEXT/TODO documents only. A checked source task or a merged pull request does not by itself prove a successful live provider request, a completed browser attestation, or cleared provider reservations.
 <!-- janitor:end:recent -->
