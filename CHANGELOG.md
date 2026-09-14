@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value. Export the token yourself in the shell that launches the client.
 
 ### Added
+- **Scoped paywall browser exception (`ARGUS_AUTH_BROWSER_DOMAINS`)** — off by
+  default. When set to a comma-separated domain list, an `authenticated_content`
+  HTTPS browser request is admitted without a browser-network attestation only
+  if its host is on the list, is a known paywall domain, and has a cookie file.
+  It applies only when no attestation is present, so an installed authority's
+  rejection still wins. The admission records `basis="auth_browser_exception"`
+  and the matched domain, and the same-origin resource guard still applies.
+  This is temporary until the browser-network authority lands (#148).
 - **Accepted-operation HTTP authority and additive v2 contract** — legacy HTTP
   routes now render one immutable accepted operation, while `/api/v2/*`
   provides canonical outcome envelopes, capability negotiation, principal-bound

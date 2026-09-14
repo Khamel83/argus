@@ -12,6 +12,7 @@ from argus.acquisition.browser_policy import (
     BrowserAdmission,
     BrowserNetworkAttestation,
     admit_browser_request,
+    admit_browser_url,
     current_release_identity,
     guard_browser_route,
     install_browser_policy,
@@ -20,6 +21,7 @@ from argus.acquisition.browser_policy import (
     set_browser_attestation_provider,
     validate_browser_attestation,
 )
+from argus.acquisition.models import OriginProfile
 
 
 @pytest.fixture(autouse=True)
@@ -326,3 +328,150 @@ async def test_context_creation_failure_closes_page_context_and_browser(monkeypa
     assert result.error == "playwright: context creation failed"
     browser.close.assert_awaited_once()
     assert extractor._browser is None
+
+
+_NYT_ARTICLE = "https://www.nytimes.com/2026/09/13/business/article.html"
+
+
+@pytest.fixture
+def paywall_cookies(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARGUS_COOKIE_DIR", str(tmp_path))
+    monkeypatch.delenv("ARGUS_AUTH_BROWSER_DOMAINS", raising=False)
+    for domain in ("nytimes.com", "bloomberg.com", "example.org"):
+        (tmp_path / f"{domain}.json").write_text("[]")
+    return tmp_path
+
+
+def _auth_request(url: str = _NYT_ARTICLE):
+    return make_browser_request(
+        url,
+        profile=OriginProfile.AUTHENTICATED_CONTENT,
+        credential_policy="origin_scoped",
+        request_id="auth-test",
+    )
+
+
+def test_auth_browser_exception_is_off_by_default(paywall_cookies):
+    failure = require_browser_policy(_auth_request(), None)
+
+    assert failure.code == "browser_policy_unavailable"
+    assert failure.before_browser_creation is True
+
+
+def test_auth_browser_exception_admits_allowlisted_cookie_backed_paywall_host(
+    paywall_cookies, monkeypatch
+):
+    monkeypatch.setenv("ARGUS_AUTH_BROWSER_DOMAINS", " NYTimes.com , wsj.com ")
+    now = datetime(2026, 9, 14, 12, tzinfo=timezone.utc)
+
+    admission = require_browser_policy(_auth_request(), None, now=now)
+
+    assert isinstance(admission, BrowserAdmission)
+    assert admission.basis == "auth_browser_exception"
+    assert admission.exception_ref == "ARGUS_AUTH_BROWSER_DOMAINS:nytimes.com"
+    assert admission.attestation is None
+    assert admission.policy_identity == ""
+    assert admission.admitted_at == now
+    assert admission.expires_at == now + timedelta(minutes=5)
+
+
+@pytest.mark.parametrize(
+    ("url", "profile"),
+    [
+        # Allowlisted paywall domain, but no cookie file.
+        ("https://www.wsj.com/articles/example", OriginProfile.AUTHENTICATED_CONTENT),
+        # Allowlisted and cookie-backed, but not a known paywall domain.
+        ("https://example.org/article", OriginProfile.AUTHENTICATED_CONTENT),
+        # Cookie-backed paywall domain that is not on the allowlist.
+        ("https://www.bloomberg.com/news/example", OriginProfile.AUTHENTICATED_CONTENT),
+        # Plain HTTP never carries cookies through the exception.
+        ("http://www.nytimes.com/article", OriginProfile.AUTHENTICATED_CONTENT),
+        # Lookalike hosts.
+        ("https://nytimes.com.attacker.example/a", OriginProfile.AUTHENTICATED_CONTENT),
+        ("https://evilnytimes.com/article", OriginProfile.AUTHENTICATED_CONTENT),
+        # Public browsing stays fail-closed.
+        (_NYT_ARTICLE, OriginProfile.PUBLIC_CONTENT),
+    ],
+)
+def test_auth_browser_exception_rejects_requests_outside_its_scope(
+    paywall_cookies, monkeypatch, url, profile
+):
+    monkeypatch.setenv("ARGUS_AUTH_BROWSER_DOMAINS", "nytimes.com,wsj.com,example.org")
+    request = make_browser_request(
+        url,
+        profile=profile,
+        credential_policy=(
+            "origin_scoped"
+            if profile is OriginProfile.AUTHENTICATED_CONTENT
+            else "none"
+        ),
+        request_id="auth-test",
+    )
+
+    result = require_browser_policy(request, None)
+
+    assert not isinstance(result, BrowserAdmission)
+    assert result.code == "browser_policy_unavailable"
+
+
+def test_auth_browser_exception_never_overrides_a_rejecting_authority(
+    paywall_cookies, monkeypatch
+):
+    monkeypatch.setenv("ARGUS_AUTH_BROWSER_DOMAINS", "nytimes.com")
+    request = _auth_request()
+    current = datetime.now(timezone.utc)
+
+    unverified = require_browser_policy(request, _attestation(verified=False))
+    expired = require_browser_policy(
+        request, _attestation(expires_at=current - timedelta(seconds=1))
+    )
+    attested = require_browser_policy(request, _attestation())
+
+    assert unverified.code == "browser_policy_unavailable"
+    assert expired.code == "browser_policy_unavailable"
+    assert isinstance(attested, BrowserAdmission)
+    assert attested.basis == "attestation"
+    assert attested.exception_ref == ""
+
+
+@pytest.mark.asyncio
+async def test_auth_browser_exception_keeps_the_same_origin_resource_guard(
+    paywall_cookies, monkeypatch
+):
+    monkeypatch.setenv("ARGUS_AUTH_BROWSER_DOMAINS", "nytimes.com")
+    # The auth extractor's entry point, with the default fail-closed provider.
+    admission = await admit_browser_url(
+        _NYT_ARTICLE,
+        profile="authenticated_content",
+        credential_policy="origin_scoped",
+        request_id="auth-test",
+    )
+    assert isinstance(admission, BrowserAdmission)
+    assert admission.basis == "auth_browser_exception"
+
+    def checker(_url):
+        return True, ""
+
+    same_origin = SimpleNamespace(
+        request=SimpleNamespace(
+            url="https://www.nytimes.com/svc/article.json", resource_type="xhr"
+        ),
+        continue_=AsyncMock(),
+        abort=AsyncMock(),
+    )
+    await guard_browser_route(same_origin, admission, url_checker=checker)
+    same_origin.continue_.assert_awaited_once()
+
+    cross_origin = SimpleNamespace(
+        request=SimpleNamespace(
+            url="https://static01.nyt.com/app.js", resource_type="script"
+        ),
+        continue_=AsyncMock(),
+        abort=AsyncMock(),
+    )
+    await guard_browser_route(cross_origin, admission, url_checker=checker)
+    cross_origin.abort.assert_awaited_once()
+    cross_origin.continue_.assert_not_awaited()
+    assert admission.blocked_resources[-1][2] == (
+        "cross-origin authenticated resource blocked"
+    )
