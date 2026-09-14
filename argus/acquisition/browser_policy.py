@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import inspect
 import os
 from typing import Any, Protocol, runtime_checkable
@@ -32,11 +32,20 @@ from .models import (
 )
 from .. import __version__
 from ..extraction.ssrf import is_safe_url as _default_url_checker
+from ..logging import get_logger
 
+
+logger = get_logger("acquisition.browser_policy")
 
 MAX_ATTESTATION_ID_LENGTH = 256
 MAX_FAILURE_REQUEST_ID_LENGTH = 64
 _BROWSER_POLICY_UNAVAILABLE = "browser connection policy is unavailable"
+ADMISSION_BASIS_ATTESTATION = "attestation"
+ADMISSION_BASIS_AUTH_BROWSER_EXCEPTION = "auth_browser_exception"
+# Temporary paywall exception (#148); retire once a real browser-network
+# authority supplies attestations.
+AUTH_BROWSER_DOMAINS_ENV = "ARGUS_AUTH_BROWSER_DOMAINS"
+AUTH_BROWSER_EXCEPTION_LEASE = timedelta(minutes=5)
 _NON_NETWORK_SCHEMES = frozenset({"about", "blob", "data"})
 _BROWSER_RESOURCE_TYPES = frozenset(
     {
@@ -448,13 +457,20 @@ class _BrowserAdmissionRuntime:
 
 @dataclass(frozen=True, slots=True)
 class BrowserAdmission:
-    """Bound browser lease after connection-policy admission."""
+    """Bound browser lease after connection-policy admission.
+
+    ``basis`` is the admission receipt: ``attestation`` when an external
+    authority vouched for the browser network, or ``auth_browser_exception``
+    when the scoped paywall exception admitted it with no attestation.
+    """
 
     request: AcquisitionRequest
-    attestation: BrowserNetworkAttestation
+    attestation: BrowserNetworkAttestation | None
     admitted_at: datetime
     expires_at: datetime
     max_resources: int
+    basis: str = ADMISSION_BASIS_ATTESTATION
+    exception_ref: str = ""
     _runtime: _BrowserAdmissionRuntime = field(
         default_factory=_BrowserAdmissionRuntime,
         repr=False,
@@ -463,14 +479,18 @@ class BrowserAdmission:
 
     @property
     def policy_identity(self) -> str:
-        return self.attestation.policy_identity
+        return self.attestation.policy_identity if self.attestation else ""
 
     @property
     def resolver_address_control_identity(self) -> str:
+        if self.attestation is None:
+            return ""
         return self.attestation.resolver_address_control_identity
 
     @property
     def connection_binding_identity(self) -> str:
+        if self.attestation is None:
+            return ""
         return self.attestation.connection_binding_identity
 
     def reserve_resource(self, resource_type: str, url: str) -> bool:
@@ -498,6 +518,46 @@ def _request_is_browser(request: object) -> bool:
     if isinstance(operation, OperationClass):
         operation = operation.value
     return operation == OperationClass.BROWSER.value
+
+
+def _auth_browser_exception_domain(request: AcquisitionRequest) -> str | None:
+    """Return the allowlisted domain that admits ``request`` with no attestation.
+
+    The exception is deliberately narrow: authenticated content only, HTTPS
+    only, a host on ``ARGUS_AUTH_BROWSER_DOMAINS`` that is also a known paywall
+    domain, and a cookie file for it.  Resource guards still restrict the
+    session to the request's own origin.
+    """
+
+    if request.profile is not OriginProfile.AUTHENTICATED_CONTENT:
+        return None
+    allowlist = {
+        domain.strip().strip(".").lower()
+        for domain in os.environ.get(AUTH_BROWSER_DOMAINS_ENV, "").split(",")
+        if domain.strip().strip(".")
+    }
+    if not allowlist:
+        return None
+    parsed = urlsplit(request.normalized_url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not host:
+        return None
+    matched = next(
+        (
+            domain
+            for domain in sorted(allowlist)
+            if host == domain or host.endswith(f".{domain}")
+        ),
+        None,
+    )
+    if matched is None:
+        return None
+
+    from ..extraction.cookies import get_cookie_path, needs_auth
+
+    if not needs_auth(request.normalized_url) or get_cookie_path(host) is None:
+        return None
+    return matched
 
 
 def require_browser_policy(
@@ -536,7 +596,32 @@ def require_browser_policy(
         request_id=request_id,
     )
     if failure is not None:
-        return failure
+        # The paywall exception covers only a missing attestation.  Anything an
+        # authority did supply, even an invalid value, keeps the rejection.
+        if attestation is not None:
+            return failure
+        exception_domain = _auth_browser_exception_domain(request)
+        if exception_domain is None:
+            return failure
+        try:
+            admitted_at = _now(now)
+        except (TypeError, ValueError, OverflowError):
+            return failure
+        logger.warning(
+            "Browser admitted without network attestation via %s host=%s request_id=%s",
+            AUTH_BROWSER_DOMAINS_ENV,
+            parsed.hostname,
+            request_id,
+        )
+        return BrowserAdmission(
+            request=request,
+            attestation=None,
+            admitted_at=admitted_at,
+            expires_at=admitted_at + AUTH_BROWSER_EXCEPTION_LEASE,
+            max_resources=request.limits.max_resource_count,
+            basis=ADMISSION_BASIS_AUTH_BROWSER_EXCEPTION,
+            exception_ref=f"{AUTH_BROWSER_DOMAINS_ENV}:{exception_domain}",
+        )
     checked = _normalise_attestation(attestation)
     # ``validate_browser_attestation`` above guarantees this branch.  Keep the
     # defensive check because the provider is an external boundary.
