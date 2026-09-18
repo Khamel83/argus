@@ -39,10 +39,8 @@ resets, credential rotation or repeated provider tests.
 - [ ] Admit a real external browser-network authority/attestation and prove a browser-assisted extraction. A scoped paywall browser exception was merged (#148 via PR #149), but it is not external browser-network proof; keep browser access fail-closed meanwhile.
 - [ ] Obtain fresh authorized validation for providers whose one-call canary failed before the transport repair; preserve those failures and uncertain reservations.
 - [ ] Reconcile uncertain provider charges only with authoritative provider evidence. Never convert an HTTP rejection into assumed zero spend.
-- [ ] Automate the exact digest scorecard-admission handoff; retain bounded residual semantics when the evaluator is absent.
+- [ ] Automate the exact digest scorecard-admission handoff; retain bounded residual semantics when the evaluator is absent. Runbook documented in docs/DEPLOYMENT.md (73bff53); automated handoff remains pending.
 - [ ] Close remaining pool/lifespan, authenticated-browser shutdown and workflow shutdown/finalization debt.
 - [ ] Review the optional workflow LLM gateway's admission and error boundary before enabling it as a production capability.
 - [ ] Add deliberate type/format governance separately from restoration; do not reformat unrelated user work.
-
-SearchAPI has no configured key. Valyu must remain account-blocked if it rejects the bounded request; this checklist does not authorize billing changes, quota resets, credential rotation or repeated provider tests.
 <!-- janitor:end:todo -->
