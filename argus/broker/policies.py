@@ -80,23 +80,63 @@ MODE_PROVIDER_PREFERENCES: dict[SearchMode, list[ProviderName]] = {
 }
 
 
+import os
+
+
+def get_tier_order_priority(
+    routing_preference: str | None = None,
+    *,
+    free_only: bool = False,
+) -> dict[int, int]:
+    """Return tier priority mapping for provider sorting.
+
+    By default, follows the canonical tier policy (Tier 0 free first).
+    When ARGUS_ROUTING_PREFERENCE=monthly_first (or ai_first), Tier 1 monthly
+    renewable credits are prioritized first, falling back to Tier 0 scrapers.
+    When free_only is True, Tier 0 always comes first.
+    """
+    if free_only:
+        return {0: 0, 1: 1, 3: 2}
+    pref = (
+        routing_preference
+        if routing_preference is not None
+        else os.environ.get("ARGUS_ROUTING_PREFERENCE", "free_first")
+    )
+    if str(pref).lower() in {"monthly_first", "tier1_first", "ai_first"}:
+        return {1: 0, 0: 1, 3: 2}
+    return {0: 0, 1: 1, 3: 2}
+
+
 def stable_tier_sort(
     providers: list[ProviderName] | tuple[ProviderName, ...],
     *,
     deduplicate: bool = False,
+    routing_preference: str | None = None,
+    free_only: bool = False,
 ) -> list[ProviderName]:
     """Return providers in stable tier order.
 
     When requested by the planner, later duplicates are removed before the
     stable sort so caller order remains the tie-break within a tier.
     """
+    priority_map = get_tier_order_priority(
+        routing_preference, free_only=free_only
+    )
     ordered = list(providers)
     if deduplicate:
         ordered = list(dict.fromkeys(ordered))
-    return sorted(ordered, key=lambda provider: PROVIDER_TIERS.get(provider, 99))
+    return sorted(
+        ordered,
+        key=lambda provider: priority_map.get(PROVIDER_TIERS.get(provider, 99), 99),
+    )
 
 
-def get_provider_order(mode: SearchMode) -> list[ProviderName]:
+def get_provider_order(
+    mode: SearchMode,
+    *,
+    routing_preference: str | None = None,
+    free_only: bool = False,
+) -> list[ProviderName]:
     """Return tier-sorted provider list for a given search mode.
 
     CACHE is always prepended. Remaining providers are sorted by tier
@@ -105,14 +145,18 @@ def get_provider_order(mode: SearchMode) -> list[ProviderName]:
     preferences = MODE_PROVIDER_PREFERENCES.get(
         mode, MODE_PROVIDER_PREFERENCES[SearchMode.DISCOVERY]
     )
-    # Stable sort by tier: free first, monthly next, one-time last
-    tier_sorted = stable_tier_sort(preferences)
+    tier_sorted = stable_tier_sort(
+        preferences, routing_preference=routing_preference, free_only=free_only
+    )
     return [ProviderName.CACHE, *tier_sorted]
 
 
 def resolve_routing(
     mode: SearchMode,
     override_providers: list[ProviderName] | None,
+    *,
+    routing_preference: str | None = None,
+    free_only: bool = False,
 ) -> list[ProviderName]:
     """Resolve the final provider routing order.
 
@@ -120,6 +164,12 @@ def resolve_routing(
     Otherwise use the mode-based tier-sorted policy.
     """
     if override_providers:
-        tier_sorted = stable_tier_sort(override_providers)
+        tier_sorted = stable_tier_sort(
+            override_providers,
+            routing_preference=routing_preference,
+            free_only=free_only,
+        )
         return tier_sorted
-    return get_provider_order(mode)
+    return get_provider_order(
+        mode, routing_preference=routing_preference, free_only=free_only
+    )

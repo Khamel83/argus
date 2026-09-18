@@ -259,7 +259,9 @@ class SearchBroker:
             logger.debug("Cache hit (mode=%s)", query.mode)
             return cached
 
-        provider_order = resolve_routing(query.mode, query.providers)
+        provider_order = resolve_routing(
+            query.mode, query.providers, free_only=query.free_only
+        )
         outcome = await self._executor.execute(
             query,
             provider_order,
