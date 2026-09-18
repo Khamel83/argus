@@ -10,6 +10,7 @@ import time
 
 import click
 
+import argus.config  # noqa: F401 — triggers documented dotenv autoloading
 from argus import __version__
 from argus.logging import get_logger
 from argus.operations.presentation import (

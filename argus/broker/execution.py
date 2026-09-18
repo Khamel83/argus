@@ -13,6 +13,7 @@ from argus.broker.health import HealthTracker
 from argus.broker.planning import RetrievalPlan
 from argus.broker.readiness import ExecutionContext, ProviderReadinessService
 from argus.broker.provider_evidence import (
+    FailureCategory,
     LegacyProviderBatchAdapter,
     ProviderSearchBatch,
     EgressType,
@@ -526,6 +527,16 @@ class ProviderExecutor:
                 actual_charge = float(trace.credit_info["cost_usd"])
             elif trace.status == "success":
                 actual_charge = charge
+            elif batch is not None and getattr(
+                getattr(batch, "failure", None), "category", None
+            ) in {
+                FailureCategory.INVALID_REQUEST,
+                FailureCategory.AUTHENTICATION_REJECTED,
+                FailureCategory.POLICY_REJECTED,
+                FailureCategory.RATE_LIMITED,
+                FailureCategory.BALANCE_EXHAUSTED,
+            }:
+                actual_charge = 0.0
             self._readiness.complete_execution(
                 authorization,
                 failure=batch.failure,
@@ -660,7 +671,9 @@ class ProviderExecutor:
                 )
             return ProviderInvocationOutcome(
                 batch=batch,
-                uncertain_charge=not self._trace_charge_known(provider_name, trace),
+                uncertain_charge=not self._trace_charge_known(
+                    provider_name, trace, getattr(batch, "failure", None)
+                ),
                 compatibility_trace=trace,
             )
         except Exception as error:
@@ -680,7 +693,11 @@ class ProviderExecutor:
             return ProviderInvocationOutcome(failure, True, failure.trace)
 
     @staticmethod
-    def _trace_charge_known(provider: ProviderName, trace: ProviderTrace) -> bool:
+    def _trace_charge_known(
+        provider: ProviderName,
+        trace: ProviderTrace,
+        failure=None,
+    ) -> bool:
         if trace.status == "success":
             if provider != ProviderName.VALYU:
                 return True
@@ -690,6 +707,15 @@ class ProviderExecutor:
                 and math.isfinite(float(trace.credit_info["cost_usd"]))
                 and float(trace.credit_info["cost_usd"]) >= 0
             )
+        failure_category = getattr(failure, "category", None)
+        if failure_category in {
+            FailureCategory.INVALID_REQUEST,
+            FailureCategory.AUTHENTICATION_REJECTED,
+            FailureCategory.POLICY_REJECTED,
+            FailureCategory.RATE_LIMITED,
+            FailureCategory.BALANCE_EXHAUSTED,
+        }:
+            return True
         if not trace.credit_info:
             return False
         return (

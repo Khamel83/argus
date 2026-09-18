@@ -1195,14 +1195,38 @@ class TestPolicies:
         assert ProviderName.EXA in order
 
     def test_tier_sorting_free_first(self):
-        """Tier 0 (SearXNG) should always come before tier 1+ providers."""
+        """Tier 0 (SearXNG) should come first when free_first routing is requested."""
         from argus.broker.policies import get_provider_order
 
         for mode in SearchMode:
-            order = get_provider_order(mode)
+            order = get_provider_order(mode, routing_preference="free_first")
             # CACHE is index 0, SearXNG (tier 0) should be index 1
             assert order[1] == ProviderName.SEARXNG, (
                 f"{mode}: expected SearXNG at position 1, got {order[1]}"
+            )
+
+    def test_tier_sorting_monthly_first(self):
+        """Monthly-first policy should place Tier 1 before Tier 0."""
+        from argus.broker.budgets import PROVIDER_TIERS
+        from argus.broker.policies import get_provider_order
+
+        for mode in SearchMode:
+            order = get_provider_order(mode, routing_preference="monthly_first")
+            first_provider = order[1]
+            assert PROVIDER_TIERS.get(first_provider) == 1, (
+                f"{mode}: expected Tier 1 at position 1, got {first_provider}"
+            )
+
+    def test_tier_sorting_free_only_forces_tier0_first(self):
+        """free_only=True should always prioritize Tier 0 over Tier 1 regardless of routing preference."""
+        from argus.broker.budgets import PROVIDER_TIERS
+        from argus.broker.policies import get_provider_order
+
+        for mode in SearchMode:
+            order = get_provider_order(mode, free_only=True)
+            first_provider = order[1]
+            assert PROVIDER_TIERS.get(first_provider) == 0, (
+                f"{mode}: expected Tier 0 at position 1, got {first_provider}"
             )
 
     def test_tier_sorting_monthly_before_onetime(self):
@@ -2311,6 +2335,7 @@ class TestRouter:
             "argus.persistence.db.SearchPersistenceGateway.record_completed_search",
             lambda self, query, response: None,
         )
+        monkeypatch.setenv("ARGUS_ROUTING_PREFERENCE", "free_first")
 
         failing = StubProvider(
             name=ProviderName.SEARXNG,
