@@ -198,9 +198,9 @@ When using `agy`, treat target selection, execution mode, and flag syntax as sep
 
 If the command is part of a script or wrapper, preserve these checks at the invocation boundary and fail closed on invalid combinations.
 
-## Gateway2000 usage
+## G2K usage
 
-When the user says “send this to g2k,” use the installed Gateway2000 OMP route
+When the user says “send this to g2k,” use the installed G2K OMP route
 instead of choosing a provider-specific CLI:
 
 Carry the current task context into the prompt; ask only for missing authority
