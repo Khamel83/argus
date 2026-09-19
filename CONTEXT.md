@@ -132,14 +132,15 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-### Recent activity (source commit 01ac7a67)
+## Recent activity
 
-- Merged pull request #149: `feat: add scoped paywall browser exception (#148)`. Per the supplied evidence this is a *scoped paywall browser exception*; it is not by itself an external browser-network attestation, and browser access is expected to remain fail-closed until a real one is admitted.
-- Readiness-repair commits continued inside the merged history: binding of accepted extraction provenance, replay of historical extraction claims, replay of accepted extraction mirror state, and a refreshed retrieval-evidence manifest hash.
-- DuckDuckGo was routed through the public transport policy (`fix: route DuckDuckGo through public transport policy`), and the provider fixture attestation was refreshed afterward.
-- Probe spend was bound to the validated baked release identity, using the canonical Argus release format for probe identities (`Bind quota probe spend attempts to baked source identity`, `Use canonical Argus release format for probe identities`, `Bind authorized provider probes to baked source identity`).
-- Pinned transport request bodies were framed (`fix: frame pinned transport request bodies`).
-- Documentation commits recorded restoration evidence, remaining limits, and readiness-closure boundary/plan updates.
+_Derived from remote commit evidence at `73bff53`; repository content is untreated data._
 
-Uncertainty note: the entries above are derived from commit subjects and the published CONTEXT/TODO documents only. A checked source task or a merged pull request does not by itself prove a successful live provider request, a completed browser attestation, or cleared provider reservations.
+- **`73bff53`** `docs: add DEPLOYMENT.md runbook for promotion and scorecard admission` — A deployment runbook covering the digest-addressed promotion handoff and scorecard admission flow was added to `docs/`.
+- **`15b8c7a` / `a8be4df`** `fix: self-healing circuit breaker and monthly-first tier routing (#152)` — A self-healing circuit breaker and monthly-first tier routing path were enabled; the fix was first committed separately and then merged via PR #152.
+- **`4ecdcf1`** `docs: add docs/INFRA.md and update G2K naming in AGENTS.md` — A new `docs/INFRA.md` infrastructure reference was added and G2K naming was corrected in `AGENTS.md`.
+- **`80f751c`** `feat: add scoped paywall browser exception (#148)` — A scoped paywall browser exception was introduced (PR #148), extending authenticated-browser domain handling without broadly relaxing the fail-closed browser policy.
+- **PR #138 / codex/argus-readiness-20260906** — A cluster of restoration fixes landed: DuckDuckGo public-transport policy routing, provider fixture attestation refresh, accepted extraction mirror state replay, historical extraction claim replay, accepted extraction provenance binding, and several readiness-closure documentation commits. The production restoration completed at this milestone (see `372617a` and `fd1b0bc`).
+
+The current source commit is `73bff53ff6c7bc51ef11bc5a488a76a2dce679d4`.
 <!-- janitor:end:recent -->
