@@ -373,6 +373,21 @@ def test_auth_browser_exception_admits_allowlisted_cookie_backed_paywall_host(
     assert admission.policy_identity == ""
     assert admission.admitted_at == now
     assert admission.expires_at == now + timedelta(minutes=5)
+ 
+def test_auth_browser_exception_requires_origin_scoped_credentials(
+    paywall_cookies, monkeypatch
+):
+    monkeypatch.setenv("ARGUS_AUTH_BROWSER_DOMAINS", "nytimes.com")
+    request = make_browser_request(
+        _NYT_ARTICLE,
+        profile=OriginProfile.AUTHENTICATED_CONTENT,
+        credential_policy="none",
+        request_id="auth-test",
+    )
+
+    result = require_browser_policy(request, None)
+
+    assert result.code == "browser_policy_unavailable"
 
 
 @pytest.mark.parametrize(

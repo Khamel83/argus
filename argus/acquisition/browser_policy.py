@@ -529,7 +529,10 @@ def _auth_browser_exception_domain(request: AcquisitionRequest) -> str | None:
     session to the request's own origin.
     """
 
-    if request.profile is not OriginProfile.AUTHENTICATED_CONTENT:
+    if (
+        request.profile is not OriginProfile.AUTHENTICATED_CONTENT
+        or request.credential_policy != CredentialPolicy.ORIGIN_SCOPED.value
+    ):
         return None
     allowlist = {
         domain.strip().strip(".").lower()
