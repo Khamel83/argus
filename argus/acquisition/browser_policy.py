@@ -44,6 +44,7 @@ ADMISSION_BASIS_ATTESTATION = "attestation"
 ADMISSION_BASIS_AUTH_BROWSER_EXCEPTION = "auth_browser_exception"
 # Temporary paywall exception (#148); retire once a real browser-network
 # authority supplies attestations.
+AUTH_BROWSER_CALLER_PRINCIPAL = "authenticated-browser"
 AUTH_BROWSER_DOMAINS_ENV = "ARGUS_AUTH_BROWSER_DOMAINS"
 AUTH_BROWSER_EXCEPTION_LEASE = timedelta(minutes=5)
 _NON_NETWORK_SCHEMES = frozenset({"about", "blob", "data"})
@@ -523,15 +524,17 @@ def _request_is_browser(request: object) -> bool:
 def _auth_browser_exception_domain(request: AcquisitionRequest) -> str | None:
     """Return the allowlisted domain that admits ``request`` with no attestation.
 
-    The exception is deliberately narrow: authenticated content only, HTTPS
-    only, a host on ``ARGUS_AUTH_BROWSER_DOMAINS`` that is also a known paywall
-    domain, and a cookie file for it.  Resource guards still restrict the
-    session to the request's own origin.
+    The exception is deliberately narrow: the dedicated authenticated browser
+    caller, authenticated content only, HTTPS only, a host on
+    ``ARGUS_AUTH_BROWSER_DOMAINS`` that is also a known paywall domain, and a
+    cookie file for it.  Resource guards still restrict the session to the
+    request's own origin.
     """
 
     if (
         request.profile is not OriginProfile.AUTHENTICATED_CONTENT
         or request.credential_policy != CredentialPolicy.ORIGIN_SCOPED.value
+        or request.caller_principal != AUTH_BROWSER_CALLER_PRINCIPAL
     ):
         return None
     allowlist = {
