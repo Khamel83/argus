@@ -22,6 +22,7 @@ jobs:
     name: Fast PR Review
     if: >-
       github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
       (github.event.action == 'opened' || github.event.action == 'synchronize')
     runs-on: [self-hosted, oci-ts]
     steps:
@@ -89,6 +90,7 @@ jobs:
     name: Deep PR Review
     if: >-
       github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
       (github.event.action == 'opened' ||
        (github.event.action == 'labeled' && github.event.label.name == 'deep-review'))
     runs-on: [self-hosted, oci-ts]
