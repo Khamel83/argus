@@ -1,4 +1,22 @@
-# Argus status — September 7, 2026
+# Argus status — September 29, 2026
+
+## Current release checkpoint
+
+Guarded production promotion completed its 1,800-second soak at 08:00 UTC.
+Both current and known-good records identify source
+`e8f36cfea3552a952479b335f964618f89f4fd42`, image
+`ghcr.io/khamel83/argus@sha256:c8853fbe0d95d44f52bf68b0f5e579013c89bb07d722effa0abbe14e7f2df7df`,
+and release receipt SHA-256
+`1d785cf208e31f766793cddbbdc5fc6b671b73826851f506f3bd0958b812fa51`.
+API and MCP containers are healthy on that digest. Live `/api/ready` returns
+`ready=true`, `status=degraded`, and the exact source SHA. A supervised OCI
+Janitor operation archived a healthy observation with valid source identity;
+a later natural scheduled receipt remains to be checked. The fresh shared
+PostgreSQL backup and disposable Argus/Atlas restore passed before promotion;
+a second post-cutover backup and restore passed and published a generic job
+receipt. The Homelab dated promotion receipt has the gate and receipt detail.
+
+## September 7 provider and capability evidence (historical)
 
 Core HTTP/MCP access, extraction and Maya capture are usable in the sampled
 paths. Full provider readiness is not established. The corrected image is

@@ -1,13 +1,13 @@
 # Argus operational follow-up
 
-- [ ] Complete the Janitor #296 runtime identity receipt. PR #162's admitted
-  image passed candidate gates but failed the pre-cutover Atlas restore schema
-  inventory. The cause and narrow fix are in
-  `docs/evidence/2026-09-29-restore-inventory-debug.md`. Merge the fix,
-  make a fresh backup with its fingerprint, prove disposable restore, admit
-  the exact selected image, promote, verify live `/api/ready`, then obtain a
-  natural Janitor OCI observation with a durable receipt. Production remains
-  at the prior image until the gate passes.
+- [ ] Confirm the next natural Janitor OCI observation of Argus source
+  `e8f36cf` has an archived receipt. The supervised OCI dispatch
+  [36538279239](https://github.com/Khamel83/janitor/actions/runs/36538279239)
+  already archived valid identity. PR #164 repaired the restore inventory;
+  fresh backup and disposable restore passed, and guarded promotion completed
+  its 1,800-second soak at 08:00 UTC on 2026-09-29. The new digest is current
+  and known-good; live `/api/ready` returns the source SHA. See the Homelab
+  dated Argus promotion receipt. Issue #296 has other fleet gates.
 - [x] Retire the old `oci-ts` AI Review workflow. PR #163 merged as `bdca7fb`.
   Keep public/fork CI on GitHub-hosted runners. Its separate image failed
   exact scorecard admission; issue triage from the old workflow has no

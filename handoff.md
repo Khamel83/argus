@@ -1,19 +1,22 @@
 # Execution result — September 7, 2026
 
-## Current checkpoint — restore inventory repair, 2026-09-29
+## Current checkpoint — Argus promotion, 2026-09-29
 
-Argus #162's admitted image passed all candidate gates after the Homelab
-network and MCP startup repairs, then failed closed before cutover at the
-shared PostgreSQL restore proof. A disposable comparison isolated the mismatch
-to two Atlas `dispatch_receipts` CHECK constraints: counts, columns, indexes,
-functions, and other constraints matched. PostgreSQL moved an equivalent
-varchar-to-text cast from the entire literal array onto its elements during
-dump/restore. This branch normalizes that narrow representation in the backup
-inventory hash; `docs/evidence/2026-09-29-restore-inventory-debug.md` has the
-diagnosis and proof plan. Next: exact
-review and CI, fresh backup and disposable restore using the merged code,
-digest admission, guarded promotion, live `/api/ready` identity, and a later
-Janitor natural receipt. Production and known-good still point to `15b8c7a`.
+PR #164 merged the narrow shared PostgreSQL inventory repair as `e8f36cf`.
+The new fingerprint passed a fresh backup and disposable Argus/Atlas restore.
+Exact digest `sha256:c8853fbe0d95d44f52bf68b0f5e579013c89bb07d722effa0abbe14e7f2df7df`
+passed isolated admission, candidate and rollback gates, production gates,
+and the 1,800-second soak. At 08:00 UTC the guarded promoter recorded that
+digest and source as both current and known-good. API and MCP containers are
+healthy; live `/api/ready` returns `ready=true` and source `e8f36cf` while
+capability status remains degraded. OCI Janitor dispatch 36538279239 archived
+a healthy observation with valid source identity. Next: verify a later natural
+Janitor schedule receipt; keep Homelab #296 open for its other fleet gates.
+The restore diagnosis is in `docs/evidence/2026-09-29-restore-inventory-debug.md`.
+A second supervised backup after cutover published generic job receipt
+`1790669110-1146348-10891` with `result=success`; the matching latest-set
+disposable restore recorded verification at 08:08 UTC. Natural daily backup
+and natural Janitor receipts remain to be observed.
 
 Argus #163 already merged as `bdca7fb`; its separate image failed exact
 scorecard admission. The old AI Review workflow is gone. Do not confuse that
