@@ -2,8 +2,9 @@
 
 - [x] Repair PR #166's terminal spend test clock race. Local Python 3.12
   provider-spend tests: 56 passed, 6 skipped.
-- [ ] Confirm required CI on the updated PR #166 head before merge. This
-  test-only change has no deployment or provider-effect claim.
+- [x] Confirm required CI on source/test commit `b8642be`: all eight checks
+  passed, including Python 3.11, 3.12, and 3.13. This test-only change has no
+  deployment or provider-effect claim.
 
 - [ ] Confirm the next natural Janitor OCI observation of Argus source
   `e8f36cf` has an archived receipt. The supervised OCI dispatch

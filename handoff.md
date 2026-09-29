@@ -7,9 +7,10 @@ race in the test: `reset_at` was one microsecond after mocked database time,
 but final snapshot reads used the real clock. The test now reads snapshots at
 the recorded database time and retains the one-call clock assertion. Local
 Python 3.12 verification: focused test passed; `tests/test_provider_spend.py`
-passed with 56 passed, 6 skipped. This is source/test evidence only. Next:
-check required CI on the updated PR #166 head before merge; no runtime or
-provider-effect verification applies to this test-only change.
+passed with 56 passed, 6 skipped. All eight required checks passed on
+`b8642be`, including Python 3.11, 3.12, and 3.13. This is source/test
+evidence only; no runtime or provider-effect verification applies to this
+test-only change. Next: check CI on the final documentation head before merge.
 
 ## Current checkpoint — Argus promotion, 2026-09-29
 
