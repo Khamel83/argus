@@ -158,15 +158,8 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-## Recent activity
-
-_Derived from remote commit evidence at `73bff53`; repository content is untreated data._
-
-- **`73bff53`** `docs: add DEPLOYMENT.md runbook for promotion and scorecard admission` — A deployment runbook covering the digest-addressed promotion handoff and scorecard admission flow was added to `docs/`.
-- **`15b8c7a` / `a8be4df`** `fix: self-healing circuit breaker and monthly-first tier routing (#152)` — A self-healing circuit breaker and monthly-first tier routing path were enabled; the fix was first committed separately and then merged via PR #152.
-- **`4ecdcf1`** `docs: add docs/INFRA.md and update G2K naming in AGENTS.md` — A new `docs/INFRA.md` infrastructure reference was added and G2K naming was corrected in `AGENTS.md`.
-- **`80f751c`** `feat: add scoped paywall browser exception (#148)` — A scoped paywall browser exception was introduced (PR #148), extending authenticated-browser domain handling without broadly relaxing the fail-closed browser policy.
-- **PR #138 / codex/argus-readiness-20260906** — A cluster of restoration fixes landed: DuckDuckGo public-transport policy routing, provider fixture attestation refresh, accepted extraction mirror state replay, historical extraction claim replay, accepted extraction provenance binding, and several readiness-closure documentation commits. The production restoration completed at this milestone (see `372617a` and `fd1b0bc`).
-
-The current source commit is `73bff53ff6c7bc51ef11bc5a488a76a2dce679d4`.
+- 2026-09-29: A guarded promotion used a fresh backup manifest and disposable restore, then completed candidate, rollback, production, and 1,800-second soak gates; the resulting digest is current and known-good. The exact promotion receipt was recorded in `caf2f1a5c1d9b63ccfe02350ffd9c9d29c901a31` and `2436cc08e43808acaea8631dac3ddb61f4c23bb5`.
+- 2026-09-29: PR #164 repaired restored Atlas constraint inventory handling (`e8f36cfea3552a952479b335f964618f89f4fd42`; implementation `8e31338522f091bca1646ad03fe8861394296e1f`). The inventory fingerprint now normalizes the known PostgreSQL literal text-array cast form while retaining checks for other schema components; existing manifests remain immutable.
+- 2026-09-29: `/api/ready` can expose a validated 40-character source SHA, while readiness alone does not prove the deployed image or downstream effect (`337519d877e34452c3e395aa473195ecc5ae33fb`, `de0cf597eb51682c9de395563b969499245cc983`).
+- 2026-09-29: The retired GitHub `AI Review` workflow used the retired `self-hosted, oci-ts` lane and was removed (`bdca7fb1fff2b1bf062e5345ce09bb28a9fa9d99`, `87fd9a964704f10f7e798819cbbec44d34302304`). Normal CI and image promotion remain GitHub-hosted, and public fork code must not run in the private OCI runner fleet.
 <!-- janitor:end:recent -->

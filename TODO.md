@@ -39,9 +39,10 @@ SearchAPI has no configured key. Valyu must remain account-blocked if it rejects
 the bounded request; this checklist does not authorize billing changes, quota
 resets, credential rotation or repeated provider tests.
 <!-- janitor:begin:todo -->
-## Open follow-ups
+- [ ] Confirm the next natural Janitor OCI observation of Argus source `e8f36cf` has an archived receipt. The supervised OCI dispatch [36538279239](https://github.com/Khamel83/janitor/actions/runs/36538279239) already archived valid identity. PR #164 repaired the restore inventory; fresh backup and disposable restore passed, and guarded promotion completed its 1,800-second soak at 08:00 UTC on 2026-09-29. The new digest is current and known-good; live `/api/ready` returns the source SHA. See the Homelab dated Argus promotion receipt. Issue #296 has other fleet gates.
+- [x] Retire the old `oci-ts` AI Review workflow. PR #163 merged as `bdca7fb`. Keep public/fork CI on GitHub-hosted runners. Its separate image failed exact scorecard admission; issue triage from the old workflow has no replacement proven here.
 
-_Updated from remote TODO.md evidence (base: 2026-09-07). A checked item does not imply every provider has passed a live call._
+Updated September 7, 2026. The current dated capability evidence belongs in [public status](docs/STATUS.md); the private audit preserves raw receipts. A checked source task does not imply every provider has passed a live call.
 
 - [x] Bound authenticated admin provider canaries to one uncached result and one consumed authorization, with no fallback.
 - [x] Restore canonical vault projection, Wolfram naming, explicit account registration and retained scoped caller/Maya configuration.
