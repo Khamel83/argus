@@ -1305,6 +1305,10 @@ def _inventory(cursor, tables: set[str], row_counts: dict[str, int]) -> dict[str
         raise RuntimeError("database contains unvalidated foreign-key constraints")
     cursor.execute(_SCHEMA_CONSTRAINT_QUERY)
     constraints = [list(row) for row in cursor.fetchall()]
+    stable_constraints = [
+        [name, table, _normalize_restored_check_array_casts(definition)]
+        for name, table, definition in constraints
+    ]
     cursor.execute(_SCHEMA_INDEX_QUERY)
     indexes = [list(row) for row in cursor.fetchall()]
     cursor.execute(_SCHEMA_FUNCTION_QUERY)
@@ -1312,7 +1316,7 @@ def _inventory(cursor, tables: set[str], row_counts: dict[str, int]) -> dict[str
     schema_state = {
         "tables": sorted(tables),
         "columns": columns,
-        "constraints": constraints,
+        "constraints": stable_constraints,
         "indexes": indexes,
         "functions": functions,
     }
@@ -1331,6 +1335,46 @@ def _inventory(cursor, tables: set[str], row_counts: dict[str, int]) -> dict[str
         "indexes": indexes,
         "functions": functions,
     }
+
+
+def _normalize_restored_check_array_casts(definition: str) -> str:
+    """Canonicalize PostgreSQL's two spellings of a literal text ANY array.
+
+    pg_dump/pg_restore may move an unbounded varchar-to-text cast from the
+    complete array onto each literal. Restrict this rewrite to literal-only
+    arrays inside CHECK expressions; other definitions retain exact hashing.
+    """
+    if not definition.startswith("CHECK (") or "ANY (" not in definition:
+        return definition
+
+    literal = r"'(?:''|[^'])*'"
+    source_item = rf"{literal}::character varying"
+    restored_item = rf"\({source_item}\)::text"
+    source_array = re.compile(
+        rf"\(\(ARRAY\[((?:{source_item})(?:, {source_item})*)\]\)::text\[\]\)"
+    )
+    restored_array = re.compile(
+        rf"ARRAY\[((?:{restored_item})(?:, {restored_item})*)\]"
+    )
+
+    def canonical_items(items: str) -> str:
+        return re.sub(r"::character varying", "::text", items)
+
+    definition = source_array.sub(
+        lambda match: "(ARRAY[" + canonical_items(match.group(1)) + "])",
+        definition,
+    )
+    definition = restored_array.sub(
+        lambda match: "ARRAY["
+        + re.sub(
+            rf"\(({literal}::character varying)\)::text",
+            lambda item: item.group(1).replace("::character varying", "::text"),
+            match.group(1),
+        )
+        + "]",
+        definition,
+    )
+    return definition
 
 
 def _compare_inventory(

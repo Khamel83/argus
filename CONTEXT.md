@@ -6,6 +6,14 @@ can identify the actual release without admin access. Absence of a validated
 SHA means runtime identity remains unknown; readiness alone does not prove
 the deployed image or downstream effect.
 
+Shared PostgreSQL backup manifests bind archive checksums, exact row counts,
+and a schema fingerprint to both Argus and Atlas. PostgreSQL can deparse an
+equivalent literal text-array `CHECK` expression differently after restore.
+The inventory fingerprint normalizes only that known cast form; every other
+schema component remains checked. Existing manifests remain immutable and
+need a fresh backup after a fingerprint change. See
+`docs/evidence/2026-09-29-restore-inventory-debug.md`.
+
 The old GitHub `AI Review` workflow requested `self-hosted, oci-ts`, a retired
 runner lane. The separately managed OCI PR reviewer submitted exact-head
 reviews on recent Argus PRs. Normal CI and image promotion remain GitHub-hosted;

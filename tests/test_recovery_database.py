@@ -973,6 +973,45 @@ def test_restored_source_inventory_accepts_manifest_projection_and_rejects_drift
             )
 
 
+def test_restore_inventory_normalizes_literal_text_array_check_deparse():
+    from argus.recovery.database import _normalize_restored_check_array_casts
+
+    source = (
+        "CHECK (((state)::text = ANY ((ARRAY['processing'::character varying, "
+        "'done'::character varying])::text[])))"
+    )
+    restored = (
+        "CHECK (((state)::text = ANY (ARRAY[('processing'::character varying)::text, "
+        "('done'::character varying)::text])))"
+    )
+    assert _normalize_restored_check_array_casts(source) == (
+        _normalize_restored_check_array_casts(restored)
+    )
+    source_completion = (
+        "CHECK (((((state)::text = 'done'::text) AND (canonical_content_id IS NOT NULL) "
+        "AND (drop_sha256 IS NOT NULL)) OR (((state)::text = ANY "
+        "((ARRAY['processing'::character varying, 'not-mine'::character varying])::text[])) "
+        "AND (canonical_content_id IS NULL) AND (drop_sha256 IS NULL))))"
+    )
+    restored_completion = (
+        "CHECK (((((state)::text = 'done'::text) AND (canonical_content_id IS NOT NULL) "
+        "AND (drop_sha256 IS NOT NULL)) OR (((state)::text = ANY "
+        "(ARRAY[('processing'::character varying)::text, "
+        "('not-mine'::character varying)::text])) AND (canonical_content_id IS NULL) "
+        "AND (drop_sha256 IS NULL))))"
+    )
+    assert _normalize_restored_check_array_casts(source_completion) == (
+        _normalize_restored_check_array_casts(restored_completion)
+    )
+    changed = restored.replace("'done'", "'failed'")
+    assert _normalize_restored_check_array_casts(changed) != (
+        _normalize_restored_check_array_casts(source)
+    )
+    assert _normalize_restored_check_array_casts("CHECK (amount > 0)") == (
+        "CHECK (amount > 0)"
+    )
+
+
 def test_recovery_schema_head_tracks_alembic_head():
     from alembic.config import Config
     from alembic.script import ScriptDirectory
