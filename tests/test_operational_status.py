@@ -2648,7 +2648,14 @@ def test_maya_worker_uses_real_dispatcher_outcomes(
             repository.operational_status.call_args.kwargs["stop_event"],
             threading.Event,
         )
-        assert service.full_status()["dependencies"]["maya"]["state"] == expected_state
+        # run_once increments calls before the worker records the resulting
+        # observation; allow that asynchronous handoff to finish.
+        deadline = time.monotonic() + 1
+        state = service.full_status()["dependencies"]["maya"]["state"]
+        while state != expected_state and time.monotonic() < deadline:
+            time.sleep(0.01)
+            state = service.full_status()["dependencies"]["maya"]["state"]
+        assert state == expected_state
 
 
 def test_outbox_compaction_failure_does_not_rewrite_maya_delivery_evidence(

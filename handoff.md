@@ -9,6 +9,11 @@ The existing admin status remains separate. This is source work, not an Argus
 deployment or a natural Janitor receipt. Next: exact-head review and merge,
 then use the private Argus promotion procedure to install the reviewed image
 and verify `/api/ready` plus a later natural Janitor archive receipt.
+The first PR #162 CI run failed one Python 3.12 test because its fake Maya
+dispatcher increments a call counter before the asynchronous status
+observation is recorded. A bounded wait for the expected observation was
+added in that test; 10 focused repeats and all 84 operational status tests
+passed locally. Require fresh exact-head CI and review on the amended PR.
 
 The requested restoration deployment has completed its required soak. See
 [STATUS](docs/STATUS.md) for the exact deployed image, all provider outcomes,
