@@ -1,5 +1,16 @@
 # Execution result — September 7, 2026
 
+## PR #166 source checkpoint — 2026-09-29
+
+The Python 3.12 CI failure in the terminal spend fanout test was an expiry
+race in the test: `reset_at` was one microsecond after mocked database time,
+but final snapshot reads used the real clock. The test now reads snapshots at
+the recorded database time and retains the one-call clock assertion. Local
+Python 3.12 verification: focused test passed; `tests/test_provider_spend.py`
+passed with 56 passed, 6 skipped. This is source/test evidence only. Next:
+check required CI on the updated PR #166 head before merge; no runtime or
+provider-effect verification applies to this test-only change.
+
 ## Current checkpoint — Argus promotion, 2026-09-29
 
 PR #164 merged the narrow shared PostgreSQL inventory repair as `e8f36cf`.
