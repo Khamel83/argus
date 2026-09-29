@@ -2,6 +2,19 @@
 
 ## Current checkpoint — Janitor identity gate, 2026-09-29
 
+The old `AI Review` workflow used the retired `oci-ts` lane and remained
+queued on public PRs. The separate OCI reviewer passed Argus PR #162 at its
+exact final head. This branch removes the dead workflow; merge it only after
+the current Argus image promotion settles, because every main push starts a
+new image build. The old workflow's issue-triage path was also unavailable;
+no replacement issue-triage receipt is claimed.
+
+PR #162 merged as `337519d`. Its first image promotion failed closed with
+`admission_failed`; the prior production image remained current. The exact
+digest's isolated scorecard was in progress at this checkpoint. Verify its
+admission, rerun guarded promotion, and read back live `/api/ready` before
+claiming source identity or Janitor schedule acceptance.
+
 Homelab #296's scheduled Janitor receipt saw Argus `/api/ready` return without
 a source SHA. This branch adds only a validated source SHA to that cached
 public readiness response and covers both valid and unknown revision cases.

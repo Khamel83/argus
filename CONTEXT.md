@@ -6,6 +6,13 @@ can identify the actual release without admin access. Absence of a validated
 SHA means runtime identity remains unknown; readiness alone does not prove
 the deployed image or downstream effect.
 
+The old GitHub `AI Review` workflow requested `self-hosted, oci-ts`, a retired
+runner lane. The separately managed OCI PR reviewer submitted exact-head
+reviews on recent Argus PRs. Normal CI and image promotion remain GitHub-hosted;
+public fork code must not run in the private OCI runner fleet. Retiring the old
+workflow removes its queued jobs and its unused issue-triage path, without
+changing the deployed Argus service.
+
 > **What this file is for:** background, glossary, and architectural decisions
 > that don't belong in [README.md](README.md) (user-facing) or
 > [AGENTS.md](AGENTS.md) (AI-agent conventions). Add entries here when a term
