@@ -474,10 +474,11 @@ def test_terminal_fanout_rolls_back_fault_and_uses_one_database_time(tmp_path):
     ]
     assert len(terminal_rows) == 4
     assert {row.expires_at for row in terminal_rows} == {reset_at}
-    assert [
-        service.snapshot(ProviderName.BRAVE, request_class=mode).spend
-        for mode in modes
-    ] == ["exhausted"] * 4
+    with patch.object(readiness, "authority_now", return_value=database_now):
+        assert [
+            service.snapshot(ProviderName.BRAVE, request_class=mode).spend
+            for mode in modes
+        ] == ["exhausted"] * 4
 
 
 def test_unknown_outcome_never_expires_or_refunds_automatically(tmp_path):

@@ -1,5 +1,10 @@
 # Argus operational follow-up
 
+- [x] Repair PR #166's terminal spend test clock race. Local Python 3.12
+  provider-spend tests: 56 passed, 6 skipped.
+- [ ] Confirm required CI on the updated PR #166 head before merge. This
+  test-only change has no deployment or provider-effect claim.
+
 - [ ] Confirm the next natural Janitor OCI observation of Argus source
   `e8f36cf` has an archived receipt. The supervised OCI dispatch
   [36538279239](https://github.com/Khamel83/janitor/actions/runs/36538279239)

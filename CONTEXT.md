@@ -1,5 +1,11 @@
 # Context
 
+The terminal spend fanout test uses a reset one microsecond after a mocked
+database time to check that all scopes share one timestamp. Snapshot reads
+must use that same authority time: the real clock can pass the reset before
+the assertions, at which point `unknown` is the correct spend state. The
+one-call assertion still checks the production fanout's clock use.
+
 Argus `/api/ready` is a public cached readiness projection. A validated
 40-character source SHA may be included so a read-only Janitor observation
 can identify the actual release without admin access. Absence of a validated
