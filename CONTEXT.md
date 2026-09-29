@@ -14,6 +14,11 @@ schema component remains checked. Existing manifests remain immutable and
 need a fresh backup after a fingerprint change. See
 `docs/evidence/2026-09-29-restore-inventory-debug.md`.
 
+The 2026-09-29 guarded promotion used a fresh manifest and disposable restore,
+then completed candidate, rollback, production, and 1,800-second soak gates.
+Its exact digest is both current and known-good. Runtime identity, a Janitor
+archived operation, and a later natural schedule are separate acceptance facts.
+
 The old GitHub `AI Review` workflow requested `self-hosted, oci-ts`, a retired
 runner lane. The separately managed OCI PR reviewer submitted exact-head
 reviews on recent Argus PRs. Normal CI and image promotion remain GitHub-hosted;
