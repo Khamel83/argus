@@ -1,10 +1,14 @@
 # Argus operational follow-up
 
-- [ ] Complete the Janitor #296 runtime identity receipt: merge the minimal
-  `/api/ready` source-SHA change after exact-head review, promote the exact
-  image through Argus's existing release gate, then verify Janitor's natural
-  OCI observation and durable receipt. Source tests alone do not prove the
-  deployed Argus response.
+- [ ] Complete the Janitor #296 runtime identity receipt. PR #162 merged as
+  `337519d`, but its first image promotion failed closed because the exact
+  scorecard admission was missing. Run that isolated admission, promote the
+  exact image through the existing gate, then verify live `/api/ready` and a
+  natural Janitor OCI observation with a durable receipt.
+- [ ] Retire the old `oci-ts` AI Review workflow after exact-head review. Its
+  runner lane is retired; the separate OCI PR reviewer handled recent Argus
+  PR #162. Keep public/fork CI on GitHub-hosted runners. Issue triage from
+  this old workflow has no replacement proven here.
 
 Updated September 7, 2026. The current dated capability evidence belongs in
 [public status](docs/STATUS.md); the private audit preserves raw receipts.
