@@ -10,7 +10,7 @@ turning them into container restart storms.
 |---|---|---|---|
 | `GET /api/live` | Public | Always `200` while the event loop can serve | Constant process liveness. It performs no broker, database, provider, Maya, browser, or network I/O, and is exempt from request rate limits. Docker health uses this route. |
 | `GET /api/startup` | Public | `200` | Minimal cached initialization state and loaded package version. |
-| `GET /api/ready` | Public | `200` when ready or degraded; `503` when unready | Minimal cached readiness. It never probes a dependency in the request. |
+| `GET /api/ready` | Public | `200` when ready or degraded; `503` when unready | Minimal cached readiness and validated source SHA when available. It never probes a dependency in the request. |
 | `GET /api/admin/status` | Admin token | `200` | Full operator view: build/deployment/instance identity, authority and schema identity, capabilities, typed observations, promotion state, and bounded metrics. |
 | `GET /api/health` | Public | `200` | Liveness-only compatibility surface. It is deliberately safe for old health checks but new deployments should use `/api/live`. |
 

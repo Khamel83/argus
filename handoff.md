@@ -1,5 +1,15 @@
 # Execution result — September 7, 2026
 
+## Current checkpoint — Janitor identity gate, 2026-09-29
+
+Homelab #296's scheduled Janitor receipt saw Argus `/api/ready` return without
+a source SHA. This branch adds only a validated source SHA to that cached
+public readiness response and covers both valid and unknown revision cases.
+The existing admin status remains separate. This is source work, not an Argus
+deployment or a natural Janitor receipt. Next: exact-head review and merge,
+then use the private Argus promotion procedure to install the reviewed image
+and verify `/api/ready` plus a later natural Janitor archive receipt.
+
 The requested restoration deployment has completed its required soak. See
 [STATUS](docs/STATUS.md) for the exact deployed image, all provider outcomes,
 MCP/extraction/Maya evidence and limitations, and [TODO](TODO.md) for remaining

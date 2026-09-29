@@ -1,5 +1,11 @@
 # Context
 
+Argus `/api/ready` is a public cached readiness projection. A validated
+40-character source SHA may be included so a read-only Janitor observation
+can identify the actual release without admin access. Absence of a validated
+SHA means runtime identity remains unknown; readiness alone does not prove
+the deployed image or downstream effect.
+
 > **What this file is for:** background, glossary, and architectural decisions
 > that don't belong in [README.md](README.md) (user-facing) or
 > [AGENTS.md](AGENTS.md) (AI-agent conventions). Add entries here when a term

@@ -1,5 +1,11 @@
 # Argus operational follow-up
 
+- [ ] Complete the Janitor #296 runtime identity receipt: merge the minimal
+  `/api/ready` source-SHA change after exact-head review, promote the exact
+  image through Argus's existing release gate, then verify Janitor's natural
+  OCI observation and durable receipt. Source tests alone do not prove the
+  deployed Argus response.
+
 Updated September 7, 2026. The current dated capability evidence belongs in
 [public status](docs/STATUS.md); the private audit preserves raw receipts.
 A checked source task does not imply every provider has passed a live call.
