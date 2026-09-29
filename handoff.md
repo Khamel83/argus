@@ -1,6 +1,25 @@
 # Execution result — September 7, 2026
 
-## Current checkpoint — Janitor identity gate, 2026-09-29
+## Current checkpoint — restore inventory repair, 2026-09-29
+
+Argus #162's admitted image passed all candidate gates after the Homelab
+network and MCP startup repairs, then failed closed before cutover at the
+shared PostgreSQL restore proof. A disposable comparison isolated the mismatch
+to two Atlas `dispatch_receipts` CHECK constraints: counts, columns, indexes,
+functions, and other constraints matched. PostgreSQL moved an equivalent
+varchar-to-text cast from the entire literal array onto its elements during
+dump/restore. This branch normalizes that narrow representation in the backup
+inventory hash; `docs/evidence/2026-09-29-restore-inventory-debug.md` has the
+diagnosis and proof plan. Next: exact
+review and CI, fresh backup and disposable restore using the merged code,
+digest admission, guarded promotion, live `/api/ready` identity, and a later
+Janitor natural receipt. Production and known-good still point to `15b8c7a`.
+
+Argus #163 already merged as `bdca7fb`; its separate image failed exact
+scorecard admission. The old AI Review workflow is gone. Do not confuse that
+image's admission failure with #162's restore-proof failure.
+
+## Historical checkpoint — Janitor identity gate, 2026-09-29
 
 The old `AI Review` workflow used the retired `oci-ts` lane and remained
 queued on public PRs. The separate OCI reviewer passed Argus PR #162 at its
