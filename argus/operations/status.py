@@ -701,11 +701,15 @@ class OperationalStatusService:
     def readiness_status(self) -> dict[str, Any]:
         dependencies, providers = self._render()
         status, reasons = self._classification(dependencies, providers)
-        return {
+        result = {
             "status": status,
             "ready": status != "unready",
             "reason_codes": reasons[:16],
         }
+        source_revision = self.build.get("source_revision")
+        if isinstance(source_revision, str) and _FULL_REVISION.fullmatch(source_revision):
+            result["source_sha"] = source_revision
+        return result
 
     def full_status(self) -> dict[str, Any]:
         dependencies, providers = self._render()

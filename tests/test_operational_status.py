@@ -523,6 +523,7 @@ def test_public_status_is_minimal_and_admin_status_is_authenticated(monkeypatch)
     assert set(startup.json()) == {"status", "initialized", "version"}
     assert ready.status_code == 200
     assert ready.json()["status"] == "degraded"
+    assert ready.json()["source_sha"] == "a" * 40
     assert "dependencies" not in ready.json()
     assert "evidence_at" not in str(ready.json())
     assert denied.status_code == 401
@@ -552,6 +553,16 @@ def test_cached_readiness_returns_503_without_calling_dependencies():
 
     assert response.status_code == 503
     assert response.json()["status"] == "unready"
+    assert response.json()["source_sha"] == "a" * 40
+
+
+def test_cached_readiness_omits_unverified_source_revision():
+    service = _service()
+    service.build["source_revision"] = "unknown"
+
+    payload = service.readiness_status()
+
+    assert "source_sha" not in payload
 
 
 def test_invalid_request_id_is_replaced_and_never_used_as_a_metric_label():
@@ -2637,7 +2648,14 @@ def test_maya_worker_uses_real_dispatcher_outcomes(
             repository.operational_status.call_args.kwargs["stop_event"],
             threading.Event,
         )
-        assert service.full_status()["dependencies"]["maya"]["state"] == expected_state
+        # run_once increments calls before the worker records the resulting
+        # observation; allow that asynchronous handoff to finish.
+        deadline = time.monotonic() + 1
+        state = service.full_status()["dependencies"]["maya"]["state"]
+        while state != expected_state and time.monotonic() < deadline:
+            time.sleep(0.01)
+            state = service.full_status()["dependencies"]["maya"]["state"]
+        assert state == expected_state
 
 
 def test_outbox_compaction_failure_does_not_rewrite_maya_delivery_evidence(
