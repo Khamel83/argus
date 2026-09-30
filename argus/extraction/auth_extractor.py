@@ -289,6 +289,9 @@ async def extract_authenticated(url: str, domain: str) -> Optional[ExtractedCont
                 text=extracted,
                 word_count=word_count,
                 extractor=ExtractorName.AUTH,
+                source_type="authenticated",
+                auth_used=True,
+                cookies_used=True,
             )
 
         finally:

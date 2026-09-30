@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import inspect
 import os
+from uuid import uuid4
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import urlsplit
 
@@ -366,6 +367,12 @@ def _request_id(request: object | None) -> str:
     return "browser-policy"
 
 
+def _admission_receipt_ref() -> str:
+    """Return a non-sensitive identity for one browser admission."""
+
+    return f"browser-admission:{uuid4().hex[:24]}"
+
+
 def _failure(
     request: object | None,
     reason: str = _BROWSER_POLICY_UNAVAILABLE,
@@ -460,9 +467,10 @@ class _BrowserAdmissionRuntime:
 class BrowserAdmission:
     """Bound browser lease after connection-policy admission.
 
-    ``basis`` is the admission receipt: ``attestation`` when an external
-    authority vouched for the browser network, or ``auth_browser_exception``
-    when the scoped paywall exception admitted it with no attestation.
+    ``basis`` and ``receipt_ref`` are the admission receipt: ``attestation``
+    when an external authority vouched for the browser network, or
+    ``auth_browser_exception`` when the scoped paywall exception admitted it
+    with no attestation.  ``exception_ref`` identifies the configured scope.
     """
 
     request: AcquisitionRequest
@@ -472,6 +480,7 @@ class BrowserAdmission:
     max_resources: int
     basis: str = ADMISSION_BASIS_ATTESTATION
     exception_ref: str = ""
+    receipt_ref: str = ""
     _runtime: _BrowserAdmissionRuntime = field(
         default_factory=_BrowserAdmissionRuntime,
         repr=False,
@@ -561,7 +570,10 @@ def _auth_browser_exception_domain(request: AcquisitionRequest) -> str | None:
 
     from ..extraction.cookies import get_cookie_path, needs_auth
 
-    if not needs_auth(request.normalized_url) or get_cookie_path(host) is None:
+    cookie_path = get_cookie_path(host)
+    if not needs_auth(request.normalized_url) or cookie_path is None:
+        return None
+    if not cookie_path.is_file():
         return None
     return matched
 
@@ -627,6 +639,7 @@ def require_browser_policy(
             max_resources=request.limits.max_resource_count,
             basis=ADMISSION_BASIS_AUTH_BROWSER_EXCEPTION,
             exception_ref=f"{AUTH_BROWSER_DOMAINS_ENV}:{exception_domain}",
+            receipt_ref=_admission_receipt_ref(),
         )
     checked = _normalise_attestation(attestation)
     # ``validate_browser_attestation`` above guarantees this branch.  Keep the
@@ -640,6 +653,7 @@ def require_browser_policy(
         admitted_at=admitted_at,
         expires_at=checked.expires_at,
         max_resources=request.limits.max_resource_count,
+        receipt_ref=_admission_receipt_ref(),
     )
 
 

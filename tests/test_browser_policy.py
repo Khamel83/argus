@@ -495,7 +495,7 @@ async def test_auth_browser_exception_keeps_the_same_origin_resource_guard(
 
     same_origin = SimpleNamespace(
         request=SimpleNamespace(
-            url="https://www.nytimes.com/svc/article.json", resource_type="xhr"
+            url="https://www.nytimes.com/svc/article.json", resource_type="document"
         ),
         continue_=AsyncMock(),
         abort=AsyncMock(),
@@ -505,7 +505,7 @@ async def test_auth_browser_exception_keeps_the_same_origin_resource_guard(
 
     cross_origin = SimpleNamespace(
         request=SimpleNamespace(
-            url="https://static01.nyt.com/app.js", resource_type="script"
+            url="https://example.com/login", resource_type="document"
         ),
         continue_=AsyncMock(),
         abort=AsyncMock(),
@@ -516,3 +516,148 @@ async def test_auth_browser_exception_keeps_the_same_origin_resource_guard(
     assert admission.blocked_resources[-1][2] == (
         "cross-origin authenticated resource blocked"
     )
+
+
+def test_auth_browser_exception_receipt_identifies_basis_and_is_per_admission(
+    paywall_cookies, monkeypatch
+):
+    monkeypatch.setenv("ARGUS_AUTH_BROWSER_DOMAINS", "nytimes.com,wsj.com")
+
+    nyt = require_browser_policy(_auth_request(_NYT_ARTICLE), None)
+    wsj = require_browser_policy(_auth_request(_WSJ_ARTICLE), None)
+
+    assert isinstance(nyt, BrowserAdmission)
+    assert isinstance(wsj, BrowserAdmission)
+    assert nyt.basis == "auth_browser_exception"
+    assert wsj.basis == "auth_browser_exception"
+    assert nyt.exception_ref == "ARGUS_AUTH_BROWSER_DOMAINS:nytimes.com"
+    assert wsj.exception_ref == "ARGUS_AUTH_BROWSER_DOMAINS:wsj.com"
+    assert nyt.receipt_ref.startswith("browser-admission:")
+    assert wsj.receipt_ref.startswith("browser-admission:")
+    assert nyt.receipt_ref != wsj.receipt_ref
+
+
+class _AuthBrowserResponse:
+    status = 200
+
+
+class _AuthBrowserPage:
+    def __init__(self, url):
+        self.url = url
+        self.closed = False
+
+    async def goto(self, *_args, **_kwargs):
+        return _AuthBrowserResponse()
+
+    async def wait_for_timeout(self, _milliseconds):
+        return None
+
+    async def content(self):
+        return "<html><article>paywalled content</article></html>"
+
+    async def title(self):
+        return "Subscriber article"
+
+    async def close(self):
+        self.closed = True
+
+
+class _AuthBrowserContext:
+    def __init__(self, url):
+        self.url = url
+        self.page = _AuthBrowserPage(url)
+        self.routes = []
+        self.websocket_routes = []
+        self.cookies = []
+
+    def route(self, pattern, handler):
+        self.routes.append((pattern, handler))
+
+    def route_web_socket(self, pattern, handler):
+        self.websocket_routes.append((pattern, handler))
+
+    async def add_cookies(self, cookies):
+        self.cookies = cookies
+
+    async def new_page(self):
+        return self.page
+
+
+class _AuthBrowser:
+    def __init__(self):
+        self.contexts = []
+
+    def is_connected(self):
+        return True
+
+    async def new_context(self, **_kwargs):
+        context = _AuthBrowserContext("")
+        self.contexts.append(context)
+        return context
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("url", "domain"),
+    [(_NYT_ARTICLE, "nytimes.com"), (_WSJ_ARTICLE, "wsj.com")],
+)
+async def test_authenticated_extractor_uses_exception_for_allowlisted_paywall(
+    tmp_path, monkeypatch, url, domain
+):
+    import argus.extraction.auth_extractor as auth_extractor
+    import argus.extraction.cookies as cookies
+
+    monkeypatch.setattr(cookies, "_last_auth_request", {})
+    monkeypatch.setenv("ARGUS_COOKIE_DIR", str(tmp_path))
+    monkeypatch.setenv("ARGUS_AUTH_BROWSER_DOMAINS", domain)
+    (tmp_path / f"{domain}.json").write_text(
+        '[{"name":"session","value":"cookie","domain":".%s","path":"/"}]' % domain
+    )
+    monkeypatch.setattr(
+        auth_extractor,
+        "_extract_from_html",
+        lambda _html: " ".join(["subscriber"] * 200),
+    )
+    browser = _AuthBrowser()
+    monkeypatch.setattr(auth_extractor, "_browser", browser)
+    monkeypatch.setattr(auth_extractor, "_playwright_instance", None)
+    monkeypatch.setattr(auth_extractor, "_contexts", {})
+
+    result = await auth_extractor.extract_authenticated(url, domain)
+
+    assert result is not None
+    assert result.error is None
+    assert result.auth_used is True
+    assert result.cookies_used is True
+    assert browser.contexts[0].cookies
+    assert browser.contexts[0].routes
+    assert browser.contexts[0].websocket_routes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("url", "domain"),
+    [(_NYT_ARTICLE, "nytimes.com"), (_WSJ_ARTICLE, "wsj.com")],
+)
+async def test_authenticated_extractor_stays_fail_closed_when_exception_is_off(
+    tmp_path, monkeypatch, url, domain
+):
+    import argus.extraction.auth_extractor as auth_extractor
+    import argus.extraction.cookies as cookies
+
+    monkeypatch.setattr(cookies, "_last_auth_request", {})
+    monkeypatch.setenv("ARGUS_COOKIE_DIR", str(tmp_path))
+    monkeypatch.delenv("ARGUS_AUTH_BROWSER_DOMAINS", raising=False)
+    (tmp_path / f"{domain}.json").write_text(
+        '[{"name":"session","value":"cookie","domain":".%s","path":"/"}]' % domain
+    )
+    browser = _AuthBrowser()
+    monkeypatch.setattr(auth_extractor, "_browser", browser)
+    monkeypatch.setattr(auth_extractor, "_playwright_instance", None)
+    monkeypatch.setattr(auth_extractor, "_contexts", {})
+
+    result = await auth_extractor.extract_authenticated(url, domain)
+
+    assert result is not None
+    assert result.error == "auth: browser_policy_unavailable"
+    assert not browser.contexts
