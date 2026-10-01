@@ -45,15 +45,17 @@ SearchAPI has no configured key. Valyu must remain account-blocked if it rejects
 the bounded request; this checklist does not authorize billing changes, quota
 resets, credential rotation or repeated provider tests.
 <!-- janitor:begin:todo -->
-- [ ] Confirm the next natural Janitor OCI observation of Argus source `e8f36cf` has an archived receipt. Supervised OCI dispatch [36538279239](https://github.com/Khamel83/janitor/actions/runs/36538279239) archived valid identity; PR #164's fresh backup and disposable restore passed, and guarded promotion completed its 1,800-second soak on 2026-09-29. The new digest is current and known-good, and live `/api/ready` returns the source SHA.
-- [ ] Correct extraction release configuration/binding and preserve the full source URL; existing receipts remain unchanged.
-- [ ] Admit a real external browser-network authority/attestation and prove a browser-assisted extraction; keep browser access fail-closed meanwhile.
+## Todo
+
+- [ ] Confirm the next natural Janitor OCI observation of Argus source `e8f36cf` has an archived receipt. The supervised OCI dispatch [36538279239](https://github.com/Khamel83/janitor/actions/runs/36538279239) already archived valid identity. PR #164 repaired the restore inventory; fresh backup and disposable restore passed, and guarded promotion completed its 1,800-second soak at 08:00 UTC on 2026-09-29. The new digest is current and known-good; live `/api/ready` returns the source SHA. See the Homelab dated Argus promotion receipt. Issue #296 has other fleet gates.
+- [ ] Correct extraction release configuration/binding and preserve full source URL; existing receipts remain unchanged.
+- [ ] Admit a real external browser-network authority/attestation and prove a browser-assisted extraction. Keep browser access fail-closed meanwhile.
 - [ ] Obtain fresh authorized validation for providers whose one-call canary failed before the transport repair; preserve those failures and uncertain reservations.
-- [ ] Reconcile uncertain provider charges only with authoritative provider evidence; never convert an HTTP rejection into assumed zero spend.
-- [ ] Automate the exact digest scorecard-admission handoff and retain bounded residual semantics when the evaluator is absent.
-- [ ] Close remaining pool/lifespan, authenticated-browser shutdown, and workflow shutdown/finalization debt.
+- [ ] Reconcile uncertain provider charges only with authoritative provider evidence. Never convert an HTTP rejection into assumed zero spend.
+- [ ] Automate the exact digest scorecard-admission handoff; retain bounded residual semantics when the evaluator is absent.
+- [ ] Close remaining pool/lifespan, authenticated-browser shutdown and workflow shutdown/finalization debt.
 - [ ] Review the optional workflow LLM gateway's admission and error boundary before enabling it as a production capability.
 - [ ] Add deliberate type/format governance separately from restoration; do not reformat unrelated user work.
 
-SearchAPI has no configured key. Valyu must remain account-blocked if it rejects the bounded request; this checklist does not authorize billing changes, quota resets, credential rotation, or repeated provider tests.
+SearchAPI has no configured key. Valyu must remain account-blocked if it rejects the bounded request; this checklist does not authorize billing changes, quota resets, credential rotation or repeated provider tests.
 <!-- janitor:end:todo -->

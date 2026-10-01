@@ -164,9 +164,12 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-- `4f8f0a5bd65ad45ae57079e6ada8f8a427ffc50a` froze authority time for terminal spend snapshots; the test uses one timestamp across scopes, while snapshot reads correctly report `unknown` if the real clock has already passed the reset.
-- `724266a48c1bf971507dba9b64df8ac35a55ecd5` recorded passing PR #166 CI; the remote TODO records all eight required checks passing on `b8642be`, including Python 3.11, 3.12, and 3.13.
-- `8e31338522f091bca1646ad03fe8861394296e1f` stabilized the restored Atlas constraint inventory. The remote context records that fresh backup and disposable restore passed, followed by guarded candidate, rollback, production, and 1,800-second soak gates; the resulting digest is current and known-good, but runtime identity, an archived Janitor operation, and a later natural schedule remain separate acceptance facts.
-- `de0cf597eb51682c9de395563b969499245cc983` exposed a validated source SHA through public cached `/api/ready`; absence of a validated SHA still leaves runtime identity unknown, and readiness does not prove the deployed image or downstream effect.
-- `87fd9a964704f10f7e798819cbbec44d34302304` retired the queued legacy `oci-ts` AI Review workflow. Normal CI and image promotion remain GitHub-hosted, and public fork code must not run on the private OCI runner fleet; the change does not alter the deployed Argus service.
+## Recent
+
+- `5af0ddc41ad94c9853f4d970092d4890c50e2c4c` — synchronized shared agent rules. The commit subject does not establish additional runtime or provider effects.
+- PR #166 repaired the terminal spend snapshot clock race at `4f8f0a5bd65ad45ae57079e6ada8f8a427ffc50a`. The documented local Python 3.12 result was 56 passed and 6 skipped; all eight required checks passed for source/test commit `b8642be`, including Python 3.11, 3.12, and 3.13. This remains a test-only result with no deployment or provider-effect claim.
+- Guarded promotion evidence was recorded at `2436cc08e43808acaea8631dac3ddb61f4c23bb5`, with a further promotion receipt at `caf2f1a5c1d9b63ccfe02350ffd9c9d29c901a31`. The remote documentation says the fresh backup, disposable restore, promotion gates, and 1,800-second soak completed on 2026-09-29. The next natural Janitor observation and its archived receipt remain separate acceptance facts.
+- Restore inventory handling changed at `8e31338522f091bca1646ad03fe8861394296e1f` and merged in `e8f36cfea3552a952479b335f964618f89f4fd42`. Shared backup manifests bind checksums, row counts, and a normalized schema fingerprint across Argus and Atlas; existing manifests remain immutable and require a fresh backup after fingerprint changes.
+- The retired `oci-ts` AI Review workflow was removed at `87fd9a964704f10f7e798819cbbec44d34302304` and merged in `bdca7fb1fff2b1bf062e5345ce09bb28a9fa9d99`. Normal CI and image promotion remain GitHub-hosted; no replacement issue-triage path is proven.
+- `/api/ready` is a public cached readiness projection and may include a validated 40-character source SHA. Without that SHA, runtime identity remains unknown; readiness alone does not prove the loaded image or downstream effect.
 <!-- janitor:end:recent -->
