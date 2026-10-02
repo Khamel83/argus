@@ -427,12 +427,33 @@ def create_app(
 
                 async def _run_probes_background() -> None:
                     """Run network probes every 30 minutes."""
+                    from argus.broker.credential_observation import (
+                        observe_tavily_usage_credential,
+                    )
+
                     while True:
                         try:
                             await b.refresh_provider_evidence()
                         except Exception as exc:
                             logger.warning(
                                 "Reachability probe failed: %s",
+                                type(exc).__name__,
+                            )
+                        try:
+                            credential_result = (
+                                await observe_tavily_usage_credential(
+                                    get_config(),
+                                    build=app.state.operational_status.build,
+                                )
+                            )
+                            if credential_result.status == "publish_failed":
+                                logger.warning(
+                                    "Credential observation failed: %s",
+                                    credential_result.reason,
+                                )
+                        except Exception as exc:
+                            logger.warning(
+                                "Credential observation failed: %s",
                                 type(exc).__name__,
                             )
                         await asyncio.sleep(30 * 60)

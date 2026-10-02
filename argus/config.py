@@ -178,6 +178,7 @@ class ArgusConfig:
     log_provider_payloads: bool = False
     caller_tier_caps: dict[str, int] = field(default_factory=dict)
     accepted_operation_authority: str = "legacy"
+    tavily_usage_observer_enabled: bool = False
 
 
 class SecretsResolver:
@@ -401,6 +402,10 @@ class EnvironmentConfigLoader:
                 "ARGUS_ACCEPTED_OPERATION_AUTHORITY",
                 "legacy",
             ).strip().lower(),
+            tavily_usage_observer_enabled=self.get_bool(
+                "ARGUS_TAVILY_USAGE_OBSERVER_ENABLED",
+                False,
+            ),
             searxng=SearXNGConfig(
                 enabled=self.get_bool("ARGUS_SEARXNG_ENABLED", False),
                 base_url=self.get_str(

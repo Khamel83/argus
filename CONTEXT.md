@@ -1,5 +1,18 @@
 # Context
 
+October2 Homelab H26 work adds a disabled-by-default Tavily metadata observer
+to the existing30-minute authority probe loop. It uses the existing credential
+and data mount, exports only a bounded redacted latest receipt, and leaves
+aggregate health unknown. Independent plan review passed. Filesystem
+identity/atomicity, malformed-input and integer-attempt corrections now pass
+69 combined observer/configuration/API lifecycle tests and focused Ruff.
+Independent final review approved the implementation with that correction.
+No provider request or deployment occurred.
+[Contract and separate acceptance gates](docs/operations/tavily-credential-observation.md).
+Live Homelab still reports source `e8f36cfea3552a952479b335f964618f89f4fd42`
+and the accepted `c8853fbe` image; existing source overrides remain protected.
+Homelab v1 and all provider holds remain unchanged.
+
 The terminal spend fanout test uses a reset one microsecond after a mocked
 database time to check that all scopes share one timestamp. Snapshot reads
 must use that same authority time: the real clock can pass the reset before

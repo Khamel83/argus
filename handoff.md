@@ -1,5 +1,22 @@
 # Execution result — September 7, 2026
 
+## Current work — October2 credential observation
+
+Homelab H26 authorizes this narrow owner-produced Tavily metadata observation.
+Source starts from fetched `b05d59f674ace5deba57e0edd8a36fa5620a9576` in an
+isolated worktree; the protected root checkout remains unchanged. Independent
+plan review passed. Filesystem identity/atomicity and malformed-input defects
+and integer-attempt admission are corrected; 69 combined observer/configuration/API
+lifecycle tests and focused Ruff pass. Final independent review approved the
+implementation with the integer-attempt correction, now regression-tested.
+
+Next: exact-head CI/PASS and the guarded Argus release.
+Explicit opt-in remains false. No real provider call, new mount/grant, runtime
+mutation or accepted consumer receipt exists. Current production remains
+source `e8f36cf` and accepted image `c8853fbe`; preserve its four overrides.
+Homelab owns later independent source binding, health-log and delivery gates.
+[Contract](docs/operations/tavily-credential-observation.md).
+
 ## PR #166 source checkpoint — 2026-09-29
 
 The Python 3.12 CI failure in the terminal spend fanout test was an expiry
