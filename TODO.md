@@ -1,5 +1,25 @@
 # Argus operational follow-up
 
+## Homelab H26 — bounded credential observation
+
+- [x] Implement and independently review the Tavily-only opt-in observer,
+  including filesystem/input and integer-attempt admission regressions.
+  69 combined observer/configuration/API lifecycle tests and focused Ruff pass.
+- [ ] Obtain exact-head trusted review and required CI before guarded release.
+  First head `067088d` received trusted PASS but CI correctly refused stale
+  provider fixture attestations after the shared config change. Regenerated
+  with the existing hermetic generator; its exact check passes. Final-head
+  review and CI remain required.
+- [ ] Use guarded digest/source release and explicit nonsecret opt-in; accept
+  a natural redacted metadata receipt. Production currently remains `e8f36cf`.
+- [ ] Homelab separately owns protected source binding, credential-free reader
+  acceptance, durable health-log admission and notification evidence. No raw
+  credential is exported and overall readiness remains unknown.
+  [Contract](docs/operations/tavily-credential-observation.md).
+
+The remaining Argus application backlog below is separate from this scoped
+Homelab credential-health change.
+
 - [x] Repair PR #166's terminal spend test clock race. Local Python 3.12
   provider-spend tests: 56 passed, 6 skipped.
 - [x] Confirm required CI on source/test commit `b8642be`: all eight checks
