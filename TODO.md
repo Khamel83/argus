@@ -6,6 +6,10 @@
   including filesystem/input and integer-attempt admission regressions.
   69 combined observer/configuration/API lifecycle tests and focused Ruff pass.
 - [ ] Obtain exact-head trusted review and required CI before guarded release.
+  First head `067088d` received trusted PASS but CI correctly refused stale
+  provider fixture attestations after the shared config change. Regenerated
+  with the existing hermetic generator; its exact check passes. Final-head
+  review and CI remain required.
 - [ ] Use guarded digest/source release and explicit nonsecret opt-in; accept
   a natural redacted metadata receipt. Production currently remains `e8f36cf`.
 - [ ] Homelab separately owns protected source binding, credential-free reader

@@ -11,6 +11,9 @@ lifecycle tests and focused Ruff pass. Final independent review approved the
 implementation with the integer-attempt correction, now regression-tested.
 
 Next: exact-head CI/PASS and the guarded Argus release.
+PR173 first head `067088d` passed trusted review but CI stopped on stale
+provider fixture attestations after the shared config change. Existing
+hermetic regeneration and `--check` pass; verify the final updated head.
 Explicit opt-in remains false. No real provider call, new mount/grant, runtime
 mutation or accepted consumer receipt exists. Current production remains
 source `e8f36cf` and accepted image `c8853fbe`; preserve its four overrides.
