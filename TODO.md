@@ -65,9 +65,32 @@ SearchAPI has no configured key. Valyu must remain account-blocked if it rejects
 the bounded request; this checklist does not authorize billing changes, quota
 resets, credential rotation or repeated provider tests.
 <!-- janitor:begin:todo -->
-## Todo
+## Homelab H26 — bounded credential observation
+
+- [x] Implement and independently review the Tavily-only opt-in observer, including filesystem/input and integer-attempt admission regressions. 69 combined observer/configuration/API lifecycle tests and focused Ruff pass.
+- [ ] Obtain exact-head trusted review and required CI before guarded release. First head `067088d` received trusted PASS but CI correctly refused stale provider fixture attestations after the shared config change. Regenerated with the existing hermetic generator; its exact check passes. Final-head review and CI remain required by the supplied evidence.
+- [ ] Use guarded digest/source release and explicit nonsecret opt-in; accept a natural redacted metadata receipt. PR #173 merged at `bf58a770a74e58fa07f0d9104fc9e91301b96453`, but no release or deployment is evidenced. Production currently remains `e8f36cf`.
+- [ ] Homelab separately owns protected source binding, credential-free reader acceptance, durable health-log admission and notification evidence. No raw credential is exported and overall readiness remains unknown. See [the contract](docs/operations/tavily-credential-observation.md).
+
+The remaining Argus application backlog below is separate from this scoped Homelab credential-health change.
+
+- [x] Repair PR #166's terminal spend test clock race. Local Python 3.12 provider-spend tests: 56 passed, 6 skipped.
+- [x] Confirm required CI on source/test commit `b8642be`: all eight checks passed, including Python 3.11, 3.12, and 3.13. This test-only change has no deployment or provider-effect claim.
 
 - [ ] Confirm the next natural Janitor OCI observation of Argus source `e8f36cf` has an archived receipt. The supervised OCI dispatch [36538279239](https://github.com/Khamel83/janitor/actions/runs/36538279239) already archived valid identity. PR #164 repaired the restore inventory; fresh backup and disposable restore passed, and guarded promotion completed its 1,800-second soak at 08:00 UTC on 2026-09-29. The new digest is current and known-good; live `/api/ready` returns the source SHA. See the Homelab dated Argus promotion receipt. Issue #296 has other fleet gates.
+- [x] Retire the old `oci-ts` AI Review workflow. PR #163 merged as `bdca7fb`. Keep public/fork CI on GitHub-hosted runners. Its separate image failed exact scorecard admission; issue triage from the old workflow has no replacement proven here.
+
+Updated September 7, 2026. The current dated capability evidence belongs in [public status](docs/STATUS.md); the private audit preserves raw receipts. A checked source task does not imply every provider has passed a live call.
+
+- [x] Bound authenticated admin provider canaries to one uncached result and one consumed authorization, with no fallback.
+- [x] Restore canonical vault projection, Wolfram naming, explicit account registration and retained scoped caller/Maya configuration.
+- [x] Repair native HTTP POST framing and test actual socket bytes.
+- [x] Bind new paid/free probe spend records to the validated baked release identity.
+- [x] Repair DDG's framing ownership and credential-free redirect policy without weakening public-address checks.
+- [x] Verify disposable PostgreSQL migrations, all production metadata, no drift and canonical restore.
+- [x] Repair temporary scorecard network allocation, evidence schema and current accepted-operation promotion accounting.
+- [x] Complete authenticated MCP, extraction and one-attempt Maya capture checks on the corrected image.
+- [x] Finish the automatic corrected-image promotion soak and restore Valyu disablement.
 - [ ] Correct extraction release configuration/binding and preserve full source URL; existing receipts remain unchanged.
 - [ ] Admit a real external browser-network authority/attestation and prove a browser-assisted extraction. Keep browser access fail-closed meanwhile.
 - [ ] Obtain fresh authorized validation for providers whose one-call canary failed before the transport repair; preserve those failures and uncertain reservations.
