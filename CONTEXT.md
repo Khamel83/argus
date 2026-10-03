@@ -183,10 +183,15 @@ retired and are not fallbacks. See the
 <!-- janitor:begin:recent -->
 ## Recent
 
-- `5af0ddc41ad94c9853f4d970092d4890c50e2c4c` — synchronized shared agent rules. The commit subject does not establish additional runtime or provider effects.
-- PR #166 repaired the terminal spend snapshot clock race at `4f8f0a5bd65ad45ae57079e6ada8f8a427ffc50a`. The documented local Python 3.12 result was 56 passed and 6 skipped; all eight required checks passed for source/test commit `b8642be`, including Python 3.11, 3.12, and 3.13. This remains a test-only result with no deployment or provider-effect claim.
-- Guarded promotion evidence was recorded at `2436cc08e43808acaea8631dac3ddb61f4c23bb5`, with a further promotion receipt at `caf2f1a5c1d9b63ccfe02350ffd9c9d29c901a31`. The remote documentation says the fresh backup, disposable restore, promotion gates, and 1,800-second soak completed on 2026-09-29. The next natural Janitor observation and its archived receipt remain separate acceptance facts.
-- Restore inventory handling changed at `8e31338522f091bca1646ad03fe8861394296e1f` and merged in `e8f36cfea3552a952479b335f964618f89f4fd42`. Shared backup manifests bind checksums, row counts, and a normalized schema fingerprint across Argus and Atlas; existing manifests remain immutable and require a fresh backup after fingerprint changes.
-- The retired `oci-ts` AI Review workflow was removed at `87fd9a964704f10f7e798819cbbec44d34302304` and merged in `bdca7fb1fff2b1bf062e5345ce09bb28a9fa9d99`. Normal CI and image promotion remain GitHub-hosted; no replacement issue-triage path is proven.
-- `/api/ready` is a public cached readiness projection and may include a validated 40-character source SHA. Without that SHA, runtime identity remains unknown; readiness alone does not prove the loaded image or downstream effect.
+- **2026-10-03 — Tavily metadata observer merged (`bf58a770a74e58fa07f0d9104fc9e91301b96453`).** PR #173 merged the disabled-by-default Tavily-only observer after its filesystem identity, malformed-input, and integer-attempt corrections. Independent plan and final reviews approved it; 69 combined observer/configuration/API lifecycle tests and focused Ruff passed. The hermetic provider-attestation generator was refreshed for the shared configuration change and its check passes. No provider request or deployment is evidenced, live source remains `e8f36cfea3552a952479b335f964618f89f4fd42`, and aggregate health remains unknown.
+
+- **2026-09-29 — Guarded promotion and restore evidence.** The fresh-manifest backup and disposable restore completed candidate, rollback, production, and 1,800-second soak gates. Its exact digest is current and known-good, while runtime identity, an archived Janitor operation, and a later natural observation remain separate acceptance facts.
+
+- **2026-09-29 — Legacy review workflow retired (`bdca7fb1fff2b1bf062e5345ce09bb28a9fa9d99`).** The retired `oci-ts` AI Review workflow and its queued jobs were removed. Public/fork CI remains on GitHub-hosted runners; separately managed OCI review and normal CI/image promotion paths are unchanged.
+
+- **2026-09-29 — Public readiness identity projection (`337519d877e34452c3e395aa473195ecc5ae33fb`).** `/api/ready` may expose a validated 40-character source SHA to read-only observers. A missing validated SHA leaves runtime identity unknown; readiness alone does not prove a deployed image or downstream effect.
+
+- **2026-09-29 — Restore inventory normalization (`e8f36cfea3552a952479b335f964618f89f4fd42`).** Shared PostgreSQL backup manifests bind archive checksums, exact row counts, and a schema fingerprint to Argus and Atlas. Inventory normalization handles only the known PostgreSQL cast-form variation; other schema components remain checked and existing manifests require a fresh backup after fingerprint changes.
+
+- **2026-09-27 — Terminal spend snapshot authority (`4f8f0a5bd65ad45ae57079e6ada8f8a427ffc50a`).** Snapshot reads share one frozen authority timestamp with terminal-spend fanout. If real clock time advances beyond a mocked reset, `unknown` remains the correct spend state rather than proving different timestamps.
 <!-- janitor:end:recent -->
