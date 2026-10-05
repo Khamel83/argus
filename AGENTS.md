@@ -264,6 +264,12 @@ them with the work they describe:
 - `INFRA.md`: when a host, service, port, credential location, or deploy path
   changes.
 
+Keep one current checkpoint and replace superseded facts. Keep each long
+writeup in a dated history/evidence file and link it from the relevant record.
+For document-size warnings or compaction, follow the
+[working-document contract](https://github.com/Khamel83/docs/blob/main/templates/WORKING_DOCUMENTS.md).
+Preserve previous bytes, active decisions and every unresolved task.
+
 A change is not done until it is deployed and verified. If the repository has
 a deploy command or automation, run it (or confirm it ran) and check the
 result. Registration steps the deploy depends on (for example a consumer list
