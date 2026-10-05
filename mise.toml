@@ -1,0 +1,6 @@
+[tools]
+python = "3.12.13"
+
+[env]
+UV_PYTHON = "{{env.HOME}}/.local/share/mise/installs/python/3.12.13/bin/python"
+UV_PYTHON_DOWNLOADS = "never"
