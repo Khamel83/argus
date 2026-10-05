@@ -277,12 +277,12 @@ or catalog entry) are part of the change. Never leave a "remember to run X"
 step for the owner; if something truly needs the owner, write it in
 `HANDOFF.md` as a blocker with the exact command.
 
-Homelab owns active repository membership and explicit PR merge exclusions.
+infra owns active repository membership and explicit PR merge exclusions.
 Janitor's standing worker merges every PR type after the latest trusted,
 non-dismissed OCI reviewer Bot PASS for the exact current commit. A stale,
 superseded or contradictory PASS does not qualify. It uses GitHub's normal merge endpoint
 and records independent readback. Labels, authors and changed paths do not
-restrict eligibility. Homelab owns improvements to the reviewer and PASS
+restrict eligibility. infra owns improvements to the reviewer and PASS
 process. Verify the merged PR and its merge receipt before reporting completion.
 <!-- janitor:end:working-docs -->
 <!-- janitor:begin:fresh-source -->
