@@ -305,6 +305,9 @@ The global view reads the default branch and native GitHub records; it does
 not own another task list. Keep completed evidence with its source links.
 Use stable task IDs when available. Explicit GitHub links identify related
 records; matching text alone does not establish a dependency or completion.
+A pull request that finishes a TODO line puts `Closes-TODO: <the line's text>`
+in its body; a TODO line that gets its own issue or PR carries that full URL.
+After merge, Janitor ticks such lines and appends the evidence link.
 Development progress and runtime acceptance are separate facts. Missing or
 stale source evidence stays unknown. Generated summaries must not become new
 copies of the underlying tasks. Janitor distributes this contract; Infra's
