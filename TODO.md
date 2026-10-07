@@ -52,7 +52,7 @@ A checked source task does not imply every provider has passed a live call.
 - [x] Repair temporary scorecard network allocation, evidence schema and current accepted-operation promotion accounting.
 - [x] Complete authenticated MCP, extraction and one-attempt Maya capture checks on the corrected image.
 - [x] Finish the automatic corrected-image promotion soak and restore Valyu disablement.
-- [ ] Correct extraction release configuration/binding and preserve full source URL; existing receipts remain unchanged.
+- [x] Correct extraction release configuration/binding and preserve full source URL; existing receipts remain unchanged. Done (model-matched): https://github.com/Khamel83/argus/pull/138
 - [ ] Admit a real external browser-network authority/attestation and prove a browser-assisted extraction. Keep browser access fail-closed meanwhile.
 - [ ] Obtain fresh authorized validation for providers whose one-call canary failed before the transport repair; preserve those failures and uncertain reservations.
 - [ ] Reconcile uncertain provider charges only with authoritative provider evidence. Never convert an HTTP rejection into assumed zero spend.
