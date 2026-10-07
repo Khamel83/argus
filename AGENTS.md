@@ -249,6 +249,14 @@ Use g2k/OMP when available instead of creating another provider integration.
 Use GitHub issues and pull requests for durable work. Do not assume that local
 provider credentials, filesystem state, or a local g2k daemon exists. See
 `INFRA.md` for the machine-specific access path and boundaries.
+
+Before a g2k review or API call, read g2k's current README:
+https://github.com/Khamel83/g2k/blob/main/README.md.
+For plan reviews use `g2k-review --quality high --caller PROJECT < plan.md`
+(or explicit `frontier`). It has no tools or implementation authority and saves
+a private OCI receipt before printing. Do not invent receipt paths under a
+repository `data/` directory, local provider credentials, or a local daemon.
+The interactive `g2k -p` command runs OMP and is not the tool-free review path.
 <!-- janitor:end:capability -->
 <!-- janitor:begin:working-docs -->
 ## Keep the working docs current
