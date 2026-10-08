@@ -315,7 +315,10 @@ Use stable task IDs when available. Explicit GitHub links identify related
 records; matching text alone does not establish a dependency or completion.
 A pull request that finishes a TODO line puts `Closes-TODO: <the line's text>`
 in its body; a TODO line that gets its own issue or PR carries that full URL.
-After merge, Janitor ticks such lines and appends the evidence link.
+After merge, Janitor ticks such lines and appends the evidence link. It may
+also tick an unlinked line the model gateway matches to a merged PR, labelled
+`Done (model-matched)`; such ticks merge only after the trusted reviewer's PASS
+(owner decision, October 5, 2026). Otherwise model output never closes work.
 Development progress and runtime acceptance are separate facts. Missing or
 stale source evidence stays unknown. Generated summaries must not become new
 copies of the underlying tasks. Janitor distributes this contract; Infra's
