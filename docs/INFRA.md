@@ -77,3 +77,40 @@ curl -s -H "Authorization: Bearer $ARGUS_AUTHORITY_TOKEN" \
 # Full system diagnostic (requires admin token):
 ARGUS_AUTHORITY_TOKEN="$ARGUS_ADMIN_API_KEY" argus doctor
 ```
+
+---
+
+## 6. Multi-Platform Lock Metadata
+
+`uv.lock` carries multi-platform metadata for the three platforms CI targets:
+
+| Target | `uv` environment marker |
+|---|---|
+| linux-x86_64 | `sys_platform == 'linux' and platform_machine == 'x86_64'` |
+| linux-aarch64 | `sys_platform == 'linux' and platform_machine == 'aarch64'` |
+| macos-aarch64 | `sys_platform == 'darwin' and platform_machine == 'arm64'` |
+
+The targets are declared in `pyproject.toml` under `[tool.uv] environments`.
+`uv lock` records them as `supported-markers` plus the per-platform
+`resolution-markers`, and keeps wheels only for those targets.
+
+Issue #180 requested this command verbatim:
+
+```bash
+uv lock --python-platform linux-x86_64 --python-platform linux-aarch64 --python-platform macos-aarch64
+```
+
+That invocation is not accepted by the `uv` CLI pinned by CI and the
+`Dockerfile` (`0.11.26`); `--python-platform` is available to `uv run`,
+`uv sync`, and `uv pip compile`, not `uv lock`. The supported lock-generation
+equivalent is the `environments` list above:
+
+```bash
+uv lock
+uv lock --check
+```
+
+The lock was regenerated with `uv 0.11.26` and succeeded for the three
+declared target environments. No platform was executed: `uv lock` resolves
+metadata only, installs nothing, and runs nothing. No dependency versions
+changed; only platform scoping and the per-platform wheel set changed.

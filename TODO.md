@@ -60,6 +60,7 @@ A checked source task does not imply every provider has passed a live call.
 - [ ] Close remaining pool/lifespan, authenticated-browser shutdown and workflow shutdown/finalization debt.
 - [ ] Review the optional workflow LLM gateway's admission and error boundary before enabling it as a production capability.
 - [ ] Add deliberate type/format governance separately from restoration; do not reformat unrelated user work.
+- [x] Regenerate multi-platform lock metadata for CI targets (issue #180). Pinned uv `0.11.26` rejects `uv lock --python-platform`; the three target environments are declared in `pyproject.toml [tool.uv].environments` and documented in `docs/INFRA.md` §6. `uv lock` (0.11.26) produced a byte-identical `uv.lock`; `uv lock --check` passes on 0.11.26 and 0.12.23; frozen syncs for the CI and Docker paths pass. Only Windows-only packages (`colorama`, `httpx2-jsfetch`, `pywin32`, `tzdata`) dropped; no version changes; no platform executed. Re-verified 2026-10-09: byte-identical `uv lock` on 0.11.26, `--check` clean on 0.11.26 and 0.12.23, CI and Docker frozen syncs pass, 95 lock/contract tests pass.
 
 SearchAPI has no configured key. Valyu must remain account-blocked if it rejects
 the bounded request; this checklist does not authorize billing changes, quota

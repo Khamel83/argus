@@ -1,5 +1,38 @@
 # Execution result — September 7, 2026
 
+## Current work — Issue #180 multi-platform lock metadata (2026-10-06)
+
+Issue #177 follow-up #180: regenerate `uv.lock` for the CI platforms
+linux-x86_64, linux-aarch64, macos-aarch64. Pinned uv is `0.11.26` (CI and
+Dockerfile). The verbatim issue command `uv lock --python-platform ...` is
+rejected by both `0.11.26` and `0.12.23` (`error: unexpected argument
+'--python-platform'`); the supported equivalent is the `[tool.uv].environments`
+list in `pyproject.toml`. The verbatim command, platform marker list, and
+rationale are documented in `docs/INFRA.md` §6; no platform was executed, only
+lock generation.
+
+Re-verified 2026-10-09 in this worktree (uv 0.11.26 installed from PyPI for
+the pinned check): the verbatim command fails with `unexpected argument
+'--python-platform'` (exit 2, lock untouched); `uv lock` on 0.11.26 regenerates
+the staged `uv.lock` byte-identically (`cmp` clean); `uv lock --check` passes on
+0.11.26 and 0.12.23; CI frozen sync (`--python 3.12 --extra dev --extra mcp`)
+installs clean on 0.11.26; Docker frozen sync dry-run
+(`--no-dev --extra mcp --no-install-project`) passes. Lock invariants: 139 → 135
+packages; only `colorama`, `httpx2-jsfetch`, `pywin32`, `tzdata` dropped;
+name/version set otherwise identical (zero version changes); `supported-markers`
+lists exactly the three environments; wheel coverage is macos arm64 158,
+linux x86_64 350, linux aarch64 349, with zero win32/win_amd64, ppc64le, s390x
+or riscv64 wheels. `mcp==2.0.0` lock entry intact. Tests on the synced env:
+`tests/test_runtime_manifest.py`, `tests/test_delivery_contract.py`,
+`tests/test_mcp_transport.py` → 61 passed; `tests/test_distribution_artifacts.py`,
+`tests/test_container_contract.py`, `tests/test_config.py` → 34 passed.
+
+Next: orchestrator review of the staged changes (modified `docs/INFRA.md`,
+`pyproject.toml`, `uv.lock`) and CI. Recheck: `uv lock --check`. Branch
+`g2k/issue-180` sits at `4bf3fa9`, four docs-only commits behind `origin/main`
+(`171dd2f`); the worker did not rebase, merge, or push per policy — the
+orchestrator owns that step.
+
 ## Current work — October2 credential observation
 
 Homelab H26 authorizes this narrow owner-produced Tavily metadata observation.

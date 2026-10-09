@@ -80,3 +80,16 @@ include = ["argus*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.uv]
+# Multi-platform lock targets (CI): linux-x86_64, linux-aarch64, macos-aarch64.
+# `uv lock` scopes the universal lock through these environments (it has no
+# --python-platform flag; that flag belongs to `uv pip compile`/`uv run`).
+# Regenerate with: uv lock
+# Verify with: uv lock --check
+# See docs/INFRA.md §6.
+environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
