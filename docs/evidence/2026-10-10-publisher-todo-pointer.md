@@ -5,7 +5,7 @@ Natural October9 Janitor publication deferred this repository with
 `de57ceb8-8e01-4826-8c6d-b0da9aa7c214` preceded this source-only reconciliation.
 Reuse Janitor's existing canonical pointer; no opt-in marker or parser bypass.
 
-All twelve old open-task intents map to current handwritten H26, natural observation and application/provider tasks. The old unchecked extraction item conflicts with the current checked/model-matched item; an explicit unchecked reconciliation gate preserves that ambiguity. No completion is inferred. Expanded PR173 and release notes remain in the exact archive below. Root HANDOFF was absent in fetched source; the new handoff records only this source prerequisite.
+All twelve old open-task intents map to current handwritten H26, natural observation and application/provider tasks. The old unchecked extraction item conflicts with the current checked/model-matched item; an explicit unchecked reconciliation gate preserves that ambiguity. No completion is inferred. Expanded PR173 and release notes remain in the exact archive below. The existing lowercase `handoff.md` retains all prior bytes beneath the new source checkpoint; no new handoff file is introduced.
 
 Validation: exact archival block/hash and task-preservation assertions; existing
 Janitor5fea3026 pure helpers reproduce baseline refusal and verify candidate
