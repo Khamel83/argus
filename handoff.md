@@ -1,3 +1,15 @@
+# Publisher source checkpoint — October 10, 2026
+
+Prepared the existing Janitor TODO pointer reconciliation from fetched `171dd2f`
+after G2K High SATISFIED `de57ceb8-8e01-4826-8c6d-b0da9aa7c214`.
+All previous handoff bytes below and canonical dirty work remain preserved.
+The managed projection is archived exactly; unique and ambiguous task gates remain
+in TODO. [Evidence](docs/evidence/2026-10-10-publisher-todo-pointer.md).
+Next: trusted exact-head review/normal merge, then the natural10:30 UTC publisher
+receipt. Source eligibility is not runtime, H26 or full H20 acceptance. No
+provider, credential, ledger, runtime or host action occurred. Use AGENTS'
+private operator procedure before any operated deployment change.
+
 # Execution result — September 7, 2026
 
 ## Current work — October2 credential observation
