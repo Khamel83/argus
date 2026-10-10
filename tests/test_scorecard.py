@@ -583,6 +583,30 @@ def test_live_configuration_declares_exact_receipt_contract():
     )
 
 
+def test_live_configuration_declares_shared_bounded_execution_admission():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "run_scorecard", ROOT / "scripts" / "run-scorecard.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    configuration = module._live_configuration(load_corpus(FIXTURES / "corpus.json"))
+
+    admission = configuration["execution_admission"]
+    assert admission["max_active_jobs"] == 1
+    assert admission["starts_resources_after"] == "admitted"
+    assert admission["statuses"] == [
+        "waiting",
+        "admitted",
+        "canceled",
+        "failed",
+        "completed",
+    ]
+    assert admission["retry"]["max_wait_seconds"] == 30.0
+
+
 def test_scorecard_cli_exposes_network_free_compiler_and_residual_interfaces():
     completed = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "run-scorecard.py"), "--help"],

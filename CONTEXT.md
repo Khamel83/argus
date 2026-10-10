@@ -163,6 +163,12 @@ HTTPS ingress. PostgreSQL and SearXNG remain Docker-internal. The Mac is
 development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
+- Issue #156 adds a shared `ScorecardExecutionQueue` seam for baseline and
+  candidate workloads. It admits one complete workload at a time, applies
+  bounded exponential retries, exposes host-neutral lifecycle statuses, and
+  releases leases on cancellation, startup failure, worker cancellation, and
+  expiry. Focused scorecard and live compiler checks pass locally; this is
+  source/test evidence, not a deployment or Docker-host qualification.
 <!-- janitor:begin:recent -->
 - `4f8f0a5bd65ad45ae57079e6ada8f8a427ffc50a` froze authority time for terminal spend snapshots; the test uses one timestamp across scopes, while snapshot reads correctly report `unknown` if the real clock has already passed the reset.
 - `724266a48c1bf971507dba9b64df8ac35a55ecd5` recorded passing PR #166 CI; the remote TODO records all eight required checks passing on `b8642be`, including Python 3.11, 3.12, and 3.13.

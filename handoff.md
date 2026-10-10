@@ -1,5 +1,23 @@
 # Execution result — September 7, 2026
 
+## Issue #156 scorecard execution admission — 2026-10-01
+
+`argus/scorecard/queue.py` adds `ScorecardExecutionQueue`: one bounded queue for
+baseline/candidate workloads, a single active admission lease by default, and
+bounded exponential backoff (`RetryPolicy`: six attempts, 250 ms–5 s delays,
+30 s maximum wait). The workload callback is not invoked while waiting, so no
+Docker container, network, or other ephemeral resource is created before
+admission. Status distinguishes `waiting`, `admitted`, `canceled`, `failed`,
+and `completed` with retry metadata only. Cancellation, startup failure, worker
+cancellation, expired admission, and queue shutdown release the lease before
+returning, so later queued work proceeds. `scripts/run-scorecard.py` declares
+the admission contract in the live-configuration document; no live execution is
+performed. Local Python 3.12: `tests/test_scorecard.py`,
+`tests/test_scorecard_queue.py`, and `tests/test_scorecard_queue_docker_integration.py`
+→ 64 passed; `tests/test_live_scorecard.py` → 32 passed. This is source/test
+evidence only; no Docker host, provider, or deployment verification applies.
+Next: run the required CI checks on the issue branch.
+
 ## PR #166 source checkpoint — 2026-09-29
 
 The Python 3.12 CI failure in the terminal spend fanout test was an expiry

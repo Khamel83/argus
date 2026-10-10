@@ -314,6 +314,26 @@ Secrets, authorization headers, raw credentials, and provider-native secret
 payloads are forbidden. A missing required artifact for the declared lane,
 checksum mismatch, or identity mismatch invalidates the verdict.
 
+## Live execution admission
+
+Baseline and candidate workloads share one `ScorecardExecutionQueue`. The
+default policy admits one complete workload at a time and bounds queued work.
+The queue invokes the workload only after the admission callback grants an
+opaque lease; Docker containers, networks, and other ephemeral resources must
+be initialized inside that callback's workload, never while waiting.
+
+Capacity denial remains `waiting` and retries with bounded exponential
+backoff. The default policy is six attempts, delays from 250 ms through 5 s,
+and a 30 s maximum wait. Queue status exposes only the workload id, lifecycle
+state, retry count, bounded retry delay, and content-free failure code:
+`waiting`, `admitted`, `canceled`, `failed`, or `completed`.
+
+Cancellation waits for the workload task and lease cleanup before returning.
+Startup exceptions, task cancellation, queue shutdown, and expired admissions
+release the lease on every exit path; expired admissions are retried within
+the same bounded policy. A failed or terminated workload therefore cannot
+hold the shared slot and prevent later queued work from proceeding.
+
 ### Required diagnostic evidence
 
 Diagnostics do not change the verdict unless they also violate a hard policy

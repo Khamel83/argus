@@ -43,6 +43,10 @@ from argus.hermetic_scorecard import (  # noqa: E402
 )
 from argus.models import ProviderName  # noqa: E402
 from argus.providers.fixture_harness import run_fixture_case_summaries  # noqa: E402
+from argus.scorecard.queue import QueueStatus, RetryPolicy  # noqa: E402
+
+
+_SCORECARD_RETRY_POLICY = RetryPolicy()
 
 
 def _hash_file(path: Path) -> str:
@@ -80,6 +84,21 @@ def _live_configuration(corpus: dict[str, Any]) -> dict[str, object]:
         "diagnostic_only": True,
         "can_authorize_deployment": False,
         "pr_safe": False,
+        "execution_admission": {
+            "schema": "scorecard-execution-admission-v1",
+            "max_active_jobs": 1,
+            "max_queued_jobs": 8,
+            "starts_resources_after": "admitted",
+            "statuses": [status.value for status in QueueStatus],
+            "retry": {
+                "max_attempts": _SCORECARD_RETRY_POLICY.max_attempts,
+                "base_delay_seconds": _SCORECARD_RETRY_POLICY.base_delay,
+                "max_delay_seconds": _SCORECARD_RETRY_POLICY.max_delay,
+                "max_wait_seconds": _SCORECARD_RETRY_POLICY.max_wait,
+            },
+            "cancellation": "release_before_return",
+            "recovery": ["startup_failure", "worker_termination", "expired_admission"],
+        },
         "cases": [
             *(
                 {

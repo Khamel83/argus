@@ -6,6 +6,12 @@
   passed, including Python 3.11, 3.12, and 3.13. This test-only change has no
   deployment or provider-effect claim.
 
+- [x] Queue scorecard baseline/candidate workloads behind one bounded
+  admission lease. Waiting work initializes no resources; status distinguishes
+  waiting/admitted/canceled/failed/completed without host details; cancellation,
+  startup failure, worker cancellation, and expired leases clean up. Focused
+  scorecard tests: 64 passed; live compiler compatibility: 32 passed.
+
 - [ ] Confirm the next natural Janitor OCI observation of Argus source
   `e8f36cf` has an archived receipt. The supervised OCI dispatch
   [36538279239](https://github.com/Khamel83/janitor/actions/runs/36538279239)
