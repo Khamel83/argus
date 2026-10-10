@@ -1,0 +1,21 @@
+[tools]
+python = "3.12"
+
+[tasks.install]
+run = "make install"
+env = { UV_NO_MANAGED_PYTHON = "true" }
+
+[tasks.test]
+run = "make test"
+
+[tasks.lint]
+run = "make lint"
+
+[tasks.typecheck]
+run = "make typecheck"
+
+[tasks.format]
+run = "make format"
+
+[tasks.clean]
+run = "make clean"
