@@ -1,5 +1,24 @@
 # Execution result — September 7, 2026
 
+## Issue #154 — host-wide scorecard admission, 2026-10-06
+
+`argus/scorecard/admission.py` adds `ScorecardAdmissionCoordinator`: a
+file-locked, atomic acquire/release lease shared by baseline and candidate
+workload launches across separate worker processes on one host. Default limit
+is one active workload; `ARGUS_SCORECARD_ACTIVE_WORKLOAD_LIMIT` (bounded 1–32)
+overrides it and `ArgusConfig.scorecard_active_workload_limit` exposes it.
+Admission returns stable `admitted`/`queued`/`unavailable` states; a dead
+worker's slot is reclaimed on the next acquire. Tests
+`tests/test_scorecard_admission.py` cover the bounded limit, shared
+baseline/candidate budget before startup, release on failure, separate-process
+exclusion, dead-worker recovery, and privacy-safe results. Local run:
+6 passed; related scorecard/config suites 108 passed. Full suite passes except
+pre-existing `test_mcp_pack_tools.py` import error from a mismatched `mcp`
+package in this environment (fails on a clean tree too). Next: exact-head
+review and merge; the external Homelab scorecard launcher should call
+`coordinator.run_baseline`/`run_candidate` before creating any Docker
+container/network/exec stream.
+
 ## PR #166 source checkpoint — 2026-09-29
 
 The Python 3.12 CI failure in the terminal spend fanout test was an expiry

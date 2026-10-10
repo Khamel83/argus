@@ -9,6 +9,35 @@ from pathlib import Path
 from typing import Mapping, Optional
 
 _log = logging.getLogger("argus.config")
+SCORECARD_ACTIVE_WORKLOAD_LIMIT_ENV = "ARGUS_SCORECARD_ACTIVE_WORKLOAD_LIMIT"
+DEFAULT_SCORECARD_ACTIVE_WORKLOAD_LIMIT = 1
+MAX_SCORECARD_ACTIVE_WORKLOAD_LIMIT = 32
+
+
+def _validate_scorecard_active_workload_limit(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("scorecard active workload limit must be an integer")
+    if not 1 <= value <= MAX_SCORECARD_ACTIVE_WORKLOAD_LIMIT:
+        raise ValueError(
+            "scorecard active workload limit must be between 1 and "
+            f"{MAX_SCORECARD_ACTIVE_WORKLOAD_LIMIT}"
+        )
+    return value
+
+
+def _scorecard_active_workload_limit(
+    environ: Mapping[str, str],
+) -> int:
+    raw = environ.get(SCORECARD_ACTIVE_WORKLOAD_LIMIT_ENV)
+    if raw is None or not raw.strip():
+        return DEFAULT_SCORECARD_ACTIVE_WORKLOAD_LIMIT
+    try:
+        value = int(raw.strip(), 10)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{SCORECARD_ACTIVE_WORKLOAD_LIMIT_ENV} must be a bounded positive integer"
+        ) from exc
+    return _validate_scorecard_active_workload_limit(value)
 
 
 def _load_dotenv_file(path: Path) -> None:
@@ -178,7 +207,12 @@ class ArgusConfig:
     log_provider_payloads: bool = False
     caller_tier_caps: dict[str, int] = field(default_factory=dict)
     accepted_operation_authority: str = "legacy"
+    scorecard_active_workload_limit: int = DEFAULT_SCORECARD_ACTIVE_WORKLOAD_LIMIT
 
+    def __post_init__(self) -> None:
+        _validate_scorecard_active_workload_limit(
+            self.scorecard_active_workload_limit
+        )
 
 class SecretsResolver:
     def get(self, key: str) -> str:
@@ -397,6 +431,9 @@ class EnvironmentConfigLoader:
                 60,
             ),
             default_max_results=self.get_int("ARGUS_DEFAULT_MAX_RESULTS", 10),
+            scorecard_active_workload_limit=_scorecard_active_workload_limit(
+                self._environ
+            ),
             accepted_operation_authority=self.get_str(
                 "ARGUS_ACCEPTED_OPERATION_AUTHORITY",
                 "legacy",

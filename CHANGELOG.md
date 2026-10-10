@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value. Export the token yourself in the shell that launches the client.
 
 ### Added
+- **Host-wide scorecard admission budget** — baseline and candidate live
+  scorecard workloads share one host-scoped budget through
+  `ScorecardAdmissionCoordinator`, so concurrent launches from separate worker
+  processes cannot multiply Docker container/network/exec pressure. The
+  default limit is one active workload, overridable with
+  `ARGUS_SCORECARD_ACTIVE_WORKLOAD_LIMIT` (validated as a bounded 1–32
+  positive integer). Admission is an atomic file-locked acquire/release that
+  yields stable `admitted`/`queued`/`unavailable` states and reclaims the slot
+  of a worker that exits unexpectedly. Closes #154.
 - **Scoped paywall browser exception (`ARGUS_AUTH_BROWSER_DOMAINS`)** — off by
   default. When set to a comma-separated domain list, an `authenticated_content`
   HTTPS browser request is admitted without a browser-network attestation only
