@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value. Export the token yourself in the shell that launches the client.
 
 ### Added
+- **Scorecard capacity admission** — bounded, fail-closed host capacity probes
+  (CPU load ratio, available memory, Docker container/network counts, network
+  interface count, active scorecard jobs) guard scorecard workload startup.
+  Capacity is sampled before waiting, after each wait interval, and again
+  immediately before workload creation; any unavailable or over-threshold
+  metric queues the workload with a stable reason code and never calls the
+  workload factory. Thresholds are configurable via `ARGUS_SCORECARD_*` with
+  validated safe defaults (see `argus/scorecard/admission.py`).
 - **Scoped paywall browser exception (`ARGUS_AUTH_BROWSER_DOMAINS`)** — off by
   default. When set to a comma-separated domain list, an `authenticated_content`
   HTTPS browser request is admitted without a browser-network attestation only

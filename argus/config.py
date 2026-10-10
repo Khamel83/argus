@@ -7,6 +7,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Optional
+from argus.scorecard.admission import CapacityLimits
 
 _log = logging.getLogger("argus.config")
 
@@ -178,6 +179,7 @@ class ArgusConfig:
     log_provider_payloads: bool = False
     caller_tier_caps: dict[str, int] = field(default_factory=dict)
     accepted_operation_authority: str = "legacy"
+    scorecard_capacity: CapacityLimits = field(default_factory=CapacityLimits)
 
 
 class SecretsResolver:
@@ -330,6 +332,57 @@ class EnvironmentConfigLoader:
             ),
             account_fingerprint=self.get_str(
                 f"ARGUS_{prefix}_ACCOUNT_FINGERPRINT"
+            ),
+        )
+
+    def scorecard_capacity_config(self) -> CapacityLimits:
+        """Load and validate bounded scorecard admission budgets."""
+        defaults = CapacityLimits()
+
+        def value(name: str, parser, default):
+            raw = self._environ.get(name)
+            if raw is None or not raw.strip():
+                return default
+            try:
+                return parser(raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"invalid {name}") from exc
+
+        return CapacityLimits(
+            max_cpu_load_ratio=value(
+                "ARGUS_SCORECARD_MAX_CPU_LOAD_RATIO",
+                float,
+                defaults.max_cpu_load_ratio,
+            ),
+            min_available_memory_bytes=value(
+                "ARGUS_SCORECARD_MIN_AVAILABLE_MEMORY_BYTES",
+                int,
+                defaults.min_available_memory_bytes,
+            ),
+            max_docker_containers=value(
+                "ARGUS_SCORECARD_MAX_DOCKER_CONTAINERS",
+                int,
+                defaults.max_docker_containers,
+            ),
+            max_docker_networks=value(
+                "ARGUS_SCORECARD_MAX_DOCKER_NETWORKS",
+                int,
+                defaults.max_docker_networks,
+            ),
+            max_network_interfaces=value(
+                "ARGUS_SCORECARD_MAX_NETWORK_INTERFACES",
+                int,
+                defaults.max_network_interfaces,
+            ),
+            max_active_scorecard_jobs=value(
+                "ARGUS_SCORECARD_MAX_ACTIVE_JOBS",
+                int,
+                defaults.max_active_scorecard_jobs,
+            ),
+            probe_timeout_seconds=value(
+                "ARGUS_SCORECARD_PROBE_TIMEOUT_SECONDS",
+                float,
+                defaults.probe_timeout_seconds,
             ),
         )
 
@@ -535,6 +588,7 @@ class EnvironmentConfigLoader:
             log_provider_payloads=self.get_bool("ARGUS_LOG_PROVIDER_PAYLOADS"),
             egress_nodes=_egress_nodes,
             caller_tier_caps=_caller_tier_caps,
+            scorecard_capacity=self.scorecard_capacity_config(),
         )
 
 

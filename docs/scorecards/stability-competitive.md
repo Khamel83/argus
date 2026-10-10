@@ -20,6 +20,38 @@ research topics, label routine results, or operate a benchmark by hand.
 This record defines the target contract. It does not claim that the current
 implementation already satisfies every field or gate.
 
+## Live workload admission
+
+The scorecard coordinator is fail-closed before it creates any Docker object.
+It samples CPU load ratio, available memory, Docker container count, Docker
+network count, host network-interface count, and active scorecard jobs. A
+missing sample or a value at/over its pressure boundary queues the workload
+with a stable reason code and never calls the workload factory. Capacity is
+sampled before waiting, after each bounded wait interval, and again while the
+creation lock is held immediately before workload creation.
+
+The defaults are bounded and conservative:
+
+| Metric | Default budget |
+|---|---:|
+| CPU load ratio | `0.85` maximum |
+| Available memory | `536870912` bytes minimum (512 MiB) |
+| Docker containers | `64` maximum |
+| Docker networks | `32` maximum |
+| Network interfaces | `128` maximum |
+| Active scorecard jobs | `1` maximum |
+| Probe command timeout | `1.0` seconds |
+
+Configuration uses `ARGUS_SCORECARD_MAX_CPU_LOAD_RATIO`,
+`ARGUS_SCORECARD_MIN_AVAILABLE_MEMORY_BYTES`,
+`ARGUS_SCORECARD_MAX_DOCKER_CONTAINERS`,
+`ARGUS_SCORECARD_MAX_DOCKER_NETWORKS`,
+`ARGUS_SCORECARD_MAX_NETWORK_INTERFACES`,
+`ARGUS_SCORECARD_MAX_ACTIVE_JOBS`, and
+`ARGUS_SCORECARD_PROBE_TIMEOUT_SECONDS`. Values are parsed and validated at
+configuration load; invalid values fail startup rather than widening a
+workload budget.
+
 ## Verdicts
 
 Verdicts apply to an exact release and evaluation profile.
