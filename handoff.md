@@ -1,7 +1,25 @@
 # Execution result — September 7, 2026
 
-## PR #166 source checkpoint — 2026-09-29
+## Issue #158 documentation checkpoint — 2026-10-09
 
+Scorecard admission operations for issue #158 are documented in
+`docs/scorecards/admission-operations.md`: every `ARGUS_SCORECARD_*`
+admission and pressure setting with default/range/effect, the shared
+baseline/candidate host budget with no Docker resources created before
+admission, queue states with bounded backoff, cancellation, lease expiry and
+worker-crash recovery, emergency disable/rollback without deleting unrelated
+scorecard or Homelab data, runner-demand five-second evidence coordination,
+and the bounded qualification command, pass criteria, and evidence artifacts.
+Cross-linked from `docs/README.md`, `docs/operations.md`, and
+`docs/scorecards/stability-competitive.md`. This is a documentation contract
+for the issue #151 children (#154–#157); the live coordinator and the
+qualification harness are not yet shipped in this repository, so the only
+recheck here is the focused scorecard suite:
+`uv run pytest tests/test_scorecard.py tests/test_live_scorecard.py -q`
+(84 passed) plus the offline lane
+`uv run python scripts/run-scorecard.py --lane hermetic --output .artifacts/scratch`.
+
+## PR #166 source checkpoint — 2026-09-29
 The Python 3.12 CI failure in the terminal spend fanout test was an expiry
 race in the test: `reset_at` was one microsecond after mocked database time,
 but final snapshot reads used the real clock. The test now reads snapshots at

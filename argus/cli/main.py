@@ -941,7 +941,19 @@ def mcp():
 )
 def mcp_serve(transport, host, port):
     """Start MCP server. Use stdio for Claude/Cursor, sse or streamable-http for remote access."""
+    import os
     from argus.authority import adapter_execution_mode
+
+    # Production mode rejects standalone MCP without proper authority
+    if (
+        os.environ.get("ARGUS_ENV", "development").strip().lower() == "production"
+        and os.environ.get("ARGUS_MCP_STANDALONE", "").strip().lower() in {"1", "true", "yes"}
+        and not os.environ.get("ARGUS_AUTHORITY_URL", "").strip()
+    ):
+        raise RuntimeError(
+            "MCP requires ARGUS_AUTHORITY_URL and authority authentication; "
+            "standalone development must use the external development MCP launcher"
+        )
 
     try:
         if adapter_execution_mode() == "standalone":

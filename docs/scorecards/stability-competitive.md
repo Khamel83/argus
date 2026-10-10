@@ -342,6 +342,11 @@ not fresh. Each canary schedule records its interval and evidence TTL; the next
 run must occur before expiry, so “recurrently” never becomes an unbounded
 operator promise.
 
+Live execution admission, host-pressure thresholds, queue/retry semantics,
+runner-demand coordination, rollback, and the bounded qualification procedure
+are operational controls rather than verdict rules. See
+[scorecard admission operations](admission-operations.md).
+
 ## Hermetic implementation boundary
 
 `scripts/run-scorecard.py --lane hermetic` is the pull-request lane. It reads

@@ -18,6 +18,10 @@
   Keep public/fork CI on GitHub-hosted runners. Its separate image failed
   exact scorecard admission; issue triage from the old workflow has no
   replacement proven here.
+- [x] Document scorecard admission operations and Homelab coordination for
+  issue #158. See
+  [scorecard admission operations](docs/scorecards/admission-operations.md);
+  focused scorecard tests passed: 84 passed.
 
 Updated September 7, 2026. The current dated capability evidence belongs in
 [public status](docs/STATUS.md); the private audit preserves raw receipts.

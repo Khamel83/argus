@@ -21,6 +21,12 @@ through the root Homelab Compose project, with current recovery evidence,
 candidate gates, authenticated HTTP/MCP checks and the required 1,800-second
 soak. Keep the previous proven image available for rollback.
 
+Scorecard live-workload admission is a separate host-control-plane concern.
+Use the [scorecard admission operations guide](scorecards/admission-operations.md)
+for the shared baseline/candidate budget, pressure thresholds, queue and lease
+recovery, emergency disable, runner-demand coordination, and qualification
+evidence. The hermetic scorecard lane does not create Docker resources.
+
 ### Current provider probe procedure
 
 Use the admin credential for capability probes. Use a unique,
