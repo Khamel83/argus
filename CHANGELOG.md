@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value. Export the token yourself in the shell that launches the client.
 
 ### Added
+- **Disposable scorecard/Baywatch qualification harness** — `qualify-scorecard.py`
+  runs bounded baseline and candidate scorecard workloads through the real
+  hermetic scorecard path while calling local Baywatch evidence commands for
+  Docker, Hermes, and Homelab runner demand concurrently. Every evidence call
+  has a five-second deadline and the run fails on timeout or fail-closed
+  response. The JSON report records max evidence latency, queue transitions,
+  max active scorecards, and Docker object/interface pressure before, during,
+  and after execution, and a cleanup command must leave zero containers,
+  networks, leases, and queue entries.
 - **Scoped paywall browser exception (`ARGUS_AUTH_BROWSER_DOMAINS`)** — off by
   default. When set to a comma-separated domain list, an `authenticated_content`
   HTTPS browser request is admitted without a browser-network attestation only

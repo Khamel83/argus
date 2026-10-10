@@ -28,6 +28,7 @@ Top-level entry points live at the repo root:
 - [superpowers/plans/2026-07-27-retrieval-evidence-mechanical-port.md](superpowers/plans/2026-07-27-retrieval-evidence-mechanical-port.md) — dependency-ordered isolated implementation and operationally gated homelab port plan
 - [dashboard-design.md](dashboard-design.md) — dashboard UI design system reference
 - [scorecards/stability-competitive.md](scorecards/stability-competitive.md) — hard stability gates and automated competitive-evidence verdicts
+- [scorecards/qualification.md](scorecards/qualification.md) — disposable local scorecard/Baywatch qualification harness and its evidence/cleanup contract
 - [PUBLICITY-CHECKLIST.md](PUBLICITY-CHECKLIST.md) — project-internal launch / publicity checklist
 - [roadmaps/](roadmaps/) — long-range roadmap documents
 - [research/](research/) — research notes used while building features
