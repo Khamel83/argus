@@ -1,0 +1,366 @@
+[
+  {
+    "number": 163,
+    "kind": "pr",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/pull/163",
+    "updated_at": "2026-09-29T06:03:42Z",
+    "title": "ci: retire queued legacy AI review workflow",
+    "body": "## Summary\n\nRemove the legacy public AI Review workflow that targets the retired `oci-ts` runner lane. The separate OCI reviewer passed PR #162 at its exact head. Keep public fork CI GitHub-hosted and record that the old issue-triage job has no replacement proof.\n\n## Verification\n\n- `git diff --check`\n- Review current runner policy in Homelab `infra/oci-runner-fleet/README.md`\n- Verify OCI reviewer exact-head PR #162 receipt\n\nMerge this after the current Argus scorecard and promotion settle. A main push starts another image build.\n",
+    "body_complete": true,
+    "full_body_sha256": "c61bd5a487a106a3c9eef64dec51ccf5aa15dc8922483ed956ba0fe405fea926",
+    "closed_at": "2026-09-29T06:03:40Z",
+    "labels": [],
+    "merged_at": "2026-09-29T06:03:39Z",
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 162,
+    "kind": "pr",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/pull/162",
+    "updated_at": "2026-09-29T05:25:30Z",
+    "title": "fix(status): include validated release SHA in readiness",
+    "body": "## Summary\n\n```text\nArgus cached /api/ready\n  status + ready + reason_codes\n  + source_sha only when build revision is a validated 40-character SHA\n```\n\nThis gives Janitor a bounded release identity on its existing read-only observation. Detailed admin status remains separate.\n\n## Evidence\n\n- **Before:** Janitor's Argus operation received HTTP 200 but recorded `response_sha_missing`.\n- **After:** Valid build revisions appear as `source_sha`; unknown revisions omit the field. Focused operational status tests: 84 passed. Ruff and `git diff --check` pass.\n- **Runtime gate:** This is source only. Exact image promotion and a later natural Janitor receipt are required before #296 can count Argus identity as verified.\n\n## Merge Danger\n\n**Door:** two-way\n\n**Blast Radius:** public cached readiness response\n\nThe new field is validated release metadata; it does not run a dependency probe or expose admin status.\n",
+    "body_complete": true,
+    "full_body_sha256": "6fb0e0c0631d31179a3980cf03788eac40263e70f966107f11a8e8a58ecd6f22",
+    "closed_at": "2026-09-29T05:25:28Z",
+    "labels": [],
+    "merged_at": "2026-09-29T05:25:28Z",
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 161,
+    "kind": "pr",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/pull/161",
+    "updated_at": "2026-09-28T22:25:22Z",
+    "title": "Keep fork PR reviews off private OCI runner",
+    "body": "## Summary\n\n```diff\n pull_request event\n+require same-repository head\n private OCI fast/deep review\n```\n\nRequire the PR head repository to match Argus before either review job reaches the self-hosted runner. Issue triage is unchanged. Supports Homelab [#296](https://github.com/Khamel83/homelab/issues/296).\n\n## Evidence\n\n- **Before:** `fast-review` and `deep-review` accepted any `pull_request` event, including a public fork.\n  **After:** Both jobs require `github.event.pull_request.head.repo.full_name == github.repository`.\n- `actionlint -ignore 'label \"oci-ts\" is unknown' .github/workflows/ai-review.yml` and `git diff --check` passed at `d2d6b75`. The ignored label is an existing custom self-hosted label.\n\n## Merge Danger\n\n**Door:** two-way\n\n**Blast Radius:** review\n\nFork PRs will no longer receive the private fast or deep review. Same-repository PRs keep those jobs.\n",
+    "body_complete": true,
+    "full_body_sha256": "d40607d17406636ed5f91780016c4c9ba67029f92990cf9c9b99ba470082f0dc",
+    "closed_at": "2026-09-28T22:25:20Z",
+    "labels": [],
+    "merged_at": "2026-09-28T22:25:20Z",
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 160,
+    "kind": "pr",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/pull/160",
+    "updated_at": "2026-09-26T06:32:11Z",
+    "title": "docs: reconcile Argus context and TODO",
+    "body": "## Summary\n- Submit the existing Janitor-generated CONTEXT.md and TODO.md sweep for review against current Argus main.\n- Keep the local generated LLM overview in a local archive branch; it is not part of this PR.\n\n## Evidence\n- Reviewed commit `b301a36` changes only `CONTEXT.md` and `TODO.md`.\n- The change is documentation-only; `git diff --check` passes.\n\n## Merge Danger\nArgus main is two commits ahead of the source commit. Merge this exact reviewed commit, then fast-forward the Mac checkout. Preserve the local overview archive branch.\n",
+    "body_complete": true,
+    "full_body_sha256": "4de6705d70f8888cd7ab27c59232978c5cae4753b3f7f0ccde1af1092c650cf9",
+    "closed_at": "2026-09-26T06:32:11Z",
+    "labels": [],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 159,
+    "kind": "issue",
+    "state": "open",
+    "url": "https://github.com/Khamel83/argus/issues/159",
+    "updated_at": "2026-09-30T09:28:18Z",
+    "title": "AI chat share links extract only 'Sign in' (Gemini, ChatGPT)",
+    "body": "Public AI chat share links return only site chrome from Argus extraction.\n\nObserved 2026-09-25: `extract_content_v2` on `https://share.gemini.google/bQBdWIDX3xBr` → `extraction_failed`, 2 words (\"Sign in\"), extractor trafilatura, machine homelab. The conversation is rendered client-side.\n\nHeadless Chrome (Playwright, `wait_until=networkidle` + ~4 s) on the Mac mini reads the full conversation for:\n- Gemini: `share.gemini.google/<id>` (redirects to `gemini.google.com/share/<id>`)\n- ChatGPT: `chatgpt.com/share/<id>`\n\nClaude `claude.ai/share/<id>` is not yet verified against a real public share (an invalid id redirects to `/login`).\n\nWorking reference: `~/.claude/skills/read-share-link/read_share.py` on the Mac mini (renders, strips site chrome, exits 2 on a login wall).\n\n## Acceptance\n- The chain reaches its Playwright stage for these hosts instead of accepting/failing on the trafilatura result; the cross-domain redirect `share.gemini.google → gemini.google.com` is admitted by browser policy.\n- Site chrome (navigation, \"Sign in\", footer) is removed; a login redirect is reported as not public, never as content.\n- Canary tests for one Gemini and one ChatGPT public share.",
+    "body_complete": true,
+    "full_body_sha256": "769ff073f71e4e5d70eedeb32fb36b8a178678b5d07c1668b658124f98202857",
+    "closed_at": null,
+    "labels": [
+      "needs-human"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified",
+    "comments": [
+      {
+        "body": "Update 2026-09-25: Claude public shares (`claude.ai/share/<id>`) also render fully with the same headless Chrome approach (a real share returned ~18.6k chars). So Gemini, ChatGPT, and Claude are all confirmed; please include a Claude canary too.",
+        "html_url": "https://github.com/Khamel83/argus/issues/159#issuecomment-5842408796",
+        "created_at": "2026-09-26T02:33:31Z",
+        "updated_at": "2026-09-26T02:33:31Z"
+      },
+      {
+        "body": "<!-- g2k:review-v1 -->\nG2K review-v1 receipt\n- disposition: `execute`\n- skill: `code-change-v1`\n- priority: `next`\n- reason: review_reason_unavailable\n- evidence: evidence_unavailable; evidence_unavailable; evidence_unavailable; evidence_unavailable\n- issue: https://github.com/Khamel83/argus/issues/159\n<!-- g2k:review-fingerprint:5b7efc77c2a756fcde2e3567b6ae450c62bcec0c908b9f1f3cb01bfa76c704bd -->\n",
+        "html_url": "https://github.com/Khamel83/argus/issues/159#issuecomment-5908198363",
+        "created_at": "2026-09-30T09:22:32Z",
+        "updated_at": "2026-09-30T09:22:32Z"
+      }
+    ]
+  },
+  {
+    "number": 158,
+    "kind": "issue",
+    "state": "open",
+    "url": "https://github.com/Khamel83/argus/issues/158",
+    "updated_at": "2026-10-10T20:41:44Z",
+    "title": "Document scorecard admission operations and Homelab coordination",
+    "body": "Parent issue: #151\n\n## What\nDocument the scorecard concurrency limit, capacity thresholds, queue and backoff behavior, recovery semantics, rollback controls, and coordination with Homelab runner-demand scheduling. Include the qualification procedure and operator signals needed to distinguish queued work from a failed workload.\n\n## Acceptance criteria\n- [ ] Documentation names every admission and pressure setting, its default, its valid range, and its operational effect.\n- [ ] Documentation explains that baseline and candidate jobs consume one shared host budget and that no Docker resources are created before admission.\n- [ ] Queue states, retry/backoff behavior, cancellation, lease expiry, and worker-crash recovery are described.\n- [ ] A rollback or emergency-disable procedure is documented and can be applied without deleting unrelated scorecard or Homelab data.\n- [ ] Coordination with Homelab runner-demand scheduling is explicit, including how scorecard admission avoids competing with five-second evidence checks.\n- [ ] The bounded qualification command, expected pass criteria, and evidence artifacts are documented.",
+    "body_complete": true,
+    "full_body_sha256": "bebc48add5493043c9e2bc4efd4ae76a671d5bd5b37b614fbfc2f0066648c2e4",
+    "closed_at": null,
+    "labels": [
+      "needs-human"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 157,
+    "kind": "issue",
+    "state": "open",
+    "url": "https://github.com/Khamel83/argus/issues/157",
+    "updated_at": "2026-10-10T20:41:37Z",
+    "title": "Add a bounded scorecard qualification run for Baywatch evidence latency",
+    "body": "Parent issue: #151\n\n## What\nCreate a repeatable qualification command or harness that runs bounded baseline and candidate scorecard activity while exercising the local Baywatch evidence calls used for Docker, Hermes, and Homelab runner-demand checks. Record admission, queue, resource-pressure, and evidence-call timing so the protection can be evaluated without using a production database or deployment.\n\n## Acceptance criteria\n- [ ] The qualification run starts bounded baseline and candidate activity through the real scorecard execution path.\n- [ ] The run exercises the local Baywatch evidence calls concurrently with scorecard activity, including Docker, Hermes, and Homelab runner-demand checks.\n- [ ] Every evidence call has a five-second deadline, and the run fails if any call exceeds that deadline or fails closed unexpectedly.\n- [ ] The run reports the maximum evidence latency, active scorecard count, queue transitions, and Docker object/interface pressure before, during, and after execution.\n- [ ] The run leaves no scorecard containers, networks, leases, or queue entries behind after completion or interruption.\n- [ ] The qualification procedure is safe for a disposable local environment and does not target production databases or deployments.",
+    "body_complete": true,
+    "full_body_sha256": "6c1c97a936abb2500e0542383447af426332532dec6ce84ce66fde44cde5e04d",
+    "closed_at": null,
+    "labels": [
+      "needs-human"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 156,
+    "kind": "issue",
+    "state": "open",
+    "url": "https://github.com/Khamel83/argus/issues/156",
+    "updated_at": "2026-10-10T20:41:30Z",
+    "title": "Queue and safely recover scorecard workloads denied by admission",
+    "body": "Parent issue: #151\n\n## What\nIntegrate queueing and bounded backoff into scorecard execution so capacity denial delays the complete workload instead of partially starting it. Add cancellation, retry limits, lease cleanup, and recovery for abandoned queue entries or expired admissions.\n\n## Acceptance criteria\n- [ ] A capacity-denied baseline or candidate request enters a bounded queue and does not initialize Docker resources while waiting.\n- [ ] Retries use bounded exponential backoff with a maximum wait or retry policy and do not busy-loop.\n- [ ] Queue status distinguishes waiting, admitted, canceled, failed, and completed work without exposing host details.\n- [ ] Cancellation removes waiting work and releases any acquired admission before returning.\n- [ ] Startup failures and worker termination release leases and allow later queued work to proceed.\n- [ ] A test exercises two concurrent jobs, verifies that the second waits, and verifies that it starts only after the first releases admission.",
+    "body_complete": true,
+    "full_body_sha256": "65d3f77e49f0f6458411d6018b4b72c85af15e2159f98e88ddccee081ce454aa",
+    "closed_at": null,
+    "labels": [
+      "needs-human"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 155,
+    "kind": "issue",
+    "state": "open",
+    "url": "https://github.com/Khamel83/argus/issues/155",
+    "updated_at": "2026-10-10T20:41:24Z",
+    "title": "Gate scorecard admission on bounded host and Docker pressure",
+    "body": "Parent issue: #151\n\n## What\nAdd capacity probes and an admission policy for the scorecard coordinator. Evaluate bounded host capacity before workload startup using CPU, available memory, Docker object/interface pressure, and the number of active scorecard jobs. Keep thresholds configurable with safe defaults and make probe failures fail closed to queueing rather than allowing an unbounded workload.\n\n## Acceptance criteria\n- [ ] Admission evaluates CPU capacity, available memory, Docker container/network pressure, interface or veth pressure, and active scorecard jobs before startup.\n- [ ] Each metric has a bounded threshold or budget with a documented default and validated configuration.\n- [ ] A workload is not admitted when any required capacity check is unavailable or over threshold.\n- [ ] Capacity is rechecked after waiting and immediately before Docker workload creation.\n- [ ] Tests cover each pressure boundary and verify that a rejected admission creates no container, network, or exec resource.\n- [ ] The policy returns a stable, content-free reason code suitable for logs and queue state.",
+    "body_complete": true,
+    "full_body_sha256": "e8d9b2a453b7a533df15e3105c63e756d1ebbfce35fe810ac5a7cab59a0d3d50",
+    "closed_at": null,
+    "labels": [
+      "needs-human"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 154,
+    "kind": "issue",
+    "state": "open",
+    "url": "https://github.com/Khamel83/argus/issues/154",
+    "updated_at": "2026-10-10T20:41:18Z",
+    "title": "Add a host-wide shared admission budget for Argus scorecard jobs",
+    "body": "Parent issue: #151\n\n## What\nImplement a host-wide scorecard admission coordinator used by both baseline and candidate execution paths. The coordinator must enforce one shared active-job budget rather than separate limits per execution mode. Use a bounded default of one active scorecard workload, with an explicit configuration override and an atomic acquire/release or lease mechanism that recovers when a worker exits unexpectedly.\n\n## Acceptance criteria\n- [ ] Baseline and candidate jobs acquire the same host-scoped admission budget before creating any Docker container, network, or exec stream.\n- [ ] The default active scorecard workload limit is one and the configured limit is validated as a bounded positive value.\n- [ ] Concurrent baseline and candidate launches cannot exceed the shared limit, including when they start from separate worker processes.\n- [ ] Admission state is released on success, failure, cancellation, and worker termination recovery.\n- [ ] Tests demonstrate that a second job cannot enter workload startup while the first job holds the shared admission.\n- [ ] The admission result exposes stable states for admitted, queued, and unavailable without leaking host-specific diagnostics.",
+    "body_complete": true,
+    "full_body_sha256": "3cda18cc7721cd0badd5ef6678fb363aa2e3c3dec8e81ef91203c00f8830f645",
+    "closed_at": null,
+    "labels": [
+      "needs-human"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 153,
+    "kind": "pr",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/pull/153",
+    "updated_at": "2026-09-19T02:20:43Z",
+    "title": "docs: reconcile repository context and TODOs",
+    "body": "Janitor reconciled only the managed sections of `CONTEXT.md` and `TODO.md` from evidence already published in this repository.\n\nImmutable source SHA: `73bff53ff6c7bc51ef11bc5a488a76a2dce679d4`\n- [CONTEXT.md](https://github.com/Khamel83/argus/blob/73bff53ff6c7bc51ef11bc5a488a76a2dce679d4/CONTEXT.md)\n- [TODO.md](https://github.com/Khamel83/argus/blob/73bff53ff6c7bc51ef11bc5a488a76a2dce679d4/TODO.md)\n- Evidence digest: `6b3ecc1f69c5b305d6334b1a8f24df6414bbc987b0fca9c83572479f011ea798`\n\nJanitor must not merge this PR. External automated review and human review are expected.",
+    "body_complete": true,
+    "full_body_sha256": "e765660a4984cefc8f50760d9fc93d24326e3b5197f9ac774178e1f39a435695",
+    "closed_at": "2026-09-19T02:20:41Z",
+    "labels": [],
+    "merged_at": "2026-09-19T02:20:41Z",
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 152,
+    "kind": "pr",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/pull/152",
+    "updated_at": "2026-09-18T04:41:53Z",
+    "title": "fix/self healing monthly first routing",
+    "body": "- **fix: enable self-healing circuit breaker and monthly-first tier routing**\n- **docs: add docs/INFRA.md and update G2K naming in AGENTS.md**\n",
+    "body_complete": true,
+    "full_body_sha256": "a6dab748ca22465c3e6e3034317a30435ca358be57b9272e6dc0b3e493dba2cf",
+    "closed_at": "2026-09-18T04:41:51Z",
+    "labels": [],
+    "merged_at": "2026-09-18T04:41:51Z",
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 151,
+    "kind": "issue",
+    "state": "open",
+    "url": "https://github.com/Khamel83/argus/issues/151",
+    "updated_at": "2026-09-22T20:34:09Z",
+    "title": "Bound scorecard concurrency to protect Docker and network health evidence",
+    "body": "## Context\n\nDuring the 2026-09-14 05:34–05:39 UTC window, Argus scorecard baseline/candidate jobs created a burst of Docker containers and networks while Homelab runner-demand checks were active.\n\nObserved host evidence included:\n\n- repeated Docker network and veth creation;\n- canceled /containers/json?all=1 requests and Docker broken-pipe responses;\n- closed exec streams and stopped-container health probes;\n- repeated host No buffer space available interface errors;\n- Baywatch delegated evidence calls failing closed for baywatch.timer, Hermes, and Homelab together.\n\nThe Docker daemon did not restart and no OOM event was found in the inspected window, but the control plane was sufficiently pressured to starve five-second health evidence calls.\n\n## Goal\n\nBound Argus scorecard ephemeral workload concurrency so scorecard execution cannot degrade the Homelab Docker/network control plane or monitoring evidence.\n\n## Acceptance criteria\n\n- Argus scorecard baseline/candidate execution has an explicit host concurrency limit or queue.\n- Concurrent baseline/candidate runs share one admission budget and cannot independently multiply container/network pressure.\n- Admission considers bounded host capacity such as CPU, memory, Docker object/interface pressure, and active scorecard jobs.\n- When capacity is unavailable, work queues or backs off with a content-free reason and does not partially start a workload.\n- A bounded qualification run demonstrates that Baywatch local evidence calls remain within their five-second budget while scorecard activity runs.\n- The limit, queue behavior, and recovery/rollback path are documented.\n- Any required coordination with Homelab runner-demand scheduling is explicitly documented.\n\n## Notes\n\nThis is an infrastructure follow-up to the transient Baywatch incident documented in https://github.com/Khamel83/homelab/blob/main/docs/HANDOFF.md; it is not evidence that Hermes itself crashed.",
+    "body_complete": true,
+    "full_body_sha256": "be360f80dc7cedac4e3bab92c106029aa3efaef0fbc097288411c5b9257ad560",
+    "closed_at": null,
+    "labels": [
+      "bug",
+      "high-priority",
+      "chronos",
+      "infrastructure"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified",
+    "comments": [
+      {
+        "body": "<!-- g2k:review-v1 -->\nG2K review-v1 receipt\n- disposition: `execute`\n- skill: `code-change-v1`\n- priority: `next`\n- reason: execute_ready\n- evidence: evidence_unavailable; evidence_unavailable; evidence_unavailable; evidence_unavailable\n- issue: https://github.com/Khamel83/argus/issues/151\n<!-- g2k:review-fingerprint:453c2fcdc90f7412df266d8200ba0923d3dd4e0d354a4ec286bbe5137d3c1df8 -->\n",
+        "html_url": "https://github.com/Khamel83/argus/issues/151#issuecomment-5783651686",
+        "created_at": "2026-09-22T20:29:53Z",
+        "updated_at": "2026-09-22T20:29:53Z"
+      },
+      {
+        "body": "g2k decomposition created these child issues:\n- [ ] Add a host-wide shared admission budget for Argus scorecard jobs\n- [ ] Gate scorecard admission on bounded host and Docker pressure\n- [ ] Queue and safely recover scorecard workloads denied by admission\n- [ ] Add a bounded scorecard qualification run for Baywatch evidence latency\n- [ ] Document scorecard admission operations and Homelab coordination",
+        "html_url": "https://github.com/Khamel83/argus/issues/151#issuecomment-5783669687",
+        "created_at": "2026-09-22T20:31:08Z",
+        "updated_at": "2026-09-22T20:31:08Z"
+      },
+      {
+        "body": "<!-- g2k:review-v1 -->\nG2K review-v1 receipt\n- disposition: `execute`\n- skill: `code-change-v1`\n- priority: `next`\n- reason: execute_ready\n- evidence: evidence_unavailable; evidence_unavailable; evidence_unavailable; evidence_unavailable; evidence_unavailable\n- issue: https://github.com/Khamel83/argus/issues/151\n<!-- g2k:review-fingerprint:776133527f71110a35265e74abc0c712a84815ef7f9d1cf7a0d40479f0ea24d2 -->\n",
+        "html_url": "https://github.com/Khamel83/argus/issues/151#issuecomment-5783711815",
+        "created_at": "2026-09-22T20:34:09Z",
+        "updated_at": "2026-09-22T20:34:09Z"
+      }
+    ]
+  },
+  {
+    "number": 150,
+    "kind": "pr",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/pull/150",
+    "updated_at": "2026-09-14T21:20:57Z",
+    "title": "docs: reconcile repository context and TODOs",
+    "body": "Janitor reconciled only the managed sections of `CONTEXT.md` and `TODO.md` from evidence already published in this repository.\n\nImmutable source SHA: `01ac7a67be0c57b5bbbb7931711f74d690f31c69`\n- [CONTEXT.md](https://github.com/Khamel83/argus/blob/01ac7a67be0c57b5bbbb7931711f74d690f31c69/CONTEXT.md)\n- [TODO.md](https://github.com/Khamel83/argus/blob/01ac7a67be0c57b5bbbb7931711f74d690f31c69/TODO.md)\n- Evidence digest: `552d95a092d5e754318a83fbf0ee96c662229c34ca5c667cf3103dd1a3441448`\n\nJanitor must not merge this PR. External automated review and human review are expected.",
+    "body_complete": true,
+    "full_body_sha256": "b4239355618bf63ef264a7ee84567db29f1486bee5886ae9814eacec03f5dadb",
+    "closed_at": "2026-09-14T21:20:55Z",
+    "labels": [],
+    "merged_at": "2026-09-14T21:20:55Z",
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 149,
+    "kind": "pr",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/pull/149",
+    "updated_at": "2026-09-14T02:46:10Z",
+    "title": "feat: add scoped paywall browser exception (#148)",
+    "body": "## Summary\nOption 1 from #148. Paywalled extraction (NYT, WSJ, and other cookie-backed domains) has failed with `browser_policy_unavailable` since `07b807e`, because no browser-network attestation provider exists. This adds a scoped, **off-by-default** exception.\n\n- New `ARGUS_AUTH_BROWSER_DOMAINS` (comma-separated). A browser request is admitted without an attestation only when **all** of these hold:\n  - profile is `authenticated_content`\n  - the URL is HTTPS\n  - the host (or a parent) is on the allowlist\n  - the host is in `PAYWALL_DOMAINS`\n  - a cookie file exists for it\n- It applies **only when no attestation is present**. An installed authority that returns an invalid or expired attestation still wins.\n- **Receipt:** `BrowserAdmission.basis == \"auth_browser_exception\"` and `exception_ref == \"ARGUS_AUTH_BROWSER_DOMAINS:<domain>\"`, with `attestation=None` and a 5-minute lease. Each such admission logs a warning.\n- The existing same-origin resource guard for `authenticated_content` is unchanged.\n- Both gates on the auth path (`guarded.open_browser_session` and `admit_browser_url`) go through `require_browser_policy`, so a single hook covers both.\n- `ARGUS_AUTH_BROWSER_DOMAINS` joins the authority-only inputs that the MCP adapter rejects.\n- Readiness is unchanged. No attestation provider is installed, so browser attestation still reads as missing.\n- Docs: README env table, `.env.example`, CHANGELOG `[Unreleased]`.\n\nRemove this once option 2, the real browser-network authority, lands.\n\n## Known pre-existing limit (not changed here)\n`auth_extractor` caches one browser context per domain. That context's route guard stays bound to the **first** admission: its origin and its `max_resources` counter. Across many articles on one domain, later pages can hit \"browser resource limit exceeded\", or have a different subdomain blocked as cross-origin. That needs a follow-up if it shows up in production.\n\n## Test plan\n- [x] 12 new tests: off by default; admits an allowlisted, cookie-backed paywall host with a receipt; rejects missing cookies, non-paywall hosts, hosts not on the allowlist, plain HTTP, lookalike hosts, and `public_content`; never overrides a rejecting authority; keeps the same-origin guard through `admit_browser_url`; MCP adapter rejects the variable.\n- [x] Full suite: 2932 passed, 47 skipped\n- [x] `ruff check`, `scripts/verify_release_contract.py`, hermetic scorecard (`stable`)\n- [ ] Live: with the switch on, one NYT and one WSJ article extract from homelab; with it off, both fail closed\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01QEpSUpBctrHbv9ecdnFSz7\n",
+    "body_complete": true,
+    "full_body_sha256": "e493796b14d7ce5cb1d900ae973017080001d6a54770fdf89e9d946d8f751e49",
+    "closed_at": "2026-09-14T02:46:09Z",
+    "labels": [],
+    "merged_at": "2026-09-14T02:46:08Z",
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 148,
+    "kind": "issue",
+    "state": "open",
+    "url": "https://github.com/Khamel83/argus/issues/148",
+    "updated_at": "2026-09-30T10:38:06Z",
+    "title": "Paywall login browser: scoped exception now, browser-network attestation long-term",
+    "body": "## Problem\n\nAtlas saves paywalled articles (NYT, WSJ, Bloomberg, LA Times, Chicago Tribune, ESPN, Stratechery) through Argus. Since `07b807e` (2026-09-02, \"gate browser acquisition on connection policy\"), every browser admission fails closed: `UnavailableBrowserAttestationProvider` is the only provider, and nothing installs another. So `extract_authenticated` returns `auth: browser_policy_unavailable` even when the cookies are valid. TODO.md already says: \"Admit a real external browser-network authority/attestation … Keep browser access fail-closed meanwhile.\"\n\n### Evidence, 2026-09-14, homelab\n- The cookies are now at `/data/cookies` (`ARGUS_COOKIE_DIR`), owner `argus`, mode 600. For nytimes.com, `needs_auth`, `get_cookie_path` and `can_authenticate` are all true.\n- `extract_authenticated(nyt_url)` returns `auth: browser_policy_unavailable`.\n- Plain HTTP with the same cookies gets NYT 403 and WSJ 401. Bot protection blocks non-browser clients, so a browser is required.\n- The browser used to work: sandboxed Chromium shipped in `f84565f` (2026-07-23), and the bounded raw browser fetch in `4ba0ede` (2026-07-29).\n\n## Plan\n\n### 1. Now: a scoped, switchable exception\n- A setting that is off by default, for example `ARGUS_AUTH_BROWSER_DOMAINS`. It admits the browser only for the `authenticated_content` profile, only for cookie-backed domains in `PAYWALL_DOMAINS` that are also on that allowlist, and only for same-origin navigation. That is the existing `authenticated_content` same-origin rule.\n- Every admission still records a receipt that it went through the exception, not through an attestation. Readiness keeps reporting browser attestation as missing.\n- Everything else (raw browser fetch, generic Playwright, Obscura, residential) stays fail-closed.\n\n### 2. Long-term: the real browser-network authority\n- An isolated browser network with enforced egress, and an attestation provider that `validate_browser_attestation` accepts: policy identity, resolver/address-control identity, connection binding, release identity, and expiry.\n- Once it is in place, retire the exception in item 1.\n\n## Alternatives already on file\n- #142 Obscura (anti-detection CDP browser) and #139 CloakBrowser (fingerprint-patched Chromium). Both target the bot protection behind the NYT and WSJ 403/401s.\n- #143 Lightpanda, #140 Scrapling, #144 crawl4ai: lighter or stealthier browser runtimes.\n- #141 Firecrawl: a paid API. It cannot use the user's subscriptions, so it doesn't help with paywalls.\n- The archive fallbacks (Wayback, archive.is) are **not** an option for Maya-origin saves: Atlas's deny-archive policy (`7c4fb139`, 2026-08-09).\n- Cookie freshness: the files were exported 2026-04-05. NYT has 3 of 6 cookies still valid. Re-export from a logged-in browser when auth starts failing. The old auto-login service (`argus-extract-service`, retired in May) could come back as a cookie refresher.\n\n## Done means\n- [ ] With the switch on, one NYT and one WSJ article extract through the auth browser from homelab. With it off, both fail closed.\n- [ ] Tests cover off-by-default, the allowlist, same-origin navigation, and the receipt marking.\n- [ ] Item 2 is tracked to completion, and the exception is removed after it lands.\n\nRelated: Khamel83/atlas#32, Khamel83/homelab#243.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+    "body_complete": true,
+    "full_body_sha256": "a4382558fbc18bf25f96572c8d5a4e4a88db4cc4aaa45f6c98469db0c4e0fa05",
+    "closed_at": null,
+    "labels": [
+      "needs-human"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified",
+    "comments": [
+      {
+        "body": "<!-- g2k:judge-v1 -->\ng2k stopped this issue and needs a person. Verdict: `needs_human`.\n\n**Why:** judge unavailable: ValueError\n**What would unblock it:** not reported safely\n\nRemove the `needs-human` label to grant one fresh attempt.",
+        "html_url": "https://github.com/Khamel83/argus/issues/148#issuecomment-5760290767",
+        "created_at": "2026-09-21T12:13:03Z",
+        "updated_at": "2026-09-21T12:13:03Z"
+      },
+      {
+        "body": "<!-- g2k:close-out:ef2dc78fa2d149241cad6798fb42622c7c7ae46e -->\nSaved unfinished work on `g2k/issue-148` at `ef2dc78fa2d149241cad6798fb42622c7c7ae46e`. A verified compact OCI receipt also preserves unique ignored files.",
+        "html_url": "https://github.com/Khamel83/argus/issues/148#issuecomment-5909415189",
+        "created_at": "2026-09-30T10:30:24Z",
+        "updated_at": "2026-09-30T10:30:24Z"
+      },
+      {
+        "body": "<!-- g2k:review-v1 -->\nG2K review-v1 receipt\n- disposition: `execute`\n- skill: `code-change-v1`\n- priority: `now`\n- reason: review_reason_unavailable\n- evidence: evidence_unavailable; evidence_unavailable; evidence_unavailable; evidence_unavailable\n- issue: https://github.com/Khamel83/argus/issues/148\n<!-- g2k:review-fingerprint:9f4045c01524553f26fe0693938980a1edd36a936a7b6968e82557b5464ec3e5 -->\n",
+        "html_url": "https://github.com/Khamel83/argus/issues/148#issuecomment-5909455649",
+        "created_at": "2026-09-30T10:33:19Z",
+        "updated_at": "2026-09-30T10:33:19Z"
+      }
+    ]
+  },
+  {
+    "number": 147,
+    "kind": "pr",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/pull/147",
+    "updated_at": "2026-09-13T18:25:45Z",
+    "title": "docs: reconcile repository context and TODOs",
+    "body": "Janitor reconciled only the managed sections of `CONTEXT.md` and `TODO.md` from evidence already published in this repository.\n\nImmutable source SHA: `9c955a1d3b26549eb3f48a8412ffa6777d07195b`\n- [CONTEXT.md](https://github.com/Khamel83/argus/blob/9c955a1d3b26549eb3f48a8412ffa6777d07195b/CONTEXT.md)\n- [TODO.md](https://github.com/Khamel83/argus/blob/9c955a1d3b26549eb3f48a8412ffa6777d07195b/TODO.md)\n- Evidence digest: `6b079fa6659fe8d89fc490b1a4773a73764809962c6cc361f1f30bf64cbc6478`\n\nJanitor must not merge this PR. External automated review and human review are expected.",
+    "body_complete": true,
+    "full_body_sha256": "14dbef2d1ad7c70f22538c7cd144d65e05b0e05e15901e04d4503cac68545e01",
+    "closed_at": "2026-09-13T18:25:43Z",
+    "labels": [],
+    "merged_at": "2026-09-13T18:25:42Z",
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 145,
+    "kind": "issue",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/issues/145",
+    "updated_at": "2026-09-23T23:04:59Z",
+    "title": "[Star Opportunity] apple/container -> Khamel83/argus: Run standard OCI-compatible Linux container images as lightweight virtual machines on Apple-silicon Macs using Apple’s native `container` CLI.",
+    "body": "<!-- ideaz:opportunity pair=\"apple/container::Khamel83/argus\" -->\n\n<!-- ideaz:generated:start -->\n## Recommendation\n\nThis is a proposal for evaluation. It does not mean that implementation, approval, deployment, or adoption has occurred.\n\n**Capability:** Run standard OCI-compatible Linux container images as lightweight virtual machines on Apple-silicon Macs using Apple’s native `container` CLI.\n**Confidence:** 0.89\n\n## Starred repository evidence\n\n- **Repository:** [apple/container](https://github.com/apple/container)\n- **Description:** A tool for creating and running Linux containers using lightweight virtual machines on a Mac. It is written in Swift, and optimized for Apple silicon. \n- **Latest observed commit:** 8ca5c80c380cdd925d87b497fb23eddb6b58843f\n\n## Matched repository evidence\n\n- **Repository:** [Khamel83/argus](https://github.com/Khamel83/argus)\n- **Description:** Multi-provider web search broker for AI agents. 14 providers, budget-aware routing, content extraction — one API.\n- **Recent commits in window:** 165\n- **Target subsystem:** `Argus standalone/development container deployment defined by `Dockerfile` and `docker-compose.yml`, including the published `ghcr.io/khamel83/argus` image.`\n\n## Direct relationship\n\nAdd an optional macOS 26 Apple-silicon development launcher that runs Argus’s existing OCI image through `container`, mapping the current port, environment, and persistent `/var/lib/argus` storage configuration without changing the canonical Docker Compose or homelab deployment paths.\n\nSupporting evidence:\n- The source explicitly consumes and produces OCI-compatible images and can pull and run images from standard container registries.\n- The target has a `Dockerfile`, a Docker Compose service, and a README badge identifying the published `ghcr.io/khamel83/argus` container image.\n- The target container exposes Argus on port 8000 and defines a concrete runtime contract through environment variables and `/var/lib/argus` persistence in `docker-compose.yml`.\n- The source is optimized for Apple silicon and requires macOS 26, matching a concrete local-development environment rather than suggesting a generic production-runtime replacement.\n- The source is active, unarchived, and reached v1.0.0 in the supplied recent commits.\n\n## Expected benefit\n\nApple-silicon contributors on macOS 26 could run Argus’s existing Linux image without Docker Desktop while retaining OCI portability and isolating Playwright and extraction dependencies inside a lightweight VM.\n\n## Proposed implementation outline\n\n1. Keep `Dockerfile` and `docker-compose.yml` as the canonical portable definitions.\n1. Create an optional macOS launcher that checks for Apple silicon, macOS 26, and an available `container` system service.\n1. Run the published Argus OCI image, or an image built from the existing Dockerfile, with port 8000 exposed and the existing `ARGUS_*` environment contract applied.\n1. Attach persistent storage for `/var/lib/argus` and reproduce read-only filesystem, temporary storage, and resource restrictions only where the `container` CLI demonstrably supports equivalent controls.\n1. Exercise `/api/live`, SQLite persistence across restarts, and a Playwright-backed extraction path before documenting the launcher as supported.\n\n## Compatibility and risks\n\nStrong at the image boundary because both projects explicitly use standard OCI images. The integration should remain an optional local macOS path: the supplied evidence does not establish Docker Compose compatibility or equivalents for every Compose security, healthcheck, tmpfs, volume, and resource-control option.\n\n- Only Apple-silicon Macs running macOS 26 are supported by the source.\n- The supplied evidence does not confirm direct Docker Compose support, so Compose orchestration cannot be assumed.\n- Equivalent handling for `seccomp`, `read_only`, `tmpfs`, PID limits, memory limits, healthchecks, and named volumes must be verified individually.\n- Playwright browser execution and shared-memory requirements may behave differently inside the source’s VM-backed containers.\n- Depending on an external system service adds installation and startup requirements for contributors.\n\n## Acceptance criteria\n\n- The target subsystem has a focused test.\n- The integration preserves the target repository's existing behavior.\n\nEvidence fingerprint: `39cde3afff7a91c025bc6a48156dbbd99fe096a2dfa0632b3e7866bc67bbd471`\nGenerated at: 2026-09-10T04:00:21.969001+00:00\n<!-- ideaz:generated:end -->\n",
+    "body_complete": true,
+    "full_body_sha256": "4a99d71828fb78d16ce2b0fbe95de04820940185dd27bbee972b910cf0a15cf0",
+    "closed_at": "2026-09-23T23:04:59Z",
+    "labels": [
+      "star-opportunity",
+      "g2k:parked"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 144,
+    "kind": "issue",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/issues/144",
+    "updated_at": "2026-09-23T23:04:56Z",
+    "title": "[Star Opportunity] unclecode/crawl4ai -> Khamel83/argus: LLM-oriented web crawling and scraping with browser-backed extraction, including JavaScript-rendered content.",
+    "body": "<!-- ideaz:opportunity pair=\"unclecode/crawl4ai::Khamel83/argus\" -->\n\n<!-- ideaz:generated:start -->\n## Recommendation\n\nThis is a proposal for evaluation. It does not mean that implementation, approval, deployment, or adoption has occurred.\n\n**Capability:** LLM-oriented web crawling and scraping with browser-backed extraction, including JavaScript-rendered content.\n**Confidence:** 0.98\n\n## Starred repository evidence\n\n- **Repository:** [unclecode/crawl4ai](https://github.com/unclecode/crawl4ai)\n- **Description:** 🚀🤖 Crawl4AI: Open-source LLM Friendly Web Crawler & Scraper. Don't be shy, join here: https://discord.gg/jP8KfhDhyN\n- **Latest observed commit:** 862f6bccb9c063f49b9d42701baa0eea17a4993f\n\n## Matched repository evidence\n\n- **Repository:** [Khamel83/argus](https://github.com/Khamel83/argus)\n- **Description:** Multi-provider web search broker for AI agents. 14 providers, budget-aware routing, content extraction — one API.\n- **Recent commits in window:** 165\n- **Target subsystem:** `Argus 12-step content extraction chain and topology-aware local JavaScript extraction path.`\n\n## Direct relationship\n\nUse Crawl4AI as an optional extraction backend through the existing `crawl4ai` optional dependency declared in `pyproject.toml`, selected by the extraction chain for JavaScript-heavy pages and deployable on the documented Raspberry Pi extraction node.\n\nSupporting evidence:\n- Argus explicitly declares `crawl4ai = [\"crawl4ai>=0.4\"]` in `pyproject.toml`.\n- Argus includes `crawl4ai` in its package keywords, indicating an intended product-level integration rather than generic Python dependency overlap.\n- The Argus overview states that the Raspberry Pi deployment hosts \"Crawl4AI local JS extraction.\"\n- Argus documents a 12-step content extraction chain with quality gates, providing a concrete subsystem that can consume Crawl4AI output.\n- Crawl4AI describes itself as an LLM-friendly web crawler and scraper, directly matching Argus's AI-agent retrieval and content-extraction purpose.\n- Both repositories are Python projects, and Argus already depends on Playwright, reducing runtime-model mismatch for browser-backed extraction.\n\n## Expected benefit\n\nImprove extraction success and content quality for JavaScript-rendered or dynamically assembled pages while preserving Argus routing, provenance, fallback behavior, and quality gates.\n\n## Proposed implementation outline\n\n1. Implement or complete a Crawl4AI-backed adapter conforming to Argus's existing extraction-stage contract.\n1. Load the backend only when the `crawl4ai` optional dependency is installed, keeping the base installation unchanged.\n1. Route JavaScript-heavy extraction attempts to the Crawl4AI adapter according to Argus topology and local-node policy.\n1. Normalize extracted text, cleaned HTML, URL, and failure metadata into the existing extraction result consumed by downstream quality gates.\n1. Preserve Argus provenance fields such as `egress`, `machine`, and `source_type` on Crawl4AI results.\n1. Retain existing extractors as fallbacks when Crawl4AI is unavailable, fails, or does not pass content-quality thresholds.\n1. Exercise the integration against a JavaScript-rendered page and verify that the existing quality gates accept useful content and reject empty or unsafe output.\n\n## Compatibility and risks\n\nStrong. Argus already declares Crawl4AI as an optional Python dependency, documents a Crawl4AI local-JavaScript extraction deployment, and uses Playwright. Pinning or constraining a tested Crawl4AI release may be necessary because Argus currently specifies only `crawl4ai>=0.4`.\n\n- Crawl4AI browser startup and cleanup failures could leak Playwright resources; recent upstream commits specifically addressed a driver leak.\n- Untrusted-page extraction carries XSS and unsafe cleaned-HTML risks; recent upstream commits fixed DOM and PDF-related XSS issues.\n- PDF fetching and redirects can introduce SSRF, cookie propagation, and resource-exhaustion risks; upstream history shows active fixes in these areas.\n- The broad `>=0.4` constraint may admit API or behavior changes that break the adapter.\n- Browser crawling is materially heavier than HTTP or Trafilatura extraction and could conflict with Argus's documented 1 GB container memory limit unless bounded.\n- Crawl4AI output must pass through Argus normalization, provenance, egress controls, and quality gates rather than bypassing them.\n\n## Acceptance criteria\n\n- The target subsystem has a focused test.\n- The integration preserves the target repository's existing behavior.\n\nEvidence fingerprint: `25fa41d145b5ddd7579ed64b64ff8da06d6fbbfbb4dcc3077e9c5b35517c2f9c`\nGenerated at: 2026-09-10T03:43:31.341805+00:00\n<!-- ideaz:generated:end -->\n",
+    "body_complete": true,
+    "full_body_sha256": "07eda62dbf217b82282ee6abfa78db1333cba6f018bba8e0dcfd743127958bee",
+    "closed_at": "2026-09-23T23:04:56Z",
+    "labels": [
+      "star-opportunity",
+      "g2k:parked"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified"
+  }
+]

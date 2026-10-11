@@ -9,11 +9,11 @@ Source eligibility does not close the release or natural-consumer gates below.
 - [x] Implement and independently review the Tavily-only opt-in observer,
   including filesystem/input and integer-attempt admission regressions.
   69 combined observer/configuration/API lifecycle tests and focused Ruff pass.
-- [ ] Obtain exact-head trusted review and required CI before guarded release.
+- [x] Obtain exact-head trusted review and required CI before guarded release.
   First head `067088d` received trusted PASS but CI correctly refused stale
   provider fixture attestations after the shared config change. Regenerated
-  with the existing hermetic generator; its exact check passes. Final-head
-  review and CI remain required.
+  with the existing hermetic generator; its exact check passes. PR #173 merged
+  2026-10-02, satisfying the review/CI gate; the guarded release below remains.
 - [ ] Use guarded digest/source release and explicit nonsecret opt-in; accept
   a natural redacted metadata receipt. Production currently remains `e8f36cf`.
 - [ ] Homelab separately owns protected source binding, credential-free reader
@@ -73,11 +73,24 @@ resets, credential rotation or repeated provider tests.
 - [x] Reconcile the managed TODO pointer after G2K High; original generated
   bytes and all task intents are preserved in the dated evidence above.
 - [ ] Verify normal trusted review/merge and the next natural publisher; no
-  publisher invocation or full-fleet acceptance is claimed here.
+  publisher invocation or full-fleet acceptance is claimed here. PR #189
+  merged 2026-10-10, satisfying the review/merge part; the natural publisher
+  receipt remains to be observed.
 - [ ] Reconcile the inherited extraction-completion conflict: canonical task
   is checked/model-matched to PR138 while the archived generated item remained
   unchecked. Retain that unresolved extraction acceptance until owning source
   evidence resolves it; this pointer repair does not choose a completion state.
+
+## Repository plan — October 11, 2026
+
+The ordered repository plan — dependencies, owner decisions, acceptance
+criteria, proposed native dispositions, and the empty ready-jobs batch with its
+blockers — is [docs/REPO_PLAN.md](docs/REPO_PLAN.md). It was produced by the
+[reconciliation audit #192](https://github.com/Khamel83/argus/issues/192) under
+the tracking coordinator [#191](https://github.com/Khamel83/argus/issues/191).
+This TODO remains the authoritative project task list; the plan orders and
+classifies these intents and does not replace them. Coverage and classification
+evidence: [docs/history/2026-10-11-repository-audit-intake.md](docs/history/2026-10-11-repository-audit-intake.md).
 
 <!-- janitor:begin:todo -->
 The project-owned task list in this TODO.md is authoritative. Janitor does not duplicate its checkboxes.

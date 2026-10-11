@@ -1,3 +1,41 @@
+# Repository audit checkpoint — October 11, 2026
+
+Prepared the [reconciliation audit #192](https://github.com/Khamel83/argus/issues/192)
+documentation deliverables under coordinator [#191](https://github.com/Khamel83/argus/issues/191)
+from fetched `cf20dd6eceba8aa67902166d1c044193104a3a5f` (this worktree HEAD).
+All prior handoff bytes and the staged G2K intake are preserved.
+
+- **Done:** read the [intake manifest](docs/reconciliation/intake-2026-10-10.json)
+  and all 8 intake parts (171 records; SHA-256 of each part recomputed and
+  matching the manifest). Classified 16 open issues and every TODO item. Wrote
+  the [canonical plan](docs/REPO_PLAN.md) and the dated
+  [coverage/classification history](docs/history/2026-10-11-repository-audit-intake.md).
+  Corrected TODO.md (H26 review/CI line satisfied by the PR #173 merge; publisher
+  review/merge satisfied by PR #189) and added the reconciliation records to
+  CONTEXT.md.
+- **Coverage / limits:** 20 records omitted by the manifest (issues 5,7,9,12,13,
+  15,18,19,20; PRs 1–4,6,8,10,11,14,16,17) as closed before the bounded history
+  window; closed-issue acceptance and any deployment/provider receipts outside
+  the packet stay unknown. No credentials, secrets, or files outside the
+  worktree were accessed. No native issue was created, closed, re-labeled, or
+  enqueued.
+- **Canonical plan:** `docs/REPO_PLAN.md`. It carries the single g2k
+  ready-jobs marker with an empty batch; blockers are the
+  scorecard `needs-human` chain (#151, #154–#158), mise blocked by
+  Khamel83/infra#727 (#177, #179–#183, with #181/#182 premised on a `Makefile`
+  and lint/typecheck CI jobs that do not exist here), the paywall/browser owner
+  decision (#148, #159), provider re-validation (owner authorization), and the
+  H26/natural publisher/Janitor deployment gates (runtime acceptance pending).
+- **In flight:** the audit PR itself.
+- **Next step:** trusted exact-head review and normal merge of the audit PR; no
+  implementation is enqueued and the coordinator stays parked. Only after that
+  merge does the owner authorize G2K to link existing ready issues and admit one
+  finite batch through the ready-jobs contract.
+- **Recheck commands:**
+  - `jq '.retained_records,.open_records' docs/reconciliation/intake-2026-10-10.json`
+  - `sha256sum docs/reconciliation/intake-2026-10-10-part-*.json`
+  - `git log --oneline -1` (expect `cf20dd6`)
+
 # Publisher source checkpoint — October 10, 2026
 
 Prepared the existing Janitor TODO pointer reconciliation from fetched `171dd2f`

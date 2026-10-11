@@ -1,0 +1,211 @@
+[
+  {
+    "number": 32,
+    "kind": "issue",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/issues/32",
+    "updated_at": "2026-07-23T06:07:09Z",
+    "title": "Make Argus configuration and image CI hermetic",
+    "body": "## Parent\n\n[Wayfinder: make Argus a reliable homelab retrieval platform for Maya](https://github.com/Khamel83/argus/issues/23)\n\n## What to build\n\nMake every test and production image build independent of developer state, production secrets, and mutable dependency resolution. Produce one reproducible image whose embedded identity and declared capabilities can be verified before it is eligible for production.\n\n## Acceptance criteria\n\n- [ ] The complete test suite runs with dotenv autoload disabled and cannot fall back to developer or production services, credentials, egress policy, or state.\n- [ ] Tests explicitly control provider enablement, topology, residential policy, configuration caches, and temporary persistence.\n- [ ] The production image is built from the frozen lock and CI fails on lock, package-version, or server-metadata drift.\n- [ ] The image reports source revision, package version, supported schema range, lock identity, and expected runtime capabilities without requiring network access.\n- [ ] A network-free image admission command validates its baked identity and exits nonzero on a missing required artifact.\n- [ ] Python 3.11, 3.12, and 3.13 tests plus the production-like configuration test pass in CI.\n\n## Blocked by\n\nNone — can start immediately.",
+    "body_complete": true,
+    "full_body_sha256": "c3bb921ca12f109a94fb903afc9a466f2902fdf44ab89cbb8844423adf716b15",
+    "closed_at": "2026-07-23T06:07:09Z",
+    "labels": [
+      "agent-ready",
+      "infrastructure"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 31,
+    "kind": "issue",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/issues/31",
+    "updated_at": "2026-07-23T04:56:36Z",
+    "title": "Approve the decision-complete Argus homelab reliability design",
+    "body": "## Question\n\nDo the resolved Maya contract, OCI degraded mode, reliability targets, extraction capability, authoritative state model, production topology, and deployment gates form one internally consistent design with no remaining architectural decisions before a detailed implementation plan is written?",
+    "body_complete": true,
+    "full_body_sha256": "9cfa7af910c73eda2a9f14c7a94cdefb0c2bdd16fab7d25d353f51d16b2c6a75",
+    "closed_at": "2026-07-23T04:56:36Z",
+    "labels": [
+      "wayfinder:grilling"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 30,
+    "kind": "issue",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/issues/30",
+    "updated_at": "2026-07-23T04:14:58Z",
+    "title": "Define deployment promotion, rollback, and runtime identity gates",
+    "body": "## Question\n\nWhat immutable-image promotion, readiness, search/extraction smoke, memory, restart, dependency-loss, rollback, and loaded-revision checks must the GitHub-to-homelab deployment workflow enforce so that a successful build cannot silently replace production with an unhealthy or unidentifiable Argus instance?",
+    "body_complete": true,
+    "full_body_sha256": "896ba3b076e924c66298e2d4fdb21e0d305adcf871bd9573decd534cd5825a98",
+    "closed_at": "2026-07-23T04:14:58Z",
+    "labels": [
+      "wayfinder:research"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 29,
+    "kind": "issue",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/issues/29",
+    "updated_at": "2026-07-23T04:02:10Z",
+    "title": "Choose the homelab production topology and transport ownership",
+    "body": "## Question\n\nGiven Maya's invocation contract, the OCI degraded-mode decision, and the authoritative state model, what exact homelab Docker topology gives Argus one production truth: which module owns the broker, whether MCP is a stateless adapter or co-hosted interface, how SearXNG and optional egress workers connect, how persistent volumes and databases are assigned, and how mac-mini development instances remain isolated?",
+    "body_complete": true,
+    "full_body_sha256": "1478e0f56c63b5d59d8cb6af7f39f4072f782cea8d54b0dafc21458e966ab0b1",
+    "closed_at": "2026-07-23T04:02:10Z",
+    "labels": [
+      "wayfinder:grilling"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 28,
+    "kind": "issue",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/issues/28",
+    "updated_at": "2026-07-23T03:54:57Z",
+    "title": "Choose the authoritative state and observability model",
+    "body": "## Question\n\nWhich production state must have one authoritative owner across HTTP and MCP—search runs, extraction attempts, provider reachability, cooldowns, caches, budgets, provider balance snapshots, caller attribution, and deployment identity—and which persistence interfaces and database adapters make that state truthful across restarts without coupling development instances to production?",
+    "body_complete": true,
+    "full_body_sha256": "439d6bd9f875557b7c89158174b690166eced1f546d67e1146fa0b1bf17a6968",
+    "closed_at": "2026-07-23T03:51:00Z",
+    "labels": [
+      "wayfinder:research"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 27,
+    "kind": "issue",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/issues/27",
+    "updated_at": "2026-07-23T03:38:35Z",
+    "title": "Choose the container browser and extraction capability contract",
+    "body": "## Question\n\nWhat browser-backed extraction capability should the homelab production image promise under its memory limit: how should Argus detect missing browser binaries, clean up failed runtimes, cache and reset capability state, expose readiness, isolate optional browser profiles, and prove bounded sequential extraction without OOM or restarts?",
+    "body_complete": true,
+    "full_body_sha256": "f5323b33e5213b89d5dbc616424c87f81db42c71e0206942add750f9a77b99e4",
+    "closed_at": "2026-07-23T03:38:35Z",
+    "labels": [
+      "wayfinder:research"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 26,
+    "kind": "issue",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/issues/26",
+    "updated_at": "2026-07-23T04:14:57Z",
+    "title": "Set Argus production reliability targets and evidence gates",
+    "body": "## Question\n\nWhat observable targets and acceptance evidence define a working production Argus for search, extraction, dependency loss, restart recovery, latency, memory, connection continuity, provider degradation, and durable accounting—and which failures must block deployment versus permit an explicitly degraded state?",
+    "body_complete": true,
+    "full_body_sha256": "1cae63561fe1c83fff1ac6da0a9b5097009d8cd58934a4ba76b8b3711a81b581",
+    "closed_at": "2026-07-23T03:29:33Z",
+    "labels": [
+      "wayfinder:grilling"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 25,
+    "kind": "issue",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/issues/25",
+    "updated_at": "2026-07-23T03:24:54Z",
+    "title": "Reconstruct the OCI dependency and choose Argus degraded mode",
+    "body": "## Question\n\nWhich search, extraction, routing, deployment, or network paths depended on the OCI machine before it was turned off; which observed failures are caused by that loss; and should production Argus operate acceptably without OCI or declare OCI as a required dependency with explicit readiness failure and recovery behavior?",
+    "body_complete": true,
+    "full_body_sha256": "951d4bacb2ffd6a95683ffcd9d120239b757177282e5ca612dde121098408ce3",
+    "closed_at": "2026-07-23T03:24:54Z",
+    "labels": [
+      "wayfinder:research"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 24,
+    "kind": "issue",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/issues/24",
+    "updated_at": "2026-07-23T03:16:00Z",
+    "title": "Define the Maya–Argus ownership and invocation contract",
+    "body": "## Question\n\nWhat is the exact production contract between Maya, Hermes, and Argus now that Clio is retired: who may initiate retrieval, which HTTP or MCP interface each caller uses, how caller identity and authentication flow, which results remain ephemeral, which results may become durable Maya captures, and what authority or idempotency guarantees must each interface preserve?",
+    "body_complete": true,
+    "full_body_sha256": "2b36d5149464e7fc31a7ff016799ea6b5dcd00d2a55c23dc9eab9aa2386c10ef",
+    "closed_at": "2026-07-23T03:16:00Z",
+    "labels": [
+      "wayfinder:research"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 23,
+    "kind": "issue",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/issues/23",
+    "updated_at": "2026-07-23T05:03:33Z",
+    "title": "Wayfinder: make Argus a reliable homelab retrieval platform for Maya",
+    "body": "## Destination\n\nA reviewed, decision-complete reliability design and execution handoff for Argus: one homelab Docker production stack, the mac mini used only for development, Maya as the durable orchestration integration, Hermes as transport, and every reliability gate specified well enough that implementation can proceed without architectural ambiguity.\n\n## Notes\n\n- Planning map only; do not implement the destination while resolving this map.\n- Clio is retired and must not appear as a caller, owner, or fallback. Historical Clio records are evidence only.\n- Maya owns durable memory and orchestration. Hermes is the Slack transport. Argus owns internet retrieval.\n- Homelab Docker is the intended production deployment. Mac-mini instances are disposable development instances.\n- OCI has been investigated and retired from all Argus production paths; see Decisions so far.\n- Start from `handoff.md`, production issue \"fix(extraction): failed Playwright launch leaks runtimes until container OOM restart\", and Maya's current `docs/AGENTS.md` contract.\n- Use `research`, `grilling`, `domain-modeling`, `codebase-design`, and `verification-before-completion` as appropriate.\n- Production implementation, stress tests, deployments, and provider-credit probes are not authorized by this map.\n- Evaluate every decision as a fleet contract: prefer reusable health states, deployment gates, durable-event semantics, authentication boundaries, capability reporting, and resource ownership over Argus-only exceptions.\n\n## Decisions so far\n\n- [Define the Maya–Argus ownership and invocation contract](https://github.com/Khamel83/argus/issues/24) — Maya durably captures every user-visible retrieval through an idempotent Argus outbox; captures use a parent retrieval plus linked extracted-page children, while useful internal telemetry stays in Argus and rejected sanitized captures enter an explicit dead-letter state.\n- [Reconstruct the OCI dependency and choose Argus degraded mode](https://github.com/Khamel83/argus/issues/25) — OCI is retired from Argus entirely; homelab is self-contained, Mac is development-only, direct Yahoo is opportunistic, and deployment must no longer transit OCI.\n- [Set Argus production reliability targets and evidence gates](https://github.com/Khamel83/argus/issues/26) — Personal-production means 99.5% monthly readiness, five-minute unattended recovery, zero loss of acknowledged state, explicit ready/degraded/unready states, and blocking container, fault, restart, accounting, identity, and rollback gates.\n- [Choose the container browser and extraction capability contract](https://github.com/Khamel83/argus/issues/27) — Ship one version-matched, sandboxed Chromium headless-shell capability with serialized lifecycle ownership and isolated contexts; use a 1 GiB enabled profile plus the 512 MiB missing-browser leak regression, both admitted by bounded canaries.\n- [Choose the authoritative state and observability model](https://github.com/Khamel83/argus/issues/28) — The authenticated HTTP service is the sole production execution authority and a separate Argus database on formally managed PostgreSQL is the homelab state authority; SQLite remains for development and standalone installs, MCP becomes an HTTP client, and promotion requires tested logical backup and restore.\n- [Choose the homelab production topology and transport ownership](https://github.com/Khamel83/argus/issues/29) — One homelab API container owns the broker, browser, PostgreSQL writes, and Maya outbox; a keyless stateless MCP adapter calls it over internal HTTP, SearXNG and shared PostgreSQL remain internal, Tailscale Serve is the only remote ingress, and Mac/OCI/host-worker primaries are retired.\n- [Define deployment promotion, rollback, and runtime identity gates](https://github.com/Khamel83/argus/issues/30) — Build and test one attested GHCR digest, promote it through an ephemeral Tailscale identity and one locked homelab command, prove exact loaded identity through isolated fault/resource/restart gates and a 30-minute soak, and retain the previous schema-compatible digest for automatic application rollback.\n- [Approve the decision-complete Argus homelab reliability design](https://github.com/Khamel83/argus/issues/31) — The integrated architecture is internally consistent and approved for incremental implementation: stabilize the browser, establish authoritative state and execution, complete Maya/MCP integration, cut over the private homelab topology, then finish deployment and operational hardening.\n\n## Not yet specified\n\nNone. The approved implementation backlog is published with native dependency relationships and linked in the map completion comment.\n\n## Out of scope\n\n- Restoring Clio. It is retired and Maya has replaced its orchestration role.\n- Restoring OCI to any Argus production role. A future remote-egress architecture would require a new explicit design effort.\n- Implementing the Playwright OOM fix inside this planning map; that production defect remains tracked by its existing issue and constrains this design.\n- Implementing the Parallel credit-tier change inside this planning map; its existing issue remains separate, although the budget model must accommodate it.\n- Unrelated Maya internals or Hermes behavior beyond their Argus integration contracts.\n",
+    "body_complete": true,
+    "full_body_sha256": "3245a4265ee3a663d60115af7fcd00b94b07fbbcdd58d98b97ebd093a5862b6f",
+    "closed_at": "2026-07-23T05:03:33Z",
+    "labels": [
+      "roadmap",
+      "wayfinder:map"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 22,
+    "kind": "issue",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/issues/22",
+    "updated_at": "2026-07-23T06:34:05Z",
+    "title": "fix(extraction): failed Playwright launch leaks runtimes until container OOM restart",
+    "body": "## Summary\n\nArgus leaks Playwright runtime processes when the Python package is installed but the Chromium executable is absent. A small sequential `/api/extract` workload then exhausts the production container's 512 MiB memory limit and Docker OOM-restarts it, interrupting callers.\n\nThis is a production reliability bug in the free/local extraction path. It does not require paid providers to reproduce or fix.\n\n## Production evidence\n\n- Image revision: `f9aa1adaa219c80aef209b7e9b994333b37c3adc`\n- Container memory limit: 512 MiB (1 GiB swap)\n- Workload: 14 sequential, single-worker extraction requests against ordinary public-content hosts\n- Result: 0 accepted extractions in that bounded wave; the final callers observed server disconnect, connection refused, and connection reset\n- Docker event evidence:\n  - `oom`\n  - `die` with `exitCode=137`\n  - automatic restart\n- Container restart count after the event: 9\n- The service recovered automatically and returned healthy, but in-flight requests failed\n\nNo private source URLs or credentials are included in this issue.\n\n## Root cause\n\nIn `argus/extraction/playwright_extractor.py::_get_browser`:\n\n1. `async_playwright().start()` assigns a live runtime to `_playwright_instance`.\n2. `chromium.launch(...)` fails because the image does not contain the expected browser executable.\n3. The broad exception handler logs and returns `None`.\n4. It does not stop/clear `_playwright_instance`, and it does not cache Playwright as unusable.\n5. Every later extraction request repeats the start/fail/leak cycle.\n\nThe production log repeatedly reports:\n\n```\nBrowserType.launch: Executable doesn't exist at .../chromium_headless_shell-1228/...\n```\n\nThe current Dockerfile installs the Playwright Python dependency but does not install browser binaries.\n\n## Scope\n\nFix lifecycle safety and capability detection for the Playwright fallback.\n\nPreferred behavior:\n\n- If a Playwright runtime was started but browser launch fails, stop it and clear all globals before returning.\n- Cache the failed browser capability (with a bounded/explicit reset policy) so every URL does not repeat an impossible launch.\n- Make the container contract explicit:\n  - either install a supported Chromium/browser runtime and dependencies, or\n  - advertise Playwright as disabled when no executable is available.\n- Preserve free/local extraction, SSRF checks, URL redaction, and existing provider-spend boundaries.\n- Do not solve this by enabling a paid extractor or raising the memory limit alone.\n\n## Tests\n\nAdd focused tests that prove:\n\n1. A failed `chromium.launch()` calls `playwright.stop()` exactly once and clears `_browser` / `_playwright_instance`.\n2. Repeated requests after a known launch-capability failure do not start additional Playwright runtimes.\n3. A later explicit reset/recovery path can successfully initialize Playwright.\n4. Browser contexts/pages are still closed on normal extraction errors.\n5. A bounded sequential extraction smoke test stays below the existing 512 MiB container limit and causes zero container restarts.\n\n## Acceptance criteria\n\n- [ ] No leaked Playwright driver/runtime process after failed browser launch.\n- [ ] Twenty sequential public-page extraction requests with one worker cause zero OOM events, zero container restarts, and zero connection resets.\n- [ ] `/api/health` remains continuously healthy during that run.\n- [ ] The deployed image's Playwright capability matches reality (working browser or explicitly disabled).\n- [ ] Existing extraction, quality-gate, SSRF, and privacy tests pass.\n- [ ] Production canary is run with sanitized aggregate evidence only.\n\n## Follow-up boundary\n\nThe same recovery run also observed Trafilatura results with hundreds or thousands of words being returned as `all_extractors_quality_failed`. That may be a separate quality-gate defect. Reassess and file it separately after this lifecycle/OOM fix so memory leakage and content-quality policy are not conflated.\n\n## Reliability implementation map\n\nParent: [Wayfinder: make Argus a reliable homelab retrieval platform for Maya](https://github.com/Khamel83/argus/issues/23)\n\nThis remains the first production-stability slice and has no implementation blockers. Its lifecycle-safe missing-browser behavior blocks the production Chromium capability and the Trafilatura quality follow-up.\n",
+    "body_complete": true,
+    "full_body_sha256": "459d8f3e57db87c750ccf68d798f82a6412db16d9256c236e65f7a303bae8661",
+    "closed_at": "2026-07-23T06:34:05Z",
+    "labels": [
+      "bug",
+      "agent-ready",
+      "critical"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified"
+  },
+  {
+    "number": 21,
+    "kind": "issue",
+    "state": "closed",
+    "url": "https://github.com/Khamel83/argus/issues/21",
+    "updated_at": "2026-07-23T08:57:36Z",
+    "title": "[Provider] Parallels Free tier",
+    "body": "### Provider name\n\nParallels\n\n### Provider homepage / API docs URL\n\nhttps://parallel.ai/\n\n### What does this provider do?\n\nWeb search\n\n### Cost / credit model\n\nFree unlimited\n\n### Why this provider?\n\nNew: Free tier for Parallel\n\nJuly 15, 2026\n\nNew: Free tier for Parallel\nGet up to 5,000 searches free each month on us\n\nStarting this month, accounts with a credit card on file now receive $5 in free credits monthly to use Parallel’s APIs and platform. Credits refresh every month but do not carry over.\n\nThis new plan is perfect for open-source projects, OpenClaw / Hermes agents, and personal use of our playground for daily research. When you need more usage, just top up with your credit card.\n\nHappy building!\n\n\n\n### Anything else\n\n_No response_\n\n## Reliability implementation map\n\nParent: [Wayfinder: make Argus a reliable homelab retrieval platform for Maya](https://github.com/Khamel83/argus/issues/23)\n\nBlocked by:\n\n- [Reserve and reconcile paid-provider spending durably](https://github.com/Khamel83/argus/issues/35)\n\nParallel's new recurring credit must use the authoritative accounting model and preserve historical lifetime records rather than adding another provider-specific counter.\n",
+    "body_complete": true,
+    "full_body_sha256": "aeba937c9f23459d0ab257268936c51567c0fe1d2f913450ffa6cd97e8305103",
+    "closed_at": "2026-07-23T08:57:36Z",
+    "labels": [
+      "enhancement",
+      "agent-ready"
+    ],
+    "merged_at": null,
+    "merge_identity": "unknown unless separately verified"
+  }
+]
