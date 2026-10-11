@@ -82,3 +82,7 @@ resets, credential rotation or repeated provider tests.
 <!-- janitor:begin:todo -->
 The project-owned task list in this TODO.md is authoritative. Janitor does not duplicate its checkboxes.
 <!-- janitor:end:todo -->
+
+## Owning repository plan
+
+Use [the ordered reconciliation](docs/REPO_PLAN.md) and [coordinator #191](https://github.com/Khamel83/argus/issues/191). It maps every observed open source record. Existing incomplete acceptance and holds remain in force.
