@@ -187,19 +187,8 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-## Recent
-
-- **2026-10-03 — Tavily metadata observer merged (`bf58a770a74e58fa07f0d9104fc9e91301b96453`).** PR #173 merged the disabled-by-default Tavily-only observer after its filesystem identity, malformed-input, and integer-attempt corrections. Independent plan and final reviews approved it; 69 combined observer/configuration/API lifecycle tests and focused Ruff passed. The hermetic provider-attestation generator was refreshed for the shared configuration change and its check passes. No provider request or deployment is evidenced, live source remains `e8f36cfea3552a952479b335f964618f89f4fd42`, and aggregate health remains unknown.
-
-- **2026-09-29 — Guarded promotion and restore evidence.** The fresh-manifest backup and disposable restore completed candidate, rollback, production, and 1,800-second soak gates. Its exact digest is current and known-good, while runtime identity, an archived Janitor operation, and a later natural observation remain separate acceptance facts.
-
-- **2026-09-29 — Legacy review workflow retired (`bdca7fb1fff2b1bf062e5345ce09bb28a9fa9d99`).** The retired `oci-ts` AI Review workflow and its queued jobs were removed. Public/fork CI remains on GitHub-hosted runners; separately managed OCI review and normal CI/image promotion paths are unchanged.
-
-- **2026-09-29 — Public readiness identity projection (`337519d877e34452c3e395aa473195ecc5ae33fb`).** `/api/ready` may expose a validated 40-character source SHA to read-only observers. A missing validated SHA leaves runtime identity unknown; readiness alone does not prove a deployed image or downstream effect.
-
-- **2026-09-29 — Restore inventory normalization (`e8f36cfea3552a952479b335f964618f89f4fd42`).** Shared PostgreSQL backup manifests bind archive checksums, exact row counts, and a schema fingerprint to Argus and Atlas. Inventory normalization handles only the known PostgreSQL cast-form variation; other schema components remain checked and existing manifests require a fresh backup after fingerprint changes.
-
-- **2026-09-27 — Terminal spend snapshot authority (`4f8f0a5bd65ad45ae57079e6ada8f8a427ffc50a`).** Snapshot reads share one frozen authority timestamp with terminal-spend fanout. If real clock time advances beyond a mocked reset, `unknown` remains the correct spend state rather than proving different timestamps.
+- `ed8f92123e6c5b70f276bffb25e7e0a755f2de9b` (PR #193): Reconciled open work into the owning repository plan (`docs/REPO_PLAN.md`), mapping 13 unchecked source references and 16 open native records tracked under coordinator #191.
+- PR #173 merged the opt-in sanitized Tavily credential observer, but guarded release, live metadata receipts, and Homelab health admission remain pending; deployed production remains at `e8f36cf` / `c8853fbe`.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
