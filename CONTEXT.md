@@ -4,6 +4,26 @@ The owner requested one owning plan for every open TODO, issue and PR. [docs/REP
 
 This source proposal requires trusted exact-head review, native CI and normal merge before audit192 is closed or finite sequencing is applied. Source, installation, ordinary receipt and downstream effect remain separate. Next: verify this PR’s current head and accepted native merge, then update the existing coordinator; resolve the explicitly listed next review/receipt/decision in plan order. No busy worker, host service, access policy or retry state was changed.
 
+## Public AI-chat share-link source (#159) — October 12, 2026
+
+Source slice, not runtime acceptance. Recognised Gemini (`share.gemini.google`,
+`gemini.google.com/share`), ChatGPT (`chatgpt.com`, `chat.openai.com`) and
+Claude (`claude.ai/share`) public share URLs are detected in the extraction
+chain and dispatched directly to the Playwright stage, so a static trafilatura
+result is never accepted or returned as the outcome. The browser render adds a
+bounded network-idle plus settle window, strips edge navigation/brand/footer
+chrome, and reports a login wall as `share_link_not_public` rather than
+content. The temporary, off-by-default `ARGUS_SHARE_BROWSER_DOMAINS` exception
+admits a share render without a browser-network attestation; its resource guard
+keeps document navigation on the provider's share hosts, which includes the
+`share.gemini.google` → `gemini.google.com` redirect, while subresources still
+use the normal URL policy. `tests/test_share_links.py` passes (55) with focused
+Ruff clean, including a regression that admits Gemini's canonical redirect when
+only the initial share host is configured. Original runtime acceptance stays
+open: installing the reviewed image and rendering real public/private shares is
+a separate, still-pending fact; the browser-network authority requirement (see
+TODO) is unchanged.
+
 # Context
 
 October2 Homelab H26 work adds a disabled-by-default Tavily metadata observer

@@ -1,3 +1,35 @@
+## Share-link extraction source checkpoint — October 12, 2026
+
+In flight: issue #159 source slice for public AI-chat share pages. `Refs #159`;
+no closing keyword. Branch `g2k/issue-159`, edits left for the orchestrator.
+
+Done (source only): new `argus/extraction/share_links.py` (share detection,
+render hosts, edge-chrome strip, login-wall reason); the chain in
+`argus/extraction/extractor.py` dispatches a recognised share URL straight to
+the browser stage and never returns static chrome; `argus/extraction/playwright_extractor.py`
+adds a share settle window, full-body render for app shells, and chrome/login
+cleanup; `argus/acquisition/browser_policy.py` adds the off-by-default
+`ARGUS_SHARE_BROWSER_DOMAINS` exception and keeps share document navigation on
+the provider share hosts (admitting `share.gemini.google` → `gemini.google.com`).
+`tests/test_share_links.py` passes (55); focused Ruff and diff checks are clean,
+including the Gemini redirect regression. The focused related extraction set
+(`test_browser_policy`, `test_extraction`, `test_playwright_lifecycle`) passes
+(136). A broader related run reached 432 passed and 1 skipped before the
+existing `test_http_authority` MCP canary failed because the installed
+`mcp.server` exposes `Server`, not the test's expected `MCPServer`; this is
+outside the share-link slice.
+
+Next: publish for native CI and trusted exact-head review, then ordinary merge.
+
+Remaining, separate gates (not claimed): install the reviewed image; render a
+real public Gemini and ChatGPT share with chrome removed and a login/private
+share reported as `share_link_not_public`; the external browser-network
+authority/attestation gate from TODO is unchanged.
+
+Recheck commands:
+`python3 -m pytest tests/test_share_links.py tests/test_browser_policy.py tests/test_extraction.py tests/test_playwright_lifecycle.py -q`
+`python3 -m ruff check argus/extraction/share_links.py argus/extraction/playwright_extractor.py argus/extraction/extractor.py argus/acquisition/browser_policy.py argus/authority.py tests/test_share_links.py`
+
 ## Current repository-plan checkpoint — October 11, 2026
 
 The owner requested one owning plan for every open TODO, issue and PR. [docs/REPO_PLAN.md](docs/REPO_PLAN.md) maps 13 unchecked source references and 16 open native records observed from `cf20dd6eceba8aa67902166d1c044193104a3a5f`. G2K is the executor; coordinator191 tracks project-owned acceptance. Previous source prose below is retained as dated evidence, not refreshed runtime attestation.

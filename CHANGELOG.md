@@ -30,6 +30,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rejection still wins. The admission records `basis="auth_browser_exception"`
   and the matched domain, and the same-origin resource guard still applies.
   This is temporary until the browser-network authority lands (#148).
+- **Public AI-chat share-link extraction (`ARGUS_SHARE_BROWSER_DOMAINS`)** —
+  Gemini, ChatGPT, and Claude public share pages are client-rendered application
+  shells, so a recognised share URL (`share.gemini.google`, `gemini.google.com`,
+  `chatgpt.com`, `chat.openai.com`, `claude.ai`) now routes directly to the
+  browser stage instead of being accepted or failed on a static trafilatura
+  result. The rendered page is cleaned of edge navigation, brand, and footer
+  chrome, and a page that only resolves to a login wall is reported as
+  `share_link_not_public`, never as content. The temporary, off-by-default
+  `ARGUS_SHARE_BROWSER_DOMAINS` exception admits a share render without a
+  browser-network attestation; document navigation stays on the provider's own
+  share hosts, including `share.gemini.google` → `gemini.google.com`, while
+  subresources keep the normal URL policy (#159).
 - **Accepted-operation HTTP authority and additive v2 contract** — legacy HTTP
   routes now render one immutable accepted operation, while `/api/v2/*`
   provides canonical outcome envelopes, capability negotiation, principal-bound

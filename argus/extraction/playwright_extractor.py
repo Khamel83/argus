@@ -26,6 +26,13 @@ from argus.acquisition.browser_policy import (
 )
 from argus.acquisition.guarded import GuardedAcquisitionError, guarded_browser_session
 from argus.extraction.models import ExtractedContent, ExtractorName
+from argus.extraction.share_links import (
+    SHARE_RENDER_SETTLE_SECONDS,
+    ShareLink,
+    normalize_share_link,
+    share_access_failure,
+    strip_share_chrome,
+)
 from argus.acquisition.guarded import guarded_url_policy
 from argus.logging import get_logger
 from argus.runtime_manifest import inspect_playwright_browser_capability
@@ -181,7 +188,33 @@ async def _get_browser(admission: BrowserAdmission | None = None):
             return None
 
 
-async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedContent:
+async def _settle_share_render(page, timeout_ms: int) -> None:
+    """Best-effort wait for a client-rendered share transcript to paint.
+
+    ``networkidle`` can time out on a polling SPA, so the wait is optional and
+    followed by a bounded fixed settle window.
+    """
+
+    wait_for_state = getattr(page, "wait_for_load_state", None)
+    if callable(wait_for_state):
+        try:
+            result = wait_for_state("networkidle", timeout=timeout_ms)
+            if asyncio.iscoroutine(result) or isinstance(result, asyncio.Future):
+                await result
+        except Exception as exc:
+            logger.debug(
+                "Share render did not reach networkidle reason=idle_timeout class=%s",
+                type(exc).__name__,
+            )
+    await asyncio.sleep(SHARE_RENDER_SETTLE_SECONDS)
+
+
+async def _extract_playwright(
+    url: str,
+    timeout_ms: int = 15000,
+    *,
+    share_link: ShareLink | None = None,
+) -> ExtractedContent:
     """Extract content using headless browser (Obscura CDP or Chrome)."""
     try:
         await guarded_browser_session(
@@ -221,7 +254,12 @@ async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedCon
                 return ExtractedContent(
                     url=url, error=f"playwright: unsafe redirect blocked: {reason}"
                 )
-        await asyncio.sleep(1)
+        if share_link is not None:
+            # The share transcript is a client-rendered SPA; use a bounded
+            # network-idle plus settle window instead of the default pause.
+            await _settle_share_render(page, timeout_ms)
+        else:
+            await asyncio.sleep(1)
 
         title = await page.title()
         text = ""
@@ -241,14 +279,30 @@ async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedCon
 
         # Standard path (Chrome, or Obscura CDP fallback)
         if not text or len(text.split()) < 50:
-            text = await page.evaluate("""() => {
-                const els = document.querySelectorAll('script, style, nav, footer, header, aside, iframe, noscript');
-                els.forEach(el => el.remove());
-                const main = document.querySelector('main, article, [role="main"], .post-content, .article-body, .entry-content');
-                const source = main || document.body;
-                return source.innerText || source.textContent || '';
-            }""")
+            if share_link is not None:
+                # A share page is an app shell: the transcript may sit outside
+                # ``main``.  Read the whole cleaned body so chrome stripping
+                # sees the complete rendered surface.
+                text = await page.evaluate("""() => {
+                    const els = document.querySelectorAll('script, style, nav, footer, header, aside, iframe, noscript');
+                    els.forEach(el => el.remove());
+                    return document.body ? (document.body.innerText || document.body.textContent || '') : '';
+                }""")
+            else:
+                text = await page.evaluate("""() => {
+                    const els = document.querySelectorAll('script, style, nav, footer, header, aside, iframe, noscript');
+                    els.forEach(el => el.remove());
+                    const main = document.querySelector('main, article, [role="main"], .post-content, .article-body, .entry-content');
+                    const source = main || document.body;
+                    return source.innerText || source.textContent || '';
+                }""")
             text = text.strip() if text else ""
+
+        if share_link is not None:
+            text = strip_share_chrome(text)
+            access_failure = share_access_failure(final_url or url, text)
+            if access_failure is not None:
+                return ExtractedContent(url=url, error=access_failure)
 
         if not text or len(text.strip()) < 100:
             return ExtractedContent(
@@ -306,6 +360,19 @@ async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedCon
 async def extract_playwright(url: str) -> ExtractedContent:
     """Public entry point for Playwright extraction."""
     return await _extract_playwright(url)
+
+
+async def extract_share_link(url: str) -> ExtractedContent:
+    """Public entry point for a public AI-chat share render.
+
+    Routes the URL through the browser stage with share-aware settling and
+    chrome cleanup.  A non-share URL or a login wall is rejected without
+    falling back to static chrome.
+    """
+    link = normalize_share_link(url)
+    if link is None:
+        return ExtractedContent(url=url, error="share_link: unsupported share URL")
+    return await _extract_playwright(url, share_link=link)
 
 
 async def close_browser():

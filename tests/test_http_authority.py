@@ -71,6 +71,7 @@ def _configure_authority_projections(broker):
         "FIRECRAWL_API_KEY",
         "ARGUS_COOKIE_DIR",
         "ARGUS_AUTH_BROWSER_DOMAINS",
+        "ARGUS_SHARE_BROWSER_DOMAINS",
         "ARGUS_OBSCURA_CDP_URL",
         "ARGUS_ADMIN_API_KEY",
     ],

@@ -42,9 +42,15 @@ MAX_FAILURE_REQUEST_ID_LENGTH = 64
 _BROWSER_POLICY_UNAVAILABLE = "browser connection policy is unavailable"
 ADMISSION_BASIS_ATTESTATION = "attestation"
 ADMISSION_BASIS_AUTH_BROWSER_EXCEPTION = "auth_browser_exception"
+ADMISSION_BASIS_SHARE_BROWSER_EXCEPTION = "share_browser_exception"
 # Temporary paywall exception (#148); retire once a real browser-network
 # authority supplies attestations.
 AUTH_BROWSER_DOMAINS_ENV = "ARGUS_AUTH_BROWSER_DOMAINS"
+# Narrow public-share exception (#159).  A recognised public AI-chat share
+# host may render without an external attestation because the transcript is
+# only reachable client-side.  Off by default; the resource guard keeps such a
+# session on the share render hosts.
+SHARE_BROWSER_DOMAINS_ENV = "ARGUS_SHARE_BROWSER_DOMAINS"
 AUTH_BROWSER_EXCEPTION_LEASE = timedelta(minutes=5)
 _NON_NETWORK_SCHEMES = frozenset({"about", "blob", "data"})
 _BROWSER_RESOURCE_TYPES = frozenset(
@@ -560,6 +566,47 @@ def _auth_browser_exception_domain(request: AcquisitionRequest) -> str | None:
     return matched
 
 
+def _share_browser_exception_host(request: AcquisitionRequest) -> str | None:
+    """Return the allowlisted share host that admits a browser with no attestation.
+
+    Scope is deliberately narrow: public content only, HTTPS only, a host on
+    ``ARGUS_SHARE_BROWSER_DOMAINS``, and a URL that normalizes to a recognised
+    AI-chat share link.  The resource guard keeps the session on the share
+    render hosts, which include the ``share.gemini.google`` →
+    ``gemini.google.com`` redirect pair.
+    """
+
+    if request.profile is not OriginProfile.PUBLIC_CONTENT:
+        return None
+    allowlist = {
+        domain.strip().strip(".").lower()
+        for domain in os.environ.get(SHARE_BROWSER_DOMAINS_ENV, "").split(",")
+        if domain.strip().strip(".")
+    }
+    if not allowlist:
+        return None
+    parsed = urlsplit(request.normalized_url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not host:
+        return None
+    matched = next(
+        (
+            domain
+            for domain in sorted(allowlist)
+            if host == domain or host.endswith(f".{domain}")
+        ),
+        None,
+    )
+    if matched is None:
+        return None
+
+    from ..extraction.share_links import normalize_share_link
+
+    if normalize_share_link(request.normalized_url) is None:
+        return None
+    return matched
+
+
 def require_browser_policy(
     request: AcquisitionRequest,
     attestation: BrowserNetworkAttestation | Mapping[str, object] | None,
@@ -601,15 +648,22 @@ def require_browser_policy(
         if attestation is not None:
             return failure
         exception_domain = _auth_browser_exception_domain(request)
-        if exception_domain is None:
-            return failure
+        if exception_domain is not None:
+            exception_basis = ADMISSION_BASIS_AUTH_BROWSER_EXCEPTION
+            exception_env = AUTH_BROWSER_DOMAINS_ENV
+        else:
+            exception_domain = _share_browser_exception_host(request)
+            if exception_domain is None:
+                return failure
+            exception_basis = ADMISSION_BASIS_SHARE_BROWSER_EXCEPTION
+            exception_env = SHARE_BROWSER_DOMAINS_ENV
         try:
             admitted_at = _now(now)
         except (TypeError, ValueError, OverflowError):
             return failure
         logger.warning(
             "Browser admitted without network attestation via %s host=%s request_id=%s",
-            AUTH_BROWSER_DOMAINS_ENV,
+            exception_env,
             parsed.hostname,
             request_id,
         )
@@ -619,8 +673,8 @@ def require_browser_policy(
             admitted_at=admitted_at,
             expires_at=admitted_at + AUTH_BROWSER_EXCEPTION_LEASE,
             max_resources=request.limits.max_resource_count,
-            basis=ADMISSION_BASIS_AUTH_BROWSER_EXCEPTION,
-            exception_ref=f"{AUTH_BROWSER_DOMAINS_ENV}:{exception_domain}",
+            basis=exception_basis,
+            exception_ref=f"{exception_env}:{exception_domain}",
         )
     checked = _normalise_attestation(attestation)
     # ``validate_browser_attestation`` above guarantees this branch.  Keep the
@@ -751,6 +805,7 @@ async def _check_resource_url(
     admission: BrowserAdmission,
     url: str,
     *,
+    resource_type: str = "other",
     url_checker: Callable[[str], tuple[bool, str]] = _default_url_checker,
 ) -> tuple[bool, str]:
     try:
@@ -772,6 +827,18 @@ async def _check_resource_url(
             same_origin = False
         if not same_origin:
             return False, "cross-origin authenticated resource blocked"
+    if (
+        resource_type == "document"
+        and admission.basis == ADMISSION_BASIS_SHARE_BROWSER_EXCEPTION
+    ):
+        # A share render may only navigate between the provider's own share
+        # hosts; this admits the share.gemini.google -> gemini.google.com hop
+        # and nothing else.  Subresources stay on the normal URL policy.
+        from ..extraction.share_links import share_render_hosts
+
+        render_hosts = share_render_hosts(admission.request.normalized_url)
+        if (parsed.hostname or "").lower() not in render_hosts:
+            return False, "share document navigation outside the declared hosts"
     try:
         policy_url = url
         if parsed.scheme.lower() in {"ws", "wss"}:
@@ -813,6 +880,7 @@ async def guard_browser_route(
     allowed, reason = await _check_resource_url(
         admission,
         url,
+        resource_type=resource_type,
         url_checker=url_checker,
     )
     if allowed:
@@ -850,6 +918,7 @@ async def guard_browser_websocket(
     allowed, reason = await _check_resource_url(
         admission,
         url if isinstance(url, str) else "",
+        resource_type="websocket",
         url_checker=url_checker,
     )
     if allowed:

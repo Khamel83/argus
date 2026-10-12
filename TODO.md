@@ -68,6 +68,23 @@ A checked source task does not imply every provider has passed a live call.
 SearchAPI has no configured key. Valyu must remain account-blocked if it rejects
 the bounded request; this checklist does not authorize billing changes, quota
 resets, credential rotation or repeated provider tests.
+
+## Public AI-chat share links (#159)
+
+- [x] Source: recognised Gemini, ChatGPT and Claude public share URLs now route
+  to the browser (Playwright) stage instead of being accepted or failed on the
+  static trafilatura result; edge navigation/brand/footer chrome is stripped
+  and a login wall is reported as `share_link_not_public`, never content. The
+  temporary, off-by-default `ARGUS_SHARE_BROWSER_DOMAINS` exception admits a
+  share render and keeps document navigation on the provider share hosts,
+  including `share.gemini.google` → `gemini.google.com`.
+  `tests/test_share_links.py`: 55 passed; focused Ruff clean, including the
+  Gemini redirect regression.
+- [ ] Publish for native CI and trusted exact-head review, then ordinary merge.
+- [ ] Separate runtime acceptance: install the reviewed image and confirm one
+  real public Gemini and ChatGPT share render with chrome removed, plus a
+  login/private share reported as not public. Not claimed by this source change.
+
 ## Publisher source prerequisite — October 10, 2026
 
 - [x] Reconcile the managed TODO pointer after G2K High; original generated
