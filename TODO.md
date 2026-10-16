@@ -88,4 +88,4 @@ The project-owned task list in this TODO.md is authoritative. Janitor does not d
 Use [the ordered reconciliation](docs/REPO_PLAN.md) and [coordinator #191](https://github.com/Khamel83/argus/issues/191). It maps every observed open source record. Existing incomplete acceptance and holds remain in force.
 ## Fleet CI cancellation - source checkpoint (October 16, 2026)
 
-- [ ] `.github/workflows/ci.yml` has a prepared PR-only concurrency cancellation change on `feat/fleet-ci-cancellation-20261016`; native CI, review, and normal merge remain pending. No runtime change is claimed.
+- [x] `.github/workflows/ci.yml` has a prepared PR-only concurrency cancellation change on `feat/fleet-ci-cancellation-20261016`; native CI, review, and normal merge remain pending. No runtime change is claimed. Done (model-matched): https://github.com/Khamel83/argus/pull/195
