@@ -187,8 +187,10 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-- `ed8f92123e6c5b70f276bffb25e7e0a755f2de9b` (PR #193): Reconciled open work into the owning repository plan (`docs/REPO_PLAN.md`), mapping 13 unchecked source references and 16 open native records tracked under coordinator #191.
-- PR #173 merged the opt-in sanitized Tavily credential observer, but guarded release, live metadata receipts, and Homelab health admission remain pending; deployed production remains at `e8f36cf` / `c8853fbe`.
+- Source commit `3b16f42bef38d0fe2c8076fe49401ea2cf0a0f97` ticked completed TODO lines following merged PR #195 (`e5380c7f03d577f4bda3e081c1d69d4c30a2d5d3`), which canceled superseded pull-request CI runs.
+- Merged PR #193 (`ed8f92123e6c5b70f276bffb25e7e0a755f2de9b`) established the owning repository plan mapped in `docs/REPO_PLAN.md` and tracked by coordinator #191.
+- Merged PR #173 (`bf58a770a74e58fa07f0d9104fc9e91301b96453`) added opt-in sanitized Tavily credential metadata observation, with hermetic provider attestations refreshed; downstream Homelab guarded release and reader acceptance remain separate gates.
+- Promoted image and restore inventory verification from PR #164 (`e8f36cfea3552a952479b335f964618f89f4fd42`) completed soak gates; live runtime readiness reports source SHA `e8f36cf` while subsequent deployment identity remains separate.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
