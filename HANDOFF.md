@@ -14,21 +14,25 @@ and 3.13 CI compatibility lanes keep their own actual interpreters.
 Local `mise run env-sync` created a separate `.venv` in the reused worktree;
 three-platform `mise.lock` generation is metadata, not Linux execution.
 The actual HOME-path regression failed on the retained candidate and passes
-with tool-path binding. All 14 affected release/distribution checks pass in the
-new isolated environment; lock/fixture checks also pass. Native CI, trusted
-exact-head review and normal merge
-remain pending. No production service, provider request, G2K attempt, grant,
-label or candidate state changed. The retained baseline/candidate each had
-nine identical failures; this source recovery does not erase that evidence.
+with tool-path binding. All 14 affected release/distribution checks pass;
+lock/fixture checks also pass. [PR198](https://github.com/Khamel83/argus/pull/198)
+first head `b602f81` received trusted PASS. Its native full tests finished with
+2 stale CI-command assertion failures, 2993 passes and 31 skips on both 3.12
+and 3.13; the 3.13 job and uncompleted 3.11 lane were cancelled by fail-fast.
+The other five jobs passed. The correction checks actual CI-to-mise task
+links; both affected modules pass locally (162 tests, one skip). Fresh
+corrective-head native CI/review and normal merge remain pending. No runtime,
+provider, G2K attempt, grant, label or candidate state changed. The retained
+baseline/candidate's nine identical failures remain historical evidence.
 
 Original lint/typecheck/format/clean criteria remain unmet: the project has
 no existing commands to wrap, and TODO defers that governance. No tools or
 successful no-op targets were invented. Issues177/179 remain open; use
 [Refs179](https://github.com/Khamel83/argus/issues/179), not automatic closure.
 
-Next: finish focused contract checks, then publish only after source review;
-normal native CI/review/merge follow publication. Recheck `mise run lock-check`,
-`mise tasks` and the exact PR head. Deployment/provider acceptance is separate.
+Next: verify fresh exact-head native CI and trusted review on existing PR198,
+then normal merge. The implementation/mise/CI files are unchanged by the two
+test-assertion corrections. Deployment/provider acceptance is separate.
 
 Reused worktree: `.worktrees/retained/argus-publisher-reconcile-20261010`.
 Its old `codex/publisher-todo-reconcile-20261010` branch is retained. Keep this

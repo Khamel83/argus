@@ -6,9 +6,14 @@
   path, add existing command wrappers and preserve the dependency lock.
 - [x] Create an isolated worktree environment and generate three-platform
   runtime-lock metadata; preserve the primary environment and old candidate.
-- [ ] Obtain exact-head native CI, trusted review and normal merge for
-  [issue179](https://github.com/Khamel83/argus/issues/179); local checks are
-  source evidence only. Parent177's Infra727 source dependency is already merged.
+- [x] Correct two stale inline-command CI assertions after PR198's first native
+  3.12/3.13 test runs each finished with 2 failures/2993 passes/31 skips; both
+  affected modules now pass locally (162 tests, one skip). The 3.11 lane was
+  cancelled by fail-fast; five other native jobs passed.
+- [ ] Obtain corrective-head native CI, trusted review and normal merge for
+  [PR198](https://github.com/Khamel83/argus/pull/198), which references
+  [issue179](https://github.com/Khamel83/argus/issues/179). Earlier trusted PASS
+  does not cover the new head. Parent177's Infra727 source dependency is merged.
 - [ ] Resolve the original lint/typecheck/format/clean acceptance against the
   existing deliberate governance deferral; no such commands currently exist.
   Keep177/179 open until their actual criteria are accepted.
