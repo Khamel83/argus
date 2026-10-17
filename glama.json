@@ -1,0 +1,7 @@
+{
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "name": "io.github.Khamel83/argus",
+  "description": "Multi-provider search broker for AI agents: 14 providers, 12-step extraction, retrieval workflows.",
+  "repository": "https://github.com/Khamel83/argus",
+  "version": "1.6.4"
+}
