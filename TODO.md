@@ -1,22 +1,17 @@
 # Argus operational follow-up
 
-## Issue179 source recovery
+## Issue177/179 development environment
 
-- [x] Recover retained candidate 7387759c, bind uv to the actual mise Python 3.12.13
-  path, add existing command wrappers and preserve the dependency lock.
-- [x] Create an isolated worktree environment and generate three-platform
-  runtime-lock metadata; preserve the primary environment and old candidate.
-- [x] Correct two stale inline-command CI assertions after PR198's first native
-  3.12/3.13 test runs each finished with 2 failures/2993 passes/31 skips; both
-  affected modules now pass locally (162 tests, one skip). The 3.11 lane was
-  cancelled by fail-fast; five other native jobs passed.
-- [ ] Obtain corrective-head native CI, trusted review and normal merge for
-  [PR198](https://github.com/Khamel83/argus/pull/198), which references
-  [issue179](https://github.com/Khamel83/argus/issues/179). Earlier trusted PASS
-  does not cover the new head. Parent177's Infra727 source dependency is merged.
-- [ ] Resolve the original lint/typecheck/format/clean acceptance against the
-  existing deliberate governance deferral; no such commands currently exist.
-  Keep177/179 open until their actual criteria are accepted.
+- [x] Accept the retained mise/uv foundation through [PR198](https://github.com/Khamel83/argus/pull/198):
+  normal merge `c1016bf`, exact trusted PASS and all eight native jobs. Actual
+  3.11/3.12/3.13 lanes each completed2995 tests/31 skips; locks and rollback preserved.
+- [x] Reassess nonexistent generic lint/typecheck/format/clean wrappers explicitly:
+  no tools/no-ops invented; the separate existing governance TODO remains open.
+- [x] Complete native [179](https://github.com/Khamel83/argus/issues/179#issuecomment-6227508234)
+  and [177](https://github.com/Khamel83/argus/issues/177#issuecomment-6227511571)
+  at00:44:30/00:44:43 UTC, October17. Independent readback verified acceptance,
+  unchanged bodies/labels and22 retained state/link identities; no attempt,
+  grant, retained candidate or stop label was reset.
 
 ## Homelab H26 — bounded credential observation
 
