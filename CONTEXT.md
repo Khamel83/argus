@@ -18,15 +18,20 @@ modal, denial shell versus quoted transcript.79 focused tests pass; final full
 suite3035 passed/47 skipped/4 existing warnings in52.22s. Earlier transient DNS
 failures and rejected source remain in private evidence/history; not erased.
 
-Publish this source for native exact-head CI/trusted review/normal merge. No live
+Source201 merged927f3f7340271157ad0318969199289f1f9b82b2 at07:49:39Z after
+exactcc027c9/PASS5556889749/all8native checks. Actual3.11/3.12/3.13 each3050
+passed/32skips. Canonical merge-e9bc1473435e47e3bf740e3668f5004b independently read;
+fetched default and reviewed head full trees match. No live
 provider/production data/private service change or operated release is claimed.
 Actual public Gemini/ChatGPT canaries and guarded runtime release remain open;
 Claude real-share acceptance is still unknown. Refs159, never auto-close.
 This is assisted source recovery, not unattended G2K throughput proof.
 Reuse .worktrees/retained/argus-publisher-reconcile-20261010, branch
-fix/public-share-links-159; retain prior604a92c/ignored environment and dirty
-primary lowercase handoff. Root g2k:parked prevents duplicate admission; original
-needs-human remains. Private argus-ops README read; follow actual operator gates
+docs/share-source-acceptance-159 from fetched927f3f7; preserve source branch
+cc027c9/prior604a92c/ignored environment and dirty primary lowercase handoff.
+Only root-owned park33508914767 removed after native compare/readback; original
+needs-human/acceptance-pending/open159 remain. Comment6231406086 records source
+acceptance. Private argus-ops README read; follow actual operator gates
 for later runtime work. No deploy is authorized by source-dispatch text alone.
 
 # Context
