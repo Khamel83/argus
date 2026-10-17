@@ -247,10 +247,11 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-- Source commit `82daea1ff9dd352c0edd3aea60980d1fed4ca6c2` records verified mise adoption and scoped issue acceptance (#199).
-- PR #198 merged as `c1016bf37eed7dc8f81943f613dd90c51585fb71`, wrapping the existing uv0.11.26 environment with mise 2026.10.2 / Python 3.12.13 and closing issues #177 and #179.
-- PR #195 merged as `e5380c7f03d577f4bda3e081c1d69d4c30a2d5d3`, canceling superseded pull request CI runs.
-- All open work is mapped in [docs/REPO_PLAN.md](docs/REPO_PLAN.md) and tracked via coordinator #191.
+- `bd57b09c16914f3718a3fd31961c4708feafeae7` records public-share extraction source acceptance (#202). Source PR #201 merged as `927f3f7340271157ad0318969199289f1f9b82b2`; published context reports exact-head trusted PASS, all eight native checks, and 3,050 passed / 32 skipped on each Python lane. Public chat shares use guarded rendered extraction without a browser-policy exception. Guarded runtime release and actual Gemini/ChatGPT canaries remain open; Claude real-share acceptance remains unknown. Issue #159 is not closed by source acceptance.
+- `82daea1ff9dd352c0edd3aea60980d1fed4ca6c2` records development-environment acceptance following PR #198 (`c1016bf37eed7dc8f81943f613dd90c51585fb71`). Published documents report verified mise/uv adoption, passing native checks, and completed issues #177/#179. This does not establish an application deployment or completion of the separate type/format governance work.
+- `e5380c7f03d577f4bda3e081c1d69d4c30a2d5d3` records PR-only CI cancellation (#195), followed by TODO reconciliation in `3b16f42bef38d0fe2c8076fe49401ea2cf0a0f97`. The handwritten checkpoint still describes review and merge as pending; those checkpoint details are stale relative to the supplied commit history. No runtime effect is established.
+- The supplied history records the Tavily observer PR #173 merge at `bf58a770a74e58fa07f0d9104fc9e91301b96453`, after the attestation refresh `8fa0c7a485e3cd31ff1de52c13999012f2f59ae4`. Published working documents retain earlier final-head review/CI gates; the merge subject alone does not establish those receipts, guarded deployment, opt-in, or a natural metadata observation. The last documented production source remains `e8f36cfea3552a952479b335f964618f89f4fd42`, not a fresh runtime observation.
+- The owning work plan is [docs/REPO_PLAN.md](docs/REPO_PLAN.md) with [coordinator #191](https://github.com/Khamel83/argus/issues/191), recorded by `ed8f92123e6c5b70f276bffb25e7e0a755f2de9b`. Publisher pointer reconciliation is recorded by `cf20dd6eceba8aa67902166d1c044193104a3a5f`; natural publication and the inherited extraction-completion conflict remain unresolved in the published queue.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
