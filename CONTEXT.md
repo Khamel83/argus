@@ -217,10 +217,10 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-- Source commit `3b16f42bef38d0fe2c8076fe49401ea2cf0a0f97` ticked completed TODO lines following merged PR #195 (`e5380c7f03d577f4bda3e081c1d69d4c30a2d5d3`), which canceled superseded pull-request CI runs.
-- Merged PR #193 (`ed8f92123e6c5b70f276bffb25e7e0a755f2de9b`) established the owning repository plan mapped in `docs/REPO_PLAN.md` and tracked by coordinator #191.
-- Merged PR #173 (`bf58a770a74e58fa07f0d9104fc9e91301b96453`) added opt-in sanitized Tavily credential metadata observation, with hermetic provider attestations refreshed; downstream Homelab guarded release and reader acceptance remain separate gates.
-- Promoted image and restore inventory verification from PR #164 (`e8f36cfea3552a952479b335f964618f89f4fd42`) completed soak gates; live runtime readiness reports source SHA `e8f36cf` while subsequent deployment identity remains separate.
+- Source commit `82daea1ff9dd352c0edd3aea60980d1fed4ca6c2` records verified mise adoption and scoped issue acceptance (#199).
+- PR #198 merged as `c1016bf37eed7dc8f81943f613dd90c51585fb71`, wrapping the existing uv0.11.26 environment with mise 2026.10.2 / Python 3.12.13 and closing issues #177 and #179.
+- PR #195 merged as `e5380c7f03d577f4bda3e081c1d69d4c30a2d5d3`, canceling superseded pull request CI runs.
+- All open work is mapped in [docs/REPO_PLAN.md](docs/REPO_PLAN.md) and tracked via coordinator #191.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
