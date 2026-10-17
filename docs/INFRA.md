@@ -77,3 +77,35 @@ curl -s -H "Authorization: Bearer $ARGUS_AUTHORITY_TOKEN" \
 # Full system diagnostic (requires admin token):
 ARGUS_AUTHORITY_TOKEN="$ARGUS_ADMIN_API_KEY" argus doctor
 ```
+
+## Development environment source — issue179
+
+The source-only migration follows accepted [Infra727](https://github.com/Khamel83/infra/pull/727).
+Python 3.12.13 matches Argus's existing development baseline; production
+containers and release controllers retain their accepted interpreters.
+Mise 2026.10.2 selects Python, while the existing uv 0.11.26 installation
+retains dependency ownership. `UV_PYTHON` is `{{ tools.python.path }}` with
+`tools=true`; `UV_PYTHON_DOWNLOADS=never`. No HOME prefix is assumed.
+
+Generate runtime metadata with:
+
+```sh
+mise trust mise.toml
+mise lock --platform linux-arm64,linux-x64,macos-arm64
+mise run lock-check
+mise run env-sync
+mise exec -- uv run --frozen python -c 'import sys; print(sys.executable, sys.base_prefix)'
+```
+
+The existing universal `uv.lock` is unchanged. `uv lock --check` is supported;
+`uv lock --python-platform` is not. The three runtime-lock platforms are
+metadata only; actual local source verification is Mac arm64. CI retains
+Linux 3.11/3.12.13/3.13 execution as a pending native gate, with job-wide
+`MISE_PYTHON_VERSION` selecting the real compatibility interpreter. Existing
+artifact paths, deploy workflows and Docker release inputs are preserved.
+
+The migration creates only the reused worktree's `.venv`. The primary
+checkout/environment and all retained candidates remain rollback anchors.
+Return to previous source and its prior environment to undo the dev setup;
+no old environment is removed. This does not install a service or promote an
+image. Lint/type/format/clean governance remains explicitly unfinished.

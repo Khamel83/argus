@@ -36,6 +36,10 @@ Search infrastructure for AI agents: 14 providers, topology-aware routing, Wolfr
 
 ## Key Commands
 
+For development setup or CI changes, read [CONTRIBUTING.md](CONTRIBUTING.md).
+The project mise tasks select the dev/test interpreter; production releases
+keep their existing deployment and acceptance paths.
+
 ```bash
 # Setup
 cp .env.example .env                    # configure providers and DB

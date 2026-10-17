@@ -1,31 +1,55 @@
 # Contributing to Argus
 
-Argus development is standardized on Python 3.12. The published package still supports Python 3.11+, but local repo work, CI parity, and release verification should use the commands below.
+Argus development uses Python 3.12.13 through mise 2026.10.2 and uv 0.11.26.
+The published package still supports Python 3.11+; CI retains separate 3.11
+and 3.13 compatibility lanes. This setup wraps the existing uv environment.
 
 ## Quick Setup
 
 ```bash
 git clone https://github.com/Khamel83/argus.git && cd argus
-uv sync --python 3.12 --extra dev --extra mcp
-cp .env.example .env  # configure at least one provider key
-uv run pytest tests/ -v --tb=short
+mise trust mise.toml
+mise install
+mise run env-sync
+mise run test
 ```
 
 ## Development
 
-- Bootstrap or refresh the dev environment: `uv sync --python 3.12 --extra dev --extra mcp`
-- Run the canonical verification command: `uv run pytest tests/ -v --tb=short`
-- Run a targeted test file: `uv run pytest tests/test_api.py -v --tb=short`
+- Bootstrap or refresh this checkout's `.venv`: `mise run env-sync`
+- Run the canonical verification command: `mise run test`
+- Run a targeted test file: `mise exec -- uv run --frozen pytest tests/test_api.py -v --tb=short`
+- Check dependency-lock parity: `mise run lock-check`
+- List the existing verification wrappers: `mise tasks`
 - All config via env vars — see `.env.example` for what's available
 - Provider adapters live in `argus/providers/` and implement `BaseProvider`
 
-If you do not already have `uv`, install it from <https://docs.astral.sh/uv/> and re-run the commands above. The repo also includes `.python-version` so `uv`, `pyenv`, and similar tools converge on Python 3.12 by default.
+Install mise using its [official instructions](https://mise.jdx.dev/getting-started.html).
+Keep the existing uv installation at 0.11.26; [uv's installation guide](https://docs.astral.sh/uv/getting-started/installation/)
+describes supported installers. `env-sync` refuses a different uv version.
+`UV_PYTHON` comes from the selected mise tool path, including CI overrides,
+and `UV_PYTHON_DOWNLOADS=never` prevents uv from selecting another runtime.
+The existing `.python-version` remains the 3.12 fallback for direct uv users.
+Source tests use hermetic configuration and need no provider credentials.
+
+`mise.lock` records Python download metadata for Linux arm64/x64 and Mac arm64.
+Refresh it with `mise lock --platform linux-arm64,linux-x64,macos-arm64`;
+platform metadata does not prove execution. `uv.lock` remains the existing
+universal dependency lock: use `uv lock --check`, not `--python-platform`.
+CI overrides `MISE_PYTHON_VERSION` at job scope for the compatibility lanes,
+so installation, task execution and uv all use that lane's actual interpreter.
+
+There are no existing lint, typecheck, format or clean targets to wrap. Those
+governance decisions remain open in TODO.md; this change adds no substitute
+tools or successful no-op tasks. To roll back development setup, return to the
+previous source and its retained environment; existing primary environments
+and production runtimes are preserved.
 
 ## Pull Requests
 
 1. Fork the repo
 2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Make your changes, make sure tests pass: `uv run pytest tests/ -v --tb=short`
+3. Make your changes, make sure tests pass: `mise run test`
 4. Push and open a PR
 
 One change per PR makes review easier. If it's two logically separate things, it's probably two PRs.

@@ -19,30 +19,40 @@ jobs:
       ARGUS_DISABLE_SECRET_RESOLUTION: "true"
       ARGUS_EGRESS_TYPE: "unknown"
       ARGUS_RESIDENTIAL_POLICY: "off"
+      # Keep the existing 3.11/3.13 compatibility lanes; pin the 3.12 baseline.
+      MISE_PYTHON_VERSION: ${{ matrix.python-version == '3.12' && '3.12.13' || matrix.python-version }}
     strategy:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - name: Install pinned mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
         with:
-          python-version: ${{ matrix.python-version }}
+          version: "2026.10.2"
+          install: false
+          env: false
+          cache: false
+
+      - name: Trust and install the selected Python
+        run: |
+          mise trust mise.toml
+          mise install
+          mise exec -- python --version
+          mise exec -- python -c 'import os,sys; expected=os.environ["MISE_PYTHON_VERSION"]; assert sys.version.split()[0] == expected or sys.version.startswith(expected + ".")'
 
       - name: Install uv
-        run: python -m pip install uv==0.11.26
+        run: mise exec -- python -m pip install uv==0.11.26
 
       - name: Sync dependencies
-        run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra mcp
+        run: mise run env-sync
 
       - name: Verify canonical provider fixture attestations
-        run: >-
-          uv run --python ${{ matrix.python-version }}
-          python scripts/generate_provider_fixture_attestations.py --check
+        run: mise run fixture-check
 
       - name: Run tests
-        run: uv run --python ${{ matrix.python-version }} pytest tests/ -v --tb=short
+        run: mise run test
 
   scorecard:
     runs-on: ubuntu-latest
@@ -55,18 +65,28 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - name: Install pinned mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
         with:
-          python-version: "3.12"
+          version: "2026.10.2"
+          install: false
+          env: false
+          cache: false
+
+      - name: Trust and install the selected Python
+        run: |
+          mise trust mise.toml
+          mise install
+          mise exec -- python --version
 
       - name: Install uv
-        run: python -m pip install uv==0.11.26
+        run: mise exec -- python -m pip install uv==0.11.26
 
       - name: Sync dependencies
-        run: uv sync --frozen --python 3.12 --extra dev --extra mcp
+        run: mise run env-sync
 
       - name: Run hermetic scorecard
-        run: uv run --python 3.12 python scripts/run-scorecard.py --lane hermetic --output .artifacts/scorecard-hermetic
+        run: mise run scorecard
 
       - name: Upload hermetic scorecard bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -103,21 +123,28 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - name: Install pinned mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
         with:
-          python-version: "3.12"
+          version: "2026.10.2"
+          install: false
+          env: false
+          cache: false
+
+      - name: Trust and install the selected Python
+        run: |
+          mise trust mise.toml
+          mise install
+          mise exec -- python --version
 
       - name: Install uv
-        run: python -m pip install uv==0.11.26
+        run: mise exec -- python -m pip install uv==0.11.26
 
       - name: Sync dependencies
-        run: uv sync --frozen --python 3.12 --extra dev --extra mcp
+        run: mise run env-sync
 
       - name: Verify canonical provider fixture attestations
-        run: >-
-          uv run --python 3.12
-          python scripts/generate_provider_fixture_attestations.py --check
+        run: mise run fixture-check
 
       - name: Install PostgreSQL client
         run: |
@@ -129,19 +156,19 @@ jobs:
       - name: Migrate PostgreSQL schema
         run: |
           ARGUS_DB_URL="$ARGUS_TEST_POSTGRES_URL" \
-            uv run --python 3.12 alembic upgrade head
+            mise exec -- uv run --frozen alembic upgrade head
 
       - name: Verify PostgreSQL schema contract
         id: schema
         run: |
-          SCHEMA_HEAD="$(uv run --python 3.12 python -c 'from argus.recovery.database import EXPECTED_SCHEMA_HEAD; print(EXPECTED_SCHEMA_HEAD)')"
-          uv run --python 3.12 \
+          SCHEMA_HEAD="$(mise exec -- uv run --frozen python -c 'from argus.recovery.database import EXPECTED_SCHEMA_HEAD; print(EXPECTED_SCHEMA_HEAD)')"
+          mise exec -- uv run --frozen \
             python scripts/generate_argus_schema_contract.py \
             --database-url "$ARGUS_TEST_POSTGRES_URL" \
             --schema-head "$SCHEMA_HEAD" \
             --check
           echo "schema_head=$SCHEMA_HEAD" >> "$GITHUB_OUTPUT"
-          SCHEMA_CONTRACT_NAME="$(uv run --python 3.12 python -c 'from argus.recovery.database import EXPECTED_SCHEMA_HEAD, SCHEMA_CONTRACT_PATHS; print(SCHEMA_CONTRACT_PATHS[EXPECTED_SCHEMA_HEAD].name)')"
+          SCHEMA_CONTRACT_NAME="$(mise exec -- uv run --frozen python -c 'from argus.recovery.database import EXPECTED_SCHEMA_HEAD, SCHEMA_CONTRACT_PATHS; print(SCHEMA_CONTRACT_PATHS[EXPECTED_SCHEMA_HEAD].name)')"
           echo "schema_contract=argus/recovery/$SCHEMA_CONTRACT_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Upload PostgreSQL schema contract
@@ -152,25 +179,12 @@ jobs:
           if-no-files-found: error
 
       - name: Run PostgreSQL ledger contract
-        run: |
-          uv run --python 3.12 pytest \
-            tests/test_search_ledger.py \
-            tests/test_provider_spend.py \
-            tests/test_maya_outbox.py \
-            tests/test_api.py::TestSearchEndpoint::test_postgresql_constraint_failure_returns_503_and_rolls_back_ledger \
-            tests/test_operation_ledger.py::test_postgresql_extraction_and_session_contract \
-            tests/test_operation_ledger.py::test_postgresql_concurrent_session_creation_and_query_allocation \
-            tests/test_operation_ledger.py::test_postgresql_concurrent_sanitized_session_url_inserts_are_idempotent \
-            tests/test_recovery_database.py \
-            tests/test_schema_contract_generator.py \
-            tests/test_postgres_provisioning.py \
-            tests/test_accepted_retrieval.py \
-            -v --tb=short
+        run: mise run postgres-test
 
       - name: Verify PostgreSQL provider-readiness authority
         run: |
           mkdir -p artifacts
-          uv run --python 3.12 \
+          mise exec -- uv run --frozen \
             python scripts/verify_provider_readiness_postgres.py \
             --output artifacts/provider-readiness-postgres.json
 
@@ -193,18 +207,28 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - name: Install pinned mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
         with:
-          python-version: "3.12"
+          version: "2026.10.2"
+          install: false
+          env: false
+          cache: false
+
+      - name: Trust and install the selected Python
+        run: |
+          mise trust mise.toml
+          mise install
+          mise exec -- python --version
 
       - name: Install uv
-        run: python -m pip install uv==0.11.26
+        run: mise exec -- python -m pip install uv==0.11.26
 
       - name: Sync frozen production dependencies
-        run: uv sync --frozen --extra dev --extra mcp
+        run: mise run env-sync
 
       - name: Verify production-like configuration
-        run: uv run pytest tests/test_production_config.py -v --tb=short
+        run: mise run production-config
 
   image-build:
     runs-on: ubuntu-latest
@@ -257,11 +281,25 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
+      - name: Install pinned mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        with:
+          version: "2026.10.2"
+          install: false
+          env: false
+          cache: false
+
+      - name: Trust and install the selected Python
+        run: |
+          mise trust mise.toml
+          mise install
+          mise exec -- python --version
+
       - name: Install uv
-        run: python3 -m pip install uv==0.11.26
+        run: mise exec -- python3 -m pip install uv==0.11.26
 
       - name: Sync release dependencies
-        run: uv sync --frozen
+        run: mise exec -- uv sync --frozen
 
       - name: Check llms.txt freshness
         run: |
@@ -274,4 +312,4 @@ jobs:
           fi
 
       - name: Check version sync
-        run: uv run --frozen --no-sync python scripts/verify_release_contract.py
+        run: mise exec -- uv run --frozen --no-sync python scripts/verify_release_contract.py

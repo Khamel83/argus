@@ -1,10 +1,15 @@
 """Release inputs must remain reproducible and internally consistent."""
 
+import json
+import os
 import re
+import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 UV_VERSION = "0.11.26"
@@ -40,7 +45,76 @@ def test_ci_runs_the_suite_with_hermetic_runtime_configuration():
     assert "ARGUS_DISABLE_SECRET_RESOLUTION: \"true\"" in ci
     assert "ARGUS_EGRESS_TYPE: \"unknown\"" in ci
     assert "ARGUS_RESIDENTIAL_POLICY: \"off\"" in ci
-    assert "tests/test_production_config.py" in ci
+    assert "mise run production-config" in ci
+    tasks = tomllib.loads((REPO_ROOT / "mise.toml").read_text())["tasks"]
+    assert "tests/test_production_config.py" in tasks["production-config"]["run"]
+
+
+def _mise_fixture(tmp_path):
+    mise = shutil.which("mise")
+    if mise is None or os.name != "posix":
+        pytest.skip("the mise runtime fixture needs mise and POSIX symlinks")
+    (tmp_path / "mise.toml").write_bytes((REPO_ROOT / "mise.toml").read_bytes())
+    home = tmp_path / "different-home"
+    home.mkdir()
+    runtime = tmp_path / "selected-runtime"
+    (runtime / "bin").mkdir(parents=True)
+    # A tool root without an installed uv keeps fake-command tests hermetic.
+    (runtime / "bin/python").symlink_to(Path(sys.base_prefix) / "bin/python")
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith(("MISE_", "UV_"))}
+    env.update({
+        "HOME": str(home),
+        "MISE_CONFIG_DIR": str(tmp_path / "config"),
+        "MISE_DATA_DIR": str(tmp_path / "data"),
+        "MISE_CACHE_DIR": str(tmp_path / "cache"),
+        "MISE_STATE_DIR": str(tmp_path / "state"),
+        "MISE_TRUSTED_CONFIG_PATHS": str(tmp_path),
+        "MISE_PYTHON_VERSION": f"path:{runtime}",
+        "MISE_AUTO_INSTALL": "false",
+    })
+    return mise, env
+
+
+def test_mise_binds_the_actual_interpreter_independently_of_home(tmp_path):
+    uv = shutil.which("uv")
+    if uv is None:
+        pytest.skip("uv is required for the runtime binding check")
+    mise, env = _mise_fixture(tmp_path)
+    result = subprocess.run(
+        [mise, "exec", "--", "python", "-c",
+         "import json,os,sys; print(json.dumps({'python':sys.executable,"
+         "'uv_python':os.environ['UV_PYTHON'],"
+         "'downloads':os.environ['UV_PYTHON_DOWNLOADS']}))"],
+        cwd=tmp_path, env=env, text=True, capture_output=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    selected = json.loads(result.stdout)
+    found = subprocess.run(
+        [uv, "python", "find", selected["uv_python"], "--offline", "--no-project"],
+        cwd=tmp_path, env=env, text=True, capture_output=True, timeout=30,
+    )
+    assert found.returncode == 0, found.stdout + found.stderr
+    assert Path(found.stdout.strip()).resolve() == Path(selected["python"]).resolve()
+    assert selected["downloads"] == "never"
+
+
+def test_mise_test_task_preserves_the_existing_pytest_invocation(tmp_path):
+    mise, env = _mise_fixture(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    uv = bin_dir / "uv"
+    uv.write_text("#!/bin/sh\nprintf '%s\\n' \"$UV_PYTHON_DOWNLOADS\" \"$@\"\n")
+    uv.chmod(0o755)
+    env["PATH"] = str(bin_dir) + os.pathsep + env["PATH"]
+    result = subprocess.run(
+        [mise, "run", "test"], cwd=tmp_path, env=env,
+        text=True, capture_output=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() == [
+        "never", "run", "--frozen", "pytest", "tests/", "-v", "--tb=short",
+    ]
 
 
 def test_every_ci_uv_install_is_version_pinned():

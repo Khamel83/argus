@@ -1,5 +1,18 @@
 # Argus operational follow-up
 
+## Issue179 source recovery
+
+- [x] Recover retained candidate 7387759c, bind uv to the actual mise Python 3.12.13
+  path, add existing command wrappers and preserve the dependency lock.
+- [x] Create an isolated worktree environment and generate three-platform
+  runtime-lock metadata; preserve the primary environment and old candidate.
+- [ ] Obtain exact-head native CI, trusted review and normal merge for
+  [issue179](https://github.com/Khamel83/argus/issues/179); local checks are
+  source evidence only. Parent177's Infra727 source dependency is already merged.
+- [ ] Resolve the original lint/typecheck/format/clean acceptance against the
+  existing deliberate governance deferral; no such commands currently exist.
+  Keep177/179 open until their actual criteria are accepted.
+
 ## Homelab H26 — bounded credential observation
 
 The former generated projection is preserved byte for byte with its expanded
