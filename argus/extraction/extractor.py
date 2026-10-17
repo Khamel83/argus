@@ -49,6 +49,7 @@ from argus.extraction.models import ExtractedContent, ExtractionAttempt, Extract
 from argus.extraction.quality_gate import QualityGate
 from argus.extraction.soft_404 import is_soft_404
 from argus.extraction.rate_limit import DomainRateLimiter
+from argus.extraction.share_links import normalize_share_link
 from argus.extraction.trafilatura_result import normalize_trafilatura_result
 from argus.logging import get_logger
 
@@ -664,6 +665,41 @@ async def _extract_url_unpersisted(
         paid_result.text = ""
         paid_result.word_count = 0
         return paid_result
+
+    # Public AI-chat share pages (Gemini, ChatGPT, Claude) are client-rendered
+    # application shells.  Static extractors only observe site chrome, so route
+    # a share URL to the browser stage and never return the chrome as content.
+    share_link = normalize_share_link(url)
+    if share_link is not None:
+        from argus.extraction.playwright_extractor import extract_share_link
+
+        result = await run_attempt("playwright", extract_share_link, url)
+        result.extractors_tried = list(extractors_tried)
+        if result.text and not result.error:
+            passed, reason = _run_quality_gate(
+                result.text,
+                url,
+                "playwright",
+                content_type=content_type,
+            )
+            result.quality_passed = passed
+            result.quality_reason = reason if not passed else None
+            record_quality_outcome(result, passed, reason)
+            if passed:
+                track_quality_pass(result)
+                result.completeness_result = assess_completeness(result.text, url)
+                if allow_legacy_cache_writes:
+                    _cache.put(cache_key, result)
+                return result
+        # A share page has no recoverable static fallback: report the browser
+        # outcome (browser unavailable, login wall, or failed quality) instead
+        # of returning an earlier chrome result or spending on external APIs.
+        if not result.error:
+            result.error = "all extractors failed: tried " + ", ".join(extractors_tried)
+        result.quality_passed = False
+        result.quality_reason = result.error
+        _populate_provenance(result)
+        return result
 
     # Phase 4: Residential Egress Policy
     res_policy = config.residential.policy

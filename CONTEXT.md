@@ -1,8 +1,33 @@
-## Current repository-plan checkpoint — October 11, 2026
+## Public share extraction / issue159 — October17 UTC
 
-The owner requested one owning plan for every open TODO, issue and PR. [docs/REPO_PLAN.md](docs/REPO_PLAN.md) maps 13 unchecked source references and 16 open native records observed from `cf20dd6eceba8aa67902166d1c044193104a3a5f`. G2K is the executor; coordinator191 tracks project-owned acceptance. Previous source prose below is retained as dated evidence, not refreshed runtime attestation.
+Source recovery for https://github.com/Khamel83/argus/issues/159 reuses the settled
+suspended G2K model tree e60ed5b2, applying/reviewing its source against fetched
+main be4a6558. Original capsule/test history/stop/marker remain unchanged. Root
+source repair removes the proposed browser-policy exception entirely; existing
+admission/attestation/SSRF/resource policy remains authoritative. Public share
+identities route to the guarded browser before static extraction. Settled text
+uses a rendered content container and live innerText, preserves semantic tags/
+edge labels, validates the final URL, and recognizes auth redirects/titles and
+visible login/denial UI. No credential or network configuration changes.
 
-This source proposal requires trusted exact-head review, native CI and normal merge before audit192 is closed or finite sequencing is applied. Source, installation, ordinary receipt and downstream effect remain separate. Next: verify this PR’s current head and accepted native merge, then update the existing coordinator; resolve the explicitly listed next review/receipt/decision in plan order. No busy worker, host service, access policy or retry state was changed.
+High reviews0b7ced22/fae5d4be/bce7ec88 and the last visible-container review found
+real extraction/lifecycle defects. New admission removed; remaining findings
+fixed with delayed navigation and actual offline Chromium DOM regressions:
+visible paragraphs/hidden descendants and containers/semantic tags, sibling auth
+modal, denial shell versus quoted transcript.79 focused tests pass; final full
+suite3035 passed/47 skipped/4 existing warnings in52.22s. Earlier transient DNS
+failures and rejected source remain in private evidence/history; not erased.
+
+Publish this source for native exact-head CI/trusted review/normal merge. No live
+provider/production data/private service change or operated release is claimed.
+Actual public Gemini/ChatGPT canaries and guarded runtime release remain open;
+Claude real-share acceptance is still unknown. Refs159, never auto-close.
+This is assisted source recovery, not unattended G2K throughput proof.
+Reuse .worktrees/retained/argus-publisher-reconcile-20261010, branch
+fix/public-share-links-159; retain prior604a92c/ignored environment and dirty
+primary lowercase handoff. Root g2k:parked prevents duplicate admission; original
+needs-human remains. Private argus-ops README read; follow actual operator gates
+for later runtime work. No deploy is authorized by source-dispatch text alone.
 
 # Context
 
