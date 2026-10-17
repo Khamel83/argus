@@ -1,0 +1,9 @@
+startCommand:
+  type: stdio
+  commandFunction:
+    - uvx
+    - argus-search
+  configSchema:
+    type: object
+    properties: {}
+  exampleConfig: {}

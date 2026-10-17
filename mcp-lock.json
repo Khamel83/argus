@@ -1,0 +1,9 @@
+{
+  "version": "1.0.0",
+  "tools": [
+    "search_web",
+    "extract_content",
+    "recover_url",
+    "expand_links"
+  ]
+}
