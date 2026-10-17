@@ -18,7 +18,7 @@ modal, denial shell versus quoted transcript.79 focused tests pass; final full
 suite3035 passed/47 skipped/4 existing warnings in52.22s. Earlier transient DNS
 failures and rejected source remain in private evidence/history; not erased.
 
-Source201 merged927f3f7340271157ad0318969199289f1f9b82b2 at07:49:27Z after
+Source201 merged927f3f7340271157ad0318969199289f1f9b82b2 at07:49:39Z after
 exactcc027c9/PASS5556889749/all8native checks. Actual3.11/3.12/3.13 each3050
 passed/32skips. Canonical merge-e9bc1473435e47e3bf740e3668f5004b independently read;
 fetched default and reviewed head full trees match. No live
