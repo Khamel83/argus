@@ -6,6 +6,37 @@ This source proposal requires trusted exact-head review, native CI and normal me
 
 # Context
 
+## Issue179 development environment — October 16, 2026
+
+Prepared on `fix/mise-source-recovery-179` from fetched default
+`a6529d507f4a2f90bbea86164f2f3e0969362f4c`, reusing the retained one-file
+candidate `7387759cdbe2523de7c575d19b47a4362f56425e`. Infra727 is merged;
+its source prerequisite is satisfied. Python 3.12.13 is the documented dev
+baseline and the interpreter exercised by the retained baseline/candidate.
+The new mise wrappers bind uv to the actual selected tool path, retain the
+universal `uv.lock`, and disable implicit Python downloads. The existing 3.11
+and 3.13 CI compatibility lanes keep their own actual interpreters.
+
+Local `mise run env-sync` created a separate `.venv` in the reused worktree;
+three-platform `mise.lock` generation is metadata, not Linux execution.
+The actual HOME-path regression failed on the retained candidate and passes
+with tool-path binding. All 14 affected release/distribution checks pass;
+lock/fixture checks also pass. [PR198](https://github.com/Khamel83/argus/pull/198)
+first head `b602f81` received trusted PASS. Its native full tests finished with
+2 stale CI-command assertion failures, 2993 passes and 31 skips on both 3.12
+and 3.13; the 3.13 job and uncompleted 3.11 lane were cancelled by fail-fast.
+The other five jobs passed. The correction checks actual CI-to-mise task
+links; both affected modules pass locally (162 tests, one skip). Fresh
+corrective-head native CI/review and normal merge remain pending. No runtime,
+provider, G2K attempt, grant, label or candidate state changed. The retained
+baseline/candidate's nine identical failures remain historical evidence.
+
+Original lint/typecheck/format/clean criteria remain unmet: the project has
+no existing commands to wrap, and TODO defers that governance. No tools or
+successful no-op targets were invented. Issues177/179 remain open; use
+[Refs179](https://github.com/Khamel83/argus/issues/179), not automatic closure.
+
+
 October2 Homelab H26 work adds a disabled-by-default Tavily metadata observer
 to the existing30-minute authority probe loop. It uses the existing credential
 and data mount, exports only a bounded redacted latest receipt, and leaves

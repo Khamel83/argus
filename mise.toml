@@ -1,0 +1,45 @@
+[tools]
+python = "3.12.13"
+
+[env]
+UV_PYTHON = { value = "{{ tools.python.path }}", tools = true }
+UV_PYTHON_DOWNLOADS = "never"
+
+[tasks.env-sync]
+description = "Sync this checkout's development environment from uv.lock"
+run = [
+  'test "$(uv --version | cut -d " " -f 2)" = "0.11.26"',
+  "uv sync --locked --extra dev --extra mcp",
+]
+
+[tasks.lock-check]
+run = "uv lock --check"
+
+[tasks.test]
+run = "uv run --frozen pytest tests/ -v --tb=short"
+
+[tasks.fixture-check]
+run = "uv run --frozen python scripts/generate_provider_fixture_attestations.py --check"
+
+[tasks.scorecard]
+run = "uv run --frozen python scripts/run-scorecard.py --lane hermetic --output .artifacts/scorecard-hermetic"
+
+[tasks.production-config]
+run = "uv run --frozen pytest tests/test_production_config.py -v --tb=short"
+
+[tasks.postgres-test]
+run = """
+uv run --frozen pytest \
+  tests/test_search_ledger.py \
+  tests/test_provider_spend.py \
+  tests/test_maya_outbox.py \
+  tests/test_api.py::TestSearchEndpoint::test_postgresql_constraint_failure_returns_503_and_rolls_back_ledger \
+  tests/test_operation_ledger.py::test_postgresql_extraction_and_session_contract \
+  tests/test_operation_ledger.py::test_postgresql_concurrent_session_creation_and_query_allocation \
+  tests/test_operation_ledger.py::test_postgresql_concurrent_sanitized_session_url_inserts_are_idempotent \
+  tests/test_recovery_database.py \
+  tests/test_schema_contract_generator.py \
+  tests/test_postgres_provisioning.py \
+  tests/test_accepted_retrieval.py \
+  -v --tb=short
+"""

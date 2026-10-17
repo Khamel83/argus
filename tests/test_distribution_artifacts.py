@@ -80,17 +80,19 @@ def test_production_image_copies_alembic_runtime_artifacts():
 
 def test_postgresql_ci_runs_real_api_commit_failure_contract():
     workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+    assert "mise run postgres-test" in workflow
+    task = tomllib.loads((ROOT / "mise.toml").read_text())["tasks"]["postgres-test"]["run"]
 
     assert (
         "tests/test_api.py::TestSearchEndpoint::"
         "test_postgresql_constraint_failure_returns_503_and_rolls_back_ledger"
-        in workflow
+        in task
     )
     assert (
         "tests/test_operation_ledger.py::"
-        "test_postgresql_extraction_and_session_contract" in workflow
+        "test_postgresql_extraction_and_session_contract" in task
     )
-    assert "tests/test_provider_spend.py" in workflow
+    assert "tests/test_provider_spend.py" in task
 
 
 def test_publish_regenerates_release_specific_provider_attestations():

@@ -2644,10 +2644,16 @@ def test_execution_outcome_updates_exact_request_class_only(tmp_path):
 
 def test_postgres_ci_persists_sanitized_readiness_evidence_artifact():
     from pathlib import Path
+    import tomllib
+    import yaml
 
     workflow = Path(".github/workflows/ci.yml").read_text()
+    job = yaml.safe_load(workflow)["jobs"]["postgres-ledger"]
+    commands = [step.get("run", "") for step in job["steps"]]
+    assert "mise run fixture-check" in commands
+    task = tomllib.loads(Path("mise.toml").read_text())["tasks"]["fixture-check"]["run"]
     assert "scripts/verify_provider_readiness_postgres.py" in workflow
-    assert "scripts/generate_provider_fixture_attestations.py --check" in workflow
+    assert "scripts/generate_provider_fixture_attestations.py --check" in task
     assert "provider-readiness-postgres.json" in workflow
     assert "actions/upload-artifact@" in workflow
 

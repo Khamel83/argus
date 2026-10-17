@@ -510,11 +510,23 @@ def test_authority_gate_observations_execute_production_contracts():
 
 
 def test_ci_runs_only_the_hermetic_lane_and_publishes_its_bundle():
-    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    import shlex
+    import tomllib
+    import yaml
 
-    assert "scripts/run-scorecard.py --lane hermetic" in workflow
-    assert "scorecard-hermetic" in workflow
-    assert "--lane live" not in workflow
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    job = yaml.safe_load(workflow)["jobs"]["scorecard"]
+    assert "mise run scorecard" in [step.get("run", "") for step in job["steps"]]
+    task = tomllib.loads((ROOT / "mise.toml").read_text())["tasks"]["scorecard"]["run"]
+    args = shlex.split(task)
+
+    assert "scripts/run-scorecard.py" in args
+    assert args[args.index("--lane") + 1] == "hermetic"
+    output = args[args.index("--output") + 1]
+    assert output == ".artifacts/scorecard-hermetic"
+    assert any(step.get("uses", "").startswith("actions/upload-artifact@")
+               and step["with"]["path"] == output for step in job["steps"])
+    assert "--lane live" not in workflow + task
 
 
 def test_live_workflow_is_free_only_on_schedule_and_budgeted_is_receipt_gated():
