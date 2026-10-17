@@ -26,6 +26,13 @@ from argus.acquisition.browser_policy import (
 )
 from argus.acquisition.guarded import GuardedAcquisitionError, guarded_browser_session
 from argus.extraction.models import ExtractedContent, ExtractorName
+from argus.extraction.share_links import (
+    SHARE_RENDER_SETTLE_SECONDS,
+    ShareLink,
+    normalize_share_link,
+    share_access_failure,
+    normalize_share_text,
+)
 from argus.acquisition.guarded import guarded_url_policy
 from argus.logging import get_logger
 from argus.runtime_manifest import inspect_playwright_browser_capability
@@ -181,7 +188,64 @@ async def _get_browser(admission: BrowserAdmission | None = None):
             return None
 
 
-async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedContent:
+# Read live rendered text, preserving block boundaries and excluding CSS-hidden
+# content. Shell ownership comes from DOM structure, never transcript words.
+_SHARE_RENDER_SCRIPT = r"""() => {
+    const visible = el => el.getClientRects().length > 0 &&
+        getComputedStyle(el).visibility !== 'hidden' &&
+        getComputedStyle(el).display !== 'none';
+    const source = [...document.querySelectorAll('main, article, [role="main"]')].find(visible) ||
+        (document.body && visible(document.body) ? document.body : null);
+    if (!source) return {text: '', access_wall: false};
+    const loginHeading = root => [...root.querySelectorAll('h1, h2, [role="heading"]')]
+        .some(el => visible(el) && /^(sign[ -]?in|log[ -]?in)(?:\b|$)/i.test(el.innerText.trim()));
+    const loginForm = root => [...root.querySelectorAll('form')].some(el => visible(el) && (
+        [...el.querySelectorAll('input[type="password"]')].some(visible) ||
+        /\/(?:login|signin|sign-in|auth)(?:\/|$|\?)/i.test(new URL(el.getAttribute('action') || '', location.href).pathname)
+    ));
+    const modalLogin = [...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')]
+        .some(el => visible(el) && loginHeading(el) && loginForm(el));
+    // Direct page headings and explicit alert surfaces establish shell ownership;
+    // headings nested inside transcript articles are not shell declarations.
+    const denial = /^(access denied|(?:this )?(?:shared )?conversation (?:is )?(?:unavailable|not found)|(?:this )?(?:link|share) (?:is )?(?:expired|invalid))\.?$/i;
+    const pageDenial = [...source.children].some(el =>
+        visible(el) && el.matches('h1, [role="alert"]') && denial.test(el.innerText.trim()));
+    const alertDenial = [...document.querySelectorAll('[role="alert"], [role="dialog"]')]
+        .some(el => visible(el) && [...el.querySelectorAll('h1, h2, [role="heading"]')]
+            .some(h => visible(h) && denial.test(h.innerText.trim())));
+    return {text: source.innerText || '', access_wall:
+        modalLogin || (loginHeading(source) && loginForm(source)) || pageDenial || alertDenial};
+
+}"""
+
+
+async def _settle_share_render(page, timeout_ms: int) -> None:
+    """Best-effort wait for a client-rendered share transcript to paint.
+
+    ``networkidle`` can time out on a polling SPA, so the wait is optional and
+    followed by a bounded fixed settle window.
+    """
+
+    wait_for_state = getattr(page, "wait_for_load_state", None)
+    if callable(wait_for_state):
+        try:
+            result = wait_for_state("networkidle", timeout=timeout_ms)
+            if asyncio.iscoroutine(result) or isinstance(result, asyncio.Future):
+                await result
+        except Exception as exc:
+            logger.debug(
+                "Share render did not reach networkidle reason=idle_timeout class=%s",
+                type(exc).__name__,
+            )
+    await asyncio.sleep(SHARE_RENDER_SETTLE_SECONDS)
+
+
+async def _extract_playwright(
+    url: str,
+    timeout_ms: int = 15000,
+    *,
+    share_link: ShareLink | None = None,
+) -> ExtractedContent:
     """Extract content using headless browser (Obscura CDP or Chrome)."""
     try:
         await guarded_browser_session(
@@ -221,13 +285,19 @@ async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedCon
                 return ExtractedContent(
                     url=url, error=f"playwright: unsafe redirect blocked: {reason}"
                 )
-        await asyncio.sleep(1)
+        if share_link is not None:
+            # The share transcript is a client-rendered SPA; use a bounded
+            # network-idle plus settle window instead of the default pause.
+            await _settle_share_render(page, timeout_ms)
+        else:
+            await asyncio.sleep(1)
 
         title = await page.title()
         text = ""
+        access_wall = False
 
         # Obscura CDP: use LP.getMarkdown for cleaner DOM-to-Markdown conversion
-        if _using_obscura_cdp:
+        if _using_obscura_cdp and share_link is None:
             try:
                 cdp = await context.new_cdp_session(page)
                 result = await cdp.send("LP.getMarkdown")
@@ -241,14 +311,35 @@ async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedCon
 
         # Standard path (Chrome, or Obscura CDP fallback)
         if not text or len(text.split()) < 50:
-            text = await page.evaluate("""() => {
-                const els = document.querySelectorAll('script, style, nav, footer, header, aside, iframe, noscript');
-                els.forEach(el => el.remove());
-                const main = document.querySelector('main, article, [role="main"], .post-content, .article-body, .entry-content');
-                const source = main || document.body;
-                return source.innerText || source.textContent || '';
-            }""")
+            if share_link is not None:
+                rendered = await page.evaluate(_SHARE_RENDER_SCRIPT)
+                text = rendered["text"]
+                access_wall = rendered["access_wall"] is True
+            else:
+                text = await page.evaluate("""() => {
+                    const els = document.querySelectorAll('script, style, nav, footer, header, aside, iframe, noscript');
+                    els.forEach(el => el.remove());
+                    const main = document.querySelector('main, article, [role="main"], .post-content, .article-body, .entry-content');
+                    const source = main || document.body;
+                    return source.innerText || source.textContent || '';
+                }""")
             text = text.strip() if text else ""
+
+        if share_link is not None:
+            # SPA navigation may happen during settling or text extraction.
+            # Attribute and authorize the actual rendered destination.
+            final_url = page.url
+            safe, reason = is_safe_url(final_url or url)
+            if not safe:
+                return ExtractedContent(
+                    url=url, error=f"playwright: unsafe redirect blocked: {reason}"
+                )
+            text = normalize_share_text(text)
+            access_failure = share_access_failure(
+                final_url or url, text, title or "", access_wall=access_wall
+            )
+            if access_failure is not None:
+                return ExtractedContent(url=url, error=access_failure)
 
         if not text or len(text.strip()) < 100:
             return ExtractedContent(
@@ -306,6 +397,19 @@ async def _extract_playwright(url: str, timeout_ms: int = 15000) -> ExtractedCon
 async def extract_playwright(url: str) -> ExtractedContent:
     """Public entry point for Playwright extraction."""
     return await _extract_playwright(url)
+
+
+async def extract_share_link(url: str) -> ExtractedContent:
+    """Public entry point for a public AI-chat share render.
+
+    Routes the URL through the browser stage with share-aware settling and
+    chrome cleanup.  A non-share URL or a login wall is rejected without
+    falling back to static chrome.
+    """
+    link = normalize_share_link(url)
+    if link is None:
+        return ExtractedContent(url=url, error="share_link: unsupported share URL")
+    return await _extract_playwright(url, share_link=link)
 
 
 async def close_browser():

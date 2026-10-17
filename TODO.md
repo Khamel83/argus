@@ -1,3 +1,12 @@
+## Public share extraction / issue159
+
+- [ ] Deliver [159](https://github.com/Khamel83/argus/issues/159): recovered/repaired
+  extraction source passes79 focused tests (including actual offline Chromium)
+  and3035 full/47skips. Removed new browser-admission exception; fixed review
+  findings with causal fixtures. Native exact-head review/CI/merge pending.
+  Guarded operated release and actual Gemini/ChatGPT conversation canaries remain
+  separate; source tests and synthetic fixtures do not satisfy runtime acceptance.
+
 # Argus operational follow-up
 
 ## Issue177/179 development environment
