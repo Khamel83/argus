@@ -311,12 +311,15 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-- Recent activity on `Khamel83/argus` up to source commit `66365a661abcfa6ccb4a10dfe5e4b251eaf339ff` includes:
-  - PostgreSQL snapshot and restore consistency repairs across PR #209 (`175a7a3`), PR #211 (`e7ee75a`), and PR #213 (`66365a6`), including canonicalizing inventory schema ordering and comparing v2 restore inventory projections.
-  - Verification of real migrations in owned isolated restores via PR #207 (`add4441`).
-  - Merged work for issue #204 via PR #205 (`9f1e521`).
-  - Public chat share extraction source recovery merged via PR #201 (`927f3f7`), with documentation recording source acceptance in PR #202 (`bd57b09`); runtime canary acceptance and guarded release remain open.
-  - Mise/uv development environment recovery completed and verified via PR #198 (`c1016bf`) and PR #199 (`82daea1`), closing native issues #177 and #179.
+- **Source `1a02b5cf7e6f53f17f667fb9de90b2d726ab4cb5`** (docs: record accepted v2 backup and restore, #215) is the latest remote commit. It records the accepted manifest v2 backup and restore evidence.
+- **Snapshot-consistent backups:** PR #209 merged as `175a7a39aefdc43e3c08a1885974f571bef0cccd`. Each dump and its inventory now share one exported PostgreSQL snapshot per database. Atlas and Argus are captured independently, so this makes no cross-database atomicity claim. Legacy v1 manifests stay immutable and their consistency is unproven.
+- **Restore-reader fixes:** PR #211 merged as `e7ee75a9193615beb12137467aa9b4104164fdb0`. It fixes the v2 projection comparison. PR #213 merged as `66365a661abcfa6ccb4a10dfe5e4b251eaf339ff`. It canonicalizes the inventory function ordering.
+- **Bounded manual acceptance:** The ordinary-user producer run published schema-2 set `20261020T032858Z`, with manifest `e69d7b6dfb15c75e40ce53dc0109e992dc9d6cd2fd28cd024e62ebab9dacae02`. The strict isolated restore at 03:34:47 UTC passed integrity, row counts, schema, the Argus read path and migration compatibility. The canonical restore record SHA is `4bc1adb82b19ebcbf11d932b0f3ea4b4264471b1fbbdb2805c3e4580a8f6a5d1`. This is not a natural 01:45 recurrence. The flags `metadata_registry_complete`, `schema_contract_clean`, `forward_compatible` and `rollback_path_human_approved` remain false. No application cutover occurred.
+- **Earlier failures retained:** The root-run preflight failure and the first two restore failures remain historical evidence. Canonical state was unchanged.
+- **Public share extraction (#159):** Source PR #201 merged as `927f3f7340271157ad0318969199289f1f9b82b2`. The guarded operated release and the real Gemini/ChatGPT canaries remain open. Claude acceptance is unknown.
+- **Development environment:** PR #198 merged as `c1016bf37eed7dc8f81943f613dd90c51585fb71`. Issues #177 and #179 are closed.
+- **CI cancellation:** PR #195 merged as `e5380c7f03d577f4bda3e081c1d69d4c30a2d5d3`. It coalesces superseded pull-request runs only, and no runtime change is claimed.
+- **Tavily observer (H26):** PR #173 merged as `bf58a770a74e58fa07f0d9104fc9e91301b96453`. The guarded release, the opt-in and a natural redacted receipt remain unproven. Production source was last recorded as `e8f36cf`.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
