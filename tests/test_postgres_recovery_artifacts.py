@@ -240,6 +240,19 @@ def test_backup_and_restore_scripts_never_accept_embedded_credentials():
     )
 
 
+def test_container_restore_migration_is_explicit_and_isolated():
+    restore = (ROOT / "ops/postgres/verify_restore.sh").read_text()
+
+    assert "ARGUS_ISOLATED_RESTORE_MIGRATION:-false" in restore
+    assert 'isolated_wrapper" != infra-v1' in restore
+    assert "127.0.0.1|::1" in restore
+    assert (
+        '[ -n "$postgres_container" ] && [ "$isolated_migration" != true ]'
+        in restore
+    )
+    assert "ARGUS_ISOLATED_RESTORE_MIGRATION_VERIFIED=1" in restore
+
+
 def test_import_wrapper_requires_postgres_and_explicit_verified_backup_gate():
     script = (ROOT / "ops/postgres/import_argus_legacy.sh").read_text()
 

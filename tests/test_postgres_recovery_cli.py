@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import subprocess
@@ -18,6 +19,71 @@ def _run(*args, env=None):
         check=False,
         env={**os.environ, **(env or {})},
     )
+
+
+def _run_restore(tmp_path, *, isolated=False, wrapper="", env_overrides=None):
+    backup = tmp_path / "20261019T120000Z"
+    backup.mkdir(parents=True)
+    for name, content in {
+        "argus.dump": b"argus archive",
+        "atlas.dump": b"atlas archive",
+        "globals.sql": b"CREATE ROLE argus;\n",
+    }.items():
+        (backup / name).write_bytes(content)
+    sums = "".join(
+        f"{hashlib.sha256((backup / name).read_bytes()).hexdigest()}  {name}\n"
+        for name in ("argus.dump", "atlas.dump", "globals.sql")
+    )
+    (backup / "SHA256SUMS").write_text(sums, encoding="utf-8")
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    trace = tmp_path / "trace"
+    (fake_bin / "python3").write_text(
+        '#!/bin/sh\nprintf "python %s\\n" "$*" >> "$TRACE"\n',
+        encoding="utf-8",
+    )
+    (fake_bin / "docker").write_text(
+        '#!/bin/sh\nprintf "docker %s\\n" "$*" >> "$TRACE"\n'
+        'case "$*" in\n'
+        '  *"{{index .Config.Labels"*) echo "${TEST_DOCKER_LABEL:-$ARGUS_ISOLATED_RESTORE_RUN_LABEL}"; exit 0 ;;\n'
+        '  *"{{.Name}}"*) echo "${TEST_DOCKER_NAME:-/argus-restore-fixture}"; exit 0 ;;\n'
+        '  "port "*) echo "${TEST_DOCKER_PORT:-127.0.0.1:$PGPORT}"; exit 0 ;;\n'
+        'esac\n'
+        'case " $* " in *" pg_restore "*) cat >/dev/null ;; esac\n',
+        encoding="utf-8",
+    )
+    (fake_bin / "python3").chmod(0o755)
+    (fake_bin / "docker").chmod(0o755)
+    live_data = tmp_path / "live-data"
+    live_data.mkdir()
+    evidence = tmp_path / "evidence.json"
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "TRACE": str(trace),
+        "ARGUS_BACKUP_SET": str(backup),
+        "ARGUS_BACKUP_ROOT": str(tmp_path),
+        "POSTGRES_LIVE_DATA_DIR": str(live_data),
+        "ARGUS_RECOVERY_EVIDENCE": str(evidence),
+        "SCRATCH_DATABASE": "argus_restore_isolated_test",
+        "ATLAS_SCRATCH_DATABASE": "atlas_restore_isolated_test",
+        "ARGUS_PG_CONTAINER": "a" * 64,
+        "PGHOST": "127.0.0.1",
+        "PGPORT": "54321",
+        "ARGUS_ISOLATED_RESTORE_MIGRATION": "true" if isolated else "false",
+        "ARGUS_ISOLATED_RESTORE_WRAPPER": wrapper,
+        "ARGUS_ISOLATED_RESTORE_RUN_LABEL": "restore-20261019T120000Z-1234",
+    }
+    env.update(env_overrides or {})
+    result = subprocess.run(
+        ["/bin/sh", str(RESTORE_SCRIPT)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    return result, trace.read_text(encoding="utf-8") if trace.exists() else ""
 
 
 def test_validate_scratch_cli_fails_closed():
@@ -116,6 +182,63 @@ def test_restore_script_supports_container_archive_streaming():
     assert "docker exec -i" in source
     assert "createdb" in source
     assert "dropdb" in source
+
+
+def test_restore_script_container_default_still_skips_migration(tmp_path):
+    result, trace = _run_restore(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    record = next(line for line in trace.splitlines() if " record-restore " in line)
+    assert "--skip-migration" in record
+    assert "ARGUS_ISOLATED_RESTORE_MIGRATION_VERIFIED=1" not in result.stdout
+
+
+def test_restore_script_isolated_wrapper_runs_migration(tmp_path):
+    result, trace = _run_restore(tmp_path, isolated=True, wrapper="infra-v1")
+
+    assert result.returncode == 0, result.stderr
+    record = next(line for line in trace.splitlines() if " record-restore " in line)
+    assert "--skip-migration" not in record
+    assert result.stdout.strip().endswith("ARGUS_ISOLATED_RESTORE_MIGRATION_VERIFIED=1")
+
+
+def test_restore_script_rejects_migration_outside_isolated_wrapper(tmp_path):
+    result, trace = _run_restore(tmp_path, isolated=True)
+
+    assert result.returncode == 2
+    assert "migration requires the isolated Infra restore wrapper" in result.stderr
+    assert trace == ""
+
+
+def test_restore_script_rejects_live_or_short_container_before_createdb(tmp_path):
+    result, trace = _run_restore(
+        tmp_path,
+        isolated=True,
+        wrapper="infra-v1",
+        env_overrides={"ARGUS_PG_CONTAINER": "atlas-postgres"},
+    )
+
+    assert result.returncode == 2
+    assert "full container ID" in result.stderr
+    assert " createdb " not in trace
+
+
+def test_restore_script_rejects_mismatched_label_name_and_port(tmp_path):
+    cases = (
+        ({"TEST_DOCKER_LABEL": "restore-20261019T120000Z-9999"}, "ownership"),
+        ({"TEST_DOCKER_NAME": "/atlas-postgres"}, "non-restore"),
+        ({"TEST_DOCKER_PORT": "0.0.0.0:54321"}, "loopback endpoint"),
+    )
+    for index, (overrides, message) in enumerate(cases):
+        result, trace = _run_restore(
+            tmp_path / str(index),
+            isolated=True,
+            wrapper="infra-v1",
+            env_overrides=overrides,
+        )
+        assert result.returncode == 2
+        assert message in result.stderr
+        assert " createdb " not in trace
 
 
 def test_record_restore_cli_documents_container_migration_skip():
