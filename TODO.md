@@ -1,14 +1,19 @@
-## Isolated PostgreSQL restore migration — October 19 UTC
+## Shared PostgreSQL backup consistency — October 20 UTC
 
-- [x] Add the narrow Infra-wrapper-only opt-in that runs the real Alembic
-  migration in container-backed restore verification while preserving the
-  legacy default `--skip-migration` behavior. Recovery-focused tests pass (`28
-  passed`); the full native suite passes (`3041 passed, 47
-  skipped`).
-- [ ] After Infra's bounded disposable PostgreSQL wrapper is published and
-  installed, publish/install this opt-in and accept one real drill. Until the migration,
-  schema/read checks, exact cleanup and CAS evidence publication pass at
-  runtime, recovery remains degraded and promotion stays held.
+- [x] Preserve the completed isolated-restore migration opt-in and the bounded
+  Infra verifier. The first real drills cleaned up exactly and left canonical
+  evidence unchanged when they refused ENOSPC and then an inventory mismatch.
+- [x] Prepare manifest v2 and per-database exported-snapshot capture so each
+  dump and its source inventory use the same PostgreSQL snapshot and bind the
+  tenant, method and exact archive SHA. Legacy v1 sets remain readable but are
+  explicitly unproven; old manifests are never rewritten.
+- [ ] Require exact-head review and native PostgreSQL CI for the concurrent
+  writer proof, then adopt the reviewed source through the separately guarded
+  immutable backup-tool capsule. No runtime, cron or backup-set change is
+  claimed by this source branch.
+- [ ] Accept the first natural v2 backup and bounded isolated restore before
+  treating backup consistency or recovery as proven. The October 20 01:45 UTC
+  v1 backup remains immutable and cannot satisfy the v2 snapshot proof.
 
 ## Public share extraction / issue159
 

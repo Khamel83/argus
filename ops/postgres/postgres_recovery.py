@@ -60,6 +60,12 @@ def _parser() -> argparse.ArgumentParser:
     manifest.add_argument("--live-data", type=Path, required=True)
     manifest.add_argument("--completed-at", required=True)
 
+    capture = commands.add_parser("capture-database")
+    capture.add_argument("--database", choices=("atlas", "argus"), required=True)
+    capture.add_argument("--archive", type=Path, required=True)
+    capture.add_argument("--sidecar", type=Path, required=True)
+    capture.add_argument("--timeout-seconds", type=int, required=True)
+
     backup = commands.add_parser("record-backup")
     backup.add_argument("--evidence", type=Path, required=True)
     backup.add_argument("--backup-set", type=Path, required=True)
@@ -130,6 +136,57 @@ def run(arguments: list[str] | None = None) -> int:
             live_data=args.live_data,
             completed_at=args.completed_at,
         )
+    elif args.command == "capture-database":
+        from argus.recovery.database import capture_snapshot_inventory
+
+        expected_sidecar = (
+            args.archive.parent / f".{args.database}-snapshot-inventory.json"
+        )
+        if (
+            not args.archive.is_absolute()
+            or args.archive.name != f"{args.database}.dump"
+            or args.sidecar != expected_sidecar
+            or args.sidecar.exists()
+            or args.sidecar.is_symlink()
+        ):
+            raise ValueError("snapshot capture output paths are invalid")
+        container = os.environ.get("ARGUS_PG_CONTAINER", "")
+        if container:
+            dump_command = [
+                "docker",
+                "exec",
+                "-u",
+                os.environ.get("ARGUS_PG_EXEC_USER", "postgres"),
+                container,
+                "pg_dump",
+                f"--dbname={args.database}",
+                "--format=custom",
+            ]
+        else:
+            dump_command = ["pg_dump", f"--dbname={args.database}", "--format=custom"]
+        result = capture_snapshot_inventory(
+            args.database,
+            archive=args.archive,
+            dump_command=dump_command,
+            timeout_seconds=args.timeout_seconds,
+        )
+        try:
+            with args.sidecar.open("x", encoding="utf-8") as handle:
+                json.dump(result, handle, sort_keys=True, separators=(",", ":"))
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            args.sidecar.chmod(0o600)
+        except Exception:
+            args.sidecar.unlink(missing_ok=True)
+            args.archive.unlink(missing_ok=True)
+            raise
+        result = {
+            "captured": True,
+            "tenant": args.database,
+            "method": result["method"],
+            "archive_sha256": result["archive_sha256"],
+        }
     if args.command == "alias-check":
         result = validate_compatibility_alias(
             args.primary,
@@ -191,7 +248,11 @@ def run(arguments: list[str] | None = None) -> int:
             repository=_target_repository(),
             apply=args.apply,
         )
-    elif args.command not in {"initialize-backup-root", "create-backup-manifest"}:
+    elif args.command not in {
+        "initialize-backup-root",
+        "create-backup-manifest",
+        "capture-database",
+    }:
         raise AssertionError(args.command)
     print(json.dumps(result, sort_keys=True))
     return 0

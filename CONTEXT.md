@@ -1,15 +1,22 @@
-## Isolated restore migration contract — October 19 UTC
+## Shared PostgreSQL snapshot contract — October 20 UTC
 
-Fresh base `8b099245086b3e0dc47c6fb8d2b0b1d2f1e92a70` adds one explicit
-`ARGUS_ISOLATED_RESTORE_MIGRATION=true` path, accepted only with the Infra
-wrapper marker and loopback PostgreSQL endpoint. That path runs the existing
-real migration plus source-inventory, schema, row-count, integrity and Argus
-read-path checks, then emits the wrapper-required success witness. Every legacy
-container caller still uses `--skip-migration` and emits no witness.
-Source tests pass; coupled Infra publication, installation and the first
-bounded live drill remain pending. The safe Infra wrapper must be installed
-before this Argus opt-in is published because Argus main auto-promotion can
-invoke the promoter.
+The installed bounded restore verifier exposed a real source-backup race: the
+legacy writer created each dump and collected its manifest inventory later
+from live PostgreSQL. A concurrent committed write could therefore make the
+manifest describe data absent from the dump. Existing v1 backup sets remain
+readable and immutable, but their snapshot consistency is unproven.
+
+Branch `fix/consistent-postgres-backup-snapshots-20261020` starts from fetched
+main `bdd5284e7f0033ea8cc1cebe3465c3e2e9f3d9e9`. Manifest v2 requires a
+bounded sidecar for each database. The producer exports one read-only,
+repeatable-read PostgreSQL snapshot, imports it into both `pg_dump` and the
+inventory collector, and persists only tenant, method, archive SHA, table
+counts and schema hash. Atlas and Argus are captured independently; this is no
+cross-database atomicity claim. Local focused tests pass (`101 passed, 22
+skipped`) and the full non-PostgreSQL suite passes (`3051 passed, 49 skipped`).
+The real concurrent-writer test is wired into native PostgreSQL CI and remains
+pending, as do exact-head review, immutable runtime-tool adoption, a natural v2
+backup and a successful isolated restore. No runtime or stored backup changed.
 
 ## Public share extraction / issue159 — October17 UTC
 

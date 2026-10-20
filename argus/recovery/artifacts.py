@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import stat
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,10 @@ REQUIRED_BACKUP_FILES = {
 }
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SNAPSHOT = re.compile(r"^\d{8}T\d{6}Z$")
+SNAPSHOT_SIDECAR = ".{tenant}-snapshot-inventory.json"
+SNAPSHOT_INVENTORY_SCHEMA = "argus.postgres-snapshot-inventory/v1"
+SNAPSHOT_METHOD = "pg-exported-snapshot-v1"
+MAX_SNAPSHOT_SIDECAR_BYTES = 1024 * 1024
 
 
 def sha256_file(path: Path) -> str:
@@ -40,7 +45,6 @@ def create_backup_manifest(
     root: Path | str,
     live_data: Path | str,
     completed_at: str,
-    inventory_collector=None,
 ) -> dict[str, Any]:
     """Create a source-derived manifest after dump/list/checksum commands succeed."""
     resolved_root = validate_backup_root(root, live_data=live_data)
@@ -66,26 +70,62 @@ def create_backup_manifest(
     )
     if re.search(r"SCRAM-SHA-256|md5[0-9a-f]{32}", globals_text, re.IGNORECASE):
         raise ValueError("cluster globals contain a credential verifier")
-    if inventory_collector is None:
-        from argus.recovery.database import collect_source_inventory
-
-        inventory_collector = collect_source_inventory
+    inventories: dict[str, dict[str, Any]] = {}
+    provenance: dict[str, dict[str, str]] = {}
+    for name in ("atlas", "argus"):
+        sidecar = stage_path / SNAPSHOT_SIDECAR.format(tenant=name)
+        try:
+            metadata = sidecar.lstat()
+        except OSError as error:
+            raise ValueError(f"{name} snapshot inventory is unavailable") from error
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or sidecar.is_symlink()
+            or metadata.st_size > MAX_SNAPSHOT_SIDECAR_BYTES
+        ):
+            raise ValueError(f"{name} snapshot inventory is unavailable")
+        try:
+            with sidecar.open("rb") as handle:
+                sidecar_bytes = handle.read(MAX_SNAPSHOT_SIDECAR_BYTES + 1)
+            if len(sidecar_bytes) > MAX_SNAPSHOT_SIDECAR_BYTES:
+                raise ValueError(f"{name} snapshot inventory is unavailable")
+            record = json.loads(sidecar_bytes.decode("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError(f"{name} snapshot inventory is invalid") from error
+        archive_sha256 = files[f"{name}.dump"]
+        if (
+            not isinstance(record, dict)
+            or record.get("schema") != SNAPSHOT_INVENTORY_SCHEMA
+            or record.get("tenant") != name
+            or record.get("method") != SNAPSHOT_METHOD
+            or record.get("archive_sha256") != archive_sha256
+        ):
+            raise ValueError(f"{name} snapshot inventory binding is invalid")
+        inventories[name] = _inventory(record.get("inventory"), name)
+        provenance[name] = {
+            "schema": SNAPSHOT_INVENTORY_SCHEMA,
+            "tenant": name,
+            "method": SNAPSHOT_METHOD,
+            "archive_sha256": archive_sha256,
+        }
     root_payload = json.loads(
         (resolved_root / BACKUP_ROOT_MARKER).read_text(encoding="utf-8")
     )
     parsed = datetime.strptime(completed_at, "%Y%m%dT%H%M%SZ")
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "root_id": root_payload["root_id"],
         "completed_at": parsed.isoformat() + "+00:00",
         "databases": {
-            name: _inventory(inventory_collector(name), name)
+            name: {**inventories[name], "snapshot_provenance": provenance[name]}
             for name in ("atlas", "argus")
         },
         "files": dict(sorted(files.items())),
         "globals_without_passwords": True,
         "archive_format": "custom",
     }
+    for name in ("atlas", "argus"):
+        (stage_path / SNAPSHOT_SIDECAR.format(tenant=name)).unlink()
     manifest = stage_path / BACKUP_SET_MANIFEST
     with manifest.open("x", encoding="utf-8") as handle:
         json.dump(payload, handle, sort_keys=True, indent=2)
@@ -161,7 +201,7 @@ def load_verified_backup_set(
         raise ValueError("backup manifest is invalid") from error
     if (
         not isinstance(payload, dict)
-        or payload.get("schema_version") != 1
+        or payload.get("schema_version") not in {1, 2}
         or payload.get("root_id") != root_payload["root_id"]
         or completed_at.tzinfo is None
         or completed_at.strftime("%Y%m%dT%H%M%SZ") != candidate.name
@@ -184,6 +224,22 @@ def load_verified_backup_set(
             or sha256_file(target) != expected
         ):
             raise ValueError(f"backup file checksum mismatch: {filename}")
+    version = payload["schema_version"]
+    snapshot_provenance: dict[str, dict[str, str]] = {}
+    if version == 2:
+        for name in ("atlas", "argus"):
+            if not isinstance(databases[name], dict):
+                raise ValueError(f"{name} source inventory is invalid")
+            provenance = databases[name].get("snapshot_provenance")
+            expected = {
+                "schema": SNAPSHOT_INVENTORY_SCHEMA,
+                "tenant": name,
+                "method": SNAPSHOT_METHOD,
+                "archive_sha256": files[f"{name}.dump"],
+            }
+            if provenance != expected:
+                raise ValueError(f"{name} snapshot provenance is invalid")
+            snapshot_provenance[name] = expected
     return {
         "path": candidate.resolve(strict=True),
         "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
@@ -192,4 +248,7 @@ def load_verified_backup_set(
             name: _inventory(databases[name], name)
             for name in ("atlas", "argus")
         },
+        "schema_version": version,
+        "snapshot_consistency_proven": version == 2,
+        "snapshot_provenance": snapshot_provenance,
     }

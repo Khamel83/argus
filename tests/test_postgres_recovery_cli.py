@@ -175,6 +175,46 @@ def test_shared_backup_script_supports_container_archive_streaming():
     assert "pg_restore --list < \"$1\"" in source
 
 
+def test_shared_backup_failure_never_publishes_staging_set(tmp_path):
+    backup_root = tmp_path / "backups"
+    backup_root.mkdir()
+    (backup_root / ".argus-shared-postgres-backup-root.json").write_text("{}\n")
+    live = tmp_path / "live"
+    live.mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_python = fake_bin / "python3"
+    fake_python.write_text(
+        '#!/bin/sh\ncase " $* " in *" capture-database "*) exit 9;; esac\nexit 0\n'
+    )
+    fake_python.chmod(0o755)
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text("#!/bin/sh\nexit 0\n")
+    fake_docker.chmod(0o755)
+    evidence = tmp_path / "evidence.json"
+
+    result = subprocess.run(
+        ["/bin/sh", str(BACKUP_SCRIPT)],
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "ARGUS_BACKUP_ROOT": str(backup_root),
+            "POSTGRES_LIVE_DATA_DIR": str(live),
+            "ARGUS_RECOVERY_EVIDENCE": str(evidence),
+            "ARGUS_PG_CONTAINER": "atlas-postgres",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert not evidence.exists()
+    assert list(backup_root.iterdir()) == [
+        backup_root / ".argus-shared-postgres-backup-root.json"
+    ]
+
+
 def test_restore_script_supports_container_archive_streaming():
     source = RESTORE_SCRIPT.read_text(encoding="utf-8")
 

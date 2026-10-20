@@ -19,11 +19,6 @@ if [ -n "$postgres_container" ]; then
         exit 2
     }
 
-    pg_dump_archive() {
-        docker exec -u "$postgres_exec_user" "$postgres_container" \
-            pg_dump "$@"
-    }
-
     pg_dump_globals() {
         docker exec -u "$postgres_exec_user" "$postgres_container" \
             pg_dumpall "$@"
@@ -45,10 +40,6 @@ else
     command -v pg_restore >/dev/null 2>&1 || {
         echo "pg_restore is required when ARGUS_PG_CONTAINER is unset" >&2
         exit 2
-    }
-
-    pg_dump_archive() {
-        pg_dump "$@"
     }
 
     pg_dump_globals() {
@@ -79,8 +70,14 @@ snapshot=$(date -u +%Y%m%dT%H%M%SZ)
 stage=$(mktemp -d "$ARGUS_BACKUP_ROOT/.staging.XXXXXX")
 trap 'rm -rf -- "$stage"' EXIT HUP INT TERM
 
-pg_dump_archive --dbname=atlas --format=custom > "$stage/atlas.dump"
-pg_dump_archive --dbname=argus --format=custom > "$stage/argus.dump"
+for database in atlas argus; do
+    timeout --signal=TERM --kill-after=10s 610s \
+        python3 "$script_dir/postgres_recovery.py" capture-database \
+        --database "$database" \
+        --archive "$stage/$database.dump" \
+        --sidecar "$stage/.$database-snapshot-inventory.json" \
+        --timeout-seconds 600 >/dev/null
+done
 pg_dump_globals --database=postgres --globals-only --no-role-passwords > "$stage/globals.sql"
 pg_restore_list "$stage/atlas.dump" >/dev/null
 pg_restore_list "$stage/argus.dump" >/dev/null

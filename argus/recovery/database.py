@@ -5,7 +5,12 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import math
+import os
 import re
+import subprocess
+import threading
+import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -1175,10 +1180,41 @@ def verify_atlas_database(
     }
 
 
+SNAPSHOT_INVENTORY_SCHEMA = "argus.postgres-snapshot-inventory/v1"
+SNAPSHOT_METHOD = "pg-exported-snapshot-v1"
+
+
+class _DeadlineCursor:
+    def __init__(self, cursor: Any, deadline: float):
+        self._cursor = cursor
+        self._deadline = deadline
+
+    def execute(self, query: str, params: object = None) -> Any:
+        remaining_ms = int((self._deadline - time.monotonic()) * 1000)
+        if remaining_ms <= 0:
+            raise TimeoutError("source inventory deadline expired")
+        self._cursor.execute("SET LOCAL statement_timeout = %s", (remaining_ms,))
+        if params is None:
+            return self._cursor.execute(query)
+        return self._cursor.execute(query, params)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._cursor, name)
+
+
+def _stop_deadline_timer(timer: threading.Timer) -> None:
+    timer.cancel()
+    timer.join(timeout=1)
+    if timer.is_alive():
+        raise RuntimeError("deadline cancellation did not stop")
+
+
 def collect_source_inventory(
     database: str,
     *,
     connect: Callable[..., Any] | None = None,
+    snapshot_id: str | None = None,
+    deadline: float | None = None,
 ) -> dict[str, Any]:
     """Collect schema and exact table counts from an approved source tenant."""
     validated = validate_database_name(database, allowed={"atlas", "argus"})
@@ -1186,17 +1222,56 @@ def collect_source_inventory(
         import psycopg2
 
         connect = psycopg2.connect
-    connection = connect(dbname=validated)
+    connect_args: dict[str, Any] = {"dbname": validated}
+    if deadline is not None:
+        remaining = math.floor(deadline - time.monotonic())
+        if remaining < 1:
+            raise TimeoutError("source inventory deadline expired")
+        connect_args["connect_timeout"] = remaining
+    connection = connect(**connect_args)
+    deadline_timer = None
     try:
+        if snapshot_id is not None:
+            if not re.fullmatch(r"[0-9A-Fa-f-]+", snapshot_id):
+                raise ValueError("exported snapshot identifier is invalid")
+            connection.set_session(isolation_level="REPEATABLE READ", readonly=True)
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("source inventory deadline expired")
+            deadline_timer = threading.Timer(remaining, connection.cancel)
+            deadline_timer.daemon = True
+            deadline_timer.start()
         with connection.cursor() as cursor:
-            cursor.execute("SELECT current_database()")
-            if cursor.fetchone()[0] != validated:
+            if snapshot_id is not None:
+                cursor.execute("SET TRANSACTION SNAPSHOT %s", (snapshot_id,))
+            if deadline is not None:
+                remaining_ms = int((deadline - time.monotonic()) * 1000)
+                if remaining_ms <= 0:
+                    raise TimeoutError("source inventory deadline expired")
+                cursor.execute("SET LOCAL statement_timeout = %s", (remaining_ms,))
+                cursor.execute(
+                    "SET LOCAL idle_in_transaction_session_timeout = %s",
+                    (remaining_ms,),
+                )
+                inventory_cursor = _DeadlineCursor(cursor, deadline)
+            else:
+                inventory_cursor = cursor
+            if snapshot_id is not None:
+                inventory_cursor.execute(
+                    "SELECT current_setting('transaction_isolation'), "
+                    "current_setting('transaction_read_only')"
+                )
+                if inventory_cursor.fetchone() != ("repeatable read", "on"):
+                    raise RuntimeError("source snapshot transaction is not read-only")
+            inventory_cursor.execute("SELECT current_database()")
+            if inventory_cursor.fetchone()[0] != validated:
                 raise RuntimeError("connected database does not match source target")
-            cursor.execute(
+            inventory_cursor.execute(
                 "SELECT table_name FROM information_schema.tables "
                 "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
             )
-            tables = {row[0] for row in cursor.fetchall()}
+            tables = {row[0] for row in inventory_cursor.fetchall()}
             if not tables:
                 raise RuntimeError(f"{validated} source has no public base tables")
             if validated == "argus":
@@ -1215,11 +1290,113 @@ def collect_source_inventory(
                 else sorted(tables)
             )
             for table in counted_tables:
-                cursor.execute(f'SELECT count(*) FROM "{table}"')
-                counts[table] = int(cursor.fetchone()[0])
-            return _inventory(cursor, tables, counts)
+                inventory_cursor.execute(f'SELECT count(*) FROM "{table}"')
+                counts[table] = int(inventory_cursor.fetchone()[0])
+            result = _inventory(inventory_cursor, tables, counts)
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("source inventory deadline expired")
+            return result
     finally:
+        if deadline_timer is not None:
+            _stop_deadline_timer(deadline_timer)
         connection.close()
+
+
+def capture_snapshot_inventory(
+    database: str,
+    *,
+    archive: Path,
+    dump_command: list[str],
+    timeout_seconds: int,
+    connect: Callable[..., Any] | None = None,
+    run: Callable[..., Any] = subprocess.run,
+) -> dict[str, Any]:
+    """Dump one database and inventory it from one exported source snapshot."""
+    validated = validate_database_name(database, allowed={"atlas", "argus"})
+    if timeout_seconds < 1 or timeout_seconds > 600:
+        raise ValueError("snapshot capture timeout is invalid")
+    if not dump_command or archive.exists() or archive.is_symlink():
+        raise ValueError("snapshot archive target is invalid")
+    deadline = time.monotonic() + timeout_seconds
+    if connect is None:
+        import psycopg2
+
+        connect = psycopg2.connect
+    connect_timeout = math.floor(deadline - time.monotonic())
+    if connect_timeout < 1:
+        raise TimeoutError("snapshot capture deadline expired")
+    connection = connect(dbname=validated, connect_timeout=connect_timeout)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        connection.close()
+        raise TimeoutError("snapshot capture deadline expired")
+    deadline_timer = threading.Timer(remaining, connection.cancel)
+    deadline_timer.daemon = True
+    deadline_timer.start()
+    try:
+        connection.set_session(isolation_level="REPEATABLE READ", readonly=True)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SET LOCAL statement_timeout = %s", (timeout_seconds * 1000,)
+            )
+            cursor.execute(
+                "SET LOCAL idle_in_transaction_session_timeout = %s",
+                (timeout_seconds * 1000,),
+            )
+            cursor.execute(
+                "SELECT current_setting('transaction_isolation'), "
+                "current_setting('transaction_read_only')"
+            )
+            if cursor.fetchone() != ("repeatable read", "on"):
+                raise RuntimeError("exported snapshot transaction is not read-only")
+            cursor.execute("SELECT pg_export_snapshot()")
+            snapshot_id = str(cursor.fetchone()[0])
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("snapshot capture deadline expired")
+        try:
+            with archive.open("xb") as output:
+                run(
+                    [*dump_command, f"--snapshot={snapshot_id}"],
+                    stdout=output,
+                    stderr=subprocess.DEVNULL,
+                    check=True,
+                    timeout=remaining,
+                )
+                output.flush()
+                os.fsync(output.fileno())
+            inventory = collect_source_inventory(
+                validated,
+                connect=connect,
+                snapshot_id=snapshot_id,
+                deadline=deadline,
+            )
+            digest = hashlib.sha256()
+            with archive.open("rb") as source:
+                for block in iter(lambda: source.read(1024 * 1024), b""):
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("snapshot capture deadline expired")
+                    digest.update(block)
+        except Exception:
+            archive.unlink(missing_ok=True)
+            raise
+        inventory_projection = {
+            key: inventory[key]
+            for key in ("tables", "schema_sha256", "constraints_validated")
+        }
+        return {
+            "schema": SNAPSHOT_INVENTORY_SCHEMA,
+            "tenant": validated,
+            "method": SNAPSHOT_METHOD,
+            "archive_sha256": digest.hexdigest(),
+            "inventory": inventory_projection,
+        }
+    finally:
+        _stop_deadline_timer(deadline_timer)
+        try:
+            connection.rollback()
+        finally:
+            connection.close()
 
 
 def verify_restored_source_inventory(
