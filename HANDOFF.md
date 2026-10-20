@@ -1,3 +1,14 @@
+## Restore-reader v2 projection repair — October 20 UTC
+
+The first installed v2 backup passed manifest and snapshot-provenance validation,
+but the strict restore reader rejected the valid database entry at 02:36:52 UTC
+because it compared the `snapshot_provenance` metadata as part of the restored
+database inventory. A bounded source candidate now strips only that known,
+artifact-validated key before comparison. Unknown fields and actual count,
+schema, and constraint drift remain exact failures. Focused tests pass; the
+native PostgreSQL concurrent-writer test and exact-head review/CI remain open.
+No runtime, backup, profile, credential, or stored-data change was made.
+
 ## Isolated restore source ready — October 19 UTC
 
 Branch `fix/isolated-restore-migration-20261019` starts at fresh main

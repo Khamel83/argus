@@ -1566,11 +1566,18 @@ def _compare_inventory(
 ) -> None:
     if expected is None:
         return
+    if not isinstance(expected, Mapping):
+        raise RuntimeError("restored database source inventory is invalid")
+    expected_projection = dict(expected)
+    # The artifact loader validates this metadata and the database verifier
+    # compares only the inventory projection. Keep this as the one explicit
+    # v2 exception; every other expected field remains an exact comparison.
+    expected_projection.pop("snapshot_provenance", None)
     manifest_projection = {
         key: actual[key]
         for key in ("tables", "schema_sha256", "constraints_validated")
     }
-    if expected == manifest_projection:
+    if expected_projection == manifest_projection:
         return
-    if actual != expected:
+    if actual != expected_projection:
         raise RuntimeError("restored database does not match source inventory")

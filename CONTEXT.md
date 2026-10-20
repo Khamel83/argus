@@ -18,6 +18,14 @@ The real concurrent-writer test is wired into native PostgreSQL CI and remains
 pending, as do exact-head review, immutable runtime-tool adoption, a natural v2
 backup and a successful isolated restore. No runtime or stored backup changed.
 
+The first installed v2 backup later passed its manifest and snapshot-provenance
+checks, but the strict restore reader rejected the valid database entry because
+it compared `snapshot_provenance` with the restored inventory instead of treating
+it as already-validated artifact metadata. The bounded source repair removes
+only that known key before comparison; unknown fields and real count, schema, or
+constraint drift remain exact failures. Native PostgreSQL validation and runtime
+adoption are still open, and no runtime or stored backup changed for this repair.
+
 ## Public share extraction / issue159 — October17 UTC
 
 Source recovery for https://github.com/Khamel83/argus/issues/159 reuses the settled

@@ -14,6 +14,13 @@
 - [ ] Accept the first natural v2 backup and bounded isolated restore before
   treating backup consistency or recovery as proven. The October 20 01:45 UTC
   v1 backup remains immutable and cannot satisfy the v2 snapshot proof.
+- [ ] Publish and validate the restore-reader v2 projection repair. The first
+  installed v2 backup passed manifest and provenance validation, but the strict
+  restore reader compared the known `snapshot_provenance` metadata as if it
+  were database inventory and rejected the restore at 02:36:52 UTC. Candidate
+  source strips only that known metadata key; unknown fields and count/schema/
+  constraint drift remain rejected. Native PostgreSQL validation and runtime
+  adoption remain open; no backup, runtime, or stored data changed here.
 
 ## Public share extraction / issue159
 
