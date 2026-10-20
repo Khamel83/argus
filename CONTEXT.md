@@ -260,7 +260,9 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-Public share extraction / issue 159 source recovery (PR #201, merged as `927f3f7` from exact `cc027c9` following trusted review PASS 5556889749) routed public chat shares through guarded rendered extraction and verified 79 focused and 3,050 native Python lane tests; real-share canary and guarded runtime deployment remain open. Development environment updates for issues 177/179 (PR #198, merged as `c1016bf`) adopted mise with Python 3.12 wrapping uv and closed issues 177 and 179 without inventing unrun tooling. Source commit `9f1e521` corresponds to PR #205 for issue #204.
+- Commit `add4441f10e06daf0f043b629e9af9d66c588171` (`#207`) verified real migrations only in owned isolated restores.
+- Commit `9f1e52185a283a67f9a4604786ac25db808c89f6` merged issue `#204` via `#205`.
+- Commit `bd57b09c16914f3718a3fd31961c4708feafeae7` recorded share extraction source acceptance (`#202`) following `#201` (`927f3f7340271157ad0318969199289f1f9b82b2`).
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
