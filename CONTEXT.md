@@ -275,16 +275,12 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-- e7ee75a9193615beb12137467aa9b4104164fdb0 fix: compare v2 restore inventory projection (#211)
-- 175a7a39aefdc43e3c08a1885974f571bef0cccd Keep PostgreSQL backup dumps and inventories on the same snapshot (#209)
-- add4441f10e06daf0f043b629e9af9d66c588171 fix: verify real migrations only in owned isolated restores (#207)
-- 9f1e52185a283a67f9a4604786ac25db808c89f6 g2k: issue #204 (#205)
-- bd57b09c16914f3718a3fd31961c4708feafeae7 docs: record share extraction source acceptance (#202)
-- 927f3f7340271157ad0318969199289f1f9b82b2 fix: route public chat shares through guarded rendered extraction (#201)
-- 82daea1ff9dd352c0edd3aea60980d1fed4ca6c2 Record verified mise adoption and scoped issue acceptance (#199)
-- c1016bf37eed7dc8f81943f613dd90c51585fb71 Recover the Argus mise development environment (#198)
-- 3b16f42bef38d0fe2c8076fe49401ea2cf0a0f97 docs: tick TODO lines finished by merged work (#196)
-- e5380c7f03d577f4bda3e081c1d69d4c30a2d5d3 ci: cancel superseded pull request runs (#195)
+- Recent activity on `Khamel83/argus` up to source commit `66365a661abcfa6ccb4a10dfe5e4b251eaf339ff` includes:
+  - PostgreSQL snapshot and restore consistency repairs across PR #209 (`175a7a3`), PR #211 (`e7ee75a`), and PR #213 (`66365a6`), including canonicalizing inventory schema ordering and comparing v2 restore inventory projections.
+  - Verification of real migrations in owned isolated restores via PR #207 (`add4441`).
+  - Merged work for issue #204 via PR #205 (`9f1e521`).
+  - Public chat share extraction source recovery merged via PR #201 (`927f3f7`), with documentation recording source acceptance in PR #202 (`bd57b09`); runtime canary acceptance and guarded release remain open.
+  - Mise/uv development environment recovery completed and verified via PR #198 (`c1016bf`) and PR #199 (`82daea1`), closing native issues #177 and #179.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
