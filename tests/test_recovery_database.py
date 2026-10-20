@@ -1066,7 +1066,11 @@ def test_snapshot_collector_first_inventory_query_timeout_always_closes(
 
 
 def test_restored_source_inventory_accepts_manifest_projection_and_rejects_drift():
-    from argus.recovery.database import verify_restored_source_inventory
+    from argus.recovery.database import (
+        SNAPSHOT_INVENTORY_SCHEMA,
+        SNAPSHOT_METHOD,
+        verify_restored_source_inventory,
+    )
 
     database = "argus_restore_issue40_manifest_projection"
     baseline = verify_restored_source_inventory(
@@ -1079,6 +1083,15 @@ def test_restored_source_inventory_accepts_manifest_projection_and_rejects_drift
         key: baseline[key]
         for key in ("tables", "schema_sha256", "constraints_validated")
     }
+    v2_manifest_entry = {
+        **projection,
+        "snapshot_provenance": {
+            "schema": SNAPSHOT_INVENTORY_SCHEMA,
+            "tenant": "argus",
+            "method": SNAPSHOT_METHOD,
+            "archive_sha256": "a" * 64,
+        },
+    }
 
     assert verify_restored_source_inventory(
         database,
@@ -1090,6 +1103,12 @@ def test_restored_source_inventory_accepts_manifest_projection_and_rejects_drift
         database,
         tenant="argus",
         expected_inventory=baseline,
+        connect=lambda **kwargs: FakeConnection(REQUIRED_TABLES, database),
+    ) == baseline
+    assert verify_restored_source_inventory(
+        database,
+        tenant="argus",
+        expected_inventory=v2_manifest_entry,
         connect=lambda **kwargs: FakeConnection(REQUIRED_TABLES, database),
     ) == baseline
 
@@ -1335,6 +1354,8 @@ def test_postgresql_snapshot_capture_binds_dump_and_inventory_during_write(
     from sqlalchemy.engine import make_url
 
     from argus.recovery.database import (
+        SNAPSHOT_INVENTORY_SCHEMA,
+        SNAPSHOT_METHOD,
         capture_snapshot_inventory,
         collect_source_inventory,
         verify_restored_source_inventory,
@@ -1494,10 +1515,19 @@ def test_postgresql_snapshot_capture_binds_dump_and_inventory_during_write(
             capture_output=True,
             env=os.environ.copy(),
         )
+        v2_manifest_entry = {
+            **record["inventory"],
+            "snapshot_provenance": {
+                "schema": SNAPSHOT_INVENTORY_SCHEMA,
+                "tenant": "atlas",
+                "method": SNAPSHOT_METHOD,
+                "archive_sha256": record["archive_sha256"],
+            },
+        }
         restored = verify_restored_source_inventory(
             scratch,
             tenant="atlas",
-            expected_inventory=record["inventory"],
+            expected_inventory=v2_manifest_entry,
             connect=connect,
         )
         live = collect_source_inventory("atlas", connect=connect)
