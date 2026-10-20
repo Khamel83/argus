@@ -59,7 +59,12 @@ validate the temporary `atlas-postgres` compatibility alias before migration.
    production database names, compares every restored table count and schema
    fingerprint to backup-time source inventories, exercises the Argus
    repository read path, validates Atlas constraints, and always drops both
-   validated scratch targets on exit.
+   validated scratch targets on exit. Container-backed callers keep the legacy
+   no-migration behavior unless the Infra isolated wrapper sets both
+   `ARGUS_ISOLATED_RESTORE_MIGRATION=true` and
+   `ARGUS_ISOLATED_RESTORE_WRAPPER=infra-v1` against a loopback endpoint. That
+   narrow opt-in runs the real Alembic migration and the same schema and read
+   checks inside the disposable, resource-bounded PostgreSQL drill.
 7. Mount the evidence JSON read-only into Argus and configure
    `ARGUS_RECOVERY_EVIDENCE_PATH`. Schema-changing promotion fails closed when
    backup or restore evidence is absent, stale, incomplete, or failed.

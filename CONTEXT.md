@@ -1,3 +1,16 @@
+## Isolated restore migration contract — October 19 UTC
+
+Fresh base `8b099245086b3e0dc47c6fb8d2b0b1d2f1e92a70` adds one explicit
+`ARGUS_ISOLATED_RESTORE_MIGRATION=true` path, accepted only with the Infra
+wrapper marker and loopback PostgreSQL endpoint. That path runs the existing
+real migration plus source-inventory, schema, row-count, integrity and Argus
+read-path checks, then emits the wrapper-required success witness. Every legacy
+container caller still uses `--skip-migration` and emits no witness.
+Source tests pass; coupled Infra publication, installation and the first
+bounded live drill remain pending. The safe Infra wrapper must be installed
+before this Argus opt-in is published because Argus main auto-promotion can
+invoke the promoter.
+
 ## Public share extraction / issue159 — October17 UTC
 
 Source recovery for https://github.com/Khamel83/argus/issues/159 reuses the settled

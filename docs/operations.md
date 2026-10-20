@@ -184,22 +184,38 @@ feature image is known-good and its rollback evidence is retained.
 
 ## PostgreSQL backup and restore
 
-Before promotion or recovery, run the Homelab backup and verifier:
+Before promotion or recovery, replace all three identity placeholders and run
+the Homelab verifier:
 
 ```bash
-ssh homelab 'sudo /mnt/fast-storage/github/homelab/scripts/verify-argus-pg-restore.sh'
+ssh homelab "sudo env \
+  ARGUS_SOURCE_REVISION='<40-hex-source-revision>' \
+  ARGUS_IMAGE_REF='ghcr.io/khamel83/argus@sha256:<64-hex-image-digest>' \
+  ARGUS_IMAGE_DIGEST='sha256:<64-hex-image-digest>' \
+  /usr/local/libexec/argus-pg-restore"
 ```
 
 Require a successful exit code, checksum verification, both tenant scopes,
 schema compatibility, and a fresh isolated restore receipt. A restore drill
-must use an isolated database/container. A production restore is an
-irreversible data operation and remains a separate explicit gate.
+must use the Infra wrapper's temporary PostgreSQL 16 container. That wrapper
+pins an installed helper image by digest, applies CPU/RAM/no-swap/PID/runtime
+limits, uses tmpfs for PGDATA, assigns a loopback-only port, and mounts neither
+live PGDATA nor production credentials. It binds the immutable Argus image's
+embedded runtime manifest to the exact clean source checkout. It holds the
+backup and evidence locks until the helper and its port are independently
+absent, then publishes through preimage compare-and-swap. The wrapper also
+requires the new Argus verifier's post-migration witness, so an older verifier
+cannot silently turn the drill into a migration-skipping proof. Exceeding a
+limit is a clean refusal and does not authorize raising the limit. A production
+restore is an irreversible data operation and remains a separate explicit
+gate.
 
-The operator backup and restore scripts accept `ARGUS_SOURCE_REVISION` and
-`ARGUS_IMAGE_DIGEST`. Set both to the deployed runtime manifest identity when
-recording evidence. Recovery evidence without those fields is intentionally
-rejected as an identity mismatch, even when the database restore itself is
-structurally valid.
+The operator backup and restore scripts accept `ARGUS_SOURCE_REVISION`,
+`ARGUS_IMAGE_REF`, and `ARGUS_IMAGE_DIGEST`. Set all three to the release
+manifest identity when recording evidence. The wrapper verifies a clean exact
+source checkout and the installed image identity before restoring. Recovery
+evidence without those fields is intentionally rejected as an identity
+mismatch, even when the database restore itself is structurally valid.
 
 ## Outbox and uncertain spend
 

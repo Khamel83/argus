@@ -1,3 +1,15 @@
+## Isolated PostgreSQL restore migration — October 19 UTC
+
+- [x] Add the narrow Infra-wrapper-only opt-in that runs the real Alembic
+  migration in container-backed restore verification while preserving the
+  legacy default `--skip-migration` behavior. Recovery-focused tests pass (`28
+  passed`); the full native suite passes (`3041 passed, 47
+  skipped`).
+- [ ] After Infra's bounded disposable PostgreSQL wrapper is published and
+  installed, publish/install this opt-in and accept one real drill. Until the migration,
+  schema/read checks, exact cleanup and CAS evidence publication pass at
+  runtime, recovery remains degraded and promotion stays held.
+
 ## Public share extraction / issue159
 
 - [ ] Deliver [159](https://github.com/Khamel83/argus/issues/159): recovered/repaired

@@ -1,3 +1,18 @@
+## Isolated restore source ready — October 19 UTC
+
+Branch `fix/isolated-restore-migration-20261019` starts at fresh main
+`8b099245086b3e0dc47c6fb8d2b0b1d2f1e92a70`. It adds only the explicit
+Infra-isolated migration opt-in; legacy container restore behavior remains
+unchanged. The witness is emitted only after the real record/migration path
+returns successfully. Recovery-focused tests pass (`28 passed`), the full
+native suite passes (`3041 passed, 47 skipped`), and shell syntax/diff checks
+pass. No commit, PR, deployment or live drill is claimed. Pair this change with
+Infra branch `fix/argus-isolated-restore-20261019`. Publish and install the
+Infra safe wrapper first; only then publish/install this Argus opt-in because
+Argus main auto-promotion can invoke the promoter. Run the bounded drill after
+both identities match. Keep recovery degraded and promotion held until exact
+cleanup and downstream evidence readback pass.
+
 ## Public share extraction / issue159 — October17 UTC
 
 Source recovery for https://github.com/Khamel83/argus/issues/159 reuses the settled
