@@ -27,11 +27,11 @@ def _owned_root(tmp_path):
     return root, live, marker["root_id"]
 
 
-def _owned_snapshot(root, name, root_id):
+def _owned_snapshot(root, name, root_id, *, schema_version=1):
     snapshot = root / name
     snapshot.mkdir()
     (snapshot / ".argus-backup-set.json").write_text(
-        json.dumps({"schema_version": 1, "root_id": root_id}),
+        json.dumps({"schema_version": schema_version, "root_id": root_id}),
         encoding="utf-8",
     )
     return snapshot
@@ -109,7 +109,13 @@ def _backup_set(tmp_path, name="20260723T060000Z"):
 
 
 def test_backup_manifest_binds_archives_and_source_inventories(tmp_path):
-    from argus.recovery.artifacts import create_backup_manifest
+    from argus.recovery.artifacts import (
+        SNAPSHOT_INVENTORY_SCHEMA,
+        SNAPSHOT_METHOD,
+        SNAPSHOT_SIDECAR,
+        create_backup_manifest,
+        sha256_file,
+    )
     from argus.recovery.database import COUNTED_TABLES
 
     root, live, _ = _owned_root(tmp_path)
@@ -134,22 +140,134 @@ def test_backup_manifest_binds_archives_and_source_inventories(tmp_path):
             "constraints_validated": True,
         },
     }
+    for database in ("atlas", "argus"):
+        (stage / SNAPSHOT_SIDECAR.format(tenant=database)).write_text(
+            json.dumps(
+                {
+                    "schema": SNAPSHOT_INVENTORY_SCHEMA,
+                    "tenant": database,
+                    "method": SNAPSHOT_METHOD,
+                    "archive_sha256": sha256_file(stage / f"{database}.dump"),
+                    "inventory": inventories[database],
+                }
+            )
+        )
 
     manifest = create_backup_manifest(
         stage,
         root=root,
         live_data=live,
         completed_at="20260723T060000Z",
-        inventory_collector=lambda database: inventories[database],
     )
 
-    assert manifest["databases"] == inventories
-    assert manifest["files"]["atlas.dump"] == hashlib.sha256(
-        b"atlas archive"
-    ).hexdigest()
-    assert json.loads(
-        (stage / ".argus-backup-set.json").read_text(encoding="utf-8")
-    ) == manifest
+    assert manifest["schema_version"] == 2
+    assert {
+        database: {
+            key: value
+            for key, value in manifest["databases"][database].items()
+            if key != "snapshot_provenance"
+        }
+        for database in ("atlas", "argus")
+    } == inventories
+    assert manifest["databases"]["atlas"]["snapshot_provenance"] == {
+        "schema": SNAPSHOT_INVENTORY_SCHEMA,
+        "tenant": "atlas",
+        "method": SNAPSHOT_METHOD,
+        "archive_sha256": sha256_file(stage / "atlas.dump"),
+    }
+    assert not any(stage.glob(".*-snapshot-inventory.json"))
+    assert (
+        manifest["files"]["atlas.dump"] == hashlib.sha256(b"atlas archive").hexdigest()
+    )
+    assert (
+        json.loads((stage / ".argus-backup-set.json").read_text(encoding="utf-8"))
+        == manifest
+    )
+
+    final = root / "20260723T060000Z"
+    stage.rename(final)
+    from argus.recovery.artifacts import load_verified_backup_set
+
+    verified = load_verified_backup_set(final, root=root, live_data=live)
+    assert verified["schema_version"] == 2
+    assert verified["snapshot_consistency_proven"] is True
+    assert (
+        verified["snapshot_provenance"]["atlas"]
+        == manifest["databases"]["atlas"]["snapshot_provenance"]
+    )
+
+
+def test_legacy_v1_backup_remains_readable_but_unproven(tmp_path):
+    from argus.recovery.artifacts import load_verified_backup_set
+
+    root, live, snapshot, _ = _backup_set(tmp_path)
+    verified = load_verified_backup_set(snapshot, root=root, live_data=live)
+
+    assert verified["schema_version"] == 1
+    assert verified["snapshot_consistency_proven"] is False
+    assert verified["snapshot_provenance"] == {}
+
+
+@pytest.mark.parametrize(
+    "fault", ["version", "database", "missing", "tenant", "method", "archive"]
+)
+def test_v2_backup_rejects_invalid_snapshot_provenance(tmp_path, fault):
+    from argus.recovery.artifacts import load_verified_backup_set
+
+    root, live, snapshot, manifest = _backup_set(tmp_path)
+    manifest["schema_version"] = 2
+    provenance = {
+        "schema": "argus.postgres-snapshot-inventory/v1",
+        "tenant": "atlas",
+        "method": "pg-exported-snapshot-v1",
+        "archive_sha256": manifest["files"]["atlas.dump"],
+    }
+    manifest["databases"]["atlas"]["snapshot_provenance"] = provenance
+    manifest["databases"]["argus"]["snapshot_provenance"] = {
+        **provenance,
+        "tenant": "argus",
+        "archive_sha256": manifest["files"]["argus.dump"],
+    }
+    if fault == "version":
+        manifest["schema_version"] = 3
+    elif fault == "database":
+        manifest["databases"]["atlas"] = []
+    elif fault == "missing":
+        del manifest["databases"]["atlas"]["snapshot_provenance"]
+    else:
+        key = {"tenant": "tenant", "method": "method", "archive": "archive_sha256"}[
+            fault
+        ]
+        manifest["databases"]["atlas"]["snapshot_provenance"][key] = "wrong"
+    (snapshot / ".argus-backup-set.json").write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="manifest|provenance|inventory"):
+        load_verified_backup_set(snapshot, root=root, live_data=live)
+
+
+def test_manifest_creation_rejects_oversized_snapshot_sidecar(tmp_path):
+    from argus.recovery.artifacts import (
+        MAX_SNAPSHOT_SIDECAR_BYTES,
+        SNAPSHOT_SIDECAR,
+        create_backup_manifest,
+    )
+
+    root, live, _ = _owned_root(tmp_path)
+    stage = root / ".staging.oversized"
+    stage.mkdir()
+    for filename in ("atlas.dump", "argus.dump", "globals.sql", "SHA256SUMS"):
+        (stage / filename).write_bytes(b"safe")
+    (stage / SNAPSHOT_SIDECAR.format(tenant="atlas")).write_bytes(
+        b"x" * (MAX_SNAPSHOT_SIDECAR_BYTES + 1)
+    )
+
+    with pytest.raises(ValueError, match="snapshot inventory is unavailable"):
+        create_backup_manifest(
+            stage,
+            root=root,
+            live_data=live,
+            completed_at="20260723T060000Z",
+        )
 
 
 def test_backup_record_is_atomic_sanitized_and_preserves_restore(tmp_path):
@@ -496,6 +614,25 @@ def test_retention_plan_is_deterministic_and_byte_for_byte_read_only(
         "mutation_performed",
         "production_reclamation_required",
     }
+    assert _filesystem_state(root) == before
+
+
+def test_retention_plan_recognizes_v2_owned_snapshot_and_excludes_unknown_version(
+    tmp_path,
+):
+    from argus.recovery.records import plan_snapshot_retention
+
+    root, live, root_id = _owned_root(tmp_path)
+    v2_name = "20260723T070000Z"
+    _owned_snapshot(root, v2_name, root_id, schema_version=2)
+    _owned_snapshot(root, "20260723T060000Z", root_id, schema_version=3)
+    before = _filesystem_state(root)
+
+    report = plan_snapshot_retention(root, live_data=live, now=NOW)
+
+    assert report["owned_snapshot_count"] == 1
+    assert report["kept"] == [v2_name]
+    assert report["expire_candidates"] == []
     assert _filesystem_state(root) == before
 
 

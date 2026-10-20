@@ -37,11 +37,21 @@ validate the temporary `atlas-postgres` compatibility alias before migration.
    writes the ownership marker required by backup and retention planning.
 5. Schedule `backup_shared_postgres.sh` on the homelab. The destination must be
    covered by separate storage protection. Each set binds dump checksums to
-   source schema fingerprints and per-table counts for both tenants. Retention
-   considers only owned sets and is the union of 7 daily, 5 weekly, and
-   12 monthly sets. `retention-plan` validates owned snapshot trees and prints
-   bounded, sanitized JSON containing only the observed policy, keep set, and
-   expiration candidates with content-and-metadata signatures. It takes a
+   source schema fingerprints and per-table counts for both tenants. Manifest
+   v2 captures each database dump and its inventory from one exported,
+   read-only, repeatable-read PostgreSQL snapshot and binds the tenant, capture
+   method, and exact archive SHA. Atlas and Argus snapshots are independent;
+   no cross-database atomicity is claimed. Legacy v1 sets remain readable but
+   their dump/inventory consistency is explicitly unproven, and they are never
+   rewritten. The producer gives each database capture a hard 600-second
+   process boundary with a 10-second termination grace; library deadline checks
+   are cooperative and do not claim to interrupt arbitrary injected calls.
+   Cluster-global export and archive-list validation have separate 30- and
+   60-second bounds. Retention considers only owned sets and is the union of 7
+   daily, 5 weekly, and 12 monthly sets. `retention-plan` validates owned
+   snapshot trees and prints bounded, sanitized JSON containing only the observed
+   policy, keep set, and expiration candidates with content-and-metadata
+   signatures. It takes a
    shared lock on the root marker while cooperative backup writers take an
    exclusive lock, hashes every regular file, and revalidates every owned
    snapshot in a second pass before returning. Strict no-atime opens are

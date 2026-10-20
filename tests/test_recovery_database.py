@@ -122,6 +122,9 @@ class FakeConnection:
     def cursor(self):
         return self.cursor_instance
 
+    def rollback(self):
+        return None
+
     def close(self):
         self.closed = True
 
@@ -927,6 +930,141 @@ def test_argus_source_inventory_matches_restore_count_scope():
     assert "alembic_version" not in inventory["tables"]
 
 
+def test_snapshot_capture_closes_exporter_when_rollback_fails(tmp_path):
+    import subprocess
+
+    from argus.recovery.database import capture_snapshot_inventory
+
+    events = []
+
+    class Cursor:
+        query = ""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query, _params=None):
+            self.query = query
+            events.append(("execute", query))
+
+        def fetchone(self):
+            if "transaction_isolation" in self.query:
+                return ("repeatable read", "on")
+            return ("00000003-0000001B-1",)
+
+    class Connection:
+        closed = False
+
+        def cursor(self):
+            return Cursor()
+
+        def set_session(self, **settings):
+            events.append(("set_session", settings))
+
+        def rollback(self):
+            raise RuntimeError("injected rollback failure")
+
+        def cancel(self):
+            return None
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+
+    def fail_dump(*_args, **_kwargs):
+        events.append(("dump", None))
+        raise subprocess.CalledProcessError(2, ["pg_dump"])
+
+    archive = tmp_path / "atlas.dump"
+    with pytest.raises(RuntimeError, match="rollback"):
+        capture_snapshot_inventory(
+            "atlas",
+            archive=archive,
+            dump_command=["pg_dump", "--dbname=atlas", "--format=custom"],
+            timeout_seconds=30,
+            connect=lambda **_kwargs: connection,
+            run=fail_dump,
+        )
+
+    assert connection.closed is True
+    assert not archive.exists()
+    assert events[0] == (
+        "set_session",
+        {"isolation_level": "REPEATABLE READ", "readonly": True},
+    )
+    assert ("dump", None) in events
+
+
+def test_snapshot_collector_first_inventory_query_timeout_always_closes(
+    monkeypatch,
+):
+    import argus.recovery.database as database_module
+
+    statements = []
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query, _params=None):
+            statements.append(query)
+
+    class Connection:
+        rolled_back = False
+        closed = False
+
+        def set_session(self, **_settings):
+            return None
+
+        def cursor(self):
+            return Cursor()
+
+        def rollback(self):
+            self.rolled_back = True
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+    connect_args = {}
+
+    def connect(**kwargs):
+        connect_args.update(kwargs)
+        return connection
+
+    observed_times = iter((0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0))
+    monkeypatch.setattr(
+        database_module.time,
+        "monotonic",
+        lambda: next(observed_times),
+    )
+
+    with pytest.raises(TimeoutError, match="deadline"):
+        database_module.collect_source_inventory(
+            "atlas",
+            connect=connect,
+            snapshot_id="00000003-0000001B-1",
+            deadline=1.0,
+        )
+
+    assert statements == [
+        "SET TRANSACTION SNAPSHOT %s",
+        "SET LOCAL statement_timeout = %s",
+        "SELECT current_setting('transaction_isolation'), "
+        "current_setting('transaction_read_only')",
+    ]
+    assert "statement_timeout=1000" in connect_args["options"]
+    assert connection.rolled_back is True
+    assert connection.closed is True
+
+
 def test_restored_source_inventory_accepts_manifest_projection_and_rejects_drift():
     from argus.recovery.database import verify_restored_source_inventory
 
@@ -1180,3 +1318,241 @@ def test_postgresql_atlas_restore_inventory_detects_count_drift(
             )
             cursor.execute(f'DROP DATABASE IF EXISTS "{scratch}"')
         admin.close()
+
+
+def test_postgresql_snapshot_capture_binds_dump_and_inventory_during_write(
+    postgres_ledger_url, tmp_path, monkeypatch
+):
+    import concurrent.futures
+    import os
+    import shutil
+    import subprocess
+    import time
+    import uuid
+
+    import psycopg2
+    from psycopg2 import sql
+    from sqlalchemy.engine import make_url
+
+    from argus.recovery.database import (
+        capture_snapshot_inventory,
+        collect_source_inventory,
+        verify_restored_source_inventory,
+    )
+
+    pg_dump = shutil.which("pg_dump")
+    pg_restore = shutil.which("pg_restore")
+    if pg_dump is None or pg_restore is None:
+        pytest.skip("PostgreSQL client tools are unavailable")
+    parsed = make_url(postgres_ledger_url)
+    scratch = f"atlas_restore_ci_{uuid.uuid4().hex[:12]}"
+    connect_kwargs = {
+        "host": parsed.host,
+        "port": parsed.port,
+        "user": parsed.username,
+        "password": parsed.password,
+    }
+
+    def connect(**kwargs):
+        return psycopg2.connect(
+            dbname=kwargs["dbname"],
+            connect_timeout=kwargs.get("connect_timeout", 5),
+            options=kwargs.get("options"),
+            **connect_kwargs,
+        )
+
+    capture_connections = []
+
+    class RecordingCursor:
+        def __init__(self, cursor, record):
+            self._cursor = cursor
+            self._record = record
+
+        def __enter__(self):
+            self._cursor.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self._cursor.__exit__(*args)
+
+        def execute(self, query, params=None):
+            self._record["statements"].append(query)
+            if params is None:
+                return self._cursor.execute(query)
+            return self._cursor.execute(query, params)
+
+        def __getattr__(self, name):
+            return getattr(self._cursor, name)
+
+    class RecordingConnection:
+        def __init__(self, connection):
+            self._connection = connection
+            self.record = {"session": None, "statements": []}
+            capture_connections.append(self.record)
+
+        def set_session(self, **settings):
+            self.record["session"] = settings
+            return self._connection.set_session(**settings)
+
+        def cursor(self):
+            return RecordingCursor(self._connection.cursor(), self.record)
+
+        def __getattr__(self, name):
+            return getattr(self._connection, name)
+
+    def capture_connect(**kwargs):
+        return RecordingConnection(connect(**kwargs))
+
+    admin = psycopg2.connect(dbname=parsed.database, **connect_kwargs)
+    admin.autocommit = True
+    created_databases = {}
+    archive = tmp_path / "atlas.dump"
+    ready = tmp_path / "dump-ready"
+    release = tmp_path / "dump-release"
+    wrapper = tmp_path / "gated-pg-dump"
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        'set -eu\n: > "$DUMP_READY"\n'
+        'while [ ! -e "$DUMP_RELEASE" ]; do sleep 0.05; done\n'
+        'exec "$REAL_PG_DUMP" "$@"\n'
+    )
+    wrapper.chmod(0o755)
+    monkeypatch.setenv("DUMP_READY", str(ready))
+    monkeypatch.setenv("DUMP_RELEASE", str(release))
+    monkeypatch.setenv("REAL_PG_DUMP", pg_dump)
+    for key, value in {
+        "PGHOST": parsed.host,
+        "PGPORT": str(parsed.port),
+        "PGUSER": parsed.username,
+        "PGPASSWORD": parsed.password,
+    }.items():
+        if value is not None:
+            monkeypatch.setenv(key, value)
+    try:
+        with admin.cursor() as cursor:
+            databases = ("atlas", scratch)
+            cursor.execute(
+                "SELECT datname FROM pg_database WHERE datname = ANY(%s)",
+                (list(databases),),
+            )
+            existing = sorted(row[0] for row in cursor.fetchall())
+            if existing:
+                pytest.fail(
+                    "snapshot integration requires absent disposable databases: "
+                    + ", ".join(existing)
+                )
+            for database in databases:
+                cursor.execute(
+                    sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database))
+                )
+                cursor.execute(
+                    "SELECT oid FROM pg_database WHERE datname = %s", (database,)
+                )
+                created_databases[database] = int(cursor.fetchone()[0])
+        source = connect(dbname="atlas")
+        try:
+            with source:
+                with source.cursor() as cursor:
+                    cursor.execute("CREATE TABLE items (id integer PRIMARY KEY)")
+                    cursor.execute("INSERT INTO items VALUES (1)")
+        finally:
+            source.close()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                capture_snapshot_inventory,
+                "atlas",
+                archive=archive,
+                dump_command=[str(wrapper), "--dbname=atlas", "--format=custom"],
+                timeout_seconds=30,
+                connect=capture_connect,
+            )
+            deadline = time.monotonic() + 10
+            while not ready.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            assert ready.exists(), "pg_dump did not start after snapshot export"
+            writer = connect(dbname="atlas")
+            try:
+                with writer:
+                    with writer.cursor() as cursor:
+                        cursor.execute("INSERT INTO items VALUES (2)")
+            finally:
+                writer.close()
+            release.touch()
+            record = future.result(timeout=30)
+
+        subprocess.run(
+            [
+                pg_restore,
+                "--exit-on-error",
+                "--no-owner",
+                "--no-privileges",
+                f"--dbname={scratch}",
+                str(archive),
+            ],
+            check=True,
+            capture_output=True,
+            env=os.environ.copy(),
+        )
+        restored = verify_restored_source_inventory(
+            scratch,
+            tenant="atlas",
+            expected_inventory=record["inventory"],
+            connect=connect,
+        )
+        live = collect_source_inventory("atlas", connect=connect)
+
+        assert restored["tables"]["items"] == 1
+        assert record["inventory"]["tables"]["items"] == 1
+        assert live["tables"]["items"] == 2
+        assert len(capture_connections) == 2
+        assert all(
+            item["session"]
+            == {"isolation_level": "REPEATABLE READ", "readonly": True}
+            for item in capture_connections
+        )
+        exporter, collector = capture_connections
+        assert "SELECT pg_export_snapshot()" in exporter["statements"]
+        assert collector["statements"][0] == "SET TRANSACTION SNAPSHOT %s"
+        inventory_query_indexes = [
+            index
+            for index, statement in enumerate(collector["statements"])
+            if statement.lstrip().startswith("SELECT")
+        ]
+        assert inventory_query_indexes
+        assert all(
+            collector["statements"][index - 1]
+            == "SET LOCAL statement_timeout = %s"
+            for index in inventory_query_indexes
+        )
+    finally:
+        cleanup_errors = []
+        with admin.cursor() as cursor:
+            for database, expected_oid in created_databases.items():
+                cursor.execute(
+                    "SELECT oid FROM pg_database WHERE datname = %s", (database,)
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    continue
+                if int(row[0]) != expected_oid:
+                    cleanup_errors.append(database)
+                    continue
+                cursor.execute(
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                    "WHERE datid = %s AND pid <> pg_backend_pid()",
+                    (expected_oid,),
+                )
+                cursor.execute(
+                    "SELECT oid FROM pg_database WHERE datname = %s", (database,)
+                )
+                row = cursor.fetchone()
+                if row is not None and int(row[0]) == expected_oid:
+                    cursor.execute(
+                        sql.SQL("DROP DATABASE {}").format(sql.Identifier(database))
+                    )
+        admin.close()
+        assert not cleanup_errors, (
+            "refusing to drop databases whose identity changed: "
+            + ", ".join(cleanup_errors)
+        )

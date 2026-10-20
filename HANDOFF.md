@@ -51,6 +51,27 @@ for later runtime work. No deploy is authorized by source-dispatch text alone.
 
 # Handoff
 
+## Shared PostgreSQL snapshot consistency — October 20 UTC
+
+Current source is on `fix/consistent-postgres-backup-snapshots-20261020` from
+fresh `origin/main` `bdd5284e7f0033ea8cc1cebe3465c3e2e9f3d9e9` in the reused
+`.worktrees/argus-readiness-20260906` worktree. It replaces post-dump live
+inventory collection with one exported read-only snapshot per database and a
+strict manifest v2 provenance binding. Legacy v1 backups remain readable and
+unproven. Capture, connection, dump and hash work share a 600-second deadline;
+private sidecars are bounded and deleted before publication.
+
+Focused recovery tests pass (`103 passed, 22 skipped`), the full local suite
+passes (`3053 passed, 49 skipped`), and Ruff, shell syntax and diff checks pass.
+The local PostgreSQL cases skipped because `ARGUS_TEST_POSTGRES_URL` is absent.
+The existing native `postgres-test` task includes the real concurrent-writer
+test that restores the dump and proves dump/inventory consistency. Next:
+exact-head independent review and native PostgreSQL CI, then guarded adoption
+through the separately reviewed immutable backup-tool capsule. Do not rewrite
+old manifests, change cron from this branch, or claim runtime acceptance until
+a natural v2 backup and bounded restore pass. The protected primary and prior
+docs branch remain untouched.
+
 ## Issue177/179 development environment accepted — October17, 2026 UTC
 
 [PR198](https://github.com/Khamel83/argus/pull/198) normally merged as

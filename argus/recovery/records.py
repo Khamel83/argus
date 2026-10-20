@@ -895,7 +895,7 @@ def _read_snapshot_owner_fd(directory_fd: int) -> str | None:
         payload = json.loads(data)
     except (UnicodeDecodeError, json.JSONDecodeError):
         return None
-    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+    if not isinstance(payload, dict) or payload.get("schema_version") not in {1, 2}:
         return None
     root_id = payload.get("root_id")
     return root_id if isinstance(root_id, str) else None

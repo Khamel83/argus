@@ -213,14 +213,17 @@ def test_provisioning_sql_scrubs_managed_role_acl_before_allowlist():
 
 def test_backup_and_restore_scripts_never_accept_embedded_credentials():
     backup = (ROOT / "ops/postgres/backup_shared_postgres.sh").read_text()
+    cli = (ROOT / "ops/postgres/postgres_recovery.py").read_text()
     restore = (ROOT / "ops/postgres/verify_restore.sh").read_text()
 
     assert "pg_dump" in backup
-    assert "--format=custom" in backup
+    assert '"--format=custom"' in cli
     assert "pg_dumpall" in backup
     assert "--globals-only" in backup
     assert "--no-role-passwords" in backup
     assert "pg_restore --list" in backup
+    assert "capture-database" in backup
+    assert "--timeout-seconds 600" in backup
     assert "PGPASSWORD" not in backup
     assert "postgresql://" not in backup
     assert "POSTGRES_LIVE_DATA_DIR" in backup
