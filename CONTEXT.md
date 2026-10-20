@@ -1,30 +1,66 @@
 ## Shared PostgreSQL snapshot contract — October 20 UTC
 
-The installed bounded restore verifier exposed a real source-backup race: the
-legacy writer created each dump and collected its manifest inventory later
-from live PostgreSQL. A concurrent committed write could therefore make the
-manifest describe data absent from the dump. Existing v1 backup sets remain
-readable and immutable, but their snapshot consistency is unproven.
+The bounded restore verifier exposed a real source-backup race: the legacy
+writer created each dump and collected its manifest inventory later from live
+PostgreSQL. A concurrent committed write could therefore make the manifest
+describe data absent from the dump. Existing v1 backup sets remain readable and
+immutable, but their snapshot consistency is unproven.
 
-Branch `fix/consistent-postgres-backup-snapshots-20261020` starts from fetched
-main `bdd5284e7f0033ea8cc1cebe3465c3e2e9f3d9e9`. Manifest v2 requires a
-bounded sidecar for each database. The producer exports one read-only,
-repeatable-read PostgreSQL snapshot, imports it into both `pg_dump` and the
-inventory collector, and persists only tenant, method, archive SHA, table
-counts and schema hash. Atlas and Argus are captured independently; this is no
-cross-database atomicity claim. Local focused tests pass (`103 passed, 22
-skipped`) and the full non-PostgreSQL suite passes (`3053 passed, 49 skipped`).
-The real concurrent-writer test is wired into native PostgreSQL CI and remains
-pending, as do exact-head review, immutable runtime-tool adoption, a natural v2
-backup and a successful isolated restore. No runtime or stored backup changed.
+PR [209](https://github.com/Khamel83/argus/pull/209) merged as
+`175a7a39aefdc43e3c08a1885974f571bef0cccd` after trusted review
+`5580007693` and required CI run `39357846393`. The native PostgreSQL ledger
+completed 323 tests, including the concurrent-writer proof. Manifest v2 uses a
+bounded sidecar for each database: the producer exports one read-only,
+repeatable-read PostgreSQL snapshot and imports it into both `pg_dump` and the
+inventory collector. It records only tenant, method, archive SHA, table counts
+and schema hash. Atlas and Argus are captured independently; this is not a
+cross-database atomicity claim.
 
-The first installed v2 backup later passed its manifest and snapshot-provenance
-checks, but the strict restore reader rejected the valid database entry because
-it compared `snapshot_provenance` with the restored inventory instead of treating
-it as already-validated artifact metadata. The bounded source repair removes
-only that known key before comparison; unknown fields and real count, schema, or
-constraint drift remain exact failures. Native PostgreSQL validation and runtime
-adoption are still open, and no runtime or stored backup changed for this repair.
+The previous `175a7a39` producer remains a rollback anchor. The current exact
+source `66365a661abcfa6ccb4a10dfe5e4b251eaf339ff` is sealed and
+import-validated in the private backup-tool capsule; its 225-file sealed
+manifest is distinct from the application identity. The fixed Infra wrapper
+from merge `13c7f97` is installed, and the protected 01:45 cron row preserves
+its schedule, job identity and log path.
+
+A bounded manual producer run from the previous source completed
+02:30:52–02:34:20 UTC in 208 seconds and published schema-2 set
+`20261020T023056Z`; both tenants carry exported-snapshot provenance bound to
+their dump hashes. This proves that producer path for that run, not a natural
+recurrence. The first test of the new installed producer was incorrectly run as
+root and failed backup-root identity preflight before making a dump. Its logs
+and failure receipt are retained. A corrected ordinary-user run completed
+03:28:54–03:32:07 UTC in 193 seconds with 82.984 CPU-seconds, 768 MiB peak and
+zero swap. It published schema-2 set `20261020T032858Z` with manifest
+`e69d7b6dfb15c75e40ce53dc0109e992dc9d6cd2fd28cd024e62ebab9dacae02`; this is
+manual functional acceptance, not a natural recurrence.
+
+The first strict restore of the previous set `20261020T023056Z` failed at
+02:36:52 UTC; its inner log was not retained, cleanup completed and canonical
+state stayed unchanged. A
+subsequent bounded reproduction identified the v2 reader defect that compared
+the already-validated `snapshot_provenance` metadata as restored database
+inventory. PR
+[211](https://github.com/Khamel83/argus/pull/211) merged as
+`e7ee75a9193615beb12137467aa9b4104164fdb0` after trusted review
+`5580171742` and required CI run `39360416459`; its native ledger completed 323
+tests with the full v2 entry. The second restore attempt failed at 02:52:27 UTC
+with canonical state unchanged. An independent observer matched both database
+table sets, row counts and constraints; Argus's schema fingerprint matched, but
+Atlas had a function-order-only schema-fingerprint mismatch. The diagnosis
+matched all 36 tables, 350 columns, 115 constraints, 106 indexes and 46
+functions. PR [213](https://github.com/Khamel83/argus/pull/213) merged as
+`66365a661abcfa6ccb4a10dfe5e4b251eaf339ff` after trusted review
+`5580366828` and required CI run `39363477632`; its native ledger completed 324
+tests. A fresh strict isolated restore completed at 03:34:47 UTC using source
+`66365a6` and restore-only image
+`sha256:01f59e0040f12ff1c51b1636e089b99396685b1469a29a482e66408a3406e3c3`.
+Integrity, row counts, schema, the Argus read path and migration compatibility
+all passed against the same schema-2 backup identity. The canonical restore
+record SHA is `4bc1adb82b19ebcbf11d932b0f3ea4b4264471b1fbbdb2805c3e4580a8f6a5d1`.
+The flags `metadata_registry_complete`, `schema_contract_clean`,
+`forward_compatible` and `rollback_path_human_approved` remain false; no application
+cutover occurred, and legacy v1 manifests remain immutable and unproven.
 
 ## Public share extraction / issue159 — October17 UTC
 
@@ -275,16 +311,12 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-- e7ee75a9193615beb12137467aa9b4104164fdb0 fix: compare v2 restore inventory projection (#211)
-- 175a7a39aefdc43e3c08a1885974f571bef0cccd Keep PostgreSQL backup dumps and inventories on the same snapshot (#209)
-- add4441f10e06daf0f043b629e9af9d66c588171 fix: verify real migrations only in owned isolated restores (#207)
-- 9f1e52185a283a67f9a4604786ac25db808c89f6 g2k: issue #204 (#205)
-- bd57b09c16914f3718a3fd31961c4708feafeae7 docs: record share extraction source acceptance (#202)
-- 927f3f7340271157ad0318969199289f1f9b82b2 fix: route public chat shares through guarded rendered extraction (#201)
-- 82daea1ff9dd352c0edd3aea60980d1fed4ca6c2 Record verified mise adoption and scoped issue acceptance (#199)
-- c1016bf37eed7dc8f81943f613dd90c51585fb71 Recover the Argus mise development environment (#198)
-- 3b16f42bef38d0fe2c8076fe49401ea2cf0a0f97 docs: tick TODO lines finished by merged work (#196)
-- e5380c7f03d577f4bda3e081c1d69d4c30a2d5d3 ci: cancel superseded pull request runs (#195)
+- Recent activity on `Khamel83/argus` up to source commit `66365a661abcfa6ccb4a10dfe5e4b251eaf339ff` includes:
+  - PostgreSQL snapshot and restore consistency repairs across PR #209 (`175a7a3`), PR #211 (`e7ee75a`), and PR #213 (`66365a6`), including canonicalizing inventory schema ordering and comparing v2 restore inventory projections.
+  - Verification of real migrations in owned isolated restores via PR #207 (`add4441`).
+  - Merged work for issue #204 via PR #205 (`9f1e521`).
+  - Public chat share extraction source recovery merged via PR #201 (`927f3f7`), with documentation recording source acceptance in PR #202 (`bd57b09`); runtime canary acceptance and guarded release remain open.
+  - Mise/uv development environment recovery completed and verified via PR #198 (`c1016bf`) and PR #199 (`82daea1`), closing native issues #177 and #179.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
