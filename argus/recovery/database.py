@@ -1492,16 +1492,31 @@ def _inventory(cursor, tables: set[str], row_counts: dict[str, int]) -> dict[str
         [name, table, _normalize_restored_check_array_casts(definition)]
         for name, table, definition in constraints
     ]
+    canonical_constraints = sorted(
+        stable_constraints,
+        key=lambda row: (str(row[0]), str(row[1])),
+    )
     cursor.execute(_SCHEMA_INDEX_QUERY)
     indexes = [list(row) for row in cursor.fetchall()]
+    canonical_indexes = sorted(
+        indexes,
+        key=lambda row: (str(row[0]), str(row[1])),
+    )
     cursor.execute(_SCHEMA_FUNCTION_QUERY)
     functions = [list(row) for row in cursor.fetchall()]
+    canonical_functions = sorted(
+        functions,
+        key=lambda row: (str(row[0]), str(row[1]) if len(row) > 1 else ""),
+    )
     schema_state = {
         "tables": sorted(tables),
-        "columns": columns,
-        "constraints": stable_constraints,
-        "indexes": indexes,
-        "functions": functions,
+        # PostgreSQL orders these catalog projections with the database
+        # collation. Sort only by table so ordinal_position remains the
+        # within-table column order contract.
+        "columns": sorted(columns, key=lambda row: str(row[0])),
+        "constraints": canonical_constraints,
+        "indexes": canonical_indexes,
+        "functions": canonical_functions,
     }
     return {
         "tables": dict(sorted(row_counts.items())),

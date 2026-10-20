@@ -1169,6 +1169,117 @@ def test_restore_inventory_normalizes_literal_text_array_check_deparse():
     )
 
 
+def test_inventory_schema_hash_canonicalizes_catalog_order_without_waiving_drift():
+    from argus.recovery.database import (
+        _SCHEMA_CONSTRAINT_QUERY,
+        _SCHEMA_FUNCTION_QUERY,
+        _SCHEMA_INDEX_QUERY,
+        _inventory,
+    )
+
+    columns = [
+        ["alpha", "first", "integer", "NO", None],
+        ["alpha", "second", "text", "YES", None],
+        ["zeta", "id", "integer", "NO", None],
+    ]
+    constraints = [
+        ["shared_name", "alpha", "CHECK (alpha_id > 0)"],
+        ["shared_name", "zeta", "CHECK (zeta_id > 0)"],
+    ]
+    indexes = [
+        ["alpha_idx", "alpha", "CREATE INDEX alpha_idx ON alpha (first)"],
+        ["zeta_idx", "zeta", "CREATE INDEX zeta_idx ON zeta (id)"],
+    ]
+    functions = [
+        [
+            "public.alpha_fn(integer)",
+            "public",
+            "CREATE FUNCTION alpha_fn(integer) RETURNS integer",
+        ],
+        [
+            "public.zeta_fn(integer)",
+            "public",
+            "CREATE FUNCTION zeta_fn(integer) RETURNS integer",
+        ],
+    ]
+
+    class Cursor:
+        def __init__(self, rows):
+            self.rows = rows
+            self.query = ""
+
+        def execute(self, query):
+            self.query = query
+
+        def fetchone(self):
+            assert "NOT constraint_row.convalidated" in self.query
+            return (0,)
+
+        def fetchall(self):
+            if "information_schema.columns" in self.query:
+                return self.rows["columns"]
+            if self.query == _SCHEMA_CONSTRAINT_QUERY:
+                return self.rows["constraints"]
+            if self.query == _SCHEMA_INDEX_QUERY:
+                return self.rows["indexes"]
+            if self.query == _SCHEMA_FUNCTION_QUERY:
+                return self.rows["functions"]
+            raise AssertionError(f"unexpected inventory query: {self.query}")
+
+    def capture(rows):
+        return _inventory(
+            Cursor(rows),
+            {"alpha", "zeta"},
+            {"alpha": 1, "zeta": 2},
+        )
+
+    baseline = capture(
+        {
+            "columns": columns,
+            "constraints": constraints,
+            "indexes": indexes,
+            "functions": functions,
+        }
+    )
+    table_reordered = capture(
+        {
+            "columns": [columns[2], columns[0], columns[1]],
+            "constraints": list(reversed(constraints)),
+            "indexes": list(reversed(indexes)),
+            "functions": list(reversed(functions)),
+        }
+    )
+    assert table_reordered["schema_sha256"] == baseline["schema_sha256"]
+    assert table_reordered["constraints"] == list(reversed(constraints))
+    assert table_reordered["indexes"] == list(reversed(indexes))
+    assert table_reordered["functions"] == list(reversed(functions))
+
+    within_table_reordered = capture(
+        {
+            "columns": [columns[1], columns[0], columns[2]],
+            "constraints": constraints,
+            "indexes": indexes,
+            "functions": functions,
+        }
+    )
+    assert (
+        within_table_reordered["schema_sha256"]
+        != baseline["schema_sha256"]
+    )
+
+    changed_definition = [list(row) for row in functions]
+    changed_definition[0][2] = "CREATE FUNCTION alpha_fn(integer) RETURNS text"
+    changed = capture(
+        {
+            "columns": columns,
+            "constraints": constraints,
+            "indexes": indexes,
+            "functions": changed_definition,
+        }
+    )
+    assert changed["schema_sha256"] != baseline["schema_sha256"]
+
+
 def test_recovery_schema_head_tracks_alembic_head():
     from alembic.config import Config
     from alembic.script import ScriptDirectory
