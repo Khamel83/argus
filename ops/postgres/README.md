@@ -43,9 +43,13 @@ validate the temporary `atlas-postgres` compatibility alias before migration.
    method, and exact archive SHA. Atlas and Argus snapshots are independent;
    no cross-database atomicity is claimed. Legacy v1 sets remain readable but
    their dump/inventory consistency is explicitly unproven, and they are never
-   rewritten. Retention considers only owned sets and is the union of 7 daily,
-   5 weekly, and 12 monthly sets. `retention-plan` validates owned snapshot
-   trees and prints bounded, sanitized JSON containing only the observed
+   rewritten. The producer gives each database capture a hard 600-second
+   process boundary with a 10-second termination grace; library deadline checks
+   are cooperative and do not claim to interrupt arbitrary injected calls.
+   Cluster-global export and archive-list validation have separate 30- and
+   60-second bounds. Retention considers only owned sets and is the union of 7
+   daily, 5 weekly, and 12 monthly sets. `retention-plan` validates owned
+   snapshot trees and prints bounded, sanitized JSON containing only the observed
    policy, keep set, and expiration candidates with content-and-metadata
    signatures. It takes a
    shared lock on the root marker while cooperative backup writers take an

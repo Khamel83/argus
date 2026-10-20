@@ -12,8 +12,8 @@ bounded sidecar for each database. The producer exports one read-only,
 repeatable-read PostgreSQL snapshot, imports it into both `pg_dump` and the
 inventory collector, and persists only tenant, method, archive SHA, table
 counts and schema hash. Atlas and Argus are captured independently; this is no
-cross-database atomicity claim. Local focused tests pass (`101 passed, 22
-skipped`) and the full non-PostgreSQL suite passes (`3051 passed, 49 skipped`).
+cross-database atomicity claim. Local focused tests pass (`103 passed, 22
+skipped`) and the full non-PostgreSQL suite passes (`3053 passed, 49 skipped`).
 The real concurrent-writer test is wired into native PostgreSQL CI and remains
 pending, as do exact-head review, immutable runtime-tool adoption, a natural v2
 backup and a successful isolated restore. No runtime or stored backup changed.

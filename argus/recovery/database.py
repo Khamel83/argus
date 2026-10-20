@@ -9,7 +9,6 @@ import math
 import os
 import re
 import subprocess
-import threading
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -1194,19 +1193,18 @@ class _DeadlineCursor:
         if remaining_ms <= 0:
             raise TimeoutError("source inventory deadline expired")
         self._cursor.execute("SET LOCAL statement_timeout = %s", (remaining_ms,))
+        if time.monotonic() >= self._deadline:
+            raise TimeoutError("source inventory deadline expired")
         if params is None:
-            return self._cursor.execute(query)
-        return self._cursor.execute(query, params)
+            result = self._cursor.execute(query)
+        else:
+            result = self._cursor.execute(query, params)
+        if time.monotonic() >= self._deadline:
+            raise TimeoutError("source inventory deadline expired")
+        return result
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._cursor, name)
-
-
-def _stop_deadline_timer(timer: threading.Timer) -> None:
-    timer.cancel()
-    timer.join(timeout=1)
-    if timer.is_alive():
-        raise RuntimeError("deadline cancellation did not stop")
 
 
 def collect_source_inventory(
@@ -1228,32 +1226,31 @@ def collect_source_inventory(
         if remaining < 1:
             raise TimeoutError("source inventory deadline expired")
         connect_args["connect_timeout"] = remaining
+        remaining_ms = int((deadline - time.monotonic()) * 1000)
+        if remaining_ms <= 0:
+            raise TimeoutError("source inventory deadline expired")
+        connect_args["options"] = (
+            f"-c statement_timeout={remaining_ms} "
+            f"-c idle_in_transaction_session_timeout={remaining_ms}"
+        )
     connection = connect(**connect_args)
-    deadline_timer = None
     try:
         if snapshot_id is not None:
             if not re.fullmatch(r"[0-9A-Fa-f-]+", snapshot_id):
                 raise ValueError("exported snapshot identifier is invalid")
-            connection.set_session(isolation_level="REPEATABLE READ", readonly=True)
-        if deadline is not None:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            if deadline is not None and time.monotonic() >= deadline:
                 raise TimeoutError("source inventory deadline expired")
-            deadline_timer = threading.Timer(remaining, connection.cancel)
-            deadline_timer.daemon = True
-            deadline_timer.start()
+            connection.set_session(isolation_level="REPEATABLE READ", readonly=True)
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("source inventory deadline expired")
         with connection.cursor() as cursor:
             if snapshot_id is not None:
-                cursor.execute("SET TRANSACTION SNAPSHOT %s", (snapshot_id,))
-            if deadline is not None:
-                remaining_ms = int((deadline - time.monotonic()) * 1000)
-                if remaining_ms <= 0:
+                if deadline is not None and time.monotonic() >= deadline:
                     raise TimeoutError("source inventory deadline expired")
-                cursor.execute("SET LOCAL statement_timeout = %s", (remaining_ms,))
-                cursor.execute(
-                    "SET LOCAL idle_in_transaction_session_timeout = %s",
-                    (remaining_ms,),
-                )
+                cursor.execute("SET TRANSACTION SNAPSHOT %s", (snapshot_id,))
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError("source inventory deadline expired")
+            if deadline is not None:
                 inventory_cursor = _DeadlineCursor(cursor, deadline)
             else:
                 inventory_cursor = cursor
@@ -1297,9 +1294,10 @@ def collect_source_inventory(
                 raise TimeoutError("source inventory deadline expired")
             return result
     finally:
-        if deadline_timer is not None:
-            _stop_deadline_timer(deadline_timer)
-        connection.close()
+        try:
+            connection.rollback()
+        finally:
+            connection.close()
 
 
 def capture_snapshot_inventory(
@@ -1325,32 +1323,33 @@ def capture_snapshot_inventory(
     connect_timeout = math.floor(deadline - time.monotonic())
     if connect_timeout < 1:
         raise TimeoutError("snapshot capture deadline expired")
-    connection = connect(dbname=validated, connect_timeout=connect_timeout)
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        connection.close()
+    remaining_ms = int((deadline - time.monotonic()) * 1000)
+    if remaining_ms <= 0:
         raise TimeoutError("snapshot capture deadline expired")
-    deadline_timer = threading.Timer(remaining, connection.cancel)
-    deadline_timer.daemon = True
-    deadline_timer.start()
+    connection = connect(
+        dbname=validated,
+        connect_timeout=connect_timeout,
+        options=(
+            f"-c statement_timeout={remaining_ms} "
+            f"-c idle_in_transaction_session_timeout={remaining_ms}"
+        ),
+    )
     try:
+        if time.monotonic() >= deadline:
+            raise TimeoutError("snapshot capture deadline expired")
         connection.set_session(isolation_level="REPEATABLE READ", readonly=True)
+        if time.monotonic() >= deadline:
+            raise TimeoutError("snapshot capture deadline expired")
         with connection.cursor() as cursor:
-            cursor.execute(
-                "SET LOCAL statement_timeout = %s", (timeout_seconds * 1000,)
-            )
-            cursor.execute(
-                "SET LOCAL idle_in_transaction_session_timeout = %s",
-                (timeout_seconds * 1000,),
-            )
-            cursor.execute(
+            bounded_cursor = _DeadlineCursor(cursor, deadline)
+            bounded_cursor.execute(
                 "SELECT current_setting('transaction_isolation'), "
                 "current_setting('transaction_read_only')"
             )
-            if cursor.fetchone() != ("repeatable read", "on"):
+            if bounded_cursor.fetchone() != ("repeatable read", "on"):
                 raise RuntimeError("exported snapshot transaction is not read-only")
-            cursor.execute("SELECT pg_export_snapshot()")
-            snapshot_id = str(cursor.fetchone()[0])
+            bounded_cursor.execute("SELECT pg_export_snapshot()")
+            snapshot_id = str(bounded_cursor.fetchone()[0])
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError("snapshot capture deadline expired")
@@ -1363,8 +1362,14 @@ def capture_snapshot_inventory(
                     check=True,
                     timeout=remaining,
                 )
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("snapshot capture deadline expired")
                 output.flush()
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("snapshot capture deadline expired")
                 os.fsync(output.fileno())
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("snapshot capture deadline expired")
             inventory = collect_source_inventory(
                 validated,
                 connect=connect,
@@ -1377,6 +1382,8 @@ def capture_snapshot_inventory(
                     if time.monotonic() >= deadline:
                         raise TimeoutError("snapshot capture deadline expired")
                     digest.update(block)
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("snapshot capture deadline expired")
         except Exception:
             archive.unlink(missing_ok=True)
             raise
@@ -1392,7 +1399,6 @@ def capture_snapshot_inventory(
             "inventory": inventory_projection,
         }
     finally:
-        _stop_deadline_timer(deadline_timer)
         try:
             connection.rollback()
         finally:

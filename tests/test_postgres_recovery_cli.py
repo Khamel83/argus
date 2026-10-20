@@ -173,6 +173,9 @@ def test_shared_backup_script_supports_container_archive_streaming():
     assert "ARGUS_PG_CONTAINER" in source
     assert "docker exec -i" in source
     assert "pg_restore --list < \"$1\"" in source
+    assert "--kill-after=10s 600s" in source
+    assert "--kill-after=10s 30s" in source
+    assert "--kill-after=10s 60s" in source
 
 
 def test_shared_backup_failure_never_publishes_staging_set(tmp_path):
@@ -191,6 +194,9 @@ def test_shared_backup_failure_never_publishes_staging_set(tmp_path):
     fake_docker = fake_bin / "docker"
     fake_docker.write_text("#!/bin/sh\nexit 0\n")
     fake_docker.chmod(0o755)
+    fake_flock = fake_bin / "flock"
+    fake_flock.write_text("#!/bin/sh\nexit 0\n")
+    fake_flock.chmod(0o755)
     evidence = tmp_path / "evidence.json"
 
     result = subprocess.run(
@@ -213,6 +219,56 @@ def test_shared_backup_failure_never_publishes_staging_set(tmp_path):
     assert list(backup_root.iterdir()) == [
         backup_root / ".argus-shared-postgres-backup-root.json"
     ]
+
+
+def test_shared_backup_post_capture_timeout_never_publishes_staging_set(tmp_path):
+    backup_root = tmp_path / "backups"
+    backup_root.mkdir()
+    marker = backup_root / ".argus-shared-postgres-backup-root.json"
+    marker.write_text("{}\n")
+    live = tmp_path / "live"
+    live.mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_python = fake_bin / "python3"
+    fake_python.write_text("#!/bin/sh\nexit 0\n")
+    fake_python.chmod(0o755)
+    fake_timeout = fake_bin / "timeout"
+    fake_timeout.write_text(
+        "#!/bin/sh\n"
+        'case " $* " in *" pg_dumpall "*) exit 124;; esac\n'
+        'while [ "$#" -gt 0 ]; do\n'
+        '  case "$1" in --signal=*|--kill-after=*) shift;; *s) shift; break;; esac\n'
+        "done\n"
+        'exec "$@"\n'
+    )
+    fake_timeout.chmod(0o755)
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text("#!/bin/sh\nexit 0\n")
+    fake_docker.chmod(0o755)
+    fake_flock = fake_bin / "flock"
+    fake_flock.write_text("#!/bin/sh\nexit 0\n")
+    fake_flock.chmod(0o755)
+    evidence = tmp_path / "evidence.json"
+
+    result = subprocess.run(
+        ["/bin/sh", str(BACKUP_SCRIPT)],
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "ARGUS_BACKUP_ROOT": str(backup_root),
+            "POSTGRES_LIVE_DATA_DIR": str(live),
+            "ARGUS_RECOVERY_EVIDENCE": str(evidence),
+            "ARGUS_PG_CONTAINER": "atlas-postgres",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 124
+    assert not evidence.exists()
+    assert list(backup_root.iterdir()) == [marker]
 
 
 def test_restore_script_supports_container_archive_streaming():

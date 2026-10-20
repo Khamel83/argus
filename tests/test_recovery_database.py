@@ -122,6 +122,9 @@ class FakeConnection:
     def cursor(self):
         return self.cursor_instance
 
+    def rollback(self):
+        return None
+
     def close(self):
         self.closed = True
 
@@ -996,6 +999,72 @@ def test_snapshot_capture_closes_exporter_when_rollback_fails(tmp_path):
     assert ("dump", None) in events
 
 
+def test_snapshot_collector_first_inventory_query_timeout_always_closes(
+    monkeypatch,
+):
+    import argus.recovery.database as database_module
+
+    statements = []
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query, _params=None):
+            statements.append(query)
+
+    class Connection:
+        rolled_back = False
+        closed = False
+
+        def set_session(self, **_settings):
+            return None
+
+        def cursor(self):
+            return Cursor()
+
+        def rollback(self):
+            self.rolled_back = True
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+    connect_args = {}
+
+    def connect(**kwargs):
+        connect_args.update(kwargs)
+        return connection
+
+    observed_times = iter((0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0))
+    monkeypatch.setattr(
+        database_module.time,
+        "monotonic",
+        lambda: next(observed_times),
+    )
+
+    with pytest.raises(TimeoutError, match="deadline"):
+        database_module.collect_source_inventory(
+            "atlas",
+            connect=connect,
+            snapshot_id="00000003-0000001B-1",
+            deadline=1.0,
+        )
+
+    assert statements == [
+        "SET TRANSACTION SNAPSHOT %s",
+        "SET LOCAL statement_timeout = %s",
+        "SELECT current_setting('transaction_isolation'), "
+        "current_setting('transaction_read_only')",
+    ]
+    assert "statement_timeout=1000" in connect_args["options"]
+    assert connection.rolled_back is True
+    assert connection.closed is True
+
+
 def test_restored_source_inventory_accepts_manifest_projection_and_rejects_drift():
     from argus.recovery.database import verify_restored_source_inventory
 
@@ -1288,6 +1357,7 @@ def test_postgresql_snapshot_capture_binds_dump_and_inventory_during_write(
         return psycopg2.connect(
             dbname=kwargs["dbname"],
             connect_timeout=kwargs.get("connect_timeout", 5),
+            options=kwargs.get("options"),
             **connect_kwargs,
         )
 

@@ -20,13 +20,15 @@ if [ -n "$postgres_container" ]; then
     }
 
     pg_dump_globals() {
-        docker exec -u "$postgres_exec_user" "$postgres_container" \
-            pg_dumpall "$@"
+        timeout --signal=TERM --kill-after=10s 30s \
+            docker exec -u "$postgres_exec_user" "$postgres_container" \
+                pg_dumpall "$@"
     }
 
     pg_restore_list() {
-        docker exec -i -u "$postgres_exec_user" "$postgres_container" \
-            pg_restore --list < "$1"
+        timeout --signal=TERM --kill-after=10s 60s \
+            docker exec -i -u "$postgres_exec_user" "$postgres_container" \
+                pg_restore --list < "$1"
     }
 else
     command -v pg_dump >/dev/null 2>&1 || {
@@ -43,11 +45,11 @@ else
     }
 
     pg_dump_globals() {
-        pg_dumpall "$@"
+        timeout --signal=TERM --kill-after=10s 30s pg_dumpall "$@"
     }
 
     pg_restore_list() {
-        pg_restore --list "$1"
+        timeout --signal=TERM --kill-after=10s 60s pg_restore --list "$1"
     }
 fi
 
@@ -63,6 +65,10 @@ command -v flock >/dev/null 2>&1 || {
     echo "flock is required for cooperative backup/retention locking" >&2
     exit 2
 }
+command -v timeout >/dev/null 2>&1 || {
+    echo "timeout is required for bounded backup commands" >&2
+    exit 2
+}
 lock_file="$ARGUS_BACKUP_ROOT/.argus-shared-postgres-backup-root.json"
 exec 9< "$lock_file"
 flock -x 9
@@ -71,7 +77,7 @@ stage=$(mktemp -d "$ARGUS_BACKUP_ROOT/.staging.XXXXXX")
 trap 'rm -rf -- "$stage"' EXIT HUP INT TERM
 
 for database in atlas argus; do
-    timeout --signal=TERM --kill-after=10s 610s \
+    timeout --signal=TERM --kill-after=10s 600s \
         python3 "$script_dir/postgres_recovery.py" capture-database \
         --database "$database" \
         --archive "$stage/$database.dump" \

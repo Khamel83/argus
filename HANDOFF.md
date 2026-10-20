@@ -61,8 +61,8 @@ strict manifest v2 provenance binding. Legacy v1 backups remain readable and
 unproven. Capture, connection, dump and hash work share a 600-second deadline;
 private sidecars are bounded and deleted before publication.
 
-Focused recovery tests pass (`101 passed, 22 skipped`), the full local suite
-passes (`3051 passed, 49 skipped`), and Ruff, shell syntax and diff checks pass.
+Focused recovery tests pass (`103 passed, 22 skipped`), the full local suite
+passes (`3053 passed, 49 skipped`), and Ruff, shell syntax and diff checks pass.
 The local PostgreSQL cases skipped because `ARGUS_TEST_POSTGRES_URL` is absent.
 The existing native `postgres-test` task includes the real concurrent-writer
 test that restores the dump and proves dump/inventory consistency. Next:
