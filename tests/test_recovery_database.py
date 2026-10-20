@@ -1262,6 +1262,7 @@ def test_postgresql_snapshot_capture_binds_dump_and_inventory_during_write(
     import uuid
 
     import psycopg2
+    from psycopg2 import sql
     from sqlalchemy.engine import make_url
 
     from argus.recovery.database import (
@@ -1334,6 +1335,7 @@ def test_postgresql_snapshot_capture_binds_dump_and_inventory_during_write(
 
     admin = psycopg2.connect(dbname=parsed.database, **connect_kwargs)
     admin.autocommit = True
+    created_databases = {}
     archive = tmp_path / "atlas.dump"
     ready = tmp_path / "dump-ready"
     release = tmp_path / "dump-release"
@@ -1358,15 +1360,25 @@ def test_postgresql_snapshot_capture_binds_dump_and_inventory_during_write(
             monkeypatch.setenv(key, value)
     try:
         with admin.cursor() as cursor:
-            for database in ("atlas", scratch):
-                cursor.execute(
-                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                    "WHERE datname = %s",
-                    (database,),
+            databases = ("atlas", scratch)
+            cursor.execute(
+                "SELECT datname FROM pg_database WHERE datname = ANY(%s)",
+                (list(databases),),
+            )
+            existing = sorted(row[0] for row in cursor.fetchall())
+            if existing:
+                pytest.fail(
+                    "snapshot integration requires absent disposable databases: "
+                    + ", ".join(existing)
                 )
-                cursor.execute(f'DROP DATABASE IF EXISTS "{database}"')
-            cursor.execute('CREATE DATABASE "atlas"')
-            cursor.execute(f'CREATE DATABASE "{scratch}"')
+            for database in databases:
+                cursor.execute(
+                    sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database))
+                )
+                cursor.execute(
+                    "SELECT oid FROM pg_database WHERE datname = %s", (database,)
+                )
+                created_databases[database] = int(cursor.fetchone()[0])
         source = connect(dbname="atlas")
         try:
             with source:
@@ -1444,12 +1456,33 @@ def test_postgresql_snapshot_capture_binds_dump_and_inventory_during_write(
             for index in inventory_query_indexes
         )
     finally:
+        cleanup_errors = []
         with admin.cursor() as cursor:
-            for database in ("atlas", scratch):
+            for database, expected_oid in created_databases.items():
+                cursor.execute(
+                    "SELECT oid FROM pg_database WHERE datname = %s", (database,)
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    continue
+                if int(row[0]) != expected_oid:
+                    cleanup_errors.append(database)
+                    continue
                 cursor.execute(
                     "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                    "WHERE datname = %s",
-                    (database,),
+                    "WHERE datid = %s AND pid <> pg_backend_pid()",
+                    (expected_oid,),
                 )
-                cursor.execute(f'DROP DATABASE IF EXISTS "{database}"')
+                cursor.execute(
+                    "SELECT oid FROM pg_database WHERE datname = %s", (database,)
+                )
+                row = cursor.fetchone()
+                if row is not None and int(row[0]) == expected_oid:
+                    cursor.execute(
+                        sql.SQL("DROP DATABASE {}").format(sql.Identifier(database))
+                    )
         admin.close()
+        assert not cleanup_errors, (
+            "refusing to drop databases whose identity changed: "
+            + ", ".join(cleanup_errors)
+        )
