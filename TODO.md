@@ -7,20 +7,51 @@
   dump and its source inventory use the same PostgreSQL snapshot and bind the
   tenant, method and exact archive SHA. Legacy v1 sets remain readable but are
   explicitly unproven; old manifests are never rewritten.
-- [ ] Require exact-head review and native PostgreSQL CI for the concurrent
-  writer proof, then adopt the reviewed source through the separately guarded
-  immutable backup-tool capsule. No runtime, cron or backup-set change is
-  claimed by this source branch.
-- [ ] Accept the first natural v2 backup and bounded isolated restore before
-  treating backup consistency or recovery as proven. The October 20 01:45 UTC
-  v1 backup remains immutable and cannot satisfy the v2 snapshot proof.
-- [ ] Publish and validate the restore-reader v2 projection repair. The first
-  installed v2 backup passed manifest and provenance validation, but the strict
-  restore reader compared the known `snapshot_provenance` metadata as if it
-  were database inventory and rejected the restore at 02:36:52 UTC. Candidate
-  source strips only that known metadata key; unknown fields and count/schema/
-  constraint drift remain rejected. Native PostgreSQL validation and runtime
-  adoption remain open; no backup, runtime, or stored data changed here.
+- [x] Require exact-head review and native PostgreSQL CI for the concurrent
+  writer proof. PR [209](https://github.com/Khamel83/argus/pull/209) merged as
+  `175a7a39aefdc43e3c08a1885974f571bef0cccd`; trusted review
+  `5580007693` and required CI run `39357846393` passed. The native PostgreSQL
+  ledger completed 323 tests, including the concurrent-writer snapshot test.
+- [x] Adopt the reviewed source through the separately guarded immutable
+  backup-tool capsule. The previous `175a7a39` source remains a rollback anchor;
+  the current capsule is source `66365a661abcfa6ccb4a10dfe5e4b251eaf339ff`
+  with 225 files and its sealed manifest. The fixed Infra wrapper from merge
+  `13c7f97` is installed and the protected 01:45 cron row remains unchanged.
+- [x] Complete the first fixed producer run. The bounded manual run completed
+  02:30:52–02:34:20 UTC, published schema-2 set `20261020T023056Z`, and bound
+  both tenants to their exported-snapshot provenance. This was a functional
+  run, not a natural recurrence.
+- [x] Publish and validate the restore-reader v2 projection repair. PR
+  [211](https://github.com/Khamel83/argus/pull/211) merged as
+  `e7ee75a9193615beb12137467aa9b4104164fdb0`; trusted review `5580171742`,
+  required CI `39360416459`, and the native 323-test ledger passed. The repair
+  strips only the known, already-validated `snapshot_provenance` metadata key;
+  unknown fields and count/schema/constraint drift remain rejected.
+- [x] Canonicalize the inventory function order found by the second restore.
+  PR [213](https://github.com/Khamel83/argus/pull/213) merged as
+  `66365a661abcfa6ccb4a10dfe5e4b251eaf339ff`; trusted review `5580366828`,
+  required CI `39363477632`, and the native 324-test ledger passed. The
+  diagnosis matched all 36 tables, 350 columns, 115 constraints, 106 indexes
+  and 46 functions; only Atlas function ordering differed.
+- [x] Complete the matching bounded isolated restore and downstream readback.
+  The first strict restore of the previous set `20261020T023056Z` failed at
+  02:36:52 UTC; its inner log was not retained, cleanup completed and
+  canonical state stayed unchanged. A subsequent bounded reproduction
+  identified the reader projection defect. The
+  second attempt of that same set failed at 02:52:27 UTC after the independent observer matched both database
+  table sets, row counts and constraints; Argus schema matched, but Atlas had a
+  function-order-only schema-fingerprint mismatch. A fresh source-`66365a6`
+  producer run published schema-2 set `20261020T032858Z`; the strict isolated
+  restore verified integrity, row counts, schema, the Argus read path and
+  migration compatibility at 03:34:47 UTC. Its source and backup identity
+  matched. This is a bounded manual acceptance, not a natural 01:45 recurrence.
+
+The first test of the new installed producer was deliberately run as root and
+failed its backup-root identity preflight before any dump was made. Its failure
+receipt and logs are retained. The corrected test runs as ordinary
+  `khamel83` with the same caps; do not count the root preflight failure as a
+  backup attempt. The corrected run and strict restore are now accepted under
+  the bounded gates above; the root preflight remains historical evidence.
 
 ## Public share extraction / issue159
 

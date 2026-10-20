@@ -1,13 +1,52 @@
-## Restore-reader v2 projection repair — October 20 UTC
+## Shared PostgreSQL snapshot and restore acceptance — October 20 UTC
 
-The first installed v2 backup passed manifest and snapshot-provenance validation,
-but the strict restore reader rejected the valid database entry at 02:36:52 UTC
-because it compared the `snapshot_provenance` metadata as part of the restored
-database inventory. A bounded source candidate now strips only that known,
-artifact-validated key before comparison. Unknown fields and actual count,
-schema, and constraint drift remain exact failures. Focused tests pass; the
-native PostgreSQL concurrent-writer test and exact-head review/CI remain open.
-No runtime, backup, profile, credential, or stored-data change was made.
+PR [209](https://github.com/Khamel83/argus/pull/209) merged as
+`175a7a39aefdc43e3c08a1885974f571bef0cccd` after trusted review
+`5580007693` and required CI run `39357846393`. The native PostgreSQL ledger
+completed 323 tests, including the concurrent-writer snapshot proof. Manifest v2
+uses one exported read-only repeatable-read snapshot for each database's dump
+and inventory, with per-database tenant, method and archive-SHA provenance.
+Atlas and Argus remain independently captured; no cross-database atomicity is
+claimed. Existing v1 sets remain immutable and unproven.
+
+The prior `175a7a39` source remains a rollback anchor. Current producer source
+`66365a661abcfa6ccb4a10dfe5e4b251eaf339ff` is sealed and import-validated in
+the private backup-tool capsule. The fixed Infra wrapper from merge `13c7f97` is installed,
+and the exact one-row cron CAS preserved the 01:45 schedule, job identity and
+log path. A bounded manual producer run completed 02:30:52–02:34:20 UTC in 208
+seconds, published schema-2 set `20261020T023056Z`, and bound both tenants to
+their exported-snapshot provenance. This is a manual functional run, not a
+natural recurrence.
+
+The first test of the new producer was incorrectly run as root and failed its
+backup-root identity preflight before creating a dump. Its failure receipt and
+logs are retained. The corrected ordinary-user run completed 03:28:54–03:32:07
+UTC in 193 seconds and published schema-2 set `20261020T032858Z`; this is a
+manual acceptance, not a natural recurrence.
+
+The first strict restore of the previous set `20261020T023056Z` failed at
+02:36:52 UTC; its inner log was not retained, cleanup completed and the
+canonical record stayed unchanged. A
+subsequent bounded reproduction identified the v2 reader defect that compared
+the already-validated `snapshot_provenance` metadata as restored database
+inventory. PR [211](https://github.com/Khamel83/argus/pull/211) merged as
+`e7ee75a9193615beb12137467aa9b4104164fdb0` after trusted review
+`5580171742` and required CI run `39360416459`; its native ledger completed 323
+tests with the full v2 entry. The second restore attempt failed at 02:52:27 UTC
+with canonical state unchanged. An independent observer matched both database
+table sets, row counts and constraints; Argus's schema matched, but Atlas had a
+function-order-only schema-fingerprint mismatch. PR [213](https://github.com/Khamel83/argus/pull/213)
+merged as `66365a661abcfa6ccb4a10dfe5e4b251eaf339ff` after trusted review
+`5580366828` and required CI `39363477632`; its native ledger completed 324
+tests. The fresh strict isolated restore completed at 03:34:47 UTC using the
+same backup identity and restore-only image. Integrity, row counts, schema, the
+Argus read path and migration compatibility passed; canonical restore SHA is
+`4bc1adb82b19ebcbf11d932b0f3ea4b4264471b1fbbdb2805c3e4580a8f6a5d1`. The
+metadata and rollback flags remain false, and no application cutover occurred.
+The next step is the separate natural recurrence observation.
+
+See [the dated evidence note](docs/evidence/2026-10-20-argus-backup-snapshot-acceptance.md)
+for the source, producer receipt, failed first restore and remaining gate.
 
 ## Isolated restore source ready — October 19 UTC
 
