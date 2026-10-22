@@ -1,13 +1,15 @@
-## Legacy worker security patch — October 21, 2026
+## Legacy worker security patch — October 22, 2026
 
-- [x] Confirm and repair missing-secret authentication bypass; default to loopback,
+- [x] Confirm and repair missing-secret authentication bypass, default to loopback,
   require explicit development opt-in and preserve paid-provider denial.
-  Worker/authority regressions: 72 passed; release contract and fixture check pass.
+  [PR217](https://github.com/Khamel83/argus/pull/217), trusted exact-head PASS and
+  [all eight native checks](https://github.com/Khamel83/argus/actions/runs/39737027592).
 - [x] Enable private vulnerability reporting and verify GitHub `enabled=true`.
-- [ ] Accept exact-head native CI/trusted review and merge worker authentication fix:
-  https://github.com/Khamel83/argus/pull/217
-- [ ] Publish 1.6.5 and verify the installed PyPI package rejects the reported PoC.
-- [ ] Send the verified release acknowledgment and coordinate reporter credit/disclosure.
+- [x] Publish1.6.5 to PyPI/MCP Registry and verify the installed PyPI package rejects
+  the reported PoC. [Release](https://github.com/Khamel83/argus/releases/tag/v1.6.5),
+  [successful publication](https://github.com/Khamel83/argus/actions/runs/39737816197).
+- [x] Send the verified release acknowledgment with reporter credit and request
+  disclosure coordination; independent original-thread readback confirms SENT.
 
 ## Shared PostgreSQL backup consistency — October 20 UTC
 
