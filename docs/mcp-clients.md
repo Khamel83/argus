@@ -148,3 +148,24 @@ For OpenCode local mode:
   }
 }
 ```
+
+
+## Glama catalog startup checks
+
+Glama runs `argus mcp serve` as a stateless adapter. Configure its environment
+schema from [the checked schema](../deploy/glama-environment.schema.json) and
+build settings from [the checked build spec](../deploy/glama-build-spec.json)
+in the listing's Admin → Dockerfile screen. These files are operator records;
+Glama does not automatically import them from the repository.
+
+The adapter requires `ARGUS_AUTHORITY_URL` and `ARGUS_AUTHORITY_TOKEN`. Real
+users supply their reachable authority URL and scoped bearer token. Keep provider
+keys, database paths and writable Argus volumes out of the adapter configuration.
+The build spec uses the repository lock and Python 3.12.
+
+The placeholder URL `http://127.0.0.1:9` and token
+`glama-discovery-placeholder` are deliberately unusable test values. They let
+Glama initialize MCP and discover the tool schemas without access to an authority
+or provider. They are not deployment credentials. A green catalog startup test
+proves protocol discovery, not successful search or extraction. Missing real
+credentials still fail closed; this configuration adds no development bypass.

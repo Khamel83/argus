@@ -1,3 +1,11 @@
+## Glama catalog startup follow-up — October 22, 2026
+
+- [x] Reproduce the reported catalog startup failure, correct the saved adapter
+  settings, and publish Glama 1.6.5 after a passing native discovery test.
+  [Successful test](https://glama.ai/mcp/servers/Khamel83/argus/admin/dockerfile/tests/01a1650d-da73-725e-926d-0b3cabecf580).
+- [ ] Accept trusted exact-head review/native CI and merge the checked Glama
+  settings, corrected metadata and release-contract version guard.
+
 ## Legacy worker security patch — October 22, 2026
 
 - [x] Confirm and repair missing-secret authentication bypass, default to loopback,

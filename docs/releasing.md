@@ -17,6 +17,7 @@ Keep these in sync for every release:
 - `pyproject.toml` — `[project].version`
 - `argus/__init__.py` — `__version__`
 - `argus/api/main.py` — FastAPI app version
+- `glama.json` — catalog `version`
 - `server.json` — top-level `version`
 - `server.json` — `packages[0].version`
 - `uv.lock` — editable `argus-search` package version

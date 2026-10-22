@@ -1,3 +1,25 @@
+## Glama catalog startup repaired — October 22, 2026
+
+The failure email referred to a successful install followed by MCP startup
+without the required HTTP authority configuration. Corrected Glama's saved
+adapter-only schema, supplied deliberately unusable discovery placeholders,
+aligned Python 3.12 and frozen-lock install, and published Glama 1.6.5 after the
+[new native test passed](https://glama.ai/mcp/servers/Khamel83/argus/admin/dockerfile/tests/01a1650d-da73-725e-926d-0b3cabecf580).
+Independent UI readback confirms the published release and persisted settings.
+The checked source metadata now includes the required maintainer and 1.6.5,
+with a release-contract guard against future Glama version drift.
+
+72 focused delivery/release/HTTP-authority checks pass. Local bare MCP startup
+fails closed; dummy-config MCP initializes and lists 15 tools without an authority
+or provider call. Native CI, trusted review and normal merge remain the source
+gates. No new PyPI package or operated HTTP authority rollout is claimed.
+See [dated evidence](docs/evidence/2026-10-22-glama-startup-repair.md).
+
+The reporter accepted credit and has no fixed advisory date; his only open
+question is who handles the CVE. Live repository/global pip advisory queries
+returned empty. No new security report or native GitHub issue was found. No
+new message or CVE request was sent in this turn; suggested wording stays in chat.
+
 ## Legacy worker security patch released — October 22, 2026
 
 [PR217](https://github.com/Khamel83/argus/pull/217) merged as
@@ -141,7 +163,7 @@ skips; Mac focused checks and the real HOME-path regression also passed.
 The first native run's two stale CI assertions, their correction and the old
 candidate's nine inherited failures remain in the retained history.
 
-Mise2026.10.2/Python3.12.13 now wrap the existing uv0.11.26 environment;
+Mise2026.10.2/Python 3.12.13 now wrap the existing uv0.11.26 environment;
 `UV_PYTHON` uses the actual selected tool path and implicit downloads are off.
 The universal `uv.lock`, package metadata, release workflows, prior environment,
 retained candidates and protected primary are preserved. Three-platform runtime
