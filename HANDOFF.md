@@ -18,8 +18,10 @@ The production authority is separate from this legacy development-only worker.
 Worktree `.worktrees/worker-auth-fix`, branch `fix/worker-auth-1.6.5`, preserves
 the dirty primary and its handoff. Retain this worktree through release acceptance;
 remove only after its source and evidence are durable and no work is active.
-Next: complete local package/full-suite checks, publish the PR, verify native
-CI and trusted review, then cut v1.6.5 from merged main and verify PyPI.
+PR: https://github.com/Khamel83/argus/pull/217. Local checks are complete.
+Next: `gh pr checks 217`, verify trusted exact-head review and normal merge,
+then cut v1.6.5 from merged main and verify PyPI.
+Recheck: `gh pr view 217 --json state,headRefOid,mergeCommit,reviews,statusCheckRollup`.
 
 ## Shared PostgreSQL snapshot and restore acceptance — October 20 UTC
 

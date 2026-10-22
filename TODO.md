@@ -4,7 +4,8 @@
   require explicit development opt-in and preserve paid-provider denial.
   Worker/authority regressions: 72 passed; release contract and fixture check pass.
 - [x] Enable private vulnerability reporting and verify GitHub `enabled=true`.
-- [ ] Accept exact-head native CI/trusted review and merge worker authentication fix.
+- [ ] Accept exact-head native CI/trusted review and merge worker authentication fix:
+  https://github.com/Khamel83/argus/pull/217
 - [ ] Publish 1.6.5 and verify the installed PyPI package rejects the reported PoC.
 - [ ] Send the verified release acknowledgment and coordinate reporter credit/disclosure.
 

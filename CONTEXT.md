@@ -14,6 +14,7 @@ the report PoC. Final full suite: 3066 passed, 49 skipped, four existing warning
 CI, trusted review, normal merge, package publication and installed-package
 readback remain required. No operated deployment or reporter message is claimed.
 The production authority is separate from this legacy development-only worker.
+Source proposal: https://github.com/Khamel83/argus/pull/217.
 
 ## Shared PostgreSQL snapshot contract — October 20 UTC
 
