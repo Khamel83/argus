@@ -362,11 +362,7 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-## Latest verified state — October 22, 2026
-
-Source commit `446ac29b17224e9b57cccf0618f9534cd8a9f8e9` records the legacy worker authentication repair and publication evidence. PR217 merged as `f0386c760bfe05127a264540e4a79b373c71c123`; release v1.6.5 passed native CI and PyPI/MCP Registry publication, and an isolated PyPI installation rejected the reported missing-secret PoC. No operated production rollout or live provider retrieval is claimed.
-
-The PostgreSQL manifest-v2 repair and bounded restore acceptance are recorded by source `1a02b5cf7e6f53f17f667fb9de90b2d726ab4cb5`. Per-database exported-snapshot capture merged as `175a7a39aefdc43e3c08a1885974f571bef0cccd`, reader projection repair as `e7ee75a9193615beb12137467aa9b4104164fdb0`, and schema-order canonicalization as `66365a661abcfa6ccb4a10dfe5e4b251eaf339ff`. A bounded manual producer run and strict isolated restore passed, but this is not proof of a natural scheduled recurrence or application cutover. Legacy v1 snapshot consistency remains unproven, and the documented metadata-registry, schema-contract, forward-compatibility, and human-rollback gates remain incomplete.
+Source commit 65513336c7d5a9975eb99f1b86c904df77683db8 (`docs: tick TODO lines finished by merged work (#222)`) is the current supplied source. Remote CONTEXT.md records Glama 1.6.5 startup repair, legacy worker 1.6.5 publication, PostgreSQL snapshot/restore acceptance, public share extraction source acceptance, and the H26 Tavily observer source state; these remain documented facts, not new deployment or runtime-acceptance claims. Factual uncertainty is preserved: guarded runtime release, natural recurrence, browser-network authority, and several provider/canary gates remain open.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
