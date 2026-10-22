@@ -1,3 +1,34 @@
+## Glama catalog startup repaired — October 22, 2026
+
+The failure email referred to a successful install followed by MCP startup
+without the required HTTP authority configuration. Corrected Glama's saved
+adapter-only schema, supplied deliberately unusable discovery placeholders,
+aligned Python 3.12 and frozen-lock install, and published Glama 1.6.5 after the
+[new native test passed](https://glama.ai/mcp/servers/Khamel83/argus/admin/dockerfile/tests/01a1650d-da73-725e-926d-0b3cabecf580).
+Independent UI readback confirms the published release and persisted settings.
+The checked source metadata now includes the required maintainer and 1.6.5,
+with a release-contract guard against future Glama version drift.
+
+72 focused delivery/release/HTTP-authority checks pass. Local bare MCP startup
+fails closed; dummy-config MCP initializes and lists 15 tools without an authority
+or provider call. Native CI, trusted review and normal merge remain the source
+gates. No new PyPI package or operated HTTP authority rollout is claimed.
+See [dated evidence](docs/evidence/2026-10-22-glama-startup-repair.md).
+
+The reporter accepted credit and has no fixed advisory date; his only open
+question is who handles the CVE. Live repository/global pip advisory queries
+returned empty. No new security report or native GitHub issue was found. No
+new message or CVE request was sent in this turn; suggested wording stays in chat.
+
+Reused worktree `.worktrees/worker-auth-fix`, branch `fix/glama-authority-config`;
+prior publication edits remain in local snapshot `bbce917` on the old branch.
+Retain the worktree/ignored artifacts and preserve the primary's handoff edit.
+Source proposal: https://github.com/Khamel83/argus/pull/221.
+Next: `gh pr view 221 --json state,headRefOid,reviews,statusCheckRollup,mergeCommit`;
+verify trusted exact-head review, all checks and normal merge. Recheck the linked
+Glama successful test/release independently.
+Owner may use the suggested CVE coordination reply in chat; no email is queued.
+
 ## Legacy worker security patch released — October 22, 2026
 
 [PR217](https://github.com/Khamel83/argus/pull/217) merged as
@@ -34,8 +65,9 @@ GitHub native APIs independently verified current main and supplied the final
 record PR. Do not delete the worktree or retained branches until an idle/preservation
 check passes. No reset, clean or source overwrite occurred.
 
-Next: verify the final record PR's normal merge; any reporter follow-up is handled
-in the existing email thread. Recheck with `gh release view v1.6.5 -R Khamel83/argus`,
+PR219's normal merge was independently verified as `446ac29`; the reporter
+subsequently accepted credit and asked about CVE ownership. No reply to that
+question has been sent by this agent. Recheck with `gh release view v1.6.5 -R Khamel83/argus`,
 `gh run view 39737816197 -R Khamel83/argus`, and the original PR217 native records.
 
 ## Shared PostgreSQL snapshot and restore acceptance — October 20 UTC
@@ -174,7 +206,7 @@ skips; Mac focused checks and the real HOME-path regression also passed.
 The first native run's two stale CI assertions, their correction and the old
 candidate's nine inherited failures remain in the retained history.
 
-Mise2026.10.2/Python3.12.13 now wrap the existing uv0.11.26 environment;
+Mise2026.10.2/Python 3.12.13 now wrap the existing uv0.11.26 environment;
 `UV_PYTHON` uses the actual selected tool path and implicit downloads are off.
 The universal `uv.lock`, package metadata, release workflows, prior environment,
 retained candidates and protected primary are preserved. Three-platform runtime

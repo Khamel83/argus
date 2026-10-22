@@ -1,0 +1,20 @@
+{
+  "baseImage": "debian:bookworm-slim",
+  "buildSteps": [
+    "uv sync --frozen --no-dev --extra mcp"
+  ],
+  "cmdArguments": [
+    "mcp-proxy",
+    "--",
+    ".venv/bin/argus",
+    "mcp",
+    "serve"
+  ],
+  "nodeVersion": "25",
+  "pythonVersion": "3.12",
+  "pinnedCommit": null,
+  "placeholderArguments": {
+    "ARGUS_AUTHORITY_URL": "http://127.0.0.1:9",
+    "ARGUS_AUTHORITY_TOKEN": "glama-discovery-placeholder"
+  }
+}

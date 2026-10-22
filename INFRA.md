@@ -64,3 +64,14 @@ GitHub private vulnerability reporting was disabled when the worker report was
 received. It is now enabled on `Khamel83/argus`; independent API readback returned
 `enabled=true` (`gh api repos/Khamel83/argus/private-vulnerability-reporting`).
 No application runtime or credential location changed in this configuration step.
+
+## Glama catalog configuration — October 22, 2026
+
+Glama's Argus adapter listing requires only `ARGUS_AUTHORITY_URL` and
+`ARGUS_AUTHORITY_TOKEN`; actual users supply their own reachable authority and
+scoped credential. Saved test values are deliberately unusable discovery
+placeholders. Python 3.12/frozen-lock build settings and the normalized environment
+schema are recorded under `deploy/glama-*.json`. A successful native test and
+Glama 1.6.5 publication were independently read back; see the dated Glama evidence.
+No real authority/provider credentials, private networking grant or production
+HTTP deployment changed.

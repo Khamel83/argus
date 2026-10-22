@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "properties": {
+    "ARGUS_AUTHORITY_URL": {
+      "type": "string",
+      "description": "URL of your Argus HTTP authority. Must be reachable from the MCP adapter."
+    },
+    "ARGUS_AUTHORITY_TOKEN": {
+      "type": "string",
+      "description": "Scoped bearer token issued by your Argus HTTP authority. Do not supply provider keys or database configuration."
+    }
+  },
+  "required": [
+    "ARGUS_AUTHORITY_URL",
+    "ARGUS_AUTHORITY_TOKEN"
+  ]
+}

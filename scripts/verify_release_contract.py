@@ -85,6 +85,9 @@ def main(argv: list[str] | None = None) -> int:
         expected = f'"{package}"'
         if package != server_version or package != registry_version:
             raise RuntimeManifestError("package and server metadata versions are out of sync")
+        glama = json.loads((ROOT / "glama.json").read_text(encoding="utf-8"))
+        if glama.get("version") != package:
+            raise RuntimeManifestError("Glama catalog version is out of sync")
         if f'__version__ = {expected}' not in source_versions:
             raise RuntimeManifestError("argus package version is out of sync")
         if f"version={expected}" not in source_versions:
