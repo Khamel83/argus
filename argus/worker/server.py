@@ -4,13 +4,14 @@ Exposes:
   POST /exec    — run a single provider search, return results + trace
   GET  /health  — liveness check
 
-Binds to ARGUS_WORKER_BIND (default 0.0.0.0:8273).
+Binds to ARGUS_WORKER_BIND (default 127.0.0.1:8273).
 Auth: Authorization: Bearer <ARGUS_EGRESS_SHARED_SECRET>
 """
 
 from __future__ import annotations
 
 import os
+import secrets
 
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
@@ -79,10 +80,10 @@ def _get_provider(provider_name: str) -> BaseProvider:
 
 def _check_auth(request: Request) -> None:
     secret = os.environ.get("ARGUS_EGRESS_SHARED_SECRET", "")
-    if not secret:
-        return  # no secret configured — open (dev mode)
+    if not secret.strip():
+        raise HTTPException(status_code=401, detail="Unauthorized")
     auth = request.headers.get("Authorization", "")
-    if auth != f"Bearer {secret}":
+    if not secrets.compare_digest(auth.encode(), f"Bearer {secret}".encode()):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
@@ -90,6 +91,8 @@ def create_worker_app() -> FastAPI:
     from argus.authority import worker_execution_allowed
 
     worker_execution_allowed()
+    if not os.environ.get("ARGUS_EGRESS_SHARED_SECRET", "").strip():
+        raise RuntimeError("Egress worker requires ARGUS_EGRESS_SHARED_SECRET")
     app = FastAPI(title="Argus Worker", docs_url=None, redoc_url=None)
 
     @app.get("/health")

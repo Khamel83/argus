@@ -18,7 +18,7 @@ def _registration_spec(provider: ProviderName):
     contract = "2026-07-27-v1"
     fixture_ref, attestation = load_fixture_attestation(
         provider,
-        release_revision="argus-1.6.4",
+        release_revision="argus-1.6.5",
         provider_contract=contract,
     )
     paid = provider not in {
@@ -42,7 +42,7 @@ def _registration_spec(provider: ProviderName):
         ),
         budget_limit=10.0 if paid else None,
         durable_spend_repository=True,
-        release_revision="argus-1.6.4",
+        release_revision="argus-1.6.5",
         contract_version=contract,
         fixture_contract=contract,
         fixture_evidence_ref=fixture_ref,
@@ -129,7 +129,7 @@ def test_registration_profile_aliases_are_normalized_and_bounded():
             account_fingerprint="account-v1",
             budget_limit=10.0,
             durable_spend_repository=True,
-            release_revision="argus-1.6.4",
+            release_revision="argus-1.6.5",
             contract_version="2026-07-27-v1",
             fixture_evidence_ref="fixture-v1",
             billing_class="free",
@@ -150,7 +150,7 @@ def test_runtime_registry_persists_all_canonical_profiles_without_availability(
     from argus.providers.fixture_registry import canonical_adapter
     from argus.providers.searxng import SearXNGProvider
 
-    monkeypatch.setenv("ARGUS_RELEASE_REVISION", "argus-1.6.4")
+    monkeypatch.setenv("ARGUS_RELEASE_REVISION", "argus-1.6.5")
     config = ArgusConfig()
     adapters = {}
     for provider in ProviderName:

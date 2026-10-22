@@ -1,5 +1,10 @@
 # Multi-Egress Worker Architecture
 
+> Historical design. Since 1.6.5, the legacy worker defaults to loopback,
+> requires a nonempty shared secret on every bind, and starts only with explicit
+> `ARGUS_ENV=development`. The historical examples below are not current
+> security defaults; see `SECURITY.md` and `.env.example`.
+
 **Date:** 2026-05-22  
 **Status:** Approved  
 **Motivation:** Argus runs on homelab (Spectrum residential, 23.241.236.110). Yahoo Search blocks Spectrum IP ranges. oci-dev (Oracle, 141.148.146.79) can reach Yahoo. Rather than hardcoding "Yahoo → oci-dev," the system should be state-driven: declare available machines, probe what each can reach, route providers through whichever egress works — and update automatically when reachability changes.

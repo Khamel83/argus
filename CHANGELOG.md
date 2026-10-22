@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.5] - 2026-10-21
+
+### Security
+- Require a shared bearer secret for legacy egress worker execution, including
+  loopback. Reject startup without a secret or explicit `ARGUS_ENV=development`;
+  reject unauthenticated requests before provider construction. Default the worker
+  CLI to `127.0.0.1:8273`. Previous versions could accept unauthenticated free-tier
+  searches when the secret was unset. Thanks to Syed Anas Mohiuddin
+  (Cognivators LLC, GitHub: SyedAnas01) for reporting this issue.
+
 ### Security
 - **`argus mcp init` no longer persists a raw bearer token.** The command
   previously wrote `export ARGUS_API_KEY=<token>` into `~/.zshrc` or

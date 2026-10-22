@@ -56,3 +56,11 @@ application deployment or cutover; `metadata_registry_complete`,
 `rollback_path_human_approved` remain false. See
 [`docs/evidence/2026-10-20-argus-backup-snapshot-acceptance.md`](docs/evidence/2026-10-20-argus-backup-snapshot-acceptance.md)
 for the source, receipts and acceptance boundary.
+
+
+## Security reporting configuration — October 21, 2026
+
+GitHub private vulnerability reporting was disabled when the worker report was
+received. It is now enabled on `Khamel83/argus`; independent API readback returned
+`enabled=true` (`gh api repos/Khamel83/argus/private-vulnerability-reporting`).
+No application runtime or credential location changed in this configuration step.

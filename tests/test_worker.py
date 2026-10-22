@@ -1,6 +1,12 @@
 import pytest
 from unittest.mock import AsyncMock, patch
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+
+
+@pytest.fixture(autouse=True)
+def explicit_development(monkeypatch):
+    monkeypatch.setenv("ARGUS_ENV", "development")
 
 
 @pytest.fixture
@@ -105,13 +111,14 @@ def test_exec_returns_results_on_success():
             assert data["results"][0]["url"] == "https://example.com"
 
 
-@pytest.mark.parametrize("secret", ["s", ""])
+@pytest.mark.parametrize("secret", ["s"])
 def test_exec_fails_closed_for_paid_providers_without_calling_adapter(secret):
     with patch.dict(
         "os.environ",
         {
             "ARGUS_EGRESS_SHARED_SECRET": secret,
             "ARGUS_MACHINE_NAME": "test-worker",
+            "ARGUS_ENV": "development",
         },
         clear=True,
     ):
@@ -134,3 +141,72 @@ def test_exec_fails_closed_for_paid_providers_without_calling_adapter(secret):
     assert response.status_code == 403
     assert "paid providers" in response.json()["detail"]
     get_provider.assert_not_called()
+
+
+@pytest.mark.parametrize("secret", [None, "", "   "])
+def test_missing_secret_rejected_at_startup_and_by_auth(monkeypatch, secret):
+    from argus.worker.server import _check_auth, create_worker_app
+
+    if secret is None:
+        monkeypatch.delenv("ARGUS_EGRESS_SHARED_SECRET", raising=False)
+    else:
+        monkeypatch.setenv("ARGUS_EGRESS_SHARED_SECRET", secret)
+    with pytest.raises(RuntimeError, match="requires ARGUS_EGRESS_SHARED_SECRET"):
+        create_worker_app()
+    request = type("Request", (), {"headers": {}})()
+    with pytest.raises(HTTPException) as error:
+        _check_auth(request)
+    assert error.value.status_code == 401
+
+
+@pytest.mark.parametrize("environment", [None, "", "production", "staging", "developmnt"])
+def test_worker_requires_explicit_development(monkeypatch, environment):
+    from argus.worker.server import create_worker_app
+
+    monkeypatch.setenv("ARGUS_EGRESS_SHARED_SECRET", "s")
+    if environment is None:
+        monkeypatch.delenv("ARGUS_ENV", raising=False)
+    else:
+        monkeypatch.setenv("ARGUS_ENV", environment)
+    with pytest.raises(RuntimeError, match="ARGUS_ENV=development"):
+        create_worker_app()
+
+
+@pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer wrong"},
+                                    {"Authorization": "Basic s"}])
+def test_unauthenticated_exec_never_constructs_provider(monkeypatch, headers):
+    from argus.worker.server import create_worker_app
+
+    monkeypatch.setenv("ARGUS_EGRESS_SHARED_SECRET", "s")
+    with patch("argus.worker.server._get_provider") as get_provider:
+        with TestClient(create_worker_app()) as client:
+            response = client.post("/exec", json={"provider": "duckduckgo", "query": "test"},
+                                   headers=headers)
+    assert response.status_code == 401
+    get_provider.assert_not_called()
+
+
+def test_secret_removed_after_startup_never_dispatches(monkeypatch):
+    from argus.worker.server import create_worker_app
+
+    monkeypatch.setenv("ARGUS_EGRESS_SHARED_SECRET", "s")
+    app = create_worker_app()
+    monkeypatch.delenv("ARGUS_EGRESS_SHARED_SECRET")
+    with patch("argus.worker.server._get_provider") as get_provider:
+        with TestClient(app) as client:
+            response = client.post("/exec", json={"provider": "duckduckgo", "query": "test"},
+                                   headers={"Authorization": "Bearer s"})
+    assert response.status_code == 401
+    get_provider.assert_not_called()
+
+
+def test_worker_cli_defaults_to_loopback(monkeypatch):
+    from click.testing import CliRunner
+    from argus.cli.main import cli
+
+    monkeypatch.setenv("ARGUS_EGRESS_SHARED_SECRET", "s")
+    monkeypatch.delenv("ARGUS_WORKER_BIND", raising=False)
+    with patch("uvicorn.run") as run:
+        result = CliRunner().invoke(cli, ["worker"])
+    assert result.exit_code == 0, result.output
+    assert run.call_args.kwargs == {"host": "127.0.0.1", "port": 8273}
