@@ -23,8 +23,10 @@ new message or CVE request was sent in this turn; suggested wording stays in cha
 Reused worktree `.worktrees/worker-auth-fix`, branch `fix/glama-authority-config`;
 prior publication edits remain in local snapshot `bbce917` on the old branch.
 Retain the worktree/ignored artifacts and preserve the primary's handoff edit.
-Next: verify this source proposal's trusted exact-head review, all native checks
-and normal merge; recheck the linked Glama successful test/release independently.
+Source proposal: https://github.com/Khamel83/argus/pull/221.
+Next: `gh pr view 221 --json state,headRefOid,reviews,statusCheckRollup,mergeCommit`;
+verify trusted exact-head review, all checks and normal merge. Recheck the linked
+Glama successful test/release independently.
 Owner may use the suggested CVE coordination reply in chat; no email is queued.
 
 ## Legacy worker security patch released — October 22, 2026

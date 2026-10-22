@@ -11,8 +11,8 @@ with a release-contract guard against future Glama version drift.
 
 72 focused delivery/release/HTTP-authority checks pass. Local bare MCP startup
 fails closed; dummy-config MCP initializes and lists 15 tools without an authority
-or provider call. Native CI, trusted review and normal merge remain the source
-gates. No new PyPI package or operated HTTP authority rollout is claimed.
+or provider call. Source review/CI/normal merge are tracked in
+https://github.com/Khamel83/argus/pull/221. No new PyPI package or operated HTTP authority rollout is claimed.
 See [dated evidence](docs/evidence/2026-10-22-glama-startup-repair.md).
 
 The reporter accepted credit and has no fixed advisory date; his only open
