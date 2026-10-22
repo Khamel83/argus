@@ -1,27 +1,42 @@
-## Legacy worker authentication — October 21, 2026
+## Legacy worker security patch released — October 22, 2026
 
-Confirmed against fetched main `62d0d2243ac9e8315fd955135058c40d3d9adf65`:
-missing `ARGUS_EGRESS_SHARED_SECRET` bypassed authentication. Source now requires
-explicit `ARGUS_ENV=development` and a nonblank secret at startup, validates
-bearer authentication before every dispatch, and defaults the CLI bind to
-`127.0.0.1:8273`. No insecure development bypass is retained. Metadata and
-provider fixture attestations are prepared for 1.6.5. Security/setup/release docs
-and reporter credit are updated. GitHub private reporting is enabled and read back.
+[PR217](https://github.com/Khamel83/argus/pull/217) merged as
+`f0386c760bfe05127a264540e4a79b373c71c123` at 06:59:49 UTC through the normal
+trusted reviewer/Janitor path. Exact-head trusted PASS review5610327986 and
+[all eight native CI checks](https://github.com/Khamel83/argus/actions/runs/39737027592)
+passed. Native GitHub readback verified the merge actor and identical full trees
+for reviewed `ff659cb` and merged main (`a1140108edd931d439cb0c7cbb8848279346d4e8`).
 
-Focused worker/authority checks: 72 passed. Release contract and exact generated
-fixture check passed. Wheel/sdist build and metadata checks pass; an isolated installed wheel blocks
-the report PoC. Final full suite: 3066 passed, 49 skipped, four existing warnings; native
-CI, trusted review, normal merge, package publication and installed-package
-readback remain required. No operated deployment or reporter message is claimed.
-The production authority is separate from this legacy development-only worker.
+[Release v1.6.5](https://github.com/Khamel83/argus/releases/tag/v1.6.5) targets
+that exact merged source. [Publish39737816197](https://github.com/Khamel83/argus/actions/runs/39737816197)
+passed both PyPI and MCP Registry jobs. PyPI metadata lists the 1.6.5 wheel and
+sdist. An isolated installation from PyPI outside the repository verified
+version/site-packages identity, the reported PoC raises401, missing-secret
+startup is rejected, unauthenticated `/exec` returns401 and authenticated paid
+provider execution remains403. No provider was constructed or called.
+Local suite:3066 passed/49 skipped; wheel/sdist metadata and release contracts pass.
 
-Worktree `.worktrees/worker-auth-fix`, branch `fix/worker-auth-1.6.5`, preserves
-the dirty primary and its handoff. Retain this worktree through release acceptance;
-remove only after its source and evidence are durable and no work is active.
-PR: https://github.com/Khamel83/argus/pull/217. Local checks are complete.
-Next: `gh pr checks 217`, verify trusted exact-head review and normal merge,
-then cut v1.6.5 from merged main and verify PyPI.
-Recheck: `gh pr view 217 --json state,headRefOid,mergeCommit,reviews,statusCheckRollup`.
+GitHub private vulnerability reporting is enabled with independent readback.
+The reporter acknowledgment was sent in the original email thread and its SENT
+status independently read back. It confirms the published fix, links release
+credit and asks about preferred wording/disclosure timing. His reply remains
+external coordination, not a gate on the published patch.
+
+This closes the package security repair and publication. No claim is made about
+an operated production rollout or live provider retrieval. The legacy worker is
+development-only; production HTTP execution remains a separate authority.
+See [dated evidence](docs/evidence/2026-10-21-worker-authentication.md).
+
+Worktree `.worktrees/worker-auth-fix` retains source, ignored local test/build
+artifacts and this final record. Preserve the dirty primary and its original
+handoff. Local Git processes stopped responding during final release readback;
+GitHub native APIs independently verified current main and supplied the final
+record PR. Do not delete the worktree or retained branches until an idle/preservation
+check passes. No reset, clean or source overwrite occurred.
+
+Next: verify the final record PR's normal merge; any reporter follow-up is handled
+in the existing email thread. Recheck with `gh release view v1.6.5 -R Khamel83/argus`,
+`gh run view 39737816197 -R Khamel83/argus`, and the original PR217 native records.
 
 ## Shared PostgreSQL snapshot and restore acceptance — October 20 UTC
 

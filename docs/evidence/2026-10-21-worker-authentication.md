@@ -48,3 +48,33 @@ Local logs and package artifacts are retained under the ignored worktree
 `.artifacts/` directory. Native CI, exact-head trusted review, normal merge,
 PyPI publication and installed-PyPI verification are separate gates. No
 production deployment or reporter message is established by this source note.
+
+## Publication and acknowledgment — October 22, 2026 UTC
+
+Trusted exact-head [PASS5610327986](https://github.com/Khamel83/argus/pull/217#pullrequestreview-5610327986)
+and all eight [CI39737027592](https://github.com/Khamel83/argus/actions/runs/39737027592)
+checks passed. Native PR readback reports merged=true, actor
+`khamel-oci-pr-reviewer[bot]`, merge `f0386c760bfe05127a264540e4a79b373c71c123`
+at06:59:49 UTC. Reviewed and merged full-tree identity matches
+`a1140108edd931d439cb0c7cbb8848279346d4e8`.
+
+[Release v1.6.5](https://github.com/Khamel83/argus/releases/tag/v1.6.5) targets
+that source. [Publish39737816197](https://github.com/Khamel83/argus/actions/runs/39737816197)
+passed PyPI and MCP Registry. PyPI returned1.6.5 metadata and both distributions.
+An isolated `uv run --no-project --with argus-search==1.6.5` outside the repository
+confirmed site-packages import/version, reported PoC401, missing-secret startup
+rejection, unauthenticated exec401 and authenticated paid-provider403. Provider
+construction was mocked only to prove non-dispatch; no provider was called.
+
+The original-thread release acknowledgment credits the researcher and asks
+about credit wording and planned disclosure. Connected Gmail returned SENT;
+independent message readback verified the original reply reference, recipient,
+subject and SENT state. Email identifiers/content remain private. This confirms
+sending, not recipient reading or agreement on disclosure timing.
+
+Git stopped responding even to `git --version` during final readback. Plain-shell
+native GitHub API calls remained available and independently verified current main,
+merged tree, release and publication. The final record branch uses that exact
+native main commit as its parent. Local source, worktree and ignored artifacts
+remain retained; the primary checkout was not changed. No runtime deployment or
+live retrieval is claimed by package publication.

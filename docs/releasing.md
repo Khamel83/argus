@@ -2,10 +2,13 @@
 
 The repository version and the published package version are separate until a release is published.
 
-October 21, 2026 source checkpoint: metadata is prepared for `1.6.5`, including
-mandatory legacy worker authentication. Publication is not established by this
-source edit. Verify the GitHub Publish workflow and PyPI before announcing the
-fix as released. The last observed GitHub release is `v1.6.4`.
+October 22, 2026: [v1.6.5](https://github.com/Khamel83/argus/releases/tag/v1.6.5)
+is published to PyPI and the MCP Registry from source
+`f0386c760bfe05127a264540e4a79b373c71c123`.
+[Publish39737816197](https://github.com/Khamel83/argus/actions/runs/39737816197)
+passed both jobs. An isolated installation from PyPI verified1.6.5 and rejection
+of the reported legacy worker authentication bypass. Production container rollout
+is a separate operator acceptance boundary.
 
 ## Version files
 
