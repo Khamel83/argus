@@ -28,7 +28,7 @@ def _service(tmp_path):
     service = ProviderReadinessService(repository=repository)
     ref, attestation = build_fixture_attestation(
         ProviderName.BRAVE,
-        release="argus-1.6.4",
+        release="argus-1.6.5",
         provider_contract="2026-07-27-v1",
     )
     service.register_provider(
@@ -40,7 +40,7 @@ def _service(tmp_path):
             account_fingerprint="stale-account",
             budget_limit=10.0,
             durable_spend_repository=True,
-            release_revision="argus-1.6.4",
+            release_revision="argus-1.6.5",
             contract_version="2026-07-27-v1",
             fixture_evidence_ref=ref,
             fixture_attestation=attestation,
@@ -111,7 +111,7 @@ def _authorize(service, repository, *, account="stale-account"):
         idempotency_key=f"stale-operation:{account}",
         egress="local",
         request_class="discovery",
-        release_revision="argus-1.6.4",
+        release_revision="argus-1.6.5",
         contract_version="2026-07-27-v1",
         operation_id=f"stale-operation:{account}",
         request_hash="a" * 64,

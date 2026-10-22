@@ -1,5 +1,10 @@
 # Multi-Egress Worker Implementation Plan
 
+> Historical design. Since 1.6.5, the legacy worker defaults to loopback,
+> requires a nonempty shared secret on every bind, and starts only with explicit
+> `ARGUS_ENV=development`. The historical examples below are not current
+> security defaults; see `SECURITY.md` and `.env.example`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add state-driven multi-egress routing to Argus — declare worker nodes via env vars, probe which egress reaches which provider, and route each provider through its best available egress automatically. Adds per-caller attribution for dashboard observability.

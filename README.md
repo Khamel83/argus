@@ -693,6 +693,8 @@ When running from the repo, Argus now auto-loads `.env` and `.env.local` (withou
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `ARGUS_WORKER_BIND` | `127.0.0.1:8273` | Legacy development worker bind; requires explicit `ARGUS_ENV=development` |
+| `ARGUS_EGRESS_SHARED_SECRET` | (empty) | Required bearer secret for every legacy worker execution request, including loopback |
 | `ARGUS_NODE_ROLE` | `primary` | Production authority is `primary`; adapters are `caller`; direct/worker execution is development-only |
 | `ARGUS_AUTHORITY_URL` | — | HTTP API base URL required by production CLI and MCP adapters |
 | `ARGUS_AUTHORITY_TOKEN` | — | Scoped caller token for production CLI and MCP adapters |

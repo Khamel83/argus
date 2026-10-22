@@ -340,9 +340,10 @@ def extraction_execution_allowed(*, authority_capability: object | None) -> None
 
 
 def worker_execution_allowed() -> None:
-    """Legacy provider workers are development-only."""
-    if os.environ.get("ARGUS_ENV", "development").strip().lower() == "production":
+    """Legacy provider workers require explicit development opt-in."""
+    if os.environ.get("ARGUS_ENV", "").strip().lower() != "development":
         raise RuntimeError(
-            "Production provider execution is reserved for the "
+            "Worker execution requires ARGUS_ENV=development; "
+            "production provider execution is reserved for the "
             "HTTP API execution authority"
         )

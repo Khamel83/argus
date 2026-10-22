@@ -650,7 +650,7 @@ def create_app(
     app = FastAPI(
         title="Argus",
         description="Retrieval platform for AI agents",
-        version="1.6.4",
+        version="1.6.5",
         lifespan=lifespan_with_probes,
     )
     app.state.operational_status = operational_status or create_operational_status()

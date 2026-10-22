@@ -1,3 +1,21 @@
+## Legacy worker authentication — October 21, 2026
+
+Confirmed against fetched main `62d0d2243ac9e8315fd955135058c40d3d9adf65`:
+missing `ARGUS_EGRESS_SHARED_SECRET` bypassed authentication. Source now requires
+explicit `ARGUS_ENV=development` and a nonblank secret at startup, validates
+bearer authentication before every dispatch, and defaults the CLI bind to
+`127.0.0.1:8273`. No insecure development bypass is retained. Metadata and
+provider fixture attestations are prepared for 1.6.5. Security/setup/release docs
+and reporter credit are updated. GitHub private reporting is enabled and read back.
+
+Focused worker/authority checks: 72 passed. Release contract and exact generated
+fixture check passed. Wheel/sdist build and metadata checks pass; an isolated installed wheel blocks
+the report PoC. Final full suite: 3066 passed, 49 skipped, four existing warnings; native
+CI, trusted review, normal merge, package publication and installed-package
+readback remain required. No operated deployment or reporter message is claimed.
+The production authority is separate from this legacy development-only worker.
+Source proposal: https://github.com/Khamel83/argus/pull/217.
+
 ## Shared PostgreSQL snapshot contract — October 20 UTC
 
 The bounded restore verifier exposed a real source-backup race: the legacy

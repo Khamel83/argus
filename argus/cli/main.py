@@ -903,14 +903,14 @@ def serve(host, port, reload):
     "--bind",
     default=None,
     envvar="ARGUS_WORKER_BIND",
-    help="Host:port to bind (default 0.0.0.0:8273)",
+    help="Host:port to bind (default 127.0.0.1:8273)",
 )
 def worker(bind: str):
     """Start an Argus egress worker — minimal provider executor over HTTP."""
     import uvicorn
     from argus.worker.server import create_worker_app
 
-    host, port = "0.0.0.0", 8273
+    host, port = "127.0.0.1", 8273
     if bind:
         parts = bind.rsplit(":", 1)
         if len(parts) == 2:

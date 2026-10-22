@@ -2,12 +2,10 @@
 
 The repository version and the published package version are separate until a release is published.
 
-As of 2026-05-22:
-
-- Repository metadata is `1.6.2`.
-- PyPI `argus-search` is published at `1.6.1` (latest release).
-- GitHub release `v1.6.1` has been created.
-- MCP Registry publication for `v1.6.1` completed through the publish workflow.
+October 21, 2026 source checkpoint: metadata is prepared for `1.6.5`, including
+mandatory legacy worker authentication. Publication is not established by this
+source edit. Verify the GitHub Publish workflow and PyPI before announcing the
+fix as released. The last observed GitHub release is `v1.6.4`.
 
 ## Version files
 

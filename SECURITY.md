@@ -25,12 +25,19 @@ vulnerabilities and publish a fix before disclosing details.
 - **Domain rate limiting**: 10 requests/minute per domain to prevent abuse
 - **Remote auth**: non-local HTTP callers and remote MCP transports must authenticate with `ARGUS_API_KEY`
 - **Admin separation**: privileged HTTP routes live under `/api/admin/*` and require the admin key
-- **Residential worker auth**: residential extraction requires a shared bearer secret and caller allowlist
+- **Residential extraction worker auth**: residential extraction requires a shared bearer secret and caller allowlist.
+- **Legacy egress worker auth (1.6.5+)**: `argus worker` requires explicit
+  `ARGUS_ENV=development` and a nonempty `ARGUS_EGRESS_SHARED_SECRET`, even on
+  loopback. Every `POST /exec` validates the bearer token before provider dispatch.
+  This worker does not implement the residential extraction caller allowlist.
 - **No user data storage**: Search queries and sessions are stored locally by the user — nothing is sent to Argus servers
 - **API keys**: Keys are read from environment variables only — never logged, transmitted, or stored outside the user's config
 
 ## Deployment Defaults
 
+- Legacy egress workers default to `127.0.0.1:8273`. To reach one from a trusted
+  peer, explicitly set `ARGUS_WORKER_BIND=HOST:PORT` and use the shared bearer
+  secret over a protected network. Production execution belongs to the HTTP authority.
 - Prefer loopback binds (`127.0.0.1`) unless you are intentionally exposing Argus to trusted peers.
 - If you publish Argus on a network, set `ARGUS_API_KEY` first and use `ARGUS_ADMIN_API_KEY` for privileged routes where possible.
 - Treat remote MCP as an authenticated interface. Local `stdio` is the safest default.

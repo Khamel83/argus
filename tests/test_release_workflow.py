@@ -171,14 +171,14 @@ def test_package_publication_is_fail_closed():
     assert "Verify release contract" in text
 
 
-def test_release_identity_is_1_6_4_in_user_visible_locations():
+def test_release_identity_is_1_6_5_in_user_visible_locations():
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     server = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
     package_text = (ROOT / "argus/__init__.py").read_text(encoding="utf-8")
     api_text = (ROOT / "argus/api/main.py").read_text(encoding="utf-8")
 
-    assert pyproject["project"]["version"] == "1.6.4"
-    assert server["version"] == "1.6.4"
-    assert server["packages"][0]["version"] == "1.6.4"
-    assert re.search(r'__version__\s*=\s*["\']1\.6\.4["\']', package_text)
-    assert re.search(r'version=["\']1\.6\.4["\']', api_text)
+    assert pyproject["project"]["version"] == "1.6.5"
+    assert server["version"] == "1.6.5"
+    assert server["packages"][0]["version"] == "1.6.5"
+    assert re.search(r'__version__\s*=\s*["\']1\.6\.5["\']', package_text)
+    assert re.search(r'version=["\']1\.6\.5["\']', api_text)
