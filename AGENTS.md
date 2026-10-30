@@ -328,3 +328,15 @@ stale source evidence stays unknown. Generated summaries must not become new
 copies of the underlying tasks. Janitor distributes this contract; Infra's
 catalog defines project membership and lifecycle.
 <!-- janitor:end:global-work -->
+<!-- janitor:begin:metered-provider -->
+## Metered provider calls
+
+Keep whole-bucket scans and listing work out of polling loops. Use bounded,
+durable cooldowns for reconciliation, including empty polls and restarts.
+Before adding or changing a recurring provider caller, state expected requests per hour
+and per month next to the applicable allowance; include pagination and retries.
+Add a provider-free test counting fake provider requests over one simulated hour.
+After deployment, verify provider analytics for a full hour and retain the
+request-count evidence. Successful responses alone do not establish budget safety.
+This rule grants no new spend, credential, monitoring or deployment authority.
+<!-- janitor:end:metered-provider -->
