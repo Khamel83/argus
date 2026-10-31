@@ -1,3 +1,15 @@
+## Shared scorecard admission — October 31, 2026 source checkpoint
+
+Current Infra source already guards both wrapper and direct scorecard entrypoints
+with one inherited host lock, bounded pressure/backoff and verified owned cleanup.
+The retained Argus callback-only candidates are not a second implementation to
+publish. Existing Infra admission/runner tests passed 80 isolated checks; no
+runtime change, installation parity or real Baywatch qualification is claimed.
+See the [immutable criterion map](docs/evidence/2026-10-31-scorecard-admission-reconciliation.md).
+This documentation candidate still needs native CI, exact-head trusted review
+and normal merge. #154/#151 stay open; browser fail-closed and Atlas ownership
+are unchanged. Native claim/session state remains unknown.
+
 ## Glama catalog startup repaired — October 22, 2026
 
 The failure email referred to a successful install followed by MCP startup
