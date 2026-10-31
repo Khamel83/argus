@@ -1,3 +1,21 @@
+## Scorecard admission #154 — October 31, 2026 continuation
+
+Finished source inspection and 80 unchanged isolated Infra admission/runner tests.
+Both real source entrypoints already share the Infra-owned guard; do not cherry-pick
+the five obsolete parallel WIP implementations. Their exact heads are preserved
+in the [dated criterion map](docs/evidence/2026-10-31-scorecard-admission-reconciliation.md).
+
+This documentation continuation uses a separate branch from current main, leaving
+all retained worker branches unchanged because native ownership is unknown.
+GitHub source/claim records were checked; no native checkout was touched.
+Next: required native CI, exact-head trusted review and normal source merge. Do not reuse
+Janitor PR224 or change its managed sections. The Infra/Homelab operator must
+separately establish installed parity and authorized real-path five-second
+qualification/cleanup receipts; those gates remain open, not failed or complete.
+Recheck the two immutable Infra test suites named in the evidence. No Docker,
+provider, SSH or runtime operation was performed. Keep #154 acceptance-pending,
+#151 open, browser attestation fail-closed and Atlas user-owned.
+
 ## Glama catalog startup repaired — October 22, 2026
 
 The failure email referred to a successful install followed by MCP startup

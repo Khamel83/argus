@@ -1,3 +1,16 @@
+## Scorecard admission #154 — source reconciliation, October 31, 2026
+
+- [x] Reconcile the retained candidates with the existing Infra-owned host guard;
+  verify its current admission and runner contracts: 80 isolated tests passed.
+  [Immutable source and criterion map](docs/evidence/2026-10-31-scorecard-admission-reconciliation.md).
+- [ ] Publish this documentation continuation through required native CI,
+  exact-head trusted review and normal merge. Native worker ownership is unknown.
+- [ ] Infra/Homelab operator: verify installed source/config parity and complete
+  the existing bounded real-path five-second Baywatch/cleanup qualification.
+  [#154](https://github.com/Khamel83/argus/issues/154) and
+  [#151](https://github.com/Khamel83/argus/issues/151) remain open; do not install
+  a retained parallel coordinator or infer runtime acceptance from source tests.
+
 ## Glama catalog startup follow-up — October 22, 2026
 
 - [x] Reproduce the reported catalog startup failure, correct the saved adapter
