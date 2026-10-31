@@ -75,16 +75,19 @@ receipt and logs are retained. The corrected test runs as ordinary
 
 ## Public share extraction / issue159
 
-- [ ] Deliver [159](https://github.com/Khamel83/argus/issues/159): recovered/repaired
-  extraction source passes79 focused tests (including actual offline Chromium)
-  and3035 full/47skips. Source[201](https://github.com/Khamel83/argus/pull/201)
-  normally merged927f3f7 after exactcc027c9/PASS5556889749/all8checks; each native
-  Python lane3050/32skips, canonical merge-e9bc1473435e47e3bf740e3668f5004b.
-  Removed admission exception; review defects fixed with causal fixtures.
-  Guarded operated release and actual Gemini/ChatGPT conversation canaries remain
-  separate; source tests and synthetic fixtures do not satisfy runtime acceptance.
 
 # Argus operational follow-up
+
+## Now
+
+Fleet limit: 10 items. Only the owner adds here ([rules](https://github.com/Khamel83/engage/blob/main/docs/design/2026-10-31-backlog-reset.md)).
+
+
+## Someday
+
+Dated lines; unpromoted lines archive after 30 days.
+
+Archived October 31, 2026: [backlog](docs/archive/backlog-2026-10-31.md).
 
 ## Issue177/179 development environment
 
@@ -108,13 +111,6 @@ Source eligibility does not close the release or natural-consumer gates below.
 - [x] Implement and independently review the Tavily-only opt-in observer,
   including filesystem/input and integer-attempt admission regressions.
   69 combined observer/configuration/API lifecycle tests and focused Ruff pass.
-- [ ] Obtain exact-head trusted review and required CI before guarded release.
-  First head `067088d` received trusted PASS but CI correctly refused stale
-  provider fixture attestations after the shared config change. Regenerated
-  with the existing hermetic generator; its exact check passes. Final-head
-  review and CI remain required.
-- [ ] Use guarded digest/source release and explicit nonsecret opt-in; accept
-  a natural redacted metadata receipt. Production currently remains `e8f36cf`.
 - [ ] Homelab separately owns protected source binding, credential-free reader
   acceptance, durable health-log admission and notification evidence. No raw
   credential is exported and overall readiness remains unknown.
@@ -129,14 +125,6 @@ Homelab credential-health change.
   passed, including Python 3.11, 3.12, and 3.13. This test-only change has no
   deployment or provider-effect claim.
 
-- [ ] Confirm the next natural Janitor OCI observation of Argus source
-  `e8f36cf` has an archived receipt. The supervised OCI dispatch
-  [36538279239](https://github.com/Khamel83/janitor/actions/runs/36538279239)
-  already archived valid identity. PR #164 repaired the restore inventory;
-  fresh backup and disposable restore passed, and guarded promotion completed
-  its 1,800-second soak at 08:00 UTC on 2026-09-29. The new digest is current
-  and known-good; live `/api/ready` returns the source SHA. See the Homelab
-  dated Argus promotion receipt. Issue #296 has other fleet gates.
 - [x] Retire the old `oci-ts` AI Review workflow. PR #163 merged as `bdca7fb`.
   Keep public/fork CI on GitHub-hosted runners. Its separate image failed
   exact scorecard admission; issue triage from the old workflow has no
@@ -156,13 +144,7 @@ A checked source task does not imply every provider has passed a live call.
 - [x] Complete authenticated MCP, extraction and one-attempt Maya capture checks on the corrected image.
 - [x] Finish the automatic corrected-image promotion soak and restore Valyu disablement.
 - [x] Correct extraction release configuration/binding and preserve full source URL; existing receipts remain unchanged. Done (model-matched): https://github.com/Khamel83/argus/pull/138
-- [ ] Admit a real external browser-network authority/attestation and prove a browser-assisted extraction. Keep browser access fail-closed meanwhile.
-- [ ] Obtain fresh authorized validation for providers whose one-call canary failed before the transport repair; preserve those failures and uncertain reservations.
 - [ ] Reconcile uncertain provider charges only with authoritative provider evidence. Never convert an HTTP rejection into assumed zero spend.
-- [ ] Automate the exact digest scorecard-admission handoff; retain bounded residual semantics when the evaluator is absent.
-- [ ] Close remaining pool/lifespan, authenticated-browser shutdown and workflow shutdown/finalization debt.
-- [ ] Review the optional workflow LLM gateway's admission and error boundary before enabling it as a production capability.
-- [ ] Add deliberate type/format governance separately from restoration; do not reformat unrelated user work.
 
 SearchAPI has no configured key. Valyu must remain account-blocked if it rejects
 the bounded request; this checklist does not authorize billing changes, quota
@@ -171,12 +153,6 @@ resets, credential rotation or repeated provider tests.
 
 - [x] Reconcile the managed TODO pointer after G2K High; original generated
   bytes and all task intents are preserved in the dated evidence above.
-- [ ] Verify normal trusted review/merge and the next natural publisher; no
-  publisher invocation or full-fleet acceptance is claimed here.
-- [ ] Reconcile the inherited extraction-completion conflict: canonical task
-  is checked/model-matched to PR138 while the archived generated item remained
-  unchecked. Retain that unresolved extraction acceptance until owning source
-  evidence resolves it; this pointer repair does not choose a completion state.
 
 <!-- janitor:begin:todo -->
 The project-owned task list in this TODO.md is authoritative. Janitor does not duplicate its checkboxes.
