@@ -362,13 +362,11 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-- Glama startup configuration: source commit `e71965e3e95297944847c6846d8b2fdcb7f91172` records the correction in PR #221, superseding the documents' pending-merge checkpoint. Published documentation reports Glama 1.6.5, a passing native discovery test, independent settings readback and 72 focused checks. No additional PyPI publication or operated HTTP authority rollout is established by this change.
-- Legacy worker security: `f0386c760bfe05127a264540e4a79b373c71c123` (#217) implements fail-closed authentication; `446ac29b17224e9b57cccf0618f9534cd8a9f8e9` (#219) records publication and installed-package verification. Documentation reports successful PyPI/MCP Registry publication of 1.6.5 and rejection of the reported PoC without provider calls. Operated production rollout is not claimed; reporter CVE coordination remains unresolved.
-- PostgreSQL backup/restore: `175a7a39aefdc43e3c08a1885974f571bef0cccd` (#209), `e7ee75a9193615beb12137467aa9b4104164fdb0` (#211) and `66365a661abcfa6ccb4a10dfe5e4b251eaf339ff` (#213) establish shared per-database snapshots and restore-inventory repairs. `1a02b5cf7e6f53f17f667fb9de90b2d726ab4cb5` (#215) records accepted bounded manual production and isolated restore of schema-2 set `20261020T032858Z`. Natural recurrence, cross-database atomicity and application cutover are not established; legacy v1 snapshot consistency remains unproven.
-- Public share extraction: `927f3f7340271157ad0318969199289f1f9b82b2` (#201) supplies guarded rendered extraction; `bd57b09c16914f3718a3fd31961c4708feafeae7` (#202) records source acceptance. Issue #159 still requires guarded runtime release and actual public-share canaries; source and offline browser tests do not establish live acceptance.
-- Development environment: `c1016bf37eed7dc8f81943f613dd90c51585fb71` (#198) and `82daea1ff9dd352c0edd3aea60980d1fed4ca6c2` (#199) record mise/uv adoption and verified closure of issues #177/#179. Separate type/format governance remains open.
-- Commit history records the Tavily observer merge at `bf58a770a74e58fa07f0d9104fc9e91301b96453` (#173) and PR-only CI cancellation at `e5380c7f03d577f4bda3e081c1d69d4c30a2d5d3` (#195), superseding older pending-merge notes. These commits do not establish observer deployment, natural receipts or provider acceptance.
-- The project-owned TODO queue and ordered reconciliation in [docs/REPO_PLAN.md](docs/REPO_PLAN.md), coordinated through [#191](https://github.com/Khamel83/argus/issues/191), retain runtime acceptance gates, provider holds and the unresolved extraction-completion conflict.
+- Docs reset backlog to the owner Now list in PR #227 (commit 164ecc18544d3ea2551e88f10d2eab81af3c001f).
+- Ticked TODO lines finished by merged work in PR #222 (commit 65513336c7d5a9975eb99f1b86c904df77683db8).
+- Glama authenticated MCP startup configuration corrected in PR #221 (commit e71965e3e95297944847c6846d8b2fdcb7f91172).
+- Worker security patch publication and installed-package proof recorded in PR #219 (commit 446ac29b17224e9b57cccf0618f9534cd8a9f8e9).
+- Fail-closed legacy worker authentication patch (1.6.5) merged in PR #217 (commit f0386c760bfe05127a264540e4a79b373c71c123).
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
