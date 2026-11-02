@@ -96,7 +96,7 @@ jobs:
           if-no-files-found: error
 
   postgres-ledger:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     services:
       postgres:
@@ -119,7 +119,7 @@ jobs:
       ARGUS_RESIDENTIAL_POLICY: "off"
       ARGUS_TEST_POSTGRES_URL: postgresql+psycopg2://postgres:postgres@127.0.0.1:5432/argus_restore_ci_authority
       ARGUS_TEST_ALLOW_PROVISIONING: disposable-only
-      ARGUS_TEST_PSQL: /usr/bin/psql
+      ARGUS_TEST_PSQL: /usr/lib/postgresql/16/bin/psql
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -146,12 +146,24 @@ jobs:
       - name: Verify canonical provider fixture attestations
         run: mise run fixture-check
 
-      - name: Install PostgreSQL client
+      - name: Install PostgreSQL 16 client
         run: |
           sudo apt-get update
-          sudo apt-get install -y postgresql-client
-          test -x "$ARGUS_TEST_PSQL"
-          "$ARGUS_TEST_PSQL" --version
+          sudo apt-get install -y postgresql-client-16
+          client_bin=/usr/lib/postgresql/16/bin
+          for tool in psql pg_dump pg_restore; do
+            test -x "$client_bin/$tool"
+            "$client_bin/$tool" --version | grep -E ' \(PostgreSQL\) 16\.'
+          done
+          echo "$client_bin" >> "$GITHUB_PATH"
+
+      - name: Verify PostgreSQL 16 client selection
+        run: |
+          for tool in psql pg_dump pg_restore; do
+            test "$(command -v "$tool")" = "/usr/lib/postgresql/16/bin/$tool"
+            "$tool" --version | grep -E ' \(PostgreSQL\) 16\.'
+          done
+          test "$ARGUS_TEST_PSQL" = "$(command -v psql)"
 
       - name: Migrate PostgreSQL schema
         run: |
