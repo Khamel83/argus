@@ -192,7 +192,9 @@ No provider request or deployment occurred.
 PR173's first head `067088d` received trusted PASS. CI refused stale provider
 fixture attestations because config.py is a hashed shared dependency. The
 existing hermetic generator refreshed shared hashes/evidence references only;
-`--check` passes. Final-head CI and trusted review remain required.
+`--check` passes. PR173 subsequently merged October2 as
+`bf58a770a74e58fa07f0d9104fc9e91301b96453`; the pending source instruction
+is superseded. Deployment and natural-consumer receipt gates remain separate.
 [Contract and separate acceptance gates](docs/operations/tavily-credential-observation.md).
 Live Homelab still reports source `e8f36cfea3552a952479b335f964618f89f4fd42`
 and the accepted `c8853fbe` image; existing source overrides remain protected.
