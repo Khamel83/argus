@@ -78,15 +78,6 @@ receipt and logs are retained. The corrected test runs as ordinary
 
 # Argus operational follow-up
 
-## Now
-
-Fleet limit: 10 items. Only the owner adds here ([rules](https://github.com/Khamel83/engage/blob/main/docs/design/2026-10-31-backlog-reset.md)).
-
-
-## Someday
-
-Dated lines; unpromoted lines archive after 30 days.
-
 Archived October 31, 2026: [backlog](docs/archive/backlog-2026-10-31.md).
 
 ## Issue177/179 development environment
