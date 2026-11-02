@@ -11,8 +11,9 @@ with a release-contract guard against future Glama version drift.
 
 72 focused delivery/release/HTTP-authority checks pass. Local bare MCP startup
 fails closed; dummy-config MCP initializes and lists 15 tools without an authority
-or provider call. Native CI, trusted review and normal merge remain the source
-gates. No new PyPI package or operated HTTP authority rollout is claimed.
+or provider call. PR221 merged October22 as
+`e71965e3e95297944847c6846d8b2fdcb7f91172`. No new PyPI package or
+operated HTTP authority rollout is claimed.
 See [dated evidence](docs/evidence/2026-10-22-glama-startup-repair.md).
 
 The reporter accepted credit and has no fixed advisory date; his only open
@@ -23,10 +24,10 @@ new message or CVE request was sent in this turn; suggested wording stays in cha
 Reused worktree `.worktrees/worker-auth-fix`, branch `fix/glama-authority-config`;
 prior publication edits remain in local snapshot `bbce917` on the old branch.
 Retain the worktree/ignored artifacts and preserve the primary's handoff edit.
-Source proposal: https://github.com/Khamel83/argus/pull/221.
-Next: `gh pr view 221 --json state,headRefOid,reviews,statusCheckRollup,mergeCommit`;
-verify trusted exact-head review, all checks and normal merge. Recheck the linked
-Glama successful test/release independently.
+Source merged: https://github.com/Khamel83/argus/pull/221.
+The obsolete source-review/merge next step is retired; release/runtime and receipt
+qualification remain separate. Records worktree `.worktrees/records-close-20261102`
+stays until verified merge; remove only that clean temporary tree afterwards.
 Owner may use the suggested CVE coordination reply in chat; no email is queued.
 
 ## Legacy worker security patch released — October 22, 2026
