@@ -718,6 +718,11 @@ When running from the repo, Argus now auto-loads `.env` and `.env.local` (withou
 | `ARGUS_DATA_ROOT` | platformdirs user data dir | Override the Argus runtime corpus root |
 | `ARGUS_*_MONTHLY_BUDGET_USD` | provider-specific | Query-count budget for most providers; USD budget for Valyu |
 | `ARGUS_CRAWL4AI_ENABLED` | false | Enable Crawl4AI extraction step |
+| `ARGUS_GATEWAY_URL` | — | OpenAI-compatible gateway (for example g2k, `http://<host>:4312/v1`) used by `POST /api/workflows/search-and-summarize` to write the answer. Unset: the deterministic extractive summary is used |
+| `ARGUS_GATEWAY_KEY` | — | Bearer token for that gateway. Use a workload token provisioned for Argus, never a shared endpoint token |
+| `ARGUS_GATEWAY_MODEL` | `auto` | Model sent to the gateway, for example `auto`, `gemini-web/gemini-flash` or `chatgpt-web/gpt-5-6-thinking-medium` |
+| `ARGUS_GATEWAY_MODE` | `grounded` | `grounded` answers only from captured sources. `expand` also lets the model research on its own and returns anything beyond the sources as an unverified "Additional leads" section |
+| `ARGUS_GATEWAY_TIMEOUT` | `120` | Seconds to wait for the gateway before falling back to the extractive summary |
 | `ARGUS_MIN_GOOD_RESULTS` | `3` | Distinct domains required before one-time-credit providers are skipped. Free and monthly providers always run |
 | `ARGUS_GUARD_ENABLED` | `true` | Runaway-caller guard on `POST /api/search`: repeat/burst limits run free-only, the daily cap returns 429 |
 | `ARGUS_GUARD_REPEAT_LIMIT` / `_BURST_LIMIT` / `_DAILY_LIMIT` | `3` / `60` / `300` | Same query per 10 min, calls per 10 min, calls per 24 h |

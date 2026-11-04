@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -172,13 +173,66 @@ class ValyuSummarizer(BaseSummarizer):
         ]
 
 
-@dataclass
-class LLMSummarizer(BaseSummarizer):
-    """Uses the gateway LLM to synthesize a structured answer from search results."""
+_GROUNDED_PROMPT = (
+    "You are a research assistant. Given search results and a user query, "
+    "produce a concise, well-structured answer. Cite sources by [Source N]. "
+    "If the results don't answer the query, say so clearly."
+)
+_EXPAND_PROMPT = (
+    _GROUNDED_PROMPT
+    + " Answer from the provided sources first. If you can also search or browse "
+    "the web yourself, do additional research to fill gaps or check claims. "
+    "Put anything that does not come from the provided sources, including any "
+    "extra URLs you found, only under a final heading '## Additional leads'. "
+    "Do not cite [Source N] for those items."
+)
+_LEADS_HEADING = re.compile(
+    r"^\s*#{1,3}\s*additional leads\s*$", re.IGNORECASE | re.MULTILINE
+)
 
-    def __init__(self, gateway_url: str = "", gateway_key: str = ""):
-        self.gateway_url = gateway_url or os.getenv("ARGUS_GATEWAY_URL", "")
+
+class LLMSummarizer(BaseSummarizer):
+    """Synthesize an answer from captured sources through an OpenAI-compatible gateway.
+
+    Built for g2k (``ARGUS_GATEWAY_URL=http://<host>:4312/v1``, model ``auto``)
+    but works with any gateway that implements ``/chat/completions``. It never
+    blocks the workflow: any gateway failure falls back to the deterministic
+    extractive summary.
+
+    ``ARGUS_GATEWAY_MODE``:
+    - ``grounded`` (default): answer only from the captured sources.
+    - ``expand``: the model may also do its own web research (for example a
+      g2k ChatGPT/Gemini web lane). Anything beyond the captured sources is
+      returned in a separate, unverified "Additional leads" section.
+    """
+
+    def __init__(
+        self,
+        gateway_url: str = "",
+        gateway_key: str = "",
+        *,
+        model: str = "",
+        mode: str = "",
+        timeout: float | None = None,
+    ):
+        self.gateway_url = (gateway_url or os.getenv("ARGUS_GATEWAY_URL", "")).rstrip(
+            "/"
+        )
         self.gateway_key = gateway_key or os.getenv("ARGUS_GATEWAY_KEY", "")
+        self.model = model or os.getenv("ARGUS_GATEWAY_MODEL", "") or "auto"
+        resolved_mode = (
+            mode or os.getenv("ARGUS_GATEWAY_MODE", "") or "grounded"
+        ).lower()
+        self.mode = (
+            resolved_mode if resolved_mode in {"grounded", "expand"} else "grounded"
+        )
+        if timeout is None:
+            try:
+                timeout = float(os.getenv("ARGUS_GATEWAY_TIMEOUT", "") or 120)
+            except ValueError:
+                timeout = 120.0
+        self.timeout = timeout if timeout > 0 else 120.0
+        self._fallback = ExtractiveSummarizer()
 
     async def summarize(
         self,
@@ -196,7 +250,57 @@ class LLMSummarizer(BaseSummarizer):
                     citation_ids=[],
                 )
             ]
+        try:
+            answer = await self._ask_gateway(prompt, documents)
+        except (
+            httpx.HTTPError,
+            RuntimeError,
+            ValueError,
+            KeyError,
+            IndexError,
+            TypeError,
+        ) as exc:
+            logger.warning(
+                "gateway summarizer unavailable (%s: %s); using extractive fallback",
+                type(exc).__name__,
+                exc,
+            )
+            return await self._fallback.summarize(
+                title=title, prompt=prompt, documents=documents, citations=citations
+            )
+        if not answer.strip():
+            logger.warning(
+                "gateway returned an empty answer; using extractive fallback"
+            )
+            return await self._fallback.summarize(
+                title=title, prompt=prompt, documents=documents, citations=citations
+            )
 
+        citation_ids = [c.id for c in citations[:10]]
+        if self.mode == "expand":
+            parts = _LEADS_HEADING.split(answer, maxsplit=1)
+            if len(parts) == 2 and parts[1].strip():
+                return [
+                    SummarySection(
+                        heading="Answer",
+                        body=parts[0].strip(),
+                        citation_ids=citation_ids,
+                    ),
+                    SummarySection(
+                        heading="Additional leads (unverified)",
+                        body=parts[1].strip(),
+                        citation_ids=[],
+                    ),
+                ]
+        return [
+            SummarySection(heading="Answer", body=answer, citation_ids=citation_ids)
+        ]
+
+    async def _ask_gateway(
+        self, prompt: str, documents: Sequence[StoredDocument]
+    ) -> str:
+        if not self.gateway_url:
+            raise RuntimeError("ARGUS_GATEWAY_URL is not configured")
         context_parts = []
         for i, doc in enumerate(documents[:20]):
             text = doc.metadata.get("lead_text", "") or ""
@@ -211,23 +315,22 @@ class LLMSummarizer(BaseSummarizer):
                 f"[Source {i + 1}]{marker} {doc.title or doc.url}\n{text[:2000]}"
             )
         context = "\n\n".join(context_parts)
-
-        system_prompt = (
-            "You are a research assistant. Given search results and a user query, "
-            "produce a concise, well-structured answer. Cite sources by [Source N]. "
-            "If the results don't answer the query, say so clearly."
-        )
+        system_prompt = _EXPAND_PROMPT if self.mode == "expand" else _GROUNDED_PROMPT
         user_prompt = f"Query: {prompt}\n\nSearch Results:\n{context}"
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        headers = {
+            "Content-Type": "application/json",
+            # Logging-only attribution for g2k; ignored by other gateways.
+            "X-G2K-Caller": "argus-workflows",
+        }
+        if self.gateway_key:
+            headers["Authorization"] = f"Bearer {self.gateway_key}"
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
             resp = await client.post(
                 f"{self.gateway_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.gateway_key}",
-                    "Content-Type": "application/json",
-                },
+                headers=headers,
                 json={
-                    "model": "cheap",
+                    "model": self.model,
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
@@ -235,20 +338,11 @@ class LLMSummarizer(BaseSummarizer):
                     "temperature": 0.2,
                 },
             )
-            if resp.status_code != 200:
-                raise RuntimeError(
-                    f"gateway returned {resp.status_code}: {resp.text[:200]}"
-                )
-            body = resp.json()
-            answer = body.get("choices", [{}])[0].get("message", {}).get("content", "")
-
-        return [
-            SummarySection(
-                heading="Answer",
-                body=answer,
-                citation_ids=[c.id for c in citations[:10]],
-            ),
-        ]
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"gateway returned {resp.status_code}: {resp.text[:200]}"
+            )
+        return resp.json()["choices"][0]["message"]["content"] or ""
 
 
 def get_summarizer(kind: str = "extractive") -> BaseSummarizer:
@@ -277,6 +371,9 @@ def get_summarizer(kind: str = "extractive") -> BaseSummarizer:
             )
             return fallback
     if kind == "llm":
+        if not os.getenv("ARGUS_GATEWAY_URL", "").strip():
+            logger.info("ARGUS_GATEWAY_URL not set; using extractive summarizer.")
+            return fallback
         return LLMSummarizer()
     if kind == "extractive":
         return ExtractiveSummarizer()
