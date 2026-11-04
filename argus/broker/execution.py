@@ -50,7 +50,7 @@ def _distinct_domains(provider_results: Mapping[str, Sequence[SearchResult]]) ->
     domains: set[str] = set()
     for results in provider_results.values():
         for result in results:
-            domain = (result.domain or urlparse(result.url).netloc).lower()
+            domain = (result.domain or urlparse(result.url).hostname or "").lower()
             if domain:
                 domains.add(domain)
     return len(domains)

@@ -2869,3 +2869,21 @@ async def test_executor_uses_local_when_reachable():
     await execute_with_plan(executor, query, [ProviderName.YAHOO])
 
     assert local_provider.calls == 1
+
+
+def test_distinct_domains_counts_hostname_not_userinfo_or_port():
+    from argus.broker.execution import _distinct_domains
+
+    def result(url):
+        return SearchResult(
+            url=url, title="t", snippet="s", provider=ProviderName.DUCKDUCKGO
+        )
+
+    results = {
+        "ddg": [
+            result("https://a@same.example/x"),
+            result("https://b@same.example:8443/y"),
+            result("https://SAME.example/z"),
+        ]
+    }
+    assert _distinct_domains(results) == 1

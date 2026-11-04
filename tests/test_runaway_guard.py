@@ -142,3 +142,37 @@ async def test_concurrent_admission_is_bounded():
     )
     allowed = [r for r in results if r.action is GuardAction.ALLOW]
     assert len(allowed) == 3
+
+
+@pytest.mark.asyncio
+async def test_model_client_ignores_environment_proxies(monkeypatch):
+    import httpx
+
+    from argus.broker import guard as guard_module
+
+    seen = {}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, json):
+            class Response:
+                def raise_for_status(self):
+                    pass
+
+                def json(self):
+                    return {"choices": [{"message": {"content": '{"runaway": false}'}}]}
+
+            return Response()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    review = guard_module._http_reviewer("http://127.0.0.1:11434/v1")
+    assert await review([{"query": "q", "age_s": 1}]) is False
+    assert seen["trust_env"] is False

@@ -240,7 +240,10 @@ def _http_reviewer(url: str) -> Reviewer:
             "process; false if they look like normal varied work.\n"
             + json.dumps(recent)
         )
-        async with httpx.AsyncClient(timeout=MODEL_TIMEOUT_S) as client:
+        # trust_env=False: never route query text through an env-configured proxy.
+        async with httpx.AsyncClient(
+            timeout=MODEL_TIMEOUT_S, trust_env=False
+        ) as client:
             response = await client.post(
                 url,
                 json={
