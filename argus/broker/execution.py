@@ -50,7 +50,13 @@ def _distinct_domains(provider_results: Mapping[str, Sequence[SearchResult]]) ->
     domains: set[str] = set()
     for results in provider_results.values():
         for result in results:
-            domain = (result.domain or urlparse(result.url).hostname or "").lower()
+            domain = result.domain
+            if not domain:
+                try:
+                    domain = urlparse(result.url).hostname or ""
+                except ValueError:  # malformed authority, e.g. "http://[bad/x"
+                    continue
+            domain = domain.lower()
             if domain:
                 domains.add(domain)
     return len(domains)

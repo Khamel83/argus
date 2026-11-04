@@ -57,7 +57,10 @@ def test_daily_cap_denies():
     guard, clock = make(daily_limit=4, burst_limit=100)
     for i in range(4):
         assert guard.admit("p", f"q{i}").action is GuardAction.ALLOW
-    assert guard.admit("p", "q4").action is GuardAction.DENY
+    denied = guard.admit("p", "q4")
+    assert denied.action is GuardAction.DENY
+    # Oldest call was at t0, so the cap lifts one day after it.
+    assert denied.retry_after_s == 24 * 3600 + 1
     clock.now += 25 * 3600
     assert guard.admit("p", "q5").action is GuardAction.ALLOW
 

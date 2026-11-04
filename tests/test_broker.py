@@ -2887,3 +2887,15 @@ def test_distinct_domains_counts_hostname_not_userinfo_or_port():
         ]
     }
     assert _distinct_domains(results) == 1
+
+
+def test_distinct_domains_ignores_malformed_urls():
+    from argus.broker.execution import _distinct_domains
+
+    def result(url):
+        return SearchResult(
+            url=url, title="t", snippet="s", provider=ProviderName.DUCKDUCKGO
+        )
+
+    results = {"ddg": [result("http://[bad/x"), result("https://ok.example/y")]}
+    assert _distinct_domains(results) == 1

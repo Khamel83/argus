@@ -1423,7 +1423,7 @@ class AcceptedOperationService:
                     status=429,
                     operation_began=False,
                     retryable=True,
-                    retry_after_seconds=900,
+                    retry_after_seconds=decision.retry_after_s,
                 ),
                 operation_began=False,
             )

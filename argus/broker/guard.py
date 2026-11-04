@@ -54,6 +54,7 @@ class GuardDecision:
     action: GuardAction
     reason: str = ""
     needs_review: bool = False
+    retry_after_s: int | None = None
 
 
 def _env_int(name: str, default: int) -> int:
@@ -159,7 +160,12 @@ class RunawayGuard:
             while state.calls and state.calls[0][0] < now - _DAY_S:
                 state.calls.popleft()
             if len(state.calls) >= cfg.daily_limit:
-                return GuardDecision(GuardAction.DENY, "daily call limit reached")
+                # Rolling window: admission is possible once the oldest counted
+                # call is a day old.
+                retry = max(1, int(state.calls[0][0] + _DAY_S - now) + 1)
+                return GuardDecision(
+                    GuardAction.DENY, "daily call limit reached", retry_after_s=retry
+                )
             state.calls.append(
                 (now, str(key), normalize_query(query_text)[:MODEL_QUERY_CHARS])
             )
