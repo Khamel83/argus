@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import inspect
 import json
 import os
 import re
 from datetime import datetime, timezone
-from dataclasses import asdict, dataclass, fields, is_dataclass
+from dataclasses import asdict, dataclass, fields, is_dataclass, replace
 from enum import Enum
 from types import SimpleNamespace
 from typing import Awaitable, Callable, Mapping
@@ -23,7 +24,9 @@ from argus.contracts import (
     http_status_for,
     operation_error_for,
 )
+from argus.broker.guard import GuardAction, RunawayGuard
 from argus.extraction import extract_url
+from argus.logging import get_logger
 from argus.extraction.composition import (
     AggregateArtifactFloor,
     ArtifactRequirement,
@@ -116,6 +119,9 @@ class AcceptedOperationRegistration:
                 "transport_security",
             }
         )
+
+
+logger = get_logger("operations.accepted")
 
 
 def _operation_error(
@@ -1188,7 +1194,10 @@ class AcceptedOperationService:
         session_authority=None,
         registration: AcceptedOperationRegistration | None = None,
         site_fetcher=None,
+        guard: RunawayGuard | None = None,
     ):
+        self._guard = guard or RunawayGuard()
+        self._review_tasks: set[asyncio.Task] = set()
         self._broker_provider = broker_provider
         self._repository_provider = repository_provider
         self._extractor = extractor
@@ -1373,8 +1382,6 @@ class AcceptedOperationService:
                     ),
                     operation_began=False,
                 )
-            if not session_id:
-                session_id = authority.issue(principal)
         broker = self._broker_provider()
         if (
             require_owned_session
@@ -1396,6 +1403,40 @@ class AcceptedOperationService:
                 ),
                 operation_began=False,
             )
+        # Admit only after session validation so rejected requests cost no quota.
+        # Keyed on the server-derived principal, never on the caller-supplied
+        # label in request.caller.
+        decision = self._guard.admit(principal, request.query)
+        if decision.action is GuardAction.DENY:
+            outcome = CanonicalOutcome.UNREADY
+            return AcceptedOperation(
+                outcome=outcome,
+                request_id=request_id,
+                result=None,
+                error=_operation_error(
+                    outcome,
+                    request_id=request_id,
+                    detail=f"Search limit reached: {decision.reason}",
+                    code="rate_limited",
+                    status=429,
+                    operation_began=False,
+                    retryable=True,
+                    retry_after_seconds=decision.retry_after_s,
+                ),
+                operation_began=False,
+            )
+        if decision.action is GuardAction.FREE_ONLY:
+            query = replace(query, free_only=True)
+            logger.info(
+                "runaway guard degraded caller to free-only: %s", decision.reason
+            )
+        if decision.needs_review:
+            task = asyncio.create_task(self._guard.review(principal))
+            self._review_tasks.add(task)
+            task.add_done_callback(self._review_tasks.discard)
+        if require_owned_session and not session_id:
+            # Issue only after admission so a denied request leaves no session.
+            session_id = self._session_authority.issue(principal)
         if self._registration == AcceptedOperationRegistration.complete():
             evidence_repository = self._get_evidence_repository()
             if session_id:

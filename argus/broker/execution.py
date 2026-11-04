@@ -3,6 +3,7 @@
 import fnmatch
 import hashlib
 import math
+import os
 import time
 import uuid
 from dataclasses import dataclass, field, replace
@@ -28,6 +29,37 @@ from argus.logging import get_logger
 from argus.models import ProviderName, ProviderTrace, SearchQuery, SearchResult
 from argus.providers.base import BaseProvider
 from argus.providers.valyu import VALYU_RESULT_CAP, VALYU_UNIT_PRICE_USD
+
+
+def min_good_results() -> int:
+    """Distinct domains required before one-time-credit providers are skipped.
+
+    Set ARGUS_MIN_GOOD_RESULTS (default 3). Invalid or non-positive values
+    fall back to the default.
+    """
+    try:
+        value = int(os.environ.get("ARGUS_MIN_GOOD_RESULTS", "3"))
+    except ValueError:
+        return 3
+    return value if value > 0 else 3
+
+
+def _distinct_domains(provider_results: Mapping[str, Sequence[SearchResult]]) -> int:
+    from urllib.parse import urlparse
+
+    domains: set[str] = set()
+    for results in provider_results.values():
+        for result in results:
+            domain = result.domain
+            if not domain:
+                try:
+                    domain = urlparse(result.url).hostname or ""
+                except ValueError:  # malformed authority, e.g. "http://[bad/x"
+                    continue
+            domain = domain.lower()
+            if domain:
+                domains.add(domain)
+    return len(domains)
 
 
 def caller_tier_cap(caller: str, caps: Mapping[str, int]) -> int | None:
@@ -423,10 +455,13 @@ class ProviderExecutor:
                     )
                 continue
 
+            # Tier 0 and tier 1 (free and monthly-recurring) always run: their
+            # credits expire unused otherwise. Only one-time-credit tiers are
+            # held back, and only once enough distinct domains are in hand.
             if (
                 query.providers is None
-                and tier > 0
-                and total_results_so_far >= query.max_results
+                and tier >= 3
+                and _distinct_domains(provider_results) >= min_good_results()
             ):
                 traces.append(
                     ProviderTrace(

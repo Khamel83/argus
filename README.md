@@ -718,6 +718,11 @@ When running from the repo, Argus now auto-loads `.env` and `.env.local` (withou
 | `ARGUS_DATA_ROOT` | platformdirs user data dir | Override the Argus runtime corpus root |
 | `ARGUS_*_MONTHLY_BUDGET_USD` | provider-specific | Query-count budget for most providers; USD budget for Valyu |
 | `ARGUS_CRAWL4AI_ENABLED` | false | Enable Crawl4AI extraction step |
+| `ARGUS_MIN_GOOD_RESULTS` | `3` | Distinct domains required before one-time-credit providers are skipped. Free and monthly providers always run |
+| `ARGUS_GUARD_ENABLED` | `true` | Runaway-caller guard on `POST /api/search`: repeat/burst limits run free-only, the daily cap returns 429 |
+| `ARGUS_GUARD_REPEAT_LIMIT` / `_BURST_LIMIT` / `_DAILY_LIMIT` | `3` / `60` / `300` | Same query per 10 min, calls per 10 min, calls per 24 h |
+| `ARGUS_GUARD_MODEL_NAME` | — | Model identifier sent with guard review requests (required by most OpenAI-compatible servers) |
+| `ARGUS_GUARD_MODEL_URL` | — | Optional loopback/private OpenAI-compatible endpoint that reviews tripped callers; can only double the burst limit for an hour |
 | `ARGUS_YOU_CONTENTS_ENABLED` | false | Enable You.com Contents API extraction |
 | `ARGUS_OBSCURA_CDP_URL` | — | Obscura CDP endpoint (e.g. `ws://127.0.0.1:9222`) — makes Playwright use Obscura as its browser engine |
 | `ARGUS_OBSCURA_TIMEOUT_SECONDS` | 20 | Timeout for Obscura CLI subprocess calls |

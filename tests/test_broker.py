@@ -1001,7 +1001,9 @@ async def test_free_results_skip_paid_provider_registered_at_startup():
 
     assert outcome.traces[0].status == "success"
     assert free.calls == 1
-    assert paid.calls == 0
+    # Monthly-recurring credits are used alongside free results (fan-out);
+    # only one-time-credit tiers are gated on result quality.
+    assert paid.calls == 1
 
 
 @pytest.mark.asyncio
@@ -2058,7 +2060,7 @@ class TestRouter:
 
         free_results = [
             SearchResult(
-                url=f"https://example.com/{i}",
+                url=f"https://site{i}.example.com/{i}",
                 title=f"Free {i}",
                 snippet="ok",
                 provider=ProviderName.DUCKDUCKGO,
@@ -2094,6 +2096,89 @@ class TestRouter:
             and trace.error == "free results satisfied query"
             for trace in response.traces
         )
+
+    @pytest.mark.asyncio
+    async def test_monthly_tier_runs_even_when_free_results_fill_query(
+        self, monkeypatch
+    ):
+        from argus.broker.router import SearchBroker
+
+        monkeypatch.setattr(
+            "argus.persistence.db.SearchPersistenceGateway.record_completed_search",
+            lambda self, query, response: None,
+        )
+
+        def results(provider, host):
+            return [
+                SearchResult(
+                    url=f"https://{host}{i}.example.com/p",
+                    title=f"{host} {i}",
+                    snippet="ok",
+                    provider=provider,
+                )
+                for i in range(5)
+            ]
+
+        free = StubProvider(
+            name=ProviderName.DUCKDUCKGO,
+            results=results(ProviderName.DUCKDUCKGO, "free"),
+        )
+        monthly = StubProvider(
+            name=ProviderName.BRAVE, results=results(ProviderName.BRAVE, "brave")
+        )
+        broker = SearchBroker(
+            providers={ProviderName.DUCKDUCKGO: free, ProviderName.BRAVE: monthly}
+        )
+
+        await broker.search(
+            SearchQuery(query="fan out", mode=SearchMode.DISCOVERY, max_results=5)
+        )
+
+        assert free.calls == 1
+        assert monthly.calls == 1
+
+    @pytest.mark.asyncio
+    async def test_one_time_credit_tier_runs_when_few_domains(self, monkeypatch):
+        from argus.broker.router import SearchBroker
+
+        monkeypatch.setattr(
+            "argus.persistence.db.SearchPersistenceGateway.record_completed_search",
+            lambda self, query, response: None,
+        )
+
+        # Many results, but all from one domain: not "good" enough.
+        thin = StubProvider(
+            name=ProviderName.DUCKDUCKGO,
+            results=[
+                SearchResult(
+                    url=f"https://one.example.com/{i}",
+                    title=f"Thin {i}",
+                    snippet="ok",
+                    provider=ProviderName.DUCKDUCKGO,
+                )
+                for i in range(5)
+            ],
+        )
+        paid = StubProvider(
+            name=ProviderName.VALYU,
+            results=[
+                SearchResult(
+                    url="https://paid.example.org",
+                    title="Paid",
+                    snippet="ok",
+                    provider=ProviderName.VALYU,
+                )
+            ],
+        )
+        broker = SearchBroker(
+            providers={ProviderName.DUCKDUCKGO: thin, ProviderName.VALYU: paid}
+        )
+
+        await broker.search(
+            SearchQuery(query="thin", mode=SearchMode.DISCOVERY, max_results=5)
+        )
+
+        assert paid.calls == 1
 
     @pytest.mark.asyncio
     async def test_process_local_pace_does_not_override_readiness(self, monkeypatch):
@@ -2784,3 +2869,33 @@ async def test_executor_uses_local_when_reachable():
     await execute_with_plan(executor, query, [ProviderName.YAHOO])
 
     assert local_provider.calls == 1
+
+
+def test_distinct_domains_counts_hostname_not_userinfo_or_port():
+    from argus.broker.execution import _distinct_domains
+
+    def result(url):
+        return SearchResult(
+            url=url, title="t", snippet="s", provider=ProviderName.DUCKDUCKGO
+        )
+
+    results = {
+        "ddg": [
+            result("https://a@same.example/x"),
+            result("https://b@same.example:8443/y"),
+            result("https://SAME.example/z"),
+        ]
+    }
+    assert _distinct_domains(results) == 1
+
+
+def test_distinct_domains_ignores_malformed_urls():
+    from argus.broker.execution import _distinct_domains
+
+    def result(url):
+        return SearchResult(
+            url=url, title="t", snippet="s", provider=ProviderName.DUCKDUCKGO
+        )
+
+    results = {"ddg": [result("http://[bad/x"), result("https://ok.example/y")]}
+    assert _distinct_domains(results) == 1

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Search now fans out across every free (tier 0) and monthly-recurring (tier 1)
+  provider on each query instead of stopping once free results fill
+  `max_results`. One-time-credit providers (tier 3) are skipped only when the
+  results so far span at least `ARGUS_MIN_GOOD_RESULTS` distinct domains
+  (default 3), rather than when the raw result count is reached.
+
+### Added
+- Runaway-caller guard (`argus/broker/guard.py`), keyed on the authenticated
+  principal and on by default for `POST /api/search`. A query repeated more than
+  3 times in 10 minutes, or more than 60 calls in 10 minutes, runs free-only.
+  More than 300 calls in 24 hours returns HTTP 429. Optional local-model review
+  (`ARGUS_GUARD_MODEL_URL`, private-network addresses only) can widen only the
+  burst limit, fails closed, and is consulted only when a limit trips. Counters
+  are process-local. See `.env.example`.
+
 ## [1.6.5] - 2026-10-21
 
 ### Security
