@@ -70,8 +70,9 @@ punctuation or symbols, since that merges distinct queries such as `C++` and
 
 Model check, only on a trip, never per query:
 
-- Trigger when a caller reaches the "60 in 10 min" rule or 25 near-identical
-  queries in a row.
+- Trigger only when a caller trips the "60 in 10 min" rule. The repeated-query
+  rule never triggers a review: a verdict can only widen the burst limit, so
+  reviewing a repeat loop would change nothing.
 - Send the last N queries (query text, timestamps, result counts) to the
   configured local model with one question: "loop or legitimate?" Expect a JSON
   verdict `{"runaway": bool, "reason": str}`. Use only the boolean. Discard
@@ -92,7 +93,9 @@ Privacy boundary for the model call:
   timestamps and result counts. No caller tokens, headers or results content.
 - `ARGUS_GUARD_MODEL_URL` must resolve to a loopback or private-network address
   (reuse the SSRF address checks in `argus/extraction/ssrf.py` in reverse:
-  accept only private ranges). Refuse to start the guard with a public URL.
+  accept only loopback and private ranges). Refuse to start the guard with a
+  public, link-local (for example 169.254.169.254), unspecified, multicast or
+  reserved address.
 - The model endpoint must not retain prompts. Argus logs only the boolean
   verdict and the principal, never the query text it sent or the model's reason.
 

@@ -109,6 +109,16 @@ def validate_model_url(url: str) -> None:
         raise ValueError(
             "ARGUS_GUARD_MODEL_URL must be a loopback or private IP address"
         ) from None
+    if (
+        address.is_link_local
+        or address.is_unspecified
+        or address.is_multicast
+        or address.is_reserved
+    ):
+        # 169.254.169.254 (cloud metadata) is "private" to ipaddress; refuse it.
+        raise ValueError(
+            "ARGUS_GUARD_MODEL_URL must not be a link-local or special address"
+        )
     if not (address.is_loopback or address.is_private):
         raise ValueError("ARGUS_GUARD_MODEL_URL must not be a public address")
 

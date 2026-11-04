@@ -78,14 +78,27 @@ def test_disabled_guard_allows_everything():
 
 @pytest.mark.parametrize(
     "url",
-    ["http://127.0.0.1:11434/v1/chat/completions", "http://10.0.0.5/v1", "http://localhost:8080"],
+    [
+        "http://127.0.0.1:11434/v1/chat/completions",
+        "http://10.0.0.5/v1",
+        "http://localhost:8080",
+    ],
 )
 def test_model_url_accepts_private(url):
     validate_model_url(url)
 
 
 @pytest.mark.parametrize(
-    "url", ["http://8.8.8.8/v1", "https://api.example.com/v1", "ftp://127.0.0.1", ""]
+    "url",
+    [
+        "http://8.8.8.8/v1",
+        "https://api.example.com/v1",
+        "ftp://127.0.0.1",
+        "",
+        "http://169.254.169.254/latest",
+        "http://[fe80::1]/v1",
+        "http://0.0.0.0/v1",
+    ],
 )
 def test_model_url_rejects_public_or_invalid(url):
     with pytest.raises(ValueError):
@@ -128,9 +141,7 @@ async def test_failed_review_fails_closed():
     async def reviewer(recent):
         raise RuntimeError("model down")
 
-    guard = RunawayGuard(
-        GuardConfig(burst_limit=1), reviewer=reviewer, clock=Clock()
-    )
+    guard = RunawayGuard(GuardConfig(burst_limit=1), reviewer=reviewer, clock=Clock())
     guard.admit("p", "a")
     assert guard.admit("p", "b").needs_review
     await guard.review("p")
