@@ -184,11 +184,14 @@ _EXPAND_PROMPT = (
     "the web yourself, do additional research to fill gaps or check claims. "
     "Put anything that does not come from the provided sources, including any "
     "extra URLs you found, only under a final heading '## Additional leads'. "
-    "Do not cite [Source N] for those items."
+    "Always end with that heading; write 'None' under it if there is nothing "
+    "to add. Do not cite [Source N] for those items."
 )
 _LEADS_HEADING = re.compile(
-    r"^\s*#{1,3}\s*additional leads\s*$", re.IGNORECASE | re.MULTILINE
+    r"^[ \t]*(?:#{1,6}[ \t]*|\*\*)?additional[ \t]+leads\b[^\n]*$",
+    re.IGNORECASE | re.MULTILINE,
 )
+_NO_LEADS = {"none", "n/a", "na", "nothing", "no additional leads"}
 
 
 class LLMSummarizer(BaseSummarizer):
@@ -279,19 +282,33 @@ class LLMSummarizer(BaseSummarizer):
         citation_ids = [c.id for c in citations[:10]]
         if self.mode == "expand":
             parts = _LEADS_HEADING.split(answer, maxsplit=1)
-            if len(parts) == 2 and parts[1].strip():
+            if len(parts) != 2:
+                # The model did not separate its own research from the sources.
+                # Fail closed: nothing here may carry captured-source citations.
                 return [
                     SummarySection(
-                        heading="Answer",
-                        body=parts[0].strip(),
-                        citation_ids=citation_ids,
-                    ),
+                        heading="Answer (unverified: source separation failed)",
+                        body=answer,
+                        citation_ids=[],
+                    )
+                ]
+            leads = parts[1].strip()
+            sections = [
+                SummarySection(
+                    heading="Answer",
+                    body=parts[0].strip(),
+                    citation_ids=citation_ids,
+                )
+            ]
+            if leads and leads.strip(" .*_`-").lower() not in _NO_LEADS:
+                sections.append(
                     SummarySection(
                         heading="Additional leads (unverified)",
-                        body=parts[1].strip(),
+                        body=leads,
                         citation_ids=[],
-                    ),
-                ]
+                    )
+                )
+            return sections
         return [
             SummarySection(heading="Answer", body=answer, citation_ids=citation_ids)
         ]
@@ -342,7 +359,12 @@ class LLMSummarizer(BaseSummarizer):
             raise RuntimeError(
                 f"gateway returned {resp.status_code}: {resp.text[:200]}"
             )
-        return resp.json()["choices"][0]["message"]["content"] or ""
+        content = resp.json()["choices"][0]["message"]["content"]
+        if content is None:
+            return ""
+        if not isinstance(content, str):
+            raise ValueError("gateway content is not a string")
+        return content
 
 
 def get_summarizer(kind: str = "extractive") -> BaseSummarizer:

@@ -134,3 +134,55 @@ def test_unconfigured_gateway_uses_extractive(monkeypatch):
 def test_configured_gateway_uses_llm_summarizer(monkeypatch):
     monkeypatch.setenv("ARGUS_GATEWAY_URL", "http://gw/v1")
     assert isinstance(get_summarizer("llm"), LLMSummarizer)
+
+
+class _RawResp(_Resp):
+    def __init__(self, content):
+        super().__init__()
+        self._content = content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", [["a"], {"k": "v"}, 5])
+async def test_non_string_content_falls_back(monkeypatch, content):
+    _patch_post(monkeypatch, _RawResp(content))
+
+    sections = await _run(LLMSummarizer("http://gw/v1", "k"))
+
+    assert sections[0].heading == "Overview"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "heading", ["## Additional leads:", "### ADDITIONAL LEADS", "**Additional leads**"]
+)
+async def test_expand_accepts_heading_variants(monkeypatch, heading):
+    content = f"Main [Source 1].\n\n{heading}\n- https://extra.example/a"
+    _patch_post(monkeypatch, _Resp(content=content))
+
+    sections = await _run(LLMSummarizer("http://gw/v1", "k", mode="expand"))
+
+    assert [s.heading for s in sections] == ["Answer", "Additional leads (unverified)"]
+
+
+@pytest.mark.asyncio
+async def test_expand_missing_heading_fails_closed(monkeypatch):
+    _patch_post(monkeypatch, _Resp(content="Answer plus http://x.example [Source 1]"))
+
+    sections = await _run(LLMSummarizer("http://gw/v1", "k", mode="expand"))
+
+    assert len(sections) == 1
+    assert "unverified" in sections[0].heading
+    assert sections[0].citation_ids == []
+
+
+@pytest.mark.asyncio
+async def test_expand_none_leads_returns_single_answer(monkeypatch):
+    _patch_post(
+        monkeypatch, _Resp(content="Main [Source 1].\n\n## Additional leads\nNone")
+    )
+
+    sections = await _run(LLMSummarizer("http://gw/v1", "k", mode="expand"))
+
+    assert [s.heading for s in sections] == ["Answer"]
+    assert sections[0].citation_ids == ["S0", "S1"]
