@@ -188,7 +188,7 @@ _EXPAND_PROMPT = (
     "to add. Do not cite [Source N] for those items."
 )
 _LEADS_HEADING = re.compile(
-    r"^[ \t]*(?:#{1,6}[ \t]*|\*\*)?additional[ \t]+leads\b[^\n]*$",
+    r"^[ \t]*(?:#{1,6}[ \t]*|\*\*)?additional[ \t]+leads\b[ \t]*:?[ \t]*(?:\*\*)?",
     re.IGNORECASE | re.MULTILINE,
 )
 _NO_LEADS = {"none", "n/a", "na", "nothing", "no additional leads"}

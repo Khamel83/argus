@@ -186,3 +186,22 @@ async def test_expand_none_leads_returns_single_answer(monkeypatch):
 
     assert [s.heading for s in sections] == ["Answer"]
     assert sections[0].citation_ids == ["S0", "S1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "heading_line",
+    [
+        "## Additional leads: https://extra.example/a",
+        "**Additional leads:** https://extra.example/a",
+    ],
+)
+async def test_expand_keeps_leads_written_on_the_heading_line(
+    monkeypatch, heading_line
+):
+    _patch_post(monkeypatch, _Resp(content=f"Main [Source 1].\n\n{heading_line}"))
+
+    sections = await _run(LLMSummarizer("http://gw/v1", "k", mode="expand"))
+
+    assert [s.heading for s in sections] == ["Answer", "Additional leads (unverified)"]
+    assert "https://extra.example/a" in sections[1].body
