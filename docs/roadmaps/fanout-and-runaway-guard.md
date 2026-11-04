@@ -60,8 +60,22 @@ Model check, only on a trip, never per query:
   verdict `{"runaway": bool, "reason": str}`.
 - Timeout 10 s. On timeout, error or unparseable output, fail closed: keep the
   caller degraded to free-only for 15 minutes.
-- On a "legitimate" verdict, lift the degrade for that caller for 1 hour.
+- The model can never disable a deterministic rule. On a "legitimate" verdict
+  the only effect is a bounded exception: the 10-minute call limit doubles
+  (60 to 120) for that caller for 1 hour. The repeated-query rule, the daily cap
+  and all provider budgets stay enforced. Query text is attacker-controlled, so
+  treat the verdict as advice that can only loosen one limit by a fixed amount.
 - Log every trip and verdict. Surface them in `argus budgets`.
+
+Privacy boundary for the model call:
+
+- Send at most the last 20 queries, each truncated to 200 characters, plus
+  timestamps and result counts. No caller tokens, headers or results content.
+- `ARGUS_GUARD_MODEL_URL` must resolve to a loopback or private-network address
+  (reuse the SSRF address checks in `argus/extraction/ssrf.py` in reverse:
+  accept only private ranges). Refuse to start the guard with a public URL.
+- The model endpoint must not retain prompts. Argus stores only the verdict and
+  reason in its own log, never the query text it sent.
 
 Config: `ARGUS_GUARD_ENABLED`, `ARGUS_GUARD_MODEL_URL`, and the thresholds above
 as env vars. If no model URL is set, skip the model step and keep the
