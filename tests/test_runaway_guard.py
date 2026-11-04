@@ -226,3 +226,12 @@ async def test_rejected_session_request_does_not_consume_guard_quota():
     from argus.broker.guard import GuardAction
 
     assert guard.admit("maya", "real").action is GuardAction.ALLOW
+
+
+def test_idle_principals_are_evicted():
+    guard, clock = make()
+    guard.admit("gone", "x")
+    clock.now += 25 * 3600
+    guard.admit("active", "y")
+    assert "gone" not in guard._callers
+    assert "active" in guard._callers

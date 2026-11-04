@@ -38,6 +38,7 @@ from argus.logging import get_logger
 logger = get_logger("broker.guard")
 
 _DAY_S = 24 * 3600
+_SWEEP_INTERVAL_S = 3600
 MODEL_QUERY_LIMIT = 20
 MODEL_QUERY_CHARS = 200
 MODEL_TIMEOUT_S = 10.0
@@ -149,6 +150,7 @@ class RunawayGuard:
         self._clock = clock
         self._lock = threading.Lock()
         self._callers: dict[str, _CallerState] = {}
+        self._last_sweep = 0.0
         self._reviewer = reviewer
         if reviewer is None and self._config.model_url:
             validate_model_url(self._config.model_url)
@@ -166,6 +168,7 @@ class RunawayGuard:
         now = self._clock()
         key = hash(normalize_query(query_text))
         with self._lock:
+            self._sweep(now)
             state = self._callers.setdefault(principal, _CallerState())
             while state.calls and state.calls[0][0] < now - _DAY_S:
                 state.calls.popleft()
@@ -205,6 +208,20 @@ class RunawayGuard:
             if now < state.degraded_until:
                 return GuardDecision(GuardAction.FREE_ONLY, "caller degraded")
             return GuardDecision(GuardAction.ALLOW)
+
+    def _sweep(self, now: float) -> None:
+        """Drop principals with no calls in the last day (caller holds the lock)."""
+        if now - self._last_sweep < _SWEEP_INTERVAL_S:
+            return
+        self._last_sweep = now
+        for principal in [
+            name
+            for name, state in self._callers.items()
+            if not state.reviewing
+            and (not state.calls or state.calls[-1][0] < now - _DAY_S)
+            and state.exception_until < now
+        ]:
+            del self._callers[principal]
 
     async def review(self, principal: str) -> None:
         """Ask the model whether the recent calls look like a loop.
