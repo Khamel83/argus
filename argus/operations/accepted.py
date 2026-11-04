@@ -1351,36 +1351,6 @@ class AcceptedOperationService:
             caller=principal,
             metadata={"caller_label": request.caller},
         )
-        # Runaway protection keys on the server-derived principal, never on the
-        # caller-supplied label in request.caller.
-        decision = self._guard.admit(principal, request.query)
-        if decision.action is GuardAction.DENY:
-            outcome = CanonicalOutcome.UNREADY
-            return AcceptedOperation(
-                outcome=outcome,
-                request_id=request_id,
-                result=None,
-                error=_operation_error(
-                    outcome,
-                    request_id=request_id,
-                    detail=f"Search limit reached: {decision.reason}",
-                    code="rate_limited",
-                    status=429,
-                    operation_began=False,
-                    retryable=True,
-                    retry_after_seconds=900,
-                ),
-                operation_began=False,
-            )
-        if decision.action is GuardAction.FREE_ONLY:
-            query = replace(query, free_only=True)
-            logger.info(
-                "runaway guard degraded caller to free-only: %s", decision.reason
-            )
-        if decision.needs_review:
-            task = asyncio.create_task(self._guard.review(principal))
-            self._review_tasks.add(task)
-            task.add_done_callback(self._review_tasks.discard)
         session_id = request.session_id
         if require_owned_session:
             authority = self._session_authority
@@ -1435,6 +1405,37 @@ class AcceptedOperationService:
                 ),
                 operation_began=False,
             )
+        # Admit only after session validation so rejected requests cost no quota.
+        # Keyed on the server-derived principal, never on the caller-supplied
+        # label in request.caller.
+        decision = self._guard.admit(principal, request.query)
+        if decision.action is GuardAction.DENY:
+            outcome = CanonicalOutcome.UNREADY
+            return AcceptedOperation(
+                outcome=outcome,
+                request_id=request_id,
+                result=None,
+                error=_operation_error(
+                    outcome,
+                    request_id=request_id,
+                    detail=f"Search limit reached: {decision.reason}",
+                    code="rate_limited",
+                    status=429,
+                    operation_began=False,
+                    retryable=True,
+                    retry_after_seconds=900,
+                ),
+                operation_began=False,
+            )
+        if decision.action is GuardAction.FREE_ONLY:
+            query = replace(query, free_only=True)
+            logger.info(
+                "runaway guard degraded caller to free-only: %s", decision.reason
+            )
+        if decision.needs_review:
+            task = asyncio.create_task(self._guard.review(principal))
+            self._review_tasks.add(task)
+            task.add_done_callback(self._review_tasks.discard)
         if self._registration == AcceptedOperationRegistration.complete():
             evidence_repository = self._get_evidence_repository()
             if session_id:
