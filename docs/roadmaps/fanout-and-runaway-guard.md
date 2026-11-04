@@ -1,6 +1,11 @@
 # Fan-out routing and runaway guard — implementation brief
 
-Status: proposal, not implemented. Hand this to the implementing agent as-is.
+Status: changes A and B are implemented on this branch (`argus/broker/guard.py`,
+`argus/broker/execution.py`, `argus/operations/accepted.py`). Change C needs live
+provider keys and is not done. Known gaps against this brief: guard counters are
+process-local rather than in the shared authority database; the guard covers
+`POST /api/search` only (not recover, expand or workflows); a repeated query
+beyond the limit runs free-only rather than cache-only.
 
 ## Problem
 
@@ -40,9 +45,10 @@ Tier 3 (one-time credits) stays a last resort.
 Deterministic first, model second.
 
 Identity: key every counter on the authenticated principal derived server-side
-from the API key or token that passed authentication. Never use the
-caller-supplied `query.caller` string for counters, because a caller can rotate
-it on every request. `query.caller` may be logged as a label only.
+from the API key or token that passed authentication (in the accepted-operation
+service this is `principal`, which becomes `query.caller`). Never use the
+caller-supplied label (`request.caller`, stored in `metadata["caller_label"]`),
+because a caller can rotate it on every request.
 
 Counters are kept in the authority database so they survive restarts and are
 shared across workers. Admission must be atomic: check the limits and reserve
