@@ -205,3 +205,11 @@ async def test_expand_keeps_leads_written_on_the_heading_line(
 
     assert [s.heading for s in sections] == ["Answer", "Additional leads (unverified)"]
     assert "https://extra.example/a" in sections[1].body
+
+
+@pytest.mark.asyncio
+async def test_malformed_gateway_url_falls_back():
+    # A non-numeric port raises httpx.InvalidURL inside client.post().
+    sections = await _run(LLMSummarizer("http://gateway.example:notaport/v1", "k"))
+
+    assert sections[0].heading == "Overview"

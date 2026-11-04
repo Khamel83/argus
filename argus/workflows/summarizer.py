@@ -255,14 +255,7 @@ class LLMSummarizer(BaseSummarizer):
             ]
         try:
             answer = await self._ask_gateway(prompt, documents)
-        except (
-            httpx.HTTPError,
-            RuntimeError,
-            ValueError,
-            KeyError,
-            IndexError,
-            TypeError,
-        ) as exc:
+        except Exception as exc:  # noqa: BLE001 - optional gateway must never fail the workflow
             logger.warning(
                 "gateway summarizer unavailable (%s: %s); using extractive fallback",
                 type(exc).__name__,
