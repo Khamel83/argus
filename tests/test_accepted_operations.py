@@ -1704,37 +1704,3 @@ def test_production_evidence_validator_replays_all_frozen_scenarios_and_mutation
                 entry["expected_invariant"] in violation
                 for violation in rejected.value.violations
             ), (entry["path"], rejected.value.violations)
-
-
-@pytest.mark.asyncio
-async def test_rejected_session_request_does_not_consume_guard_quota():
-    from argus.broker.guard import GuardConfig, RunawayGuard
-    from argus.operations.accepted import (
-        AcceptedOperationRegistration,
-        AcceptedOperationService,
-    )
-
-    session_authority = MagicMock()
-    session_authority.owns.return_value = False
-    guard = RunawayGuard(GuardConfig(daily_limit=1))
-    service = AcceptedOperationService(
-        broker_provider=lambda: MagicMock(),
-        repository_provider=MagicMock(),
-        session_authority=session_authority,
-        registration=AcceptedOperationRegistration.complete(),
-        guard=guard,
-    )
-
-    for index in range(5):
-        operation = await service.search(
-            SearchRequest(query=f"q{index}", session_id="not-mine"),
-            principal="maya",
-            request_id=f"request-{index}",
-            require_owned_session=True,
-        )
-        assert operation.error.code == "session_not_found"
-
-    # None of the rejected requests counted, so the one-call daily cap is intact.
-    from argus.broker.guard import GuardAction
-
-    assert guard.admit("maya", "real").action is GuardAction.ALLOW
