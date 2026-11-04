@@ -39,8 +39,17 @@ Tier 3 (one-time credits) stays a last resort.
 
 Deterministic first, model second.
 
-Counters, per `query.caller` (fallback: API key id), kept in the authority
-database so they survive restarts and are shared across workers:
+Identity: key every counter on the authenticated principal derived server-side
+from the API key or token that passed authentication. Never use the
+caller-supplied `query.caller` string for counters, because a caller can rotate
+it on every request. `query.caller` may be logged as a label only.
+
+Counters are kept in the authority database so they survive restarts and are
+shared across workers. Admission must be atomic: check the limits and reserve
+the request in one operation (a single transaction or an atomic
+increment-and-compare) before any provider is dispatched, so concurrent workers
+cannot all see a count below the limit. A retry counts as a new request. A
+reservation for a request that never dispatched a provider is released.
 
 | Rule | Default | Action |
 |------|---------|--------|
@@ -49,7 +58,9 @@ database so they survive restarts and are shared across workers:
 | Calls per caller | 300 per day | Deny with 429 and a reason |
 | Paid calls (tier 1 + 3), all callers | per-provider monthly budget (existing) | Existing skip |
 
-Normalization: lowercase, collapse whitespace, strip punctuation.
+Normalization: Unicode NFKC, lowercase, collapse whitespace, trim. Do not strip
+punctuation or symbols, since that merges distinct queries such as `C++` and
+`C#`. Hash the normalized string for the counter key.
 
 Model check, only on a trip, never per query:
 
@@ -93,6 +104,12 @@ deterministic rules.
 
 - A query with all free and monthly providers healthy returns fused results
   from at least three providers.
-- 100 identical queries in a minute produce at most 3 provider calls.
-- A guarded caller still gets free-tier results, not an error.
+- 100 identical queries in a minute from one principal, sent concurrently,
+  produce at most 3 admitted query executions. The other 97 are served from
+  cache. (Each admitted execution fans out to every healthy tier 0 and tier 1
+  provider, so upstream calls are 3 times that provider count, not 3.)
+- A caller degraded by the 60-in-10-minutes rule still gets tier 0 results, not
+  an error. A caller past the 300-per-day cap gets a 429 with a reason.
+- Rotating `query.caller` between requests does not reset any counter.
+- `C++` and `C#` do not trigger each other's repeat limit.
 - Full test suite passes with `uv run pytest`.
