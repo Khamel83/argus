@@ -78,6 +78,7 @@ class GuardConfig:
     exception_s: int = 3600
     exception_factor: int = 2
     model_url: str = ""
+    model_name: str = ""
 
     @classmethod
     def from_env(cls) -> GuardConfig:
@@ -88,6 +89,7 @@ class GuardConfig:
             burst_limit=_env_int("ARGUS_GUARD_BURST_LIMIT", 60),
             daily_limit=_env_int("ARGUS_GUARD_DAILY_LIMIT", 300),
             model_url=os.environ.get("ARGUS_GUARD_MODEL_URL", "").strip(),
+            model_name=os.environ.get("ARGUS_GUARD_MODEL_NAME", "").strip(),
         )
 
 
@@ -154,7 +156,9 @@ class RunawayGuard:
         self._reviewer = reviewer
         if reviewer is None and self._config.model_url:
             validate_model_url(self._config.model_url)
-            self._reviewer = _http_reviewer(self._config.model_url)
+            self._reviewer = _http_reviewer(
+                self._config.model_url, self._config.model_name
+            )
 
     @property
     def enabled(self) -> bool:
@@ -260,7 +264,7 @@ class RunawayGuard:
         logger.info("guard review verdict principal=%s runaway=%s", principal, runaway)
 
 
-def _http_reviewer(url: str) -> Reviewer:
+def _http_reviewer(url: str, model: str = "") -> Reviewer:
     """OpenAI-compatible chat endpoint (Ollama, llama.cpp, LM Studio)."""
 
     async def review(recent: list[dict]) -> bool:
@@ -280,6 +284,9 @@ def _http_reviewer(url: str) -> Reviewer:
             response = await client.post(
                 url,
                 json={
+                    # OpenAI-compatible servers require "model" (Ollama,
+                    # LM Studio); some single-model servers ignore it.
+                    "model": model,
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0,
                 },

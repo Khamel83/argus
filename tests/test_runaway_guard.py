@@ -177,6 +177,8 @@ async def test_model_client_ignores_environment_proxies(monkeypatch):
             return False
 
         async def post(self, url, json):
+            seen["payload"] = json
+
             class Response:
                 def raise_for_status(self):
                     pass
@@ -187,9 +189,10 @@ async def test_model_client_ignores_environment_proxies(monkeypatch):
             return Response()
 
     monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
-    review = guard_module._http_reviewer("http://127.0.0.1:11434/v1")
+    review = guard_module._http_reviewer("http://127.0.0.1:11434/v1", "llama3")
     assert await review([{"query": "q", "age_s": 1}]) is False
     assert seen["trust_env"] is False
+    assert seen["payload"]["model"] == "llama3"
 
 
 @pytest.mark.asyncio
@@ -235,3 +238,35 @@ def test_idle_principals_are_evicted():
     guard.admit("active", "y")
     assert "gone" not in guard._callers
     assert "active" in guard._callers
+
+
+@pytest.mark.asyncio
+async def test_denied_request_issues_no_session():
+    from unittest.mock import MagicMock
+
+    from argus.api.schemas import SearchRequest
+    from argus.operations.accepted import (
+        AcceptedOperationRegistration,
+        AcceptedOperationService,
+    )
+
+    session_authority = MagicMock()
+    guard = RunawayGuard(GuardConfig(daily_limit=1))
+    service = AcceptedOperationService(
+        broker_provider=lambda: MagicMock(),
+        repository_provider=MagicMock(),
+        session_authority=session_authority,
+        registration=AcceptedOperationRegistration.complete(),
+        guard=guard,
+    )
+    guard.admit("maya", "use up the cap")
+
+    operation = await service.search(
+        SearchRequest(query="over the cap"),
+        principal="maya",
+        request_id="request-denied",
+        require_owned_session=True,
+    )
+
+    assert operation.error.code == "rate_limited"
+    session_authority.issue.assert_not_called()

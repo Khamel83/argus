@@ -1382,8 +1382,6 @@ class AcceptedOperationService:
                     ),
                     operation_began=False,
                 )
-            if not session_id:
-                session_id = authority.issue(principal)
         broker = self._broker_provider()
         if (
             require_owned_session
@@ -1436,6 +1434,9 @@ class AcceptedOperationService:
             task = asyncio.create_task(self._guard.review(principal))
             self._review_tasks.add(task)
             task.add_done_callback(self._review_tasks.discard)
+        if require_owned_session and not session_id:
+            # Issue only after admission so a denied request leaves no session.
+            session_id = self._session_authority.issue(principal)
         if self._registration == AcceptedOperationRegistration.complete():
             evidence_repository = self._get_evidence_repository()
             if session_id:
