@@ -117,11 +117,11 @@ deterministic rules.
   from at least three providers.
 - 100 identical queries in a minute from one principal, sent concurrently,
   produce exactly 3 full executions (admission is atomic, so concurrency cannot
-  admit a fourth). The other 97 run free-only: they make no paid provider
-  calls, and they do not depend on any cache being populated first. Each full
-  execution fans out to every healthy tier 0 and tier 1 provider, so upstream
-  calls are 3 times that provider count, not 3. Covered by
-  `test_concurrent_admission_is_bounded`.
+  admit a fourth). The other 97 run free-only: they make no paid (tier 1 or
+  tier 3) provider calls and do not depend on any cache being populated first,
+  but they still call every healthy tier 0 provider. Expected upstream calls:
+  tier 0 providers are called 100 times each, tier 1 providers 3 times each.
+  Covered by `test_concurrent_admission_is_bounded`.
 - A caller degraded by the 60-in-10-minutes rule still gets tier 0 results, not
   an error. A caller past the 300-per-day cap gets a 429 with a reason.
 - Rotating `query.caller` between requests does not reset any counter.
