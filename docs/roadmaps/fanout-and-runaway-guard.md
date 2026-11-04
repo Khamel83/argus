@@ -59,7 +59,7 @@ reservation for a request that never dispatched a provider is released.
 
 | Rule | Default | Action |
 |------|---------|--------|
-| Same normalized query repeated | 3 in 10 min | Serve cache only; no provider call |
+| Same normalized query | first 3 in 10 min run normally (the initial request counts); the 4th and later run free-only | Tier 0 only; no paid provider call |
 | Calls per caller | 60 in 10 min | Degrade to tier 0 only |
 | Calls per caller | 300 per day | Deny with 429 and a reason |
 | Paid calls (tier 1 + 3), all callers | per-provider monthly budget (existing) | Existing skip |
@@ -74,7 +74,9 @@ Model check, only on a trip, never per query:
   queries in a row.
 - Send the last N queries (query text, timestamps, result counts) to the
   configured local model with one question: "loop or legitimate?" Expect a JSON
-  verdict `{"runaway": bool, "reason": str}`.
+  verdict `{"runaway": bool, "reason": str}`. Use only the boolean. Discard
+  `reason`: it is free text and can echo query content, so it is never logged
+  or stored.
 - Timeout 10 s. On timeout, error or unparseable output, fail closed: keep the
   caller degraded to free-only for 15 minutes.
 - The model can never disable a deterministic rule. On a "legitimate" verdict
@@ -91,8 +93,8 @@ Privacy boundary for the model call:
 - `ARGUS_GUARD_MODEL_URL` must resolve to a loopback or private-network address
   (reuse the SSRF address checks in `argus/extraction/ssrf.py` in reverse:
   accept only private ranges). Refuse to start the guard with a public URL.
-- The model endpoint must not retain prompts. Argus stores only the verdict and
-  reason in its own log, never the query text it sent.
+- The model endpoint must not retain prompts. Argus logs only the boolean
+  verdict and the principal, never the query text it sent or the model's reason.
 
 Config: `ARGUS_GUARD_ENABLED`, `ARGUS_GUARD_MODEL_URL`, and the thresholds above
 as env vars. If no model URL is set, skip the model step and keep the
@@ -111,9 +113,12 @@ deterministic rules.
 - A query with all free and monthly providers healthy returns fused results
   from at least three providers.
 - 100 identical queries in a minute from one principal, sent concurrently,
-  produce at most 3 admitted query executions. The other 97 are served from
-  cache. (Each admitted execution fans out to every healthy tier 0 and tier 1
-  provider, so upstream calls are 3 times that provider count, not 3.)
+  produce exactly 3 full executions (admission is atomic, so concurrency cannot
+  admit a fourth). The other 97 run free-only: they make no paid provider
+  calls, and they do not depend on any cache being populated first. Each full
+  execution fans out to every healthy tier 0 and tier 1 provider, so upstream
+  calls are 3 times that provider count, not 3. Covered by
+  `test_concurrent_admission_is_bounded`.
 - A caller degraded by the 60-in-10-minutes rule still gets tier 0 results, not
   an error. A caller past the 300-per-day cap gets a 429 with a reason.
 - Rotating `query.caller` between requests does not reset any counter.
