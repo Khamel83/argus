@@ -364,23 +364,9 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-## Recent source activity — November 3, 2026 checkpoint
+## Provider fanout and runaway-caller guard — source checkpoint
 
-Remote default-branch HEAD is `6418c6e233b3226b4d0ba4f67c1f7129eb0b3ec3`, subject `g2k: issue #234 (#235)`. The subject evidences past activity only; the supplied documents do not state what issue #234 changed, so its content and downstream effect remain unknown.
-
-Documentation/CI commits visible in the supplied summaries but not described by the published CONTEXT entries:
-- `63b64cb731d13df92afd6d29609de1d8637d3b10` — "docs: remove the Now list (#229)"
-- `87a932d913c2efce374aba2c789dfba0b7aee022` — "docs: correct Argus merged source statuses (#230)"
-- `98174928128718900b3a1959b6ba1e1afc3d35fa` — "ci: select PostgreSQL 16 clients for server 16 ledger tests (#231)"
-- `164ecc18544d3ea2551e88f10d2eab81af3c001f` — "docs: reset backlog to the owner Now list (#227)"
-- `65513336c7d5a9975eb99f1b86c904df77683db8` — "docs: tick TODO lines finished by merged work (#222)"
-- `446ac29b17224e9b57cccf0618f9534cd8a9f8e9` — "docs: record worker security patch publication and installed-package proof (#219)"
-
-Latest published project state (from the remote CONTEXT/TODO): Glama catalog startup repair published 1.6.5 after the native discovery test, PR #221 merged as `e71965e3e95297944847c6846d8b2fdcb7f91172`; legacy worker security patch PR #217 merged as `f0386c760bfe05127a264540e4a79b373c71c123` with release v1.6.5 verified from an isolated PyPI install; shared PostgreSQL manifest v2 with exported-snapshot capture and strict isolated restore accepted at source `66365a661abcfa6ccb4a10dfe5e4b251eaf339ff` (restore record `4bc1adb82b19ebcbf11d932b0f3ea4b4264471b1fbbdb2805c3e4580a8f6a5d1`), while `metadata_registry_complete`, `schema_contract_clean`, `forward_compatible` and `rollback_path_human_approved` remain false, no application cutover occurred, and legacy v1 manifests remain immutable and unproven.
-
-Open questions preserved from the published records: the CVE-handling question from the Glama reporter remains externally open with no advisory date; issue159 keeps its original acceptance/needs-human state with real public-share canaries and guarded runtime release still open and Claude real-share acceptance unknown; the October 16 fleet CI cancellation checkpoint in CONTEXT still describes the change as pending on `feat/fleet-ci-cancellation-20261016`, whereas the remote TODO records merge as `e5380c7f03d577f4bda3e081c1d69d4c30a2d5d3` (#195) — that SHA is absent from the supplied commit summaries, so the merge status rests on the TODO text alone.
-
-No runtime, deployment, provider or production-rollout claim is derived from these commits.
+Source commit `40385eccff8e5088bfe115f62cdc141d8a8f06b8` is titled “feat: fan out across free and monthly providers, add runaway-caller guard (#237).” This records source activity only; the supplied evidence does not establish tests, deployment, provider requests, or runtime acceptance.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
