@@ -7,14 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- Search now fans out across every free (tier 0) and monthly-recurring (tier 1)
-  provider on each query instead of stopping once free results fill
-  `max_results`. One-time-credit providers (tier 3) are skipped only when the
-  results so far span at least `ARGUS_MIN_GOOD_RESULTS` distinct domains
-  (default 3), rather than when the raw result count is reached.
-
 ### Added
+- `POST /api/workflows/search-and-summarize` can synthesize its answer through
+  any OpenAI-compatible gateway such as g2k (`ARGUS_GATEWAY_URL`,
+  `ARGUS_GATEWAY_KEY`, `ARGUS_GATEWAY_MODEL`, `ARGUS_GATEWAY_MODE`,
+  `ARGUS_GATEWAY_TIMEOUT`). `ARGUS_GATEWAY_MODE=expand` lets web-lane models do
+  their own research and returns anything beyond the captured sources as an
+  unverified "Additional leads" section.
 - Runaway-caller guard (`argus/broker/guard.py`), keyed on the authenticated
   principal and on by default for `POST /api/search`. A query repeated more than
   3 times in 10 minutes, or more than 60 calls in 10 minutes, runs free-only.
@@ -22,6 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`ARGUS_GUARD_MODEL_URL`, private-network addresses only) can widen only the
   burst limit, fails closed, and is consulted only when a limit trips. Counters
   are process-local. See `.env.example`.
+
+### Changed
+- The gateway summarizer now sends model `auto` by default (previously
+  `cheap`), waits up to 120 s, and falls back to the extractive summary on any
+  gateway failure or empty answer instead of failing the workflow. With
+  `ARGUS_GATEWAY_URL` unset the workflow uses the extractive summary.
+- Search now fans out across every free (tier 0) and monthly-recurring (tier 1)
+  provider on each query instead of stopping once free results fill
+  `max_results`. One-time-credit providers (tier 3) are skipped only when the
+  results so far span at least `ARGUS_MIN_GOOD_RESULTS` distinct domains
+  (default 3), rather than when the raw result count is reached.
 
 ## [1.6.5] - 2026-10-21
 
