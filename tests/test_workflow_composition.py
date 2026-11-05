@@ -1020,3 +1020,49 @@ async def test_rejected_artifact_never_reaches_document_or_summarizer(
     assert result.metadata["composition"]["rejected_extraction_refs"] == [
         "extract-rejected"
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('tamper', [None, 'url', 'title', 'snippet', 'score', 'provider', 'egress', 'machine', 'score_attribution', 'extra', 'source_type', 'source_date', 'retrieved_at'])
+async def test_real_search_presenter_composes_only_receipt_bound_results(tmp_path, tamper):
+    from argus.broker.accepted import AcceptedSearchExecution
+    from argus.broker.router import SearchBroker
+    from argus.models import ProviderName, SearchMode, SearchResponse, SearchResult
+    from tests.test_extraction_composition import _link
+
+    service, repository = _real_authority(tmp_path, [_link()])
+    result = SearchResult(
+        url='https://example.com/1', title='Article', snippet='Accepted source',
+        domain='example.com', provider=ProviderName.GITHUB, score=1.0,
+        metadata={'egress': 'residential', 'machine': 'test-node'},
+    )
+    durable = _accepted_retrieval(repository, (SearchBroker._result_projection(result),))
+    receipt = AcceptanceReceipt('receipt:workflow', datetime.now(timezone.utc), 'a' * 64)
+    operation = service._accepted_search_operation(
+        AcceptedSearchExecution(
+            CanonicalOutcome.SUCCESS, 'accepted',
+            SearchResponse(query='workflow', mode=SearchMode.DISCOVERY,
+                           results=[result], total_results=1), receipt,
+        ), request_id='real-search-projection', include_attribution=False, session_id=None,
+    )
+    projected = dict(operation.result['results'][0])
+    if tamper:
+        projected[tamper] = 'https://attacker.example/' if tamper == 'url' else 'tampered'
+        operation = replace(operation, result={**operation.result, 'results': (projected,)})
+    composed = await service.compose_workflow(
+        operation, max_results=1, principal='workflow-test', request_id='compose-real-search',
+    )
+    if tamper:
+        assert composed.outcome is CanonicalOutcome.UNREADY
+        service.extract.assert_not_called()
+    else:
+        assert composed.outcome is CanonicalOutcome.SUCCESS
+        assert composed.result['accepted_artifact_refs'] == ('artifact-1',)
+        assert composed.result['artifacts'][0]['url'] == 'https://example.com/1'
+        # Presentation timestamps must not alter requirement/claim identity.
+        original = await service.compose_workflow(
+            durable, max_results=1, principal='workflow-test', request_id='compose-durable',
+        )
+        assert composed.result['requirement_ref'] == original.result['requirement_ref']
+        assert composed.result['composition_receipt_ref'] == original.result['composition_receipt_ref']
+        service.extract.assert_awaited_once()
