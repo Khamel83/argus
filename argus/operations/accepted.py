@@ -226,6 +226,30 @@ def _canonical_json(value) -> str:
     )
 
 
+
+def _is_search_presentation_of(projected, durable) -> bool:
+    """Recognize HTTP-only context without treating it as accepted evidence."""
+    core = {"url", "title", "snippet", "domain", "provider", "score",
+            "egress", "machine", "score_attribution"}
+    context = {"source_type", "source_date", "retrieved_at"}
+    if len(projected) != len(durable):
+        return False
+    for public, bound in zip(projected, durable):
+        if not isinstance(public, Mapping) or not isinstance(bound, Mapping):
+            return False
+        if set(bound) != core or set(public) != core | context:
+            return False
+        if public["source_type"] != "search" or public["source_date"] is not None:
+            return False
+        try:
+            datetime.fromisoformat(public["retrieved_at"])
+        except (TypeError, ValueError):
+            return False
+        if _canonical_json({key: public[key] for key in core}) != _canonical_json(bound):
+            return False
+    return True
+
+
 def _workflow_projection(requirement, composition, receipt, artifacts):
     requirement_state = _canonical_json_value(requirement)
     composition_state = _canonical_json_value(composition)
@@ -2057,6 +2081,28 @@ class AcceptedOperationService:
         repository = self._repository_provider()
         claim_requirement_ref = None
         results = (retrieval.result or {}).get("results")
+        if (
+            isinstance(receipt_ref, str)
+            and isinstance(results, tuple)
+            and results
+            and all(isinstance(item, Mapping) and "retrieved_at" in item for item in results)
+        ):
+            from sqlalchemy.exc import SQLAlchemyError
+
+            try:
+                durable = repository.load_accepted_retrieval_results(receipt_ref)
+            except SQLAlchemyError:
+                outcome = CanonicalOutcome.PERSISTENCE_FAILED
+                return AcceptedOperation(
+                    outcome=outcome, request_id=request_id, result=None,
+                    error=_operation_error(outcome, request_id=request_id,
+                                           detail="Workflow retrieval evidence could not be loaded"),
+                )
+            if durable is not None and _is_search_presentation_of(results, durable):
+                # Claim identity and composition both consume the stored result,
+                # never timestamps or other context added by the HTTP presenter.
+                results = tuple(durable)
+                retrieval = replace(retrieval, result={**retrieval.result, "results": results})
         if isinstance(receipt_ref, str) and isinstance(results, tuple):
             if selection_urls is None:
                 selected = tuple(results[:max_results])

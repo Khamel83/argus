@@ -155,3 +155,29 @@ Use [the ordered reconciliation](docs/REPO_PLAN.md) and [coordinator #191](https
 ## Fleet CI cancellation - source checkpoint (October 16, 2026)
 
 - [x] PR-only concurrency cancellation source merged October 16 as `e5380c7f03d577f4bda3e081c1d69d4c30a2d5d3`; the old CI/review/merge instruction is retired. No runtime qualification is claimed. Source: https://github.com/Khamel83/argus/pull/195
+
+## Search-and-summarize receipt projection repair — November 5 UTC
+
+Live PR239 source061f5c2/image73f5ff35 serves healthy API/MCP and passed doctor.
+A fresh tier-capped discovery search returned10results; Exa, Tavily, Linkup,
+Parallel, SearXNG, Yahoo and GitHub succeeded. Brave was skipped; DuckDuckGo
+failed. Spend totals remain uncertain and overall readiness remains degraded.
+Workflow e98f4e950f6a failed before extraction/model inference: its public
+search projection added retrieved_at/source_date/source_type absent from the
+receipt-bound results. Read-only database comparison confirmed exactly those
+three differences. The real broker/presenter regression reproduced UNREADY.
+
+The repair recognizes only that exact presentation shape, verifies every stored
+field, and uses the original stored results for both claim and composition.
+Existing strict receipt binding remains unchanged; changed URLs/content, unknown
+fields or malformed presentation context remain rejected. Public response shape
+and accepted historical rows are untouched. Focused workflow checks61passed
+before expanded tamper cases; native CI/review, immutable image, admission and
+actual gateway workflow remain required. The existing061f5c2 guarded promotion
+is in its mandatory1800ssoak, with healthy runtime; do not interrupt it.
+
+Worktree `.worktrees/deploy-latest` now owns `fix/workflow-receipt-projection`;
+prior records/source are retained on `ops/pr239-rollout-checkpoint` atab679bf.
+Next: finish source gates, then promote only the accepted built digest with
+normal scorecard/recovery/rollback/soak and retry one actual workflow after repair.
+No model request occurred in the failed workflow.
