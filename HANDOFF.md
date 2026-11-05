@@ -1,3 +1,17 @@
+## Approved reliability delivery — November 5, 2026
+
+Owner approved ARG-QS-01–05. Reused `.worktrees/deploy-latest` from fetched
+origin/main0e3821ed onfix/recovery-registry-evidence. Prior rollout, Quickstrike
+and approval records remain preserved onfix/workflow-frozen-metadata/b7c8c1e
+and in ignored privateartifacts. Primary owner edits remain untouched.
+Recovery coverage and omitted-CLI evidence correction are prepared; no new
+runtime change yet. Focused86pass/22skip; broader/native checks pending.
+Infra PR1851 owns compiler/admission handoff. Next: accepted exact-head gates,
+locked scoped helper install, new digest promotion, five-second monitoring
+qualification and full1,800-second soak. Do not close151/154 before that proof.
+One shared claim; cap5.75weeklypoints from41%used, stopnew45.6%,hard46.75%.
+No paid APIs/new provider canaries. Browser148/cleanup232 remain excluded.
+
 ## Glama catalog startup repaired — October 22, 2026
 
 The failure email referred to a successful install followed by MCP startup

@@ -1119,9 +1119,11 @@ def verify_argus_database(
     if expected_schema_identity is not None:
         if not _schema_identity_matches(identity, expected_schema_identity):
             raise RuntimeError("database schema identity does not match")
+    coverage = metadata_registry_coverage(schema_manifest)
     return {
         "database": validated,
         "schema_head": schema_head,
+        "metadata_registry": coverage,
         **({"schema_identity": identity} if identity is not None else {}),
         "row_counts": row_counts,
         "inventory": inventory,
@@ -1131,7 +1133,38 @@ def verify_argus_database(
             "integrity": True,
             "argus_read_path": True,
             "migration_compatible": True,
+            "metadata_registry_complete": coverage["complete"],
         },
+    }
+
+
+def metadata_registry_coverage(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Compare source ownership/column coverage with the verified SQL catalog.
+
+    Alembic owns its version table. Historical schemas must not inherit a
+    current completeness claim. Types and rollback approval are separate gates.
+    """
+    from argus.persistence.registry import ProductionMetadataRegistry
+
+    registry = ProductionMetadataRegistry()
+    expected = set(manifest["tables"]) - {"alembic_version"}
+    actual = set(registry.production_tables)
+    missing = sorted(expected - actual)
+    extra = sorted(actual - expected)
+    column_differences = {}
+    for table in sorted(expected & actual):
+        expected_columns = set(manifest["columns"][table])
+        actual_columns = set(registry.metadata.tables[table].columns.keys())
+        if expected_columns != actual_columns:
+            column_differences[table] = {
+                "missing": sorted(expected_columns - actual_columns),
+                "extra": sorted(actual_columns - expected_columns),
+            }
+    return {
+        "complete": not (missing or extra or column_differences),
+        "missing_tables": missing,
+        "extra_tables": extra,
+        "column_differences": column_differences,
     }
 
 

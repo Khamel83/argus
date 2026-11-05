@@ -112,7 +112,9 @@ jobs:
   promote:
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    # Frozen compiler preparation and the existing two live comparisons now
+    # run in this transaction, before restore/rollback and the 30-minute soak.
+    timeout-minutes: 120
     if: github.ref == 'refs/heads/main'
     environment: production
     concurrency:

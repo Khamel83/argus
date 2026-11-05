@@ -1,3 +1,15 @@
+## Approved reliability closure — November 5, 2026
+
+Owner approved corrected Quickstrike ARG-QS-01–05; excluded browser148 and
+parked cleanup232. Cap5.75 Codex weekly points from41%used; stop new delivery
+at45.6%used, reserve1.15 points; no paid APIs/new provider canaries. One existing
+claim and direct Codex writer own this delivery. Runtime remains0e3821ed/image
+355468da; source, merge, installation, restore and downstream evidence stay
+separate. Infra PR1851 connects exact compiler and existing scorecard admission.
+Prepared recovery verifier compares registered table/column coverage with the
+verified catalog; omitted CLI attestation no longer overwrites this evidence.
+Actual schema compatibility and human rollback approval are not inferred.
+
 ## Glama catalog startup repaired — October 22, 2026
 
 The failure email referred to a successful install followed by MCP startup

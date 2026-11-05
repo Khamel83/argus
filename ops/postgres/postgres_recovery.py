@@ -83,7 +83,7 @@ def _parser() -> argparse.ArgumentParser:
     restore.add_argument("--atlas-database", required=True)
     restore.add_argument("--source-revision")
     restore.add_argument("--image-digest")
-    restore.add_argument("--metadata-registry-complete", action="store_true")
+    restore.add_argument("--metadata-registry-complete", action="store_true", default=None)
     restore.add_argument("--schema-contract-clean", action="store_true")
     restore.add_argument("--forward-compatible", action="store_true")
     restore.add_argument("--rollback-path-human-approved", action="store_true")
