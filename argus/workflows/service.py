@@ -4359,6 +4359,10 @@ class WorkflowService:
     ) -> StoredDocument:
         from argus.corpus.paths import slugify
 
+        # Accepted evidence is deeply immutable. Store an independent JSON-native
+        # metadata tree so later dataclass serialization never deep-copies proxies.
+        metadata = _plain_json_value(metadata)
+
         filename = (
             f"{citation_id.lower()}-{slugify(title or url, default='document')}.md"
         )

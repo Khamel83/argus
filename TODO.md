@@ -181,3 +181,29 @@ prior records/source are retained on `ops/pr239-rollout-checkpoint` atab679bf.
 Next: finish source gates, then promote only the accepted built digest with
 normal scorecard/recovery/rollback/soak and retry one actual workflow after repair.
 No model request occurred in the failed workflow.
+
+## Workflow finalization repair — November 5 UTC
+
+ArgusPR240 sourcea335e289/imagef966565f is serving healthy API/MCP, with its
+required soak still active underargus-promote-a335e28.service. Doctor passed
+and a fresh discovery returned10results; Exa/Tavily/Linkup/Parallel/SearXNG/
+GitHub succeeded. Brave skipped; DuckDuckGo/Yahoo failed. Readiness remains
+degraded and spend totals uncertain. Actual workflowa49653dc1c18 extracted
+one source and generated a cited Answer. OCI durable row707713 at07:22:42 UTC
+records successfulagy/primary/gemini-3.8-flash-medium inference, authenticated
+workloadargus/callerargus-workflows. This proves inference, not workflow completion.
+
+Finalization then failed because nested accepted cache-age metadata remained
+MappingProxyType inside StoredDocument. dataclasses.asdict cannot deep-copy it;
+report publication and durable completion did not occur. The regression using
+the real accepted extraction/composition authority reproduced the exactTypeError.
+A copy at the existing document-storage boundary now preserves all metadata
+values in plain containers; immutable accepted evidence remains unchanged.
+73focused tests pass, including complete report+manifest publication, disk
+reload and authenticated artifact read. Full native source gates and guarded
+deployment remain required. Keep failed run and successful inference receipt;
+no model retry is authorized merely to conceal that finalization failure.
+Next: publish reviewed repair, deploy its exact accepted image after the active
+soak ends, and verify one complete workflow/report with a new inference receipt.
+Reuse the now-idle Homelabdeploy-latest compiler tree for this source; keep
+activea335compilerdeploy-workflow unchanged. Preserve protected primaries.
