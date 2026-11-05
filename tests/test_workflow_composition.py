@@ -1066,3 +1066,40 @@ async def test_real_search_presenter_composes_only_receipt_bound_results(tmp_pat
         assert composed.result['requirement_ref'] == original.result['requirement_ref']
         assert composed.result['composition_receipt_ref'] == original.result['composition_receipt_ref']
         service.extract.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_real_composed_workflow_publishes_and_reloads_frozen_evidence(monkeypatch, tmp_path):
+    import json
+    from pathlib import Path
+    from argus.workflows.service import WorkflowService
+    from argus.workflows.models import SummarySection
+    from tests.test_extraction_composition import _link
+
+    monkeypatch.setenv('ARGUS_DATA_ROOT', str(tmp_path / 'workflow-data'))
+    authority, repository = _real_authority(tmp_path, [_link()])
+    retrieval = _accepted_retrieval(repository, ({'url': 'https://example.com/1', 'title': 'Article'},))
+    authority.search = AsyncMock(return_value=retrieval)
+
+    class Summarizer:
+        async def summarize(self, **kwargs):
+            return [SummarySection(heading='Answer', body='A grounded answer [Source 1].', citation_ids=['S1'])]
+
+    monkeypatch.setattr('argus.workflows.service.get_summarizer', lambda _name: Summarizer())
+    workflow = WorkflowService(authority)
+    run = await workflow.search_and_summarize(query='workflow', max_search_results=1,
+                                               caller_identity='workflow-test')
+    assert run.status.value == 'completed'
+    assert Path(run.report_path).is_file()
+    manifest = json.loads(Path(run.manifest_path).read_text())
+    assert manifest['status'] == 'completed'
+    assert len(manifest['sources']) == 1
+    assert manifest['summary_sections'][0]['heading'] == 'Answer'
+    # This used to reach the answer and fail in dataclasses.asdict while
+    # copying cache_age's nested immutable accepted-evidence mapping.
+    assert isinstance(run.documents[0].metadata['cache_age'], dict)
+    reopened = WorkflowService(authority).get_run(run.run_id, principal='workflow-test')
+    assert reopened.status.value == 'completed'
+    assert reopened.summary_sections[0].heading == 'Answer'
+    assert reopened.documents[0].metadata['cache_age'] == run.documents[0].metadata['cache_age']
+    assert workflow.read_artifact(run, 'report', principal='workflow-test')['content']
