@@ -1,6 +1,6 @@
 ## Approved Quickstrike reliability work — November 5, 2026
 
-- [ ] ARG-QS-01 reconcile current records and existing PR226/238; retain native gates.
+- [ ] ARG-QS-01 reconcile current records and existing PR226/238; PR238 closed as superseded by https://github.com/Khamel83/argus/pull/242 with branch/history retained. PR226 awaits151/154 runtime evidence.
 - [ ] ARG-QS-02 install reviewed exact-source handoff (https://github.com/Khamel83/infra/pull/1851), then prove one genuinely new digest through all release gates.
 - [ ] ARG-QS-03 preserve the Brave uncertain parse-error attempt until authoritative settlement; distinguish expired observations from failures and budget estimates from balances.
 - [ ] ARG-QS-04 publish derived registry evidence and qualify a fresh disposable restore plus ordinary producer/reader observations.
