@@ -156,6 +156,7 @@ def test_restore_verifier_checks_schema_counts_integrity_and_read_path():
         "integrity": True,
         "argus_read_path": True,
         "migration_compatible": True,
+        "metadata_registry_complete": False,
     }
     assert set(report["row_counts"]) == REQUIRED_TABLES - {"alembic_version"}
     assert report["inventory"]["constraints_validated"] is True

@@ -1,4 +1,32 @@
-# Argus status — September 29, 2026
+# Argus status — November 5, 2026
+
+## Current verified release and approved follow-up
+
+Source `0e3821ed7edb0da26ca2815e71abf942279f8da5` is deployed as immutable
+image `sha256:355468dacd6b9af4ae16c3c3d39d46e6b4a8ae8573c96b3589d6974633ed4188`.
+API/MCP health, the mandatory1,800-second soak, fresh discovery and completed
+gateway workflow/report publication were independently verified November5.
+The green promotion rerun was idempotent after an operator promotion; it does
+not prove automatic fresh-image admission. Readiness remains degraded.
+
+Owner approved Quickstrike ARG-QS-01–05: records reconciliation, exact-source
+release handoff, authoritative spend evidence, recovery registry evidence and
+five-second monitoring qualification against the existing single admission
+guard. Source repairs and fresh release proof remain pending. Browser148 and
+parked cleanup232 are excluded; the October31 archive remains inactive.
+
+The current ledger has one uncertain Brave parse-error attempt. Its actual
+charge has no authoritative settlement; preserve that hold. Other configured
+monthly providers have no uncertain ledger charge in the readback, but budget
+estimates do not establish upstream account balances. Expired health and
+reachability observations remain unknown. No new provider canary was run.
+
+Recovery's source registry covers45 production tables plus Alembic's owned
+version table in the frozen catalog. Prepared code derives completeness during
+the disposable restore; it does not attest schema compatibility or rollback
+approval. Installation and fresh restore evidence are still pending.
+
+## September 29 release checkpoint (historical)
 
 ## Current release checkpoint
 

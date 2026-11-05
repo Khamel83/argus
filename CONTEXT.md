@@ -1,3 +1,15 @@
+## Approved reliability closure — November 5, 2026
+
+Owner approved corrected Quickstrike ARG-QS-01–05; excluded browser148 and
+parked cleanup232. Cap5.75 Codex weekly points from41%used; stop new delivery
+at45.6%used, reserve1.15 points; no paid APIs/new provider canaries. One existing
+claim and direct Codex writer own this delivery. Runtime remains0e3821ed/image
+355468da; source, merge, installation, restore and downstream evidence stay
+separate. Infra PR1851 connects exact compiler and existing scorecard admission.
+Prepared recovery verifier compares registered table/column coverage with the
+verified catalog; omitted CLI attestation no longer overwrites this evidence.
+Actual schema compatibility and human rollback approval are not inferred.
+
 ## Glama catalog startup repaired — October 22, 2026
 
 The failure email referred to a successful install followed by MCP startup
@@ -364,9 +376,14 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-## Recent source activity — November 3, 2026 checkpoint
+## Recent source activity — November 5, 2026 checkpoint
 
-Remote default-branch HEAD is `6418c6e233b3226b4d0ba4f67c1f7129eb0b3ec3`, subject `g2k: issue #234 (#235)`. The subject evidences past activity only; the supplied documents do not state what issue #234 changed, so its content and downstream effect remain unknown.
+Verified default source/runtime is0e3821ed; current rollout evidence is recorded
+at the top ofdocs/STATUS.md. PR242 supersedes the stale documentation PR238,
+closed November5 with its branch/history preserved. Issues159/191 are closed
+in native GitHub (October23); their remaining historical assertions below do
+not reactivate those issues or authorize archived work. PR226 remains draft
+until the existing151/154 runtime qualification is established.
 
 Documentation/CI commits visible in the supplied summaries but not described by the published CONTEXT entries:
 - `63b64cb731d13df92afd6d29609de1d8637d3b10` — "docs: remove the Now list (#229)"
@@ -378,7 +395,8 @@ Documentation/CI commits visible in the supplied summaries but not described by 
 
 Latest published project state (from the remote CONTEXT/TODO): Glama catalog startup repair published 1.6.5 after the native discovery test, PR #221 merged as `e71965e3e95297944847c6846d8b2fdcb7f91172`; legacy worker security patch PR #217 merged as `f0386c760bfe05127a264540e4a79b373c71c123` with release v1.6.5 verified from an isolated PyPI install; shared PostgreSQL manifest v2 with exported-snapshot capture and strict isolated restore accepted at source `66365a661abcfa6ccb4a10dfe5e4b251eaf339ff` (restore record `4bc1adb82b19ebcbf11d932b0f3ea4b4264471b1fbbdb2805c3e4580a8f6a5d1`), while `metadata_registry_complete`, `schema_contract_clean`, `forward_compatible` and `rollback_path_human_approved` remain false, no application cutover occurred, and legacy v1 manifests remain immutable and unproven.
 
-Open questions preserved from the published records: the CVE-handling question from the Glama reporter remains externally open with no advisory date; issue159 keeps its original acceptance/needs-human state with real public-share canaries and guarded runtime release still open and Claude real-share acceptance unknown; the October 16 fleet CI cancellation checkpoint in CONTEXT still describes the change as pending on `feat/fleet-ci-cancellation-20261016`, whereas the remote TODO records merge as `e5380c7f03d577f4bda3e081c1d69d4c30a2d5d3` (#195) — that SHA is absent from the supplied commit summaries, so the merge status rests on the TODO text alone.
+The CVE-handling question remains external coordination. Fleet CI cancellation
+merged in PR195 ase5380c7f; its older prepared-source paragraph below is historical.
 
 No runtime, deployment, provider or production-rollout claim is derived from these commits.
 <!-- janitor:end:recent -->
