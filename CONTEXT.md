@@ -376,29 +376,56 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-## Recent source activity — November 5, 2026 checkpoint
+## Approved reliability closure — November 5, 2026
 
-Verified default source/runtime is0e3821ed; current rollout evidence is recorded
-at the top ofdocs/STATUS.md. PR242 supersedes the stale documentation PR238,
-closed November5 with its branch/history preserved. Issues159/191 are closed
-in native GitHub (October23); their remaining historical assertions below do
-not reactivate those issues or authorize archived work. PR226 remains draft
-until the existing151/154 runtime qualification is established.
+Owner approved corrected Quickstrike ARG-QS-01–05; excluded browser148 and
+parked cleanup232. Cap 5.75 Codex weekly points from 41% used; stop new delivery
+at 45.6% used, reserve 1.15 points; no paid APIs/new provider canaries. One existing
+claim and direct Codex writer own this delivery. Runtime remains `0e3821ed`/image
+`355468da`; source, merge, installation, restore and downstream evidence stay
+separate. HEAD source includes `77a29f979cb647f38868edd3a09d43c2c9c8ab28`
+(#242 recovery registry completeness from verified catalog coverage). Infra PR1851
+connects exact compiler and existing scorecard admission. Prepared recovery
+verifier compares registered table/column coverage with the verified catalog;
+omitted CLI attestation no longer overwrites this evidence. Actual schema
+compatibility and human rollback approval are not inferred.
 
-Documentation/CI commits visible in the supplied summaries but not described by the published CONTEXT entries:
-- `63b64cb731d13df92afd6d29609de1d8637d3b10` — "docs: remove the Now list (#229)"
-- `87a932d913c2efce374aba2c789dfba0b7aee022` — "docs: correct Argus merged source statuses (#230)"
-- `98174928128718900b3a1959b6ba1e1afc3d35fa` — "ci: select PostgreSQL 16 clients for server 16 ledger tests (#231)"
-- `164ecc18544d3ea2551e88f10d2eab81af3c001f` — "docs: reset backlog to the owner Now list (#227)"
-- `65513336c7d5a9975eb99f1b86c904df77683db8` — "docs: tick TODO lines finished by merged work (#222)"
-- `446ac29b17224e9b57cccf0618f9534cd8a9f8e9` — "docs: record worker security patch publication and installed-package proof (#219)"
+## Workflow finalization repair — November 5 UTC
 
-Latest published project state (from the remote CONTEXT/TODO): Glama catalog startup repair published 1.6.5 after the native discovery test, PR #221 merged as `e71965e3e95297944847c6846d8b2fdcb7f91172`; legacy worker security patch PR #217 merged as `f0386c760bfe05127a264540e4a79b373c71c123` with release v1.6.5 verified from an isolated PyPI install; shared PostgreSQL manifest v2 with exported-snapshot capture and strict isolated restore accepted at source `66365a661abcfa6ccb4a10dfe5e4b251eaf339ff` (restore record `4bc1adb82b19ebcbf11d932b0f3ea4b4264471b1fbbdb2805c3e4580a8f6a5d1`), while `metadata_registry_complete`, `schema_contract_clean`, `forward_compatible` and `rollback_path_human_approved` remain false, no application cutover occurred, and legacy v1 manifests remain immutable and unproven.
+PR241 merged as `0e3821ed7edb0da26ca2815e71abf942279f8da5` (fix/workflow-frozen-metadata;
+`8bda8221da5800ac0f9ad1333b90bfb0c34ca59e`). Nested accepted cache-age metadata
+MappingProxyType inside StoredDocument broke `dataclasses.asdict`; copy at the
+document-storage boundary preserves plain containers. 73 focused tests passed
+including report+manifest publication. Runtime identity above is this merge;
+guarded deployment/soak and one complete workflow/report with a new inference
+receipt remain separate acceptance facts. Keep failed run `a49653dc1c18` and OCI
+inference row 707713; no model retry authorized merely to conceal finalization failure.
 
-The CVE-handling question remains external coordination. Fleet CI cancellation
-merged in PR195 ase5380c7f; its older prepared-source paragraph below is historical.
+## Search-and-summarize receipt projection repair — November 5 UTC
 
-No runtime, deployment, provider or production-rollout claim is derived from these commits.
+PR240 merged as `a335e28911a7684c960ee64a1e3232c411ace683` after
+`b34012c496c9dce1878e42429b37046b177e5268` bound composition to accepted search
+results before presentation. PR239 `061f5c2788b27b44dffcbba72df174a0c3f68358`
+introduced search-and-summarize gateway synthesis. Live discovery still had
+uncertain spend and degraded readiness in pre-merge notes; Brave skipped and
+some free providers failed in those probes. Strict receipt binding unchanged.
+Promotion/scorecard/recovery/rollback/soak and post-repair workflow proof stay
+separate from merge evidence.
+
+## Glama 1.6.5 and legacy worker security — October 22, 2026
+
+Glama catalog startup repaired and 1.6.5 published after native discovery test;
+PR221. Legacy worker auth fail-closed PR217 merged `f0386c760bfe05127a264540e4a79b373c71c123`;
+release v1.6.5 PyPI/MCP Registry verified. No operated production HTTP authority
+rollout claimed.
+
+## Shared PostgreSQL snapshot contract — October 20 UTC
+
+Manifest v2 snapshot-consistent backup/restore path merged through
+`175a7a39` / `e7ee75a9` / `66365a66`. Bounded manual producer+restore accepted;
+flags `metadata_registry_complete`, `schema_contract_clean`, `forward_compatible`,
+and `rollback_path_human_approved` remain false until separately proven. Legacy
+v1 manifests immutable and unproven.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
