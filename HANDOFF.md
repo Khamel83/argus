@@ -1,3 +1,9 @@
+## PR245 records repair — November 6, 2026 UTC
+
+Owner-authorized [Engage campaign](https://github.com/Khamel83/engage/issues/96) applies only to this tested-PR repair. Dot prepared a spacing correction against c49791bf; Engage verified native head, original-file and patch hashes, dry-run application and unchanged non-whitespace bytes. Identifiers, dates and quantities are readable again; operational facts are unchanged. Earlier ARG quickstrike caps/checkpoints below are historical for their own scope; this does not restart parked browser/cleanup work or authorize provider/runtime actions.
+
+Source candidate only: fresh exact-head trusted review, native CI and normal merge/readback are pending. Existing runtime, soak, restore, grants and downstream acceptance remain separate. Recheck `gh pr view 245 --repo Khamel83/argus --json state,headRefOid,reviews,statusCheckRollup,mergeCommit`.
+
 ## Approved reliability delivery — November 5, 2026
 
 Owner approved ARG-QS-01–05. Reused `.worktrees/deploy-latest` from fetched
