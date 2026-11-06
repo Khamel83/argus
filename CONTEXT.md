@@ -1,11 +1,17 @@
+## PR245 records repair — November 6, 2026 UTC
+
+Owner-authorized [Engage campaign](https://github.com/Khamel83/engage/issues/96) applies only to this tested-PR repair. Dot prepared a spacing correction against c49791bf; Engage verified native head, original-file and patch hashes, dry-run application and unchanged non-whitespace bytes. Identifiers, dates and quantities are readable again; operational facts are unchanged. Earlier ARG quickstrike caps/checkpoints below are historical for their own scope; this does not restart parked browser/cleanup work or authorize provider/runtime actions.
+
+Source candidate only: fresh exact-head trusted review, native CI and normal merge/readback are pending. Existing runtime, soak, restore, grants and downstream acceptance remain separate. Recheck `gh pr view 245 --repo Khamel83/argus --json state,headRefOid,reviews,statusCheckRollup,mergeCommit`.
+
 ## Approved reliability closure — November 5, 2026
 
-Owner approved corrected Quickstrike ARG-QS-01–05; excluded browser148 and
-parked cleanup232. Cap5.75 Codex weekly points from41%used; stop new delivery
-at45.6%used, reserve1.15 points; no paid APIs/new provider canaries. One existing
-claim and direct Codex writer own this delivery. Runtime remains0e3821ed/image
+Owner approved corrected Quickstrike ARG-QS-01–05; excluded browser 148 and
+parked cleanup 232. Cap 5.75 Codex weekly points from 41% used; stop new delivery
+at 45.6% used, reserve 1.15 points; no paid APIs/new provider canaries. One existing
+claim and direct Codex writer own this delivery. Runtime remains 0e3821ed / image
 355468da; source, merge, installation, restore and downstream evidence stay
-separate. Infra PR1851 connects exact compiler and existing scorecard admission.
+separate. Infra PR 1851 connects exact compiler and existing scorecard admission.
 Prepared recovery verifier compares registered table/column coverage with the
 verified catalog; omitted CLI attestation no longer overwrites this evidence.
 Actual schema compatibility and human rollback approval are not inferred.
@@ -45,9 +51,9 @@ for reviewed `ff659cb` and merged main (`a1140108edd931d439cb0c7cbb8848279346d4e
 that exact merged source. [Publish39737816197](https://github.com/Khamel83/argus/actions/runs/39737816197)
 passed both PyPI and MCP Registry jobs. PyPI metadata lists the 1.6.5 wheel and
 sdist. An isolated installation from PyPI outside the repository verified
-version/site-packages identity, the reported PoC raises401, missing-secret
+version/site-packages identity, the reported PoC raises 401, missing-secret
 startup is rejected, unauthenticated `/exec` returns401 and authenticated paid
-provider execution remains403. No provider was constructed or called.
+provider execution remains 403. No provider was constructed or called.
 Local suite:3066 passed/49 skipped; wheel/sdist metadata and release contracts pass.
 
 GitHub private vulnerability reporting is enabled with independent readback.
@@ -125,7 +131,7 @@ The flags `metadata_registry_complete`, `schema_contract_clean`,
 `forward_compatible` and `rollback_path_human_approved` remain false; no application
 cutover occurred, and legacy v1 manifests remain immutable and unproven.
 
-## Public share extraction / issue159 — October17 UTC
+## Public share extraction / issue 159 — October 17 UTC
 
 Source recovery for https://github.com/Khamel83/argus/issues/159 reuses the settled
 suspended G2K model tree e60ed5b2, applying/reviewing its source against fetched
@@ -151,7 +157,7 @@ passed/32skips. Canonical merge-e9bc1473435e47e3bf740e3668f5004b independently r
 fetched default and reviewed head full trees match. No live
 provider/production data/private service change or operated release is claimed.
 Actual public Gemini/ChatGPT canaries and guarded runtime release remain open;
-Claude real-share acceptance is still unknown. Refs159, never auto-close.
+Claude real-share acceptance is still unknown. Refs 159, never auto-close.
 This is assisted source recovery, not unattended G2K throughput proof.
 Reuse .worktrees/retained/argus-publisher-reconcile-20261010, branch
 docs/share-source-acceptance-159 from fetched927f3f7; preserve source branch
@@ -163,7 +169,7 @@ for later runtime work. No deploy is authorized by source-dispatch text alone.
 
 # Context
 
-## Issue177/179 development environment accepted — October17, 2026 UTC
+## Issue 177/179 development environment accepted — October 17, 2026 UTC
 
 [PR198](https://github.com/Khamel83/argus/pull/198) normally merged as
 `c1016bf37eed7dc8f81943f613dd90c51585fb71`. Exact reviewed head `85cb78c`
@@ -378,54 +384,86 @@ retired and are not fallbacks. See the
 <!-- janitor:begin:recent -->
 ## Approved reliability closure — November 5, 2026
 
-Owner approved corrected Quickstrike ARG-QS-01–05; excluded browser148 and
-parked cleanup232. Cap 5.75 Codex weekly points from 41% used; stop new delivery
+Owner approved corrected Quickstrike ARG-QS-01–05; excluded browser 148 and
+parked cleanup 232. Cap 5.75 Codex weekly points from 41% used; stop new delivery
 at 45.6% used, reserve 1.15 points; no paid APIs/new provider canaries. One existing
-claim and direct Codex writer own this delivery. Runtime remains `0e3821ed`/image
-`355468da`; source, merge, installation, restore and downstream evidence stay
-separate. HEAD source includes `77a29f979cb647f38868edd3a09d43c2c9c8ab28`
-(#242 recovery registry completeness from verified catalog coverage). Infra PR1851
-connects exact compiler and existing scorecard admission. Prepared recovery
-verifier compares registered table/column coverage with the verified catalog;
-omitted CLI attestation no longer overwrites this evidence. Actual schema
+claim and direct Codex writer own this delivery. Runtime remains 0e3821ed / image
+355468da; source, merge, installation, restore and downstream evidence stay
+separate. Infra PR 1851 connects exact compiler and existing scorecard admission.
+Prepared recovery verifier compares registered table/column coverage with the
+verified catalog; omitted CLI attestation no longer overwrites this evidence
+(source `77a29f979cb647f38868edd3a09d43c2c9c8ab28`, PR 242). ARG-QS-01 reconciled
+current records and closed PR 238 as superseded by PR 242. Actual schema
 compatibility and human rollback approval are not inferred.
 
 ## Workflow finalization repair — November 5 UTC
 
-PR241 merged as `0e3821ed7edb0da26ca2815e71abf942279f8da5` (fix/workflow-frozen-metadata;
-`8bda8221da5800ac0f9ad1333b90bfb0c34ca59e`). Nested accepted cache-age metadata
-MappingProxyType inside StoredDocument broke `dataclasses.asdict`; copy at the
-document-storage boundary preserves plain containers. 73 focused tests passed
-including report+manifest publication. Runtime identity above is this merge;
-guarded deployment/soak and one complete workflow/report with a new inference
-receipt remain separate acceptance facts. Keep failed run `a49653dc1c18` and OCI
-inference row 707713; no model retry authorized merely to conceal finalization failure.
+PR 241 merged frozen-metadata repair as `0e3821ed7edb0da26ca2815e71abf942279f8da5`
+(fix commit `8bda8221da5800ac0f9ad1333b90bfb0c34ca59e`). Nested accepted
+cache-age MappingProxyType inside StoredDocument had blocked dataclasses.asdict;
+copy at the document-storage boundary preserves plain containers. Prior live
+PR 240 source a335e289 / image f966565f had healthy API/MCP under active soak
+argus-promote-a335e28.service; workflow a49653dc1c18 extracted one source and
+generated a cited Answer; OCI row 707713 at 07:22:42 UTC recorded successful
+agy/primary/gemini-3.8-flash-medium inference (proves inference, not completion).
+73 focused tests had passed including report+manifest publication. Full native
+source gates and guarded deployment of the accepted repair image, plus one
+complete workflow/report with a new inference receipt, remain required. Keep
+failed run and successful inference receipt; no model retry to conceal
+finalization failure. Runtime identity after PR 241 promotion stays separate
+from merge evidence.
 
 ## Search-and-summarize receipt projection repair — November 5 UTC
 
-PR240 merged as `a335e28911a7684c960ee64a1e3232c411ace683` after
-`b34012c496c9dce1878e42429b37046b177e5268` bound composition to accepted search
-results before presentation. PR239 `061f5c2788b27b44dffcbba72df174a0c3f68358`
-introduced search-and-summarize gateway synthesis. Live discovery still had
-uncertain spend and degraded readiness in pre-merge notes; Brave skipped and
-some free providers failed in those probes. Strict receipt binding unchanged.
-Promotion/scorecard/recovery/rollback/soak and post-repair workflow proof stay
-separate from merge evidence.
+PR 240 merged receipt-projection repair as `a335e28911a7684c960ee64a1e3232c411ace683`
+(fix `b34012c496c9dce1878e42429b37046b177e5268`). Earlier live PR 239
+source 061f5c2 / image 73f5ff35 served healthy API/MCP; workflow e98f4e950f6a failed
+before extraction because public search projection added
+retrieved_at/source_date/source_type absent from receipt-bound results. Repair
+binds composition to accepted stored results; strict receipt binding unchanged.
+Focused workflow checks 61 passed. PR 239 synthesize path remains
+`061f5c2788b27b44dffcbba72df174a0c3f68358`. Immutable image admission, scorecard,
+recovery/rollback/soak and a post-repair gateway workflow remain separate gates.
+Spend totals uncertain; readiness degraded on last reported discovery.
 
-## Glama 1.6.5 and legacy worker security — October 22, 2026
+## Glama catalog startup repaired — October 22, 2026
 
-Glama catalog startup repaired and 1.6.5 published after native discovery test;
-PR221. Legacy worker auth fail-closed PR217 merged `f0386c760bfe05127a264540e4a79b373c71c123`;
-release v1.6.5 PyPI/MCP Registry verified. No operated production HTTP authority
-rollout claimed.
+Corrected Glama adapter-only schema and published 1.6.5 after native test pass.
+PR 221 merged as `e71965e3e95297944847c6846d8b2fdcb7f91172`. Independent UI
+readback confirmed release and settings. 72 focused checks pass; bare MCP fails
+closed; dummy-config lists 15 tools. No new PyPI package or operated HTTP
+authority rollout claimed beyond the separate worker 1.6.5 publication path.
+See [dated evidence](docs/evidence/2026-10-22-glama-startup-repair.md).
+
+## Legacy worker security patch released — October 22, 2026
+
+PR 217 merged as `f0386c760bfe05127a264540e4a79b373c71c123`. Release v1.6.5
+published; PyPI/MCP Registry jobs passed. Isolated PyPI install verified PoC
+raises 401 and paid provider execution remains 403. No operated production
+rollout claimed. See [dated evidence](docs/evidence/2026-10-21-worker-authentication.md).
 
 ## Shared PostgreSQL snapshot contract — October 20 UTC
 
-Manifest v2 snapshot-consistent backup/restore path merged through
-`175a7a39` / `e7ee75a9` / `66365a66`. Bounded manual producer+restore accepted;
-flags `metadata_registry_complete`, `schema_contract_clean`, `forward_compatible`,
-and `rollback_path_human_approved` remain false until separately proven. Legacy
-v1 manifests immutable and unproven.
+Manifest v2 exported-snapshot path merged via PR 209 `175a7a39`, reader repair
+PR 211 `e7ee75a9`, inventory ordering PR 213 `66365a66`. Bounded manual producer
+and strict isolated restore accepted for schema-2 set `20261020T032858Z`; flags
+`metadata_registry_complete`, `schema_contract_clean`, `forward_compatible` and
+`rollback_path_human_approved` remain false; no application cutover; legacy v1
+manifests immutable and unproven.
+
+## Public share extraction / issue 159 — October 17 UTC
+
+Source recovery merged PR 201 as `927f3f7340271157ad0318969199289f1f9b82b2`.
+Refs 159, never auto-close. Actual public Gemini/ChatGPT canaries and guarded
+runtime release remain open; Claude real-share acceptance unknown.
+
+## Issue 177/179 development environment accepted — October 17, 2026 UTC
+
+PR 198 merged as `c1016bf37eed7dc8f81943f613dd90c51585fb71`. Native 179/177
+CLOSED/COMPLETED. Pre-existing separate unchecked type/format governance TODO
+remains. No application service or provider runtime changed.
+
+Source commit for this documentation reconciliation: `e2a632c5310be5b4044f2fc6f2898b4d7132870b`.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
@@ -440,8 +478,8 @@ not natural publication, H26 release or provider acceptance. No runtime changed.
 
 ## Search-and-summarize receipt projection repair — November 5 UTC
 
-Live PR239 source061f5c2/image73f5ff35 serves healthy API/MCP and passed doctor.
-A fresh tier-capped discovery search returned10results; Exa, Tavily, Linkup,
+Live PR 239 source 061f5c2 / image 73f5ff35 serves healthy API/MCP and passed doctor.
+A fresh tier-capped discovery search returned 10 results; Exa, Tavily, Linkup,
 Parallel, SearXNG, Yahoo and GitHub succeeded. Brave was skipped; DuckDuckGo
 failed. Spend totals remain uncertain and overall readiness remains degraded.
 Workflow e98f4e950f6a failed before extraction/model inference: its public
@@ -453,27 +491,27 @@ The repair recognizes only that exact presentation shape, verifies every stored
 field, and uses the original stored results for both claim and composition.
 Existing strict receipt binding remains unchanged; changed URLs/content, unknown
 fields or malformed presentation context remain rejected. Public response shape
-and accepted historical rows are untouched. Focused workflow checks61passed
+and accepted historical rows are untouched. Focused workflow checks 61 passed
 before expanded tamper cases; native CI/review, immutable image, admission and
-actual gateway workflow remain required. The existing061f5c2 guarded promotion
-is in its mandatory1800ssoak, with healthy runtime; do not interrupt it.
+actual gateway workflow remain required. The existing 061f5c2 guarded promotion
+is in its mandatory 1800s soak, with healthy runtime; do not interrupt it.
 
 Worktree `.worktrees/deploy-latest` now owns `fix/workflow-receipt-projection`;
-prior records/source are retained on `ops/pr239-rollout-checkpoint` atab679bf.
+prior records/source are retained on `ops/pr239-rollout-checkpoint` at ab679bf.
 Next: finish source gates, then promote only the accepted built digest with
 normal scorecard/recovery/rollback/soak and retry one actual workflow after repair.
 No model request occurred in the failed workflow.
 
 ## Workflow finalization repair — November 5 UTC
 
-ArgusPR240 sourcea335e289/imagef966565f is serving healthy API/MCP, with its
-required soak still active underargus-promote-a335e28.service. Doctor passed
-and a fresh discovery returned10results; Exa/Tavily/Linkup/Parallel/SearXNG/
+Argus PR 240 source a335e289 / image f966565f is serving healthy API/MCP, with its
+required soak still active under argus-promote-a335e28.service. Doctor passed
+and a fresh discovery returned 10 results; Exa/Tavily/Linkup/Parallel/SearXNG/
 GitHub succeeded. Brave skipped; DuckDuckGo/Yahoo failed. Readiness remains
-degraded and spend totals uncertain. Actual workflowa49653dc1c18 extracted
-one source and generated a cited Answer. OCI durable row707713 at07:22:42 UTC
-records successfulagy/primary/gemini-3.8-flash-medium inference, authenticated
-workloadargus/callerargus-workflows. This proves inference, not workflow completion.
+degraded and spend totals uncertain. Actual workflow a49653dc1c18 extracted
+one source and generated a cited Answer. OCI durable row 707713 at 07:22:42 UTC
+records successful agy/primary/gemini-3.8-flash-medium inference, authenticated
+workload argus / caller argus-workflows. This proves inference, not workflow completion.
 
 Finalization then failed because nested accepted cache-age metadata remained
 MappingProxyType inside StoredDocument. dataclasses.asdict cannot deep-copy it;
