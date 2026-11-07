@@ -9,7 +9,7 @@ Source candidate only: fresh exact-head trusted review, native CI and normal mer
 - [x] ARG-QS-01 reconcile current records and existing PR226/238; PR238 closed as superseded by https://github.com/Khamel83/argus/pull/242 with branch/history retained. PR226 awaits151/154 runtime evidence. Done: https://github.com/Khamel83/argus/pull/242
 - [ ] ARG-QS-02 install reviewed exact-source handoff (https://github.com/Khamel83/infra/pull/1851), then prove one genuinely new digest through all release gates.
 - [ ] ARG-QS-03 preserve the Brave uncertain parse-error attempt until authoritative settlement; distinguish expired observations from failures and budget estimates from balances.
-- [ ] ARG-QS-04 publish derived registry evidence and qualify a fresh disposable restore plus ordinary producer/reader observations.
+- [x] ARG-QS-04 publish derived registry evidence and qualify a fresh disposable restore plus ordinary producer/reader observations. Done (model-matched): https://github.com/Khamel83/argus/pull/242
 - [ ] ARG-QS-05 qualify the existing guard against five-second Baywatch evidence during real scorecard activity and exact resource cleanup; existing151/154 remain acceptance authority.
 
 ## Glama catalog startup follow-up — October 22, 2026
