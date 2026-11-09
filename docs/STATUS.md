@@ -1,3 +1,13 @@
+# Argus status — November 8, 2026
+
+Sourcebd7dded9/imagec9275a40 passed the guarded new-digest promotion and full
+1,800-second soak; current/known-good and live identity/200 verified. Hosted
+run42187925242 attempt3 SUCCESS. ARG-QS-02 is complete; provider uncertainty,
+restore/ordinary-reader and broader monitoring acceptance remain independent.
+[Evidence](https://github.com/Khamel83/argus/issues/151#issuecomment-6728505607).
+
+## Earlier verified checkpoint (November5)
+
 # Argus status — November 5, 2026
 
 ## Current verified release and approved follow-up

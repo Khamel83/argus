@@ -1,3 +1,22 @@
+## November 8 — ARG-QS-02 release proof complete
+
+Reviewed exact-source handoff is installed and a genuinely new digest passed
+the guarded release gates: source `bd7dded90d4378ee6dba516b114738cb81a474a7`,
+image `sha256:c9275a40142e452c31c0aa40bf9e57d9da83431855a72e33f632b777b337da56`.
+Native promotion/full1,800-second soak completed23:04:32UTC. Current/known-good
+agree; healthy API/MCP load that digest and baked source; live200 verified.
+Hosted run42187925242 attempt3 is SUCCESS (promote128900892858), returning
+existing known-good proof after attempt2 cancelled. Original failed retries
+remain retained. [Bounded operator evidence](https://github.com/Khamel83/argus/issues/151#issuecomment-6728505607).
+
+ARG-QS-03/04/05 remain open: uncertain provider settlement, restore/ordinary
+reader proof and broader monitoring qualification are independent. No claim of
+whole-host zero-timeout acceptance. Detailed private receipts remain in Argus-ops.
+Records only; no further deployment is needed for this documentation.
+Own `.worktrees/nov8-todo-closeout` is isolated from the protected primary and
+other sessions; retain through exact-head review/CI and normal merge, then remove
+if clean. Next: verify that records PR's native gates and merge receipt.
+
 ## PR245 records repair — November 6, 2026 UTC
 
 Owner-authorized [Engage campaign](https://github.com/Khamel83/engage/issues/96) applies only to this tested-PR repair. Dot prepared a spacing correction against c49791bf; Engage verified native head, original-file and patch hashes, dry-run application and unchanged non-whitespace bytes. Identifiers, dates and quantities are readable again; operational facts are unchanged. Earlier ARG quickstrike caps/checkpoints below are historical for their own scope; this does not restart parked browser/cleanup work or authorize provider/runtime actions.
@@ -7,7 +26,7 @@ Source candidate only: fresh exact-head trusted review, native CI and normal mer
 ## Approved Quickstrike reliability work — November 5, 2026
 
 - [x] ARG-QS-01 reconcile current records and existing PR226/238; PR238 closed as superseded by https://github.com/Khamel83/argus/pull/242 with branch/history retained. PR226 awaits151/154 runtime evidence. Done: https://github.com/Khamel83/argus/pull/242
-- [ ] ARG-QS-02 install reviewed exact-source handoff (https://github.com/Khamel83/infra/pull/1851), then prove one genuinely new digest through all release gates.
+- [x] ARG-QS-02 install reviewed exact-source handoff (https://github.com/Khamel83/infra/pull/1851), then prove one genuinely new digest through all release gates. Verified November8: sourcebd7dded9/imagec9275a40, complete1,800-second soak and hosted run42187925242 attempt3 SUCCESS. [Operator evidence](https://github.com/Khamel83/argus/issues/151#issuecomment-6728505607).
 - [ ] ARG-QS-03 preserve the Brave uncertain parse-error attempt until authoritative settlement; distinguish expired observations from failures and budget estimates from balances.
 - [ ] ARG-QS-04 publish derived registry evidence and qualify a fresh disposable restore plus ordinary producer/reader observations.
 - [ ] ARG-QS-05 qualify the existing guard against five-second Baywatch evidence during real scorecard activity and exact resource cleanup; existing151/154 remain acceptance authority.
