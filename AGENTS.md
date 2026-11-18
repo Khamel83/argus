@@ -289,8 +289,12 @@ or catalog entry) are part of the change. Never leave a "remember to run X"
 step for the owner; if something truly needs the owner, write it in
 `HANDOFF.md` as a blocker with the exact command.
 
-infra owns active repository membership and explicit PR merge exclusions.
-Janitor's standing worker merges every PR type after the latest trusted,
+GitHub defines the active set: Khamel83-owned repositories that are not forks
+or archived. Catalog lifecycle fields are project facts, not membership.
+Infra catalog rows add project facts and an explicit
+`pr_auto_merge: false` merge exclusion. An incomplete owner listing blocks all
+fleet publication and merging. Janitor's standing worker merges every PR type
+after the latest trusted,
 non-dismissed OCI reviewer Bot PASS for the exact current commit. A stale,
 superseded or contradictory PASS does not qualify. It uses GitHub's normal merge endpoint
 and records independent readback. Labels, authors and changed paths do not
@@ -325,8 +329,9 @@ also tick an unlinked line the model gateway matches to a merged PR, labelled
 (owner decision, October 5, 2026). Otherwise model output never closes work.
 Development progress and runtime acceptance are separate facts. Missing or
 stale source evidence stays unknown. Generated summaries must not become new
-copies of the underlying tasks. Janitor distributes this contract; Infra's
-catalog defines project membership and lifecycle.
+copies of the underlying tasks. Janitor distributes this contract; the GitHub
+owner listing defines active repository membership and Infra's catalog adds
+project identity, lifecycle and merge-policy facts.
 <!-- janitor:end:global-work -->
 <!-- janitor:begin:metered-provider -->
 ## Metered provider calls
