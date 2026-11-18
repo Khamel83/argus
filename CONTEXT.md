@@ -401,9 +401,9 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-- Source commit `250a2d3d7b910a22ec4ee7fc10c0b4ec1cffbce3` merged docs completing the exact-source new-digest promotion TODO (#247).
-- ARG-QS-02 release proof verified November 8: exact source `bd7dded90d4378ee6dba516b114738cb81a474a7`, image `sha256:c9275a40142e452c31c0aa40bf9e57d9da83431855a72e33f632b777b337da56`, complete 1,800-second soak, and hosted run 42187925242 attempt 3 SUCCESS.
-- ARG-QS-03/04/05 remain open: uncertain provider settlement, restore/ordinary reader proof, and monitoring qualification are independent.
+- Current source commit `3708c25773e4daadd309fd3b2954e97f825e7675`: g2k: issue #249 (#250).
+- Commit `250a2d3d7b910a22ec4ee7fc10c0b4ec1cffbce3`: docs: complete exact-source new-digest promotion TODO (#247).
+- November 8 release proof complete: source `bd7dded90d4378ee6dba516b114738cb81a474a7`, image `sha256:c9275a40142e452c31c0aa40bf9e57d9da83431855a72e33f632b777b337da56` passed guarded release gates and 1,800-second soak (hosted run 42187925242 attempt 3 SUCCESS). ARG-QS-03, ARG-QS-04, and ARG-QS-05 remain open.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
