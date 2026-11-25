@@ -23,6 +23,11 @@ Owner-authorized [Engage campaign](https://github.com/Khamel83/engage/issues/96)
 
 Source candidate only: fresh exact-head trusted review, native CI and normal merge/readback are pending. Existing runtime, soak, restore, grants and downstream acceptance remain separate. Recheck `gh pr view 245 --repo Khamel83/argus --json state,headRefOid,reviews,statusCheckRollup,mergeCommit`.
 
+## Release path — November 25, 2026
+
+- [ ] Find why `promote` exits 78 on main since November 9 (newest Homelab attempt log), fix it, and promote the current main digest through the full gates.
+- [ ] Merge the docs-only skip for the release workflow after trusted review and CI.
+
 ## Approved Quickstrike reliability work — November 5, 2026
 
 - [x] ARG-QS-01 reconcile current records and existing PR226/238; PR238 closed as superseded by https://github.com/Khamel83/argus/pull/242 with branch/history retained. PR226 awaits151/154 runtime evidence. Done: https://github.com/Khamel83/argus/pull/242

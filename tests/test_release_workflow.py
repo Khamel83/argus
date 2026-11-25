@@ -182,3 +182,76 @@ def test_release_identity_is_1_6_5_in_user_visible_locations():
     assert server["packages"][0]["version"] == "1.6.5"
     assert re.search(r'__version__\s*=\s*["\']1\.6\.5["\']', package_text)
     assert re.search(r'version=["\']1\.6\.5["\']', api_text)
+
+
+def _github_path_pattern(pattern: str) -> re.Pattern[str]:
+    # GitHub filter globs: ** crosses directories, * stays inside one.
+    out = []
+    index = 0
+    while index < len(pattern):
+        if pattern.startswith("**", index):
+            out.append(".*")
+            index += 2
+        elif pattern[index] == "*":
+            out.append("[^/]*")
+            index += 1
+        else:
+            out.append(re.escape(pattern[index]))
+            index += 1
+    return re.compile("".join(out) + r"\Z")
+
+
+def _push_runs_for(patterns: list[str], changed: list[str]) -> bool:
+    # A push runs when any changed path is included by the last pattern it matches.
+    for path in changed:
+        included = False
+        for pattern in patterns:
+            negated = pattern.startswith("!")
+            if _github_path_pattern(pattern.lstrip("!")).match(path):
+                included = not negated
+        if included:
+            return True
+    return False
+
+
+def test_release_workflow_skips_documentation_only_pushes():
+    payload = yaml.safe_load((WORKFLOWS / "docker-publish.yml").read_text(encoding="utf-8"))
+    push = payload[True]["push"]
+    patterns = push["paths"]
+
+    assert push["branches"] == ["main"]
+    assert push["tags"] == ["v*"]
+    assert "workflow_dispatch" in payload[True]
+
+    for docs_only in (
+        ["docs/research/g2k-issue-249.md"],
+        ["TODO.md", "CONTEXT.md", "HANDOFF.md"],
+        ["thoughts/shared/plan.md", "AGENTS.md", "CLAUDE.md"],
+        ["docs/README.md"],
+    ):
+        assert not _push_runs_for(patterns, docs_only), docs_only
+
+    for releasing in (
+        ["README.md"],
+        ["argus/api/main.py"],
+        ["TODO.md", "argus/config.py"],
+        ["Dockerfile"],
+        ["pyproject.toml"],
+        ["uv.lock"],
+        [".github/workflows/docker-publish.yml"],
+        ["tests/test_release_workflow.py"],
+        ["deploy/argus.service"],
+    ):
+        assert _push_runs_for(patterns, releasing), releasing
+
+    # Every file the image copies from the source tree still releases.
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    sources = []
+    for line in dockerfile.splitlines():
+        parts = line.split()
+        if parts[:1] == ["COPY"] and not any(part.startswith("--from") for part in parts):
+            sources.extend(parts[1:-1])
+    assert "README.md" in sources
+    for source in sources:
+        probe = source.rstrip("/") + ("/probe.py" if source.endswith("/") else "")
+        assert _push_runs_for(patterns, [probe]), source

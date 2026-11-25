@@ -4,6 +4,17 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+    # A push that changes only documentation builds and promotes nothing:
+    # the image would be byte-for-byte the same service, yet each run spends
+    # the full promotion transaction and 30-minute soak on Homelab. The last
+    # matching pattern wins, so README.md (copied into the image as package
+    # metadata) is included again. Tag pushes ignore path filters.
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!thoughts/**'
+      - '!*.md'
+      - 'README.md'
   workflow_dispatch: {}
 
 env:

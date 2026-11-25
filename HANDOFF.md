@@ -1,3 +1,20 @@
+## November 25 — promotion failing on main; docs-only pushes skipped
+
+Every main push since November 9 failed in `promote` (November 18: exit 78
+after about five minutes; November 9: no readable log). The Actions log shows
+only the status because Infra's promoter writes everything after its early
+checks to a private attempt log on Homelab, so the reason is on Homelab only.
+Source change on `claude/project-thread-jy5vb6`: the release workflow no
+longer builds or promotes for pushes that change only `docs/**`, `thoughts/**`
+or root `*.md` files other than `README.md` (copied into the image). Tag
+pushes and manual runs are unchanged. Test:
+`tests/test_release_workflow.py::test_release_workflow_skips_documentation_only_pushes`.
+Not deployed and nothing promoted. The current runtime is still the November 8
+known-good digest unless Homelab state says otherwise. Infra carries the
+promoter change that prints the refusal phase; the reason for exit 78 still
+needs the newest Homelab attempt log. Next: trusted review, merge, then rerun
+the latest failed run after the Homelab read.
+
 ## November 8 — ARG-QS-02 release proof complete
 
 Reviewed exact-source handoff is installed and a genuinely new digest passed
