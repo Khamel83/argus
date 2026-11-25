@@ -3,10 +3,12 @@
 import json
 import os
 import re
+import shlex
 import subprocess
 import tomllib
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -182,3 +184,304 @@ def test_release_identity_is_1_6_5_in_user_visible_locations():
     assert server["packages"][0]["version"] == "1.6.5"
     assert re.search(r'__version__\s*=\s*["\']1\.6\.5["\']', package_text)
     assert re.search(r'version=["\']1\.6\.5["\']', api_text)
+
+
+def _github_path_pattern(pattern: str) -> re.Pattern[str]:
+    # GitHub filter globs: ** crosses directories, * stays inside one.
+    out = []
+    index = 0
+    while index < len(pattern):
+        if pattern.startswith("**", index):
+            out.append(".*")
+            index += 2
+        elif pattern[index] == "*":
+            out.append("[^/]*")
+            index += 1
+        else:
+            out.append(re.escape(pattern[index]))
+            index += 1
+    return re.compile("".join(out) + r"\Z")
+
+
+def _push_runs_for(patterns: list[str], changed: list[str]) -> bool:
+    # A push runs when any changed path is included by the last pattern it matches.
+    for path in changed:
+        included = False
+        for pattern in patterns:
+            negated = pattern.startswith("!")
+            if _github_path_pattern(pattern.lstrip("!")).match(path):
+                included = not negated
+        if included:
+            return True
+    return False
+
+
+def test_release_workflow_skips_documentation_only_pushes():
+    payload = yaml.safe_load((WORKFLOWS / "docker-publish.yml").read_text(encoding="utf-8"))
+    push = payload[True]["push"]
+    patterns = push["paths"]
+
+    assert push["branches"] == ["main"]
+    assert push["tags"] == ["v*"]
+    assert "workflow_dispatch" in payload[True]
+
+    for docs_only in (
+        ["docs/research/g2k-issue-249.md"],
+        ["TODO.md", "CONTEXT.md", "HANDOFF.md"],
+        ["thoughts/shared/plan.md", "AGENTS.md", "CLAUDE.md"],
+        ["docs/README.md"],
+    ):
+        assert not _push_runs_for(patterns, docs_only), docs_only
+
+    for releasing in (
+        ["README.md"],
+        ["argus/api/main.py"],
+        ["TODO.md", "argus/config.py"],
+        ["Dockerfile"],
+        ["pyproject.toml"],
+        ["uv.lock"],
+        [".github/workflows/docker-publish.yml"],
+        ["tests/test_release_workflow.py"],
+        ["deploy/argus.service"],
+    ):
+        assert _push_runs_for(patterns, releasing), releasing
+
+    # Every file the image copies from the source tree still releases.
+    sources = _dockerfile_context_sources(ROOT / "Dockerfile")
+    assert "README.md" in sources
+    assert "migrations/" in sources
+    for source in sources:
+        files = _context_files(source)
+        assert files, source
+        for path in files:
+            assert _push_runs_for(patterns, [path]), (source, path)
+
+
+HEREDOC_WORD = re.compile(r"\d*<<(-?)([^<]+)")
+CONTINUATION = re.compile(r"\\[ \t]*$")
+
+
+def _dockerfile_context_sources(dockerfile: Path) -> list[str]:
+    """Build-context sources the Dockerfile reads.
+
+    Covers COPY and ADD without --from (also under ONBUILD) and RUN bind
+    mounts without from=, and skips flags such as --chown. Lines are read the
+    way BuildKit reads them: a comment line (first non-blank character `#`)
+    is dropped, also inside a continued instruction, and never continues; a
+    backslash followed only by spaces or tabs continues the instruction.
+    Heredocs are recognised only as a whole word of a COPY, ADD or RUN
+    instruction (also under ONBUILD), and their bodies are skipped up to the exact terminator line.
+    HEREDOC_WORD follows BuildKit's own rule (``reHeredoc`` in
+    frontend/dockerfile/parser/parser.go: optional digits, ``<<``, an optional
+    ``-``, then the name, checked on each word), so a bare word such as
+    ``1<<2`` opens a heredoc here exactly as it does in a real build.
+    A heredoc without a terminator fails the check rather than hiding the
+    rest of the file, and so does a non-default escape directive, which
+    would change the continuation character.
+    """
+    lines = dockerfile.read_text(encoding="utf-8").splitlines()
+    for line in lines:
+        directive = re.match(r"\s*#\s*escape\s*=\s*(\S*)", line, re.IGNORECASE)
+        if directive:
+            assert directive.group(1) == "\\", f"unsupported Dockerfile escape directive: {line.strip()}"
+            continue
+        if not re.match(r"\s*#\s*\w+\s*=", line):
+            break
+
+    def is_comment(line: str) -> bool:
+        return line.lstrip().startswith("#")
+
+    sources: list[str] = []
+    index = 0
+    while index < len(lines):
+        instruction = lines[index]
+        index += 1
+        if is_comment(instruction) or not instruction.strip():
+            continue
+        while CONTINUATION.search(instruction):
+            instruction = CONTINUATION.sub("", instruction)
+            while index < len(lines) and (is_comment(lines[index]) or not lines[index].strip()):
+                index += 1
+            if index == len(lines):
+                break
+            instruction += lines[index]
+            index += 1
+        parts = instruction.split()
+        # BuildKit reads heredocs of an ONBUILD COPY, ADD or RUN too.
+        if parts and parts[0].upper() == "ONBUILD":
+            parts = parts[1:]
+        if parts and parts[0].upper() in {"COPY", "ADD", "RUN"}:
+            try:
+                words = shlex.split(instruction)
+            except ValueError:
+                words = parts
+            for word in words[1:]:
+                heredoc = HEREDOC_WORD.fullmatch(word)
+                if not heredoc:
+                    continue
+                chomp, name = heredoc.groups()
+                while True:
+                    assert index < len(lines), f"unterminated Dockerfile heredoc {name}"
+                    body = lines[index]
+                    index += 1
+                    if (body.lstrip("\t") if chomp else body) == name:
+                        break
+            parts = [part for part in parts if not HEREDOC_WORD.fullmatch(part)]
+        if parts and parts[0].upper() == "RUN":
+            sources.extend(_bind_mount_sources(parts[1:]))
+            continue
+        if not parts or parts[0].upper() not in {"COPY", "ADD"}:
+            continue
+        args = parts[1:]
+        if any(arg.startswith("--from") for arg in args):
+            continue
+        operands = [arg for arg in args if not arg.startswith("--")]
+        if operands[:1] and operands[0].startswith("["):
+            operands = json.loads(" ".join(operands))
+        sources.extend(operands[:-1])
+    return sources
+
+
+def _bind_mount_sources(args: list[str]) -> list[str]:
+    """Context sources of RUN --mount=type=bind flags that have no from=."""
+    sources: list[str] = []
+    for arg in args:
+        if not arg.startswith("--mount="):
+            if not arg.startswith("--"):
+                break
+            continue
+        options = dict(
+            item.split("=", 1) if "=" in item else (item, "")
+            for item in arg[len("--mount="):].split(",")
+        )
+        if options.get("type", "bind") != "bind" or "from" in options:
+            continue
+        sources.append(options.get("source", options.get("src", ".")))
+    return sources
+
+
+def _context_files(source: str) -> list[str]:
+    """Repository files a COPY/ADD source puts into the image.
+
+    A directory or "." expands to every file under it (excluding .git), and a
+    glob expands to its matches, so copying docs/ or the whole context fails
+    the docs-only check instead of passing it vacuously.
+    """
+    files: list[str] = []
+    pattern = source.strip("/")
+    while pattern.startswith("./"):
+        pattern = pattern[2:]
+    matches = [ROOT] if pattern in {"", "."} else sorted(ROOT.glob(pattern))
+    for match in matches:
+        candidates = match.rglob("*") if match.is_dir() else [match]
+        for path in candidates:
+            relative = path.relative_to(ROOT)
+            if path.is_file() and ".git" not in relative.parts:
+                files.append(relative.as_posix())
+    return files
+
+
+def test_docs_only_guard_refuses_a_non_default_escape_directive(tmp_path):
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("# syntax=docker/dockerfile:1\n# escape=`\nFROM python\nCOPY a `\n  docs/ ./\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match="escape directive"):
+        _dockerfile_context_sources(dockerfile)
+    dockerfile.write_text("# escape=\\\nFROM python\nCOPY a \\\n  docs/ ./\n", encoding="utf-8")
+    assert _dockerfile_context_sources(dockerfile) == ["a", "docs/"]
+    dockerfile.write_text("FROM python\n# escape=`\nCOPY a b\n", encoding="utf-8")
+    assert _dockerfile_context_sources(dockerfile) == ["a"]
+
+
+def test_docs_only_guard_reads_lines_like_buildkit(tmp_path):
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        "FROM python\n"
+        "# a comment that mentions <<EOF is not a heredoc\n"
+        "COPY docs/a.md /a\n"
+        "RUN echo $((x<<END)) && x=1<<2\n"
+        "COPY thoughts/ /t/\n"
+        "# a comment ending in a backslash does not continue \\\n"
+        "COPY notes.md /n\n"
+        "COPY b \\  \t\n"
+        "  docs/c.md ./\n"
+        "COPY d \\\n"
+        "# a comment inside a continuation is dropped\n"
+        "\n"
+        "  docs/e.md ./\n"
+        "END\n"
+        "EOF\n",
+        encoding="utf-8",
+    )
+    assert _dockerfile_context_sources(dockerfile) == [
+        "docs/a.md",
+        "thoughts/",
+        "notes.md",
+        "b",
+        "docs/c.md",
+        "d",
+        "docs/e.md",
+    ]
+
+
+def test_docs_only_guard_fails_on_an_unterminated_heredoc(tmp_path):
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("FROM python\nCOPY <<EOF /x\nCOPY docs/ ./\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match="unterminated Dockerfile heredoc EOF"):
+        _dockerfile_context_sources(dockerfile)
+    # A chomped heredoc ends at its terminator after leading tabs; a plain one
+    # needs the exact line.
+    dockerfile.write_text("FROM python\nRUN <<-EOF\n\tcat x\n\tEOF\nCOPY docs/ ./\n", encoding="utf-8")
+    assert _dockerfile_context_sources(dockerfile) == ["docs/"]
+    dockerfile.write_text("FROM python\nRUN <<EOF\n\tEOF\nCOPY docs/ ./\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match="unterminated"):
+        _dockerfile_context_sources(dockerfile)
+
+
+def test_docs_only_guard_sees_every_copy_form(tmp_path):
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        "FROM python AS builder\n"
+        "COPY --chown=app:app pyproject.toml \\\n"
+        "     uv.lock ./\n"
+        "ADD docs/ ./docs/\n"
+        'COPY ["alembic.ini", "./"]\n'
+        "COPY --from=builder /app /app\n"
+        "COPY . .\n"
+        "ONBUILD COPY thoughts/ ./thoughts/\n"
+        "RUN --mount=type=bind,source=docs/guide.md,target=/g --mount=type=cache,target=/c \\\n"
+        "    --mount=type=bind,from=builder,source=/app,target=/a cat /g\n"
+        "RUN --mount=target=/ctx ls /ctx\n"
+        "COPY <<EOF /etc/note\n"
+        "COPY docs/ignored.md /never\n"
+        "EOF\n"
+        "COPY <<-'ONE' <<TWO /tmp/\n"
+        "a\n"
+        "ONE\n"
+        "b\n"
+        "TWO\n"
+        "ONBUILD RUN <<EOF\n"
+        "COPY docs/also-ignored.md /never\n"
+        "EOF\n"
+        "ONBUILD COPY <<EOF /etc/onbuild-note\n"
+        "ADD docs/ignored-too.md /never\n"
+        "EOF\n",
+        encoding="utf-8",
+    )
+    sources = _dockerfile_context_sources(dockerfile)
+    assert sources == [
+        "pyproject.toml",
+        "uv.lock",
+        "docs/",
+        "alembic.ini",
+        ".",
+        "thoughts/",
+        "docs/guide.md",
+        ".",
+    ]
+
+    patterns = yaml.safe_load((WORKFLOWS / "docker-publish.yml").read_text(encoding="utf-8"))[True]["push"]["paths"]
+    # Copying docs/ or the whole context would put docs in the image, so the
+    # guard must report a docs path that would not release.
+    for source in ("docs/", "."):
+        skipped = [path for path in _context_files(source) if not _push_runs_for(patterns, [path])]
+        assert any(path.startswith("docs/") for path in skipped), source

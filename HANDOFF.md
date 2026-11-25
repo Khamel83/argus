@@ -1,3 +1,37 @@
+## November 25 — promotion failing on main; docs-only pushes skipped
+
+Main pushes since November 9, from "Build and Promote Immutable Image" runs
+281–285 (all changed only docs or root `*.md` files): run 281 (#247) was
+cancelled; runs 282 (#248, November 9), 283 (#250), 284 (#251) and 285 (#252,
+all November 18) built, then failed in `promote` at "Submit forced-command
+promotion". The November 18 runs exited 78 after about five minutes each; the
+November 9 run failed after about 64 minutes and its log is no longer
+downloadable. Run IDs: 42538350825, 44227976483, 44228760366, 44282879634.
+The Actions log shows
+only the status because Infra's promoter writes everything after its early
+checks to a private attempt log on Homelab, so the reason is on Homelab only.
+Source change on `claude/project-thread-jy5vb6`: the release workflow no
+longer builds or promotes for pushes that change only `docs/**`, `thoughts/**`
+or root `*.md` files other than `README.md` (copied into the image). Tag
+pushes and manual runs are unchanged. Test:
+`tests/test_release_workflow.py::test_release_workflow_skips_documentation_only_pushes`.
+Not deployed. The Actions records show no successful promotion after
+November 8, but what the promoter did on Homelab during these runs (above all
+the 64-minute November 9 run) is unverified until the newest Homelab attempt
+logs are read. The current runtime is still the November 8 known-good digest
+unless Homelab state says otherwise. The promoter change
+that prints the refusal phase is Infra PR #2437 (open, not merged or
+installed); the reason for exit 78 still needs the newest Homelab attempt log.
+Merging this change is not a docs-only push: it changes the workflow and
+`tests/`, so the merge push itself runs `build` and the environment-gated
+`promote` job against Homelab. Expect that run to reach `promote` and, until
+the exit-78 cause is fixed, to fail the same way. That run is a release
+attempt, not a deployment approval. Next: trusted review, merge, read the
+newest Homelab attempt log and fix the cause. Then promote current main: the
+fix's own push to main starts a fresh run, or start one with "Run workflow" on
+main. Do not re-run an old failed run; a re-run builds that run's original
+commit, not current main.
+
 ## November 8 — ARG-QS-02 release proof complete
 
 Reviewed exact-source handoff is installed and a genuinely new digest passed
