@@ -7,6 +7,7 @@ import subprocess
 import tomllib
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -260,13 +261,32 @@ def _dockerfile_context_sources(dockerfile: Path) -> list[str]:
 
     Covers COPY and ADD without --from (also under ONBUILD) and RUN bind
     mounts without from=. Joins backslash continuations and skips flags such
-    as --chown. Other ways to read the context (for example a remote ADD or
-    a heredoc) are not context paths and are not checked here.
+    as --chown. Heredoc operands (<<EOF) and their bodies are inline text,
+    not context paths, so they are skipped. A non-default escape directive
+    changes how lines continue, so it fails the check instead of being read
+    with the wrong continuation character.
     """
-    joined = re.sub(r"\\\n", " ", dockerfile.read_text(encoding="utf-8"))
+    text = dockerfile.read_text(encoding="utf-8")
+    for line in text.splitlines():
+        directive = re.match(r"\s*#\s*escape\s*=\s*(\S*)", line, re.IGNORECASE)
+        if directive:
+            assert directive.group(1) == "\\", f"unsupported Dockerfile escape directive: {line.strip()}"
+            continue
+        if not re.match(r"\s*#\s*\w+\s*=", line):
+            break
+    joined = re.sub(r"\\\n", " ", text)
     sources: list[str] = []
+    heredoc_end: list[str] = []
     for line in joined.splitlines():
+        if heredoc_end:
+            if line.strip() == heredoc_end[0]:
+                heredoc_end.pop(0)
+            continue
         parts = line.split()
+        heredoc_end = [
+            match.group(1) for match in re.finditer(r"<<-?[\"']?([A-Za-z_][A-Za-z0-9_]*)[\"']?", line)
+        ]
+        parts = [part for part in parts if not part.startswith("<<")]
         if parts and parts[0].upper() == "ONBUILD":
             parts = parts[1:]
         if parts and parts[0].upper() == "RUN":
@@ -323,6 +343,17 @@ def _context_files(source: str) -> list[str]:
     return files
 
 
+def test_docs_only_guard_refuses_a_non_default_escape_directive(tmp_path):
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("# syntax=docker/dockerfile:1\n# escape=`\nFROM python\nCOPY a `\n  docs/ ./\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match="escape directive"):
+        _dockerfile_context_sources(dockerfile)
+    dockerfile.write_text("# escape=\\\nFROM python\nCOPY a \\\n  docs/ ./\n", encoding="utf-8")
+    assert _dockerfile_context_sources(dockerfile) == ["a", "docs/"]
+    dockerfile.write_text("FROM python\n# escape=`\nCOPY a b\n", encoding="utf-8")
+    assert _dockerfile_context_sources(dockerfile) == ["a"]
+
+
 def test_docs_only_guard_sees_every_copy_form(tmp_path):
     dockerfile = tmp_path / "Dockerfile"
     dockerfile.write_text(
@@ -336,7 +367,15 @@ def test_docs_only_guard_sees_every_copy_form(tmp_path):
         "ONBUILD COPY thoughts/ ./thoughts/\n"
         "RUN --mount=type=bind,source=docs/guide.md,target=/g --mount=type=cache,target=/c \\\n"
         "    --mount=type=bind,from=builder,source=/app,target=/a cat /g\n"
-        "RUN --mount=target=/ctx ls /ctx\n",
+        "RUN --mount=target=/ctx ls /ctx\n"
+        "COPY <<EOF /etc/note\n"
+        "COPY docs/ignored.md /never\n"
+        "EOF\n"
+        "COPY <<-'ONE' <<TWO /tmp/\n"
+        "a\n"
+        "ONE\n"
+        "b\n"
+        "TWO\n",
         encoding="utf-8",
     )
     sources = _dockerfile_context_sources(dockerfile)
