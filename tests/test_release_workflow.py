@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import shlex
 import subprocess
 import tomllib
 from pathlib import Path
@@ -256,37 +257,69 @@ def test_release_workflow_skips_documentation_only_pushes():
             assert _push_runs_for(patterns, [path]), (source, path)
 
 
+HEREDOC_WORD = re.compile(r"\d*<<(-?)([^<]+)")
+CONTINUATION = re.compile(r"\\[ \t]*$")
+
+
 def _dockerfile_context_sources(dockerfile: Path) -> list[str]:
     """Build-context sources the Dockerfile reads.
 
     Covers COPY and ADD without --from (also under ONBUILD) and RUN bind
-    mounts without from=. Joins backslash continuations and skips flags such
-    as --chown. Heredoc operands (<<EOF) and their bodies are inline text,
-    not context paths, so they are skipped. A non-default escape directive
-    changes how lines continue, so it fails the check instead of being read
-    with the wrong continuation character.
+    mounts without from=, and skips flags such as --chown. Lines are read the
+    way BuildKit reads them: a comment line (first non-blank character `#`)
+    is dropped, also inside a continued instruction, and never continues; a
+    backslash followed only by spaces or tabs continues the instruction.
+    Heredocs are recognised only as a whole word of a COPY, ADD or RUN
+    instruction, and their bodies are skipped up to the exact terminator line.
+    A heredoc without a terminator fails the check rather than hiding the
+    rest of the file, and so does a non-default escape directive, which
+    would change the continuation character.
     """
-    text = dockerfile.read_text(encoding="utf-8")
-    for line in text.splitlines():
+    lines = dockerfile.read_text(encoding="utf-8").splitlines()
+    for line in lines:
         directive = re.match(r"\s*#\s*escape\s*=\s*(\S*)", line, re.IGNORECASE)
         if directive:
             assert directive.group(1) == "\\", f"unsupported Dockerfile escape directive: {line.strip()}"
             continue
         if not re.match(r"\s*#\s*\w+\s*=", line):
             break
-    joined = re.sub(r"\\\n", " ", text)
+
+    def is_comment(line: str) -> bool:
+        return line.lstrip().startswith("#")
+
     sources: list[str] = []
-    heredoc_end: list[str] = []
-    for line in joined.splitlines():
-        if heredoc_end:
-            if line.strip() == heredoc_end[0]:
-                heredoc_end.pop(0)
+    index = 0
+    while index < len(lines):
+        instruction = lines[index]
+        index += 1
+        if is_comment(instruction) or not instruction.strip():
             continue
-        parts = line.split()
-        heredoc_end = [
-            match.group(1) for match in re.finditer(r"<<-?[\"']?([A-Za-z_][A-Za-z0-9_]*)[\"']?", line)
-        ]
-        parts = [part for part in parts if not part.startswith("<<")]
+        while CONTINUATION.search(instruction):
+            instruction = CONTINUATION.sub("", instruction)
+            while index < len(lines) and (is_comment(lines[index]) or not lines[index].strip()):
+                index += 1
+            if index == len(lines):
+                break
+            instruction += lines[index]
+            index += 1
+        parts = instruction.split()
+        if parts and parts[0].upper() in {"COPY", "ADD", "RUN"}:
+            try:
+                words = shlex.split(instruction)
+            except ValueError:
+                words = parts
+            for word in words[1:]:
+                heredoc = HEREDOC_WORD.fullmatch(word)
+                if not heredoc:
+                    continue
+                chomp, name = heredoc.groups()
+                while True:
+                    assert index < len(lines), f"unterminated Dockerfile heredoc {name}"
+                    body = lines[index]
+                    index += 1
+                    if (body.lstrip("\t") if chomp else body) == name:
+                        break
+            parts = [part for part in parts if not HEREDOC_WORD.fullmatch(part)]
         if parts and parts[0].upper() == "ONBUILD":
             parts = parts[1:]
         if parts and parts[0].upper() == "RUN":
@@ -352,6 +385,51 @@ def test_docs_only_guard_refuses_a_non_default_escape_directive(tmp_path):
     assert _dockerfile_context_sources(dockerfile) == ["a", "docs/"]
     dockerfile.write_text("FROM python\n# escape=`\nCOPY a b\n", encoding="utf-8")
     assert _dockerfile_context_sources(dockerfile) == ["a"]
+
+
+def test_docs_only_guard_reads_lines_like_buildkit(tmp_path):
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        "FROM python\n"
+        "# a comment that mentions <<EOF is not a heredoc\n"
+        "COPY docs/a.md /a\n"
+        "RUN echo $((x<<END)) && x=1<<2\n"
+        "COPY thoughts/ /t/\n"
+        "# a comment ending in a backslash does not continue \\\n"
+        "COPY notes.md /n\n"
+        "COPY b \\  \t\n"
+        "  docs/c.md ./\n"
+        "COPY d \\\n"
+        "# a comment inside a continuation is dropped\n"
+        "\n"
+        "  docs/e.md ./\n"
+        "END\n"
+        "EOF\n",
+        encoding="utf-8",
+    )
+    assert _dockerfile_context_sources(dockerfile) == [
+        "docs/a.md",
+        "thoughts/",
+        "notes.md",
+        "b",
+        "docs/c.md",
+        "d",
+        "docs/e.md",
+    ]
+
+
+def test_docs_only_guard_fails_on_an_unterminated_heredoc(tmp_path):
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("FROM python\nCOPY <<EOF /x\nCOPY docs/ ./\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match="unterminated Dockerfile heredoc EOF"):
+        _dockerfile_context_sources(dockerfile)
+    # A chomped heredoc ends at its terminator after leading tabs; a plain one
+    # needs the exact line.
+    dockerfile.write_text("FROM python\nRUN <<-EOF\n\tcat x\n\tEOF\nCOPY docs/ ./\n", encoding="utf-8")
+    assert _dockerfile_context_sources(dockerfile) == ["docs/"]
+    dockerfile.write_text("FROM python\nRUN <<EOF\n\tEOF\nCOPY docs/ ./\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match="unterminated"):
+        _dockerfile_context_sources(dockerfile)
 
 
 def test_docs_only_guard_sees_every_copy_form(tmp_path):

@@ -1,7 +1,13 @@
 ## November 25 — promotion failing on main; docs-only pushes skipped
 
-Every main push since November 9 failed in `promote` (November 18: exit 78
-after about five minutes; November 9: no readable log). The Actions log shows
+Main pushes since November 9, from "Build and Promote Immutable Image" runs
+281–285 (all changed only docs or root `*.md` files): run 281 (#247) was
+cancelled; runs 282 (#248, November 9), 283 (#250), 284 (#251) and 285 (#252,
+all November 18) built, then failed in `promote` at "Submit forced-command
+promotion". The November 18 runs exited 78 after about five minutes each; the
+November 9 run failed after about 64 minutes and its log is no longer
+downloadable. Run IDs: 42538350825, 44227976483, 44228760366, 44282879634.
+The Actions log shows
 only the status because Infra's promoter writes everything after its early
 checks to a private attempt log on Homelab, so the reason is on Homelab only.
 Source change on `claude/project-thread-jy5vb6`: the release workflow no
