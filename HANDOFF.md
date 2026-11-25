@@ -950,3 +950,9 @@ Next: publish reviewed repair, deploy its exact accepted image after the active
 soak ends, and verify one complete workflow/report with a new inference receipt.
 Reuse the now-idle Homelabdeploy-latest compiler tree for this source; keep
 activea335compilerdeploy-workflow unchanged. Preserve protected primaries.
+
+## November 25 session status
+
+The documentation-only workflow change merged. The November 25 session reported that main-branch promotion still failed and the reason remained unverified. Check the current promotion record and native logs before attempting a release.
+
+GitHub readback November 25: [#253](https://github.com/Khamel83/argus/pull/253): merged; [#249](https://github.com/Khamel83/argus/issues/249): closed. Recheck before action.
