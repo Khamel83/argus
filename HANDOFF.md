@@ -20,14 +20,17 @@ November 8, but what the promoter did on Homelab during these runs (above all
 the 64-minute November 9 run) is unverified until the newest Homelab attempt
 logs are read. The current runtime is still the November 8 known-good digest
 unless Homelab state says otherwise. The promoter change
-that prints the refusal phase is Infra PR #2437 (open draft, not merged or
+that prints the refusal phase is Infra PR #2437 (open, not merged or
 installed); the reason for exit 78 still needs the newest Homelab attempt log.
 Merging this change is not a docs-only push: it changes the workflow and
 `tests/`, so the merge push itself runs `build` and the environment-gated
 `promote` job against Homelab. Expect that run to reach `promote` and, until
 the exit-78 cause is fixed, to fail the same way. That run is a release
 attempt, not a deployment approval. Next: trusted review, merge, read the
-newest Homelab attempt log, fix the cause, then rerun the latest failed run.
+newest Homelab attempt log and fix the cause. Then promote current main: the
+fix's own push to main starts a fresh run, or start one with "Run workflow" on
+main. Do not re-run an old failed run; a re-run builds that run's original
+commit, not current main.
 
 ## November 8 — ARG-QS-02 release proof complete
 

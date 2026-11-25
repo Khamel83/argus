@@ -270,7 +270,7 @@ def _dockerfile_context_sources(dockerfile: Path) -> list[str]:
     is dropped, also inside a continued instruction, and never continues; a
     backslash followed only by spaces or tabs continues the instruction.
     Heredocs are recognised only as a whole word of a COPY, ADD or RUN
-    instruction, and their bodies are skipped up to the exact terminator line.
+    instruction (also under ONBUILD), and their bodies are skipped up to the exact terminator line.
     HEREDOC_WORD follows BuildKit's own rule (``reHeredoc`` in
     frontend/dockerfile/parser/parser.go: optional digits, ``<<``, an optional
     ``-``, then the name, checked on each word), so a bare word such as
@@ -307,6 +307,9 @@ def _dockerfile_context_sources(dockerfile: Path) -> list[str]:
             instruction += lines[index]
             index += 1
         parts = instruction.split()
+        # BuildKit reads heredocs of an ONBUILD COPY, ADD or RUN too.
+        if parts and parts[0].upper() == "ONBUILD":
+            parts = parts[1:]
         if parts and parts[0].upper() in {"COPY", "ADD", "RUN"}:
             try:
                 words = shlex.split(instruction)
@@ -324,8 +327,6 @@ def _dockerfile_context_sources(dockerfile: Path) -> list[str]:
                     if (body.lstrip("\t") if chomp else body) == name:
                         break
             parts = [part for part in parts if not HEREDOC_WORD.fullmatch(part)]
-        if parts and parts[0].upper() == "ONBUILD":
-            parts = parts[1:]
         if parts and parts[0].upper() == "RUN":
             sources.extend(_bind_mount_sources(parts[1:]))
             continue
@@ -457,7 +458,13 @@ def test_docs_only_guard_sees_every_copy_form(tmp_path):
         "a\n"
         "ONE\n"
         "b\n"
-        "TWO\n",
+        "TWO\n"
+        "ONBUILD RUN <<EOF\n"
+        "COPY docs/also-ignored.md /never\n"
+        "EOF\n"
+        "ONBUILD COPY <<EOF /etc/onbuild-note\n"
+        "ADD docs/ignored-too.md /never\n"
+        "EOF\n",
         encoding="utf-8",
     )
     sources = _dockerfile_context_sources(dockerfile)
