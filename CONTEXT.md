@@ -401,19 +401,10 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-## Current observation — source `1a6a0700beae4b3b7753dae50d89aa460c7c9cab`
-
-Supplied source commit is `1a6a0700beae4b3b7753dae50d89aa460c7c9cab`. That SHA is not in the supplied commit-summary list, so this note does not state its subject or whether it is deployed.
-
-Newest supplied subjects are past activity only: `a89a9ef8ea81ad5ab0fae01f1f8eb733f6003c63` docs tick of TODO lines finished by merged work (#254); `7672f32756473705c63645eed90757d1b27cb860` CI skip of build and promotion for documentation-only pushes (#253); `3708c25773e4daadd309fd3b2954e97f825e7675` g2k issue #249 (#250); `250a2d3d7b910a22ec4ee7fc10c0b4ec1cffbce3` docs completion of the exact-source new-digest promotion TODO (#247). None of these subjects is evidence that main promotion now succeeds.
-
-Project TODO dated November 25, 2026 still records an open promote failure on main: November 18 runs exited 78; the November 9 run's exit code is unknown because its log expired. At https://github.com/Khamel83/argus/pull/253 (`7672f327`) the release-workflow path filters for documentation-only pushes landed, but that merge commit's TODO still has an unchecked item to merge the docs-only skip after trusted review and CI. Subject `a89a9ef` (#254) only records a docs tick of TODO lines and is not evidence that PR 253 checked that item done. No supplied text shows the promote cause fixed or a current-main digest passed through the full gates.
-
-Last stated guarded release proof remains November 8 ARG-QS-02: source `bd7dded90d4378ee6dba516b114738cb81a474a7`, image `sha256:c9275a40142e452c31c0aa40bf9e57d9da83431855a72e33f632b777b337da56`, native promotion and full 1,800-second soak completed 23:04:32 UTC, current and known-good agreeing, hosted run 42187925242 attempt 3 SUCCESS. ARG-QS-03/04/05 stay open in the project TODO. No whole-host zero-timeout acceptance is claimed. Spend settlement, restore/ordinary reader proof, and broader monitoring qualification remain independent.
-
-November 6 context left PR 245 as a source candidate only, with exact-head trusted review, native CI, and merge readback pending. Later docs commits are not identified as that PR's merge. PR 245 merge state stays unknown here. Runtime, soak, restore, grants, and downstream acceptance stay separate.
-
-November 5 workflow repairs are merged in history (`a335e28911a7684c960ee64a1e3232c411ace683` PR #240; `0e3821ed7edb0da26ca2815e71abf942279f8da5` PR #241). Same-day context still required guarded deployment and one complete workflow/report receipt after soak. Later QS-02 proof does not say those workflow gates closed. Degraded readiness and uncertain spend from that narrative are not updated by newer supplied text.
+- At source `de6155f62b3db5a710eee37d967b8e3b4ea8236a`, the November 25 release-path record says the November 18 main promotion runs exited 78; the November 9 exit code is unknown because its log expired. The cause and current-main promotion remain open.
+- The documentation-only build and promotion skip was merged in [PR #253](https://github.com/Khamel83/argus/pull/253), commit `7672f32756473705c63645eed90757d1b27cb860`.
+- The November 8 ARG-QS-02 proof records a successful guarded promotion and 1,800-second soak for source `bd7dded90d4378ee6dba516b114738cb81a474a7` and image `sha256:c9275a40142e452c31c0aa40bf9e57d9da83431855a72e33f632b777b337da56`. Current and known-good agreed at that checkpoint. This does not establish promotion of current main. [Operator evidence](https://github.com/Khamel83/argus/issues/151#issuecomment-6728505607).
+- ARG-QS-03, ARG-QS-04 and ARG-QS-05 remain open for provider settlement, restore and ordinary reader proof, and broader monitoring qualification. No whole-host zero-timeout acceptance is claimed.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
