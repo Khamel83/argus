@@ -15,8 +15,11 @@ longer builds or promotes for pushes that change only `docs/**`, `thoughts/**`
 or root `*.md` files other than `README.md` (copied into the image). Tag
 pushes and manual runs are unchanged. Test:
 `tests/test_release_workflow.py::test_release_workflow_skips_documentation_only_pushes`.
-Not deployed and nothing promoted. The current runtime is still the November 8
-known-good digest unless Homelab state says otherwise. The promoter change
+Not deployed. The Actions records show no successful promotion after
+November 8, but what the promoter did on Homelab during these runs (above all
+the 64-minute November 9 run) is unverified until the newest Homelab attempt
+logs are read. The current runtime is still the November 8 known-good digest
+unless Homelab state says otherwise. The promoter change
 that prints the refusal phase is Infra PR #2437 (open draft, not merged or
 installed); the reason for exit 78 still needs the newest Homelab attempt log.
 Merging this change is not a docs-only push: it changes the workflow and

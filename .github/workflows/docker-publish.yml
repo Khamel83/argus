@@ -11,6 +11,9 @@ on:
     # before the soak). The last
     # matching pattern wins, so README.md (copied into the image as package
     # metadata) is included again. Tag pushes ignore path filters.
+    # tests/test_release_workflow.py fails if the Dockerfile reads a path
+    # these filters skip. Only ci.yml runs it (every pull request and main
+    # push), so keep that CI check required before merge.
     paths:
       - '**'
       - '!docs/**'

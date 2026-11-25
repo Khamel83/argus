@@ -25,7 +25,7 @@ Source candidate only: fresh exact-head trusted review, native CI and normal mer
 
 ## Release path — November 25, 2026
 
-- [ ] Find why `promote` exits 78 on main since November 9 (newest Homelab attempt log), fix it, and promote the current main digest through the full gates.
+- [ ] Find why `promote` fails on main: the November 18 runs exited 78; the November 9 run's exit code is unknown (its log expired). Read the newest Homelab attempt log, fix the cause, and promote the current main digest through the full gates.
 - [ ] Merge the docs-only skip for the release workflow after trusted review and CI.
 
 ## Approved Quickstrike reliability work — November 5, 2026
