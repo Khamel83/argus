@@ -271,10 +271,10 @@ def _dockerfile_context_sources(dockerfile: Path) -> list[str]:
     backslash followed only by spaces or tabs continues the instruction.
     Heredocs are recognised only as a whole word of a COPY, ADD or RUN
     instruction, and their bodies are skipped up to the exact terminator line.
-    HEREDOC_WORD is BuildKit's own rule (``reHeredoc`` in
-    frontend/dockerfile/parser/parser.go, ``^(\d*)<<(-?)\s*([^<]*)$`` on each
-    word), so a bare word such as ``1<<2`` opens a heredoc here exactly as it
-    does in a real build.
+    HEREDOC_WORD follows BuildKit's own rule (``reHeredoc`` in
+    frontend/dockerfile/parser/parser.go: optional digits, ``<<``, an optional
+    ``-``, then the name, checked on each word), so a bare word such as
+    ``1<<2`` opens a heredoc here exactly as it does in a real build.
     A heredoc without a terminator fails the check rather than hiding the
     rest of the file, and so does a non-default escape directive, which
     would change the continuation character.
