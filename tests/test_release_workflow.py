@@ -256,15 +256,22 @@ def test_release_workflow_skips_documentation_only_pushes():
 
 
 def _dockerfile_context_sources(dockerfile: Path) -> list[str]:
-    """Build-context sources of every COPY/ADD that does not use --from.
+    """Build-context sources the Dockerfile reads.
 
-    Joins backslash continuations and skips flags such as --chown, so no
-    instruction form escapes the release-path check.
+    Covers COPY and ADD without --from (also under ONBUILD) and RUN bind
+    mounts without from=. Joins backslash continuations and skips flags such
+    as --chown. Other ways to read the context (for example a remote ADD or
+    a heredoc) are not context paths and are not checked here.
     """
     joined = re.sub(r"\\\n", " ", dockerfile.read_text(encoding="utf-8"))
     sources: list[str] = []
     for line in joined.splitlines():
         parts = line.split()
+        if parts and parts[0].upper() == "ONBUILD":
+            parts = parts[1:]
+        if parts and parts[0].upper() == "RUN":
+            sources.extend(_bind_mount_sources(parts[1:]))
+            continue
         if not parts or parts[0].upper() not in {"COPY", "ADD"}:
             continue
         args = parts[1:]
@@ -274,6 +281,24 @@ def _dockerfile_context_sources(dockerfile: Path) -> list[str]:
         if operands[:1] and operands[0].startswith("["):
             operands = json.loads(" ".join(operands))
         sources.extend(operands[:-1])
+    return sources
+
+
+def _bind_mount_sources(args: list[str]) -> list[str]:
+    """Context sources of RUN --mount=type=bind flags that have no from=."""
+    sources: list[str] = []
+    for arg in args:
+        if not arg.startswith("--mount="):
+            if not arg.startswith("--"):
+                break
+            continue
+        options = dict(
+            item.split("=", 1) if "=" in item else (item, "")
+            for item in arg[len("--mount="):].split(",")
+        )
+        if options.get("type", "bind") != "bind" or "from" in options:
+            continue
+        sources.append(options.get("source", options.get("src", ".")))
     return sources
 
 
@@ -307,11 +332,24 @@ def test_docs_only_guard_sees_every_copy_form(tmp_path):
         "ADD docs/ ./docs/\n"
         'COPY ["alembic.ini", "./"]\n'
         "COPY --from=builder /app /app\n"
-        "COPY . .\n",
+        "COPY . .\n"
+        "ONBUILD COPY thoughts/ ./thoughts/\n"
+        "RUN --mount=type=bind,source=docs/guide.md,target=/g --mount=type=cache,target=/c \\\n"
+        "    --mount=type=bind,from=builder,source=/app,target=/a cat /g\n"
+        "RUN --mount=target=/ctx ls /ctx\n",
         encoding="utf-8",
     )
     sources = _dockerfile_context_sources(dockerfile)
-    assert sources == ["pyproject.toml", "uv.lock", "docs/", "alembic.ini", "."]
+    assert sources == [
+        "pyproject.toml",
+        "uv.lock",
+        "docs/",
+        "alembic.ini",
+        ".",
+        "thoughts/",
+        "docs/guide.md",
+        ".",
+    ]
 
     patterns = yaml.safe_load((WORKFLOWS / "docker-publish.yml").read_text(encoding="utf-8"))[True]["push"]["paths"]
     # Copying docs/ or the whole context would put docs in the image, so the
