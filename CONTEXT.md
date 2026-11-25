@@ -401,9 +401,15 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-- Current source commit `3708c25773e4daadd309fd3b2954e97f825e7675`: g2k: issue #249 (#250).
-- Commit `250a2d3d7b910a22ec4ee7fc10c0b4ec1cffbce3`: docs: complete exact-source new-digest promotion TODO (#247).
-- November 8 release proof complete: source `bd7dded90d4378ee6dba516b114738cb81a474a7`, image `sha256:c9275a40142e452c31c0aa40bf9e57d9da83431855a72e33f632b777b337da56` passed guarded release gates and 1,800-second soak (hosted run 42187925242 attempt 3 SUCCESS). ARG-QS-03, ARG-QS-04, and ARG-QS-05 remain open.
+## Current source — 7672f32756473705c63645eed90757d1b27cb860
+
+Published commit subject: `ci: skip build and promotion for documentation-only pushes (#253)`. That subject is past activity only. At this same source, the handwritten TODO still has an open checkbox to merge the docs-only release-workflow skip after trusted review and CI, so trusted review, native CI, and merge read-back for that skip are not established here.
+
+The same handwritten section says `promote` fails on main: November 18 runs exited 78; the November 9 run's exit code is unknown because its log expired. No supplied document shows a later full-gate promotion of current main. Runtime, soak, restore, grants, and downstream acceptance stay separate from this documentation commit.
+
+ARG-QS-02 remains checked complete in the handwritten TODO: source `bd7dded90d4378ee6dba516b114738cb81a474a7`, image `sha256:c9275a40142e452c31c0aa40bf9e57d9da83431855a72e33f632b777b337da56`, native promotion and 1,800-second soak completed 23:04:32 UTC, hosted run 42187925242 attempt 3 SUCCESS. ARG-QS-03, ARG-QS-04, and ARG-QS-05 remain open. Uncertain provider settlement, ordinary restore/reader proof, broader monitoring qualification, and whole-host zero-timeout acceptance are not claimed.
+
+November 6 text still says PR 245 exact-head review, native CI, and merge read-back were pending. No supplied commit subject or later TODO line confirms that PR merged.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
