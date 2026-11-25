@@ -245,13 +245,77 @@ def test_release_workflow_skips_documentation_only_pushes():
         assert _push_runs_for(patterns, releasing), releasing
 
     # Every file the image copies from the source tree still releases.
-    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-    sources = []
-    for line in dockerfile.splitlines():
-        parts = line.split()
-        if parts[:1] == ["COPY"] and not any(part.startswith("--from") for part in parts):
-            sources.extend(parts[1:-1])
+    sources = _dockerfile_context_sources(ROOT / "Dockerfile")
     assert "README.md" in sources
+    assert "migrations/" in sources
     for source in sources:
-        probe = source.rstrip("/") + ("/probe.py" if source.endswith("/") else "")
-        assert _push_runs_for(patterns, [probe]), source
+        files = _context_files(source)
+        assert files, source
+        for path in files:
+            assert _push_runs_for(patterns, [path]), (source, path)
+
+
+def _dockerfile_context_sources(dockerfile: Path) -> list[str]:
+    """Build-context sources of every COPY/ADD that does not use --from.
+
+    Joins backslash continuations and skips flags such as --chown, so no
+    instruction form escapes the release-path check.
+    """
+    joined = re.sub(r"\\\n", " ", dockerfile.read_text(encoding="utf-8"))
+    sources: list[str] = []
+    for line in joined.splitlines():
+        parts = line.split()
+        if not parts or parts[0].upper() not in {"COPY", "ADD"}:
+            continue
+        args = parts[1:]
+        if any(arg.startswith("--from") for arg in args):
+            continue
+        operands = [arg for arg in args if not arg.startswith("--")]
+        if operands[:1] and operands[0].startswith("["):
+            operands = json.loads(" ".join(operands))
+        sources.extend(operands[:-1])
+    return sources
+
+
+def _context_files(source: str) -> list[str]:
+    """Repository files a COPY/ADD source puts into the image.
+
+    A directory or "." expands to every file under it (excluding .git), and a
+    glob expands to its matches, so copying docs/ or the whole context fails
+    the docs-only check instead of passing it vacuously.
+    """
+    files: list[str] = []
+    pattern = source.strip("/")
+    while pattern.startswith("./"):
+        pattern = pattern[2:]
+    matches = [ROOT] if pattern in {"", "."} else sorted(ROOT.glob(pattern))
+    for match in matches:
+        candidates = match.rglob("*") if match.is_dir() else [match]
+        for path in candidates:
+            relative = path.relative_to(ROOT)
+            if path.is_file() and ".git" not in relative.parts:
+                files.append(relative.as_posix())
+    return files
+
+
+def test_docs_only_guard_sees_every_copy_form(tmp_path):
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        "FROM python AS builder\n"
+        "COPY --chown=app:app pyproject.toml \\\n"
+        "     uv.lock ./\n"
+        "ADD docs/ ./docs/\n"
+        'COPY ["alembic.ini", "./"]\n'
+        "COPY --from=builder /app /app\n"
+        "COPY . .\n",
+        encoding="utf-8",
+    )
+    sources = _dockerfile_context_sources(dockerfile)
+    assert sources == ["pyproject.toml", "uv.lock", "docs/", "alembic.ini", "."]
+
+    patterns = yaml.safe_load((WORKFLOWS / "docker-publish.yml").read_text(encoding="utf-8"))[True]["push"]["paths"]
+    # Copying docs/ or the whole context would put docs in the image, so the
+    # guard must report a docs path that would not release.
+    for source in ("docs/", "."):
+        skipped = [path for path in _context_files(source) if not _push_runs_for(patterns, [path])]
+        assert any(path.startswith("docs/") for path in skipped), source

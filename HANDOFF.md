@@ -10,9 +10,9 @@ or root `*.md` files other than `README.md` (copied into the image). Tag
 pushes and manual runs are unchanged. Test:
 `tests/test_release_workflow.py::test_release_workflow_skips_documentation_only_pushes`.
 Not deployed and nothing promoted. The current runtime is still the November 8
-known-good digest unless Homelab state says otherwise. Infra carries the
-promoter change that prints the refusal phase; the reason for exit 78 still
-needs the newest Homelab attempt log. Next: trusted review, merge, then rerun
+known-good digest unless Homelab state says otherwise. The promoter change
+that prints the refusal phase is Infra PR #2437 (open draft, not merged or
+installed); the reason for exit 78 still needs the newest Homelab attempt log. Next: trusted review, merge, then rerun
 the latest failed run after the Homelab read.
 
 ## November 8 — ARG-QS-02 release proof complete
