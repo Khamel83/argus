@@ -920,6 +920,25 @@ def _extraction_source_fingerprint(state: dict) -> str:
     return acceptance_fingerprint(source)
 
 
+def _pre_archive_flag_mirror_matches(state: dict, stored_fingerprint: str) -> bool:
+    """Accept a mirror row written before archive provenance was projected.
+
+    Before issue #259 the accepted projection always reported
+    ``archive_used=False``, so archive-origin mirror rows stored that value.
+    A cache-hit replay now projects ``True`` for the same accepted outcome.
+    Only that single historical difference is accepted; any other payload
+    change still conflicts.
+    """
+    artifact = state.get("artifact")
+    if not isinstance(artifact, dict) or artifact.get("archive_used") is not True:
+        return False
+    if artifact.get("source_type") != "archive":
+        return False
+    legacy = dict(state)
+    legacy["artifact"] = {**artifact, "archive_used": False}
+    return acceptance_fingerprint(legacy) == stored_fingerprint
+
+
 def _canonical_extraction_url_identity(value: object) -> str | None:
     """Return the typed URL identity for a current or legacy hash value."""
     if not isinstance(value, str):
@@ -2959,7 +2978,11 @@ class SqlAlchemySearchLedgerRepository:
             )
         )
         if existing is not None:
-            if existing.acceptance_fingerprint != fingerprint:
+            if existing.acceptance_fingerprint != fingerprint and not (
+                _pre_archive_flag_mirror_matches(
+                    state, existing.acceptance_fingerprint
+                )
+            ):
                 raise AcceptanceConflictError(
                     f"extraction {public_id!r} has a different durable payload"
                 )
