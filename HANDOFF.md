@@ -1,4 +1,12 @@
 # Handoff
+## November 27, 2026, 2:05 PM PT — #264 live in production
+
+- Done: the release with the loosened gate (0.95) also expired (run 46061912900); the gate file was restored to 0.7 automatically. Homelab was 99.7% CPU busy (ffmpeg repair job, Jellyfin, Plex, minuspod). At 1:21 PM PT this session recreated `argus` by hand with the promoter's `production_up` step: same image `sha256:2ff1af5f…` (`dbbea122`), promotion lock held, rendered diff = one env key, `argus-mcp` not recreated. `argus-production-gates` passed. `current.json` is unchanged and still true. Restore: https://github.com/Khamel83/infra/issues/1928#issuecomment-7228475684 (decide by Dec 4, 2026).
+- Effect: live Playwright content for www, 3rdstes, west and pei.lausd.org. Third Street run 46070479061: 4 success, 19 degraded, 3 extraction_failed (`.ics` feeds), 3 ok RSS.
+- Cleanup: 40 exited Atlas containers removed (141 → 101), newest `atlas-old` kept: https://github.com/Khamel83/infra/issues/1928#issuecomment-7227301909.
+- Open: #277 (archive beats live incomplete), #278 (ICS feeds), index PR (owner: PR only, low priority).
+- Worktrees of this session: `.worktrees/records-264-close` (remove after this PR merges). `.worktrees/issue-264-browser` is already gone.
+- The next Argus promotion uses the staged compose file in Infra's checkout as is. It is not committed there.
 ## November 27, 2026, 11:45 AM PT — #264 waits for Homelab CPU
 
 - Done: Omar's command put `ARGUS_PUBLIC_BROWSER_DOMAINS=lausd.org` into `/mnt/fast-storage/github/homelab/services/argus/docker-compose.yml` (fetch ran from his shell; the checkout step was run by this session as one line). It is staged, not committed, in Infra's checkout and matches origin/main (infra#2479).
