@@ -192,3 +192,82 @@ async def test_trafilatura_origin_refusal_is_a_bounded_attempt_result(monkeypatc
 
     assert result.error == "trafilatura: HTTP 403"
     assert not result.text
+
+
+def _archived_wayback(url):
+    from argus.extraction.extractor import _populate_provenance
+
+    result = ExtractedContent(
+        url=url,
+        title="Archived page",
+        text="archived replay content " * 60,
+        word_count=180,
+        extractor=ExtractorName.WAYBACK,
+    )
+    _populate_provenance(result)
+    return result
+
+
+def _accept_as_pre_issue_259(monkeypatch, tmp_path, url):
+    """Write an archive outcome the way releases before #260 mirrored it."""
+    from argus.extraction.outcomes import AcceptedExtractionOutcome
+
+    original = AcceptedExtractionOutcome.to_legacy_extracted_content
+
+    def pre_fix_projection(self):
+        legacy = original(self)
+        legacy.archive_used = False
+        return legacy
+
+    repository = _repository(tmp_path, "replay.db")
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            AcceptedExtractionOutcome,
+            "to_legacy_extracted_content",
+            pre_fix_projection,
+        )
+        projected = _finalize(
+            _archived_wayback(url),
+            url=url,
+            repository=repository,
+            request_id="issue-259-replay",
+        )
+    accepted = repository.load_extraction_outcome_by_receipt(
+        projected.acceptance_receipt.receipt_ref
+    )
+    assert accepted is not None
+    return repository, accepted
+
+
+def test_cache_replay_accepts_pre_fix_archive_mirror(monkeypatch, tmp_path):
+    """A cache hit on a pre-#260 archive row must not be a conflict."""
+    repository, accepted = _accept_as_pre_issue_259(
+        monkeypatch, tmp_path, "https://example.com/replayed-archive"
+    )
+
+    receipt = repository.ensure_accepted_extraction_delivery(accepted)
+
+    assert receipt.extraction_run_id == accepted.extraction_run_id
+    assert accepted.to_legacy_extracted_content().archive_used is True
+
+
+def test_cache_replay_still_rejects_other_mirror_drift(monkeypatch, tmp_path):
+    from argus.persistence.search_ledger import (
+        AcceptanceConflictError,
+        ExtractionRunRow,
+    )
+    from sqlalchemy import select
+
+    repository, accepted = _accept_as_pre_issue_259(
+        monkeypatch, tmp_path, "https://example.com/tampered-archive"
+    )
+    with repository.session_factory.begin() as session:
+        row = session.scalar(
+            select(ExtractionRunRow).where(
+                ExtractionRunRow.extraction_run_id == accepted.extraction_run_id
+            )
+        )
+        row.acceptance_fingerprint = "0" * 64
+
+    with pytest.raises(AcceptanceConflictError):
+        repository.ensure_accepted_extraction_delivery(accepted)
