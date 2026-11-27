@@ -1,4 +1,14 @@
 # Handoff
+## November 27, 2026, 2:40 AM PT — #267 and #269 merged; release in flight
+
+- Live: source `1b4b5ad` (#260), promoted 9:39 PM PT Nov 26.
+- Third Street rerun 45948253498: 1 ok, 16 `persistence_failed` (cache-replay `AcceptanceConflictError`), 11 `extraction_failed`. Fix #267 (another session) merged `59335bad`.
+- #264: Homelab is not blocked; only headless clients are. Headed Chromium on Xvfb got 397 words from www.lausd.org and 538 from 3rdstes.lausd.org with the production image and seccomp. #269 merged `30f0dd3d` (CI green, reviewer PASS after a Xvfb race fix).
+- In flight: release https://github.com/Khamel83/argus/actions/runs/45979955071 (#267 + #269). The #267 release 45976676234 failed: "scorecard schema is not at the baked head" (`attempt.Y4kkhw.log`); if it repeats, read `/usr/local/sbin/argus-live-scorecard` near line 549 and the alembic output.
+- Needs Infra: https://github.com/Khamel83/infra/pull/2479 (env line). Message sent to the Infra session.
+- Recheck: `ssh homelab sudo -n cat /mnt/fast-storage/appdata/hestia-repo-state/status/argus-promotion/current.json`; then `gh workflow run collect-argus.yml -R Khamel83/third-street`.
+- Worktree `.worktrees/issue-264-browser` (this session); `.worktrees/records-close-20261102` is used by another session. Bed report: https://reports.khamel.com/argus/bed-2026-11-27/
+
 ## November 26, 2026 (night) — #259 deployed; bed session cut short by usage limit
 
 - DEPLOYED: Homelab current.json = source `1b4b5ad`, digest `sha256:5760ffd5…`, phase complete at 9:39 PM PT (05:39:50Z Nov 27). GitHub run 45941624757 shows failure only because the hosted runner lost contact during soak; the promoter finished.

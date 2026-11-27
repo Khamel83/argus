@@ -1,8 +1,9 @@
 ## Third Street caller faults (#259) — November 26, 2026
 
-- [ ] Ship the accepted-extraction fixes for https://github.com/Khamel83/argus/issues/259: a failed durable cache read is a cache miss (it caused all 14 `persistence_failed`), archive copies set `archive_used`, and each failed attempt names its reason. Merge, promote, then rerun Third Street `collect-argus.yml` and compare counts.
-- [ ] Promote current main. Scorecard admission waits expire under Homelab CPU pressure (https://github.com/Khamel83/infra/issues/1928); the November 26 attempt `attempt.bhbw06.log` ended `wait_expired`, and so did release runs 45919264386 and 45920160494 for the #260 fix on November 27 UTC.
-- [ ] Give accepted extraction outcomes an indexed URL identity column, so the durable cache read is not a full scan of `projection_json` (about 0.5 to 3 s at 4,411 rows). This is a schema change: use the bridge release in docs/operations.md.
+- [x] Ship the accepted-extraction fixes for https://github.com/Khamel83/argus/issues/259 (#260). Live on Homelab since 9:39 PM PT Nov 26 (source `1b4b5ad`, image `5760ffd5`). Rerun https://github.com/Khamel83/third-street/actions/runs/45948253498: 0 cache-read timeouts, but 16 `persistence_failed` from `AcceptanceConflictError` on cache replay of pre-#260 archive mirror rows.
+- [ ] Promote #267 (replay conflict fix, `59335bad`) and #269 (#264 allow-list, `30f0dd3d`). Release 45976676234 for #267 failed in the scorecard ("scorecard schema is not at the baked head", `attempt.Y4kkhw.log`); release 45979955071 for #269 carries both. Then rerun Third Street and close #259.
+- [ ] #264 effect: https://github.com/Khamel83/infra/pull/2479 adds `ARGUS_PUBLIC_BROWSER_DOMAINS=lausd.org` to the Homelab compose. Needs Infra merge and the Homelab checkout updated (165 commits behind, local edits), then one more Argus promotion.
+- [ ] Indexed URL identity column for the accepted-extraction cache read (owner Nov 26: PR only, no production schema change). Low priority: the rerun had no cache-read timeouts.
 
 ## November 8 — ARG-QS-02 release proof complete
 

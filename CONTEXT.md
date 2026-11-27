@@ -400,6 +400,12 @@ HTTPS ingress. PostgreSQL and SearXNG remain Docker-internal. The Mac is
 development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
+## Owner decisions — November 26, 2026 (night)
+
+- #264: headed-browser fetches are approved for `*.lausd.org` only, merge and deploy after CI and a reviewer pass. Implemented as `ARGUS_PUBLIC_BROWSER_DOMAINS` (off by default).
+- Accepted-extraction index: migration PR only; no production schema change without a new decision.
+- Third Street: report numbers only; no change to its collector for archive copies.
+
 <!-- janitor:begin:recent -->
 ## Source checkpoint — 2026-11-27
 
