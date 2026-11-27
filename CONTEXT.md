@@ -401,10 +401,11 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-- At source `de6155f62b3db5a710eee37d967b8e3b4ea8236a`, the November 25 release-path record says the November 18 main promotion runs exited 78; the November 9 exit code is unknown because its log expired. The cause and current-main promotion remain open.
-- The documentation-only build and promotion skip was merged in [PR #253](https://github.com/Khamel83/argus/pull/253), commit `7672f32756473705c63645eed90757d1b27cb860`.
-- The November 8 ARG-QS-02 proof records a successful guarded promotion and 1,800-second soak for source `bd7dded90d4378ee6dba516b114738cb81a474a7` and image `sha256:c9275a40142e452c31c0aa40bf9e57d9da83431855a72e33f632b777b337da56`. Current and known-good agreed at that checkpoint. This does not establish promotion of current main. [Operator evidence](https://github.com/Khamel83/argus/issues/151#issuecomment-6728505607).
-- ARG-QS-03, ARG-QS-04 and ARG-QS-05 remain open for provider settlement, restore and ordinary reader proof, and broader monitoring qualification. No whole-host zero-timeout acceptance is claimed.
+## Extraction cache timeout fix (#259, #260) — November 26, 2026
+
+Source commit `453e33ee818307ac1a1e9ac67dffb16e759a5158` merged PR #260 to address issue #259, preventing cache-read timeouts from failing extractions by treating failed durable cache reads as cache misses, setting `archive_used` on archive copies, and recording failure reasons. Live promotion and runtime rerun of Third Street `collect-argus.yml` remain separate pending actions.
+
+Prior merged changes include commit `7672f32756473705c63645eed90757d1b27cb860` (PR #253) skipping release builds on docs-only changes, and documentation updates in commits `a89a9ef8ea81ad5ab0fae01f1f8eb733f6003c63` (PR #254) and `de6155f62b3db5a710eee37d967b8e3b4ea8236a` (PR #257).
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
