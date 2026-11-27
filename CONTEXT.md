@@ -401,13 +401,11 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-## Third Street caller faults (#259) — November 26, 2026
+## Source checkpoint — 2026-11-27
 
-PR #260 (source commit `453e33ee818307ac1a1e9ac67dffb16e759a5158`) merged to resolve extraction failures from cache-read timeouts (#259): failed durable cache reads are treated as cache misses, archive copies set `archive_used`, and failed attempts record reasons.
+Published source HEAD is `59335bad2b3b35207322d6bdd61dfc9b5e4ee040` (`fix: accept pre-#260 archive mirror rows on cache replay (#259) (#267)`). Related published commits, not deployment or acceptance proof: `453e33ee818307ac1a1e9ac67dffb16e759a5158` (`fix: stop cache-read timeouts failing extractions (#259) (#260)`), `1b4b5ad181424bdcffe8eff0b31d714463f8c4f3` (docs: #259 fix merged, deploy blocked by scorecard admission), `b368941116c3e00dbcc2050c75bd42463e3637da` (docs: record #259 deploy and night decisions). A commit subject does not prove promote, soak, or live effect.
 
-Promotion of current main remains blocked: scorecard admission waits expired under Homelab CPU pressure (https://github.com/Khamel83/infra/issues/1928). The November 26 attempt `attempt.bhbw06.log` and release runs 45919264386 and 45920160494 for the #260 fix ended `wait_expired` on November 27 UTC.
-
-Documentation updates and decisions were recorded in PR #262 (`1b4b5ad181424bdcffe8eff0b31d714463f8c4f3`) and PR #265 (`b368941116c3e00dbcc2050c75bd42463e3637da`). Earlier, PR #253 (`7672f32756473705c63645eed90757d1b27cb860`) merged to skip release build and promotion workflows on documentation-only pushes.
+Project-owned TODO still lists #259 follow-through open: ship accepted-extraction fixes (failed durable cache read as a cache miss, `archive_used` on archive copies, named failure reasons), then merge, promote, and rerun Third Street `collect-argus.yml`. Promote of current main is also still open: scorecard admission waits expire under Homelab CPU pressure (https://github.com/Khamel83/infra/issues/1928); November 26 `attempt.bhbw06.log` ended `wait_expired`, as did release runs 45919264386 and 45920160494 for the #260 fix on November 27 UTC. An indexed URL identity column for accepted extraction outcomes remains an open schema change. ARG-QS-03/04/05 remain open (uncertain provider settlement, restore/ordinary reader proof, broader monitoring qualification). No whole-host zero-timeout or provider-settlement claim.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
