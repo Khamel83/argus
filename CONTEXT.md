@@ -407,13 +407,17 @@ retired and are not fallbacks. See the
 - Third Street: report numbers only; no change to its collector for archive copies.
 
 <!-- janitor:begin:recent -->
-## Third Street caller faults (#259) and public browser allow-list (#264) — November 26, 2026
+## Current — source `ba9d3f1136d9e54d25533b9a2563071ceff7eb94`
 
-PR #260 (`453e33ee818307ac1a1e9ac67dffb16e759a5158`) merged to prevent cache-read timeouts from failing extractions for https://github.com/Khamel83/argus/issues/259. It has been live on Homelab since 9:39 PM PT November 26 (source `1b4b5ad181424bdcffe8eff0b31d714463f8c4f3`, image `5760ffd5`). A rerun of Third Street (run 45948253498) confirmed 0 cache-read timeouts, but yielded 16 `persistence_failed` errors from `AcceptanceConflictError` during cache replay of pre-#260 archive mirror rows.
+Docs commit `ba9d3f1136d9e54d25533b9a2563071ceff7eb94` (`docs: record #259 close and #264 remaining step (#273)`) is a records change. It is not a new runtime or deploy claim.
 
-PR #267 (`59335bad2b3b35207322d6bdd61dfc9b5e4ee040`) merged to accept pre-#260 archive mirror rows on cache replay. PR #269 (`30f0dd3d268d6b1b287bb062bbf78ace289afae4`) merged to add a public browser allow-list (`ARGUS_PUBLIC_BROWSER_DOMAINS`) for origins blocking headless clients (#264), per owner approval restricted to `*.lausd.org`. Docs commit `275a1e7d594e96707ecdc1eadce60f9caf534676` recorded the rerun, #267/#269 merges, and owner decisions (#270).
+Project TODO records #259 closed. #260 shipped and was live on Homelab at 9:39 PM PT Nov 26 (source `1b4b5ad`, image `5760ffd5`). Third Street run https://github.com/Khamel83/third-street/actions/runs/45948253498 had 0 cache-read timeouts and 16 `persistence_failed` from `AcceptanceConflictError` on cache replay of pre-#260 archive mirror rows. #267 and #269 are recorded as promoted. Live source `dbbea122`; known-good recorded as 7:43 AM PT Nov 27 (third release; two earlier scorecard runs failed under CPU pressure). Third Street run https://github.com/Khamel83/third-street/actions/runs/46028235147: 0 `persistence_failed`.
 
-Release promotion 45976676234 for #267 failed in the scorecard ("scorecard schema is not at the baked head", `attempt.Y4kkhw.log`). Release run 45979955071 for #269 carries both changes. Full promotion, downstream Infra PR 2479 (`ARGUS_PUBLIC_BROWSER_DOMAINS=lausd.org`), and closure of #259 remain pending. Earlier, PR #253 (`7672f32756473705c63645eed90757d1b27cb860`) merged to skip build and promotion for documentation-only pushes.
+#264 effect is not closed. Owner decision (Nov 26 night): headed-browser fetches approved for `*.lausd.org` only, implemented as `ARGUS_PUBLIC_BROWSER_DOMAINS` (off by default). https://github.com/Khamel83/infra/pull/2479 is merged, but the Infra-owned Homelab checkout `/mnt/fast-storage/github/homelab` (recorded 10 days old, with local edits) lacks that line. Live LAUSD content is not claimed until that compose file is taken from origin/main, Argus is promoted once, and Third Street is rerun.
+
+Accepted-extraction index remains a migration PR only; no production schema change without a new decision. Third Street collector is unchanged (report numbers only). The indexed URL identity column stays low priority; that rerun had no cache-read timeouts.
+
+ARG-QS-03/04/05, main `promote` exit-78 diagnosis, Homelab Tavily reader acceptance, and uncertain provider settlement stay independent open items in the project TODO. No whole-host zero-timeout acceptance is claimed.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
