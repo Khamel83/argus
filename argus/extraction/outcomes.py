@@ -544,6 +544,12 @@ class AcceptedExtractionOutcome:
             ),
             egress=artifact.provenance.egress if artifact is not None else "unknown",
             machine=artifact.provenance.machine if artifact is not None else None,
+            # Archive provenance is part of the accepted truth.  Callers use
+            # this flag to keep archived copies apart from live coverage
+            # (issue #259: Wayback artifacts were reported as live).
+            archive_used=(
+                artifact is not None and artifact.provenance.source_type == "archive"
+            ),
         )
         legacy.rejection = self.rejection
         legacy.artifact_disposition = self.artifact_disposition

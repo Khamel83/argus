@@ -1,3 +1,32 @@
+## November 26 — Third Street caller faults (#259)
+
+Run https://github.com/Khamel83/third-street/actions/runs/45913338228 had 14 ok
+and 34 errors. Causes, from Argus and PostgreSQL logs for 00:01–00:14Z Nov 27:
+
+- `persistence_failed` (14): the accepted-cache read
+  `find_extraction_outcomes_by_url_identity` scans every `projection_json`
+  with LIKE; 14 reads hit the 5 s statement timeout (Postgres log has exactly
+  14). The exception became `persistence_failed` before any extraction ran.
+- `degraded` (10): Wayback copies that the finalizer marks
+  `incomplete_content`. This is correct partial evidence, not a fault.
+- `extraction_failed` (9): no free path. LAUSD hosts return a Cloudflare WAF
+  block ("Sorry, you have been blocked", edliocloud) to the Homelab IP for
+  every User-Agent; CDE redirects to a Radware bot challenge
+  (validate.perfdrive.com); browsers fail closed with
+  `browser_policy_unavailable` by design; no Wayback copy exists.
+- `policy_rejected` (1): `boe.lausd.org` preflight `unsupported_source`.
+- Also: the 14 "ok" results were Wayback copies with `archive_used=false`.
+
+Source fix on branch `fix/issue-259-extract-cache-archive` (worktree
+`.worktrees/records-close-20261102`): cache read failure is a miss, cheaper
+lookup (PostgreSQL `strpos`, no second NOT LIKE scan), `archive_used` from
+accepted provenance, per-attempt reasons, trafilatura HTTP status kept.
+Test: `tests/test_issue_259_extraction_faults.py`. Not deployed until the
+promotion passes scorecard admission (Homelab CPU pressure, infra #1928).
+Next: trusted review, merge, promote, rerun `gh workflow run collect-argus.yml
+-R Khamel83/third-street`, compare counts, comment on #259. After merge,
+switch the worktree back off this branch; it was reused, not created.
+
 ## November 25 — promotion failing on main; docs-only pushes skipped
 
 Main pushes since November 9, from "Build and Promote Immutable Image" runs

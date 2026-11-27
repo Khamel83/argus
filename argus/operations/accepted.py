@@ -1978,6 +1978,15 @@ class AcceptedOperationService:
                 outcome = CanonicalOutcome.PERSISTENCE_FAILED
                 detail = "Extraction could not be durably recorded"
                 operation_began = True
+            # Record the exception class so an operator can tell a database
+            # deadline from a contract fault (issue #259).  The message is not
+            # logged because driver errors can echo request URLs.
+            logger.warning(
+                "Accepted extraction %s returned %s after %s",
+                request_id,
+                outcome.value,
+                type(error).__name__,
+            )
             return AcceptedOperation(
                 outcome=outcome,
                 request_id=request_id,
