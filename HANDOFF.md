@@ -17,15 +17,18 @@ and 34 errors. Causes, from Argus and PostgreSQL logs for 00:01–00:14Z Nov 27:
 - `policy_rejected` (1): `boe.lausd.org` preflight `unsupported_source`.
 - Also: the 14 "ok" results were Wayback copies with `archive_used=false`.
 
-Source fix on branch `fix/issue-259-extract-cache-archive` (worktree
-`.worktrees/records-close-20261102`): cache read failure is a miss, cheaper
+Source fix merged: https://github.com/Khamel83/argus/pull/260 (merge
+`453e33ee`, reviewer PASS, CI green). Cache read failure is a miss, cheaper
 lookup (PostgreSQL `strpos`, no second NOT LIKE scan), `archive_used` from
 accepted provenance, per-attempt reasons, trafilatura HTTP status kept.
-Test: `tests/test_issue_259_extraction_faults.py`. Not deployed until the
-promotion passes scorecard admission (Homelab CPU pressure, infra #1928).
-Next: trusted review, merge, promote, rerun `gh workflow run collect-argus.yml
--R Khamel83/third-street`, compare counts, comment on #259. After merge,
-switch the worktree back off this branch; it was reused, not created.
+Test: `tests/test_issue_259_extraction_faults.py`.
+NOT DEPLOYED. Runtime is still `eea874aa` (Nov 9). Release runs 45919264386
+(merge push) and 45920160494 (manual, main `68db7e31`) both failed in
+`promote` with scorecard admission `wait_expired` (CPU pressure, infra #1928).
+Next: when Homelab CPU PSI drops, run `gh workflow run docker-publish.yml -R
+Khamel83/argus --ref main`; after current.json names the new source, run
+`gh workflow run collect-argus.yml -R Khamel83/third-street`, compare counts
+with the baseline in #259, then close #259.
 
 ## November 25 — promotion failing on main; docs-only pushes skipped
 

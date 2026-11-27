@@ -1,7 +1,7 @@
 ## Third Street caller faults (#259) — November 26, 2026
 
 - [ ] Ship the accepted-extraction fixes for https://github.com/Khamel83/argus/issues/259: a failed durable cache read is a cache miss (it caused all 14 `persistence_failed`), archive copies set `archive_used`, and each failed attempt names its reason. Merge, promote, then rerun Third Street `collect-argus.yml` and compare counts.
-- [ ] Promote current main. Scorecard admission waits expire under Homelab CPU pressure (https://github.com/Khamel83/infra/issues/1928); the November 26 attempt `attempt.bhbw06.log` ended `wait_expired`.
+- [ ] Promote current main. Scorecard admission waits expire under Homelab CPU pressure (https://github.com/Khamel83/infra/issues/1928); the November 26 attempt `attempt.bhbw06.log` ended `wait_expired`, and so did release runs 45919264386 and 45920160494 for the #260 fix on November 27 UTC.
 - [ ] Give accepted extraction outcomes an indexed URL identity column, so the durable cache read is not a full scan of `projection_json` (about 0.5 to 3 s at 4,411 rows). This is a schema change: use the bridge release in docs/operations.md.
 
 ## November 8 — ARG-QS-02 release proof complete
