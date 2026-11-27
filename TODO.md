@@ -2,7 +2,7 @@
 
 - [x] Ship the accepted-extraction fixes for https://github.com/Khamel83/argus/issues/259 (#260). Live on Homelab since 9:39 PM PT Nov 26 (source `1b4b5ad`, image `5760ffd5`). Rerun https://github.com/Khamel83/third-street/actions/runs/45948253498: 0 cache-read timeouts, but 16 `persistence_failed` from `AcceptanceConflictError` on cache replay of pre-#260 archive mirror rows.
 - [x] Promote #267 and #269. Live: source `dbbea122`, known-good 7:43 AM PT Nov 27 (third release; two earlier scorecard runs failed under CPU pressure). Third Street run 46028235147: 0 `persistence_failed`. #259 closed.
-- [ ] #264 effect: https://github.com/Khamel83/infra/pull/2479 is merged, but the Homelab checkout `/mnt/fast-storage/github/homelab` (Infra-owned, 10 days old, local edits) lacks the line. Owner or Infra: `git fetch origin && git checkout origin/main -- services/argus/docker-compose.yml` there, then promote Argus once and rerun Third Street; close #264 when LAUSD returns live content.
+- [ ] #264 effect: the env line is on the Homelab checkout since 8:20 AM PT Nov 27 (staged from origin/main in Infra's checkout). It needs one Argus promotion. Four tries (8:40, 9:00, 9:31, 9:59 AM PT) ended `wait_expired`: the admission gate needs CPU busy at or below 85% within 300 s, and Homelab stays near 80 to 90% (infra #1928). Retry when it is lower: `gh workflow run docker-publish.yml -R Khamel83/argus --ref main`, then check `docker exec argus env | grep ARGUS_PUBLIC_BROWSER_DOMAINS`, rerun Third Street and close #264.
 - [ ] Indexed URL identity column for the accepted-extraction cache read (owner Nov 26: PR only, no production schema change). Low priority: the rerun had no cache-read timeouts.
 
 ## November 8 — ARG-QS-02 release proof complete
