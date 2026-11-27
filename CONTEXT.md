@@ -407,21 +407,13 @@ retired and are not fallbacks. See the
 - Third Street: report numbers only; no change to its collector for archive copies.
 
 <!-- janitor:begin:recent -->
-## Source checkpoint — 30f0dd3d268d6b1b287bb062bbf78ace289afae4
+## Third Street caller faults (#259) and public browser allow-list (#264) — November 26, 2026
 
-Published head subject only: public browser allow-list for origins that block headless clients (#264) (#269). That subject is past activity, not a runtime, review, or deployment receipt. No independent read-back for this commit is in the supplied documents.
+PR #260 (`453e33ee818307ac1a1e9ac67dffb16e759a5158`) merged to prevent cache-read timeouts from failing extractions for https://github.com/Khamel83/argus/issues/259. It has been live on Homelab since 9:39 PM PT November 26 (source `1b4b5ad181424bdcffe8eff0b31d714463f8c4f3`, image `5760ffd5`). A rerun of Third Street (run 45948253498) confirmed 0 cache-read timeouts, but yielded 16 `persistence_failed` errors from `AcceptanceConflictError` during cache replay of pre-#260 archive mirror rows.
 
-Nearby subjects, also not task closures:
-- `59335bad2b3b35207322d6bdd61dfc9b5e4ee040` — accept pre-#260 archive mirror rows on cache replay (#259) (#267)
-- `b368941116c3e00dbcc2050c75bd42463e3637da` — record #259 deploy and night decisions (#265)
-- `1b4b5ad181424bdcffe8eff0b31d714463f8c4f3` — record #259 fix merged, deploy blocked by scorecard admission (#262)
-- `453e33ee818307ac1a1e9ac67dffb16e759a5158` — stop cache-read timeouts failing extractions (#259) (#260)
+PR #267 (`59335bad2b3b35207322d6bdd61dfc9b5e4ee040`) merged to accept pre-#260 archive mirror rows on cache replay. PR #269 (`30f0dd3d268d6b1b287bb062bbf78ace289afae4`) merged to add a public browser allow-list (`ARGUS_PUBLIC_BROWSER_DOMAINS`) for origins blocking headless clients (#264), per owner approval restricted to `*.lausd.org`. Docs commit `275a1e7d594e96707ecdc1eadce60f9caf534676` recorded the rerun, #267/#269 merges, and owner decisions (#270).
 
-Project-owned TODO still lists open #259 follow-up: accepted-extraction fixes, promote current main, and an indexed URL identity column. It records scorecard admission `wait_expired` for November 26 `attempt.bhbw06.log` and for release runs 45919264386 and 45920160494 (November 27 UTC) on the #260 fix. Whether later commits closed or deployed those lines is not established here.
-
-ARG-QS-03/04/05 remain open in the published TODO. ARG-QS-02 November 8 proof stays historical: source `bd7dded90d4378ee6dba516b114738cb81a474a7`, image `sha256:c9275a40142e452c31c0aa40bf9e57d9da83431855a72e33f632b777b337da56`. The November 6 PR 245 note still describes a source candidate with review, CI, and merge/read-back pending; later resolution is not in the supplied context body.
-
-November 5 workflow notes remain historical. Commit subjects show PR 240 merged as `a335e28911a7684c960ee64a1e3232c411ace683` and PR 241 merged as `0e3821ed7edb0da26ca2815e71abf942279f8da5`. Those subjects do not add a new soak, workflow-completion, or provider-settlement claim.
+Release promotion 45976676234 for #267 failed in the scorecard ("scorecard schema is not at the baked head", `attempt.Y4kkhw.log`). Release run 45979955071 for #269 carries both changes. Full promotion, downstream Infra PR 2479 (`ARGUS_PUBLIC_BROWSER_DOMAINS=lausd.org`), and closure of #259 remain pending. Earlier, PR #253 (`7672f32756473705c63645eed90757d1b27cb860`) merged to skip build and promotion for documentation-only pushes.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
