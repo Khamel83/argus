@@ -1,4 +1,12 @@
-## November 26 — Third Street caller faults (#259)
+# Handoff
+## November 26, 2026 (night) — #259 deployed; bed session cut short by usage limit
+
+- DEPLOYED: Homelab current.json = source `1b4b5ad`, digest `sha256:5760ffd5…`, phase complete at 9:39 PM PT (05:39:50Z Nov 27). GitHub run 45941624757 shows failure only because the hosted runner lost contact during soak; the promoter finished.
+- In flight: Third Street rerun https://github.com/Khamel83/third-street/actions/runs/45948253498 (compare with #259 baseline: 14 ok / 14 persistence_failed / 10 degraded / 9 extraction_failed / 1 policy_rejected). Homelab browser probe for LAUSD: `ssh homelab` then `docker run --rm --cpus 1 --entrypoint "" -v /tmp/argus_lausd_probe.py:/probe.py:ro ghcr.io/khamel83/argus@sha256:5760ffd55f212488b1d5d85dab632d11059563c2124c15be0620c1ef066da5b6 xvfb-run -a python /probe.py` (Mac result: headless 403, headed 200; see #264 comment).
+- Owner decisions (Nov 26 night): Q1 if Homelab headed browser gets LAUSD, build #264 `*.lausd.org` allow-list, merge + deploy after CI and review. Q2 index: migration PR only, no production schema change. Q3 Third Street: report numbers only, no collector change.
+- Next: read rerun counts, close #259 if persistence_failed = 0; run probe; act on Q1/Q2.
+- Worktree `.worktrees/records-close-20261102` is on this branch; remove when merged.
+
 
 Run https://github.com/Khamel83/third-street/actions/runs/45913338228 had 14 ok
 and 34 errors. Causes, from Argus and PostgreSQL logs for 00:01–00:14Z Nov 27:
