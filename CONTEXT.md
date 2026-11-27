@@ -407,17 +407,17 @@ retired and are not fallbacks. See the
 - Third Street: report numbers only; no change to its collector for archive copies.
 
 <!-- janitor:begin:recent -->
-## Current — source `ba9d3f1136d9e54d25533b9a2563071ceff7eb94`
+## Current — November 27, 2026
 
-Docs commit `ba9d3f1136d9e54d25533b9a2563071ceff7eb94` (`docs: record #259 close and #264 remaining step (#273)`) is a records change. It is not a new runtime or deploy claim.
+Source checkpoint `3c2158d097d0027028a7fdc2b6f1229eb28e3a43` (`docs: #264 waits for Homelab CPU; record retry path (#275)`) records the remaining #264 step only. It does not show that the promotion completed.
 
-Project TODO records #259 closed. #260 shipped and was live on Homelab at 9:39 PM PT Nov 26 (source `1b4b5ad`, image `5760ffd5`). Third Street run https://github.com/Khamel83/third-street/actions/runs/45948253498 had 0 cache-read timeouts and 16 `persistence_failed` from `AcceptanceConflictError` on cache replay of pre-#260 archive mirror rows. #267 and #269 are recorded as promoted. Live source `dbbea122`; known-good recorded as 7:43 AM PT Nov 27 (third release; two earlier scorecard runs failed under CPU pressure). Third Street run https://github.com/Khamel83/third-street/actions/runs/46028235147: 0 `persistence_failed`.
+#259 is closed in the published TODO. Accepted-extraction fixes shipped in #260 (source `1b4b5ad`, image `5760ffd5`, live on Homelab since 9:39 PM PT Nov 26). A rerun still had 16 `persistence_failed` from `AcceptanceConflictError` on cache replay of pre-#260 archive mirror rows. #267 and #269 were then promoted. Published known-good is source `dbbea122` at 7:43 AM PT Nov 27 (third release; two earlier scorecard runs failed under CPU pressure). Third Street run 46028235147 had 0 `persistence_failed`.
 
-#264 effect is not closed. Owner decision (Nov 26 night): headed-browser fetches approved for `*.lausd.org` only, implemented as `ARGUS_PUBLIC_BROWSER_DOMAINS` (off by default). https://github.com/Khamel83/infra/pull/2479 is merged, but the Infra-owned Homelab checkout `/mnt/fast-storage/github/homelab` (recorded 10 days old, with local edits) lacks that line. Live LAUSD content is not claimed until that compose file is taken from origin/main, Argus is promoted once, and Third Street is rerun.
+#264 effect is not accepted. Owner decision (Nov 26): headed-browser fetches for `*.lausd.org` only, implemented as `ARGUS_PUBLIC_BROWSER_DOMAINS` (off by default), merge and deploy after CI and a reviewer pass. Related source: `30f0dd3d268d6b1b287bb062bbf78ace289afae4` (#269). The env line is on the Homelab checkout since 8:20 AM PT Nov 27 (staged from origin/main in Infra's checkout) and still needs one Argus promotion. Four tries (8:40, 9:00, 9:31, 9:59 AM PT) ended `wait_expired`: admission needs CPU busy at or below 85% within 300 s, and Homelab stays near 80 to 90% (infra #1928). Retry is recorded, not done.
 
-Accepted-extraction index remains a migration PR only; no production schema change without a new decision. Third Street collector is unchanged (report numbers only). The indexed URL identity column stays low priority; that rerun had no cache-read timeouts.
+Also unchanged from the Nov 26 owner decisions: accepted-extraction index is a migration PR only, with no production schema change without a new decision; Third Street reports numbers only and does not change its collector for archive copies. The rerun had no cache-read timeouts, so the indexed URL identity column stays low priority.
 
-ARG-QS-03/04/05, main `promote` exit-78 diagnosis, Homelab Tavily reader acceptance, and uncertain provider settlement stay independent open items in the project TODO. No whole-host zero-timeout acceptance is claimed.
+No claim of provider settlement, natural backup recurrence, whole-host zero-timeout acceptance, or operated rollout beyond the published #259/#267/#269 known-good facts above. ARG-QS-03/04/05, promote-on-main diagnosis, Homelab credential-observation acceptance, and uncertain provider charges remain separate open items in the project-owned TODO.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
