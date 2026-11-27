@@ -46,6 +46,12 @@ ADMISSION_BASIS_AUTH_BROWSER_EXCEPTION = "auth_browser_exception"
 # authority supplies attestations.
 AUTH_BROWSER_DOMAINS_ENV = "ARGUS_AUTH_BROWSER_DOMAINS"
 AUTH_BROWSER_EXCEPTION_LEASE = timedelta(minutes=5)
+ADMISSION_BASIS_PUBLIC_BROWSER_EXCEPTION = "public_browser_exception"
+# Owner-approved public allow-list (#264): public HTTPS pages whose origin
+# blocks headless clients (LAUSD for Third Street).  Admitted sessions run in a
+# headed browser on a virtual display.  Retire with the paywall exception once
+# a real browser-network authority supplies attestations.
+PUBLIC_BROWSER_DOMAINS_ENV = "ARGUS_PUBLIC_BROWSER_DOMAINS"
 _NON_NETWORK_SCHEMES = frozenset({"about", "blob", "data"})
 _BROWSER_RESOURCE_TYPES = frozenset(
     {
@@ -520,6 +526,50 @@ def _request_is_browser(request: object) -> bool:
     return operation == OperationClass.BROWSER.value
 
 
+def _allowlisted_https_domain(url: str, env_name: str) -> str | None:
+    """Return the entry of ``env_name`` that covers ``url``'s HTTPS host."""
+
+    allowlist = {
+        domain.strip().strip(".").lower()
+        for domain in os.environ.get(env_name, "").split(",")
+        if domain.strip().strip(".")
+    }
+    if not allowlist:
+        return None
+    parsed = urlsplit(url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not host:
+        return None
+    return next(
+        (
+            domain
+            for domain in sorted(allowlist)
+            if host == domain or host.endswith(f".{domain}")
+        ),
+        None,
+    )
+
+
+def _public_browser_exception_domain(request: AcquisitionRequest) -> str | None:
+    """Return the allowlisted domain that admits a public ``request`` (#264).
+
+    Public content only, no credentials, HTTPS only, and a host on
+    ``ARGUS_PUBLIC_BROWSER_DOMAINS``.  Resource guards still restrict the
+    session to the request's own origin.
+    """
+
+    if request.profile is not OriginProfile.PUBLIC_CONTENT:
+        return None
+    credential_policy = getattr(
+        request.credential_policy, "value", request.credential_policy
+    )
+    if credential_policy != CredentialPolicy.NONE.value:
+        return None
+    return _allowlisted_https_domain(
+        request.normalized_url, PUBLIC_BROWSER_DOMAINS_ENV
+    )
+
+
 def _auth_browser_exception_domain(request: AcquisitionRequest) -> str | None:
     """Return the allowlisted domain that admits ``request`` with no attestation.
 
@@ -600,7 +650,13 @@ def require_browser_policy(
         # authority did supply, even an invalid value, keeps the rejection.
         if attestation is not None:
             return failure
+        exception_env = AUTH_BROWSER_DOMAINS_ENV
+        exception_basis = ADMISSION_BASIS_AUTH_BROWSER_EXCEPTION
         exception_domain = _auth_browser_exception_domain(request)
+        if exception_domain is None:
+            exception_env = PUBLIC_BROWSER_DOMAINS_ENV
+            exception_basis = ADMISSION_BASIS_PUBLIC_BROWSER_EXCEPTION
+            exception_domain = _public_browser_exception_domain(request)
         if exception_domain is None:
             return failure
         try:
@@ -609,7 +665,7 @@ def require_browser_policy(
             return failure
         logger.warning(
             "Browser admitted without network attestation via %s host=%s request_id=%s",
-            AUTH_BROWSER_DOMAINS_ENV,
+            exception_env,
             parsed.hostname,
             request_id,
         )
@@ -619,8 +675,8 @@ def require_browser_policy(
             admitted_at=admitted_at,
             expires_at=admitted_at + AUTH_BROWSER_EXCEPTION_LEASE,
             max_resources=request.limits.max_resource_count,
-            basis=ADMISSION_BASIS_AUTH_BROWSER_EXCEPTION,
-            exception_ref=f"{AUTH_BROWSER_DOMAINS_ENV}:{exception_domain}",
+            basis=exception_basis,
+            exception_ref=f"{exception_env}:{exception_domain}",
         )
     checked = _normalise_attestation(attestation)
     # ``validate_browser_attestation`` above guarantees this branch.  Keep the

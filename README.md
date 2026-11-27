@@ -732,6 +732,7 @@ When running from the repo, Argus now auto-loads `.env` and `.env.local` (withou
 | `ARGUS_OBSCURA_CDP_URL` | — | Obscura CDP endpoint (e.g. `ws://127.0.0.1:9222`) — makes Playwright use Obscura as its browser engine |
 | `ARGUS_OBSCURA_TIMEOUT_SECONDS` | 20 | Timeout for Obscura CLI subprocess calls |
 | `ARGUS_AUTH_BROWSER_DOMAINS` | — | Temporary, off by default (#148). Comma-separated paywall domains whose cookie-backed `authenticated_content` HTTPS browser requests may run without a browser-network attestation. Applies only when no attestation is present; same-origin guards still apply |
+| `ARGUS_PUBLIC_BROWSER_DOMAINS` | — | Off by default (#264). Comma-separated domains whose public, credential-free HTTPS pages may use the browser without a browser-network attestation. These requests run in a one-request headed Chromium on a virtual display (Xvfb), for origins that block headless clients. Same-origin guards still apply. `ARGUS_BROWSER_XVFB_DISPLAY` (default `:99`) names the display Argus starts when `DISPLAY` is unset |
 | `ARGUS_CACHE_TTL_HOURS` | 168 | Result cache TTL |
 | `ARGUS_BIND_HOST` | `127.0.0.1` | Host used by `argus serve` unless `--host` is passed |
 | `ARGUS_PORT` | `8000` | Port used by `argus serve` unless `--port` is passed |
