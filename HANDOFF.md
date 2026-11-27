@@ -1,4 +1,11 @@
 # Handoff
+## November 27, 2026, 11:45 AM PT — #264 waits for Homelab CPU
+
+- Done: Omar's command put `ARGUS_PUBLIC_BROWSER_DOMAINS=lausd.org` into `/mnt/fast-storage/github/homelab/services/argus/docker-compose.yml` (fetch ran from his shell; the checkout step was run by this session as one line). It is staged, not committed, in Infra's checkout and matches origin/main (infra#2479).
+- Blocked: four release tries ended scorecard admission `wait_expired` (CPU busy above 85%; ffmpeg, paperclip, gunicorn top the list). Production is unchanged on `dbbea122`.
+- In flight: a session-local watcher checks Homelab CPU every 10 minutes until about 11:45 PM PT and dispatches a release after two readings under 75% (at most 2 tries). If this session closes, it stops; run the TODO command by hand.
+- Next: when the container shows the env, rerun Third Street and close #264.
+
 ## November 27, 2026, 8:15 AM PT — #259 closed; #264 waits on Homelab env line
 
 - Live: source `dbbea122` (#260, #267, #269), known-good 7:43 AM PT. GitHub release runs show failure when the runner loses contact; Homelab `current.json` is the truth.
