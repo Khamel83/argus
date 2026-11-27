@@ -2304,18 +2304,31 @@ class SqlAlchemySearchLedgerRepository:
             # identity is checked.  The identity is a fixed ``sha256:`` plus
             # hex value, but escape LIKE metacharacters defensively because
             # this is still caller-provided input at the repository boundary.
-            identity_fragment = _canonical_json(
+            raw_fragment = _canonical_json(
                 {"normalized_url_identity": normalized_url_identity}
             )[1:-1]
-            identity_fragment = (
-                identity_fragment.replace("\\", "\\\\")
-                .replace("%", "\\%")
-                .replace("_", "\\_")
-            )
-            identity_match = ExtractionOutcomeAcceptanceRow.projection_json.like(
-                f"%{identity_fragment}%",
-                escape="\\",
-            )
+            bind = session.get_bind()
+            if getattr(getattr(bind, "dialect", None), "name", "") == "postgresql":
+                # A plain substring test avoids LIKE/ESCAPE pattern matching
+                # over every large projection document (issue #259: the LIKE
+                # scan exceeded the statement deadline under load).
+                identity_match = (
+                    func.strpos(
+                        ExtractionOutcomeAcceptanceRow.projection_json,
+                        raw_fragment,
+                    )
+                    > 0
+                )
+            else:
+                identity_fragment = (
+                    raw_fragment.replace("\\", "\\\\")
+                    .replace("%", "\\%")
+                    .replace("_", "\\_")
+                )
+                identity_match = ExtractionOutcomeAcceptanceRow.projection_json.like(
+                    f"%{identity_fragment}%",
+                    escape="\\",
+                )
             identity_rows = session.execute(
                 statement.where(identity_match)
                 .order_by(ExtractionOutcomeAcceptanceRow.accepted_at.desc())
@@ -2325,15 +2338,23 @@ class SqlAlchemySearchLedgerRepository:
             # Rows written before the typed identity was added are retained by
             # the legacy URL-hash fallback below.  Fetch only the unused part
             # of the same bounded window so legacy compatibility cannot turn
-            # this cache lookup into an unbounded scan.
+            # this cache lookup into an unbounded scan.  The window is the
+            # newest rows by acceptance time.  It does not repeat the identity
+            # predicate as a second full-text scan (issue #259); identity
+            # matches that reappear here are de-duplicated by receipt.
             legacy_rows = []
             remaining = 128 - len(identity_rows)
             if remaining:
-                legacy_rows = session.execute(
-                    statement.where(~identity_match)
-                    .order_by(ExtractionOutcomeAcceptanceRow.accepted_at.desc())
-                    .limit(remaining)
-                ).all()
+                seen = {pair[1].receipt_ref for pair in identity_rows}
+                legacy_rows = [
+                    pair
+                    for pair in session.execute(
+                        statement.order_by(
+                            ExtractionOutcomeAcceptanceRow.accepted_at.desc()
+                        ).limit(remaining)
+                    ).all()
+                    if pair[1].receipt_ref not in seen
+                ]
             rows = sorted(
                 [*identity_rows, *legacy_rows],
                 key=lambda pair: pair[1].accepted_at,

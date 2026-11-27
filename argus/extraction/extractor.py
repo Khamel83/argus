@@ -37,6 +37,7 @@ import httpx
 
 from argus.acquisition.guarded import (
     GuardedAcquisitionError,
+    GuardedHTTPStatusError,
     guarded_http_request,
     guarded_url_policy,
     patched_httpx_client,
@@ -257,6 +258,12 @@ async def _extract_trafilatura(url: str, timeout: int = 10) -> ExtractedContent:
         resp.raise_for_status()
     except GuardedAcquisitionError as exc:
         return ExtractedContent(url=url, error=f"trafilatura: {exc.failure.code.value}")
+    except GuardedHTTPStatusError as exc:
+        # An origin refusal is a bounded attempt result, not an extractor
+        # crash.  Keep the status so evidence can name the block (#259).
+        status = exc.response.status_code
+        logger.warning("Trafilatura failed for %s: HTTP %s", url[:60], status)
+        return ExtractedContent(url=url, error=f"trafilatura: HTTP {status}")
     final_url = str(resp.url)
 
     safe, reason = _safe_final_url(url, final_url)
@@ -1219,6 +1226,48 @@ async def extract_url(
     return result
 
 
+_ORIGIN_BLOCK_STATUS = re.compile(r"\bhttp (401|403|451)\b")
+_ORIGIN_RATE_LIMIT_STATUS = re.compile(r"\bhttp 429\b")
+_ORIGIN_UNAVAILABLE_STATUS = re.compile(r"\bhttp 5\d\d\b")
+
+
+def _failed_attempt_outcome(failure_summary: object):
+    """Classify a failed legacy attempt into the closed attempt taxonomy.
+
+    The legacy chain records a bounded failure summary per attempt.  Without
+    this mapping every failure surfaced as ``unknown_failure``, so a caller
+    could not tell an origin block from a disabled browser or a missing
+    archive copy (issue #259).  Unknown text stays ``unknown_failure``.
+    """
+    from argus.extraction.outcomes import AttemptOutcome
+
+    summary = failure_summary.lower() if isinstance(failure_summary, str) else ""
+    if not summary:
+        return AttemptOutcome.UNKNOWN_FAILURE
+    if _ORIGIN_BLOCK_STATUS.search(summary) or "acquisition_blocked" in summary:
+        return AttemptOutcome.PROVIDER_POLICY_REJECTED
+    if _ORIGIN_RATE_LIMIT_STATUS.search(summary):
+        return AttemptOutcome.RATE_LIMITED
+    if "browser_policy_unavailable" in summary or "browser policy unavailable" in summary:
+        return AttemptOutcome.PROVIDER_UNAVAILABLE
+    if _ORIGIN_UNAVAILABLE_STATUS.search(summary):
+        return AttemptOutcome.PROVIDER_UNAVAILABLE
+    if "timeout" in summary or "timed out" in summary:
+        return AttemptOutcome.TIMEOUT
+    if any(
+        marker in summary
+        for marker in (
+            "not archived",
+            "no existing archive",
+            "returned no text",
+            "no content extracted",
+            "no_content",
+        )
+    ):
+        return AttemptOutcome.EMPTY
+    return AttemptOutcome.UNKNOWN_FAILURE
+
+
 def _finalize_accepted_extraction(
     result: ExtractedContent,
     *,
@@ -1322,7 +1371,7 @@ def _finalize_accepted_extraction(
             return AttemptOutcome.EMPTY
         if attempt.status == "quality_failed":
             return AttemptOutcome.PARSE_ERROR
-        return AttemptOutcome.UNKNOWN_FAILURE
+        return _failed_attempt_outcome(attempt.failure_summary)
 
     def attempt_spend(attempt):
         # Free/local attempts have no spend record.  Paid attempts must carry

@@ -13,6 +13,9 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from argus.extraction.models import ExtractedContent
+from argus.logging import get_logger
+
+_logger = get_logger("extraction.cache")
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,14 +290,27 @@ class ExtractionCache:
             )
             if callable(finder):
                 try:
-                    durable_candidates = finder(
-                        identity.normalized_url,
-                        mode=identity.mode,
+                    try:
+                        durable_candidates = finder(
+                            identity.normalized_url,
+                            mode=identity.mode,
+                        )
+                    except TypeError:
+                        # Narrow compatibility for repository doubles that
+                        # expose the additive query without the optional mode
+                        # keyword.
+                        durable_candidates = finder(identity.normalized_url)
+                except Exception as error:
+                    # The durable lookup is an optimization, like process
+                    # memory.  A slow or failed read (for example a statement
+                    # deadline) is a cache miss, never a failed extraction:
+                    # the request still runs the chain and records its own
+                    # evidence.  Issue #259.
+                    _logger.warning(
+                        "Accepted extraction cache lookup failed; treating as miss: %s",
+                        type(error).__name__,
                     )
-                except TypeError:
-                    # Narrow compatibility for repository doubles that expose
-                    # the additive query without the optional mode keyword.
-                    durable_candidates = finder(identity.normalized_url)
+                    durable_candidates = ()
                 for content in durable_candidates or ():
                     if not isinstance(content, AcceptedExtractionOutcome):
                         continue
