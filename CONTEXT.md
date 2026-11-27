@@ -407,17 +407,12 @@ retired and are not fallbacks. See the
 - Third Street: report numbers only; no change to its collector for archive copies.
 
 <!-- janitor:begin:recent -->
-## Current — source `ba9d3f1136d9e54d25533b9a2563071ceff7eb94`
+## November 27, 2026 — Production #264 browser allow-list live and #259 closed
 
-Docs commit `ba9d3f1136d9e54d25533b9a2563071ceff7eb94` (`docs: record #259 close and #264 remaining step (#273)`) is a records change. It is not a new runtime or deploy claim.
-
-Project TODO records #259 closed. #260 shipped and was live on Homelab at 9:39 PM PT Nov 26 (source `1b4b5ad`, image `5760ffd5`). Third Street run https://github.com/Khamel83/third-street/actions/runs/45948253498 had 0 cache-read timeouts and 16 `persistence_failed` from `AcceptanceConflictError` on cache replay of pre-#260 archive mirror rows. #267 and #269 are recorded as promoted. Live source `dbbea122`; known-good recorded as 7:43 AM PT Nov 27 (third release; two earlier scorecard runs failed under CPU pressure). Third Street run https://github.com/Khamel83/third-street/actions/runs/46028235147: 0 `persistence_failed`.
-
-#264 effect is closed. Owner decision (Nov 26 night): headed-browser fetches approved for `*.lausd.org` only, implemented as `ARGUS_PUBLIC_BROWSER_DOMAINS` (off by default). Since 1:21 PM PT Nov 27, production `argus` runs with `ARGUS_PUBLIC_BROWSER_DOMAINS=lausd.org`. This came from a config-only recreate with the same image `dbbea122`, not from a promotion (CPU 99.7%; infra #1928). Live LAUSD HTML is confirmed by direct probes and by Third Street run https://github.com/Khamel83/third-street/actions/runs/46070479061. `.ics` feeds (#278) and archive-over-live ranking (#277) are still open.
-
-Accepted-extraction index remains a migration PR only; no production schema change without a new decision. Third Street collector is unchanged (report numbers only). The indexed URL identity column stays low priority; that rerun had no cache-read timeouts.
-
-ARG-QS-03/04/05, main `promote` exit-78 diagnosis, Homelab Tavily reader acceptance, and uncertain provider settlement stay independent open items in the project TODO. No whole-host zero-timeout acceptance is claimed.
+- **#264 live in production** (commit `3e196cc4f95ba31e885ab9eab2fb28ad9d37126b` via PR #279): Live since 1:21 PM PT Nov 27, 2026. A config-only recreation of `argus` with image `dbbea122` enabled `ARGUS_PUBLIC_BROWSER_DOMAINS=lausd.org` following host CPU recovery (infra #1928). Production gates passed; Third Street run 46070479061 verified `extraction_failed` dropped from 11 to 3 ([Argus #264 comment 7228874180](https://github.com/Khamel83/argus/issues/264#issuecomment-7228874180)).
+- **#259 closed**: Merged fixes #260 (`453e33ee818307ac1a1e9ac67dffb16e759a5158`), #267 (`59335bad2b3b35207322d6bdd61dfc9b5e4ee040`), and #269 (`30f0dd3d268d6b1b287bb062bbf78ace289afae4`) are live on source `dbbea122` (known-good 7:43 AM PT Nov 27). Third Street run 46028235147 verified 0 `persistence_failed`.
+- **Owner decisions (Nov 26)**: Headed-browser fetches approved for `*.lausd.org` only; accepted-extraction index changes restricted to migration PR only (no production schema change); Third Street collector unchanged.
+- **Open follow-ups**: LAUSD `.ics` feed failures behind Cloudflare (#278), shorter archive copy preference over incomplete live pages (#277), accepted-extraction index PR, and diagnosing `promote` failure exit 78 on main (#253 docs-skip merged).
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
