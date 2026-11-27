@@ -612,9 +612,13 @@ def create_app(
                 await authority_worker.aclose()
                 await maya_worker.aclose()
                 try:
-                    from argus.extraction.playwright_extractor import close_browser
+                    from argus.extraction.playwright_extractor import (
+                        close_browser,
+                        stop_virtual_display,
+                    )
 
                     await close_browser()
+                    stop_virtual_display()
                 except Exception as exc:
                     logger.warning(
                         "Failed to close Playwright resources: %s",

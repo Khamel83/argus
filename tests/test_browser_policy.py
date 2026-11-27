@@ -581,3 +581,33 @@ async def test_public_browser_exception_uses_a_per_request_headed_browser(
     shared.assert_not_awaited()
     browser.close.assert_awaited_once()
     playwright.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_requests_start_one_virtual_display(monkeypatch):
+    import asyncio
+
+    from argus.extraction import playwright_extractor as extractor
+
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.setattr(extractor, "_xvfb_process", None)
+    monkeypatch.setattr(extractor, "_xvfb_lock", None)
+    started = []
+
+    class FakeXvfb:
+        def poll(self):
+            return None
+
+    def fake_popen(*args, **kwargs):
+        started.append(args)
+        return FakeXvfb()
+
+    monkeypatch.setattr(extractor.subprocess, "Popen", fake_popen)
+
+    displays = await asyncio.gather(
+        extractor._ensure_virtual_display(), extractor._ensure_virtual_display()
+    )
+
+    assert displays == [":99", ":99"]
+    assert len(started) == 1
+    monkeypatch.setattr(extractor, "_xvfb_process", None)

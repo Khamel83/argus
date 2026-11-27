@@ -190,36 +190,71 @@ async def _get_browser(admission: BrowserAdmission | None = None):
 
 
 _xvfb_process: subprocess.Popen | None = None
+_xvfb_lock: asyncio.Lock | None = None
 _XVFB_DISPLAY = os.getenv("ARGUS_BROWSER_XVFB_DISPLAY", ":99")
 
 
+def _get_xvfb_lock() -> asyncio.Lock:
+    global _xvfb_lock
+    if _xvfb_lock is None:
+        _xvfb_lock = asyncio.Lock()
+    return _xvfb_lock
+
+
 async def _ensure_virtual_display() -> str | None:
-    """Return an X display for a headed browser, starting Xvfb once if needed."""
+    """Return an X display for a headed browser, starting Xvfb once if needed.
+
+    Serialized so concurrent requests cannot start competing Xvfb servers on
+    the same display.
+    """
     global _xvfb_process
     existing = os.environ.get("DISPLAY")
     if existing:
         return existing
-    if _xvfb_process is not None and _xvfb_process.poll() is None:
+    async with _get_xvfb_lock():
+        process = _xvfb_process
+        if process is not None and process.poll() is None:
+            return _XVFB_DISPLAY
+        try:
+            process = subprocess.Popen(
+                [
+                    "Xvfb",
+                    _XVFB_DISPLAY,
+                    "-screen",
+                    "0",
+                    "1280x1024x24",
+                    "-nolisten",
+                    "tcp",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError as exc:
+            logger.warning(
+                "Virtual display unavailable reason=xvfb_missing class=%s",
+                type(exc).__name__,
+            )
+            _xvfb_process = None
+            return None
+        await asyncio.sleep(0.5)
+        if process.poll() is not None:
+            logger.warning("Virtual display unavailable reason=xvfb_exited")
+            _xvfb_process = None
+            return None
+        _xvfb_process = process
         return _XVFB_DISPLAY
-    try:
-        _xvfb_process = subprocess.Popen(
-            ["Xvfb", _XVFB_DISPLAY, "-screen", "0", "1280x1024x24", "-nolisten", "tcp"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except OSError as exc:
-        logger.warning(
-            "Virtual display unavailable reason=xvfb_missing class=%s",
-            type(exc).__name__,
-        )
-        _xvfb_process = None
-        return None
-    await asyncio.sleep(0.5)
-    if _xvfb_process.poll() is not None:
-        logger.warning("Virtual display unavailable reason=xvfb_exited")
-        _xvfb_process = None
-        return None
-    return _XVFB_DISPLAY
+
+
+def _stop_virtual_display() -> None:
+    """Stop the Xvfb server this process started, if any."""
+    global _xvfb_process
+    process, _xvfb_process = _xvfb_process, None
+    if process is not None and process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
 
 
 async def _launch_headed_browser():
@@ -245,16 +280,18 @@ async def _launch_headed_browser():
             env={**os.environ, "DISPLAY": display},
         )
         return playwright, browser
-    except Exception as exc:
-        logger.warning(
-            "Failed to launch headed browser reason=launch_failed class=%s",
-            type(exc).__name__,
-        )
+    except BaseException as exc:
         if playwright is not None:
             try:
                 await playwright.stop()
             except Exception:
-                pass
+                logger.debug("Failed to stop headed Playwright reason=stop_failed")
+        if not isinstance(exc, Exception):
+            raise
+        logger.warning(
+            "Failed to launch headed browser reason=launch_failed class=%s",
+            type(exc).__name__,
+        )
         return None, None
 
 
@@ -504,6 +541,11 @@ async def close_browser():
     """
     async with _get_browser_lock():
         await _close_browser_resources()
+
+
+def stop_virtual_display() -> None:
+    """Stop the Xvfb server for headed browsers (call on shutdown only)."""
+    _stop_virtual_display()
 
 
 async def reset_browser():
