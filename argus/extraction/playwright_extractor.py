@@ -236,7 +236,12 @@ async def _ensure_virtual_display() -> str | None:
             )
             _xvfb_process = None
             return None
-        await asyncio.sleep(0.5)
+        try:
+            await asyncio.sleep(0.5)
+        except BaseException:
+            # Do not orphan a server that would hold the display.
+            process.terminate()
+            raise
         if process.poll() is not None:
             logger.warning("Virtual display unavailable reason=xvfb_exited")
             _xvfb_process = None

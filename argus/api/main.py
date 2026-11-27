@@ -617,8 +617,10 @@ def create_app(
                         stop_virtual_display,
                     )
 
-                    await close_browser()
-                    stop_virtual_display()
+                    try:
+                        await close_browser()
+                    finally:
+                        stop_virtual_display()
                 except Exception as exc:
                     logger.warning(
                         "Failed to close Playwright resources: %s",
