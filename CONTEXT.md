@@ -401,11 +401,13 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-## Current source — 1b4b5ad181424bdcffe8eff0b31d714463f8c4f3
+## Third Street caller faults (#259) — November 26, 2026
 
-Published docs commit `1b4b5ad181424bdcffe8eff0b31d714463f8c4f3` records that the #259 extraction fix merged and that deploy is blocked by scorecard admission (docs #262). Related source activity only: `453e33ee818307ac1a1e9ac67dffb16e759a5158` ("fix: stop cache-read timeouts failing extractions (#259) (#260)"). A commit subject is not promotion, soak, or a Third Street rerun. Remote TODO still lists shipping and promoting those fixes, an indexed URL identity column for accepted extraction, and scorecard `wait_expired` under Homelab CPU pressure (https://github.com/Khamel83/infra/issues/1928; `attempt.bhbw06.log`; release runs 45919264386 and 45920160494) as open. No current-main digest, healthy runtime, or live200 for that head is established here.
+PR #260 (source commit `453e33ee818307ac1a1e9ac67dffb16e759a5158`) merged to resolve extraction failures from cache-read timeouts (#259): failed durable cache reads are treated as cache misses, archive copies set `archive_used`, and failed attempts record reasons.
 
-ARG-QS-02 remains a completed historical gate only: source `bd7dded90d4378ee6dba516b114738cb81a474a7`, image `sha256:c9275a40142e452c31c0aa40bf9e57d9da83431855a72e33f632b777b337da56`, 1,800-second soak, hosted run 42187925242 attempt 3 SUCCESS. ARG-QS-03/04/05, uncertain provider settlement, restore/ordinary reader proof, and broader monitoring qualification stay independent and open. Docs-only release skip merged as `7672f32756473705c63645eed90757d1b27cb860` (#253). Why `promote` fails on main (November 18 exit 78; November 9 exit unknown) remains an open project task. Workflow receipt/finalization merges #240 (`a335e28911a7684c960ee64a1e3232c411ace683`) and #241 (`0e3821ed7edb0da26ca2815e71abf942279f8da5`) are source history; later guarded promotion of those images is not re-proven by this evidence.
+Promotion of current main remains blocked: scorecard admission waits expired under Homelab CPU pressure (https://github.com/Khamel83/infra/issues/1928). The November 26 attempt `attempt.bhbw06.log` and release runs 45919264386 and 45920160494 for the #260 fix ended `wait_expired` on November 27 UTC.
+
+Documentation updates and decisions were recorded in PR #262 (`1b4b5ad181424bdcffe8eff0b31d714463f8c4f3`) and PR #265 (`b368941116c3e00dbcc2050c75bd42463e3637da`). Earlier, PR #253 (`7672f32756473705c63645eed90757d1b27cb860`) merged to skip release build and promotion workflows on documentation-only pushes.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
