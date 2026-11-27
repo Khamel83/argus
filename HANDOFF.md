@@ -1,4 +1,11 @@
 # Handoff
+## November 27, 2026, 8:15 AM PT — #259 closed; #264 waits on Homelab env line
+
+- Live: source `dbbea122` (#260, #267, #269), known-good 7:43 AM PT. GitHub release runs show failure when the runner loses contact; Homelab `current.json` is the truth.
+- #259 closed: Third Street run 46028235147 has 0 `persistence_failed` (14 degraded, 11 extraction_failed, 4 success; the collector still rejects archive copies by owner decision).
+- #264: code is live but off. Needs `ARGUS_PUBLIC_BROWSER_DOMAINS=lausd.org` in the Homelab checkout (infra#2479 merged, not on host), then one promotion and a Third Street rerun.
+- Worktree `.worktrees/issue-264-browser` (this session): remove after this records PR merges.
+
 ## November 27, 2026, 2:40 AM PT — #267 and #269 merged; release in flight
 
 - Live: source `1b4b5ad` (#260), promoted 9:39 PM PT Nov 26.

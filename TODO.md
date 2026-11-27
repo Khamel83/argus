@@ -1,8 +1,8 @@
 ## Third Street caller faults (#259) — November 26, 2026
 
 - [x] Ship the accepted-extraction fixes for https://github.com/Khamel83/argus/issues/259 (#260). Live on Homelab since 9:39 PM PT Nov 26 (source `1b4b5ad`, image `5760ffd5`). Rerun https://github.com/Khamel83/third-street/actions/runs/45948253498: 0 cache-read timeouts, but 16 `persistence_failed` from `AcceptanceConflictError` on cache replay of pre-#260 archive mirror rows.
-- [ ] Promote #267 (replay conflict fix, `59335bad`) and #269 (#264 allow-list, `30f0dd3d`). Release 45976676234 for #267 failed in the scorecard ("scorecard schema is not at the baked head", `attempt.Y4kkhw.log`); release 45979955071 for #269 carries both. Then rerun Third Street and close #259.
-- [ ] #264 effect: https://github.com/Khamel83/infra/pull/2479 adds `ARGUS_PUBLIC_BROWSER_DOMAINS=lausd.org` to the Homelab compose. Needs Infra merge and the Homelab checkout updated (165 commits behind, local edits), then one more Argus promotion.
+- [x] Promote #267 and #269. Live: source `dbbea122`, known-good 7:43 AM PT Nov 27 (third release; two earlier scorecard runs failed under CPU pressure). Third Street run 46028235147: 0 `persistence_failed`. #259 closed.
+- [ ] #264 effect: https://github.com/Khamel83/infra/pull/2479 is merged, but the Homelab checkout `/mnt/fast-storage/github/homelab` (Infra-owned, 10 days old, local edits) lacks the line. Owner or Infra: `git fetch origin && git checkout origin/main -- services/argus/docker-compose.yml` there, then promote Argus once and rerun Third Street; close #264 when LAUSD returns live content.
 - [ ] Indexed URL identity column for the accepted-extraction cache read (owner Nov 26: PR only, no production schema change). Low priority: the rerun had no cache-read timeouts.
 
 ## November 8 — ARG-QS-02 release proof complete
