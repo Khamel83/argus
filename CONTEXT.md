@@ -401,11 +401,21 @@ development only; Mac launchd, OCI, Maya, and the host residential worker are
 retired and are not fallbacks. See the
 [production operations guide](docs/operations.md); ADR 0001 is superseded.
 <!-- janitor:begin:recent -->
-## Source checkpoint — 2026-11-27
+## Source checkpoint — 30f0dd3d268d6b1b287bb062bbf78ace289afae4
 
-Published source HEAD is `59335bad2b3b35207322d6bdd61dfc9b5e4ee040` (`fix: accept pre-#260 archive mirror rows on cache replay (#259) (#267)`). Related published commits, not deployment or acceptance proof: `453e33ee818307ac1a1e9ac67dffb16e759a5158` (`fix: stop cache-read timeouts failing extractions (#259) (#260)`), `1b4b5ad181424bdcffe8eff0b31d714463f8c4f3` (docs: #259 fix merged, deploy blocked by scorecard admission), `b368941116c3e00dbcc2050c75bd42463e3637da` (docs: record #259 deploy and night decisions). A commit subject does not prove promote, soak, or live effect.
+Published head subject only: public browser allow-list for origins that block headless clients (#264) (#269). That subject is past activity, not a runtime, review, or deployment receipt. No independent read-back for this commit is in the supplied documents.
 
-Project-owned TODO still lists #259 follow-through open: ship accepted-extraction fixes (failed durable cache read as a cache miss, `archive_used` on archive copies, named failure reasons), then merge, promote, and rerun Third Street `collect-argus.yml`. Promote of current main is also still open: scorecard admission waits expire under Homelab CPU pressure (https://github.com/Khamel83/infra/issues/1928); November 26 `attempt.bhbw06.log` ended `wait_expired`, as did release runs 45919264386 and 45920160494 for the #260 fix on November 27 UTC. An indexed URL identity column for accepted extraction outcomes remains an open schema change. ARG-QS-03/04/05 remain open (uncertain provider settlement, restore/ordinary reader proof, broader monitoring qualification). No whole-host zero-timeout or provider-settlement claim.
+Nearby subjects, also not task closures:
+- `59335bad2b3b35207322d6bdd61dfc9b5e4ee040` — accept pre-#260 archive mirror rows on cache replay (#259) (#267)
+- `b368941116c3e00dbcc2050c75bd42463e3637da` — record #259 deploy and night decisions (#265)
+- `1b4b5ad181424bdcffe8eff0b31d714463f8c4f3` — record #259 fix merged, deploy blocked by scorecard admission (#262)
+- `453e33ee818307ac1a1e9ac67dffb16e759a5158` — stop cache-read timeouts failing extractions (#259) (#260)
+
+Project-owned TODO still lists open #259 follow-up: accepted-extraction fixes, promote current main, and an indexed URL identity column. It records scorecard admission `wait_expired` for November 26 `attempt.bhbw06.log` and for release runs 45919264386 and 45920160494 (November 27 UTC) on the #260 fix. Whether later commits closed or deployed those lines is not established here.
+
+ARG-QS-03/04/05 remain open in the published TODO. ARG-QS-02 November 8 proof stays historical: source `bd7dded90d4378ee6dba516b114738cb81a474a7`, image `sha256:c9275a40142e452c31c0aa40bf9e57d9da83431855a72e33f632b777b337da56`. The November 6 PR 245 note still describes a source candidate with review, CI, and merge/read-back pending; later resolution is not in the supplied context body.
+
+November 5 workflow notes remain historical. Commit subjects show PR 240 merged as `a335e28911a7684c960ee64a1e3232c411ace683` and PR 241 merged as `0e3821ed7edb0da26ca2815e71abf942279f8da5`. Those subjects do not add a new soak, workflow-completion, or provider-settlement claim.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
