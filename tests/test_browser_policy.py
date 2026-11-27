@@ -475,3 +475,109 @@ async def test_auth_browser_exception_keeps_the_same_origin_resource_guard(
     assert admission.blocked_resources[-1][2] == (
         "cross-origin authenticated resource blocked"
     )
+
+
+# --- Public browser allow-list (#264) -------------------------------------
+
+_LAUSD_PAGE = "https://www.lausd.org/apps/pages/index.jsp?type=d&uREC_ID=4432518"
+
+
+@pytest.fixture
+def public_allowlist(monkeypatch):
+    monkeypatch.delenv("ARGUS_AUTH_BROWSER_DOMAINS", raising=False)
+    monkeypatch.setenv("ARGUS_PUBLIC_BROWSER_DOMAINS", " LAUSD.org ")
+
+
+def _public_request(url: str = _LAUSD_PAGE):
+    return make_browser_request(url, request_id="public-test")
+
+
+def test_public_browser_exception_is_off_by_default(monkeypatch):
+    monkeypatch.delenv("ARGUS_PUBLIC_BROWSER_DOMAINS", raising=False)
+
+    failure = require_browser_policy(_public_request(), None)
+
+    assert failure.code == "browser_policy_unavailable"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [_LAUSD_PAGE, "https://lausd.org/", "https://3rdstes.lausd.org/apps/news/rss"],
+)
+def test_public_browser_exception_admits_allowlisted_https_hosts(
+    public_allowlist, url
+):
+    now = datetime(2026, 11, 27, 12, tzinfo=timezone.utc)
+
+    admission = require_browser_policy(_public_request(url), None, now=now)
+
+    assert isinstance(admission, BrowserAdmission)
+    assert admission.basis == "public_browser_exception"
+    assert admission.exception_ref == "ARGUS_PUBLIC_BROWSER_DOMAINS:lausd.org"
+    assert admission.attestation is None
+    assert admission.expires_at == now + timedelta(minutes=5)
+
+
+@pytest.mark.parametrize(
+    ("url", "profile", "credential_policy"),
+    [
+        ("https://www.example.com/", OriginProfile.PUBLIC_CONTENT, "none"),
+        ("http://www.lausd.org/", OriginProfile.PUBLIC_CONTENT, "none"),
+        ("https://lausd.org.attacker.example/", OriginProfile.PUBLIC_CONTENT, "none"),
+        ("https://evillausd.org/", OriginProfile.PUBLIC_CONTENT, "none"),
+        (_LAUSD_PAGE, OriginProfile.AUTHENTICATED_CONTENT, "origin_scoped"),
+    ],
+)
+def test_public_browser_exception_rejects_requests_outside_its_scope(
+    public_allowlist, url, profile, credential_policy
+):
+    request = make_browser_request(
+        url,
+        profile=profile,
+        credential_policy=credential_policy,
+        request_id="public-test",
+    )
+
+    result = require_browser_policy(request, None)
+
+    assert not isinstance(result, BrowserAdmission)
+    assert result.code == "browser_policy_unavailable"
+
+
+def test_public_browser_exception_never_overrides_a_rejecting_authority(
+    public_allowlist,
+):
+    unverified = require_browser_policy(
+        _public_request(), _attestation(verified=False)
+    )
+
+    assert unverified.code == "browser_policy_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_public_browser_exception_uses_a_per_request_headed_browser(
+    public_allowlist, monkeypatch
+):
+    from argus.extraction import playwright_extractor as extractor
+
+    shared = AsyncMock(side_effect=AssertionError("shared browser must not be used"))
+    monkeypatch.setattr(extractor, "_get_browser", shared)
+    monkeypatch.setattr(
+        extractor, "guarded_browser_session", AsyncMock(return_value=None)
+    )
+    browser = MagicMock()
+    browser.new_context = AsyncMock(side_effect=RuntimeError("stop here"))
+    browser.close = AsyncMock()
+    browser.is_connected = MagicMock(return_value=True)
+    playwright = MagicMock()
+    playwright.stop = AsyncMock()
+    launch = AsyncMock(return_value=(playwright, browser))
+    monkeypatch.setattr(extractor, "_launch_headed_browser", launch)
+
+    result = await extractor.extract_playwright(_LAUSD_PAGE)
+
+    assert result.error == "playwright: stop here"
+    launch.assert_awaited_once()
+    shared.assert_not_awaited()
+    browser.close.assert_awaited_once()
+    playwright.stop.assert_awaited_once()

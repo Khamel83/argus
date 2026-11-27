@@ -19,6 +19,7 @@ import os
 import subprocess
 
 from argus.acquisition.browser_policy import (
+    ADMISSION_BASIS_PUBLIC_BROWSER_EXCEPTION,
     BrowserAdmission,
     admit_browser_url,
     failure_text,
@@ -188,6 +189,75 @@ async def _get_browser(admission: BrowserAdmission | None = None):
             return None
 
 
+_xvfb_process: subprocess.Popen | None = None
+_XVFB_DISPLAY = os.getenv("ARGUS_BROWSER_XVFB_DISPLAY", ":99")
+
+
+async def _ensure_virtual_display() -> str | None:
+    """Return an X display for a headed browser, starting Xvfb once if needed."""
+    global _xvfb_process
+    existing = os.environ.get("DISPLAY")
+    if existing:
+        return existing
+    if _xvfb_process is not None and _xvfb_process.poll() is None:
+        return _XVFB_DISPLAY
+    try:
+        _xvfb_process = subprocess.Popen(
+            ["Xvfb", _XVFB_DISPLAY, "-screen", "0", "1280x1024x24", "-nolisten", "tcp"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        logger.warning(
+            "Virtual display unavailable reason=xvfb_missing class=%s",
+            type(exc).__name__,
+        )
+        _xvfb_process = None
+        return None
+    await asyncio.sleep(0.5)
+    if _xvfb_process.poll() is not None:
+        logger.warning("Virtual display unavailable reason=xvfb_exited")
+        _xvfb_process = None
+        return None
+    return _XVFB_DISPLAY
+
+
+async def _launch_headed_browser():
+    """Launch a one-request headed Chromium for public allow-list hosts (#264).
+
+    Some public origins block headless clients but serve a normal browser.  The
+    session is still bound by the same admission and resource guards.  Returns
+    ``(playwright, browser)`` or ``(None, None)``.
+    """
+    if not _check_playwright():
+        return None, None
+    display = await _ensure_virtual_display()
+    if display is None:
+        return None, None
+    playwright = None
+    try:
+        from playwright.async_api import async_playwright
+
+        playwright = await async_playwright().start()
+        browser = await playwright.chromium.launch(
+            headless=False,
+            chromium_sandbox=True,
+            env={**os.environ, "DISPLAY": display},
+        )
+        return playwright, browser
+    except Exception as exc:
+        logger.warning(
+            "Failed to launch headed browser reason=launch_failed class=%s",
+            type(exc).__name__,
+        )
+        if playwright is not None:
+            try:
+                await playwright.stop()
+            except Exception:
+                pass
+        return None, None
+
+
 # Read live rendered text, preserving block boundaries and excluding CSS-hidden
 # content. Shell ownership comes from DOM structure, never transcript words.
 _SHARE_RENDER_SCRIPT = r"""() => {
@@ -259,7 +329,11 @@ async def _extract_playwright(
     if not isinstance(admission, BrowserAdmission):
         return ExtractedContent(url=url, error=failure_text(admission))
 
-    browser = await _get_browser(admission)
+    headed_playwright = None
+    if admission.basis == ADMISSION_BASIS_PUBLIC_BROWSER_EXCEPTION:
+        headed_playwright, browser = await _launch_headed_browser()
+    else:
+        browser = await _get_browser(admission)
     if not browser:
         return ExtractedContent(url=url, error="playwright: not available")
 
@@ -390,7 +464,17 @@ async def _extract_playwright(
                 await context.close()
             except Exception:
                 logger.debug("Failed to close Playwright context reason=close_failed")
-        if browser_cleanup_required:
+        if headed_playwright is not None:
+            # The headed browser belongs to this request only.
+            try:
+                await browser.close()
+            except Exception:
+                logger.debug("Failed to close headed browser reason=close_failed")
+            try:
+                await headed_playwright.stop()
+            except Exception:
+                logger.debug("Failed to stop headed Playwright reason=stop_failed")
+        elif browser_cleanup_required:
             await close_browser()
 
 

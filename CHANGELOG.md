@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Public browser allow-list (`ARGUS_PUBLIC_BROWSER_DOMAINS`, #264)** — off by
+  default. Public, credential-free HTTPS pages on the listed domains may use
+  the browser path with no browser-network attestation. They run in a
+  one-request headed Chromium on a virtual display, because some origins
+  (LAUSD for Third Street) block headless clients. Hosts not on the list still
+  fail closed with `browser_policy_unavailable`.
 - `POST /api/workflows/search-and-summarize` can synthesize its answer through
   any OpenAI-compatible gateway such as g2k (`ARGUS_GATEWAY_URL`,
   `ARGUS_GATEWAY_KEY`, `ARGUS_GATEWAY_MODEL`, `ARGUS_GATEWAY_MODE`,
