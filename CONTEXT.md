@@ -407,12 +407,15 @@ retired and are not fallbacks. See the
 - Third Street: report numbers only; no change to its collector for archive copies.
 
 <!-- janitor:begin:recent -->
-## November 27, 2026 — Production #264 browser allow-list live and #259 closed
+Observed source `62114b9899b5de1148ffe51bbd241ba78432aec6` (`chore: add Dependabot weekly grouped updates (#281)`). That subject is past activity only; it does not open a task or prove a runtime change.
 
-- **#264 live in production** (commit `3e196cc4f95ba31e885ab9eab2fb28ad9d37126b` via PR #279): Live since 1:21 PM PT Nov 27, 2026. A config-only recreation of `argus` with image `dbbea122` enabled `ARGUS_PUBLIC_BROWSER_DOMAINS=lausd.org` following host CPU recovery (infra #1928). Production gates passed; Third Street run 46070479061 verified `extraction_failed` dropped from 11 to 3 ([Argus #264 comment 7228874180](https://github.com/Khamel83/argus/issues/264#issuecomment-7228874180)).
-- **#259 closed**: Merged fixes #260 (`453e33ee818307ac1a1e9ac67dffb16e759a5158`), #267 (`59335bad2b3b35207322d6bdd61dfc9b5e4ee040`), and #269 (`30f0dd3d268d6b1b287bb062bbf78ace289afae4`) are live on source `dbbea122` (known-good 7:43 AM PT Nov 27). Third Street run 46028235147 verified 0 `persistence_failed`.
-- **Owner decisions (Nov 26)**: Headed-browser fetches approved for `*.lausd.org` only; accepted-extraction index changes restricted to migration PR only (no production schema change); Third Street collector unchanged.
-- **Open follow-ups**: LAUSD `.ics` feed failures behind Cloudflare (#278), shorter archive copy preference over incomplete live pages (#277), accepted-extraction index PR, and diagnosing `promote` failure exit 78 on main (#253 docs-skip merged).
+#259 is closed. Accepted-extraction fixes shipped and #267/#269 were promoted. Recorded live source `dbbea122`, known-good 7:43 AM PT Nov 27 (third release; two earlier scorecard runs failed under CPU pressure). Third Street run 46028235147: 0 `persistence_failed`.
+
+#264 is live in production since 1:21 PM PT Nov 27, 2026. A config-only recreate of `argus` on the same image `dbbea122` set `ARGUS_PUBLIC_BROWSER_DOMAINS=lausd.org`. The promoter could not admit at 99.7% host CPU; record and restore steps: https://github.com/Khamel83/infra/issues/1928#issuecomment-7228475684. Production gates passed. Third Street run https://github.com/Khamel83/third-street/actions/runs/46070479061: `extraction_failed` 11 → 3, degraded 14 → 19, success 4. Evidence: https://github.com/Khamel83/argus/issues/264#issuecomment-7228874180.
+
+Owner decisions November 26, 2026 (night) remain: headed-browser fetches approved for `*.lausd.org` only; accepted-extraction index is a migration PR only, with no production schema change without a new decision; Third Street reports numbers only and does not change its collector for archive copies.
+
+Later commits do not close the project-owned open items: LAUSD `.ics` Cloudflare failures (#278); a shorter archive copy winning over a longer incomplete live page (#277); indexed URL identity column (low priority, PR only); `promote` failing on main (November 18 runs exited 78; November 9 exit code unknown because its log expired); ARG-QS-03/04/05; Homelab Tavily credential-observation acceptance; uncertain provider charges reconciled only with authoritative evidence. No whole-host zero-timeout acceptance, natural backup recurrence, or rollout beyond the recorded #259/#264 facts is claimed. Docs-only release-workflow skip is merged: https://github.com/Khamel83/argus/pull/253.
 <!-- janitor:end:recent -->
 ## Publisher source checkpoint — October 10, 2026
 
