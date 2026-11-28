@@ -13,6 +13,10 @@ updates:
     open-pull-requests-limit: 2
     groups:
       pip-all:
+        applies-to: version-updates
+        patterns: ["*"]
+      pip-security:
+        applies-to: security-updates
         patterns: ["*"]
   - package-ecosystem: "docker"
     directories:
@@ -25,6 +29,10 @@ updates:
     open-pull-requests-limit: 2
     groups:
       docker-all:
+        applies-to: version-updates
+        patterns: ["*"]
+      docker-security:
+        applies-to: security-updates
         patterns: ["*"]
   - package-ecosystem: "github-actions"
     directories:
@@ -37,4 +45,8 @@ updates:
     open-pull-requests-limit: 2
     groups:
       github-actions-all:
+        applies-to: version-updates
+        patterns: ["*"]
+      github-actions-security:
+        applies-to: security-updates
         patterns: ["*"]
